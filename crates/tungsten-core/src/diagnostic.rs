@@ -185,6 +185,7 @@ pub mod codes {
             "circular $ref without a named type to break the cycle",
         ),
         ("TG0206", "overlay target matched nothing"),
+        ("TG0207", "overlay document or action is invalid"),
         (
             "TG0301",
             "untagged union: runtime will sniff candidates in order",
