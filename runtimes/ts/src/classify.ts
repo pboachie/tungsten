@@ -118,12 +118,24 @@ export interface CallContext {
   attempts: number;
 }
 
-function verifyHint(ctx: CallContext): string | null {
+/** What resolves an unknown outcome: the verification hook when there is
+ * one, else repeating the call under its replay protection (the same key,
+ * or the identical body), which answers the original result instead of
+ * applying the effect twice. Null when nothing can resolve it safely. */
+function nextActionHint(ctx: CallContext): string | null {
   const verify = ctx.op.agent.verify;
-  if (!verify || typeof verify.operation !== "string") return null;
-  const keys = isRecord(verify.args) ? Object.keys(verify.args) : [];
-  const withArgs = keys.length > 0 ? ` with ${keys.join(", ")}` : "";
-  return `Call ${verify.operation}${withArgs} to check whether ${ctx.op.id} took effect before doing anything else.`;
+  if (verify && typeof verify.operation === "string") {
+    const keys = isRecord(verify.args) ? Object.keys(verify.args) : [];
+    const withArgs = keys.length > 0 ? ` with ${keys.join(", ")}` : "";
+    return `Call ${verify.operation}${withArgs} to check whether ${ctx.op.id} took effect before doing anything else.`;
+  }
+  if (ctx.op.agent.idempotency.policy === "content_identity") {
+    return `Call ${ctx.op.id} again with the identical body; the body is its own identity, so the server answers the original result instead of applying it twice.`;
+  }
+  if (ctx.key !== null) {
+    return `Call ${ctx.op.id} again with the same ${ctx.keyHeader} value and identical arguments; the server answers the original result instead of applying it twice.`;
+  }
+  return null;
 }
 
 /** OUTCOME_UNKNOWN for a mutation whose effect cannot be known. */
@@ -140,7 +152,7 @@ export function outcomeUnknown(ctx: CallContext, cause: string, fields: Partial<
   return diagnostic(op.id, "OUTCOME_UNKNOWN", {
     remediation: `${cause} The server may or may not have applied ${op.id}. ${rule}`,
     retryable: "same_key_only",
-    next_action: fields.next_action ?? verifyHint(ctx),
+    next_action: fields.next_action ?? nextActionHint(ctx),
     http_status: fields.http_status ?? null,
     code: fields.code ?? null,
     request_id: fields.request_id ?? null,
@@ -179,18 +191,25 @@ export function classifyError(
     });
   }
 
+  const entry = remediationEntry(op.agent.remediation, code) ?? remediationEntry(api.errorCodes, code);
+  const media = decoded.empty ? "none" : mediaTypeOf(headers) || "none";
+  const nonJson = decoded.json
+    ? undefined
+    : (Array.isArray(api.nonJson) ? api.nonJson : []).find(
+        (n) => isRecord(n) && n.status === status && (n.media === media || (n.media === "none" && decoded.empty)),
+      );
   const declared = matchResponse(op.responses, status);
   const ambiguous = (Array.isArray(api.ambiguousStatuses) && api.ambiguousStatuses.includes(status)) || declared?.kind === "ambiguous";
   if (ambiguous && isMutation(op)) {
-    const entry = remediationEntry(op.agent.remediation, code) ?? remediationEntry(api.errorCodes, code);
-    return outcomeUnknown(ctx, `HTTP ${status} leaves the outcome of this call unknown.`, {
+    // The manifest's text for this answer still explains it.
+    const said = entry && typeof entry.text === "string" ? entry.text : nonJson && typeof nonJson.text === "string" ? nonJson.text : null;
+    return outcomeUnknown(ctx, `HTTP ${status} leaves the outcome of this call unknown.${said ? ` ${said}` : ""}`, {
       ...base,
       code,
-      next_action: entry?.next_action ?? null,
+      next_action: typeof entry?.next_action === "string" ? entry.next_action : null,
     });
   }
 
-  const entry = remediationEntry(op.agent.remediation, code) ?? remediationEntry(api.errorCodes, code);
   let category: Category;
   let retryable: Retryable | undefined;
   let text: string | null = null;
@@ -200,20 +219,18 @@ export function classifyError(
     retryable = isRetryable(entry.retryable) ? entry.retryable : undefined;
     text = typeof entry.text === "string" ? entry.text : null;
     nextAction = typeof entry.next_action === "string" ? entry.next_action : null;
+  } else if (nonJson && isCategory(nonJson.category)) {
+    category = nonJson.category;
+    retryable = isRetryable(nonJson.retryable) ? nonJson.retryable : undefined;
+    text = typeof nonJson.text === "string" ? nonJson.text : null;
   } else {
-    const media = decoded.empty ? "none" : mediaTypeOf(headers) || "none";
-    const nonJson = decoded.json
-      ? undefined
-      : (Array.isArray(api.nonJson) ? api.nonJson : []).find(
-          (n) => isRecord(n) && n.status === status && (n.media === media || (n.media === "none" && decoded.empty)),
-        );
-    if (nonJson && isCategory(nonJson.category)) {
-      category = nonJson.category;
-      retryable = isRetryable(nonJson.retryable) ? nonJson.retryable : undefined;
-      text = typeof nonJson.text === "string" ? nonJson.text : null;
-    } else {
-      category = categoryForStatus(status, decoded.json);
-    }
+    category = categoryForStatus(status, decoded.json);
+  }
+  if (category === "OUTCOME_UNKNOWN" && !isMutation(op)) {
+    // A read has no effect whose outcome could be unknown: the answer only
+    // says the service did not respond in time.
+    category = "UPSTREAM_UNAVAILABLE";
+    if (retryable === undefined || retryable === "same_key_only") retryable = "after_delay";
   }
   if (text === null) {
     const said = decoded.json ? serverMessage(decoded.value) : null;
