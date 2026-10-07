@@ -1,0 +1,41 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.95"
+license = "AGPL-3.0-only"
+repository = "https://github.com/pboachie/tungsten"
+publish = false
+
+[workspace.dependencies]
+tungsten-core = { path = "crates/tungsten-core" }
+tungsten-config = { path = "crates/tungsten-config" }
+tungsten-openapi = { path = "crates/tungsten-openapi" }
+tungsten-ir = { path = "crates/tungsten-ir" }
+tungsten-build = { path = "crates/tungsten-build" }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+schemars = { version = "1", features = ["preserve_order", "indexmap2"] }
+indexmap = { version = "2", features = ["serde"] }
+thiserror = "2"
+blake3 = "1"
+clap = { version = "4", features = ["derive"] }
+petgraph = "0.8"
+yaml-rust2 = "0.10"
+url = "2"
+semver = { version = "1", features = ["serde"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
