@@ -89,8 +89,9 @@ impl JsonPath {
         Ok(Self { segments })
     }
 
-    /// Pointers of every node selected in `root`.
-    pub(crate) fn select(&self, root: &Value) -> Vec<String> {
+    /// Pointers of every node selected in `root`. `Err` when a step of the
+    /// selection holds more than [`MAX_SELECTED`] nodes.
+    pub(crate) fn select(&self, root: &Value) -> Result<Vec<String>, String> {
         let mut current: Vec<(String, &Value)> = vec![(String::new(), root)];
         for segment in &self.segments {
             let mut next = vec![];
@@ -101,31 +102,44 @@ impl JsonPath {
                     }
                 }
                 Segment::Descendant(sel) => {
-                    for (p, v) in &current {
-                        for (dp, dv) in descendants(p, v) {
-                            apply(sel, &dp, dv, &mut next);
+                    // One walk of the document applies `sel` to every node
+                    // inside a current subtree, so nested current nodes do
+                    // not walk their subtrees again.
+                    let roots: HashSet<&str> = current.iter().map(|(p, _)| p.as_str()).collect();
+                    let mut stack = vec![(String::new(), root, false)];
+                    while let Some((p, v, inside)) = stack.pop() {
+                        let inside = inside || roots.contains(p.as_str());
+                        if inside {
+                            apply(sel, &p, v, &mut next);
+                            if next.len() > MAX_SELECTED {
+                                return Err(too_many());
+                            }
                         }
+                        stack.extend(
+                            children(&p, v)
+                                .into_iter()
+                                .rev()
+                                .map(|(cp, cv)| (cp, cv, inside)),
+                        );
                     }
                 }
             }
             let mut seen = HashSet::new();
             next.retain(|(p, _)| seen.insert(p.clone()));
+            if next.len() > MAX_SELECTED {
+                return Err(too_many());
+            }
             current = next;
         }
-        current.into_iter().map(|(p, _)| p).collect()
+        Ok(current.into_iter().map(|(p, _)| p).collect())
     }
 }
 
-/// `v` and every node below it, in document pre-order.
-fn descendants<'v>(pointer: &str, v: &'v Value) -> Vec<(String, &'v Value)> {
-    let mut out = vec![];
-    let mut stack = vec![(pointer.to_string(), v)];
-    while let Some((p, v)) = stack.pop() {
-        let children = children(&p, v);
-        out.push((p, v));
-        stack.extend(children.into_iter().rev());
-    }
-    out
+/// Most nodes one step of a JSONPath selection may hold.
+pub(crate) const MAX_SELECTED: usize = 1_000_000;
+
+fn too_many() -> String {
+    format!("the selection exceeds the limit of {MAX_SELECTED} nodes")
 }
 
 fn children<'v>(pointer: &str, v: &'v Value) -> Vec<(String, &'v Value)> {

@@ -4,15 +4,19 @@
 //!
 //! - Scalars resolve with the YAML 1.2 core schema (`on`/`yes` stay
 //!   strings); `.inf`/`.nan` stay strings because JSON cannot hold them.
-//! - Anchors and aliases are expanded under a node budget so a
-//!   "billion laughs" document fails fast with TG0105 instead of exhausting
-//!   memory; expanded nodes take the span of the alias that produced them.
+//! - Anchors and aliases are expanded under a node budget and a byte
+//!   budget (string, key and number text), so a "billion laughs" document,
+//!   or one that aliases a huge scalar many times, fails fast with TG0105
+//!   instead of exhausting memory; expanded nodes take the span of the
+//!   alias that produced them.
 //!   Merge keys (`<<`) are applied with explicit keys taking
 //!   precedence.
 //! - Mapping keys must be scalars; duplicate keys and multi-document streams
 //!   are errors (TG0102).
 //! - yaml-rust2 markers count characters; they are converted to byte offsets
 //!   so spans agree with [`tungsten_core::SourceFile`].
+//! - A leading UTF-8 byte order mark is skipped (as JSON does), and spans
+//!   still count it.
 
 use std::collections::HashMap;
 
@@ -28,6 +32,10 @@ use crate::spans::SpanIndex;
 /// Maximum number of nodes alias expansion may add to one document.
 pub(crate) const MAX_ALIAS_NODES: usize = 1_000_000;
 
+/// Maximum bytes of text (strings, keys, numbers) alias expansion may add
+/// to one document: twice the default input size limit.
+pub(crate) const MAX_ALIAS_BYTES: usize = 64 * 1024 * 1024;
+
 const CORE_TAG: &str = "tag:yaml.org,2002:";
 
 pub(crate) fn parse_yaml(
@@ -35,18 +43,22 @@ pub(crate) fn parse_yaml(
     source: SourceId,
     max_depth: usize,
 ) -> Result<Parsed, ParseError> {
+    let body = text.strip_prefix('\u{feff}').unwrap_or(text);
+    let mut offsets = Offsets::new(text);
+    offsets.char_shift = usize::from(body.len() != text.len());
     YamlBuilder {
         text,
         source,
         max_depth,
-        offsets: Offsets::new(text),
+        offsets,
         spans: SpanIndex::default(),
         pointer: String::new(),
         stack: vec![],
         anchors: HashMap::new(),
         alias_nodes: 0,
+        alias_bytes: 0,
     }
-    .run(&mut Parser::new_from_str(text))
+    .run(&mut Parser::new_from_str(body))
 }
 
 /// Character index → byte offset, with a moving cursor (markers are mostly
@@ -56,6 +68,8 @@ struct Offsets<'a> {
     ascii: bool,
     chars: usize,
     bytes: usize,
+    /// Characters of `text` before the parsed body (a byte order mark).
+    char_shift: usize,
 }
 
 impl<'a> Offsets<'a> {
@@ -65,10 +79,12 @@ impl<'a> Offsets<'a> {
             ascii: text.is_ascii(),
             chars: 0,
             bytes: 0,
+            char_shift: 0,
         }
     }
 
     fn byte(&mut self, char_index: usize) -> usize {
+        let char_index = char_index.saturating_add(self.char_shift);
         if self.ascii {
             return char_index.min(self.text.len());
         }
@@ -91,27 +107,35 @@ impl<'a> Offsets<'a> {
     }
 }
 
-/// A node definition remembered for aliases, with its node count and depth.
+/// A node definition remembered for aliases, with its node count, text
+/// size and depth.
 struct Anchor {
     value: Value,
     nodes: usize,
+    bytes: usize,
     depth: usize,
 }
 
-/// Number of nodes in `value` and its nesting depth (a scalar has depth 0).
-fn size_and_depth(value: &Value) -> (usize, usize) {
-    let (mut nodes, mut depth) = (0, 0);
+/// Number of nodes in `value`, bytes of its text (strings, keys, numbers)
+/// and its nesting depth (a scalar has depth 0).
+fn measure(value: &Value) -> (usize, usize, usize) {
+    let (mut nodes, mut bytes, mut depth) = (0, 0, 0);
     let mut stack = vec![(value, 0)];
     while let Some((v, d)) = stack.pop() {
         nodes += 1;
         depth = depth.max(d);
         match v {
-            Value::Object(m) => stack.extend(m.values().map(|c| (c, d + 1))),
+            Value::Object(m) => {
+                bytes += m.keys().map(String::len).sum::<usize>();
+                stack.extend(m.values().map(|c| (c, d + 1)));
+            }
             Value::Array(a) => stack.extend(a.iter().map(|c| (c, d + 1))),
-            _ => {}
+            Value::String(s) => bytes += s.len(),
+            Value::Number(n) => bytes += n.to_string().len(),
+            Value::Bool(_) | Value::Null => bytes += 1,
         }
     }
-    (nodes, depth)
+    (nodes, bytes, depth)
 }
 
 enum Frame {
@@ -157,6 +181,7 @@ struct YamlBuilder<'a> {
     stack: Vec<Frame>,
     anchors: HashMap<usize, Anchor>,
     alias_nodes: usize,
+    alias_bytes: usize,
 }
 
 impl YamlBuilder<'_> {
@@ -354,12 +379,13 @@ impl YamlBuilder<'_> {
         if anchor == 0 {
             return;
         }
-        let (nodes, depth) = size_and_depth(value);
+        let (nodes, bytes, depth) = measure(value);
         self.anchors.insert(
             anchor,
             Anchor {
                 value: value.clone(),
                 nodes,
+                bytes,
                 depth,
             },
         );
@@ -371,9 +397,10 @@ impl YamlBuilder<'_> {
             self.anchors.insert(
                 anchor,
                 Anchor {
-                    value: Value::String(key),
                     nodes: 1,
+                    bytes: key.len(),
                     depth: 0,
+                    value: Value::String(key),
                 },
             );
         }
@@ -384,10 +411,18 @@ impl YamlBuilder<'_> {
             return Err(self.error("TG0102", "invalid YAML: unknown alias", at));
         };
         self.alias_nodes += anchor.nodes;
+        self.alias_bytes += anchor.bytes;
         if self.alias_nodes > MAX_ALIAS_NODES {
             return Err(self.error(
                 "TG0105",
                 &format!("YAML alias expansion exceeds the limit of {MAX_ALIAS_NODES} nodes"),
+                at,
+            ));
+        }
+        if self.alias_bytes > MAX_ALIAS_BYTES {
+            return Err(self.error(
+                "TG0105",
+                &format!("YAML alias expansion exceeds the limit of {MAX_ALIAS_BYTES} bytes"),
                 at,
             ));
         }

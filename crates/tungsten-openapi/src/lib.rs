@@ -148,6 +148,13 @@ pub struct Workspace {
     pub documents: Vec<Document>,
     /// Entry documents in the order given to [`load`]; fragments follow.
     pub entries: Vec<DocId>,
+    /// One slot per [`LoadEntry`] given to [`load`], in that order: the
+    /// entry's document, or `None` when it could not be loaded. The same
+    /// file listed twice (with different overlays) is two documents.
+    pub entry_docs: Vec<Option<DocId>>,
+    /// Digest of the bytes of every overlay file that was read and applied,
+    /// keyed by the path given in [`LoadEntry::overlays`].
+    pub overlay_digests: BTreeMap<PathBuf, Digest>,
     pub graph: RefGraph,
     pub diagnostics: Diagnostics,
     /// Loaded files by absolute path (lexical and canonical forms).
@@ -172,16 +179,22 @@ impl Workspace {
 
     /// Follow `$ref` chains starting at a target until a non-`$ref` value.
     /// Returns the final target, or `None` on a dangling or circular chain.
+    /// Chains of any length are followed; only a repeated target stops one.
     pub fn deref(&self, target: &RefTarget) -> Option<RefTarget> {
         let mut cur = target.clone();
-        for _ in 0..64 {
+        let mut seen = std::collections::HashSet::new();
+        loop {
             let v = self.get(&cur)?;
             match v.get("$ref").and_then(|r| r.as_str()) {
-                Some(r) => cur = self.resolve(cur.doc, r)?,
+                Some(r) => {
+                    if !seen.insert(cur.clone()) {
+                        return None;
+                    }
+                    cur = self.resolve(cur.doc, r)?;
+                }
                 None => return Some(cur),
             }
         }
-        None
     }
 
     /// Span for a target, if known.
@@ -228,6 +241,9 @@ pub mod __testing {
     /// Maximum number of nodes YAML alias expansion may add to one document.
     pub const MAX_ALIAS_NODES: usize = crate::yaml::MAX_ALIAS_NODES;
 
+    /// Maximum bytes of text YAML alias expansion may add to one document.
+    pub const MAX_ALIAS_BYTES: usize = crate::yaml::MAX_ALIAS_BYTES;
+
     /// Parse JSON or YAML (format chosen from `name`, then content) into a
     /// value and its pointer → span index, as source 0.
     pub fn parse(
@@ -242,7 +258,7 @@ pub mod __testing {
 
     /// Pointers selected by an overlay JSONPath expression.
     pub fn jsonpath_select(expr: &str, root: &Value) -> Result<Vec<String>, String> {
-        crate::jsonpath::JsonPath::parse(expr).map(|p| p.select(root))
+        crate::jsonpath::JsonPath::parse(expr).and_then(|p| p.select(root))
     }
 
     /// Apply the 3.0 → 3.1 rewrites to a standalone schema.

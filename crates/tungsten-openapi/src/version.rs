@@ -28,9 +28,9 @@ pub(crate) fn detect(
             .as_str()
             .map_or_else(|| swagger.to_string(), str::to_string);
         let help = if opts.convert_swagger2 {
-            "--convert-swagger2 is not yet supported in this version; convert the document to OpenAPI 3.x first"
+            "Swagger 2.0 conversion is not yet supported in this version; convert the document to OpenAPI 3.x first"
         } else {
-            "Swagger 2.0 documents need --convert-swagger2 (not yet supported in this version); convert the document to OpenAPI 3.x first"
+            "this version of tungsten does not convert Swagger 2.0; convert the document to OpenAPI 3.x first (for example with swagger2openapi)"
         };
         return Err(vec![at(
             Diagnostic::error(

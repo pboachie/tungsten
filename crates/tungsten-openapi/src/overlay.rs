@@ -7,6 +7,13 @@
 //! elements), anything else is replaced. A target that selects nothing is
 //! reported with TG0206; malformed overlays and actions with TG0207.
 //! Spans of inserted values point into the overlay file.
+//!
+//! Budgets: a target may select at most
+//! [`MAX_SELECTED`](crate::jsonpath::MAX_SELECTED) nodes, and the updates of
+//! one overlay may copy at most [`MAX_OVERLAY_NODES`] nodes into the
+//! document (an update merged into every node of a large selection
+//! multiplies). Past either, the action is not applied (TG0105) and the
+//! overlay stops.
 
 use std::cmp::Ordering;
 
@@ -16,6 +23,24 @@ use tungsten_core::{Diagnostic, Diagnostics};
 use crate::jsonpath::JsonPath;
 use crate::spans::SpanIndex;
 use crate::{join_pointer, split_pointer};
+
+/// Most nodes the updates of one overlay may copy into the document.
+pub(crate) const MAX_OVERLAY_NODES: usize = 1_000_000;
+
+/// Number of nodes (values) in a JSON value.
+fn node_count(value: &Value) -> usize {
+    let mut count = 0;
+    let mut stack = vec![value];
+    while let Some(v) = stack.pop() {
+        count += 1;
+        match v {
+            Value::Object(m) => stack.extend(m.values()),
+            Value::Array(a) => stack.extend(a.iter()),
+            _ => {}
+        }
+    }
+    count
+}
 
 /// A parsed overlay file.
 pub(crate) struct Overlay<'a> {
@@ -59,26 +84,33 @@ pub(crate) fn apply(
         ));
         return;
     };
+    let mut copied = 0;
     for (i, action) in actions.iter().enumerate() {
-        apply_action(doc, spans, overlay, action, &format!("/actions/{i}"), diags);
+        let at = format!("/actions/{i}");
+        if !apply_action(doc, spans, overlay, action, &at, &mut copied, diags) {
+            return;
+        }
     }
 }
 
+/// Apply one action. False when a budget is exhausted and the overlay
+/// must stop.
 fn apply_action(
     doc: &mut Value,
     spans: &mut SpanIndex,
     overlay: &Overlay<'_>,
     action: &Value,
     at: &str,
+    copied: &mut usize,
     diags: &mut Diagnostics,
-) {
+) -> bool {
     let target_ptr = format!("{at}/target");
     let Some(target) = action.get("target").and_then(Value::as_str) else {
         diags.push(overlay.diagnostic(
             Diagnostic::error("TG0207", "overlay action has no string `target`"),
             at,
         ));
-        return;
+        return true;
     };
     let path = match JsonPath::parse(target) {
         Ok(p) => p,
@@ -87,7 +119,7 @@ fn apply_action(
                 Diagnostic::error("TG0207", format!("invalid JSONPath target `{target}`: {e}")),
                 &target_ptr,
             ));
-            return;
+            return true;
         }
     };
     let remove = match action.get("remove") {
@@ -98,7 +130,7 @@ fn apply_action(
                 Diagnostic::error("TG0207", "overlay action `remove` must be a boolean"),
                 &format!("{at}/remove"),
             ));
-            return;
+            return true;
         }
     };
     let update = action.get("update");
@@ -110,9 +142,18 @@ fn apply_action(
             ),
             at,
         ));
-        return;
+        return true;
     }
-    let selected = path.select(doc);
+    let selected = match path.select(doc) {
+        Ok(selected) => selected,
+        Err(e) => {
+            diags.push(overlay.diagnostic(
+                Diagnostic::error("TG0105", format!("overlay target `{target}`: {e}")),
+                &target_ptr,
+            ));
+            return false;
+        }
+    };
     if selected.is_empty() {
         diags.push(overlay.diagnostic(
             Diagnostic::warning(
@@ -121,11 +162,25 @@ fn apply_action(
             ),
             &target_ptr,
         ));
-        return;
+        return true;
     }
     if remove {
         remove_all(doc, spans, selected, overlay, &target_ptr, diags);
     } else if let Some(update) = update {
+        let adds = node_count(update).saturating_mul(selected.len());
+        *copied = copied.saturating_add(adds);
+        if *copied > MAX_OVERLAY_NODES {
+            diags.push(overlay.diagnostic(
+                Diagnostic::error(
+                    "TG0105",
+                    format!(
+                        "overlay updates would copy more than {MAX_OVERLAY_NODES} nodes into the document; action not applied"
+                    ),
+                ),
+                at,
+            ));
+            return false;
+        }
         let update_ptr = format!("{at}/update");
         for p in selected {
             if let Some(node) = doc.pointer_mut(&p) {
@@ -133,6 +188,7 @@ fn apply_action(
             }
         }
     }
+    true
 }
 
 /// Order pointers so that later array elements and descendants come first:

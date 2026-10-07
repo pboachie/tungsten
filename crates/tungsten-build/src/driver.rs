@@ -13,6 +13,35 @@ use crate::{
     BuildInput, DEFAULT_MANIFEST_NAME, NamespaceInput, TUNGSTEN_VERSION, build_with_manifest,
 };
 
+/// Stack of the thread a compilation runs on. Building a type recurses
+/// once per named type of a `$ref` chain; [`crate::types::MAX_BUILD_DEPTH`]
+/// bounds the chain far below what this holds, whatever stack the caller
+/// has. Only the pages actually touched are committed.
+const COMPILE_STACK_BYTES: usize = 256 * 1024 * 1024;
+
+/// Run `f` on a thread with [`COMPILE_STACK_BYTES`] of stack, or on the
+/// current thread when no such thread can be started. A panic in `f`
+/// resumes on the caller.
+fn on_compile_stack<T: Send>(f: impl FnOnce() -> T + Send) -> T {
+    let job = std::sync::Mutex::new(Some(f));
+    let run = || {
+        let f = job.lock().ok().and_then(|mut j| j.take());
+        f.map(|f| f())
+    };
+    let spawned = std::thread::scope(|s| {
+        std::thread::Builder::new()
+            .name("tungsten-compile".into())
+            .stack_size(COMPILE_STACK_BYTES)
+            .spawn_scoped(s, run)
+            .ok()
+            .map(|h| h.join().unwrap_or_else(|e| std::panic::resume_unwind(e)))
+    });
+    match spawned.flatten() {
+        Some(out) => out,
+        None => run().expect("the compilation job runs exactly once"),
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct CompileOptions {
     pub load: LoadOptions,
@@ -40,6 +69,10 @@ impl Compiled {
 /// its file name, as specs are named relative to that directory, and carry
 /// spans into its text, which is added to `workspace.sources`.
 pub fn compile_project(manifest: &Path, opts: &CompileOptions) -> Compiled {
+    on_compile_stack(|| compile_project_here(manifest, opts))
+}
+
+fn compile_project_here(manifest: &Path, opts: &CompileOptions) -> Compiled {
     let ParsedManifest {
         config,
         mut diagnostics,
@@ -80,7 +113,7 @@ pub fn compile_spec(spec: &Path, opts: &CompileOptions) -> Compiled {
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
     let config = TungstenConfig::for_single_spec(&ns, &file);
-    compile_config(config, &base, None, opts)
+    on_compile_stack(|| compile_config_here(config, &base, None, opts))
 }
 
 fn namespace_for_stem(stem: &str) -> String {
@@ -106,6 +139,15 @@ fn namespace_for_stem(stem: &str) -> String {
 /// name and bytes, when it came from a file: its digest is recorded and
 /// its diagnostics get spans.
 pub fn compile_config(
+    config: TungstenConfig,
+    base_dir: &Path,
+    manifest: Option<(&str, &[u8])>,
+    opts: &CompileOptions,
+) -> Compiled {
+    on_compile_stack(|| compile_config_here(config, base_dir, manifest, opts))
+}
+
+fn compile_config_here(
     config: TungstenConfig,
     base_dir: &Path,
     manifest: Option<(&str, &[u8])>,
@@ -204,23 +246,21 @@ fn compile_validated(
     for d in &workspace.documents {
         input_digests.insert(d.name.clone(), d.digest.clone());
     }
+    // Overlay digests are those of the bytes the loader read and applied.
     for i in config.inputs.iter() {
         for o in i.overlays.iter().chain(config.overlays.iter()) {
-            if let Ok(bytes) = std::fs::read(resolve(o)) {
-                input_digests.insert(o.clone(), Digest::of(&bytes));
+            if let Some(digest) = workspace.overlay_digests.get(&resolve(o)) {
+                input_digests.insert(o.clone(), digest.clone());
             }
         }
     }
 
-    // Match entries back to their config inputs by display name.
+    // Entries come back one per input, in input order (the same spec may
+    // be listed by several namespaces, each with its own overlays).
     let mut namespaces = vec![];
     for (idx, input) in config.inputs.iter().enumerate() {
-        match workspace
-            .entries
-            .iter()
-            .find(|&&d| workspace.documents[d].name == input.spec)
-        {
-            Some(&doc) => namespaces.push(NamespaceInput {
+        match workspace.entry_docs.get(idx).copied().flatten() {
+            Some(doc) => namespaces.push(NamespaceInput {
                 config_index: idx,
                 doc,
             }),

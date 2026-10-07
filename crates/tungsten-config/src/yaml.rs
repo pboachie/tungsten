@@ -51,9 +51,12 @@ pub(crate) struct YamlError {
 }
 
 pub(crate) fn to_json(text: &str) -> Result<Converted, Box<YamlError>> {
+    // A leading byte order mark is not part of the document; offsets still
+    // count its bytes.
+    let body = text.strip_prefix('\u{feff}').unwrap_or(text);
     let mut reader = Reader {
-        parser: Parser::new_from_str(text),
-        offsets: Offsets::new(text),
+        parser: Parser::new_from_str(body),
+        offsets: Offsets::new(body, (text.len() - body.len()) as u32),
         positions: BTreeMap::new(),
     };
     match reader.document() {
@@ -292,24 +295,30 @@ fn tag_name(tag: &Tag) -> String {
 struct Offsets<'a> {
     text: &'a str,
     line_starts: Vec<usize>,
+    /// Bytes before `text` in the source (a byte order mark).
+    shift: u32,
 }
 
 impl<'a> Offsets<'a> {
-    fn new(text: &'a str) -> Self {
+    fn new(text: &'a str, shift: u32) -> Self {
         let mut line_starts = vec![0];
         line_starts.extend(text.match_indices('\n').map(|(i, _)| i + 1));
-        Self { text, line_starts }
+        Self {
+            text,
+            line_starts,
+            shift,
+        }
     }
 
     fn of(&self, mark: &Marker) -> u32 {
         let Some(&start) = self.line_starts.get(mark.line().saturating_sub(1)) else {
-            return self.text.len() as u32;
+            return self.text.len() as u32 + self.shift;
         };
         let line = &self.text[start..];
         let within = line
             .char_indices()
             .nth(mark.col())
             .map_or(line.len(), |(i, _)| i);
-        (start + within) as u32
+        (start + within) as u32 + self.shift
     }
 }

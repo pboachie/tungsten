@@ -2,7 +2,7 @@
 //! Loading: entry documents, overlays, version checks, normalization,
 //! `$ref` resolution across files and the reference graph.
 
-use std::collections::{BTreeSet, HashSet, VecDeque};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
@@ -22,7 +22,8 @@ use crate::{
 pub fn load(entries: &[LoadEntry], opts: &LoadOptions) -> Workspace {
     let mut loader = Loader::new(opts);
     for entry in entries {
-        loader.load_entry(entry);
+        let doc = loader.load_entry(entry);
+        loader.ws.entry_docs.push(doc);
     }
     loader.finish()
 }
@@ -40,9 +41,10 @@ pub fn load_str(name: &str, text: &str, opts: &LoadOptions) -> Workspace {
     } else {
         let source = loader.ws.sources.add(name, text);
         let digest = Digest::of(text.as_bytes());
-        if let Some(parsed) = loader.parse(name, source, None) {
-            loader.add_entry(name, None, parsed, source, digest, &[]);
-        }
+        let doc = loader
+            .parse(name, source, None)
+            .and_then(|parsed| loader.add_entry(name, None, parsed, source, digest, &[]));
+        loader.ws.entry_docs.push(doc);
     }
     loader.finish()
 }
@@ -55,9 +57,18 @@ fn too_big(name: &str, max: usize) -> Diagnostic {
 }
 
 /// Read at most `max` bytes of UTF-8 text, with the digest of the bytes.
+/// Only regular files (after symlinks) are opened: a directory, a named
+/// pipe or a device is TG0101, so a FIFO never blocks the compiler.
 fn read_limited(path: &Path, name: &str, max: usize) -> Result<(String, Digest), Diagnostic> {
     let cannot_read =
         |e: std::io::Error| Diagnostic::error("TG0101", format!("cannot read {name}: {e}"));
+    let meta = std::fs::metadata(path).map_err(cannot_read)?;
+    if !meta.is_file() {
+        return Err(Diagnostic::error(
+            "TG0101",
+            format!("cannot read {name}: not a regular file"),
+        ));
+    }
     let file = std::fs::File::open(path).map_err(cannot_read)?;
     let mut bytes = vec![];
     file.take(max as u64 + 1)
@@ -97,7 +108,8 @@ struct RefSite {
     reference: Value,
 }
 
-/// The input root: file references must stay inside it.
+/// An input root: the directory of an entry document. File references
+/// must stay inside one of them.
 #[derive(Debug)]
 struct Root {
     lexical: PathBuf,
@@ -109,12 +121,14 @@ struct Root {
 struct Loader<'o> {
     opts: &'o LoadOptions,
     ws: Workspace,
-    root: Option<Root>,
-    /// Per document: whether it holds OpenAPI 3.0 schemas (entries declared
-    /// 3.0, fragments inherit from the document that first referenced them).
+    /// The directory of every entry document, in entry order.
+    roots: Vec<Root>,
+    /// Per document: whether it was declared OpenAPI 3.0 (entries only;
+    /// fragments have no dialect of their own).
     dialect30: Vec<bool>,
-    /// Subtrees of 3.0 fragments reached by references, normalized after
-    /// resolution.
+    /// Subtrees of fragments reached by references from 3.0 documents,
+    /// normalized after resolution. A subtree any 3.0 document reaches is
+    /// normalized, whatever else reaches it and in whatever order.
     fragment_roots: Vec<(DocId, String, Kind)>,
     /// Every schema `$ref` target.
     schema_targets: BTreeSet<RefTarget>,
@@ -127,7 +141,7 @@ impl<'o> Loader<'o> {
         Self {
             opts,
             ws: Workspace::default(),
-            root: None,
+            roots: vec![],
             dialect30: vec![],
             fragment_roots: vec![],
             schema_targets: BTreeSet::new(),
@@ -135,36 +149,32 @@ impl<'o> Loader<'o> {
         }
     }
 
-    fn load_entry(&mut self, entry: &LoadEntry) {
+    fn load_entry(&mut self, entry: &LoadEntry) -> Option<DocId> {
         let name = entry.display_name.as_str();
-        let Some((text, digest)) = self.read(&entry.path, name, None) else {
-            return;
-        };
+        let (text, digest) = self.read(&entry.path, name, None)?;
         let lexical = absolute(&entry.path);
-        if self.root.is_none()
-            && let (Some(dir), Ok(canonical)) = (lexical.parent(), std::fs::canonicalize(&lexical))
+        if let (Some(dir), Ok(canonical)) = (lexical.parent(), std::fs::canonicalize(&lexical))
             && let Some(canonical_dir) = canonical.parent()
+            && !self.roots.iter().any(|r| r.canonical == canonical_dir)
         {
             let display = match name.rfind('/') {
                 Some(i) => name[..=i].to_string(),
                 None => String::new(),
             };
-            self.root = Some(Root {
+            self.roots.push(Root {
                 lexical: dir.to_path_buf(),
                 canonical: canonical_dir.to_path_buf(),
                 display,
             });
         }
         let source = self.ws.sources.add(name, text);
-        let Some(parsed) = self.parse(&entry.path.to_string_lossy(), source, None) else {
-            return;
-        };
+        let parsed = self.parse(&entry.path.to_string_lossy(), source, None)?;
         let overlays: Vec<(PathBuf, String)> = entry
             .overlays
             .iter()
             .map(|o| (o.clone(), overlay_display(o, entry)))
             .collect();
-        self.add_entry(name, Some(lexical), parsed, source, digest, &overlays);
+        self.add_entry(name, Some(lexical), parsed, source, digest, &overlays)
     }
 
     /// Overlays, version check, normalization; then register the document.
@@ -176,15 +186,18 @@ impl<'o> Loader<'o> {
         source: SourceId,
         digest: Digest,
         overlays: &[(PathBuf, String)],
-    ) {
+    ) -> Option<DocId> {
         let Parsed {
             value: mut root,
             mut spans,
         } = parsed;
         for (overlay_path, overlay_name) in overlays {
-            let Some((text, _)) = self.read(overlay_path, overlay_name, None) else {
+            let Some((text, overlay_digest)) = self.read(overlay_path, overlay_name, None) else {
                 continue;
             };
+            self.ws
+                .overlay_digests
+                .insert(overlay_path.clone(), overlay_digest);
             let overlay_source = self.ws.sources.add(overlay_name.as_str(), text);
             let Some(o) = self.parse(&overlay_path.to_string_lossy(), overlay_source, None) else {
                 continue;
@@ -206,7 +219,7 @@ impl<'o> Loader<'o> {
                 for e in errors {
                     self.ws.diagnostics.push(e);
                 }
-                return;
+                return None;
             }
         };
         let v30 = matches!(version, SpecVersion::V30(_));
@@ -219,6 +232,7 @@ impl<'o> Loader<'o> {
         doc.moves = moves;
         let id = self.push(doc, path, v30);
         self.ws.entries.push(id);
+        Some(id)
     }
 
     fn push(&mut self, mut doc: Document, path: Option<PathBuf>, v30: bool) -> DocId {
@@ -284,23 +298,25 @@ impl<'o> Loader<'o> {
     }
 
     /// Walk every entry document, follow every `$ref`, load referenced
-    /// files, and report the references that cannot be followed.
+    /// files, and report the references that cannot be followed. Each walk
+    /// carries the dialect of the entry it started from, so a fragment
+    /// subtree reached from a 3.0 document is normalized even when a 3.1
+    /// document reached it first.
     fn resolve_all(&mut self) {
-        let mut queue: VecDeque<(DocId, String, Kind)> = self
+        let mut queue: VecDeque<(DocId, String, Kind, bool)> = self
             .ws
             .entries
             .iter()
-            .map(|&d| (d, String::new(), Kind::Document))
+            .map(|&d| (d, String::new(), Kind::Document, self.dialect30[d]))
             .collect();
         let mut seen_roots = HashSet::new();
-        let mut seen_sites = HashSet::new();
-        while let Some((doc, pointer, kind)) = queue.pop_front() {
-            if !seen_roots.insert((doc, pointer.clone(), kind)) {
+        // Each `$ref` is followed (and reported) once, whatever walks reach it.
+        let mut followed: HashMap<(DocId, String), Option<RefTarget>> = HashMap::new();
+        while let Some((doc, pointer, kind, v30)) = queue.pop_front() {
+            if !seen_roots.insert((doc, pointer.clone(), kind, v30)) {
                 continue;
             }
-            if self.dialect30[doc]
-                && matches!(self.ws.documents[doc].version, SpecVersion::Fragment)
-            {
+            if v30 && matches!(self.ws.documents[doc].version, SpecVersion::Fragment) {
                 self.fragment_roots.push((doc, pointer.clone(), kind));
             }
             let Some(start) = self.ws.documents[doc].get(&pointer) else {
@@ -318,14 +334,28 @@ impl<'o> Loader<'o> {
                 true
             });
             for site in sites {
-                if !seen_sites.insert((doc, site.pointer.clone())) {
-                    continue;
-                }
-                if let Some(target) = self.follow(doc, &site) {
-                    if site.kind == Kind::Schema {
-                        self.schema_targets.insert(target.clone());
+                let key = (doc, site.pointer.clone());
+                let target = match followed.get(&key) {
+                    Some(known) => known.clone(),
+                    None => {
+                        let target = self.follow(doc, &site);
+                        if let Some(t) = &target
+                            && site.kind == Kind::Schema
+                        {
+                            self.schema_targets.insert(t.clone());
+                        }
+                        followed.insert(key, target.clone());
+                        target
                     }
-                    queue.push_back((target.doc, target.pointer, site.kind));
+                };
+                if let Some(target) = target {
+                    // A fragment is read in the dialect of whoever reaches
+                    // it; an entry document keeps its own.
+                    let target_v30 = match self.ws.documents[target.doc].version {
+                        SpecVersion::Fragment => v30,
+                        _ => self.dialect30[target.doc],
+                    };
+                    queue.push_back((target.doc, target.pointer, site.kind, target_v30));
                 }
             }
         }
@@ -419,9 +449,9 @@ impl<'o> Loader<'o> {
                 "TG0204",
                 format!("$ref \"{reference}\" points outside the input root"),
             )
-            .with_help("file references must stay inside the directory of the first input document")
+            .with_help("file references must stay inside the directory of an input document")
         };
-        let Some(root) = self.root.as_ref() else {
+        if self.roots.is_empty() {
             self.report(
                 at,
                 Diagnostic::error(
@@ -430,8 +460,8 @@ impl<'o> Loader<'o> {
                 ),
             );
             return None;
-        };
-        if !lexical.starts_with(&root.lexical) {
+        }
+        if !self.roots.iter().any(|r| lexical.starts_with(&r.lexical)) {
             self.report(at, outside());
             return None;
         }
@@ -445,10 +475,14 @@ impl<'o> Loader<'o> {
             );
             return None;
         };
-        if !canonical.starts_with(&root.canonical) {
+        let Some(root) = self
+            .roots
+            .iter()
+            .find(|r| canonical.starts_with(&r.canonical))
+        else {
             self.report(at, outside());
             return None;
-        }
+        };
         if let Some(&id) = self.ws.files.get(&canonical) {
             self.ws.files.insert(lexical, id);
             return Some(id);
@@ -470,8 +504,7 @@ impl<'o> Loader<'o> {
         let parsed = self.parse(&relative, source, Some(at))?;
         let mut doc = Document::new(source, name, SpecVersion::Fragment, parsed.value, digest);
         doc.spans = parsed.spans;
-        let v30 = self.dialect30[from];
-        let id = self.push(doc, Some(lexical), v30);
+        let id = self.push(doc, Some(lexical), false);
         self.ws.files.insert(canonical, id);
         Some(id)
     }
