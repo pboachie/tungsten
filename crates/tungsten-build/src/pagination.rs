@@ -9,6 +9,11 @@
 //!   string; the request cursor is the query parameter named like the
 //!   property without `next_`, or else the only one of `before`, `cursor`,
 //!   `after`, `page_token` the operation has.
+//! - Link header: the 200 response declares a `Link` header and its JSON
+//!   body is an array or an object with exactly one array property; the
+//!   runtime follows `rel="next"` until there is none (GitHub style). Tried
+//!   after cursor and before offset and page, since the server's links are
+//!   authoritative when it sends them.
 //! - Offset: query parameters `offset` and `limit`, and a response that is
 //!   an array or an object with exactly one array property.
 //! - Page: query parameter `page` plus one of `page_size`, `per_page`,
@@ -17,7 +22,7 @@
 use serde_json::{Map, Value};
 use tungsten_config::PaginationConfig;
 use tungsten_core::Diagnostic;
-use tungsten_ir::{Exhausted, HttpMethod, Pagination, PaginationStyle, StatusMatch};
+use tungsten_ir::{Exhausted, HttpMethod, Operation, Pagination, PaginationStyle, StatusMatch};
 use tungsten_openapi::RefTarget;
 
 use crate::ctx::{Ctx, child};
@@ -139,7 +144,40 @@ fn infer_for(cx: &Ctx<'_>, built: &BuiltOp) -> Option<Pagination> {
         .iter()
         .map(|p| p.wire_name.as_str())
         .collect();
-    cursor(cx, &target, schema, &query).or_else(|| offset_or_page(cx, &target, schema, &query))
+    cursor(cx, &target, schema, &query)
+        .or_else(|| link_header(cx, &built.op, &target, schema, &query))
+        .or_else(|| offset_or_page(cx, &target, schema, &query))
+}
+
+fn link_header(
+    cx: &Ctx<'_>,
+    op: &Operation,
+    target: &RefTarget,
+    schema: &Value,
+    query: &[&str],
+) -> Option<Pagination> {
+    let declares_link = op
+        .responses
+        .iter()
+        .find(|r| r.status == StatusMatch::Exact(200))?
+        .headers
+        .iter()
+        .any(|h| h.wire_name.eq_ignore_ascii_case("link"));
+    if !declares_link {
+        return None;
+    }
+    let items = if is_array(schema) {
+        String::new()
+    } else {
+        single_array_property(cx, target, schema.get("properties")?.as_object()?)?
+    };
+    Some(Pagination {
+        style: PaginationStyle::LinkHeader,
+        items_field: items,
+        page_size_param: first_present(&PAGE_SIZE_PARAMS, query),
+        exhausted_when: Exhausted::NoLink,
+        inferred: true,
+    })
 }
 
 fn cursor(cx: &Ctx<'_>, target: &RefTarget, schema: &Value, query: &[&str]) -> Option<Pagination> {

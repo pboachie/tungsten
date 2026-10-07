@@ -5,14 +5,19 @@
 //! `sealed.Error` with different code sets, `workflow.WorkflowError` with
 //! the code one level down):
 //!
-//! - envelope: the component schema referenced by the most error responses
+//! - envelope: the named schema referenced by the most error responses
 //!   with JSON content across the namespace's callable operations; ties go
-//!   to the lexicographically smallest type id;
-//! - code field: the first of `code`, `error_code`, `type`, `error` that is
-//!   a string property of the envelope, or of an object property one level
-//!   down (`error.code`); the message field likewise from `message`,
-//!   `detail`, `error_description` next to it;
-//! - codes: the code field's `enum`, each with the exact error statuses of
+//!   to the lexicographically smallest type id. A named schema is a
+//!   `components/schemas` entry or any other `$ref` target (an error
+//!   schema kept in a shared file, which a component may adopt);
+//! - code field: at the top of the envelope and in each object property
+//!   one level down (`error.code`), the first of `code`, `error_code`,
+//!   `type`, `error` that is a string property, with the message field
+//!   from `message`, `detail`, `error_description` next to it. A level
+//!   whose code admits more than one value wins over one whose code is a
+//!   single constant (`type: "error"` is a tag, not an error code), then a
+//!   level with a message field wins, then the top level;
+//! - codes: the code field's `enum` (or `const`), each with the exact error statuses of
 //!   responses carrying the envelope whose description names the code as
 //!   a word followed by `:` or whitespace. Sorted by code.
 //!
@@ -107,7 +112,7 @@ fn envelope(cx: &Ctx<'_>, namespace: &str, ops: &[&[RawResponse]]) -> Option<Ref
             let Some(target) = raw.json_schema.as_ref().and_then(|s| cx.deref(s)) else {
                 continue;
             };
-            if is_named_schema(&target.pointer) {
+            if is_named_schema(&target.pointer) || cx.ws.graph.nodes.contains(&target) {
                 *counts.entry(target).or_insert(0) += 1;
             }
         }
@@ -144,9 +149,7 @@ fn type_id(cx: &mut Ctx<'_>, namespace: &str, target: &RefTarget) -> Option<Type
 fn code_field(cx: &Ctx<'_>, envelope: &RefTarget) -> Option<(String, Option<String>, Vec<String>)> {
     let (target, schema) = cx.deref_value(envelope)?;
     let props = schema.get("properties")?.as_object()?;
-    if let Some(found) = fields_in(cx, &target, props, "") {
-        return Some(found);
-    }
+    let mut levels = vec![fields_in(cx, &target, props, "")];
     for outer in props.keys() {
         let Some((inner_target, inner)) = cx.deref_value(&property(&target, outer)) else {
             continue;
@@ -154,11 +157,24 @@ fn code_field(cx: &Ctx<'_>, envelope: &RefTarget) -> Option<(String, Option<Stri
         let Some(inner_props) = inner.get("properties").and_then(Value::as_object) else {
             continue;
         };
-        if let Some(found) = fields_in(cx, &inner_target, inner_props, &format!("{outer}.")) {
-            return Some(found);
+        levels.push(fields_in(
+            cx,
+            &inner_target,
+            inner_props,
+            &format!("{outer}."),
+        ));
+    }
+    // The first level with the best (not a single constant, has a message).
+    let score = |(_, message, values): &(String, Option<String>, Vec<String>)| {
+        (values.len() != 1, message.is_some())
+    };
+    let mut best: Option<(String, Option<String>, Vec<String>)> = None;
+    for found in levels.into_iter().flatten() {
+        if best.as_ref().is_none_or(|b| score(&found) > score(b)) {
+            best = Some(found);
         }
     }
-    None
+    best
 }
 
 fn fields_in(
@@ -176,7 +192,12 @@ fn fields_in(
     let code = CODE_FIELDS.iter().find(string_prop)?;
     let values = cx
         .deref_value(&property(target, code))
-        .and_then(|(_, s)| s.get("enum").and_then(Value::as_array).cloned())
+        .and_then(|(_, s)| {
+            s.get("enum")
+                .and_then(Value::as_array)
+                .cloned()
+                .or_else(|| s.get("const").map(|c| vec![c.clone()]))
+        })
         .unwrap_or_default()
         .iter()
         .filter_map(Value::as_str)

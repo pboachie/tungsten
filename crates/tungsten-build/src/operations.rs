@@ -399,6 +399,7 @@ fn rpc_op(
         discriminator_field: rpc.discriminator.clone(),
         discriminator_value: variant.value.clone(),
         params_field: rpc.params.clone(),
+        constants: variant.constants.clone(),
     });
     op.source = SourceRef {
         file: cx.ws.name(variant.variant.doc).to_string(),

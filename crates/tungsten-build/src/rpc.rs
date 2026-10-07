@@ -3,6 +3,14 @@
 //! a `oneOf` of objects told apart by a `const` method field becomes one
 //! operation per method. Reads the normalized documents directly; the
 //! types of the parameters come from the type builder later.
+//!
+//! A member may require other envelope members only when their schema is
+//! a constant (`jsonrpc: {const: "2.0"}`); the binding carries them so the
+//! runtime sends them verbatim. A required member that is not a constant
+//! (JSON-RPC `id`) has no place in an unflattened method, so the envelope
+//! is not unflattened (TG0506) rather than silently dropping it.
+
+use std::collections::BTreeMap;
 
 use serde_json::Value;
 use tungsten_config::RpcUnflatten;
@@ -26,6 +34,8 @@ pub(crate) struct RpcVariant {
     pub params: Option<RefTarget>,
     /// Whether the variant requires the parameters member.
     pub params_required: bool,
+    /// Other required members with a constant value.
+    pub constants: BTreeMap<String, Value>,
     /// Media type of the envelope's JSON body.
     pub media_type: String,
     pub doc: Option<Doc>,
@@ -135,10 +145,34 @@ fn collect(cx: &Ctx<'_>, rpc: &RpcUnflatten, op: &RefTarget) -> Result<Vec<RpcVa
         }
         let params_at = child(&child(&variant, "properties"), &rpc.params);
         let params = cx.get(&params_at).map(|_| params_at.clone());
-        let params_required = v
+        let required: Vec<&str> = v
             .get("required")
             .and_then(Value::as_array)
-            .is_some_and(|r| r.iter().any(|n| n.as_str() == Some(rpc.params.as_str())));
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .collect();
+        let params_required = required.contains(&rpc.params.as_str());
+        let mut constants = BTreeMap::new();
+        for name in required {
+            if name == rpc.discriminator || name == rpc.params {
+                continue;
+            }
+            let prop_at = child(&child(&variant, "properties"), name);
+            let value = cx
+                .deref_value(&prop_at)
+                .and_then(|(_, p)| constant(p))
+                .ok_or_else(|| {
+                    fail(
+                        format!(
+                            "oneOf member {i} requires `{name}`, which is neither `{}`, `{}` nor a constant, so an unflattened method could not send it",
+                            rpc.discriminator, rpc.params
+                        ),
+                        &variant,
+                    )
+                })?;
+            constants.insert(name.to_string(), value);
+        }
         let params_doc = params
             .as_ref()
             .and_then(|p| cx.deref_value(p))
@@ -149,6 +183,7 @@ fn collect(cx: &Ctx<'_>, rpc: &RpcUnflatten, op: &RefTarget) -> Result<Vec<RpcVa
             variant,
             params,
             params_required,
+            constants,
             media_type: media_type.clone(),
             doc: doc(None, str_of(v, "description").or(params_doc)),
         });
@@ -157,6 +192,17 @@ fn collect(cx: &Ctx<'_>, rpc: &RpcUnflatten, op: &RefTarget) -> Result<Vec<RpcVa
         return Err(fail("the oneOf has no members".into(), &schema));
     }
     Ok(out)
+}
+
+/// A `const` of any JSON value, or the single value of a one-element `enum`.
+fn constant(schema: &Value) -> Option<Value> {
+    if let Some(c) = schema.get("const") {
+        return Some(c.clone());
+    }
+    match schema.get("enum").and_then(Value::as_array) {
+        Some(values) if values.len() == 1 => Some(values[0].clone()),
+        _ => None,
+    }
 }
 
 /// A string `const`, or the single value of a one-element string `enum`.

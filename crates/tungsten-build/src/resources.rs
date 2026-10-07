@@ -10,7 +10,9 @@
 //!    `v1beta`) is dropped, a trailing action (below) is set aside, and the
 //!    remaining literal segments nest (`/v1/webhooks/{id}/deliveries` →
 //!    `webhooks` › `deliveries`). An operation with no literal segment
-//!    goes to a resource named `root`.
+//!    goes to a resource named `root`. A segment mixing text and
+//!    placeholders (`{date}.csv`) is an item, like a `{param}`, and never
+//!    names a resource.
 //! 3. An rpc-unflattened method goes under the configured resource of its
 //!    HTTP path (or the top level) and then the dotted parts of its id
 //!    except the last (`action.send` → `action`); with a single part it is
@@ -19,14 +21,22 @@
 //! An action is the last segment of a POST path when it is a literal
 //! following a `{param}`, every operation on that exact path is a POST, no
 //! other path continues below it, and it reads as a verb (a known verb
-//! word, or a last word not ending in `s`): `/x/{id}/enable`.
+//! word, or a last word not ending in `s`): `/x/{id}/enable`. A custom
+//! method suffix on the last segment (`/v1/users/{id}:archive`,
+//! `/v1/users:search`, any HTTP method) is an action too: the operation is
+//! placed by the segment without the suffix and named after the suffix.
 //!
 //! Method names: `naming.operations` wins; then, relative to the
-//! resource's path, `list` (GET of the collection), `create` (POST of the
-//! collection), `get` / `update` (PATCH, PUT) / `delete` on one item, the
-//! action for POST actions, and the last dotted part for rpc methods;
-//! anything else uses the operation id. Collisions inside a resource are
-//! renamed with TG0401.
+//! resource's path, `list` (GET of a collection: the operation is
+//! paginated, or its success JSON body is an array or an object with
+//! exactly one array property, or it declares no JSON body and an item
+//! path `<path>/{id}` exists or its last literal segment is a plural
+//! such as `deliveries`), `get` (any other GET of the resource's own
+//! path, a singleton such as `/users/me`), `create` (POST of the resource's own
+//! path), `update` (PATCH, PUT) and `delete` on a singleton path, `get` /
+//! `update` / `delete` on one item, the action for actions, and the last
+//! dotted part for rpc methods; anything else uses the operation id.
+//! Collisions inside a resource are renamed with TG0401.
 //!
 //! `path_prefix`: the longest common segment prefix of the resource's
 //! operations and the path that names it (its configured `path`, the
@@ -37,12 +47,16 @@
 //! Order: resources and children appear in the order of their first
 //! operation in the spec; operations inside a resource keep spec order.
 
+use std::collections::BTreeSet;
+
 use indexmap::IndexMap;
 use serde_json::Value;
 use tungsten_config::ResourceConfig;
 use tungsten_core::Diagnostic;
 use tungsten_ir::naming::{Role, split_words};
-use tungsten_ir::{HttpMethod, Ident, Operation, PathSegment, Resource};
+use tungsten_ir::{
+    BodyEncoding, HttpMethod, Ident, Operation, PathSegment, Resource, ResponseKind, Shape, TypeRef,
+};
 use tungsten_openapi::{DocId, RefTarget};
 
 use crate::ctx::{Ctx, child, pointer};
@@ -180,13 +194,23 @@ pub(crate) fn build(
 ) -> Vec<Resource> {
     let index = PathIndex::of(cx, doc);
     let configured = configured(cx, namespace, &index);
+    let collections: BTreeSet<String> = callable
+        .iter()
+        .chain(planned.iter())
+        .filter(|b| b.op.method == HttpMethod::Get && returns_collection(cx, &index, &b.op))
+        .map(|b| b.op.path.raw.clone())
+        .collect();
+    let paths = Paths {
+        index: &index,
+        collections: &collections,
+    };
     let mut roots: Vec<Node> = vec![];
     for built in planned.iter_mut() {
-        let placement = place(cx, &configured, &index, &built.op);
+        let placement = place(cx, &configured, &paths, &built.op);
         built.op.name = Ident::new(&placement.method);
     }
     for mut built in callable {
-        let placement = place(cx, &configured, &index, &built.op);
+        let placement = place(cx, &configured, &paths, &built.op);
         built.op.name = Ident::new(&placement.method);
         insert(&mut roots, &placement.levels, built);
     }
@@ -222,15 +246,10 @@ impl PathIndex {
 
     /// Whether the last segment of `segments` is an action of a POST.
     fn action(&self, segments: &[PathSegment], method: HttpMethod) -> Option<String> {
-        let [
-            ..,
-            PathSegment::Param { .. },
-            PathSegment::Literal { value },
-        ] = segments
-        else {
+        let [.., item, PathSegment::Literal { value }] = segments else {
             return None;
         };
-        if method != HttpMethod::Post || !reads_as_verb(value) {
+        if !is_item(item) || method != HttpMethod::Post || !reads_as_verb(value) {
             return None;
         }
         let only_post = self
@@ -246,6 +265,94 @@ impl PathIndex {
     }
 }
 
+/// What placement knows about the namespace's paths.
+struct Paths<'p> {
+    index: &'p PathIndex,
+    /// Raw paths whose GET returns a collection.
+    collections: &'p BTreeSet<String>,
+}
+
+/// Whether a GET returns a collection: it is paginated, or its first
+/// success JSON body is an array or an object with exactly one array
+/// property, or (no JSON body says otherwise) an item path continues it
+/// or its last literal segment reads as a plural.
+fn returns_collection(cx: &Ctx<'_>, index: &PathIndex, op: &Operation) -> bool {
+    if op.pagination.is_some() {
+        return true;
+    }
+    let Some(body) = op
+        .responses
+        .iter()
+        .filter(|r| r.kind == ResponseKind::Success)
+        .flat_map(|r| &r.content)
+        .find(|c| c.encoding == BodyEncoding::Json)
+    else {
+        let segments = &op.path.segments;
+        let has_items = index.paths.iter().any(|(p, _)| {
+            p.len() == segments.len() + 1 && is_prefix(segments, p) && p.last().is_some_and(is_item)
+        });
+        let plural = match segments.last() {
+            Some(PathSegment::Literal { value }) => split_words(value)
+                .last()
+                .is_some_and(|w| w.ends_with('s') && !w.ends_with("ss")),
+            _ => false,
+        };
+        return has_items || plural;
+    };
+    let is_array = |ty: &TypeRef| matches!(non_null(cx, ty), Some(Shape::Array { .. }));
+    match non_null(cx, &body.ty) {
+        Some(Shape::Array { .. }) => true,
+        Some(Shape::Record { fields, .. }) => {
+            fields.iter().filter(|f| is_array(&f.ty)).count() == 1
+        }
+        _ => false,
+    }
+}
+
+/// The shape behind a type, looking through `Nullable`.
+fn non_null<'s>(cx: &'s Ctx<'_>, ty: &'s TypeRef) -> Option<&'s Shape> {
+    match cx.tb.shape_of(ty)? {
+        Shape::Nullable { inner } => cx.tb.shape_of(inner),
+        shape => Some(shape),
+    }
+}
+
+/// A custom method suffix on the last segment (`{id}:archive`,
+/// `users:search`): the segments with the suffix removed, and the verb.
+fn custom_method(segments: &[PathSegment]) -> Option<(Vec<PathSegment>, String)> {
+    let (last, head) = segments.split_last()?;
+    let mut parts = match last {
+        PathSegment::Template { parts } => parts.clone(),
+        literal @ PathSegment::Literal { .. } => vec![literal.clone()],
+        PathSegment::Param { .. } => return None,
+    };
+    let Some(PathSegment::Literal { value }) = parts.pop() else {
+        return None;
+    };
+    let (before, verb) = value.rsplit_once(':')?;
+    if verb.is_empty() || !verb.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        return None;
+    }
+    if !before.is_empty() {
+        parts.push(PathSegment::Literal {
+            value: before.to_string(),
+        });
+    }
+    let base = match parts.len() {
+        0 => return None,
+        1 => parts.remove(0),
+        _ => PathSegment::Template { parts },
+    };
+    let mut out = head.to_vec();
+    out.push(base);
+    Some((out, verb.to_string()))
+}
+
+/// A segment that stands for one item: a `{param}` or a template with one.
+fn is_item(segment: &PathSegment) -> bool {
+    !matches!(segment, PathSegment::Literal { .. })
+}
+
 pub(crate) fn reads_as_verb(segment: &str) -> bool {
     let words = split_words(segment);
     words.iter().any(|w| VERBS.contains(&w.as_str()))
@@ -257,6 +364,9 @@ fn same_segment(a: &PathSegment, b: &PathSegment) -> bool {
     match (a, b) {
         (PathSegment::Param { .. }, PathSegment::Param { .. }) => true,
         (PathSegment::Literal { value: x }, PathSegment::Literal { value: y }) => x == y,
+        (PathSegment::Template { parts: x }, PathSegment::Template { parts: y }) => {
+            x.len() == y.len() && x.iter().zip(y).all(|(a, b)| same_segment(a, b))
+        }
         _ => false,
     }
 }
@@ -335,8 +445,9 @@ fn flatten(
 }
 
 /// Decide the resource and method name of an operation.
-fn place(cx: &Ctx<'_>, configured: &[Configured], index: &PathIndex, op: &Operation) -> Placement {
-    let segments = &op.path.segments;
+fn place(cx: &Ctx<'_>, configured: &[Configured], paths: &Paths<'_>, op: &Operation) -> Placement {
+    let custom = custom_method(&op.path.segments);
+    let segments = custom.as_ref().map_or(&op.path.segments, |(base, _)| base);
     let best = configured
         .iter()
         .filter_map(|c| c.path.as_ref().map(|p| (c, p)))
@@ -345,10 +456,15 @@ fn place(cx: &Ctx<'_>, configured: &[Configured], index: &PathIndex, op: &Operat
             Some((_, len)) if len >= p.len() => best,
             _ => Some((c, p.len())),
         });
-    let action = index.action(segments, op.method);
+    let action = match &custom {
+        Some((_, verb)) => Some(verb.clone()),
+        None => paths.index.action(segments, op.method),
+    };
+    // A custom method keeps its item segment; a trailing action is set aside.
+    let set_aside = action.is_some() && custom.is_none();
     let (levels, relative) = match best {
         Some((c, len)) => (configured_levels(configured, c), segments[len..].to_vec()),
-        None => inferred(segments, action.is_some()),
+        None => inferred(segments, set_aside),
     };
     let local = op.id.0.split_once('.').map_or(op.id.0.as_str(), |(_, l)| l);
     let override_name = cx.cfg.naming.operations.get(&op.id.0).cloned();
@@ -362,7 +478,7 @@ fn place(cx: &Ctx<'_>, configured: &[Configured], index: &PathIndex, op: &Operat
                 .unwrap_or_default();
             levels.extend(resource_parts.iter().map(|p| Level {
                 name: p.to_string(),
-                anchor: Some(segments.clone()),
+                anchor: Some(segments.to_vec()),
             }));
             return Placement {
                 levels,
@@ -374,9 +490,15 @@ fn place(cx: &Ctx<'_>, configured: &[Configured], index: &PathIndex, op: &Operat
             method: override_name.unwrap_or_else(|| local.to_string()),
         };
     }
-    let method = override_name
-        .or_else(|| crud_name(op.method, &relative, action.as_deref()))
-        .unwrap_or_else(|| local.to_string());
+    let method = match &custom {
+        Some((_, verb)) => override_name.unwrap_or_else(|| verb.clone()),
+        None => {
+            let collection = paths.collections.contains(&op.path.raw);
+            override_name
+                .or_else(|| crud_name(op.method, &relative, action.as_deref(), collection))
+                .unwrap_or_else(|| local.to_string())
+        }
+    };
     Placement { levels, method }
 }
 
@@ -417,7 +539,7 @@ fn inferred(segments: &[PathSegment], has_action: bool) -> (Vec<Level>, Vec<Path
                 name: value.clone(),
                 anchor: Some(segments[..start + i + 1].to_vec()),
             }),
-            PathSegment::Param { .. } => None,
+            PathSegment::Param { .. } | PathSegment::Template { .. } => None,
         })
         .collect();
     let last_literal = segments[start..end]
@@ -435,15 +557,24 @@ fn inferred(segments: &[PathSegment], has_action: bool) -> (Vec<Level>, Vec<Path
 }
 
 /// CRUD and action names from the path relative to the resource.
-fn crud_name(method: HttpMethod, relative: &[PathSegment], action: Option<&str>) -> Option<String> {
+/// `collection`: a GET of this exact path returns a collection.
+fn crud_name(
+    method: HttpMethod,
+    relative: &[PathSegment],
+    action: Option<&str>,
+    collection: bool,
+) -> Option<String> {
     let name = match (relative, method) {
-        ([], HttpMethod::Get) => "list",
+        ([], HttpMethod::Get) if collection => "list",
+        ([], HttpMethod::Get) => "get",
         ([], HttpMethod::Post) => "create",
-        ([PathSegment::Param { .. }], HttpMethod::Get) => "get",
-        ([PathSegment::Param { .. }], HttpMethod::Patch | HttpMethod::Put) => "update",
-        ([PathSegment::Param { .. }], HttpMethod::Delete) => "delete",
-        ([PathSegment::Param { .. }, PathSegment::Literal { value }], HttpMethod::Post)
-            if action == Some(value.as_str()) =>
+        ([], HttpMethod::Patch | HttpMethod::Put) if !collection => "update",
+        ([], HttpMethod::Delete) if !collection => "delete",
+        ([item], HttpMethod::Get) if is_item(item) => "get",
+        ([item], HttpMethod::Patch | HttpMethod::Put) if is_item(item) => "update",
+        ([item], HttpMethod::Delete) if is_item(item) => "delete",
+        ([item, PathSegment::Literal { value }], HttpMethod::Post)
+            if is_item(item) && action == Some(value.as_str()) =>
         {
             value
         }
@@ -532,15 +663,16 @@ fn first_source(node: &Node) -> Option<RefTarget> {
 }
 
 fn into_resource(node: Node) -> Resource {
-    let mut paths: Vec<&[PathSegment]> = node
+    let mut paths: Vec<Vec<PathSegment>> = node
         .ops
         .iter()
-        .map(|b| b.op.path.segments.as_slice())
-        .chain(node.anchor.as_deref())
+        .map(|b| placed_path(&b.op))
+        .chain(node.anchor.clone())
         .collect();
     if paths.is_empty() {
         collect_paths(&node.children, &mut paths);
     }
+    let paths: Vec<&[PathSegment]> = paths.iter().map(Vec::as_slice).collect();
     let path_prefix = common_prefix(&paths);
     Resource {
         name: node.name,
@@ -551,11 +683,16 @@ fn into_resource(node: Node) -> Resource {
     }
 }
 
-fn collect_paths<'n>(nodes: &'n [Node], out: &mut Vec<&'n [PathSegment]>) {
+fn collect_paths(nodes: &[Node], out: &mut Vec<Vec<PathSegment>>) {
     for n in nodes {
-        out.extend(n.ops.iter().map(|b| b.op.path.segments.as_slice()));
+        out.extend(n.ops.iter().map(|b| placed_path(&b.op)));
         collect_paths(&n.children, out);
     }
+}
+
+/// The path an operation is placed by: without a custom method suffix.
+fn placed_path(op: &Operation) -> Vec<PathSegment> {
+    custom_method(&op.path.segments).map_or_else(|| op.path.segments.clone(), |(base, _)| base)
 }
 
 /// The longest common segment prefix, without trailing parameters
@@ -575,15 +712,19 @@ fn common_prefix(paths: &[&[PathSegment]]) -> String {
         );
     }
     let mut prefix = &first[..len];
-    while let [rest @ .., PathSegment::Param { .. }] = prefix {
+    while let [rest @ .., last] = prefix
+        && is_item(last)
+    {
         prefix = rest;
     }
-    let rendered: Vec<String> = prefix
-        .iter()
-        .map(|s| match s {
-            PathSegment::Literal { value } => value.clone(),
-            PathSegment::Param { name } => format!("{{{name}}}"),
-        })
-        .collect();
+    let rendered: Vec<String> = prefix.iter().map(render).collect();
     format!("/{}", rendered.join("/"))
+}
+
+fn render(segment: &PathSegment) -> String {
+    match segment {
+        PathSegment::Literal { value } => value.clone(),
+        PathSegment::Param { name } => format!("{{{name}}}"),
+        PathSegment::Template { parts } => parts.iter().map(render).collect(),
+    }
 }

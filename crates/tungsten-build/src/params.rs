@@ -233,7 +233,7 @@ fn declared<'v>(cx: &mut Ctx<'v>, at: &RefTarget) -> Option<Declared<'v>> {
 }
 
 fn param(cx: &mut Ctx<'_>, auth: &AuthTable, scope: &OpScope<'_>, decl: &Declared<'_>) -> Param {
-    let schema = schema_target(cx, decl);
+    let (schema, media_type) = schema_target(cx, decl);
     let ty = match &schema {
         Some(t) => cx
             .tb
@@ -258,20 +258,30 @@ fn param(cx: &mut Ctx<'_>, auth: &AuthTable, scope: &OpScope<'_>, decl: &Declare
         explode,
         role: role(cx, auth, scope.ns_index, decl, schema.as_ref()),
         deprecated: flag(decl.value, "deprecated"),
+        media_type,
     }
 }
 
 /// The parameter's schema: `schema`, or the schema of its single `content`
-/// media type.
-fn schema_target(cx: &Ctx<'_>, decl: &Declared<'_>) -> Option<RefTarget> {
+/// media type, with that media type.
+fn schema_target(cx: &Ctx<'_>, decl: &Declared<'_>) -> (Option<RefTarget>, Option<String>) {
     if decl.value.get("schema").is_some() {
-        return Some(child(&decl.at, "schema"));
+        return (Some(child(&decl.at, "schema")), None);
     }
-    let content = decl.value.get("content")?.as_object()?;
-    let (media, entry) = content.iter().next()?;
-    entry.get("schema")?;
+    let Some((media, entry)) = decl
+        .value
+        .get("content")
+        .and_then(Value::as_object)
+        .and_then(|c| c.iter().next())
+    else {
+        return (None, None);
+    };
     let target = child(&child(&child(&decl.at, "content"), media), "schema");
-    cx.get(&target).map(|_| target)
+    let schema = entry
+        .get("schema")
+        .and_then(|_| cx.get(&target))
+        .map(|_| target);
+    (schema, Some(media.clone()))
 }
 
 fn parse_style(s: &str) -> Option<ParamStyle> {
@@ -367,29 +377,62 @@ pub(crate) fn template_params(raw: &str) -> Vec<String> {
 }
 
 /// Parse a path template into segments. A segment that is exactly one
-/// `{name}` is a parameter; anything else is literal text.
+/// `{name}` is a parameter, one without placeholders is literal text, and
+/// one that mixes both (`{date}.csv`, `{id}:archive`) is a template of
+/// literal and parameter parts. Unbalanced braces are literal text.
 pub(crate) fn path_template(raw: &str) -> PathTemplate {
     let segments = raw
         .split('/')
         .filter(|s| !s.is_empty())
-        .map(|s| {
-            match s
-                .strip_prefix('{')
-                .and_then(|s| s.strip_suffix('}'))
-                .filter(|n| !n.is_empty() && !n.contains(['{', '}']))
-            {
-                Some(name) => PathSegment::Param {
-                    name: name.to_string(),
-                },
-                None => PathSegment::Literal {
-                    value: s.to_string(),
-                },
-            }
-        })
+        .map(segment)
         .collect();
     PathTemplate {
         raw: raw.to_string(),
         segments,
+    }
+}
+
+fn segment(text: &str) -> PathSegment {
+    let literal = || PathSegment::Literal {
+        value: text.to_string(),
+    };
+    let mut parts = vec![];
+    let mut rest = text;
+    while !rest.is_empty() {
+        let Some(open) = rest.find('{') else {
+            if rest.contains('}') {
+                return literal();
+            }
+            parts.push(PathSegment::Literal {
+                value: rest.to_string(),
+            });
+            break;
+        };
+        if rest[..open].contains('}') {
+            return literal();
+        }
+        if open > 0 {
+            parts.push(PathSegment::Literal {
+                value: rest[..open].to_string(),
+            });
+        }
+        let after = &rest[open + 1..];
+        let Some(close) = after.find('}') else {
+            return literal();
+        };
+        let name = &after[..close];
+        if name.is_empty() || name.contains('{') {
+            return literal();
+        }
+        parts.push(PathSegment::Param {
+            name: name.to_string(),
+        });
+        rest = &after[close + 1..];
+    }
+    match parts.as_slice() {
+        [PathSegment::Param { .. }] | [PathSegment::Literal { .. }] => parts.remove(0),
+        [] => literal(),
+        _ => PathSegment::Template { parts },
     }
 }
 
@@ -408,5 +451,6 @@ fn undeclared_path_param(name: &str) -> Param {
         explode: false,
         role: ParamRole::Plain,
         deprecated: false,
+        media_type: None,
     }
 }

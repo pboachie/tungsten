@@ -9,6 +9,13 @@
 //! profiles from `tungsten.yml` are added after the spec schemes; a
 //! composite may share its name with a spec scheme it satisfies, and sorts
 //! after it.
+//!
+//! A defined scheme tungsten does not support (`mutualTLS`, HTTP `digest`)
+//! is TG0509 and left out of the table. A security requirement (one
+//! OR-alternative) that needs it is dropped with a TG0509 warning, since a
+//! client cannot satisfy it; when every alternative of a list is dropped
+//! the operation keeps no requirement and the warning says so. TG0502 is
+//! only for names that no `securitySchemes` entry defines.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -38,6 +45,9 @@ pub(crate) struct AuthTable {
     composite_headers: BTreeSet<String>,
     /// Per namespace: the document-level `security`, resolved.
     root: Vec<Vec<SecurityRequirement>>,
+    /// (namespace index, spec scheme name) of defined but unsupported
+    /// schemes.
+    unsupported: BTreeSet<(usize, String)>,
 }
 
 /// One definition of a scheme name in one namespace.
@@ -53,7 +63,11 @@ impl AuthTable {
         let mut by_name: BTreeMap<String, Vec<Definition>> = BTreeMap::new();
         for (ns_index, ns) in namespaces.iter().enumerate() {
             let mut keys = vec![];
-            for def in definitions(cx, ns_index, ns.doc) {
+            let (defs, unsupported) = definitions(cx, ns_index, ns.doc);
+            table
+                .unsupported
+                .extend(unsupported.into_iter().map(|name| (ns_index, name)));
+            for def in defs {
                 if let AuthScheme::ApiKey {
                     location,
                     wire_name,
@@ -255,6 +269,7 @@ impl AuthTable {
             return vec![];
         };
         let mut out = vec![];
+        let mut dropped = 0;
         for (i, item) in items.iter().enumerate() {
             let item_at = child(at, &i.to_string());
             let Value::Object(schemes) = item else {
@@ -267,6 +282,22 @@ impl AuthTable {
                 );
                 continue;
             };
+            if let Some(name) = schemes
+                .keys()
+                .find(|n| self.unsupported.contains(&(ns_index, (*n).clone())))
+            {
+                cx.report(
+                    Diagnostic::warning(
+                        "TG0509",
+                        format!(
+                            "security requirement needs unsupported scheme `{name}`; this alternative is dropped"
+                        ),
+                    ),
+                    &child(&item_at, name),
+                );
+                dropped += 1;
+                continue;
+            }
             let mut all_of = vec![];
             for (name, scopes) in schemes {
                 let scheme = match self.names.get(&(ns_index, name.clone())) {
@@ -296,21 +327,31 @@ impl AuthTable {
             }
             out.push(SecurityRequirement { all_of });
         }
+        if dropped > 0 && out.is_empty() {
+            cx.report(
+                Diagnostic::warning(
+                    "TG0509",
+                    "every security alternative needs an unsupported scheme; no requirement is kept, so a generated client sends no credentials",
+                ),
+                at,
+            );
+        }
         out
     }
 }
 
-/// Every supported scheme of one entry document, in spec order.
-/// Unsupported schemes are TG0509 warnings.
-fn definitions(cx: &mut Ctx<'_>, namespace: usize, doc: usize) -> Vec<Definition> {
+/// Every supported scheme of one entry document, in spec order, and the
+/// names of the defined but unsupported ones (TG0509 warnings).
+fn definitions(cx: &mut Ctx<'_>, namespace: usize, doc: usize) -> (Vec<Definition>, Vec<String>) {
     let base = RefTarget {
         doc,
         pointer: "/components/securitySchemes".into(),
     };
     let Some(Value::Object(map)) = cx.get(&base) else {
-        return vec![];
+        return (vec![], vec![]);
     };
     let mut out = vec![];
+    let mut unsupported = vec![];
     for name in map.keys() {
         let at = child(&base, name);
         let Some((_, value)) = cx.deref_value(&at) else {
@@ -322,16 +363,19 @@ fn definitions(cx: &mut Ctx<'_>, namespace: usize, doc: usize) -> Vec<Definition
                 scheme,
                 at,
             }),
-            Err(reason) => cx.report(
-                Diagnostic::warning(
-                    "TG0509",
-                    format!("security scheme `{name}` is not supported ({reason}); ignored"),
-                ),
-                &at,
-            ),
+            Err(reason) => {
+                cx.report(
+                    Diagnostic::warning(
+                        "TG0509",
+                        format!("security scheme `{name}` is not supported ({reason}); ignored"),
+                    ),
+                    &at,
+                );
+                unsupported.push(name.clone());
+            }
         }
     }
-    out
+    (out, unsupported)
 }
 
 /// Convert one Security Scheme Object.

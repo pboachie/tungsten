@@ -229,8 +229,13 @@ ir_struct! {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum PathSegment {
+    /// Literal text between two `/`.
     Literal { value: String },
+    /// A segment that is exactly one `{name}`.
     Param { name: String },
+    /// A segment mixing literal text and placeholders (`{date}.csv`,
+    /// `{id}:archive`): its parts in order, each a `Literal` or a `Param`.
+    Template { parts: Vec<PathSegment> },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -258,6 +263,10 @@ ir_struct! {
         pub discriminator_value: String,
         /// Body field carrying the parameters (`params`).
         pub params_field: String,
+        /// Other required members of the envelope whose schema is a
+        /// constant, sent verbatim (JSON-RPC `jsonrpc: "2.0"`).
+        #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+        pub constants: BTreeMap<String, serde_json::Value>,
     }
 }
 
@@ -309,6 +318,12 @@ ir_struct! {
         pub role: ParamRole,
         #[serde(default)]
         pub deprecated: bool,
+        /// Set when the parameter is declared with `content` instead of
+        /// `schema`: the value is serialized with this media type (for
+        /// example `application/json` for `?filter=<JSON>`), and `style`
+        /// and `explode` do not apply.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub media_type: Option<String>,
     }
 }
 
