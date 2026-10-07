@@ -300,7 +300,14 @@ fn build_op(
     };
     let template = params::path_template(&sk.path);
     let params = params::build(cx, auth, &scope, &sk.path_item, &sk.target, &template);
-    let body = bodies::request_body(cx, &scope, &sk.target);
+    // An rpc envelope's body is replaced by each method's parameters, so
+    // it is never converted: no type and no diagnostic for a schema that
+    // is not in the IR.
+    let body = if sk.rpc.is_some() {
+        None
+    } else {
+        bodies::request_body(cx, &scope, &sk.target)
+    };
     let (responses, raw) = responses::build(cx, &scope, &sk.target);
     let security = auth.requirements(cx, ns_index, &sk.target);
     let status = match &sk.disposition {
@@ -364,7 +371,7 @@ fn rpc_op(
         mut op, responses, ..
     } = base;
     let id = format!("{ns}.{}", sk.local_id);
-    let required = op.body.as_ref().is_some_and(|b| b.required) && variant.params_required;
+    let required = bodies::is_required(cx, &sk.target) && variant.params_required;
     op.body = variant.params.as_ref().map(|params| {
         let hint = [pascal(&variant.local_id), "Params".to_string()];
         let hint: Vec<&str> = hint.iter().map(String::as_str).collect();

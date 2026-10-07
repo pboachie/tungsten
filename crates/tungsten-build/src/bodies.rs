@@ -46,6 +46,12 @@ pub(crate) fn request_body(cx: &mut Ctx<'_>, scope: &OpScope<'_>, op: &RefTarget
     })
 }
 
+/// Whether the operation's request body is declared `required: true`.
+pub(crate) fn is_required(cx: &Ctx<'_>, op: &RefTarget) -> bool {
+    cx.deref_value(&child(op, "requestBody"))
+        .is_some_and(|(_, value)| flag(value, "required"))
+}
+
 /// The entries of the `content` map of `owner` (a Request Body or Response
 /// Object). With more than one media type, the encoding joins the hint so
 /// inline schemas get distinct names.
