@@ -26,6 +26,7 @@ pub(crate) fn start(args: &MockArgs) -> Report {
     let opts = MockOptions {
         addr,
         seed: args.seed,
+        ..MockOptions::default()
     };
     let server = match MockServer::start(ir, opts) {
         Ok(server) => server,
