@@ -23,6 +23,7 @@ serde_json.workspace = true
 schemars.workspace = true
 indexmap.workspace = true
 yaml-rust2.workspace = true
+serde_path_to_error = "0.1"
 
 [lints]
 workspace = true

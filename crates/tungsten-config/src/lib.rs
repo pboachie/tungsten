@@ -1,27 +1,43 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! The `tungsten.yml` shape manifest (planning/04).
 //!
-//! The structs here are the contract the builder consumes. The loader turns
-//! YAML into these structs and reports TG0601/TG0602 with JSON Pointers and
-//! line numbers. `TungstenConfig::json_schema()` is published as
-//! `specs/tungsten.schema.json`.
+//! The structs here are the contract the builder consumes. Loading runs in
+//! three stages, each reporting diagnostics with the JSON Pointer of the
+//! offending node and its line and column in the message:
 //!
-//! PHASE-1 STUB loader: the config work package replaces `load`/`parse_str`
-//! internals (span-aware YAML conversion, schema validation with pointers,
-//! unknown-key errors) without changing the signatures.
+//! 1. YAML → JSON with node positions ([`ManifestSource`]); YAML problems,
+//!    aliases, duplicate keys and multiple documents are `TG0601`.
+//! 2. JSON → [`TungstenConfig`]; type mismatches, missing fields and
+//!    unknown keys are `TG0602`.
+//! 3. Semantic rules ([`validate`]): `TG0602` for invalid values, `TG0604`
+//!    for references to undeclared namespaces.
+//!
+//! `TungstenConfig::json_schema()` is published as
+//! `specs/tungsten.schema.json`.
 
+mod pointer;
+mod source;
+mod strict;
+mod validate;
 mod yaml;
 
+use std::fmt;
 use std::path::Path;
 
 use indexmap::IndexMap;
-use serde::{Deserialize, Serialize};
+use serde::de::{self, MapAccess, Visitor};
+use serde::{Deserialize, Deserializer, Serialize};
 use tungsten_core::{Diagnostic, Diagnostics};
 
+pub use source::ManifestSource;
+pub use validate::{KNOWN_TARGETS, MANIFEST_VERSION, is_machine_name, validate};
+
+/// The `tungsten.yml` manifest: shape and naming of the generated SDKs.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TungstenConfig {
     /// Manifest format version. Must be 1.
+    #[schemars(range(min = 1, max = 1))]
     pub tungsten: u32,
     pub api: ApiConfig,
     pub inputs: Vec<InputConfig>,
@@ -53,6 +69,7 @@ pub struct TungstenConfig {
 #[serde(deny_unknown_fields)]
 pub struct ApiConfig {
     /// Machine name, lowercase (`zrotext`).
+    #[schemars(pattern(r"^[a-z][a-z0-9_]*$"))]
     pub name: String,
     #[serde(default)]
     pub title: Option<String>,
@@ -65,6 +82,8 @@ pub struct ApiConfig {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct InputConfig {
+    /// Namespace of this document's operations and types; unique.
+    #[schemars(pattern(r"^[a-z][a-z0-9_]*$"))]
     pub namespace: String,
     /// Path relative to the manifest's directory.
     pub spec: String,
@@ -154,8 +173,10 @@ pub struct AuthProfile {
     pub config: IndexMap<String, ConfigValue>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(untagged)]
+/// One credential part of a composite profile: a mapping with exactly one
+/// key, `cookie`, `header` or `bearer`.
+#[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
+#[serde(untagged, deny_unknown_fields)]
 pub enum CompositePartConfig {
     Cookie { cookie: String },
     Header { header: HeaderPartConfig },
@@ -173,6 +194,50 @@ pub struct HeaderPartConfig {
     /// `mutation` sends the header only on non-safe methods.
     #[serde(default)]
     pub when: Option<String>,
+}
+
+impl<'de> Deserialize<'de> for CompositePartConfig {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_map(CompositePartVisitor)
+    }
+}
+
+/// Reads a composite part as a single-key mapping so errors name the
+/// offending key instead of "did not match any variant".
+struct CompositePartVisitor;
+
+const COMPOSITE_PART_KEYS: &[&str] = &["cookie", "header", "bearer"];
+
+impl<'de> Visitor<'de> for CompositePartVisitor {
+    type Value = CompositePartConfig;
+
+    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("a mapping with exactly one key: cookie, header or bearer")
+    }
+
+    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+        let Some(key) = map.next_key::<String>()? else {
+            return Err(de::Error::invalid_length(0, &self));
+        };
+        let part = match key.as_str() {
+            "cookie" => CompositePartConfig::Cookie {
+                cookie: map.next_value()?,
+            },
+            "header" => CompositePartConfig::Header {
+                header: map.next_value()?,
+            },
+            "bearer" => CompositePartConfig::Bearer {
+                bearer: map.next_value()?,
+            },
+            other => return Err(de::Error::unknown_field(other, COMPOSITE_PART_KEYS)),
+        };
+        if let Some(extra) = map.next_key::<String>()? {
+            return Err(de::Error::custom(format!(
+                "a composite part has exactly one key (cookie, header or bearer); found `{key}` and `{extra}`"
+            )));
+        }
+        Ok(part)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, schemars::JsonSchema)]
@@ -294,49 +359,115 @@ impl TungstenConfig {
     }
 }
 
+/// A parsed manifest with everything needed to report locations.
+#[derive(Debug, Clone)]
+pub struct ParsedManifest {
+    /// `None` whenever `diagnostics` has errors.
+    pub config: Option<TungstenConfig>,
+    /// In document order; callers sort for output.
+    pub diagnostics: Diagnostics,
+    pub source: ManifestSource,
+}
+
 /// Parse a manifest from text. `name` is used in diagnostics.
 pub fn parse_str(name: &str, text: &str) -> (Option<TungstenConfig>, Diagnostics) {
-    let mut diags = Diagnostics::new();
-    let value = match yaml::to_json(text) {
-        Ok(v) => v,
-        Err(msg) => {
-            diags.push(Diagnostic::error("TG0601", msg).at(name, "", None));
-            return (None, diags);
-        }
-    };
-    match serde_json::from_value::<TungstenConfig>(value) {
-        Ok(cfg) => {
-            if cfg.tungsten != 1 {
-                diags.push(
-                    Diagnostic::error(
-                        "TG0602",
-                        format!("unsupported manifest version {}", cfg.tungsten),
-                    )
-                    .at(name, "/tungsten", None),
-                );
-                return (None, diags);
-            }
-            (Some(cfg), diags)
-        }
-        Err(err) => {
-            diags.push(Diagnostic::error("TG0602", err.to_string()).at(name, "", None));
-            (None, diags)
-        }
-    }
+    let parsed = parse_with_source(name, text);
+    (parsed.config, parsed.diagnostics)
 }
 
 /// Read and parse a manifest file.
 pub fn load(path: &Path) -> (Option<TungstenConfig>, Diagnostics) {
+    let parsed = load_with_source(path);
+    (parsed.config, parsed.diagnostics)
+}
+
+/// Read and parse a manifest file, keeping its text and node positions.
+/// The manifest is named in diagnostics by `path` as given.
+pub fn load_with_source(path: &Path) -> ParsedManifest {
     let name = path.display().to_string();
     match std::fs::read_to_string(path) {
-        Ok(text) => parse_str(&name, &text),
+        Ok(text) => parse_with_source(&name, &text),
         Err(err) => {
-            let mut d = Diagnostics::new();
-            d.push(
-                Diagnostic::error("TG0101", format!("cannot read {name}: {err}"))
-                    .at(name, "", None),
-            );
-            (None, d)
+            let diagnostic = Diagnostic::error("TG0101", format!("cannot read {name}: {err}"))
+                .at(&name, "", None);
+            ParsedManifest::failed(
+                diagnostic,
+                ManifestSource::new(&name, "", Default::default()),
+            )
         }
     }
+}
+
+/// Parse a manifest from text, keeping its text and node positions.
+pub fn parse_with_source(name: &str, text: &str) -> ParsedManifest {
+    let converted = match yaml::to_json(text) {
+        Ok(converted) => converted,
+        Err(err) => {
+            let source = ManifestSource::new(name, text, err.positions);
+            let (line, col) = source.line_col_at(err.offset);
+            let message = format!("{} (line {line}, column {col})", err.message);
+            let diagnostic = Diagnostic::error("TG0601", message).at(name, err.pointer, None);
+            return ParsedManifest::failed(diagnostic, source);
+        }
+    };
+    let source = ManifestSource::new(name, text, converted.positions);
+    if converted.value.is_null() {
+        let message = "the manifest is empty; it needs at least `tungsten`, `api` and `inputs`";
+        let diagnostic = Diagnostic::error("TG0602", message).at(name, "", None);
+        return ParsedManifest::failed(diagnostic, source);
+    }
+    let value = strict::Strict(&converted.value);
+    let config = match serde_path_to_error::deserialize::<_, TungstenConfig>(value) {
+        Ok(config) => config,
+        Err(err) => {
+            let at = error_pointer(err.path());
+            let place = if at.is_empty() {
+                "the document root"
+            } else {
+                &at
+            };
+            let location = source
+                .line_col(&at)
+                .map(|(line, col)| format!(" (line {line}, column {col})"))
+                .unwrap_or_default();
+            let message = format!("{} at {place}{location}", err.inner());
+            let diagnostic = Diagnostic::error("TG0602", message).at(name, &at, None);
+            return ParsedManifest::failed(diagnostic, source);
+        }
+    };
+    let diagnostics = validate(&config, name, Some(&source));
+    let config = (!diagnostics.has_errors()).then_some(config);
+    ParsedManifest {
+        config,
+        diagnostics,
+        source,
+    }
+}
+
+impl ParsedManifest {
+    fn failed(diagnostic: Diagnostic, source: ManifestSource) -> Self {
+        let mut diagnostics = Diagnostics::new();
+        diagnostics.push(diagnostic);
+        Self {
+            config: None,
+            diagnostics,
+            source,
+        }
+    }
+}
+
+/// The JSON Pointer of a deserialization error path. Segments the path
+/// tracker could not name end the pointer at their parent.
+fn error_pointer(path: &serde_path_to_error::Path) -> String {
+    use serde_path_to_error::Segment;
+    let mut out = String::new();
+    for segment in path.iter() {
+        out = match segment {
+            Segment::Map { key } => pointer::child(&out, key),
+            Segment::Enum { variant } => pointer::child(&out, variant),
+            Segment::Seq { index } => pointer::child(&out, &index.to_string()),
+            Segment::Unknown => break,
+        };
+    }
+    out
 }

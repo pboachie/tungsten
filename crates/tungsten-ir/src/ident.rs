@@ -4,6 +4,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::naming::{self, Case, Role, Target};
+
 #[derive(
     Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, schemars::JsonSchema,
 )]
@@ -18,22 +20,27 @@ pub struct Ident {
 impl Ident {
     pub fn new(wire: impl Into<String>) -> Self {
         let wire = wire.into();
-        let words = crate::naming::split_words(&wire);
+        let words = naming::split_words(&wire);
         Self { wire, words }
     }
     pub fn snake(&self) -> String {
-        crate::naming::to_case(&self.words, crate::naming::Case::Snake)
+        naming::to_case(&self.words, Case::Snake)
     }
     pub fn camel(&self) -> String {
-        crate::naming::to_case(&self.words, crate::naming::Case::Camel)
+        naming::to_case(&self.words, Case::Camel)
     }
     pub fn pascal(&self) -> String {
-        crate::naming::to_case(&self.words, crate::naming::Case::Pascal)
+        naming::to_case(&self.words, Case::Pascal)
     }
     pub fn screaming(&self) -> String {
-        crate::naming::to_case(&self.words, crate::naming::Case::ScreamingSnake)
+        naming::to_case(&self.words, Case::ScreamingSnake)
     }
     pub fn kebab(&self) -> String {
-        crate::naming::to_case(&self.words, crate::naming::Case::Kebab)
+        naming::to_case(&self.words, Case::Kebab)
+    }
+    /// The name as it must appear in `target` source for `role`
+    /// (see [`crate::naming::render`]).
+    pub fn render(&self, target: Target, role: Role) -> String {
+        naming::render(self, target, role)
     }
 }
