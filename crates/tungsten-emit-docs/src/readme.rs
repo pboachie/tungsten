@@ -34,11 +34,15 @@ const CATEGORIES: &[(&str, &str, &str)] = &[
         "never",
     ),
     ("RATE_LIMITED", "429", "after_delay"),
-    ("UPSTREAM_UNAVAILABLE", "502, 503 or 504", "after_delay"),
+    (
+        "UPSTREAM_UNAVAILABLE",
+        "502, 503 or 504 on a read",
+        "after_delay",
+    ),
     (
         "OUTCOME_UNKNOWN",
-        "a timeout, reset or ambiguous status on a mutation",
-        "same_key_only",
+        "a timeout, reset, ambiguous status or unexplained 5xx on a mutation",
+        "same_key_only (after_remediation without an idempotency key)",
     ),
     (
         "TRANSPORT_FAILED",

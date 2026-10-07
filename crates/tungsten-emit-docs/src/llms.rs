@@ -95,7 +95,7 @@ const CONVENTIONS: &str = "
 ## Conventions
 
 - Arguments: every operation takes one object. Parameters are keyed by camelCase name; the fields of a JSON object body are merged in under their wire names, any other body is the `body` argument. Idempotency keys, the Origin header and credentials are call options or auth configuration, never arguments.
-- Results: success bodies, or an error envelope with `category`, `retryable` and `remediation`. `retryable: never` means do not retry; `same_key_only` means retry only with the same idempotency key.
+- Results: success bodies, or an error envelope with `category`, `retryable` and `remediation`. `retryable: never` means do not retry; `same_key_only` means retry only with the same idempotency key; `after_remediation` means act first (fix the input, or check whether an unknown outcome took effect).
 - Safety tiers: `read_only` has no side effects; `mutating` changes state; `destructive` needs a confirmation; `irreversible` needs a confirmation token from a preview of the same arguments.
 - Types: `T?` optional, `T | null` nullable, `T[]` array, `{[key: string]: T}` map, `...` more properties allowed, `string{1..64}` length, `integer[1..20]` range, `/re/` pattern. Named types are listed under Types.
 ";

@@ -3,25 +3,32 @@
 //! (planning/05 "Method shape", `runtimes/ts/src/types.ts`
 //! `ParamDescriptor` and `BodyDescriptor`).
 //!
-//! - Parameters are keyed by their camelCase name (`endpointId`), in path,
-//!   query, header, cookie order. Parameters with the roles
-//!   `idempotency_key`, `origin` and `auth` are not arguments: the call
-//!   options and the auth profile supply them, so credentials never travel
-//!   through an agent's arguments.
-//! - A JSON body whose type is a record without typed extras is merged:
-//!   each field is a key of the arguments object under its wire name. Any
-//!   other body (bytes, text, form, unions, arrays, maps, or a record with
-//!   a field whose name collides with a parameter key) is one argument,
-//!   `body` (or the first free name of `requestBody`, `payload`).
+//! This layout is the single source of truth for every emitter: the
+//! TypeScript SDK's args types, request schemas and `BodyDescriptor`s, and
+//! the tool manifests (`tools.json`, `llms-full.txt`, the MCP tools), so an
+//! agent that follows a manifest builds exactly the object the SDK
+//! validates.
 //!
-//! Emitters that describe arguments (tool manifests, MCP tools, SDK
-//! methods) use [`args_layout`] so they agree on the same object.
-
-use std::collections::BTreeSet;
-
-use tungsten_ir::naming::{Case, Role, Target, to_case};
+//! - Parameters are keyed by their TypeScript parameter name (`endpointId`;
+//!   a reserved word is escaped, `class` → `class_`), in path, query,
+//!   header, cookie order, made unique within the operation (`id`, `id2`).
+//!   Parameters with the roles `idempotency_key`, `origin` and `auth` are
+//!   not arguments: the call options and the auth profile supply them, so
+//!   credentials never travel through an agent's arguments. They are named
+//!   after the arguments, for descriptors only.
+//! - The body content is the first JSON one, else the first one.
+//! - A JSON body whose type is a record without typed extras is merged:
+//!   each field that is not read-only is a key of the arguments object
+//!   under its wire name, when the body is required or every such field is
+//!   optional (an optional body with a required field stays whole, so
+//!   leaving it out stays possible) and no field name equals a parameter
+//!   key. Any other body (bytes, text, form, unions, arrays, maps) is one
+//!   argument, `body`, or `body2`, ... when a parameter takes that name.
+//!
+use tungsten_ir::naming::{self, Role, Target};
 use tungsten_ir::{
-    Additional, BodyContent, BodyEncoding, Field, Ir, Operation, Param, ParamRole, Shape, TypeRef,
+    Additional, BodyContent, BodyEncoding, Field, Ident, Ir, Operation, Param, ParamRole, Presence,
+    Shape, TypeRef,
 };
 
 /// Where a parameter goes on the wire.
@@ -57,10 +64,10 @@ pub struct ArgParam<'a> {
 #[derive(Debug, Clone, PartialEq)]
 pub enum BodyArg<'a> {
     /// The body is a JSON object whose fields are keys of the arguments
-    /// object, under their wire names.
+    /// object, under their wire names (read-only fields are not).
     Merged {
         content: &'a BodyContent,
-        fields: &'a [Field],
+        fields: Vec<&'a Field>,
         additional: &'a Additional,
     },
     /// The whole body is the argument `key`.
@@ -74,6 +81,9 @@ pub enum BodyArg<'a> {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ArgsLayout<'a> {
     pub params: Vec<ArgParam<'a>>,
+    /// Parameters supplied by the call options or the auth profile, named
+    /// after the arguments (informational, for descriptors).
+    pub supplied: Vec<ArgParam<'a>>,
     pub body: Option<BodyArg<'a>>,
     /// Whether the body must be given.
     pub body_required: bool,
@@ -112,67 +122,84 @@ pub fn args_layout<'a>(ir: &'a Ir, op: &'a Operation) -> ArgsLayout<'a> {
         (ParamLocation::Header, &op.params.header),
         (ParamLocation::Cookie, &op.params.cookie),
     ];
-    let mut used = BTreeSet::new();
-    let mut params = vec![];
-    for (location, list) in groups {
-        for param in list.iter().filter(|p| !is_supplied_param(p)) {
-            let base = param.name.render(Target::TypeScript, Role::Field);
-            let qualified = {
-                let mut words = vec![location.as_str().to_string()];
-                words.extend(param.name.words.iter().cloned());
-                to_case(&words, Case::Camel)
-            };
-            let key = free_key(&used, [base, qualified]);
-            used.insert(key.clone());
-            params.push(ArgParam {
-                key,
-                location,
-                param,
-            });
-        }
-    }
-    let body = op
-        .body
-        .as_ref()
-        .and_then(|b| b.content.first())
-        .map(|content| {
-            let record = match (content.encoding, resolve(ir, &content.ty)) {
-                (BodyEncoding::Json, Some(Shape::Record { fields, additional }))
-                    if !matches!(additional, Additional::Typed { .. })
-                        && fields.iter().all(|f| !used.contains(&f.wire_name)) =>
-                {
-                    Some((fields.as_slice(), additional))
-                }
-                _ => None,
-            };
-            match record {
-                Some((fields, additional)) => BodyArg::Merged {
-                    content,
-                    fields,
-                    additional,
-                },
-                None => BodyArg::Arg {
-                    key: free_key(&used, ["body", "requestBody", "payload"].map(String::from)),
-                    content,
-                },
+    let located: Vec<(ParamLocation, &'a Param)> = groups
+        .into_iter()
+        .flat_map(|(location, list)| list.iter().map(move |p| (location, p)))
+        .collect();
+    // Arguments first, so they keep their names; supplied ones follow.
+    let ordered: Vec<(ParamLocation, &'a Param)> = located
+        .iter()
+        .filter(|(_, p)| !is_supplied_param(p))
+        .chain(located.iter().filter(|(_, p)| is_supplied_param(p)))
+        .copied()
+        .collect();
+    let mut idents: Vec<Ident> = ordered
+        .iter()
+        .map(|(_, p)| Ident {
+            wire: p.name.words.join(" "),
+            words: p.name.words.clone(),
+        })
+        .collect();
+    naming::disambiguate(&mut idents, Target::TypeScript, Role::Param);
+    let (params, supplied): (Vec<ArgParam<'a>>, Vec<ArgParam<'a>>) = ordered
+        .iter()
+        .zip(&idents)
+        .map(|(&(location, param), ident)| ArgParam {
+            key: naming::render(ident, Target::TypeScript, Role::Param),
+            location,
+            param,
+        })
+        .partition(|a| !is_supplied_param(a.param));
+    let keys: Vec<&str> = params.iter().map(|p| p.key.as_str()).collect();
+
+    let body = op.body.as_ref().and_then(|b| {
+        let content = b
+            .content
+            .iter()
+            .find(|c| c.encoding == BodyEncoding::Json)
+            .or_else(|| b.content.first())?;
+        let merged = match (content.encoding, resolve(ir, &content.ty)) {
+            (BodyEncoding::Json, Some(Shape::Record { fields, additional }))
+                if !matches!(additional, Additional::Typed { .. }) =>
+            {
+                let sent: Vec<&'a Field> = fields.iter().filter(|f| !f.read_only).collect();
+                let optional = |f: &&Field| {
+                    matches!(f.presence, Presence::Optional | Presence::OptionalNullable)
+                };
+                ((b.required || sent.iter().all(optional))
+                    && sent.iter().all(|f| !keys.contains(&f.wire_name.as_str())))
+                .then_some((sent, additional))
             }
-        });
+            _ => None,
+        };
+        Some(match merged {
+            Some((fields, additional)) => BodyArg::Merged {
+                content,
+                fields,
+                additional,
+            },
+            None => BodyArg::Arg {
+                key: free_key(&keys, "body"),
+                content,
+            },
+        })
+    });
     ArgsLayout {
         params,
+        supplied,
         body,
         body_required: op.body.as_ref().is_some_and(|b| b.required),
     }
 }
 
-/// The first candidate not in `used`, else the last one with the smallest
-/// free numeric suffix.
-fn free_key<const N: usize>(used: &BTreeSet<String>, candidates: [String; N]) -> String {
-    if let Some(free) = candidates.iter().find(|c| !used.contains(*c)) {
-        return free.clone();
-    }
-    let last = candidates.last().cloned().unwrap_or_default();
-    (2..)
-        .map(|n| format!("{last}{n}"))
-        .find(|k| !used.contains(k))
-        .unwrap_or(last)
+/// `base` rendered as a TypeScript parameter name, with the smallest
+/// numeric suffix (`body2`, `body3`) that no key in `taken` uses.
+fn free_key(taken: &[&str], base: &str) -> String {
+    let mut idents: Vec<Ident> = taken.iter().map(|t| Ident::new(*t)).collect();
+    idents.push(Ident::new(base));
+    naming::disambiguate(&mut idents, Target::TypeScript, Role::Param);
+    idents
+        .last()
+        .map(|i| naming::render(i, Target::TypeScript, Role::Param))
+        .unwrap_or_else(|| base.to_string())
 }

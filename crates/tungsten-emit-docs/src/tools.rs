@@ -57,7 +57,7 @@ pub(crate) fn budget_warnings(model: &Model<'_>) -> Diagnostics {
                         tool["name"].as_str().unwrap_or_default()
                     ),
                 )
-                .with_help("shorten descriptions (disclosure.prune), hide fields (disclosure.prune.drop_fields), or raise defaults.disclosure.schema_budget_tokens in agent.yml"),
+                .with_help("shorten descriptions (disclosure.prune for operations, the spec for fields), split the operation, or raise defaults.disclosure.schema_budget_tokens in agent.yml"),
             );
         }
     }
@@ -338,11 +338,32 @@ fn macro_tool(model: &Model<'_>, m: &MacroDocs<'_>) -> Value {
         Some(op) => parameters(ir, op),
         None => json!({ "type": "object", "properties": {}, "additionalProperties": false }),
     };
-    if let (Some(Value::Object(add)), Some(Value::Object(props))) =
-        (input.get("add"), params.get_mut("properties"))
-    {
-        for (name, schema) in add {
-            props.insert(name.clone(), schema.clone());
+    if let Some(Value::Object(add)) = input.get("add") {
+        if let Some(Value::Object(props)) = params.get_mut("properties") {
+            for (name, schema) in add {
+                props.insert(name.clone(), schema.clone());
+            }
+        }
+        // An added input without a default is required, as in the SDK's
+        // macro input type (the runtime applies defaults only).
+        let needed: Vec<&String> = add
+            .iter()
+            .filter(|(_, schema)| schema.get("default").is_none())
+            .map(|(name, _)| name)
+            .collect();
+        if !needed.is_empty()
+            && let Value::Object(root) = &mut params
+        {
+            let required = root
+                .entry("required")
+                .or_insert_with(|| Value::Array(vec![]));
+            if let Value::Array(list) = required {
+                for name in needed {
+                    if !list.iter().any(|v| v.as_str() == Some(name.as_str())) {
+                        list.push(json!(name));
+                    }
+                }
+            }
         }
     }
     json!({

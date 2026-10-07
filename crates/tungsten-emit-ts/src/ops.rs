@@ -6,20 +6,20 @@
 use std::collections::BTreeSet;
 
 use tungsten_core::{Diagnostic, Diagnostics};
+use tungsten_emit::args::{BodyArg, args_layout};
 use tungsten_emit::{CommentStyle, Imports, Writer};
-use tungsten_ir::naming::Role;
 use tungsten_ir::{
-    Additional, ApiKeyIn, AuthScheme, BodyContent, BodyEncoding, CompositePart, HttpMethod,
-    IdempotencyKind, Ir, Jitter, OperationAgentMeta, OperationStatus, PaginationStyle, Param,
-    ParamRole, ParamStyle, Presence, PreviewMode, Remediation, ResponseKind, RetryPolicy,
-    Retryable, Safety, Shape, StatusMatch, TypeRef,
+    ApiKeyIn, AuthScheme, BodyContent, BodyEncoding, CompositePart, HttpMethod, IdempotencyKind,
+    Ir, Jitter, OperationAgentMeta, OperationStatus, PaginationStyle, Param, ParamRole, ParamStyle,
+    Presence, PreviewMode, Remediation, ResponseKind, RetryPolicy, Retryable, Safety, Shape,
+    StatusMatch, TypeRef,
 };
 
 use crate::models::{
     Ty, TypeCx, Uses, field_doc, record_of, resolve, shape_notes, union_of, write_imports,
 };
 use crate::options::Options;
-use crate::plan::{OpInfo, Plan, unique};
+use crate::plan::{OpInfo, Plan};
 use crate::ts::{Js, doc_summary, doc_text, paragraphs, prop_key};
 
 /// The error categories of the runtime contract (`Category` in types.ts).
@@ -114,43 +114,21 @@ pub(crate) fn op_shape<'a>(plan: &Plan<'a>, info: &OpInfo<'a>) -> OpShape<'a> {
     let op = info.op;
     let cx = TypeCx::outside(plan);
     let mut uses = Uses::default();
-    let located: Vec<(&'static str, &'a Param)> = [
-        ("path", &op.params.path),
-        ("query", &op.params.query),
-        ("header", &op.params.header),
-        ("cookie", &op.params.cookie),
-    ]
-    .into_iter()
-    .flat_map(|(loc, ps)| ps.iter().map(move |p| (loc, p)))
-    .collect();
-    // Arg params first so they keep their names; the others are
-    // informational.
-    let ordered: Vec<(&'static str, &'a Param)> = located
+    // One layout for the SDK and every manifest (tungsten_emit::args):
+    // argument names, the body content and whether it is merged.
+    let layout = args_layout(plan.ir, op);
+    let params: Vec<ParamPlan<'a>> = layout
+        .params
         .iter()
-        .filter(|(_, p)| is_arg(p))
-        .chain(located.iter().filter(|(_, p)| !is_arg(p)))
-        .copied()
-        .collect();
-    let names = unique(
-        &[],
-        &ordered
-            .iter()
-            .map(|(_, p)| p.name.words.clone())
-            .collect::<Vec<_>>(),
-        Role::Param,
-    );
-    let params: Vec<ParamPlan<'a>> = ordered
-        .iter()
-        .zip(names)
-        .map(|(&(location, param), name)| ParamPlan {
-            name,
-            location,
-            param,
+        .chain(&layout.supplied)
+        .map(|a| ParamPlan {
+            name: a.key.clone(),
+            location: a.location.as_str(),
+            param: a.param,
         })
         .collect();
 
     let mut fields: Vec<ArgField> = vec![];
-    let mut arg_names: Vec<String> = vec![];
     for p in params.iter().filter(|p| is_arg(p.param)) {
         uses.add_ref(plan, None, &p.param.ty);
         let base = cx.zod_ref(&p.param.ty);
@@ -180,30 +158,17 @@ pub(crate) fn op_shape<'a>(plan: &Plan<'a>, info: &OpInfo<'a>) -> OpShape<'a> {
             ty: Some(p.param.ty.clone()),
             doc: paragraphs(notes),
         });
-        arg_names.push(p.name.clone());
     }
 
-    let body = op.body.as_ref().and_then(|b| {
-        let content = b
-            .content
-            .iter()
-            .find(|c| c.encoding == BodyEncoding::Json)
-            .or_else(|| b.content.first())?;
-        Some((b, content))
-    });
-    let body = body.map(|(b, content)| {
-        let merged = (content.encoding == BodyEncoding::Json)
-            .then(|| record_of(plan, &content.ty))
-            .flatten()
-            .filter(|(_, additional)| !matches!(additional, Additional::Typed { .. }))
-            .map(|(fs, _)| fs.iter().filter(|f| !f.read_only).collect::<Vec<_>>())
-            .filter(|fs| {
-                (b.required
-                    || fs.iter().all(|f| {
-                        matches!(f.presence, Presence::Optional | Presence::OptionalNullable)
-                    }))
-                    && fs.iter().all(|f| !arg_names.contains(&f.wire_name))
-            });
+    let required = layout.body_required;
+    let body_doc = op.body.as_ref().and_then(|b| b.doc.as_ref());
+    let body = layout.body.map(|arg| {
+        let (content, merged, key) = match arg {
+            BodyArg::Merged {
+                content, fields, ..
+            } => (content, Some(fields), None),
+            BodyArg::Arg { content, key } => (content, None, Some(key)),
+        };
         match merged {
             Some(body_fields) => {
                 for f in &body_fields {
@@ -226,17 +191,14 @@ pub(crate) fn op_shape<'a>(plan: &Plan<'a>, info: &OpInfo<'a>) -> OpShape<'a> {
                 }
                 BodyPlan {
                     content,
-                    required: b.required,
+                    required,
                     shape: BodyShape::Merged(
                         body_fields.iter().map(|f| f.wire_name.clone()).collect(),
                     ),
                 }
             }
             None => {
-                let reserved: Vec<&str> = arg_names.iter().map(String::as_str).collect();
-                let name = unique(&reserved, &[vec!["body".to_string()]], Role::Param)
-                    .pop()
-                    .unwrap_or_else(|| "body".into());
+                let name = key.unwrap_or_else(|| "body".to_string());
                 let (ts, zod, ty) = match content.encoding {
                     BodyEncoding::Bytes => (
                         "Uint8Array".to_string(),
@@ -256,22 +218,22 @@ pub(crate) fn op_shape<'a>(plan: &Plan<'a>, info: &OpInfo<'a>) -> OpShape<'a> {
                 fields.push(ArgField {
                     key: name.clone(),
                     ts,
-                    zod: if b.required {
+                    zod: if required {
                         zod
                     } else {
                         format!("{zod}.exactOptional()")
                     },
-                    optional: !b.required,
+                    optional: !required,
                     nullable: false,
                     ty,
                     doc: paragraphs([
-                        doc_text(b.doc.as_ref()),
+                        doc_text(body_doc),
                         format!("The request body, sent as `{}`.", content.media_type),
                     ]),
                 });
                 BodyPlan {
                     content,
-                    required: b.required,
+                    required,
                     shape: BodyShape::Arg(name),
                 }
             }
@@ -501,7 +463,88 @@ fn opt_num(n: Option<u64>) -> Js {
     n.map_or_else(|| Js::Raw("null".into()), Js::num)
 }
 
-fn agent_js(a: &OperationAgentMeta) -> Js {
+/// Dotted args paths of the request body fields marked sensitive
+/// (`x-agent-sensitive`): merged fields by their key, an arg-shaped body
+/// under its arg name. Each named type is walked once per path, so cycles
+/// end; array items are not indexed (`AgentMeta.sensitiveRequestFields`).
+pub(crate) fn sensitive_request_fields(plan: &Plan<'_>, shape: &OpShape<'_>) -> Vec<String> {
+    let Some(body) = &shape.body else {
+        return vec![];
+    };
+    if matches!(
+        body.content.encoding,
+        BodyEncoding::Bytes | BodyEncoding::Text
+    ) {
+        return vec![];
+    }
+    let mut out = vec![];
+    let mut active = BTreeSet::new();
+    match &body.shape {
+        BodyShape::Merged(keys) => {
+            if let Some((fields, _)) = record_of(plan, &body.content.ty) {
+                for f in fields.iter().filter(|f| keys.contains(&f.wire_name)) {
+                    if f.sensitive {
+                        out.push(f.wire_name.clone());
+                    } else {
+                        sensitive_paths(plan, &f.ty, &f.wire_name, &mut active, &mut out);
+                    }
+                }
+            }
+        }
+        BodyShape::Arg(arg) => sensitive_paths(plan, &body.content.ty, arg, &mut active, &mut out),
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
+fn sensitive_paths<'p>(
+    plan: &'p Plan<'_>,
+    ty: &'p TypeRef,
+    prefix: &str,
+    active: &mut BTreeSet<&'p tungsten_ir::TypeId>,
+    out: &mut Vec<String>,
+) {
+    // Nesting is bounded so wide type graphs that share types stay cheap.
+    if prefix.matches('.').count() >= 16 || out.len() >= 256 {
+        return;
+    }
+    if let TypeRef::Named(id) = ty
+        && !active.insert(id)
+    {
+        return;
+    }
+    match resolve(plan, ty) {
+        Some(Shape::Record { fields, .. }) => {
+            for f in fields {
+                let path = format!("{prefix}.{}", f.wire_name);
+                if f.sensitive {
+                    out.push(path);
+                } else {
+                    sensitive_paths(plan, &f.ty, &path, active, out);
+                }
+            }
+        }
+        Some(Shape::Nullable { inner }) => sensitive_paths(plan, inner, prefix, active, out),
+        Some(Shape::Array { items, .. }) => sensitive_paths(plan, items, prefix, active, out),
+        Some(Shape::Union(u)) => {
+            for v in &u.variants {
+                sensitive_paths(plan, &v.ty, prefix, active, out);
+            }
+        }
+        Some(Shape::Intersection { members }) => {
+            for m in members {
+                sensitive_paths(plan, m, prefix, active, out);
+            }
+        }
+        _ => {}
+    }
+    if let TypeRef::Named(id) = ty {
+        active.remove(id);
+    }
+}
+
+fn agent_js(a: &OperationAgentMeta, sensitive_request: &[String]) -> Js {
     let idem = &a.idempotency;
     let preview = match &a.preview {
         PreviewMode::Local => Js::obj(vec![("mode", Js::str("local"))]),
@@ -538,7 +581,7 @@ fn agent_js(a: &OperationAgentMeta) -> Js {
             ])
         },
     );
-    Js::obj(vec![
+    let mut entries = vec![
         ("safety", Js::str(safety_str(a.safety))),
         (
             "idempotency",
@@ -570,8 +613,12 @@ fn agent_js(a: &OperationAgentMeta) -> Js {
             "sensitiveResponseFields",
             Js::strs(&a.sensitive_response_fields),
         ),
-        ("shownOnce", Js::bool(a.shown_once)),
-    ])
+    ];
+    if !sensitive_request.is_empty() {
+        entries.push(("sensitiveRequestFields", Js::strs(sensitive_request)));
+    }
+    entries.push(("shownOnce", Js::bool(a.shown_once)));
+    Js::obj(entries)
 }
 
 fn pagination_js(info: &OpInfo<'_>, shape: &OpShape<'_>) -> Js {
@@ -792,7 +839,10 @@ fn descriptor_js(plan: &Plan<'_>, info: &OpInfo<'_>, shape: &OpShape<'_>) -> Js 
             Js::opt_str(error_code_field(plan.ir, &info.ns)),
         ),
         ("status", status),
-        ("agent", agent_js(&op.agent)),
+        (
+            "agent",
+            agent_js(&op.agent, &sensitive_request_fields(plan, shape)),
+        ),
         ("request", Js::Raw(request)),
     ];
     let summary = op_summary(op);

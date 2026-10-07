@@ -360,8 +360,12 @@ pub(crate) fn readme(
     );
     out.push_str(
         "Branch on `category` and `retryable`: `same_key_only` means retry only with the same \
-                  idempotency key, and `OUTCOME_UNKNOWN` means the request may have been applied. \
-                  A success response without a body has `value: undefined`.\n\n",
+                  idempotency key, `after_remediation` means act first (fix the input, or check \
+                  whether an unknown outcome took effect: without a key a repeat can apply it \
+                  twice), and `OUTCOME_UNKNOWN` means the request may have been applied. When a \
+                  mutation or macro already took effect, the failed result's `partial` holds what \
+                  it produced (store one-time secrets from it). A success response without a body \
+                  has `value: undefined`.\n\n",
     );
     out.push_str("## Extending\n\n`src/custom/index.ts` is yours: it is created once, never overwritten, and exported as `custom`.\n");
     out
