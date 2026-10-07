@@ -188,9 +188,10 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
     ),
     e(
         "TG0501",
-        "No explicit pagination was configured and the operation matched the cursor \
-         heuristic (a closed response record with one array field and one nullable `next_*` \
-         field, and a query parameter of the same name). Generated SDKs will iterate pages.",
+        "No explicit pagination was configured and the operation matched a heuristic: cursor \
+         (a closed response record with one array field and one nullable `next_*` field, and \
+         a query parameter of the same name), or offset/page (`offset` and `limit`, or `page` \
+         and a page size, with an array of items). Generated SDKs will iterate pages.",
         "Confirm the inference, or declare the operation under tungsten.yml `pagination` (use \
          `none: true` to switch inference off for it).",
     ),
@@ -203,10 +204,10 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
     ),
     e(
         "TG0503",
-        "A composite auth profile in tungsten.yml claims to satisfy a security requirement \
-         but does not provide every scheme the requirement combines.",
-        "List every scheme of the requirement under the profile's `satisfies`, and add parts \
-         that supply them.",
+        "A composite auth profile in tungsten.yml lists under `satisfies` a name that is not a \
+         security scheme of any input, so the profile cannot stand in for it.",
+        "List the scheme names the operations' `security` requirements use (from \
+         `components/securitySchemes`), and add parts that supply them.",
     ),
     e(
         "TG0504",
@@ -228,6 +229,28 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
          request body is not a `oneOf` discriminated by a `const` method field, so it cannot \
          be split into one operation per method.",
         "Check `rpc_unflatten.path`, `method`, `discriminator` and `params` against the spec.",
+    ),
+    e(
+        "TG0507",
+        "A path template names a `{param}` that no path-level or operation-level parameter \
+         declares. The SDK treats it as a required string so the operation stays callable.",
+        "Declare the parameter with `in: path`, `required: true` and a schema.",
+    ),
+    e(
+        "TG0508",
+        "Part of an operation does not have the shape OpenAPI requires and was skipped: a \
+         parameter without `name` or `in`, a path parameter missing from the template, a \
+         response key that is not a status code, `NXX` range or `default`, or a member that \
+         must be an object or array but is not.",
+        "Fix the element at the reported pointer; the message names what is wrong.",
+    ),
+    e(
+        "TG0509",
+        "A security scheme uses a type tungsten cannot generate authentication for (for \
+         example `mutualTLS` or an HTTP scheme other than `bearer` and `basic`), or lacks a \
+         field its type requires. Requirements naming it stay in the IR without a scheme.",
+        "Describe the credential with a supported scheme, or authenticate those operations \
+         through a custom transport.",
     ),
     e(
         "TG0601",

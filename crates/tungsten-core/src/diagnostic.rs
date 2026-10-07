@@ -216,7 +216,7 @@ pub mod codes {
         ("TG0502", "security scheme referenced but not defined"),
         (
             "TG0503",
-            "composite auth profile does not satisfy the requirement",
+            "composite auth profile satisfies an undefined security scheme",
         ),
         (
             "TG0504",
@@ -227,6 +227,12 @@ pub mod codes {
             "TG0506",
             "rpc_unflatten target not found or not a const-discriminated oneOf",
         ),
+        (
+            "TG0507",
+            "path template parameter without a definition; assumed a required string",
+        ),
+        ("TG0508", "malformed operation element ignored"),
+        ("TG0509", "unsupported security scheme ignored"),
         ("TG0601", "manifest is not valid YAML"),
         ("TG0602", "manifest does not match its schema"),
         ("TG0603", "manifest references an unknown operation"),
