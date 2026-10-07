@@ -75,6 +75,10 @@ export interface Verification {
   passed: boolean;
   /** The verification operation's last result body. */
   observed: unknown;
+  /** True when polling for `terminal` ran out of budget. */
+  timedOut?: boolean;
+  /** Why the check could not run (verification call failed); `checked` is false. */
+  error?: Diagnostic;
 }
 
 export type Result<T> =
@@ -195,8 +199,9 @@ export interface OperationDescriptor {
   security: string[][];
   pagination: PaginationDescriptor | null;
   /** For rpc-unflattened operations: the envelope field and value to send,
-   * and the field the args are placed under. */
-  rpc: { field: string; value: string; paramsField: string } | null;
+   * and the field the args are placed under. `constants` are further
+   * envelope members sent verbatim (JSON-RPC `jsonrpc: "2.0"`). */
+  rpc: { field: string; value: string; paramsField: string; constants?: Record<string, unknown> } | null;
   /** Field path of the API error code in error bodies (`code`, `error.code`). */
   errorCodeField: string | null;
   status: { kind: "implemented" } | { kind: "gated"; envVar: string; disabledStatus: number };
@@ -205,6 +210,8 @@ export interface OperationDescriptor {
   request?: SchemaLike;
   /** Validates the success body (per `ClientOptions.validateResponses`). */
   response?: SchemaLike;
+  /** One-line summary (compacted description); the last line of preview effects. */
+  summary?: string | null;
 }
 
 export type AuthSchemeDescriptor =
@@ -300,6 +307,13 @@ export interface ClientOptions {
   /** Overrides the key used to sign confirmation tokens. Default: random
    * per client instance. */
   confirmationKey?: Uint8Array;
+  /** Operations the core can resolve by id: verification hooks, endpoint
+   * previews and macro steps. Operations passed to `call` are added too. */
+  operations?: OperationDescriptor[];
+  /** Clock in epoch milliseconds (token expiry, Retry-After dates). Default `Date.now`. */
+  now?: () => number;
+  /** Random number in [0, 1) for retry jitter. Default `Math.random`. */
+  random?: () => number;
 }
 
 export interface CallOptions {
@@ -349,6 +363,48 @@ export interface Page<T> {
 
 /** Until-predicate for `ClientCore.poll`, same shape as `VerifyDescriptor.expect`. */
 export type Predicate = Record<string, unknown>;
+
+// ---------------------------------------------------------------- macros
+
+/** One macro step in the canonical form (`tungsten_ir::Macro.steps`).
+ * `args`, `budget_ms` and the macro output are expressions: strings
+ * starting with `$` reference `$input` or an earlier step's `as` name,
+ * `{expr: "<ref> in [..]" | "<ref> == x" | "<ref> != x"}` is a boolean,
+ * anything else a literal. */
+export interface MacroStep {
+  kind: "call" | "poll" | "paginate";
+  /** Operation id, resolved among the operations registered with the core. */
+  operation: string;
+  args: unknown;
+  as: string | null;
+  /** `poll` only: predicate on the step's success body. */
+  until: Predicate | null;
+  interval_ms: number | null;
+  budget_ms: unknown;
+  /** `paginate` only: page limit. */
+  max_pages: number | null;
+}
+
+/** A compiled macro (`tungsten_ir::Macro`). */
+export interface MacroDescriptor {
+  name: string;
+  summary: string;
+  safety: Safety;
+  steps: MacroStep[];
+  output: unknown;
+  /** The macro input: an operation's args (`extends`) plus added fields. */
+  input: { extends: string | null; add: Record<string, unknown> };
+}
+
+/** Further `ClientCore` methods beyond {@link ClientCoreApi}. */
+export interface ClientCoreExtensions {
+  /** Make operations resolvable by id (verification, endpoint previews, macros). */
+  register(...ops: OperationDescriptor[]): void;
+  /** A registered operation by id. */
+  operation(id: string): OperationDescriptor | undefined;
+  /** Run a compiled macro; returns its output or the first failing step's envelope. */
+  runMacro<T>(macro: MacroDescriptor, input: Record<string, unknown>, opts?: CallOptions): Promise<Result<T>>;
+}
 
 /** What `ClientCore` (implemented in `client.ts`) offers generated code. */
 export interface ClientCoreApi {
