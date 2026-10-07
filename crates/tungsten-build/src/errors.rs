@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The API's error model (planning/03 "Errors"), read from the normalized
-//! documents:
+//! Error models (planning/03 "Errors"), read from the normalized
+//! documents. Each namespace gets its own model, because each document
+//! declares its own error schema (ZROtext: `public.Error` and
+//! `sealed.Error` with different code sets, `workflow.WorkflowError` with
+//! the code one level down):
 //!
 //! - envelope: the component schema referenced by the most error responses
-//!   with JSON content across all callable operations; ties go to the
-//!   lexicographically smallest type id;
+//!   with JSON content across the namespace's callable operations; ties go
+//!   to the lexicographically smallest type id;
 //! - code field: the first of `code`, `error_code`, `type`, `error` that is
 //!   a string property of the envelope, or of an object property one level
 //!   down (`error.code`); the message field likewise from `message`,
@@ -12,6 +15,10 @@
 //! - codes: the code field's `enum`, each with the exact error statuses of
 //!   responses carrying the envelope whose description names the code as
 //!   a word followed by `:` or whitespace. Sorted by code.
+//!
+//! The API-wide model ([`merge`]) lists every code of every namespace with
+//! the union of its statuses, and keeps the envelope, code field and
+//! message field only when all namespaces that have one agree.
 
 use std::collections::BTreeMap;
 
@@ -25,15 +32,13 @@ use crate::responses::RawResponse;
 const CODE_FIELDS: [&str; 4] = ["code", "error_code", "type", "error"];
 const MESSAGE_FIELDS: [&str; 3] = ["message", "detail", "error_description"];
 
-/// The responses of one callable operation and its namespace.
-pub(crate) type OpResponses = (String, Vec<RawResponse>);
-
-/// Build the error model from the responses of every callable operation.
-pub(crate) fn build(cx: &mut Ctx<'_>, ops: &[OpResponses]) -> ErrorModel {
-    let Some((namespace, envelope)) = envelope(cx, ops) else {
+/// Build the error model of `namespace` from the responses of its
+/// callable operations.
+pub(crate) fn build(cx: &mut Ctx<'_>, namespace: &str, ops: &[&[RawResponse]]) -> ErrorModel {
+    let Some(envelope) = envelope(cx, namespace, ops) else {
         return ErrorModel::default();
     };
-    let id = type_id(cx, &namespace, &envelope);
+    let id = type_id(cx, namespace, &envelope);
     let Some((code_field, message_field, values)) = code_field(cx, &envelope) else {
         return ErrorModel {
             envelope: id,
@@ -57,27 +62,63 @@ pub(crate) fn build(cx: &mut Ctx<'_>, ops: &[OpResponses]) -> ErrorModel {
     }
 }
 
-/// The most referenced named schema among JSON error responses, with the
-/// namespace of its first use.
-fn envelope(cx: &Ctx<'_>, ops: &[OpResponses]) -> Option<(String, RefTarget)> {
-    let mut counts: BTreeMap<RefTarget, (usize, &str)> = BTreeMap::new();
-    for (ns, responses) in ops {
+/// The API-wide model from the namespaces' models.
+pub(crate) fn merge<'m>(models: impl IntoIterator<Item = &'m ErrorModel>) -> ErrorModel {
+    let models: Vec<&ErrorModel> = models.into_iter().collect();
+    let mut codes: BTreeMap<&str, Vec<u16>> = BTreeMap::new();
+    for m in &models {
+        for c in &m.codes {
+            codes
+                .entry(c.code.as_str())
+                .or_default()
+                .extend(&c.statuses);
+        }
+    }
+    ErrorModel {
+        envelope: agreed(models.iter().map(|m| m.envelope.as_ref())),
+        code_field: agreed(models.iter().map(|m| m.code_field.as_ref())),
+        message_field: agreed(models.iter().map(|m| m.message_field.as_ref())),
+        codes: codes
+            .into_iter()
+            .map(|(code, mut statuses)| {
+                statuses.sort_unstable();
+                statuses.dedup();
+                ErrorCode {
+                    code: code.to_string(),
+                    statuses,
+                }
+            })
+            .collect(),
+    }
+}
+
+/// The value every present entry has, when there is one and they agree.
+fn agreed<'v, T: PartialEq + Clone + 'v>(values: impl Iterator<Item = Option<&'v T>>) -> Option<T> {
+    let mut present = values.flatten();
+    let first = present.next()?;
+    present.all(|v| v == first).then(|| first.clone())
+}
+
+/// The most referenced named schema among JSON error responses.
+fn envelope(cx: &Ctx<'_>, namespace: &str, ops: &[&[RawResponse]]) -> Option<RefTarget> {
+    let mut counts: BTreeMap<RefTarget, usize> = BTreeMap::new();
+    for responses in ops {
         for raw in responses.iter().filter(|r| r.is_error()) {
             let Some(target) = raw.json_schema.as_ref().and_then(|s| cx.deref(s)) else {
                 continue;
             };
             if is_named_schema(&target.pointer) {
-                counts.entry(target).or_insert((0, ns)).0 += 1;
+                *counts.entry(target).or_insert(0) += 1;
             }
         }
     }
-    let best = counts.values().map(|(n, _)| *n).max()?;
+    let best = counts.values().copied().max()?;
     counts
         .into_iter()
-        .filter(|(_, (n, _))| *n == best)
-        .map(|(target, (_, ns))| (tie_key(cx, ns, &target), ns.to_string(), target))
+        .filter(|(_, n)| *n == best)
+        .map(|(target, _)| (tie_key(cx, namespace, &target), target))
         .min()
-        .map(|(_, ns, target)| (ns, target))
+        .map(|(_, target)| target)
 }
 
 /// The type id of a component schema, or `namespace.Name` when the type
@@ -169,10 +210,15 @@ fn is_stringish(schema: &Value) -> bool {
 
 /// Exact error statuses of responses carrying the envelope whose
 /// description names `code`.
-fn statuses_for(cx: &Ctx<'_>, ops: &[OpResponses], envelope: &RefTarget, code: &str) -> Vec<u16> {
+fn statuses_for(
+    cx: &Ctx<'_>,
+    ops: &[&[RawResponse]],
+    envelope: &RefTarget,
+    code: &str,
+) -> Vec<u16> {
     let mut out: Vec<u16> = ops
         .iter()
-        .flat_map(|(_, responses)| responses.iter())
+        .flat_map(|responses| responses.iter())
         .filter(|r| r.is_error())
         .filter(|r| {
             r.json_schema

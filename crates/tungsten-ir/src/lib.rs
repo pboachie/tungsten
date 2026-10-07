@@ -114,6 +114,10 @@ ir_struct! {
         /// (`planned_from`). Never callable.
         #[serde(default)]
         pub planned: Vec<Operation>,
+        /// The error model of this document's callable operations: how to
+        /// decode their error bodies.
+        #[serde(default)]
+        pub errors: ErrorModel,
     }
 }
 
@@ -547,9 +551,14 @@ pub enum Streaming {
 }
 
 ir_struct! {
+    /// An error model. On a namespace it describes that document's errors.
+    /// `Ir.errors` is the API-wide view: every code of every namespace with
+    /// its statuses merged, and the envelope, code field and message field
+    /// only when every namespace that has one agrees (always, for a single
+    /// namespace).
     #[derive(Default)]
     pub struct ErrorModel {
-        /// The API's JSON error schema, if one is used by most error responses.
+        /// The JSON error schema used by most error responses, if any.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub envelope: Option<TypeId>,
         #[serde(default, skip_serializing_if = "Option::is_none")]

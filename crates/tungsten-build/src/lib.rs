@@ -13,8 +13,9 @@
 //! Build order: component types of every namespace, the security scheme
 //! table, then per namespace its operations (include filters, rpc
 //! unflattening, unique ids, parameters, bodies, responses, security,
-//! gates), pagination, and the resource tree with method names; finally
-//! the error model, servers and checks of manifest references. Decisions
+//! gates), pagination, its error model, and the resource tree with method
+//! names; finally the API-wide error model, servers and checks of manifest
+//! references. Decisions
 //! that depend on schema structure (pagination, rpc, error envelope) read
 //! the normalized documents, never type shapes.
 
@@ -96,7 +97,6 @@ pub fn build_with_manifest(input: &BuildInput<'_>, manifest: &str) -> BuildOutpu
 
     let mut namespaces = vec![];
     let mut known_ids: BTreeSet<String> = BTreeSet::new();
-    let mut error_inputs: Vec<errors::OpResponses> = vec![];
     for (ns_index, ns) in input.namespaces.iter().enumerate() {
         let name = cfg.inputs[ns.config_index].namespace.as_str();
         let mut ops = operations::build_namespace(&mut cx, &auth, ns_index, ns);
@@ -104,11 +104,12 @@ pub fn build_with_manifest(input: &BuildInput<'_>, manifest: &str) -> BuildOutpu
         for built in ops.callable.iter().chain(&ops.planned) {
             known_ids.insert(built.op.id.0.clone());
         }
-        error_inputs.extend(
-            ops.callable
-                .iter()
-                .map(|b| (name.to_string(), b.responses.clone())),
-        );
+        let responses: Vec<&[responses::RawResponse]> = ops
+            .callable
+            .iter()
+            .map(|b| b.responses.as_slice())
+            .collect();
+        let errors = errors::build(&mut cx, name, &responses);
         let resources = resources::build(&mut cx, name, ns.doc, ops.callable, &mut ops.planned);
         let doc = &ws.documents[ns.doc];
         let info = |k: &str| {
@@ -129,10 +130,11 @@ pub fn build_with_manifest(input: &BuildInput<'_>, manifest: &str) -> BuildOutpu
             version: info("version"),
             resources,
             planned: ops.planned.into_iter().map(|b| b.op).collect(),
+            errors,
         });
     }
     check_operation_refs(&mut cx, &known_ids);
-    let errors = errors::build(&mut cx, &error_inputs);
+    let errors = errors::merge(namespaces.iter().map(|n| &n.errors));
 
     let Ctx {
         tb,
