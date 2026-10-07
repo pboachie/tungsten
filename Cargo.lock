@@ -723,6 +723,7 @@ dependencies = [
  "tungsten-core",
  "tungsten-emit",
  "tungsten-emit-docs",
+ "tungsten-emit-mcp",
  "tungsten-emit-ts",
  "tungsten-ir",
  "tungsten-mock",
@@ -773,6 +774,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "tungsten-emit-mcp"
+version = "0.0.1"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tungsten-core",
+ "tungsten-emit",
+ "tungsten-ir",
+ "tungsten-tokens",
+]
+
+[[package]]
 name = "tungsten-emit-ts"
 version = "0.0.1"
 dependencies = [
@@ -819,6 +832,10 @@ dependencies = [
  "tungsten-core",
  "yaml-rust2",
 ]
+
+[[package]]
+name = "tungsten-tokens"
+version = "0.0.1"
 
 [[package]]
 name = "unicode-ident"

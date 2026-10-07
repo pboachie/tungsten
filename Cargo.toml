@@ -21,6 +21,8 @@ tungsten-emit = { path = "crates/tungsten-emit" }
 tungsten-emit-ts = { path = "crates/tungsten-emit-ts" }
 tungsten-emit-docs = { path = "crates/tungsten-emit-docs" }
 tungsten-mock = { path = "crates/tungsten-mock" }
+tungsten-emit-mcp = { path = "crates/tungsten-emit-mcp" }
+tungsten-tokens = { path = "crates/tungsten-tokens" }
 
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }

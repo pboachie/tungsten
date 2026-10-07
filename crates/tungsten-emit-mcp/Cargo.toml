@@ -1,0 +1,28 @@
+[package]
+name = "tungsten-emit-mcp"
+description = "MCP server emitter: tool manifest, progressive-disclosure index and server package."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lib]
+test = false
+doctest = false
+
+[features]
+# Exposes internals for the private test harness in tungsten-ops.
+testing = []
+
+[dependencies]
+tungsten-core.workspace = true
+tungsten-ir.workspace = true
+tungsten-emit.workspace = true
+tungsten-tokens.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true
