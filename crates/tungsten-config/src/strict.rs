@@ -107,8 +107,9 @@ impl<'de> Deserializer<'de> for Strict<'de> {
         self.deserialize_map(visitor)
     }
 
-    /// The manifest has no serde-derived enums (composite parts read a
-    /// mapping); enums keep `serde_json`'s representation.
+    /// Enums keep `serde_json`'s representation: a unit variant is read
+    /// from a string. Manifests with richer alternatives (composite parts,
+    /// agent.yml shorthands) read them with their own visitors.
     fn deserialize_enum<V: Visitor<'de>>(
         self,
         name: &'static str,

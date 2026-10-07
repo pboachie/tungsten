@@ -277,11 +277,65 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
          spec.",
     ),
     e(
+        "TG0605",
+        "An agent rule points at an operation that cannot do what the rule needs: a \
+         verification hook or a macro poll step names an operation that is not read_only \
+         (the runtime would repeat its side effect), a paginate step names an operation \
+         without pagination, or an endpoint preview names the operation itself. The rule \
+         (or the macro) is dropped.",
+        "Point the rule at a read_only operation (for a poll or a verification hook), at a \
+         paginated one (for paginate), or declare the operation's safety or pagination if \
+         the inferred one is wrong.",
+    ),
+    e(
+        "TG0606",
+        "A remediation entry in agent.yml (`errors.codes` or a tool's `remediation`) or in \
+         `x-agent-remediation` is keyed by an error code that the error model of the \
+         operation's namespace (or of any namespace, for `errors.codes`) does not list. The \
+         entry is kept but may never match a response.",
+        "Use a code from the error schema's `code` enum (`tungsten ir dump` shows \
+         `namespaces[].errors.codes`), or fix the spelling.",
+    ),
+    e(
+        "TG0607",
+        "An agent rule names a field that does not exist: a confirmation summary field or \
+         message placeholder that is not a request parameter or body field, a sensitive \
+         field that is not in the success response, a verification argument or predicate \
+         path, a macro reference such as `$accepted.message_id` into a step's response, or \
+         the code field of `errors.envelope`.",
+        "Use the wire names of the spec (dotted for nested fields, for example \
+         `key.action_id`); `tungsten explain <operation>` lists an operation's parameters \
+         and body.",
+    ),
+    e(
+        "TG0608",
+        "A tool's `gate` names neither an `x-runtime-gate` environment variable of the spec \
+         nor a `gates` entry, or the operation is already gated by a different variable, or \
+         a `gates` entry's `disabled_status` disagrees with the spec's gate. The spec wins.",
+        "Declare the gate under `gates` (with `text` and `disabled_status`) or use the \
+         spec's variable name.",
+    ),
+    e(
+        "TG0609",
+        "A macro could not be compiled as written: its name is also an operation id (the \
+         macro is dropped), or it declares a safety tier weaker than its strictest step (the \
+         macro gets the step's tier, because a macro can never be safer than what it calls).",
+        "Rename the macro, or declare a tier at least as strict as every `call` step.",
+    ),
+    e(
         "TG0610",
         "The spec uses an `x-agent-*` extension tungsten does not know, often a misspelling. \
          It is ignored.",
         "Fix the extension name (for example `x-agent-safety`), or rename it outside the \
          `x-agent-` prefix if it is meant for another tool.",
+    ),
+    e(
+        "TG0611",
+        "An `x-agent-*` extension of an operation has the wrong shape (for example \
+         `x-agent-safety: dangerous` or an `x-agent-idempotency` object without `policy`). \
+         The extension is ignored and the operation keeps its defaults or agent.yml rules.",
+        "Give the extension the shape of the matching agent.yml tools key \
+         (`specs/agent-manifest.schema.json`, `ToolConfig`).",
     ),
     e(
         "TG0701",
