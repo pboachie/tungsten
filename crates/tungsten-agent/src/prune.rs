@@ -127,21 +127,110 @@ fn plain(text: &str) -> String {
     out
 }
 
+/// Nesting of link labels processed as markdown; deeper labels are text.
+const MAX_LINK_DEPTH: usize = 8;
+
+/// Positions computed once per paragraph so inline parsing stays linear:
+/// every scan the parser needs (a link's closing bracket, its target's
+/// end, a code span's closing run) is a lookup instead of a search to the
+/// end of the paragraph. A paragraph of `[` characters, or of unclosed
+/// links, used to take quadratic time on every compile.
+struct Marks {
+    /// For each `[`, its matching `]` (bracket depth, as written).
+    close: Vec<Option<usize>>,
+    /// For each index, the next `)` at or after it.
+    next_paren: Vec<Option<usize>>,
+    /// For each index, the next `]` at or after it.
+    next_bracket: Vec<Option<usize>>,
+    /// Starts of backtick runs by run length, ascending.
+    runs: std::collections::BTreeMap<usize, Vec<usize>>,
+}
+
+impl Marks {
+    fn new(chars: &[char]) -> Marks {
+        let n = chars.len();
+        let mut close = vec![None; n];
+        let mut open: Vec<usize> = vec![];
+        for (j, &c) in chars.iter().enumerate() {
+            match c {
+                '[' => open.push(j),
+                ']' => {
+                    if let Some(o) = open.pop() {
+                        close[o] = Some(j);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut next_paren = vec![None; n + 1];
+        let mut next_bracket = vec![None; n + 1];
+        for j in (0..n).rev() {
+            next_paren[j] = if chars[j] == ')' {
+                Some(j)
+            } else {
+                next_paren[j + 1]
+            };
+            next_bracket[j] = if chars[j] == ']' {
+                Some(j)
+            } else {
+                next_bracket[j + 1]
+            };
+        }
+        let mut runs: std::collections::BTreeMap<usize, Vec<usize>> = Default::default();
+        let mut j = 0;
+        while j < n {
+            if chars[j] == '`' {
+                let len = chars[j..].iter().take_while(|&&c| c == '`').count();
+                runs.entry(len).or_default().push(j);
+                j += len;
+            } else {
+                j += 1;
+            }
+        }
+        Marks {
+            close,
+            next_paren,
+            next_bracket,
+            runs,
+        }
+    }
+
+    /// The first backtick run of exactly `ticks` starting at or after `from`.
+    fn code_close(&self, from: usize, ticks: usize) -> Option<usize> {
+        let starts = self.runs.get(&ticks)?;
+        starts.get(starts.partition_point(|&s| s < from)).copied()
+    }
+}
+
 /// Inline markdown of one paragraph.
 fn inline(text: &str) -> String {
     let chars: Vec<char> = text.chars().collect();
+    let marks = Marks::new(&chars);
     let mut out = String::with_capacity(text.len());
-    let mut i = 0;
-    while i < chars.len() {
+    inline_range(&chars, &marks, 0, chars.len(), 0, &mut out);
+    out.trim().to_string()
+}
+
+/// Inline markdown of `chars[from..to]`, appended to `out`. `depth` is the
+/// number of link labels this range is nested in.
+fn inline_range(
+    chars: &[char],
+    marks: &Marks,
+    from: usize,
+    to: usize,
+    depth: usize,
+    out: &mut String,
+) {
+    let mut i = from;
+    while i < to {
         let c = chars[i];
         match c {
             '`' => {
-                let ticks = chars[i..].iter().take_while(|&&c| c == '`').count();
-                let close = (i + ticks..chars.len()).find(|&j| {
-                    chars[j..].iter().take_while(|&&c| c == '`').count() == ticks
-                        && (j == 0 || chars[j - 1] != '`')
-                });
-                match close {
+                let ticks = chars[i..to].iter().take_while(|&&c| c == '`').count();
+                match marks
+                    .code_close(i + ticks, ticks)
+                    .filter(|&j| j + ticks <= to)
+                {
                     Some(j) => {
                         let inner: String = chars[i + ticks..j].iter().collect();
                         out.push_str(inner.trim());
@@ -153,10 +242,12 @@ fn inline(text: &str) -> String {
                     }
                 }
             }
-            '!' if chars.get(i + 1) == Some(&'[') => i += 1,
-            '[' => match link(&chars, i) {
-                Some((label, next)) => {
-                    out.push_str(&inline(&label));
+            '!' if i + 1 < to && chars[i + 1] == '[' => i += 1,
+            '[' => match link(chars, marks, i, to).filter(|_| depth < MAX_LINK_DEPTH) {
+                Some((label_end, next)) => {
+                    let mut label = String::new();
+                    inline_range(chars, marks, i + 1, label_end, depth + 1, &mut label);
+                    out.push_str(label.trim());
                     i = next;
                 }
                 None => {
@@ -164,7 +255,7 @@ fn inline(text: &str) -> String {
                     i += 1;
                 }
             },
-            '*' | '_' if emphasis(&chars, i) => i += 1,
+            '*' | '_' if emphasis(chars, i) => i += 1,
             c if c.is_whitespace() => {
                 if !out.ends_with(' ') {
                     out.push(' ');
@@ -177,36 +268,19 @@ fn inline(text: &str) -> String {
             }
         }
     }
-    out.trim().to_string()
 }
 
-/// `[label](target)` or `[label][ref]` starting at `start`: the label and
-/// the index after the link.
-fn link(chars: &[char], start: usize) -> Option<(String, usize)> {
-    let mut depth = 0;
-    let mut end = None;
-    for (j, &c) in chars.iter().enumerate().skip(start) {
-        match c {
-            '[' => depth += 1,
-            ']' => {
-                depth -= 1;
-                if depth == 0 {
-                    end = Some(j);
-                    break;
-                }
-            }
-            _ => {}
-        }
-    }
-    let end = end?;
-    let label: String = chars[start + 1..end].iter().collect();
-    let close = match chars.get(end + 1) {
-        Some('(') => ')',
-        Some('[') => ']',
+/// `[label](target)` or `[label][ref]` starting at `start` and ending
+/// before `to`: the end of the label (its `]`) and the index after the link.
+fn link(chars: &[char], marks: &Marks, start: usize, to: usize) -> Option<(usize, usize)> {
+    let end = marks.close[start].filter(|&e| e < to)?;
+    let target_end = match chars.get(end + 1) {
+        Some('(') if end + 2 <= to => marks.next_paren[end + 2],
+        Some('[') if end + 2 <= to => marks.next_bracket[end + 2],
         _ => return None,
-    };
-    let target_end = (end + 2..chars.len()).find(|&j| chars[j] == close)?;
-    Some((label, target_end + 1))
+    }
+    .filter(|&j| j < to)?;
+    Some((end, target_end + 1))
 }
 
 /// Whether the `*` or `_` at `i` is an emphasis marker: doubled, or
