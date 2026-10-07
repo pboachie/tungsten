@@ -116,6 +116,13 @@ pub(crate) fn op_doc(plan: &Plan<'_>, info: &OpInfo<'_>, shape: &OpShape<'_>) ->
     if shape.page_item.is_some() {
         parts.push("`.pages()` iterates every page.".into());
     }
+    if matches!(shape.success.text.as_str(), "void") || shape.success.text.ends_with(" | undefined")
+    {
+        parts.push("A success response without a body yields `value: undefined`.".into());
+    }
+    if let Some(cluster) = &a.cluster {
+        parts.push(format!("Cluster: `{cluster}`."));
+    }
     if op.deprecated {
         parts.push("@deprecated".into());
     }
@@ -378,9 +385,9 @@ pub(crate) fn client_file(plan: &Plan<'_>, has_macros: bool, header: &str) -> St
     w.blank();
     w.line("constructor(options: ClientOptions = {}) {");
     w.indent();
-    w.line("// `operations` lets the runtime resolve operations by id (verification");
-    w.line("// hooks, endpoint previews); a runtime without that option ignores it.");
-    w.line("this.core = new ClientCore(api, Object.assign({}, options, { operations }));");
+    w.line("// Every operation is registered so the runtime resolves them by id");
+    w.line("// (verification hooks, endpoint previews, macro steps).");
+    w.line("this.core = new ClientCore(api, { ...options, operations: [...operations, ...(options.operations ?? [])] });");
     if has_macros {
         w.line("this.macros = new Macros(this.core);");
     }

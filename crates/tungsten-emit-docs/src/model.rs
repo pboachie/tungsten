@@ -381,10 +381,24 @@ fn scheme(s: &AuthScheme) -> String {
             };
             format!("{name} (API key in {at} {wire_name})")
         }
-        AuthScheme::HttpBearer { name, format, .. } => match format {
-            Some(f) => format!("{name} (bearer token, format {f})"),
-            None => format!("{name} (bearer token)"),
-        },
+        AuthScheme::HttpBearer {
+            name,
+            format,
+            prefix,
+            env,
+            ..
+        } => {
+            let mut notes = vec!["bearer token".to_string()];
+            match (prefix, format) {
+                (Some(p), _) => notes.push(format!("must start with {p}")),
+                (None, Some(f)) => notes.push(format!("format {f}")),
+                (None, None) => {}
+            }
+            if let Some(e) = env {
+                notes.push(format!("from ${e}"));
+            }
+            format!("{name} ({})", notes.join(", "))
+        }
         AuthScheme::HttpBasic { name, .. } => format!("{name} (HTTP basic)"),
         AuthScheme::OAuth2 { name, flows, .. } => {
             let kinds: Vec<&str> = flows.iter().map(|f| f.kind.as_str()).collect();

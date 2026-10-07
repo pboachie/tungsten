@@ -20,7 +20,7 @@ use crate::models::{
 };
 use crate::options::Options;
 use crate::plan::{OpInfo, Plan, unique};
-use crate::ts::{Js, doc_summary, doc_text, paragraphs, prop_key, string_lit};
+use crate::ts::{Js, doc_summary, doc_text, paragraphs, prop_key};
 
 /// The error categories of the runtime contract (`Category` in types.ts).
 pub(crate) const CATEGORIES: &[&str] = &[
@@ -735,20 +735,25 @@ fn descriptor_js(plan: &Plan<'_>, info: &OpInfo<'_>, shape: &OpShape<'_>) -> Js 
     let rpc = op.rpc.as_ref().map_or_else(
         || Js::Raw("null".into()),
         |r| {
-            let mut args = vec![
-                string_lit(&r.discriminator_field),
-                string_lit(&r.discriminator_value),
-                string_lit(&r.params_field),
+            let mut entries = vec![
+                ("field", Js::str(&r.discriminator_field)),
+                ("value", Js::str(&r.discriminator_value)),
+                ("paramsField", Js::str(&r.params_field)),
             ];
+            // `constants` is optional in the contract: present only when
+            // the envelope has constant members (JSON-RPC `jsonrpc`).
             if !r.constants.is_empty() {
-                args.push(crate::ts::json_lit(&serde_json::Value::Object(
-                    r.constants
-                        .iter()
-                        .map(|(k, v)| (k.clone(), v.clone()))
-                        .collect(),
-                )));
+                entries.push((
+                    "constants",
+                    Js::json(&serde_json::Value::Object(
+                        r.constants
+                            .iter()
+                            .map(|(k, v)| (k.clone(), v.clone()))
+                            .collect(),
+                    )),
+                ));
             }
-            Js::Raw(format!("rpc({})", args.join(", ")))
+            Js::obj(entries)
         },
     );
     let status = match &op.status {
@@ -790,10 +795,26 @@ fn descriptor_js(plan: &Plan<'_>, info: &OpInfo<'_>, shape: &OpShape<'_>) -> Js 
         ("agent", agent_js(&op.agent)),
         ("request", Js::Raw(request)),
     ];
+    let summary = op_summary(op);
     if let Some(z) = &shape.response_zod {
         entries.push(("response", Js::Raw(format!("toSchemaLike({z})"))));
     }
+    entries.push((
+        "summary",
+        Js::opt_str((!summary.is_empty()).then_some(summary.as_str())),
+    ));
     Js::obj(entries)
+}
+
+/// `OperationDescriptor.summary`: the pruned agent doc (`compact_doc`),
+/// else the spec summary, collapsed to one line; empty when neither exists.
+pub(crate) fn op_summary(op: &tungsten_ir::Operation) -> String {
+    let text = if op.agent.compact_doc.trim().is_empty() {
+        doc_summary(op.doc.as_ref())
+    } else {
+        op.agent.compact_doc.clone()
+    };
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// TG0712 for each OpenID Connect scheme: the SDK sends its credential as
@@ -836,8 +857,8 @@ fn auth_js(ir: &Ir) -> Js {
                 ),
                 ("wire", Js::str(wire_name)),
             ]),
-            AuthScheme::HttpBearer { name, .. } => bearer_js(name),
-            AuthScheme::OpenIdConnect { name, .. } => bearer_js(name),
+            AuthScheme::HttpBearer { name, prefix, .. } => bearer_js(name, prefix.as_deref()),
+            AuthScheme::OpenIdConnect { name, .. } => bearer_js(name, None),
             AuthScheme::HttpBasic { name, .. } => Js::obj(vec![
                 ("kind", Js::str("http_basic")),
                 ("name", Js::str(name)),
@@ -903,20 +924,42 @@ fn auth_js(ir: &Ir) -> Js {
     Js::Array(out)
 }
 
-/// An `http_bearer` descriptor. The IR's `bearerFormat` documents the token
-/// (`JWT`) and is not a required prefix, so `prefix` is null.
-fn bearer_js(name: &str) -> Js {
+/// An `http_bearer` descriptor. `prefix` comes from the auth profile
+/// (`HttpBearer.prefix`); the spec's `bearerFormat` only documents the token
+/// (`JWT`) and is never a required prefix.
+fn bearer_js(name: &str, prefix: Option<&str>) -> Js {
     Js::obj(vec![
         ("kind", Js::str("http_bearer")),
         ("name", Js::str(name)),
-        ("prefix", Js::Raw("null".into())),
+        ("prefix", Js::opt_str(prefix)),
     ])
 }
 
+/// `ApiDescriptor.nonJson` from `AgentModel.non_json`, in manifest order.
+/// An entry whose category is outside the runtime's closed set is left out
+/// (the agent compiler already rejects it).
+fn non_json_js(ir: &Ir) -> Js {
+    Js::Array(
+        ir.agent
+            .non_json
+            .iter()
+            .filter(|e| CATEGORIES.contains(&e.category.as_str()))
+            .map(|e| {
+                Js::obj(vec![
+                    ("status", Js::num(e.status)),
+                    ("media", Js::str(&e.media)),
+                    ("category", Js::str(&e.category)),
+                    ("retryable", Js::str(retryable_str(e.retryable))),
+                    ("text", Js::opt_str(e.text.as_deref())),
+                ])
+            })
+            .collect(),
+    )
+}
+
 /// The `ApiDescriptor`. Every IR field the runtime reads is mapped here, in
-/// one place: `errorCodes`, `ambiguousStatuses` and `gates` from
-/// `Ir.agent`. `nonJson` is empty because this IR version carries no
-/// non-JSON error mapping.
+/// one place: `errorCodes`, `ambiguousStatuses`, `nonJson` and `gates` from
+/// `Ir.agent`.
 fn api_js(plan: &Plan<'_>, opts: &Options) -> Js {
     let ir = plan.ir;
     Js::obj(vec![
@@ -948,7 +991,7 @@ fn api_js(plan: &Plan<'_>, opts: &Options) -> Js {
                     .collect(),
             ),
         ),
-        ("nonJson", Js::Array(vec![])),
+        ("nonJson", non_json_js(ir)),
         (
             "gates",
             Js::Object(
@@ -971,7 +1014,6 @@ pub(crate) fn descriptors_file(
 ) -> String {
     let mut body = Writer::new("  ");
     let mut uses = Uses::default();
-    let mut needs_rpc = false;
     let api_text = api_js(plan, opts).render("  ", "export const api: ApiDescriptor = ".len());
     body.doc(
         CommentStyle::JsDoc,
@@ -983,7 +1025,6 @@ pub(crate) fn descriptors_file(
         uses.pattern |= shape.uses.pattern;
         uses.namespaces
             .extend(shape.uses.namespaces.iter().cloned());
-        needs_rpc |= info.op.rpc.is_some();
         body.blank();
         write_args_type(&mut body, info, shape);
         body.blank();
@@ -1004,7 +1045,7 @@ pub(crate) fn descriptors_file(
     body.blank();
     body.doc(
         CommentStyle::JsDoc,
-        "Every callable operation, so the runtime can resolve operations by id (verification hooks, endpoint previews).",
+        "Every callable operation. The client passes them as `ClientOptions.operations`, so the runtime resolves operations by id (verification hooks, endpoint previews, macro steps).",
     );
     let list = crate::ts::Js::Array(plan.ops.iter().map(|o| Js::Raw(o.key.clone())).collect());
     let prefix = "export const operations: OperationDescriptor[] = ";
@@ -1015,9 +1056,6 @@ pub(crate) fn descriptors_file(
     imports.add_type("@tungsten/runtime", "OperationDescriptor");
     imports.add("zod", "z");
     imports.add("./internal.js", "toSchemaLike");
-    if needs_rpc {
-        imports.add("./internal.js", "rpc");
-    }
     if uses.integer {
         imports.add("./internal.js", "integer");
     }

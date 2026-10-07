@@ -86,6 +86,7 @@ impl AuthTable {
         for (name, defs) in by_name {
             table.add_definitions(cx, namespaces, &name, defs);
         }
+        table.apply_bearer_profiles(cx);
         table.add_composites(cx);
         table
             .schemes
@@ -136,6 +137,33 @@ impl AuthTable {
             self.names
                 .insert((d.namespace, name.to_string()), qualified.clone());
             self.schemes.push(renamed(d.scheme, qualified));
+        }
+    }
+
+    /// A non-composite profile with `bearer` configures the HTTP bearer
+    /// scheme of the same name (spec or IR name): its required token
+    /// `prefix` and the `env` variable the token is read from.
+    fn apply_bearer_profiles(&mut self, cx: &Ctx<'_>) {
+        for (profile_name, profile) in &cx.cfg.auth_profiles {
+            let (None, Some(bearer)) = (&profile.composite, &profile.bearer) else {
+                continue;
+            };
+            let targets: BTreeSet<&String> = self
+                .names
+                .iter()
+                .filter(|((_, spec), ir)| *ir == profile_name || spec == profile_name)
+                .map(|(_, ir)| ir)
+                .collect();
+            for scheme in &mut self.schemes {
+                if let AuthScheme::HttpBearer {
+                    name, prefix, env, ..
+                } = scheme
+                    && targets.contains(name)
+                {
+                    *prefix = bearer.prefix.clone();
+                    *env = bearer.env.clone();
+                }
+            }
         }
     }
 
@@ -405,6 +433,8 @@ fn scheme_of(name: &str, v: &Value) -> Result<AuthScheme, String> {
                     name,
                     format: str_of(v, "bearerFormat").map(str::to_string),
                     doc,
+                    prefix: None,
+                    env: None,
                 }),
                 "basic" => Ok(AuthScheme::HttpBasic { name, doc }),
                 other => Err(format!("http scheme `{other}`")),

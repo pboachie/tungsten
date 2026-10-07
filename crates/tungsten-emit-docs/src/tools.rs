@@ -137,7 +137,52 @@ fn operation_meta(op: &Operation) -> Value {
     if let OperationStatus::Gated { gate } = &op.status {
         meta.insert("gate".into(), json!(gate.env_var));
     }
+    if let Some(cluster) = &op.agent.cluster {
+        meta.insert("cluster".into(), json!(cluster));
+    }
     Value::Object(meta)
+}
+
+/// The rules of a macro an agent must know before calling it: the tier,
+/// macro-level confirmation, caller-owned keys its steps need, one-time
+/// secrets in its output.
+fn macro_description(model: &Model<'_>, m: &MacroDocs<'_>) -> String {
+    let mac = m.mac;
+    let mut notes = vec![safety(mac.safety).to_string(), "macro".to_string()];
+    match mac.safety {
+        Safety::Destructive => notes.push("needs confirmation for the whole run".into()),
+        Safety::Irreversible => {
+            notes.push("needs a confirmation token from a preview of the macro".into())
+        }
+        Safety::ReadOnly | Safety::Mutating => {}
+    }
+    let steps = mac.steps.as_array().map(Vec::as_slice).unwrap_or_default();
+    let mut keyed: Vec<&str> = vec![];
+    for step in steps {
+        let Some(op) = step
+            .get("operation")
+            .and_then(Value::as_str)
+            .and_then(|id| model.find(id))
+            .map(|(_, c)| c.op)
+        else {
+            continue;
+        };
+        if op.agent.idempotency.policy == IdempotencyKind::CallerOwned
+            && !keyed.contains(&op.id.0.as_str())
+        {
+            keyed.push(&op.id.0);
+        }
+    }
+    if !keyed.is_empty() {
+        notes.push(format!(
+            "caller-owned idempotency key for {}: persist it and reuse it on every retry",
+            keyed.join(", ")
+        ));
+    }
+    if mac.shown_once {
+        notes.push("returns a secret once".into());
+    }
+    format!("{} [{}]", macro_summary(mac), notes.join("; "))
 }
 
 /// A macro tool: the arguments of the operation it extends plus the
@@ -163,8 +208,27 @@ fn macro_tool(model: &Model<'_>, m: &MacroDocs<'_>) -> Value {
     }
     json!({
         "name": m.tool,
-        "description": format!("{} [{}; macro]", macro_summary(m.mac), safety(m.mac.safety)),
+        "description": macro_description(model, m),
         "parameters": params,
-        "x-tungsten": { "macro": m.mac.name.0, "safety": safety(m.mac.safety) },
+        "x-tungsten": macro_meta(m),
     })
+}
+
+fn macro_meta(m: &MacroDocs<'_>) -> Value {
+    let mut meta = Map::new();
+    meta.insert("macro".into(), json!(m.mac.name.0));
+    meta.insert("safety".into(), json!(safety(m.mac.safety)));
+    if let Some(cluster) = &m.mac.cluster {
+        meta.insert("cluster".into(), json!(cluster));
+    }
+    if !m.mac.sensitive_response_fields.is_empty() {
+        meta.insert(
+            "sensitive_response_fields".into(),
+            json!(m.mac.sensitive_response_fields),
+        );
+    }
+    if m.mac.shown_once {
+        meta.insert("shown_once".into(), json!(true));
+    }
+    Value::Object(meta)
 }

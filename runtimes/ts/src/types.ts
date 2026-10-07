@@ -81,6 +81,10 @@ export interface Verification {
   error?: Diagnostic;
 }
 
+/** The outcome of a call. A success response without a body (204, or any
+ * success status the spec declares without content) has `value: undefined`;
+ * generated SDKs type such operations as `void` (or `T | undefined` when the
+ * operation can also answer with a body). */
 export type Result<T> =
   | { ok: true; value: T; meta: ResponseMeta; verification?: Verification }
   | { ok: false; error: Diagnostic };
@@ -96,9 +100,10 @@ export type ParamStyle = "simple" | "form" | "label" | "matrix" | "space_delimit
 export type ParamRole = "plain" | "idempotency_key" | "dry_run" | "origin" | "auth";
 
 export interface ParamDescriptor {
-  /** Key in the generated method's args object. Roles `idempotency_key`
-   * and `origin` are not args: they come from `CallOptions.idempotencyKey`
-   * and the auth profile, and their `name` is informational. */
+  /** Key in the generated method's args object. Roles `idempotency_key`,
+   * `origin` and `auth` are not args: they come from
+   * `CallOptions.idempotencyKey` and the auth profile (`ClientOptions.auth`),
+   * and their `name` is informational. */
   name: string;
   /** Name on the wire. */
   wire: string;
@@ -216,6 +221,9 @@ export interface OperationDescriptor {
 
 export type AuthSchemeDescriptor =
   | { kind: "api_key"; name: string; in: "header" | "query" | "cookie"; wire: string }
+  /** `prefix`: the token must start with it (tungsten.yml
+   * `auth_profiles.<name>.bearer.prefix`, e.g. `ztw_`); checked before any
+   * request is sent, and a mismatch is `AUTH_FAILED` with zero network calls. */
   | { kind: "http_bearer"; name: string; prefix: string | null }
   | { kind: "http_basic"; name: string }
   | { kind: "oauth2"; name: string; tokenUrl: string | null; scopes: string[] }
@@ -377,7 +385,9 @@ export interface MacroStep {
   operation: string;
   args: unknown;
   as: string | null;
-  /** `poll` only: predicate on the step's success body. */
+  /** `poll` only: predicate on the step's success body. When the budget
+   * runs out before it holds, the step's `as` name is bound to `null`, so
+   * an output like `{expr: "$status == null"}` reports the timeout. */
   until: Predicate | null;
   interval_ms: number | null;
   budget_ms: unknown;
@@ -385,15 +395,31 @@ export interface MacroStep {
   max_pages: number | null;
 }
 
-/** A compiled macro (`tungsten_ir::Macro`). */
+/** A compiled macro (`tungsten_ir::Macro`).
+ *
+ * Confirmation is macro-level: when the macro's tier (the strictest of its
+ * declared `safety` and its steps' tiers) is `destructive` or
+ * `irreversible`, `runMacro` requires `confirm` like an operation of that
+ * tier, with a token from `previewMacro` bound to the macro name and its
+ * exact input. That one confirmation authorizes every step of the run;
+ * steps never ask for their own tokens, since their arguments may depend on
+ * earlier steps' results. */
 export interface MacroDescriptor {
   name: string;
   summary: string;
   safety: Safety;
   steps: MacroStep[];
   output: unknown;
-  /** The macro input: an operation's args (`extends`) plus added fields. */
+  /** The macro input: an operation's args (`extends`) plus added fields.
+   * An added field's JSON Schema `default` is applied when the input
+   * omits it. */
   input: { extends: string | null; add: Record<string, unknown> };
+  /** Output fields carrying secrets (dotted paths); redacted in traces. */
+  sensitiveResponseFields?: string[];
+  /** The output holds values the API returns only once. */
+  shownOnce?: boolean;
+  /** Disclosure cluster (agent.yml `disclosure.clusters`). */
+  cluster?: string | null;
 }
 
 /** Further `ClientCore` methods beyond {@link ClientCoreApi}. */
@@ -402,8 +428,15 @@ export interface ClientCoreExtensions {
   register(...ops: OperationDescriptor[]): void;
   /** A registered operation by id. */
   operation(id: string): OperationDescriptor | undefined;
-  /** Run a compiled macro; returns its output or the first failing step's envelope. */
+  /** Run a compiled macro; returns its output or the first failing step's
+   * envelope. A `destructive` or `irreversible` macro needs `opts.confirm`
+   * (see {@link MacroDescriptor}). */
   runMacro<T>(macro: MacroDescriptor, input: Record<string, unknown>, opts?: CallOptions): Promise<Result<T>>;
+  /** Preview a macro without sending anything: validates and renders its
+   * first step, lists every step's effects and, unless the macro is
+   * read-only, returns a confirmation token bound to the macro and this
+   * exact input. */
+  previewMacro(macro: MacroDescriptor, input: Record<string, unknown>, opts?: CallOptions): Promise<Result<PreviewResult>>;
 }
 
 /** What `ClientCore` (implemented in `client.ts`) offers generated code. */

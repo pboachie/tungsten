@@ -96,6 +96,16 @@ const MACRO_PAGE_LIMIT = 100;
 /** Why a request is being prepared. */
 type Purpose = "call" | "preview" | "server_preview";
 
+/** Marks the call options of a macro step whose run was confirmed at the
+ * macro level. Module-private, so callers cannot set it. */
+const MACRO_CONFIRMED: unique symbol = Symbol("tungsten.macroConfirmed");
+type StepOptions = CallOptions & { [MACRO_CONFIRMED]?: true };
+
+const SAFETY_RANK: Readonly<Record<string, number>> = { read_only: 0, mutating: 1, destructive: 2, irreversible: 3 };
+
+/** Placeholder for macro step arguments only known after earlier steps. */
+const LATER = "<from an earlier step>";
+
 /** A request ready to send, with its redacted rendering. */
 interface Prepared {
   op: OperationDescriptor;
@@ -318,6 +328,17 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     }
   }
 
+  /** Preview a macro: no request is sent. Validates and renders the first
+   * step, lists the effects of every step, and returns a confirmation token
+   * bound to the macro and this exact input unless the macro is read-only. */
+  async previewMacro(macro: MacroDescriptor, input: Record<string, unknown>, opts?: CallOptions): Promise<Result<PreviewResult>> {
+    try {
+      return await this.#previewMacro(macro, input, this.#callOptions(opts));
+    } catch (error) {
+      return fail(this.#internal({ id: safeName(macro, "name", "<unknown macro>") }, error, "previewing the macro"));
+    }
+  }
+
   // ------------------------------------------------------------ internals
 
   #callOptions(opts: unknown): CallOptions {
@@ -473,23 +494,29 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
   }
 
   async #checkConfirmation(op: OperationDescriptor, args: Record<string, unknown>, opts: CallOptions): Promise<Failure | null> {
-    const safety = op.agent.safety;
+    if ((opts as StepOptions)[MACRO_CONFIRMED] === true) return null;
+    return this.#confirmed(op.id, op.id, op.agent.safety, args, opts.confirm, "preview(...)");
+  }
+
+  /** The confirmation rule of planning/04 for one tier: `destructive`
+   * accepts `true` or a token, `irreversible` only a token issued for
+   * `subject` (an operation id, or `macro:<name>`) and these exact args. */
+  async #confirmed(id: string, subject: string, safety: string, args: unknown, confirm: unknown, previewCall: string): Promise<Failure | null> {
     if (safety !== "destructive" && safety !== "irreversible") return null;
-    const confirm = opts.confirm;
-    const how = "call preview(...) with the same arguments and pass its confirmation_token as confirm";
+    const how = `call ${previewCall} with the same arguments and pass its confirmation_token as confirm`;
     const required = (remediation: string): Failure =>
-      fail(diagnostic(op.id, "CONFIRMATION_REQUIRED", { failed_parameter: "confirm", expected: "a confirmation_token from preview()", remediation }));
+      fail(diagnostic(id, "CONFIRMATION_REQUIRED", { failed_parameter: "confirm", expected: "a confirmation_token from preview()", remediation }));
     if (confirm === true) {
       if (safety === "destructive") return null;
-      return required(`${op.id} is irreversible, so confirm: true is not accepted: ${how}.`);
+      return required(`${id} is irreversible, so confirm: true is not accepted: ${how}.`);
     }
     if (typeof confirm !== "string" || confirm === "") {
-      return required(`${op.id} is ${safety}: ${how}${safety === "destructive" ? " (or pass confirm: true)" : ""}.`);
+      return required(`${id} is ${safety}: ${how}${safety === "destructive" ? " (or pass confirm: true)" : ""}.`);
     }
-    const check = await checkToken(this.#confirmationKey, confirm, op.id, args, this.#now());
+    const check = await checkToken(this.#confirmationKey, confirm, subject, args, this.#now());
     if (check === "valid") return null;
     if (check === "expired") return required(`The confirmation token expired (tokens last ${CONFIRMATION_TTL_MS / 60000} minutes): ${how}.`);
-    return required(`The confirmation token was not issued by this client for ${op.id} with exactly these arguments: ${how}.`);
+    return required(`The confirmation token was not issued by this client for ${id} with exactly these arguments: ${how}.`);
   }
 
   // ------------------------------------------------------------- building
@@ -1251,32 +1278,125 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
 
   // --------------------------------------------------------------- macros
 
+  /** The macro's input with the `add` defaults applied, or a failure. */
+  #macroInput(macro: MacroDescriptor, input: unknown, name: string): Step<Record<string, unknown>> {
+    if (!isRecord(input)) {
+      return fail(diagnostic(name, "VALIDATION_FAILED", { failed_parameter: "input", expected: "an object", remediation: `Pass the input of ${name} as one object.` }));
+    }
+    const effective: Record<string, unknown> = { ...input };
+    const add = isRecord(macro.input) && isRecord(macro.input.add) ? macro.input.add : {};
+    for (const [key, schema] of Object.entries(add)) {
+      if (effective[key] === undefined && isRecord(schema) && schema.default !== undefined) effective[key] = schema.default;
+    }
+    return { ok: true, value: effective };
+  }
+
+  /** The macro's steps resolved against the registry, and its effective
+   * tier: the strictest of the declared one and every step's. */
+  #macroPlan(macro: MacroDescriptor, name: string): Step<{ steps: Array<{ step: MacroStep; op: OperationDescriptor }>; safety: string }> {
+    const invalid = (remediation: string): Failure =>
+      fail(diagnostic(name, "VALIDATION_FAILED", { failed_parameter: "macro", expected: "a valid macro descriptor", remediation }));
+    if (!isRecord(macro) || !Array.isArray(macro.steps)) return invalid("The macro descriptor has no steps; regenerate the SDK.");
+    const steps: Array<{ step: MacroStep; op: OperationDescriptor }> = [];
+    let safety = typeof macro.safety === "string" && SAFETIES.has(macro.safety) ? macro.safety : "irreversible";
+    for (const [index, step] of (macro.steps.filter(isRecord) as MacroStep[]).entries()) {
+      const op = typeof step.operation === "string" ? this.#registry.get(step.operation) : undefined;
+      if (!op) return invalid(`Step ${index + 1} of ${name} names ${String(step.operation)}, which is not registered with the client.`);
+      const tier = op.agent?.safety;
+      if (typeof tier === "string" && (SAFETY_RANK[tier] ?? 3) > (SAFETY_RANK[safety] ?? 3)) safety = tier;
+      steps.push({ step, op });
+    }
+    return { ok: true, value: { steps, safety } };
+  }
+
+  /** Step arguments evaluated against `scope`; for the step whose args the
+   * input extends, the fields the macro adds are removed. */
+  #stepArgs(macro: MacroDescriptor, step: MacroStep, op: OperationDescriptor, scope: Scope): unknown {
+    let args = evaluateExpr(step.args ?? {}, scope);
+    if (args === undefined || args === null) args = {};
+    const extendsOp = isRecord(macro.input) && typeof macro.input.extends === "string" ? macro.input.extends : null;
+    const added = isRecord(macro.input) && isRecord(macro.input.add) ? Object.keys(macro.input.add) : [];
+    if (isRecord(args) && op.id === extendsOp && added.length > 0) {
+      const trimmed = { ...args };
+      for (const key of added) delete trimmed[key];
+      args = trimmed;
+    }
+    return args;
+  }
+
+  async #previewMacro(macro: MacroDescriptor, input: Record<string, unknown>, opts: CallOptions): Promise<Result<PreviewResult>> {
+    const name = safeName(macro, "name", "<unknown macro>");
+    const plan = this.#macroPlan(macro, name);
+    if (!plan.ok) return plan;
+    const effective = this.#macroInput(macro, input, name);
+    if (!effective.ok) return effective;
+    const { steps, safety } = plan.value;
+    const first = steps[0];
+    if (!first) return fail(diagnostic(name, "VALIDATION_FAILED", { failed_parameter: "macro", expected: "a valid macro descriptor", remediation: `${name} has no steps; regenerate the SDK.` }));
+    const firstArgs = this.#stepArgs(macro, first.step, first.op, { input: effective.value });
+    if (!isRecord(firstArgs)) {
+      return fail(diagnostic(name, "VALIDATION_FAILED", { failed_parameter: "input", expected: "an object", remediation: `Step 1 of ${name} does not evaluate to an argument object.` }));
+    }
+    const { confirm: _confirm, verify: _verify, ...rest } = opts;
+    const prepared = await this.#prepare(first.op, firstArgs, rest, "preview", null);
+    if (!prepared.ok) return prepared;
+    const p = prepared.value;
+    const effects: string[] = [];
+    if (typeof macro.summary === "string" && macro.summary !== "") effects.push(macro.summary);
+    for (const [index, { step, op }] of steps.entries()) {
+      const kind = typeof step.kind === "string" ? step.kind : "call";
+      effects.push(`Step ${index + 1}: ${kind} ${op.id} (${op.agent.safety}).`);
+      const confirmation = op.agent.confirmation;
+      if (confirmation && typeof confirmation.message === "string" && confirmation.message !== "") {
+        // Later steps' arguments that come from earlier results are not known yet.
+        const evaluated = index === 0 ? firstArgs : this.#stepArgs(macro, step, op, { input: effective.value });
+        const args: Record<string, unknown> = isRecord(evaluated) ? { ...evaluated } : {};
+        if (index > 0 && isRecord(step.args)) for (const key of Object.keys(step.args)) if (args[key] === undefined) args[key] = LATER;
+        effects.push(interpolate(confirmation.message, args, op));
+      }
+      if (typeof op.agent.remediationNote === "string" && op.agent.remediationNote !== "") effects.push(op.agent.remediationNote);
+    }
+    if (macro.shownOnce === true) effects.push("The result contains values the API shows only once; store them immediately.");
+    const token = safety === "read_only" ? null : await issueToken(this.#confirmationKey, `macro:${name}`, effective.value, this.#now());
+    const request: RenderedRequest = { method: p.method, url: p.displayUrl, headers: p.headers.toRecord(true), body: p.displayBody };
+    const value: PreviewResult = {
+      operation: name,
+      safety: safety as PreviewResult["safety"],
+      request,
+      effects,
+      confirmation_token: token,
+      expires_in_ms: token === null ? null : CONFIRMATION_TTL_MS,
+    };
+    return { ok: true, value, meta: { status: 0, headers: {}, requestId: null, attempts: 0 } };
+  }
+
   async #runMacro<T>(macro: MacroDescriptor, input: Record<string, unknown>, opts: CallOptions): Promise<Result<T>> {
     const name = safeName(macro, "name", "<unknown macro>");
-    const invalid = (remediation: string, failed = "macro"): Failure =>
-      fail(diagnostic(name, "VALIDATION_FAILED", { failed_parameter: failed, expected: failed === "macro" ? "a valid macro descriptor" : "an object", remediation }));
-    if (!isRecord(macro) || !Array.isArray(macro.steps)) return invalid("The macro descriptor has no steps; regenerate the SDK.");
-    if (!isRecord(input)) return invalid(`Pass the input of ${name} as one object.`, "input");
-    const added = isRecord(macro.input) && isRecord(macro.input.add) ? Object.keys(macro.input.add) : [];
-    const extendsOp = isRecord(macro.input) && typeof macro.input.extends === "string" ? macro.input.extends : null;
-    const scope: Record<string, unknown> = { input };
+    const plan = this.#macroPlan(macro, name);
+    if (!plan.ok) return plan;
+    const effective = this.#macroInput(macro, input, name);
+    if (!effective.ok) return effective;
+    const { steps, safety } = plan.value;
+    const unconfirmed = await this.#confirmed(name, `macro:${name}`, safety, effective.value, opts.confirm, `the macro's preview(...)`);
+    if (unconfirmed) return unconfirmed;
+    const scope: Record<string, unknown> = { input: effective.value };
     const completed: string[] = [];
     let keyUsed = false;
     let meta: ResponseMeta = { status: 0, headers: {}, requestId: null, attempts: 0 };
-    const steps = macro.steps.filter(isRecord) as MacroStep[];
-    for (const [index, step] of steps.entries()) {
-      const op = typeof step.operation === "string" ? this.#registry.get(step.operation) : undefined;
-      if (!op) return invalid(`Step ${index + 1} of ${name} names ${String(step.operation)}, which is not registered with the client.`);
-      let args = evaluateExpr(step.args ?? {}, scope as Scope);
-      if (args === undefined || args === null) args = {};
-      if (!isRecord(args)) return invalid(`Step ${index + 1} of ${name} does not evaluate to an argument object.`);
-      if (op.id === extendsOp && added.length > 0) {
-        const trimmed = { ...args };
-        for (const key of added) delete trimmed[key];
-        args = trimmed;
+    for (const [index, { step, op }] of steps.entries()) {
+      const args = this.#stepArgs(macro, step, op, scope as Scope);
+      if (!isRecord(args)) {
+        return fail(
+          diagnostic(name, "VALIDATION_FAILED", {
+            failed_parameter: "input",
+            expected: "an object",
+            remediation: `Step ${index + 1} of ${name} does not evaluate to an argument object.`,
+          }),
+        );
       }
       const usesKey = op.agent?.idempotency?.policy === "caller_owned" || op.agent?.idempotency?.policy === "auto";
-      const stepOpts: CallOptions = { ...opts, verify: false };
+      const { confirm: _confirm, ...rest } = opts;
+      const stepOpts: StepOptions = { ...rest, verify: false, [MACRO_CONFIRMED]: true };
       if (!usesKey || keyUsed) delete stepOpts.idempotencyKey;
       else if (opts.idempotencyKey !== undefined) keyUsed = true;
       let value: unknown;
@@ -1285,21 +1405,21 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
         const budget = evaluateExpr(step.budget_ms, scope as Scope);
         const result = await this.#poll<unknown>(
           op,
-          args as Record<string, unknown>,
+          args,
           isRecord(step.until) ? step.until : {},
           bounded(step.interval_ms, DEFAULT_POLL_INTERVAL_MS, 0),
           bounded(budget, DEFAULT_MACRO_BUDGET_MS, 0),
           stepOpts,
         );
         if (result.ok) {
-          value = result.value;
+          value = result.timedOut === true ? null : result.value;
           meta = result.meta;
         } else failure = result.error;
       } else if (step.kind === "paginate") {
         const items: unknown[] = [];
         const limit = Math.floor(bounded(step.max_pages, MACRO_PAGE_LIMIT, 1, 10_000));
         let pages = 0;
-        for await (const page of this.#pages<unknown>(op, args as Record<string, unknown>, stepOpts)) {
+        for await (const page of this.#pages<unknown>(op, args, stepOpts)) {
           if (!page.ok) {
             failure = page.error;
             break;
@@ -1311,7 +1431,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
         }
         value = items;
       } else {
-        const result = await this.#call<unknown>(op, args as Record<string, unknown>, stepOpts, null);
+        const result = await this.#call<unknown>(op, args, stepOpts, null);
         if (result.ok) {
           value = result.value;
           meta = result.meta;

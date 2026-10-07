@@ -31,8 +31,6 @@ mod plan;
 mod resources;
 mod ts;
 
-use std::collections::BTreeSet;
-
 use tungsten_core::{Diagnostic, Diagnostics};
 use tungsten_emit::{CommentStyle, Emitter, FileSet, TargetConfig, header};
 use tungsten_ir::Ir;
@@ -98,16 +96,13 @@ pub fn generate(ir: &Ir, opts: &Options) -> Vec<(String, String)> {
             ops::descriptors_file(&plan, &shapes, opts, &header),
         ),
     ];
-    let mut macro_helpers: BTreeSet<&str> = BTreeSet::new();
     if has_macros {
-        let (text, helpers) = macros::macros_file(&plan, &shapes, &macro_plans, &header);
-        macro_helpers = helpers;
-        files.push(("src/macros.ts".into(), text));
+        files.push((
+            "src/macros.ts".into(),
+            macros::macros_file(&plan, &shapes, &macro_plans, &header),
+        ));
     }
-    files.push((
-        "src/internal.ts".into(),
-        package::internal_file(&header, &macro_helpers),
-    ));
+    files.push(("src/internal.ts".into(), package::internal_file(&header)));
     for m in &plan.models {
         files.push((
             format!("src/models/{}.ts", m.file),

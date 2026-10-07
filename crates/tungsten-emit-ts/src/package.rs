@@ -77,33 +77,14 @@ pub(crate) fn custom_template() -> String {
         .to_string()
 }
 
-/// Helpers the generated modules share. Macro helpers are included only
-/// when macros use them.
-pub(crate) fn internal_file(header: &str, macro_helpers: &BTreeSet<&str>) -> String {
-    let mut macro_helpers = macro_helpers.clone();
-    if macro_helpers.contains("isIn") {
-        macro_helpers.insert("jsonEqual");
-    }
+/// Helpers the generated modules share.
+pub(crate) fn internal_file(header: &str) -> String {
     let mut w = Writer::new("  ");
     w.line(header);
     w.blank();
     w.line("// Helpers shared by the generated modules; not part of the package's API.");
     w.blank();
-    let mut runtime_types = vec!["OperationDescriptor", "SchemaLike"];
-    if macro_helpers.contains("laterOptions") {
-        runtime_types.push("CallOptions");
-    }
-    if macro_helpers.contains("invalidInput") {
-        runtime_types.push("Diagnostic");
-    }
-    if macro_helpers.contains("noMeta") {
-        runtime_types.push("ResponseMeta");
-    }
-    runtime_types.sort_unstable();
-    w.line(format!(
-        "import type {{ {} }} from \"@tungsten/runtime\";",
-        runtime_types.join(", ")
-    ));
+    w.line("import type { SchemaLike } from \"@tungsten/runtime\";");
     w.line("import { z } from \"zod\";");
     w.blank();
     w.line(TO_SCHEMA_LIKE);
@@ -111,14 +92,6 @@ pub(crate) fn internal_file(header: &str, macro_helpers: &BTreeSet<&str>) -> Str
     w.line(INTEGER);
     w.blank();
     w.line(WITH_PATTERN);
-    w.blank();
-    w.line(RPC);
-    for (name, code) in MACRO_HELPERS {
-        if macro_helpers.contains(name) {
-            w.blank();
-            w.line(*code);
-        }
-    }
     w.finish()
 }
 
@@ -157,121 +130,6 @@ export function withPattern<S extends { regex(pattern: RegExp): S }>(schema: S, 
   }
   return schema;
 }"#;
-
-const RPC: &str = r#"/** The rpc binding of an operation: the envelope field and value to send, the
- * field holding the args, and envelope members sent verbatim. */
-export function rpc(
-  field: string,
-  value: string,
-  paramsField: string,
-  constants?: Record<string, unknown>,
-): OperationDescriptor["rpc"] {
-  const binding = { field, value, paramsField };
-  return constants === undefined ? binding : Object.assign(binding, { constants });
-}"#;
-
-const MACRO_HELPERS: &[(&str, &str)] = &[
-    (
-        "asArgs",
-        r#"/** A value as an args object (`{}` when it is not an object). */
-export function asArgs(value: unknown): Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
-}"#,
-    ),
-    (
-        "get",
-        r#"/** The value at `path` (own properties only), or undefined. */
-export function get(value: unknown, path: readonly string[]): unknown {
-  let current: unknown = value;
-  for (const key of path) {
-    if (typeof current !== "object" || current === null || !Object.prototype.hasOwnProperty.call(current, key)) {
-      return undefined;
-    }
-    current = (current as Record<string, unknown>)[key];
-  }
-  return current;
-}"#,
-    ),
-    (
-        "invalidInput",
-        r#"/** The envelope for a macro input that cannot be used. */
-export function invalidInput(operation: string, parameter: string, value: unknown, expected: string): { ok: false; error: Diagnostic } {
-  return {
-    ok: false,
-    error: {
-      status: "error",
-      category: "VALIDATION_FAILED",
-      operation,
-      http_status: null,
-      code: null,
-      failed_parameter: parameter,
-      received_value: typeof value === "string" ? value.slice(0, 200) : value,
-      expected,
-      remediation: `Pass ${parameter} as ${expected} and call ${operation} again.`,
-      retryable: "never",
-      retry_after_ms: null,
-      next_action: null,
-      request_id: null,
-      trace: { attempts: 0 },
-    },
-  };
-}"#,
-    ),
-    (
-        "isIn",
-        r#"/** Whether `value` equals one of `options` (JSON equality). */
-export function isIn(value: unknown, options: readonly unknown[]): boolean {
-  return options.some((option) => jsonEqual(value, option));
-}"#,
-    ),
-    (
-        "jsonEqual",
-        r#"/** JSON equality: same primitives, arrays item by item, objects key by key. */
-export function jsonEqual(a: unknown, b: unknown): boolean {
-  if (a === b) return true;
-  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
-  if (Array.isArray(a) || Array.isArray(b)) {
-    return Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((x, i) => jsonEqual(x, b[i]));
-  }
-  const ka = Object.keys(a);
-  const kb = Object.keys(b);
-  return (
-    ka.length === kb.length &&
-    ka.every((k) => Object.prototype.hasOwnProperty.call(b, k) && jsonEqual((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k]))
-  );
-}"#,
-    ),
-    (
-        "laterOptions",
-        r#"/** The options of a macro's later steps: cancellation, timeout and headers,
- * never the first step's idempotency key or confirmation. */
-export function laterOptions(opts: CallOptions | undefined): CallOptions {
-  const later: CallOptions = {};
-  if (opts?.signal !== undefined) later.signal = opts.signal;
-  if (opts?.timeoutMs !== undefined) later.timeoutMs = opts.timeoutMs;
-  if (opts?.headers !== undefined) later.headers = opts.headers;
-  return later;
-}"#,
-    ),
-    (
-        "noMeta",
-        r#"/** Response metadata before any response arrived. */
-export function noMeta(): ResponseMeta {
-  return { status: 0, headers: {}, requestId: null, attempts: 0 };
-}"#,
-    ),
-    (
-        "omit",
-        r#"/** `value` without `keys`, as an args object. */
-export function omit(value: object, keys: readonly string[]): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(value)) {
-    if (!keys.includes(k)) out[k] = v;
-  }
-  return out;
-}"#,
-    ),
-];
 
 /// Where an operation lives on the client (`client.public.webhooks.list`).
 fn client_paths(plan: &Plan<'_>) -> Vec<(usize, String)> {
@@ -490,14 +348,21 @@ pub(crate) fn readme(
         out.push_str("  if (!page.ok) break;\n  for (const item of page.value.items) console.log(item);\n}\n```\n\n");
     }
     if has_macros {
-        out.push_str("## Macros\n\nMulti-step workflows from the agent manifest are methods of `client.macros`.\n\n");
+        out.push_str("## Macros\n\nMulti-step workflows from the agent manifest are methods of `client.macros`, \
+                      run by the runtime from the descriptors in `src/macros.ts`. A macro that is `destructive` or \
+                      `irreversible`, or has such a step, is confirmed once for the whole run: call \
+                      `.preview(input)` on it (nothing is sent) and pass its `confirmation_token` as `confirm`. \
+                      The first failing step's envelope is returned and names the steps already completed.\n\n");
     }
     out.push_str("## Errors\n\nA failed call returns `{ ok: false, error }`, where `error` is the diagnostic envelope:\n\n```json\n");
     out.push_str(
         "{\n  \"status\": \"error\",\n  \"category\": \"VALIDATION_FAILED\",\n  \"operation\": \"<operation id>\",\n  \"http_status\": null,\n  \"code\": null,\n  \"failed_parameter\": \"<args path>\",\n  \"received_value\": null,\n  \"expected\": \"<what was expected>\",\n  \"remediation\": \"<what to do next>\",\n  \"retryable\": \"never\",\n  \"retry_after_ms\": null,\n  \"next_action\": null,\n  \"request_id\": null,\n  \"trace\": { \"attempts\": 0 }\n}\n```\n\n",
     );
-    out.push_str("Branch on `category` and `retryable`: `same_key_only` means retry only with the same \
-                  idempotency key, and `OUTCOME_UNKNOWN` means the request may have been applied.\n\n");
+    out.push_str(
+        "Branch on `category` and `retryable`: `same_key_only` means retry only with the same \
+                  idempotency key, and `OUTCOME_UNKNOWN` means the request may have been applied. \
+                  A success response without a body has `value: undefined`.\n\n",
+    );
     out.push_str("## Extending\n\n`src/custom/index.ts` is yours: it is created once, never overwritten, and exported as `custom`.\n");
     out
 }

@@ -1,14 +1,22 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! `src/macros.ts`: one async method per IR macro, exposed as
-//! `client.macros.<name>`.
+//! `src/macros.ts`: each IR macro as a `MacroDescriptor` constant (data)
+//! and a typed member of `client.macros` that hands it to
+//! `ClientCore.runMacro`, with `.preview()` (`ClientCore.previewMacro`)
+//! for macros that are not read-only. The runtime is the single
+//! implementation of macro semantics: step order, expressions, the
+//! macro-level confirmation (a `destructive` or `irreversible` macro, or one
+//! with such a step, is confirmed once for the whole run), input defaults
+//! and poll timeouts.
 //!
 //! Macros arrive in the canonical form documented on `tungsten_ir::Macro`:
 //! steps (`call`, `poll`, `paginate`) over operation ids, expressions in
 //! which `$input`, `$<as>` and their dotted paths are references, and
-//! `{expr: "<ref> in [..]" | "<ref> == x" | "<ref> != x"}` booleans. A
-//! macro that does not fit the form (unknown operation, reference to a
-//! later step, malformed expression) is not emitted; [`plan_macros`]
-//! reports it as TG0710.
+//! `{expr: "<ref> in [..]" | "<ref> == x" | "<ref> != x"}` booleans. The
+//! emitter checks the form (so the input and output types are exact) and
+//! rewrites the keys of step argument objects from wire names to the
+//! operation's args keys. A macro that does not fit the form (unknown
+//! operation, reference to a later step, malformed expression) is not
+//! emitted; [`plan_macros`] reports it as TG0710.
 
 use std::collections::BTreeSet;
 
@@ -21,12 +29,7 @@ use tungsten_ir::{Macro, Presence, Shape, TypeRef};
 use crate::models::{TypeCx, Uses, resolve, write_imports};
 use crate::ops::{OpShape, is_arg, safety_str};
 use crate::plan::{Plan, unique, with_word};
-use crate::ts::{json_lit, paragraphs, prop_key, string_lit};
-
-/// Poll interval when a poll step gives none.
-const DEFAULT_INTERVAL_MS: u64 = 1000;
-/// Poll budget when a poll step gives none.
-const DEFAULT_BUDGET_MS: u64 = 60000;
+use crate::ts::{Js, json_lit, paragraphs, prop_key, string_lit};
 
 static NULL: Value = Value::Null;
 
@@ -75,6 +78,8 @@ pub(crate) struct MacroPlan<'v> {
     pub member: String,
     input_type: String,
     output_type: String,
+    /// Name of the `MacroDescriptor` constant.
+    descriptor: String,
     /// The operation whose args the input extends.
     base: Option<usize>,
     add: Vec<AddField<'v>>,
@@ -117,16 +122,20 @@ pub(crate) fn plan_macros<'v>(plan: &Plan<'v>) -> (Vec<MacroPlan<'v>>, Diagnosti
         .collect();
     let members = unique(&[], &member_words, Role::Method);
     let mut type_words = vec![];
+    let mut const_words = vec![];
     for name in &members {
         let words = naming::split_words(name);
         type_words.push(with_word(&words, "input"));
         type_words.push(with_word(&words, "output"));
+        const_words.push(with_word(&words, "macro"));
     }
-    let types = unique(&[], &type_words, Role::Type);
+    let types = unique(&["Macros"], &type_words, Role::Type);
+    let consts = unique(&[], &const_words, Role::Method);
     for (i, (p, member)) in parsed.iter_mut().zip(members).enumerate() {
         p.member = member;
         p.input_type = types[2 * i].clone();
         p.output_type = types[2 * i + 1].clone();
+        p.descriptor = consts[i].clone();
     }
     (parsed, diags)
 }
@@ -230,6 +239,7 @@ fn parse<'v>(plan: &Plan<'v>, m: &'v Macro) -> Result<MacroPlan<'v>, String> {
         member: String::new(),
         input_type: String::new(),
         output_type: String::new(),
+        descriptor: String::new(),
         base,
         add,
         steps,
@@ -367,13 +377,11 @@ fn schema_ts(schema: &Value) -> String {
     }
 }
 
-/// Code generation state for one macro.
+/// Type computation for one macro's input and output.
 struct Gen<'g, 'v> {
     plan: &'g Plan<'v>,
     shapes: &'g [OpShape<'v>],
     mp: &'g MacroPlan<'v>,
-    input_var: &'static str,
-    helpers: &'g mut BTreeSet<&'static str>,
     /// Model namespaces the macro's types name.
     uses: &'g mut Uses,
 }
@@ -383,148 +391,12 @@ impl Gen<'_, '_> {
         self.mp.steps.iter().map(|s| s.as_name).collect()
     }
 
-    /// The JavaScript value of a reference (typed when it has no path).
-    fn ref_js(&mut self, r: &Ref<'_>) -> String {
-        let (base, path) = match r {
-            Ref::Input(p) => (self.input_var.to_string(), p),
-            Ref::Step(i, p) => {
-                let base = if self.mp.steps[*i].kind == StepKind::Paginate {
-                    format!("step{i}")
-                } else {
-                    format!("step{i}.value")
-                };
-                (base, p)
-            }
-        };
-        if path.is_empty() {
-            base
-        } else {
-            self.helpers.insert("get");
-            format!(
-                "get({base}, [{}])",
-                path.iter()
-                    .map(|p| string_lit(p))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )
-        }
-    }
-
     fn parse<'s>(&self, s: &'s str, upto: usize) -> Option<Ref<'s>> {
         parse_ref(s, &self.names(), upto).ok()
     }
 
-    /// A boolean expression.
-    fn bool_js(&mut self, e: &str, upto: usize) -> String {
-        let Some((left, op, right)) = parse_bool(e) else {
-            return "false".into();
-        };
-        let Some(r) = self.parse(left, upto) else {
-            return "false".into();
-        };
-        let value = self.ref_js(&r);
-        match op {
-            "in" => {
-                self.helpers.insert("isIn");
-                format!("isIn({value}, {})", json_lit(&right))
-            }
-            "==" => {
-                self.helpers.insert("jsonEqual");
-                format!("jsonEqual({value}, {})", json_lit(&right))
-            }
-            _ => {
-                self.helpers.insert("jsonEqual");
-                format!("!jsonEqual({value}, {})", json_lit(&right))
-            }
-        }
-    }
-
-    /// An expression as JavaScript; with `typed`, leaves read through a
-    /// path are cast to their resolved type (for the output).
-    fn expr_js(&mut self, v: &Value, upto: usize, typed: bool) -> String {
-        if let Some(e) = bool_expr(v) {
-            return self.bool_js(e, upto);
-        }
-        match v {
-            Value::String(s) if s.starts_with('$') => {
-                let Some(r) = self.parse(s, upto) else {
-                    return "undefined".into();
-                };
-                let js = self.ref_js(&r);
-                let has_path = matches!(&r, Ref::Input(p) | Ref::Step(_, p) if !p.is_empty());
-                if typed && has_path {
-                    format!("({js} as {})", self.ref_type(&r))
-                } else {
-                    js
-                }
-            }
-            Value::Array(items) => format!(
-                "[{}]",
-                items
-                    .iter()
-                    .map(|i| self.expr_js(i, upto, typed))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
-            Value::Object(map) if map.is_empty() => "{}".into(),
-            Value::Object(map) => format!(
-                "{{ {} }}",
-                map.iter()
-                    .map(|(k, i)| format!("{}: {}", prop_key(k), self.expr_js(i, upto, typed)))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
-            _ => json_lit(v),
-        }
-    }
-
-    /// The args object of step `i`. Object keys that are a parameter's wire
-    /// name become that parameter's args key.
-    fn args_js(&mut self, i: usize) -> String {
-        let step = &self.mp.steps[i];
-        let shape = &self.shapes[step.op];
-        match step.args {
-            Value::String(s) if s == "$input" => {
-                if self.mp.add.is_empty() {
-                    self.input_var.to_string()
-                } else {
-                    self.helpers.insert("omit");
-                    format!(
-                        "omit({}, [{}])",
-                        self.input_var,
-                        self.mp
-                            .add
-                            .iter()
-                            .map(|a| string_lit(a.name))
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    )
-                }
-            }
-            Value::String(s) if s.starts_with('$') => {
-                self.helpers.insert("asArgs");
-                let inner = self.expr_js(step.args, i, false);
-                format!("asArgs({inner})")
-            }
-            Value::Object(map) if !map.is_empty() => {
-                let parts: Vec<String> = map
-                    .iter()
-                    .map(|(k, v)| {
-                        let key = shape
-                            .params
-                            .iter()
-                            .find(|p| is_arg(p.param) && p.param.wire_name == *k)
-                            .map_or(k.as_str(), |p| p.name.as_str());
-                        format!("{}: {}", prop_key(key), self.expr_js(v, i, false))
-                    })
-                    .collect();
-                format!("{{ {} }}", parts.join(", "))
-            }
-            _ => "{}".into(),
-        }
-    }
-
-    /// The TypeScript type of a reference.
+    /// The TypeScript type of a reference. A poll step's value is `null`
+    /// when its budget ran out (`MacroStep.until` in the runtime contract).
     fn ref_type(&mut self, r: &Ref<'_>) -> String {
         let cx = TypeCx::outside(self.plan);
         match r {
@@ -533,10 +405,12 @@ impl Gen<'_, '_> {
                     return self.mp.input_type.clone();
                 };
                 if let Some(a) = self.mp.add.iter().find(|a| a.name == *first) {
-                    return if rest.is_empty() {
-                        format!("{} | undefined", a.ts)
-                    } else {
+                    return if !rest.is_empty() {
                         "unknown".into()
+                    } else if a.default.is_some() {
+                        a.ts.clone()
+                    } else {
+                        format!("{} | undefined", a.ts)
                     };
                 }
                 let Some(base) = self.mp.base else {
@@ -571,11 +445,18 @@ impl Gen<'_, '_> {
                         "unknown".into()
                     };
                 }
+                let polled = step.kind == StepKind::Poll;
                 if path.is_empty() {
-                    return shape.success.text.clone();
+                    let t = &shape.success.text;
+                    return match (polled, t.strip_suffix(" | undefined")) {
+                        (false, _) => t.clone(),
+                        // Keep `| undefined` last: object members read it.
+                        (true, Some(defined)) => format!("{defined} | null | undefined"),
+                        (true, None) => format!("{t} | null"),
+                    };
                 }
                 match &shape.success_ref {
-                    Some(ty) => self.walk(&cx, ty, path, false),
+                    Some(ty) => self.walk(&cx, ty, path, polled),
                     None => "unknown".into(),
                 }
             }
@@ -591,7 +472,9 @@ impl Gen<'_, '_> {
         text
     }
 
-    /// The TypeScript type of the output expression.
+    /// The TypeScript type of the output expression. A reference with a
+    /// path that does not resolve reads as `undefined` (dropped from
+    /// objects), so it is typed with `| undefined` where it may be missing.
     fn out_type(&mut self, v: &Value, upto: usize) -> String {
         if bool_expr(v).is_some() {
             return "boolean".into();
@@ -616,7 +499,16 @@ impl Gen<'_, '_> {
             Value::Object(map) => format!(
                 "{{ {} }}",
                 map.iter()
-                    .map(|(k, i)| format!("{}: {}", prop_key(k), self.out_type(i, upto)))
+                    .map(|(k, i)| {
+                        let t = self.out_type(i, upto);
+                        // A value that can be undefined is dropped from the
+                        // object, so the key is optional.
+                        match t.strip_suffix(" | undefined") {
+                            Some(rest) => format!("{}?: {rest}", prop_key(k)),
+                            None if t == "unknown" => format!("{}?: unknown", prop_key(k)),
+                            None => format!("{}: {t}", prop_key(k)),
+                        }
+                    })
                     .collect::<Vec<_>>()
                     .join("; ")
             ),
@@ -682,62 +574,291 @@ fn walk_type(
     (t, Some(cur))
 }
 
-/// The source of `src/macros.ts`, and the `internal.ts` helpers it uses.
+/// Step arguments for the descriptor: keys of an argument object that are
+/// a parameter's wire name become that parameter's args key.
+fn step_args(shape: &OpShape<'_>, args: &Value) -> Value {
+    match args {
+        Value::Object(map) => Value::Object(
+            map.iter()
+                .map(|(k, v)| {
+                    let key = shape
+                        .params
+                        .iter()
+                        .find(|p| is_arg(p.param) && p.param.wire_name == *k)
+                        .map_or_else(|| k.clone(), |p| p.name.clone());
+                    (key, v.clone())
+                })
+                .collect::<Map<String, Value>>(),
+        ),
+        Value::Null => Value::Object(Map::new()),
+        other => other.clone(),
+    }
+}
+
+/// The `MacroDescriptor` literal of a macro.
+fn descriptor_js(plan: &Plan<'_>, shapes: &[OpShape<'_>], mp: &MacroPlan<'_>) -> Js {
+    let m = mp.m;
+    let null = || Js::Raw("null".into());
+    let opt_u64 = |n: Option<u64>| n.map_or_else(null, Js::num);
+    let steps = mp
+        .steps
+        .iter()
+        .map(|s| {
+            Js::obj(vec![
+                ("kind", Js::str(s.kind.as_str())),
+                ("operation", Js::str(&plan.ops[s.op].op.id.0)),
+                ("args", Js::json(&step_args(&shapes[s.op], s.args))),
+                ("as", Js::opt_str(s.as_name)),
+                (
+                    "until",
+                    s.until
+                        .map_or_else(null, |u| Js::json(&Value::Object(u.clone()))),
+                ),
+                ("interval_ms", opt_u64(s.interval_ms)),
+                ("budget_ms", Js::json(s.budget)),
+                ("max_pages", opt_u64(s.max_pages)),
+            ])
+        })
+        .collect();
+    let add: Map<String, Value> = m
+        .input
+        .get("add")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    Js::obj(vec![
+        ("name", Js::str(&m.name.0)),
+        ("summary", Js::str(&m.summary)),
+        ("safety", Js::str(safety_str(m.safety))),
+        ("steps", Js::Array(steps)),
+        ("output", Js::json(&m.output)),
+        (
+            "input",
+            Js::obj(vec![
+                (
+                    "extends",
+                    Js::opt_str(mp.base.map(|b| plan.ops[b].op.id.0.as_str())),
+                ),
+                ("add", Js::json(&Value::Object(add))),
+            ]),
+        ),
+        (
+            "sensitiveResponseFields",
+            Js::strs(&m.sensitive_response_fields),
+        ),
+        ("shownOnce", Js::bool(m.shown_once)),
+        ("cluster", Js::opt_str(m.cluster.as_deref())),
+    ])
+}
+
+/// Whether a macro gets `.preview()`: every macro that is not read-only.
+fn has_preview(mp: &MacroPlan<'_>) -> bool {
+    mp.m.safety != tungsten_ir::Safety::ReadOnly
+}
+
+/// The TSDoc of a macro member: summary, tier and confirmation rule,
+/// steps, keys, one-time secrets and cluster.
+fn macro_doc(plan: &Plan<'_>, mp: &MacroPlan<'_>) -> String {
+    let m = mp.m;
+    let steps: Vec<String> = mp
+        .steps
+        .iter()
+        .enumerate()
+        .map(|(i, s)| {
+            let op = &plan.ops[s.op].op;
+            format!(
+                "{}. `{}` `{}` ({})",
+                i + 1,
+                s.kind.as_str(),
+                op.id.0,
+                safety_str(op.agent.safety)
+            )
+        })
+        .collect();
+    let confirmation = match m.safety {
+        tungsten_ir::Safety::Irreversible => "Cannot be undone: call `.preview()` with the same input first and pass its `confirmation_token` as `{ confirm }`. The one confirmation covers every step of the run.".to_string(),
+        tungsten_ir::Safety::Destructive => "Requires confirmation for the whole run: pass `{ confirm: true }`, or the `confirmation_token` of `.preview()` as `confirm`.".to_string(),
+        _ => String::new(),
+    };
+    let keyed: Vec<String> = mp
+        .steps
+        .iter()
+        .map(|s| plan.ops[s.op].op)
+        .filter(|op| op.agent.idempotency.policy == tungsten_ir::IdempotencyKind::CallerOwned)
+        .map(|op| format!("`{}`", op.id.0))
+        .collect();
+    let key = if keyed.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "Pass `idempotencyKey` for {}: generate it once, persist it with your intent and reuse it on every retry. Only the first step that takes a key receives it.",
+            keyed.join(", ")
+        )
+    };
+    let shown_once = if m.shown_once {
+        format!(
+            "The output includes values shown only once{}: store them immediately.",
+            if m.sensitive_response_fields.is_empty() {
+                String::new()
+            } else {
+                format!(" (`{}`)", m.sensitive_response_fields.join("`, `"))
+            }
+        )
+    } else {
+        String::new()
+    };
+    paragraphs([
+        m.summary.clone(),
+        format!("`{}`. Safety: `{}`.", m.name.0, safety_str(m.safety)),
+        confirmation,
+        format!("Steps:\n{}", steps.join("\n")),
+        key,
+        shown_once,
+        m.cluster
+            .as_deref()
+            .map(|c| format!("Cluster: `{c}`."))
+            .unwrap_or_default(),
+        "The first failing step's envelope is returned; its remediation names the steps already completed.".to_string(),
+    ])
+}
+
+/// The source of `src/macros.ts`.
 pub(crate) fn macros_file(
     plan: &Plan<'_>,
     shapes: &[OpShape<'_>],
     macros: &[MacroPlan<'_>],
     header: &str,
-) -> (String, BTreeSet<&'static str>) {
-    let mut helpers: BTreeSet<&'static str> = BTreeSet::new();
+) -> String {
     let mut namespaces: BTreeSet<String> = BTreeSet::new();
     let mut types = Writer::new("  ");
+    let mut data = Writer::new("  ");
     let mut class = Writer::new("  ");
-    class.doc(
-        CommentStyle::JsDoc,
-        "Multi-step workflows compiled from the agent manifest.",
-    );
-    class.line("export class Macros {");
-    class.indent();
-    class.line("readonly #core: ClientCoreApi;");
-    class.blank();
-    class.line("constructor(core: ClientCoreApi) {");
-    class.line("  this.#core = core;");
-    class.line("}");
+    let mut any_preview = false;
+    let mut uses_input_types = false;
     for mp in macros {
-        for s in &mp.steps {
-            namespaces.extend(shapes[s.op].result_namespaces.iter().cloned());
-        }
         if let Some(b) = mp.base {
             namespaces.extend(shapes[b].uses.namespaces.iter().cloned());
+            uses_input_types = true;
         }
         let mut uses = Uses::default();
-        write_macro(
+        let mut g = Gen {
             plan,
             shapes,
             mp,
-            &mut types,
-            &mut class,
-            &mut helpers,
-            &mut uses,
-        );
+            uses: &mut uses,
+        };
+        write_types(&mut g, &mut types);
         namespaces.extend(uses.namespaces);
+
+        data.blank();
+        data.doc(
+            CommentStyle::JsDoc,
+            &format!("`{}` as data for `ClientCore.runMacro`.", mp.m.name.0),
+        );
+        let prefix = format!("export const {}: MacroDescriptor = ", mp.descriptor);
+        data.line(format!(
+            "{prefix}{};",
+            descriptor_js(plan, shapes, mp).render("  ", prefix.len())
+        ));
+        any_preview |= has_preview(mp);
     }
+    data.blank();
+    data.doc(CommentStyle::JsDoc, "Every macro of the API.");
+    let list = Js::Array(
+        macros
+            .iter()
+            .map(|m| Js::Raw(m.descriptor.clone()))
+            .collect(),
+    );
+    let prefix = "export const macroDescriptors: MacroDescriptor[] = ";
+    data.line(format!("{prefix}{};", list.render("  ", prefix.len())));
+
+    class.blank();
+    class.doc(
+        CommentStyle::JsDoc,
+        "Multi-step workflows compiled from the agent manifest, run by `ClientCore.runMacro`.",
+    );
+    class.line("export class Macros {");
+    class.indent();
+    for mp in macros {
+        class.doc(CommentStyle::JsDoc, &macro_doc(plan, mp));
+        let input = format!(
+            "input{}: {}",
+            if input_optional(shapes, mp) { "?" } else { "" },
+            mp.input_type
+        );
+        class.line(format!(
+            "readonly {}: (({input}, opts?: CallOptions) => Promise<Result<{}>>) & {{",
+            mp.member, mp.output_type
+        ));
+        class.line("  readonly descriptor: MacroDescriptor;");
+        class.line(format!(
+            "  readonly safety: {};",
+            string_lit(safety_str(mp.m.safety))
+        ));
+        if has_preview(mp) {
+            class.line(format!(
+                "  preview({input}, opts?: CallOptions): Promise<Result<PreviewResult>>;"
+            ));
+        }
+        class.line("};");
+    }
+    class.blank();
+    class.line("constructor(core: ClientCoreApi & ClientCoreExtensions) {");
+    class.indent();
+    for mp in macros {
+        let param = if input_optional(shapes, mp) {
+            format!("input: {} = {{}}", mp.input_type)
+        } else {
+            format!("input: {}", mp.input_type)
+        };
+        let d = &mp.descriptor;
+        class.line(format!("this.{} = Object.assign(", mp.member));
+        class.line(format!(
+            "  ({param}, opts?: CallOptions) => core.runMacro<{}>({d}, input, opts),",
+            mp.output_type
+        ));
+        class.line("  {");
+        class.line(format!("    descriptor: {d},"));
+        class.line(format!(
+            "    safety: {} as const,",
+            string_lit(safety_str(mp.m.safety))
+        ));
+        if has_preview(mp) {
+            class.line(format!(
+                "    preview: ({param}, opts?: CallOptions) => core.previewMacro({d}, input, opts),"
+            ));
+        }
+        class.line("  },");
+        class.line(");");
+    }
+    class.dedent();
+    class.line("}");
     class.dedent();
     class.line("}");
 
     let mut imports = Imports::new();
-    for t in ["CallOptions", "ClientCoreApi", "Result"] {
+    for t in [
+        "CallOptions",
+        "ClientCoreApi",
+        "ClientCoreExtensions",
+        "MacroDescriptor",
+        "Result",
+    ] {
         imports.add_type("@tungsten/runtime", t);
     }
-    for h in &helpers {
-        imports.add("./internal.js", h);
+    if any_preview {
+        imports.add_type("@tungsten/runtime", "PreviewResult");
     }
     let mut w = Writer::new("  ");
     w.line(header);
     w.blank();
+    w.line("// Macros: compiled workflows as data, run by the runtime.");
+    w.blank();
     write_imports(&mut w, &imports);
-    w.line("import * as ops from \"./descriptors.js\";");
+    if uses_input_types {
+        w.line("import type * as ops from \"./descriptors.js\";");
+    }
     for ns in &namespaces {
         if let Some(m) = plan.model_ns(ns) {
             w.line(format!(
@@ -750,32 +871,24 @@ pub(crate) fn macros_file(
     out.push('\n');
     out.push_str(&types.finish());
     out.push('\n');
+    out.push_str(&data.finish());
+    out.push('\n');
     out.push_str(&class.finish());
-    (out, helpers)
+    out
 }
 
-fn write_macro(
-    plan: &Plan<'_>,
-    shapes: &[OpShape<'_>],
-    mp: &MacroPlan<'_>,
-    types: &mut Writer,
-    class: &mut Writer,
-    helpers: &mut BTreeSet<&'static str>,
-    uses: &mut Uses,
-) {
-    let has_defaults = mp.add.iter().any(|a| a.default.is_some());
-    let mut g = Gen {
-        plan,
-        shapes,
-        mp,
-        input_var: if has_defaults { "inputs" } else { "input" },
-        helpers,
-        uses,
-    };
+/// Whether the input parameter can be omitted: every args key of the
+/// extended operation is optional and every added field has a default.
+fn input_optional(shapes: &[OpShape<'_>], mp: &MacroPlan<'_>) -> bool {
+    mp.base.is_none_or(|b| shapes[b].all_optional) && mp.add.iter().all(|a| a.default.is_some())
+}
 
-    // Input type.
+/// The input and output types of a macro.
+fn write_types(g: &mut Gen<'_, '_>, types: &mut Writer) {
+    let mp = g.mp;
+    types.blank();
     types.doc(CommentStyle::JsDoc, &format!("Input of `{}`.", mp.m.name.0));
-    let base = mp.base.map(|b| format!("ops.{}", plan.ops[b].args_type));
+    let base = mp.base.map(|b| format!("ops.{}", g.plan.ops[b].args_type));
     if mp.add.is_empty() {
         types.line(format!(
             "export type {} = {};",
@@ -790,7 +903,7 @@ fn write_macro(
             if let Some(d) = a.default {
                 types.doc(
                     CommentStyle::JsDoc,
-                    &format!("@defaultValue `{}`", json_lit(d)),
+                    &format!("@defaultValue `{}` (applied by the runtime)", json_lit(d)),
                 );
             }
             types.line(format!(
@@ -809,147 +922,6 @@ fn write_macro(
         &format!("Output of `{}`.", mp.m.name.0),
     );
     let n = mp.steps.len();
-    types.line(format!(
-        "export type {} = {};",
-        mp.output_type,
-        g.out_type(&mp.m.output, n)
-    ));
-    types.blank();
-
-    // Method.
-    let steps_doc: Vec<String> = mp
-        .steps
-        .iter()
-        .enumerate()
-        .map(|(i, s)| {
-            format!(
-                "{}. `{}` `{}`",
-                i + 1,
-                s.kind.as_str(),
-                plan.ops[s.op].op.id.0
-            )
-        })
-        .collect();
-    class.blank();
-    class.doc(
-        CommentStyle::JsDoc,
-        &paragraphs([
-            mp.m.summary.clone(),
-            format!("Safety: `{}`.", safety_str(mp.m.safety)),
-            format!("Steps:\n{}", steps_doc.join("\n")),
-            if n > 1 {
-                "`opts` apply to the first step; later steps receive only its `signal`, `timeoutMs` and `headers`. The first failing step's result is returned.".to_string()
-            } else {
-                "The step's failure result is returned as is.".to_string()
-            },
-        ]),
-    );
-    let input_optional = mp.base.is_none_or(|b| shapes[b].all_optional)
-        && mp.add.iter().all(|a| a.default.is_some());
-    class.line(format!(
-        "async {}(input: {}{}, opts?: CallOptions): Promise<Result<{}>> {{",
-        mp.member,
-        mp.input_type,
-        if input_optional { " = {}" } else { "" },
-        mp.output_type
-    ));
-    class.indent();
-    class.line("const core = this.#core;");
-    if has_defaults {
-        let defaults: Vec<String> = mp
-            .add
-            .iter()
-            .filter_map(|a| {
-                a.default
-                    .map(|d| format!("{}: {}", prop_key(a.name), json_lit(d)))
-            })
-            .collect();
-        class.line(format!(
-            "const inputs: {} = {{ {}, ...input }};",
-            mp.input_type,
-            defaults.join(", ")
-        ));
-    }
-    if n > 1 {
-        g.helpers.insert("laterOptions");
-        class.line("const later = laterOptions(opts);");
-    }
-    let mut last_meta = String::new();
-    for i in 0..n {
-        let step = &mp.steps[i];
-        let info = &plan.ops[step.op];
-        let shape = &shapes[step.op];
-        let d = format!("ops.{}", info.key);
-        let o = if i == 0 { "opts" } else { "later" };
-        let args = g.args_js(i);
-        match step.kind {
-            StepKind::Call => {
-                class.line(format!(
-                    "const step{i} = await core.call<{}>({d}, {args}, {o});",
-                    shape.success.text
-                ));
-                class.line(format!("if (!step{i}.ok) return step{i};"));
-                last_meta = format!("step{i}.meta");
-            }
-            StepKind::Poll => {
-                let budget = match step.budget {
-                    Value::Number(b) => b.to_string(),
-                    Value::String(_) => {
-                        let expr = g.expr_js(step.budget, i, false);
-                        g.helpers.insert("invalidInput");
-                        class.line(format!("const budget{i} = {expr};"));
-                        class.line(format!("if (typeof budget{i} !== \"number\") {{"));
-                        class.line(format!(
-                            "  return invalidInput({}, {}, budget{i}, \"a number of milliseconds\");",
-                            string_lit(&mp.m.name.0),
-                            string_lit(step.budget.as_str().unwrap_or("budget_ms").trim_start_matches("$input."))
-                        ));
-                        class.line("}");
-                        format!("budget{i}")
-                    }
-                    _ => DEFAULT_BUDGET_MS.to_string(),
-                };
-                let until = step
-                    .until
-                    .map_or_else(|| "{}".to_string(), |u| json_lit(&Value::Object(u.clone())));
-                class.line(format!(
-                    "const step{i} = await core.poll<{}>({d}, {args}, {until}, {}, {budget}, {o});",
-                    shape.success.text,
-                    step.interval_ms.unwrap_or(DEFAULT_INTERVAL_MS)
-                ));
-                class.line(format!("if (!step{i}.ok) return step{i};"));
-                last_meta = format!("step{i}.meta");
-            }
-            StepKind::Paginate => {
-                let item = shape
-                    .page_item
-                    .as_ref()
-                    .map_or_else(|| "unknown".to_string(), |t| t.text.clone());
-                g.helpers.insert("noMeta");
-                class.line(format!("const step{i}: Array<{item}> = [];"));
-                class.line(format!("let meta{i} = noMeta();"));
-                if step.max_pages.is_some() {
-                    class.line(format!("let pages{i} = 0;"));
-                }
-                class.line(format!(
-                    "for await (const page of core.pages<{item}>({d}, {args}, {o})) {{"
-                ));
-                class.line("  if (!page.ok) return page;");
-                class.line(format!("  step{i}.push(...page.value.items);"));
-                class.line(format!("  meta{i} = page.meta;"));
-                if let Some(max) = step.max_pages {
-                    class.line(format!("  pages{i} += 1;"));
-                    class.line(format!("  if (pages{i} >= {max}) break;"));
-                }
-                class.line("}");
-                last_meta = format!("meta{i}");
-            }
-        }
-    }
-    let output = g.expr_js(&mp.m.output, n, true);
-    class.line(format!(
-        "return {{ ok: true, value: {output}, meta: {last_meta} }};"
-    ));
-    class.dedent();
-    class.line("}");
+    let out = g.out_type(&mp.m.output, n);
+    types.line(format!("export type {} = {out};", mp.output_type));
 }

@@ -438,6 +438,14 @@ pub enum AuthScheme {
         format: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         doc: Option<Doc>,
+        /// Required token prefix (`tungsten.yml` `auth_profiles.<name>.bearer.prefix`,
+        /// e.g. `ztw_`). Unlike `format`, the runtime enforces it before sending.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        prefix: Option<String>,
+        /// Environment variable the profile reads the token from
+        /// (`auth_profiles.<name>.bearer.env`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        env: Option<String>,
     },
     HttpBasic {
         name: String,
