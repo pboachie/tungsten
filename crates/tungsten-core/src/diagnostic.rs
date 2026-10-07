@@ -241,6 +241,7 @@ pub mod codes {
         ("TG0603", "manifest references an unknown operation"),
         ("TG0604", "manifest references an unknown namespace or path"),
         ("TG0610", "unknown x-agent-* extension ignored"),
+        ("TG0701", "generated output could not be written"),
         ("TG0901", "generated output is stale relative to its inputs"),
     ];
 

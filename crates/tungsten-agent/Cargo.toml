@@ -1,0 +1,29 @@
+[package]
+name = "tungsten-agent"
+description = "Compiles agent.yml and x-agent-* extensions into the IR's agent metadata."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lib]
+test = false
+doctest = false
+
+[features]
+# Exposes internals for the private test harness in tungsten-ops.
+testing = []
+
+[dependencies]
+tungsten-core.workspace = true
+tungsten-ir.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+indexmap.workspace = true
+yaml-rust2.workspace = true
+
+[lints]
+workspace = true

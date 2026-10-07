@@ -476,6 +476,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "tungsten-agent"
+version = "0.0.1"
+dependencies = [
+ "indexmap",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tungsten-core",
+ "tungsten-ir",
+ "yaml-rust2",
+]
+
+[[package]]
 name = "tungsten-build"
 version = "0.0.1"
 dependencies = [
@@ -528,6 +541,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "tungsten-emit"
+version = "0.0.1"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tungsten-core",
+ "tungsten-ir",
+]
+
+[[package]]
+name = "tungsten-emit-docs"
+version = "0.0.1"
+dependencies = [
+ "serde_json",
+ "tungsten-core",
+ "tungsten-emit",
+ "tungsten-ir",
+]
+
+[[package]]
+name = "tungsten-emit-ts"
+version = "0.0.1"
+dependencies = [
+ "serde_json",
+ "tungsten-core",
+ "tungsten-emit",
+ "tungsten-ir",
+]
+
+[[package]]
 name = "tungsten-ir"
 version = "0.0.1"
 dependencies = [
@@ -537,6 +580,16 @@ dependencies = [
  "serde",
  "serde_json",
  "tungsten-core",
+]
+
+[[package]]
+name = "tungsten-mock"
+version = "0.0.1"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tungsten-core",
+ "tungsten-ir",
 ]
 
 [[package]]

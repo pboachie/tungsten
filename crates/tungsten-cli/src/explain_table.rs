@@ -284,6 +284,12 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
          `x-agent-` prefix if it is meant for another tool.",
     ),
     e(
+        "TG0701",
+        "A generated file could not be written to the target's output directory, for example \
+         because the directory is read-only or a path component is a file.",
+        "Check the target's `out` path and its permissions, then run `tungsten generate` again.",
+    ),
+    e(
         "TG0901",
         "Generated output was produced from inputs whose digests differ from the current \
          inputs, so it no longer matches the spec and manifests.",
