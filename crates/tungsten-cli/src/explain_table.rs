@@ -143,6 +143,29 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
         "Add a `type`, or an explicit empty schema `{}` if any value really is allowed.",
     ),
     e(
+        "TG0306",
+        "A `discriminator` next to `oneOf`/`anyOf` could not be used as written: it has no \
+         `propertyName`, a variant is not an object schema, a `mapping` entry does not \
+         resolve or names a schema that is not one of the variants, or a variant has no tag \
+         value. Unusable mapping entries are dropped; an unusable discriminator is ignored and \
+         the union is classified as if it had none.",
+        "Point every `mapping` value at one of the union's variants (`#/components/schemas/X` \
+         or the bare name `X`), and make every variant an object schema with the property.",
+    ),
+    e(
+        "TG0307",
+        "A schema admits no value at all: an empty `enum`, or a `oneOf`/`anyOf` with no \
+         members. Its type is `never`, so no generated client can send or accept it.",
+        "List the allowed values, or remove the schema if it is unused.",
+    ),
+    e(
+        "TG0308",
+        "An entry of tungsten.yml `types.break_cycles` does not name a property of a schema \
+         under components/schemas (entries have the form `Type.field`), so it has no effect.",
+        "Fix the entry to `Type.field` with the component key and property name as written in \
+         the spec, or remove it.",
+    ),
+    e(
         "TG0401",
         "Two names in one scope (fields of a record, operations of a resource, types of a \
          namespace) map to the same identifier in some target language. The later one in \
