@@ -266,6 +266,15 @@ pub mod codes {
             "TG0704",
             "output path leaves the output directory or is reserved",
         ),
+        (
+            "TG0710",
+            "macro not emitted by the TypeScript SDK (not in the canonical form)",
+        ),
+        ("TG0711", "invalid TypeScript target option; default used"),
+        (
+            "TG0712",
+            "OpenID Connect scheme sent as a bearer token by the TypeScript SDK",
+        ),
         ("TG0901", "generated output is stale relative to its inputs"),
     ];
 

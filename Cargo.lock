@@ -775,6 +775,7 @@ dependencies = [
 name = "tungsten-emit-ts"
 version = "0.0.1"
 dependencies = [
+ "petgraph",
  "serde_json",
  "tungsten-core",
  "tungsten-emit",

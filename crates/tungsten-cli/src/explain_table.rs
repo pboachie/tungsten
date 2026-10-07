@@ -369,6 +369,30 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
          the emitter is at fault: report it.",
     ),
     e(
+        "TG0710",
+        "A macro in the IR does not fit the canonical form the TypeScript SDK compiles: a \
+         step names an operation that is not callable, a reference names a later or unknown \
+         step, or an `{expr}` is not `<ref> in [..]`, `<ref> == x` or `<ref> != x`. The SDK \
+         is generated without that macro.",
+        "Fix the macro in agent.yml so every step calls a callable operation and every \
+         reference names `$input` or an earlier step's `as`.",
+    ),
+    e(
+        "TG0711",
+        "An option of the `typescript` target is not valid (for example a `package` that is \
+         not an npm package name or a `version` that is not a semantic version), so its \
+         default is used.",
+        "Fix the option under `targets.typescript` in tungsten.yml.",
+    ),
+    e(
+        "TG0712",
+        "The API declares an OpenID Connect security scheme. The TypeScript SDK sends the \
+         configured credential as a bearer token and does not run discovery or obtain \
+         tokens itself.",
+        "Obtain the token with your OpenID Connect client and pass it in `auth` under the \
+         scheme's name.",
+    ),
+    e(
         "TG0901",
         "A target's output directory differs from what `tungsten generate` would write now: \
          a generated file is missing or has other content, a file of the previous \
