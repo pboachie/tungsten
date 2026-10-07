@@ -1,0 +1,52 @@
+# cargo-deny policy for the compiler workspace (planning/09 "Dependency policy").
+# Run: cargo deny check
+#
+# Licence domains: the compiler crates under crates/ are AGPL-3.0-only and are
+# not published, so they are exempt through [licenses.private]. Dependencies
+# must carry a permissive licence from the allow list. The Apache-2.0
+# runtimes (runtimes/, added later) get their own stricter policy because they
+# are linked into every generated SDK.
+
+[graph]
+all-features = true
+
+[advisories]
+version = 2
+yanked = "deny"
+ignore = []
+
+[licenses]
+version = 2
+# Permissive licences only; anything else, including all copyleft licences,
+# is rejected. MPL-2.0 is deliberately absent: no current dependency needs it,
+# and admitting file-level copyleft is a reviewed decision, not a default.
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "MIT",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+]
+confidence-threshold = 0.9
+# The list is policy, not an inventory: allowed-but-unused entries are fine.
+unused-allowed-license = "allow"
+
+[licenses.private]
+# Our own unpublished AGPL-3.0-only workspace crates.
+ignore = true
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+# Workspace path dependencies carry no version requirement.
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
