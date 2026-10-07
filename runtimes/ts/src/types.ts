@@ -256,6 +256,12 @@ export interface ApiDescriptor {
   nonJson: Array<{ status: number; media: string; category: Category; retryable: Retryable; text: string | null }>;
   /** Runtime gate env var → explanation. */
   gates: Record<string, string>;
+  /** Retry defaults by safety tier (agent.yml `defaults.retries`):
+   * `readOnly` for read-only operations, `mutating` for every other tier
+   * (a mutation is still retried only with an idempotency key or an
+   * identity body). `ClientOptions.retries` overrides them field by field.
+   * Absent: the runtime defaults apply to every tier. */
+  retries?: { readOnly: Partial<RetryOptions>; mutating: Partial<RetryOptions> };
 }
 
 // --------------------------------------------------------------- options
@@ -303,6 +309,8 @@ export interface ClientOptions {
   fetch?: typeof fetch;
   /** Per-attempt timeout. Default 30000. */
   timeoutMs?: number;
+  /** Overrides the API's per-tier retry defaults (`ApiDescriptor.retries`)
+   * field by field, for every tier. */
   retries?: Partial<RetryOptions>;
   idempotencyStore?: IdempotencyStore;
   middleware?: Middleware[];

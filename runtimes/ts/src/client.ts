@@ -365,15 +365,30 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     return typeof this.options.fetch === "function" ? this.options.fetch : globalThis.fetch.bind(globalThis);
   }
 
-  #retryOptions(): RetryOptions {
-    const r = isRecord(this.options.retries) ? this.options.retries : {};
-    const jitter = r.jitter === "none" || r.jitter === "equal" || r.jitter === "full" ? r.jitter : DEFAULT_RETRIES.jitter;
+  /** The retry policy of one operation: the runtime defaults, then the
+   * API's defaults for the operation's tier, then `ClientOptions.retries`;
+   * each layer overrides the fields it sets. */
+  #retryOptions(op: OperationDescriptor): RetryOptions {
+    const tiers: Partial<NonNullable<ApiDescriptor["retries"]>> = isRecord(this.api.retries) ? this.api.retries : {};
+    const tier: unknown = isMutation(op) ? tiers.mutating : tiers.readOnly;
+    const layers: Array<Record<string, unknown>> = [isRecord(tier) ? tier : {}, isRecord(this.options.retries) ? this.options.retries : {}];
+    const pick = <T>(key: keyof RetryOptions, valid: (v: unknown) => v is T, fallback: T): T => {
+      let value = fallback;
+      for (const layer of layers) {
+        const candidate = layer[key];
+        if (valid(candidate)) value = candidate;
+      }
+      return value;
+    };
+    const finite = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
+    const jitter = (v: unknown): v is RetryOptions["jitter"] => v === "none" || v === "equal" || v === "full";
+    const flag = (v: unknown): v is boolean => typeof v === "boolean";
     return {
-      max: Math.floor(bounded(r.max, DEFAULT_RETRIES.max, 0, 100)),
-      baseMs: bounded(r.baseMs, DEFAULT_RETRIES.baseMs, 0),
-      maxMs: bounded(r.maxMs, DEFAULT_RETRIES.maxMs, 0),
-      jitter,
-      honorRetryAfter: typeof r.honorRetryAfter === "boolean" ? r.honorRetryAfter : DEFAULT_RETRIES.honorRetryAfter,
+      max: Math.floor(bounded(pick("max", finite, DEFAULT_RETRIES.max), DEFAULT_RETRIES.max, 0, 100)),
+      baseMs: bounded(pick("baseMs", finite, DEFAULT_RETRIES.baseMs), DEFAULT_RETRIES.baseMs, 0),
+      maxMs: bounded(pick("maxMs", finite, DEFAULT_RETRIES.maxMs), DEFAULT_RETRIES.maxMs, 0),
+      jitter: pick("jitter", jitter, DEFAULT_RETRIES.jitter),
+      honorRetryAfter: pick("honorRetryAfter", flag, DEFAULT_RETRIES.honorRetryAfter),
     };
   }
 
@@ -845,7 +860,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
 
   async #send<T>(prepared: Prepared, opts: CallOptions): Promise<Result<T>> {
     const { op } = prepared;
-    const retries = this.#retryOptions();
+    const retries = this.#retryOptions(op);
     const mutation = isMutation(op);
     const protectedReplay = hasReplayProtection(op, prepared.key);
     const timeoutMs = this.#timeout(opts);

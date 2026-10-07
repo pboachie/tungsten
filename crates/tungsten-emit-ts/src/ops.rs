@@ -10,9 +10,9 @@ use tungsten_emit::{CommentStyle, Imports, Writer};
 use tungsten_ir::naming::Role;
 use tungsten_ir::{
     Additional, ApiKeyIn, AuthScheme, BodyContent, BodyEncoding, CompositePart, HttpMethod,
-    IdempotencyKind, Ir, OperationAgentMeta, OperationStatus, PaginationStyle, Param, ParamRole,
-    ParamStyle, Presence, PreviewMode, Remediation, ResponseKind, Retryable, Safety, Shape,
-    StatusMatch, TypeRef,
+    IdempotencyKind, Ir, Jitter, OperationAgentMeta, OperationStatus, PaginationStyle, Param,
+    ParamRole, ParamStyle, Presence, PreviewMode, Remediation, ResponseKind, RetryPolicy,
+    Retryable, Safety, Shape, StatusMatch, TypeRef,
 };
 
 use crate::models::{
@@ -957,11 +957,28 @@ fn non_json_js(ir: &Ir) -> Js {
     )
 }
 
+/// One tier of `ApiDescriptor.retries` (agent.yml `defaults.retries`).
+fn retry_js(policy: &RetryPolicy, honor_retry_after: bool) -> Js {
+    let jitter = match policy.jitter {
+        Jitter::None => "none",
+        Jitter::Full => "full",
+        Jitter::Equal => "equal",
+    };
+    Js::obj(vec![
+        ("max", Js::num(policy.max)),
+        ("baseMs", Js::num(policy.base_ms)),
+        ("maxMs", Js::num(policy.max_ms)),
+        ("jitter", Js::str(jitter)),
+        ("honorRetryAfter", Js::bool(honor_retry_after)),
+    ])
+}
+
 /// The `ApiDescriptor`. Every IR field the runtime reads is mapped here, in
-/// one place: `errorCodes`, `ambiguousStatuses`, `nonJson` and `gates` from
-/// `Ir.agent`.
+/// one place: `errorCodes`, `ambiguousStatuses`, `nonJson`, `gates` and
+/// `retries` from `Ir.agent`.
 fn api_js(plan: &Plan<'_>, opts: &Options) -> Js {
     let ir = plan.ir;
+    let retries = &ir.agent.retries;
     Js::obj(vec![
         ("name", Js::str(&ir.api.name.wire)),
         ("version", Js::str(&opts.version)),
@@ -1001,6 +1018,19 @@ fn api_js(plan: &Plan<'_>, opts: &Options) -> Js {
                     .map(|(k, v)| (k.clone(), Js::str(v)))
                     .collect(),
             ),
+        ),
+        (
+            "retries",
+            Js::obj(vec![
+                (
+                    "readOnly",
+                    retry_js(&retries.read_only, retries.honor_retry_after),
+                ),
+                (
+                    "mutating",
+                    retry_js(&retries.mutating, retries.honor_retry_after),
+                ),
+            ]),
         ),
     ])
 }
