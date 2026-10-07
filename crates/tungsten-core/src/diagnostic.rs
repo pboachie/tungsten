@@ -275,6 +275,7 @@ pub mod codes {
             "TG0712",
             "OpenID Connect scheme sent as a bearer token by the TypeScript SDK",
         ),
+        ("TG0713", "tool schema over the agent schema token budget"),
         ("TG0901", "generated output is stale relative to its inputs"),
     ];
 

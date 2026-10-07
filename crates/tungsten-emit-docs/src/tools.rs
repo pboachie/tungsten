@@ -6,8 +6,18 @@
 //! safety tier and idempotency rule) and `parameters`, the JSON Schema of
 //! the arguments object exactly as the SDK takes it (`tungsten_emit::args`).
 //! Tool-specific facts the schema cannot carry are under `x-tungsten`.
+//!
+//! Parameters are compacted without losing constraints: a scalar
+//! sub-schema repeated within one tool (the same UUID pattern on eight
+//! fields) moves to `$defs` once when that makes the tool smaller. A tool
+//! still over the schema budget (agent.yml
+//! `defaults.disclosure.schema_budget_tokens`, measured as characters / 4)
+//! is TG0713.
+
+use std::collections::BTreeMap;
 
 use serde_json::{Map, Value, json};
+use tungsten_core::{Diagnostic, Diagnostics};
 use tungsten_emit::args::args_layout;
 use tungsten_emit::header_text;
 use tungsten_emit::schema::{SchemaBuilder, SchemaOptions, Usage, collapse_whitespace};
@@ -26,7 +36,36 @@ fn schema_options() -> SchemaOptions {
     }
 }
 
-pub(crate) fn tools_json(model: &Model<'_>) -> String {
+/// TG0713 for each tool whose `{name, description, parameters}` is over the
+/// schema budget after compaction.
+pub(crate) fn budget_warnings(model: &Model<'_>) -> Diagnostics {
+    let budget = model.ir.agent.disclosure.schema_budget_tokens as usize;
+    let mut d = Diagnostics::new();
+    for tool in tools(model) {
+        let sent = json!({ "name": tool["name"], "description": tool["description"], "parameters": tool["parameters"] });
+        let tokens = serde_json::to_string(&sent)
+            .unwrap_or_default()
+            .chars()
+            .count()
+            .div_ceil(4);
+        if tokens > budget {
+            d.push(
+                Diagnostic::warning(
+                    "TG0713",
+                    format!(
+                        "tool `{}` is about {tokens} tokens, over the schema budget of {budget}",
+                        tool["name"].as_str().unwrap_or_default()
+                    ),
+                )
+                .with_help("shorten descriptions (disclosure.prune), hide fields (disclosure.prune.drop_fields), or raise defaults.disclosure.schema_budget_tokens in agent.yml"),
+            );
+        }
+    }
+    d
+}
+
+/// Every tool: callable operations that are not hidden, then macros.
+fn tools(model: &Model<'_>) -> Vec<Value> {
     let ir = model.ir;
     let mut tools = vec![];
     for (_, c) in model.callable().filter(|(_, c)| !c.op.agent.hidden) {
@@ -40,6 +79,12 @@ pub(crate) fn tools_json(model: &Model<'_>) -> String {
     for m in &model.macros {
         tools.push(macro_tool(model, m));
     }
+    tools
+}
+
+pub(crate) fn tools_json(model: &Model<'_>) -> String {
+    let ir = model.ir;
+    let tools = tools(model);
     let doc = json!({
         "$comment": header_text(ir).replace('\n', " "),
         "api": ir.api.name.wire,
@@ -51,12 +96,106 @@ pub(crate) fn tools_json(model: &Model<'_>) -> String {
     text
 }
 
-/// The arguments object schema of `op`, self-contained (`$defs` inside).
+/// The arguments object schema of `op`, self-contained (`$defs` inside),
+/// with repeated scalar sub-schemas hoisted.
 fn parameters(ir: &Ir, op: &Operation) -> Value {
     let mut b = SchemaBuilder::new(ir, schema_options());
     let layout = args_layout(ir, op);
     let root = b.args(&layout);
-    without_dialect(b.finish(root))
+    hoist_repeats(without_dialect(b.finish(root)))
+}
+
+/// Keys under which a schema holds sub-schemas: maps of them, single
+/// ones, and arrays of them.
+const SCHEMA_MAPS: &[&str] = &["properties", "$defs"];
+const SCHEMA_ONE: &[&str] = &["items", "additionalProperties", "not"];
+const SCHEMA_LISTS: &[&str] = &["anyOf", "oneOf", "allOf", "prefixItems"];
+
+/// A scalar schema: no sub-schemas and no reference.
+fn is_scalar(schema: &Map<String, Value>) -> bool {
+    !schema.keys().any(|k| {
+        SCHEMA_MAPS.contains(&k.as_str())
+            || SCHEMA_ONE.contains(&k.as_str())
+            || SCHEMA_LISTS.contains(&k.as_str())
+            || k == "$ref"
+    })
+}
+
+/// Visit every sub-schema below the root (depth first, document order).
+fn walk_subschemas(schema: &mut Value, f: &mut dyn FnMut(&mut Value)) {
+    let Value::Object(obj) = schema else { return };
+    for (key, value) in obj.iter_mut() {
+        let children: Vec<&mut Value> = match value {
+            Value::Object(map) if SCHEMA_MAPS.contains(&key.as_str()) => map.values_mut().collect(),
+            Value::Array(list) if SCHEMA_LISTS.contains(&key.as_str()) => list.iter_mut().collect(),
+            v @ Value::Object(_) if SCHEMA_ONE.contains(&key.as_str()) => vec![v],
+            _ => vec![],
+        };
+        for child in children {
+            f(child);
+            walk_subschemas(child, f);
+        }
+    }
+}
+
+/// Move scalar sub-schemas that occur at least twice to `$defs` when that
+/// makes the schema shorter, replacing each occurrence with a `$ref`.
+/// Lossless: every constraint stays, once. Names are `shared_<type>_<n>`
+/// in order of first occurrence.
+fn hoist_repeats(mut schema: Value) -> Value {
+    let mut counts: Vec<(String, usize)> = vec![];
+    walk_subschemas(&mut schema, &mut |s| {
+        if let Value::Object(obj) = s
+            && is_scalar(obj)
+        {
+            let key = serde_json::to_string(obj).unwrap_or_default();
+            match counts.iter_mut().find(|(k, _)| *k == key) {
+                Some((_, n)) => *n += 1,
+                None => counts.push((key, 1)),
+            }
+        }
+    });
+    let mut names: BTreeMap<String, String> = BTreeMap::new();
+    let mut hoisted: Vec<(String, Value)> = vec![];
+    for (key, n) in counts {
+        if n < 2 {
+            continue;
+        }
+        let Ok(value) = serde_json::from_str::<Value>(&key) else {
+            continue;
+        };
+        let kind = value.get("type").and_then(Value::as_str).unwrap_or("value");
+        let name = format!("shared_{kind}_{}", hoisted.len() + 1);
+        let reference = format!(r##"{{"$ref":"#/$defs/{name}"}}"##);
+        let entry = name.len() + key.len() + 4;
+        if n * key.len() <= n * reference.len() + entry {
+            continue;
+        }
+        names.insert(key, name.clone());
+        hoisted.push((name, value));
+    }
+    if hoisted.is_empty() {
+        return schema;
+    }
+    walk_subschemas(&mut schema, &mut |s| {
+        if let Value::Object(obj) = s
+            && is_scalar(obj)
+            && let Some(name) = names.get(&serde_json::to_string(obj).unwrap_or_default())
+        {
+            *s = json!({ "$ref": format!("#/$defs/{name}") });
+        }
+    });
+    if let Value::Object(root) = &mut schema {
+        let defs = root
+            .entry("$defs")
+            .or_insert_with(|| Value::Object(Map::new()));
+        if let Value::Object(defs) = defs {
+            for (name, value) in hoisted {
+                defs.insert(name, value);
+            }
+        }
+    }
+    schema
 }
 
 /// Tool parameters carry no `$schema`: several function-calling APIs

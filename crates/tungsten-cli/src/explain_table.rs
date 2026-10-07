@@ -393,6 +393,15 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
          scheme's name.",
     ),
     e(
+        "TG0713",
+        "A tool of tools.json (its name, description and parameters, measured as characters \
+         / 4 after repeated sub-schemas were moved to `$defs`) is larger than the per-tool \
+         schema budget of agent.yml (`defaults.disclosure.schema_budget_tokens`, 600 by \
+         default). Agents pay this cost every time the tool is listed.",
+        "Shorten the operation's description (`disclosure.prune`), hide fields agents do not \
+         need (`disclosure.prune.drop_fields`), split the operation, or raise the budget.",
+    ),
+    e(
         "TG0901",
         "A target's output directory differs from what `tungsten generate` would write now: \
          a generated file is missing or has other content, a file of the previous \

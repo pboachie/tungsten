@@ -26,8 +26,9 @@ impl Emitter for DocsEmitter {
     fn id(&self) -> &'static str {
         "docs"
     }
-    fn supports(&self, _ir: &Ir) -> Diagnostics {
-        Diagnostics::new()
+    /// TG0713 for each tool over the schema budget; `emit` does not repeat it.
+    fn supports(&self, ir: &Ir) -> Diagnostics {
+        tools::budget_warnings(&model::Model::new(ir))
     }
     fn emit(&self, ir: &Ir, _cfg: &TargetConfig, out: &mut FileSet) -> Diagnostics {
         let model = model::Model::new(ir);
