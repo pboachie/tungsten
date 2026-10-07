@@ -14,8 +14,12 @@
 //!
 //! `TungstenConfig::json_schema()` is published as
 //! `specs/tungsten.schema.json`.
+//!
+//! Stages 1 and 2 are shared with other YAML manifests (`agent.yml`):
+//! [`parse_yaml`] and [`deserialize_manifest`] report `TG0601` and
+//! `TG0602` the same way for any manifest type.
 
-mod pointer;
+pub mod pointer;
 mod source;
 mod strict;
 mod validate;
@@ -25,7 +29,7 @@ use std::fmt;
 use std::path::Path;
 
 use indexmap::IndexMap;
-use serde::de::{self, MapAccess, Visitor};
+use serde::de::{self, DeserializeOwned, MapAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
 use tungsten_core::{Diagnostic, Diagnostics};
 
@@ -63,6 +67,10 @@ pub struct TungstenConfig {
     pub targets: IndexMap<String, serde_json::Value>,
     #[serde(default)]
     pub output: Option<serde_json::Value>,
+    /// Path of the agent manifest, relative to this file. When absent,
+    /// `agent.yml` next to this file is used if it exists.
+    #[serde(default)]
+    pub agent: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -355,6 +363,7 @@ impl TungstenConfig {
             types: TypesConfig::default(),
             targets: IndexMap::new(),
             output: None,
+            agent: None,
         }
     }
 }
@@ -400,40 +409,19 @@ pub fn load_with_source(path: &Path) -> ParsedManifest {
 
 /// Parse a manifest from text, keeping its text and node positions.
 pub fn parse_with_source(name: &str, text: &str) -> ParsedManifest {
-    let converted = match yaml::to_json(text) {
-        Ok(converted) => converted,
-        Err(err) => {
-            let source = ManifestSource::new(name, text, err.positions);
-            let (line, col) = source.line_col_at(err.offset);
-            let message = format!("{} (line {line}, column {col})", err.message);
-            let diagnostic = Diagnostic::error("TG0601", message).at(name, err.pointer, None);
-            return ParsedManifest::failed(diagnostic, source);
-        }
+    let (value, source) = parse_yaml(name, text);
+    let value = match value {
+        Ok(value) => value,
+        Err(diagnostic) => return ParsedManifest::failed(diagnostic, source),
     };
-    let source = ManifestSource::new(name, text, converted.positions);
-    if converted.value.is_null() {
+    if value.is_null() {
         let message = "the manifest is empty; it needs at least `tungsten`, `api` and `inputs`";
         let diagnostic = Diagnostic::error("TG0602", message).at(name, "", None);
         return ParsedManifest::failed(diagnostic, source);
     }
-    let value = strict::Strict(&converted.value);
-    let config = match serde_path_to_error::deserialize::<_, TungstenConfig>(value) {
+    let config = match deserialize_manifest::<TungstenConfig>(&value, name, &source) {
         Ok(config) => config,
-        Err(err) => {
-            let at = error_pointer(err.path());
-            let place = if at.is_empty() {
-                "the document root"
-            } else {
-                &at
-            };
-            let location = source
-                .line_col(&at)
-                .map(|(line, col)| format!(" (line {line}, column {col})"))
-                .unwrap_or_default();
-            let message = format!("{} at {place}{location}", err.inner());
-            let diagnostic = Diagnostic::error("TG0602", message).at(name, &at, None);
-            return ParsedManifest::failed(diagnostic, source);
-        }
+        Err(diagnostic) => return ParsedManifest::failed(diagnostic, source),
     };
     let diagnostics = validate(&config, name, Some(&source));
     let config = (!diagnostics.has_errors()).then_some(config);
@@ -442,6 +430,64 @@ pub fn parse_with_source(name: &str, text: &str) -> ParsedManifest {
         diagnostics,
         source,
     }
+}
+
+/// Stage 1 for any YAML manifest: convert `text` to JSON with node
+/// positions (see the module documentation for the accepted YAML). A YAML
+/// problem is a `TG0601` error naming `name`, the pointer of the node being
+/// read and its line and column. The source is returned either way, with
+/// the positions known so far.
+pub fn parse_yaml(
+    name: &str,
+    text: &str,
+) -> (Result<serde_json::Value, Diagnostic>, ManifestSource) {
+    match yaml::to_json(text) {
+        Ok(converted) => (
+            Ok(converted.value),
+            ManifestSource::new(name, text, converted.positions),
+        ),
+        Err(err) => {
+            let source = ManifestSource::new(name, text, err.positions);
+            let (line, col) = source.line_col_at(err.offset);
+            let message = format!("{} (line {line}, column {col})", err.message);
+            let diagnostic = Diagnostic::error("TG0601", message).at(name, err.pointer, None);
+            (Err(diagnostic), source)
+        }
+    }
+}
+
+/// Stage 2 for any manifest type: deserialize `value` strictly (mappings
+/// for structs and maps, sequences for sequences). A mismatch is a
+/// `TG0602` error with the pointer of the offending node and its line and
+/// column in `source`.
+pub fn deserialize_manifest<T: DeserializeOwned>(
+    value: &serde_json::Value,
+    name: &str,
+    source: &ManifestSource,
+) -> Result<T, Diagnostic> {
+    deserialize_value(value).map_err(|(at, message)| {
+        let place = if at.is_empty() {
+            "the document root"
+        } else {
+            &at
+        };
+        let location = source
+            .line_col(&at)
+            .map(|(line, col)| format!(" (line {line}, column {col})"))
+            .unwrap_or_default();
+        let message = format!("{message} at {place}{location}");
+        Diagnostic::error("TG0602", message).at(name, &at, None)
+    })
+}
+
+/// Deserialize `value` strictly, as [`deserialize_manifest`] does; a
+/// mismatch is the JSON Pointer of the offending node (relative to
+/// `value`) and what is wrong with it.
+pub fn deserialize_value<T: DeserializeOwned>(
+    value: &serde_json::Value,
+) -> Result<T, (String, String)> {
+    serde_path_to_error::deserialize::<_, T>(strict::Strict(value))
+        .map_err(|err| (error_pointer(err.path()), err.inner().to_string()))
 }
 
 impl ParsedManifest {

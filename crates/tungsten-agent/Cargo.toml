@@ -18,12 +18,12 @@ testing = []
 
 [dependencies]
 tungsten-core.workspace = true
+tungsten-config.workspace = true
 tungsten-ir.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 schemars.workspace = true
 indexmap.workspace = true
-yaml-rust2.workspace = true
 
 [lints]
 workspace = true

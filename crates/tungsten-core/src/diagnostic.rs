@@ -240,7 +240,22 @@ pub mod codes {
         ("TG0602", "manifest does not match its schema"),
         ("TG0603", "manifest references an unknown operation"),
         ("TG0604", "manifest references an unknown namespace or path"),
+        (
+            "TG0605",
+            "agent rule targets an operation that cannot serve it",
+        ),
+        ("TG0606", "remediation names an unknown error code"),
+        (
+            "TG0607",
+            "agent rule names a field the operation does not have",
+        ),
+        (
+            "TG0608",
+            "gate names no runtime gate or conflicts with the spec",
+        ),
+        ("TG0609", "macro dropped or its safety tier raised"),
         ("TG0610", "unknown x-agent-* extension ignored"),
+        ("TG0611", "x-agent-* extension value is malformed; ignored"),
         ("TG0701", "generated output could not be written"),
         ("TG0901", "generated output is stale relative to its inputs"),
     ];

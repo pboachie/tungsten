@@ -55,6 +55,7 @@ pub fn validate(
     v.auth_profiles(config);
     v.pagination(config, &namespaces);
     v.targets(config);
+    v.agent(config);
     v.out
 }
 
@@ -320,6 +321,16 @@ impl Validator<'_> {
                     ),
                 );
             }
+        }
+    }
+
+    fn agent(&mut self, config: &TungstenConfig) {
+        if config.agent.as_deref().is_some_and(|p| p.trim().is_empty()) {
+            self.report(
+                "TG0602",
+                "/agent",
+                "agent must be the path of an agent manifest, relative to this file".into(),
+            );
         }
     }
 

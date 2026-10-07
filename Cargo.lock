@@ -483,9 +483,9 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "tungsten-config",
  "tungsten-core",
  "tungsten-ir",
- "yaml-rust2",
 ]
 
 [[package]]
@@ -496,6 +496,7 @@ dependencies = [
  "petgraph",
  "semver",
  "serde_json",
+ "tungsten-agent",
  "tungsten-config",
  "tungsten-core",
  "tungsten-ir",
