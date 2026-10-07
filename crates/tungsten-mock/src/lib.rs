@@ -87,8 +87,11 @@
 //!     generated values. Responses carry no `Date` header.
 //!
 //! Failures produced by the mock carry a short explanation in the
-//! `X-Tungsten-Reason` response header. Their body follows the error rule:
-//! when the error model of the operation's namespace (`Namespace.errors`;
+//! `X-Tungsten-Reason` response header. A failure of a routed operation
+//! whose status the operation declares without content (a bare `408`, say)
+//! has no body, as the API answers it, unless an error code was asked for
+//! (`code` of an injection or a program). Otherwise the body follows the
+//! error rule: when the error model of the operation's namespace (`Namespace.errors`;
 //! `Ir.errors` when no operation matched) has an envelope type and a code
 //! field, the body is a generated envelope (`application/json`) whose code
 //! field (a dotted path such as `error.code`) holds the best matching code
@@ -112,11 +115,14 @@
 //!   the connection without a response.
 //! - `reset`: close the connection before reading the body; recorded with an
 //!   empty body and `response_status` 0.
-//! - `status=<code>[;retry-after=<s>][;code=<error code>]`: answer `<code>`
-//!   (200-599) without validating or applying the request, with a
+//! - `status=<code>[;retry-after=<s>][;code=<error code>][;apply]`: answer
+//!   `<code>` (200-599) without validating or applying the request, with a
 //!   `Retry-After` header when given. A 2xx code answers the operation's
 //!   generated body for that status; any other code answers the error rule
-//!   with `<error code>` when given.
+//!   with `<error code>` when given. With `apply`, the request is first
+//!   processed as usual (validated, and stored under its idempotency key
+//!   when it succeeds), so the injected status hides an applied effect: the
+//!   ambiguous answer of a server that applied the request and then failed.
 //!
 //! An unknown value answers `400` (text/plain). Injections apply to routed
 //! and unrouted requests alike and never consume a program.

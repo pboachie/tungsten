@@ -59,6 +59,9 @@ enum Injection {
         status: u16,
         retry_after: Option<String>,
         code: Option<String>,
+        /// Process the request first (validation, auth, idempotent
+        /// storage), then answer the injected status instead.
+        apply: bool,
     },
 }
 
@@ -84,8 +87,12 @@ impl Injection {
             .and_then(|s| s.parse().ok())
             .filter(|s| (200..=599).contains(s))
             .ok_or_else(bad)?;
-        let (mut retry_after, mut code) = (None, None);
+        let (mut retry_after, mut code, mut apply) = (None, None, false);
         for part in parts {
+            if part == "apply" {
+                apply = true;
+                continue;
+            }
             match part.split_once('=') {
                 Some(("retry-after", v)) if !v.is_empty() && HeaderValue::from_str(v).is_ok() => {
                     retry_after = Some(v.to_string());
@@ -98,6 +105,7 @@ impl Injection {
             status,
             retry_after,
             code,
+            apply,
         })
     }
 }
@@ -202,7 +210,13 @@ pub(crate) async fn handle(state: Arc<State>, req: Request<Incoming>) -> Outcome
             status,
             retry_after,
             code,
+            apply,
         })) => {
+            if apply {
+                // The effect happens (an idempotency key stores its
+                // response); only the answer is replaced.
+                let _ = process(&state, &routed, &request);
+            }
             let mut reply = injected_status(model, &routed, status, code.as_deref());
             if let Some(seconds) = retry_after {
                 reply = reply.with_header("retry-after", &seconds);
@@ -345,29 +359,51 @@ fn process(state: &State, routed: &Routed, request: &Exchange<'_>) -> Reply {
     }
 }
 
+/// An error answer of a routed operation. A status the operation declares
+/// without content is answered without a body (as the API does); otherwise,
+/// or when an error `code` is asked for, the error rule's body is sent.
+fn op_error(
+    model: &Model,
+    entry: &OpEntry,
+    status: u16,
+    code: Option<&str>,
+    preferred: &[&str],
+    reason: &str,
+) -> Reply {
+    let bare = code.is_none()
+        && entry
+            .op
+            .responses
+            .iter()
+            .any(|r| r.status == StatusMatch::Exact(status) && r.content.is_empty());
+    if bare {
+        return Reply::empty(status).with_header("x-tungsten-reason", &header_text(reason));
+    }
+    reply::error(model, Some(entry.ns), status, code, preferred, reason)
+}
+
 fn operation(state: &State, entry: &OpEntry, request: &Exchange<'_>) -> Reply {
     let model = &state.model;
-    let ns = Some(entry.ns);
     if let OperationStatus::Gated { gate } = &entry.op.status
         && !model.gate_on(gate)
     {
         let reason = format!("runtime gate {} is off", gate.env_var);
-        return reply::error(model, ns, gate.disabled_status, None, &[], &reason);
+        return op_error(model, entry, gate.disabled_status, None, &[], &reason);
     }
     match auth::check(model, &entry.op, request.view) {
         Ok(()) => {}
         Err(AuthFailure::Unauthenticated(reason)) => {
-            return reply::error(model, ns, 401, None, &[], &reason);
+            return op_error(model, entry, 401, None, &[], &reason);
         }
         Err(AuthFailure::Forbidden(reason)) => {
-            return reply::error(model, ns, 403, None, &[], &reason);
+            return op_error(model, entry, 403, None, &[], &reason);
         }
     }
     if let Err(reason) = params::check(model, &entry.op, request.view) {
-        return reply::error(model, ns, 400, None, &[], &reason);
+        return op_error(model, entry, 400, None, &[], &reason);
     }
     if let Err(reason) = check_body(model, entry, request) {
-        return reply::error(model, ns, 400, None, &[], &reason);
+        return op_error(model, entry, 400, None, &[], &reason);
     }
     let Some((header, key)) = entry
         .idempotency_header()
@@ -379,9 +415,9 @@ fn operation(state: &State, entry: &OpEntry, request: &Exchange<'_>) -> Reply {
     fingerprint.extend_from_slice(request.body);
     match state.idempotent(entry.id(), &key, &fingerprint) {
         Idempotent::Replay(stored) => replayed(stored),
-        Idempotent::Conflict => reply::error(
+        Idempotent::Conflict => op_error(
             model,
-            ns,
+            entry,
             409,
             None,
             &["idempotency_conflict", "conflict"],
@@ -574,6 +610,14 @@ fn injected_status(model: &Model, routed: &Routed, status: u16, code: Option<&st
         Routed::Op { index, .. } if (200..300).contains(&status) => {
             success(model, &model.ops[*index], Some(status))
         }
+        Routed::Op { index, .. } => op_error(
+            model,
+            &model.ops[*index],
+            status,
+            code,
+            &[],
+            &format!("injected status {status}"),
+        ),
         _ if (200..300).contains(&status) => Reply::empty(status),
         _ => reply::error(
             model,
@@ -591,9 +635,9 @@ fn programmed(model: &Model, entry: &OpEntry, program: &Program) -> Reply {
         Some(Value::String(text)) => Reply::text(program.status, text),
         Some(value) => Reply::json(program.status, value),
         None if (200..300).contains(&program.status) => success(model, entry, Some(program.status)),
-        None => reply::error(
+        None => op_error(
             model,
-            Some(entry.ns),
+            entry,
             program.status,
             program.code.as_deref(),
             &[],
