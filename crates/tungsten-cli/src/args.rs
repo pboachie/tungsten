@@ -11,16 +11,18 @@ use crate::output::CommandName;
 const EXIT_CODES: &str = "\
 Exit codes:
   0  success
-  1  the input has errors (or warnings with --strict), or the command refused
-     to act (init without --force, explain target not found)
+  1  the input has errors (or warnings with --strict), or the item asked
+     for does not exist (explain target not found)
   2  usage error: the command line could not be parsed
   3  I/O or internal failure (for example --out is not writable)
+  4  the command refused to act without confirmation (init over existing
+     files: pass --force)
 
 Output:
   Without --json, results go to stdout and diagnostics to stderr. With
   --json, stdout carries exactly one JSON document described by
-  `tungsten schema cli-output`. Color is used only on a terminal and never
-  when NO_COLOR is set.";
+  `tungsten schema cli-output`, help and version included. Color is used
+  only on a terminal and never when NO_COLOR is set.";
 
 #[derive(Debug, Parser)]
 #[command(
@@ -113,8 +115,11 @@ pub(crate) struct DumpArgs {
     #[arg(long, value_name = "FILE")]
     pub out: Option<PathBuf>,
     /// One line instead of indented JSON.
-    #[arg(long)]
+    #[arg(long, conflicts_with = "pretty")]
     pub compact: bool,
+    /// Indented JSON (the default).
+    #[arg(long)]
+    pub pretty: bool,
 }
 
 #[derive(Debug, Args)]

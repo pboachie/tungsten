@@ -24,12 +24,13 @@ pub struct CliOutput {
     pub tool: Tool,
     /// tungsten version.
     pub version: String,
-    /// The command that ran; null when the command line could not be parsed.
+    /// The command that ran; null when the command line could not be
+    /// parsed, or asked for help or the version.
     pub command: Option<CommandName>,
     /// True exactly when `exit_code` is 0.
     pub ok: bool,
-    /// The process exit code: 0 ok, 1 input errors or refusal, 2 usage,
-    /// 3 I/O or internal failure.
+    /// The process exit code: 0 ok, 1 input errors or item not found,
+    /// 2 usage, 3 I/O or internal failure, 4 refused without confirmation.
     pub exit_code: i32,
     /// Diagnostics about the input, in deterministic order.
     pub diagnostics: Vec<JsonDiagnostic>,
@@ -146,7 +147,8 @@ impl CliError {
 pub enum ErrorKind {
     /// The command line could not be parsed (exit 2).
     Usage,
-    /// The command refused to act, for example to overwrite files (exit 1).
+    /// The command refused to act without confirmation, for example to
+    /// overwrite files (exit 4).
     Refused,
     /// The requested item does not exist (exit 1).
     NotFound,
@@ -167,6 +169,15 @@ pub enum CommandResult {
     Schema(SchemaResult),
     Init(InitResult),
     Doctor(DoctorResult),
+    Help(HelpResult),
+}
+
+/// `--help` or `--version` under `--json`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct HelpResult {
+    /// The help or version text, as printed without `--json`.
+    pub help: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
@@ -174,6 +185,10 @@ pub enum CommandResult {
 pub struct CheckResult {
     /// Entry documents in manifest order, as named in the manifest.
     pub inputs: Vec<String>,
+    /// The OpenAPI version each input declares (`3.0.3`, `3.1.0`), in the
+    /// order of `inputs`; null for an input that was not loaded. 3.0
+    /// documents are normalized to 3.1 semantics.
+    pub openapi_versions: Vec<Option<String>>,
     /// Documents loaded, including files reached only through `$ref`.
     pub documents: usize,
     /// Diagnostic counts after `--strict` promotion.

@@ -16,6 +16,14 @@ pub fn explained_codes() -> Vec<&'static str> {
         .collect()
 }
 
+/// The meaning and fix texts of every extended explanation.
+pub fn explained_texts() -> Vec<String> {
+    crate::explain_table::EXPLANATIONS
+        .iter()
+        .flat_map(|e| [e.meaning.to_string(), e.fix.to_string()])
+        .collect()
+}
+
 /// Explain an operation or type id against an in-memory IR. Returns the
 /// JSON result and the human text, or the error message.
 pub fn explain_in_ir(ir: &Ir, target: &str) -> Result<(ExplainResult, String), String> {

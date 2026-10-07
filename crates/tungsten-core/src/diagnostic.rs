@@ -169,12 +169,15 @@ pub mod codes {
         ("TG0102", "input is not valid JSON or YAML"),
         (
             "TG0103",
-            "unsupported OpenAPI version (Swagger 2.0 needs --convert-swagger2)",
+            "unsupported OpenAPI version (convert Swagger 2.0 to OpenAPI 3 first)",
         ),
         ("TG0104", "document is missing a required OpenAPI field"),
         ("TG0105", "input exceeds a size or nesting limit"),
         ("TG0201", "unresolvable $ref"),
-        ("TG0202", "remote $ref blocked (not in the allowlist)"),
+        (
+            "TG0202",
+            "remote $ref blocked (remote fetching is not available)",
+        ),
         (
             "TG0203",
             "circular $ref through named types (recursion preserved)",

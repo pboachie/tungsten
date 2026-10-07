@@ -200,29 +200,33 @@ struct Excerpt {
 }
 
 impl Excerpt {
+    /// Only the characters of the displayed window are decoded, so the cost
+    /// does not depend on the length of the line (a minified spec is one
+    /// line) or of the span.
     fn new(loc: &Location<'_>) -> Self {
         let line = loc.file.line_text(loc.line);
-        let prefix_chars = loc.column as usize - 1;
-        let span_text = loc.file.text.get(loc.start..loc.end).unwrap_or("");
-        let span_chars = span_text
-            .split(['\n', '\r'])
-            .next()
-            .unwrap_or("")
-            .chars()
-            .count();
-        let chars: Vec<char> = line.chars().collect();
-        let (from, to) = if chars.len() > MAX_EXCERPT_CHARS {
-            let from = prefix_chars.saturating_sub(WINDOW_LEAD);
-            (from, (from + MAX_EXCERPT_CHARS).min(chars.len()))
+        let line_offset = line.as_ptr() as usize - loc.file.text.as_ptr() as usize;
+        let at = loc.start.saturating_sub(line_offset).min(line.len());
+        // A long line shows a window starting WINDOW_LEAD characters
+        // before the span.
+        let long = line.chars().nth(MAX_EXCERPT_CHARS).is_some();
+        let from = if long {
+            line[..at]
+                .char_indices()
+                .rev()
+                .take(WINDOW_LEAD)
+                .last()
+                .map_or(at, |(i, _)| i)
         } else {
-            (0, chars.len())
+            0
         };
+        let shown: Vec<char> = line[from..].chars().take(MAX_EXCERPT_CHARS).collect();
+        let to = from + shown.iter().map(|c| c.len_utf8()).sum::<usize>();
         let lead = if from > 0 { ELLIPSIS } else { "" };
-        let tail = if to < chars.len() { ELLIPSIS } else { "" };
-        let shown = &chars[from..to];
+        let tail = if to < line.len() { ELLIPSIS } else { "" };
         let width = |cs: &[char]| cs.iter().map(|&c| char_width(c)).sum::<usize>();
         let mut text = String::from(lead);
-        for &c in shown {
+        for &c in &shown {
             if c == '\t' {
                 text.push_str(&" ".repeat(TAB_WIDTH));
             } else {
@@ -230,12 +234,20 @@ impl Excerpt {
             }
         }
         text.push_str(tail);
-        let start = prefix_chars.clamp(from, to);
-        let end = (prefix_chars + span_chars).clamp(start, to);
+        // Window positions (in characters) of the span's start and of the
+        // end of its first line, clamped to the window.
+        let start = line[from..at.max(from)].chars().count().min(shown.len());
+        let span_text = loc.file.text.get(loc.start..loc.end).unwrap_or("");
+        let span_chars = span_text
+            .chars()
+            .take_while(|c| !matches!(c, '\n' | '\r'))
+            .take(shown.len() - start)
+            .count();
+        let end = start + span_chars;
         Self {
             text,
-            marker_offset: lead.len() + width(&chars[from..start]),
-            marker_len: width(&chars[start..end]).max(1),
+            marker_offset: lead.len() + width(&shown[..start]),
+            marker_len: width(&shown[start..end]).max(1),
         }
     }
 }

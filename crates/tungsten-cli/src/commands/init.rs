@@ -3,7 +3,11 @@
 //!
 //! The manifests are inferred from the OpenAPI document when one is given
 //! or found next to them. Existing manifests are never overwritten without
-//! `--force`, and nothing is written when either one exists.
+//! `--force` (exit 4 instead), and nothing is written when either one
+//! exists. Any directory entry counts as existing, a dangling symlink
+//! included, and a manifest is never written through a symlink: new files
+//! are created exclusively, and `--force` replaces a regular file but
+//! refuses a symlink.
 
 use std::fmt::Write as _;
 use std::path::{Component, Path, PathBuf};
@@ -81,19 +85,38 @@ pub(crate) fn run(args: &InitArgs) -> Report {
 
     let manifest_path = input::join(dir, "tungsten.yml");
     let agent_path = input::join(dir, "agent.yml");
+    let entry = |p: &PathBuf| std::fs::symlink_metadata(p).ok();
     let existing: Vec<&PathBuf> = [&manifest_path, &agent_path]
         .into_iter()
-        .filter(|p| p.exists())
+        .filter(|p| entry(p).is_some())
         .collect();
     if !args.force && !existing.is_empty() {
         let names: Vec<String> = existing.iter().map(|p| p.display().to_string()).collect();
         return report.failed(
-            exit::FAILED,
+            exit::REFUSED,
             CliError::new(
                 ErrorKind::Refused,
                 format!("refusing to overwrite {}", names.join(" and ")),
             )
             .with_help("pass --force to overwrite"),
+        );
+    }
+    let links: Vec<String> = existing
+        .iter()
+        .filter(|p| entry(p).is_some_and(|m| !m.file_type().is_file()))
+        .map(|p| p.display().to_string())
+        .collect();
+    if !links.is_empty() {
+        return report.failed(
+            exit::REFUSED,
+            CliError::new(
+                ErrorKind::Refused,
+                format!(
+                    "refusing to write through {}: not a regular file",
+                    links.join(" and ")
+                ),
+            )
+            .with_help("remove the symlink or other entry, then run init again"),
         );
     }
     if let Err(err) = std::fs::create_dir_all(dir) {
@@ -128,12 +151,12 @@ pub(crate) fn run(args: &InitArgs) -> Report {
 
     let mut files = vec![];
     for (path, text) in [(&manifest_path, &manifest), (&agent_path, &agent)] {
-        let action = if path.exists() {
+        let action = if entry(path).is_some() {
             InitAction::Overwritten
         } else {
             InitAction::Created
         };
-        if let Err(err) = std::fs::write(path, text) {
+        if let Err(err) = write_new(path, text, action == InitAction::Overwritten) {
             return report.failed(
                 exit::INTERNAL,
                 CliError::new(
@@ -159,6 +182,22 @@ pub(crate) fn run(args: &InitArgs) -> Report {
     report.human = human(&result);
     report.result = Some(CommandResult::Init(result));
     report
+}
+
+/// Write `text` to a new file at `path`, never following a symlink: an
+/// existing regular file is removed first when `replace`, and the file is
+/// created exclusively, so an entry that appeared meanwhile fails instead
+/// of being written through.
+fn write_new(path: &Path, text: &str, replace: bool) -> std::io::Result<()> {
+    use std::io::Write as _;
+    if replace {
+        std::fs::remove_file(path)?;
+    }
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)?;
+    file.write_all(text.as_bytes())
 }
 
 struct SpecFailure {

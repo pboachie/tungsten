@@ -64,10 +64,9 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
     ),
     e(
         "TG0202",
-        "A `$ref` names a remote URL. Remote references are fetched only from allowlisted URL \
-         prefixes so that compiling never depends on, or leaks to, arbitrary hosts.",
-        "Vendor the remote document next to the spec and reference it by relative path, or \
-         allowlist its URL prefix.",
+        "A `$ref` names a remote URL. This version of tungsten does not fetch remote \
+         references, so that compiling never depends on, or leaks to, other hosts.",
+        "Vendor the remote document next to the spec and reference it by relative path.",
     ),
     e(
         "TG0203",

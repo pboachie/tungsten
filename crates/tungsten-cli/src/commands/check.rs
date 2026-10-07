@@ -5,6 +5,7 @@ use std::fmt::Write as _;
 
 use tungsten_build::Compiled;
 use tungsten_core::{Diagnostic, Severity};
+use tungsten_openapi::SpecVersion;
 
 use crate::args::CheckArgs;
 use crate::output::{CheckResult, CommandName, CommandResult, DiagnosticCounts};
@@ -22,6 +23,7 @@ pub(crate) fn run(args: &CheckArgs) -> Report {
     let counts = count(&diagnostics);
     let result = CheckResult {
         inputs: input_names(&compiled),
+        openapi_versions: openapi_versions(&compiled),
         documents: compiled.workspace.documents.len(),
         counts,
         promoted,
@@ -68,6 +70,18 @@ pub(crate) fn count(diagnostics: &[Diagnostic]) -> DiagnosticCounts {
     c
 }
 
+/// The OpenAPI version of each entry document, in manifest order.
+fn openapi_versions(compiled: &Compiled) -> Vec<Option<String>> {
+    let ws = &compiled.workspace;
+    ws.entry_docs
+        .iter()
+        .map(|doc| match &ws.documents.get((*doc)?)?.version {
+            SpecVersion::V30(v) | SpecVersion::V31(v) => Some(v.clone()),
+            SpecVersion::Fragment => None,
+        })
+        .collect()
+}
+
 /// Entry documents in manifest order.
 fn input_names(compiled: &Compiled) -> Vec<String> {
     compiled
@@ -103,7 +117,18 @@ fn human(path: &str, r: &CheckResult) -> String {
         }
     }
     if !r.inputs.is_empty() {
-        let _ = writeln!(out, "  {:<9}{}", "inputs", r.inputs.join("  "));
+        let inputs: Vec<String> = r
+            .inputs
+            .iter()
+            .enumerate()
+            .map(
+                |(i, name)| match r.openapi_versions.get(i).cloned().flatten() {
+                    Some(v) => format!("{name} (OpenAPI {v})"),
+                    None => name.clone(),
+                },
+            )
+            .collect();
+        let _ = writeln!(out, "  {:<9}{}", "inputs", inputs.join("  "));
     }
     let _ = writeln!(out, "  {:<9}{}", "refs", describe_refs(&r.refs));
     let ir = match &r.stats {

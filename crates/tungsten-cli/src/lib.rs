@@ -47,6 +47,9 @@ pub mod exit {
     pub const USAGE: i32 = 2;
     /// An I/O failure (for example `--out` not writable) or an internal error.
     pub const INTERNAL: i32 = 3;
+    /// The command refused to act without confirmation (for example `init`
+    /// over existing files without `--force`); it never prompts.
+    pub const REFUSED: i32 = 4;
 }
 
 /// The environment the CLI runs in. Passing it explicitly keeps [`run`]
@@ -157,12 +160,28 @@ fn usage_error(
     stderr: &mut dyn Write,
 ) -> i32 {
     // Help and version are requested output, not errors: plain text on
-    // stdout even in JSON mode.
+    // stdout, or with --json one document carrying the text.
     if matches!(
         err.kind(),
         ClapErrorKind::DisplayHelp | ClapErrorKind::DisplayVersion
     ) {
-        return write_or_internal(stdout, &err.render().to_string());
+        let text = err.render().to_string();
+        if !json {
+            return write_or_internal(stdout, &text);
+        }
+        let output = CliOutput::new(
+            None,
+            exit::OK,
+            vec![],
+            None,
+            Some(output::CommandResult::Help(output::HelpResult {
+                help: text,
+            })),
+        );
+        return match write_json(stdout, &output) {
+            Ok(()) => exit::OK,
+            Err(_) => exit::INTERNAL,
+        };
     }
     if json {
         let message = err.render().to_string();
