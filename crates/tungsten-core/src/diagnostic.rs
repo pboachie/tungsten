@@ -256,6 +256,11 @@ pub mod codes {
         ("TG0609", "macro dropped or its safety tier raised"),
         ("TG0610", "unknown x-agent-* extension ignored"),
         ("TG0611", "x-agent-* extension value is malformed; ignored"),
+        ("TG0612", "targets share or nest their output directories"),
+        (
+            "TG0613",
+            "agent.yml option not applied by this version; ignored",
+        ),
         ("TG0701", "generated output could not be written"),
         ("TG0702", "target has no emitter in this version; skipped"),
         (

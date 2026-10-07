@@ -348,7 +348,71 @@ impl Validator<'_> {
                 );
             }
         }
+        // Each target owns its output directory (its `.tungsten/manifest.json`
+        // lists its files and removes the stale ones), so two targets must
+        // never share a directory or nest one inside the other.
+        let outs: Vec<(&String, String, Vec<String>)> = config
+            .targets
+            .iter()
+            .map(|(name, options)| {
+                let out = options
+                    .get("out")
+                    .and_then(|v| v.as_str())
+                    .map_or_else(|| format!("generated/{name}"), str::to_string);
+                let parts = lexical_components(&out);
+                (name, out, parts)
+            })
+            .collect();
+        for (i, (a, a_out, a_parts)) in outs.iter().enumerate() {
+            for (b, b_out, b_parts) in outs.iter().skip(i + 1) {
+                let relation = if a_parts == b_parts {
+                    "the same output directory"
+                } else if b_parts.starts_with(a_parts) || a_parts.starts_with(b_parts) {
+                    "nested output directories"
+                } else {
+                    continue;
+                };
+                let at = pointer::from_tokens(["targets", b.as_str(), "out"]);
+                let at = if config
+                    .targets
+                    .get(b.as_str())
+                    .and_then(|o| o.get("out"))
+                    .is_some()
+                {
+                    at
+                } else {
+                    pointer::from_tokens(["targets", b.as_str()])
+                };
+                self.report(
+                    "TG0612",
+                    &at,
+                    format!(
+                        "targets `{a}` (out: {a_out}) and `{b}` (out: {b_out}) have {relation}; each target deletes files it did not generate in its own directory, so give every target a separate, non-nested `out`"
+                    ),
+                );
+            }
+        }
     }
+}
+
+/// The components of a relative or absolute `out` path, with `.` dropped
+/// and `..` applied lexically (a leading `..` is kept), so `gen/./ts/` and
+/// `gen/ts` compare equal.
+fn lexical_components(path: &str) -> Vec<String> {
+    let mut out: Vec<String> = vec![];
+    if path.starts_with('/') || path.starts_with('\\') {
+        out.push("/".into());
+    }
+    for part in path.split(['/', '\\']) {
+        match part {
+            "" | "." => {}
+            ".." if out.last().is_some_and(|l| l != ".." && l != "/") => {
+                out.pop();
+            }
+            other => out.push(other.to_string()),
+        }
+    }
+    out
 }
 
 fn pagination_styles(entry: &PaginationConfig) -> Vec<&'static str> {

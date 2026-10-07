@@ -286,6 +286,23 @@ pub(crate) fn model(
         drop_fields: cfg.disclosure.prune.drop_fields.clone(),
         keep_examples: cfg.disclosure.prune.keep_examples,
     };
+    // Accepted by the schema, but no emitter of this version applies them
+    // (agent schemas follow the SDK's arguments exactly); say so instead of
+    // ignoring them silently.
+    if !cfg.disclosure.prune.drop_fields.is_empty() {
+        r.warning(
+            "TG0613",
+            "/disclosure/prune/drop_fields",
+            "disclosure.prune.drop_fields is not applied by this version of tungsten: tool schemas still list every argument the SDK takes".into(),
+        );
+    }
+    if cfg.disclosure.prune.keep_examples {
+        r.warning(
+            "TG0613",
+            "/disclosure/prune/keep_examples",
+            "disclosure.prune.keep_examples is not applied by this version of tungsten: tool schemas carry no examples".into(),
+        );
+    }
 }
 
 /// `gates` texts, checked against the spec's `x-runtime-gate`s.

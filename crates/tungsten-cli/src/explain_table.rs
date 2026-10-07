@@ -338,6 +338,24 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
          (`specs/agent-manifest.schema.json`, `ToolConfig`).",
     ),
     e(
+        "TG0612",
+        "Two targets in tungsten.yml write to the same output directory, or one target's \
+         `out` is inside another's. Each target records its files in its own \
+         `.tungsten/manifest.json` and removes files it no longer generates, so targets \
+         sharing a directory delete each other's output on every run.",
+        "Give every target its own directory that is not inside another target's, for \
+         example `typescript: { out: generated/typescript }` and `docs: { out: generated/docs }`.",
+    ),
+    e(
+        "TG0613",
+        "agent.yml sets an option the schema accepts but this version of tungsten does not \
+         apply yet (`disclosure.prune.drop_fields`, `disclosure.prune.keep_examples`). Agent \
+         tool schemas describe exactly the arguments the SDK takes, so nothing is hidden \
+         and no examples are added; the rest of the manifest applies.",
+        "Remove the option, or keep it for a later version that applies it. To make a tool \
+         smaller now, shorten descriptions or raise `defaults.disclosure.schema_budget_tokens`.",
+    ),
+    e(
         "TG0701",
         "A generated file could not be written to the target's output directory, for example \
          because the directory is read-only or a path component is a file.",
@@ -398,8 +416,8 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
          / 4 after repeated sub-schemas were moved to `$defs`) is larger than the per-tool \
          schema budget of agent.yml (`defaults.disclosure.schema_budget_tokens`, 600 by \
          default). Agents pay this cost every time the tool is listed.",
-        "Shorten the operation's description (`disclosure.prune`), hide fields agents do not \
-         need (`disclosure.prune.drop_fields`), split the operation, or raise the budget.",
+        "Shorten the operation's and its fields' descriptions (`disclosure.prune` for the \
+         operation, the spec for fields), split the operation, or raise the budget.",
     ),
     e(
         "TG0901",

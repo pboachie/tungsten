@@ -18,7 +18,7 @@ use crate::{Report, exit, input};
 pub(crate) fn run(args: &CheckArgs) -> Report {
     let compiled = input::compile(&args.input.path);
     let mut diagnostics = compiled.diagnostics.0.clone();
-    let promoted = if args.strict {
+    let mut promoted = if args.strict {
         promote_warnings(&mut diagnostics)
     } else {
         0
@@ -38,8 +38,13 @@ pub(crate) fn run(args: &CheckArgs) -> Report {
             .map(|c| c.targets.keys().cloned().collect())
             .unwrap_or_default();
         let project = Project::of(&args.input.path);
-        let outcome = run_targets(&compiled, ir, &project, &names, Mode::Check);
+        let mut outcome = run_targets(&compiled, ir, &project, &names, Mode::Check);
         io_failed = outcome.io_failed;
+        // The emitters' warnings (TG07xx, such as TG0713 over the schema
+        // budget) are warnings like the compiler's: `--strict` fails on them.
+        if args.strict {
+            promoted += promote_warnings(&mut outcome.diagnostics);
+        }
         diagnostics.extend(outcome.diagnostics);
         outputs = outcome.reports;
     }
