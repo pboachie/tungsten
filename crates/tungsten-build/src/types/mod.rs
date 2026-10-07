@@ -42,8 +42,10 @@ use tungsten_openapi::{DocId, RefTarget, Workspace, is_named_schema, join_pointe
 /// Display name used to label diagnostics about `types.break_cycles`.
 const MANIFEST_FILE: &str = "tungsten.yml";
 
-/// Longest `$ref` alias chain followed before giving up.
-const MAX_ALIAS_CHAIN: usize = 64;
+/// Deepest nesting of named-type builds (each `$ref` to a type not built
+/// yet starts a nested build). Deeper chains are TG0105 errors; the limit
+/// sits far below what the compile thread's stack holds (driver.rs).
+pub(crate) const MAX_BUILD_DEPTH: usize = 4096;
 
 /// Converts schemas to IR types, memoizing named types by reference target
 /// so each `components/schemas` entry becomes exactly one `NamedType`.
@@ -59,6 +61,10 @@ pub struct TypeBuilder<'a> {
     doc_namespace: BTreeMap<DocId, String>,
     /// `allOf` members being flattened (guards against `allOf` cycles).
     expanding: BTreeSet<RefTarget>,
+    /// Named-type builds in progress (nesting depth).
+    depth: usize,
+    /// Memoized [`TypeBuilder::admits_null`] answers.
+    null_estimates: BTreeMap<RefTarget, bool>,
     diagnostics: Diagnostics,
     /// (code, file, pointer, message) of every diagnostic already pushed.
     reported: BTreeSet<(String, String, String, String)>,
@@ -194,6 +200,8 @@ impl<'a> TypeBuilder<'a> {
             inline: BTreeMap::new(),
             doc_namespace: BTreeMap::new(),
             expanding: BTreeSet::new(),
+            depth: 0,
+            null_estimates: BTreeMap::new(),
             diagnostics: Diagnostics::new(),
             reported: BTreeSet::new(),
         }
@@ -552,12 +560,26 @@ impl<'a> TypeBuilder<'a> {
         let ns = e.ty.namespace.clone();
         let hint = e.ty.name.words.clone();
         let ws = self.ws;
+        if self.depth >= MAX_BUILD_DEPTH {
+            e.state = State::Done;
+            let message = format!(
+                "schema references nest more than {MAX_BUILD_DEPTH} named types deep; this type is treated as any"
+            );
+            self.report(
+                Diagnostic::error("TG0105", message)
+                    .with_help("shorten the chain of schemas that each reference the next one"),
+                &target.doc_pointer(),
+            );
+            return;
+        }
         // A nested build is a fresh `allOf` flattening context.
         let expanding = std::mem::take(&mut self.expanding);
+        self.depth += 1;
         let conv = match ws.get(&target) {
             Some(value) => self.convert(&ns, &target, value, &hint),
             None => Conv::shape(Shape::Any),
         };
+        self.depth -= 1;
         self.expanding = expanding;
         let Some(e) = self.entries.get_mut(id) else {
             return;
@@ -585,9 +607,11 @@ impl<'a> TypeBuilder<'a> {
             .unwrap_or(first)
     }
 
+    /// The shape behind a named type, following aliases. `None` for an
+    /// alias cycle (a chain longer than the number of types repeats one).
     fn named_shape(&self, id: &TypeId) -> Option<&Shape> {
         let mut id = id;
-        for _ in 0..MAX_ALIAS_CHAIN {
+        for _ in 0..=self.entries.len() {
             let e = self.entries.get(id)?;
             match &e.alias {
                 Some(next) => id = next,

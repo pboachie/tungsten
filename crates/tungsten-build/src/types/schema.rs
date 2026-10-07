@@ -82,7 +82,13 @@ const ARRAY_KEYWORDS: &[&str] = &[
     "uniqueItems",
 ];
 /// Keywords that imply `type: string` when `type` is absent.
-const STRING_KEYWORDS: &[&str] = &["maxLength", "minLength", "pattern"];
+const STRING_KEYWORDS: &[&str] = &[
+    "contentEncoding",
+    "contentMediaType",
+    "maxLength",
+    "minLength",
+    "pattern",
+];
 /// Keywords that imply `type: number` when `type` is absent.
 const NUMBER_KEYWORDS: &[&str] = &[
     "exclusiveMaximum",
@@ -338,6 +344,34 @@ pub(super) fn string_primitive(format: Option<&str>) -> (Primitive, bool) {
         },
         false,
     )
+}
+
+/// The primitive a 3.1 string declares through its content keywords,
+/// which replace 3.0's `format: byte`/`binary`: `contentEncoding: base64`
+/// (or `base64url`) is a base64 string (`format: byte`), and a
+/// `contentMediaType` that is not text (an image, `application/octet-stream`)
+/// without an encoding is raw bytes (`format: binary`). `None` when neither
+/// applies.
+pub(super) fn content_primitive(map: &Object) -> Option<Primitive> {
+    let text = |key: &str| map.get(key).and_then(Value::as_str);
+    if let Some(encoding) = text("contentEncoding") {
+        return matches!(
+            encoding.to_ascii_lowercase().as_str(),
+            "base64" | "base64url"
+        )
+        .then_some(Primitive::String {
+            format: Some(StringFormat::Byte),
+        });
+    }
+    let media = text("contentMediaType")?.to_ascii_lowercase();
+    let essence = media.split(';').next().unwrap_or("").trim();
+    let textual = essence.starts_with("text/")
+        || essence.ends_with("/json")
+        || essence.ends_with("+json")
+        || essence.ends_with("/xml")
+        || essence.ends_with("+xml")
+        || essence == "application/x-www-form-urlencoded";
+    (!textual).then_some(Primitive::Bytes)
 }
 
 /// The primitive for `type: integer`; formats other than `int32`/`int64`

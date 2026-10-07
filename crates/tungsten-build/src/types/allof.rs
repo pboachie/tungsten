@@ -14,22 +14,37 @@
 //! - otherwise every member must read as a record (a record, a map, or
 //!   any). Fields are merged in member order. A field declared by several
 //!   members must have the same type in each (`any` yields to the other
-//!   type); it is required when any member requires it and nullable only
-//!   when every member admits `null`. The merged record is closed when any
-//!   member is closed (that member forbids every property it does not
+//!   type), or one must refine the other without changing its JSON type:
+//!   two primitives of one kind (a format or a size may be added; the
+//!   constraints are conjoined: the larger minimum, the smaller maximum,
+//!   the later `pattern`), two arrays of the same items (bounds conjoined),
+//!   or a primitive and an enum or const of its JSON type (the enum or
+//!   const is kept). It is required when any member requires it and
+//!   nullable only when every member admits `null`. The merged record is
+//!   closed when any member is closed (that member forbids every property it does not
 //!   declare, and the generated type should not invite them), else typed
 //!   by the first member with typed extras, else open.
 //! - a member that is not a record, or a field whose types differ, keeps
 //!   the members as an `Intersection` with TG0302.
+//!
+//! Inheritance polymorphism: a base schema whose `oneOf`/`anyOf` lists its
+//! subtypes, each of which is `allOf: [{$ref: Base}, ...]`. A subtype takes
+//! only the base's own record keywords (its union is the base's type, not
+//! a part of every subtype), and a base whose union members all extend it
+//! is that union alone (each variant already carries the base fields).
+//!
+//! Referenced members that are already built reuse their shape instead of
+//! being converted again, and a member referenced twice counts once, so
+//! flattening stays linear in the number of schemas.
 
 use serde_json::Value;
 use tungsten_core::Diagnostic;
-use tungsten_ir::{Additional, Field, Shape, TypeRef};
+use tungsten_ir::{Additional, Constraints, Field, Primitive, Shape, TypeRef};
 use tungsten_openapi::RefTarget;
 
-use super::convert::{FieldAt, presence, split_presence};
+use super::convert::{FieldAt, presence, split_presence, union_members};
 use super::schema::{self, JsonType, Object};
-use super::{At, Body, Conv, Resolved, TypeBuilder, child, names};
+use super::{At, Body, Conv, Resolved, State, TypeBuilder, child, names};
 
 /// How deep `same_type` compares inline shapes.
 const MAX_COMPARE_DEPTH: usize = 16;
@@ -76,12 +91,21 @@ impl<'a> TypeBuilder<'a> {
     fn all_of_members(&mut self, target: &RefTarget, map: &Object) -> Vec<Member> {
         let ws = self.ws;
         let mut members = vec![];
+        // A schema referenced by several members applies once.
+        let mut seen: Vec<RefTarget> = vec![];
+        let mut push_at = |members: &mut Vec<Member>, at: RefTarget| {
+            let key = ws.deref(&at).unwrap_or_else(|| at.clone());
+            if !seen.contains(&key) {
+                seen.push(key);
+                members.push(Member::At(at));
+            }
+        };
         if let Some(to) = map
             .get("$ref")
             .and_then(Value::as_str)
             .and_then(|r| ws.resolve(target.doc, r))
         {
-            members.push(Member::At(to));
+            push_at(&mut members, to);
         }
         match map.get("allOf") {
             Some(Value::Array(items)) => {
@@ -90,7 +114,7 @@ impl<'a> TypeBuilder<'a> {
                     match item {
                         Value::Object(m) if schema::is_inert(m) => self.report_unsupported(&at, m),
                         Value::Bool(true) => {}
-                        _ => members.push(Member::At(at)),
+                        _ => push_at(&mut members, at),
                     }
                 }
             }
@@ -110,7 +134,9 @@ impl<'a> TypeBuilder<'a> {
             })
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
-        if !rest.is_empty() {
+        // A base whose union members all extend it is that union: every
+        // variant already carries the base's own fields.
+        if !rest.is_empty() && !self.is_inheritance_base(target, map) {
             members.push(Member::View(rest));
         }
         let union: Object = map
@@ -122,6 +148,49 @@ impl<'a> TypeBuilder<'a> {
             members.push(Member::View(union));
         }
         members
+    }
+
+    /// Whether every non-null `oneOf`/`anyOf` member of the schema at
+    /// `target` is a subtype that extends it through `allOf` (or a 3.1
+    /// sibling `$ref`).
+    fn is_inheritance_base(&self, target: &RefTarget, map: &Object) -> bool {
+        let Some((_, members)) = union_members(target, map) else {
+            return false;
+        };
+        let mut subtypes = members.iter().filter(|m| !self.is_null_only(m)).peekable();
+        subtypes.peek().is_some() && subtypes.all(|m| self.extends(m, target))
+    }
+
+    /// Whether the schema at `member` (after `$ref`s) lists `base` among
+    /// its `allOf` members or its sibling `$ref`.
+    fn extends(&self, member: &RefTarget, base: &RefTarget) -> bool {
+        let ws = self.ws;
+        let Some(sub) = ws.deref(member) else {
+            return false;
+        };
+        let Some(map) = ws.get(&sub).and_then(Value::as_object) else {
+            return false;
+        };
+        let is_base = |at: RefTarget| ws.deref(&at).as_ref() == Some(base);
+        let items = map.get("allOf").and_then(Value::as_array);
+        let by_all_of = (0..items.map_or(0, Vec::len))
+            .any(|i| is_base(child(&sub, &["allOf", &i.to_string()])));
+        let by_ref = map
+            .get("$ref")
+            .and_then(Value::as_str)
+            .and_then(|r| ws.resolve(sub.doc, r))
+            .is_some_and(is_base);
+        by_all_of || by_ref
+    }
+
+    /// Whether a `oneOf`/`anyOf` member of the schema `map` at `at` is
+    /// `whole` (after `$ref`s).
+    fn lists_member(&self, at: &RefTarget, map: &Object, whole: &RefTarget) -> bool {
+        union_members(at, map).is_some_and(|(_, members)| {
+            members
+                .iter()
+                .any(|m| self.ws.deref(m).as_ref() == Some(whole))
+        })
     }
 
     /// The type of a lone member. An inline member is converted in place
@@ -158,7 +227,7 @@ impl<'a> TypeBuilder<'a> {
     ) -> Conv {
         let mut parts = vec![];
         for (i, m) in members.iter().enumerate() {
-            match self.member_parts(ns, target, m, hint) {
+            match self.member_parts(ns, target, m, hint, target) {
                 Some(p) => parts.push(p),
                 None => {
                     let reason = format!("member {} is not an object schema", i + 1);
@@ -221,7 +290,11 @@ impl<'a> TypeBuilder<'a> {
         if is_any(&g.ty) && !is_any(&f.ty) {
             g.ty = f.ty;
             g.constraints = f.constraints;
-        } else if !is_any(&f.ty) && !self.same_type(&g.ty, &f.ty, 0) {
+        } else if is_any(&f.ty) || self.same_type(&g.ty, &f.ty, 0) {
+        } else if let Some(ty) = self.refine(&g.ty, &f.ty) {
+            g.ty = ty;
+            g.constraints = conjoin(&g.constraints, &f.constraints);
+        } else {
             return false;
         }
         g.presence = presence(g_required || f_required, g_nullable && f_nullable);
@@ -238,48 +311,98 @@ impl<'a> TypeBuilder<'a> {
         true
     }
 
+    /// A member read as a record. `whole` is the `allOf` schema being
+    /// flattened.
     fn member_parts(
         &mut self,
         ns: &str,
         target: &RefTarget,
         member: &Member,
         hint: &[String],
+        whole: &RefTarget,
     ) -> Option<Parts> {
         match member {
             Member::View(map) => {
                 let conv = self.convert_object(ns, target, map, hint);
-                self.parts_of(ns, conv, hint)
+                self.parts_of(ns, conv, hint, whole)
             }
-            Member::At(at) => self.parts_at(ns, at, hint),
+            Member::At(at) => self.parts_at(ns, at, hint, whole),
         }
     }
 
     /// The member at `at` (after `$ref`s) read as a record. A referenced
-    /// schema is converted again under its own name (its nested inline
-    /// types are memoized, so they are shared with its own named type).
-    fn parts_at(&mut self, ns: &str, at: &RefTarget, hint: &[String]) -> Option<Parts> {
+    /// schema that is already built gives its shape; one still being built
+    /// (a reference cycle) is converted again under its own name (its
+    /// nested inline types are memoized, so they are shared with its own
+    /// named type). A base whose `oneOf`/`anyOf` lists `whole` contributes
+    /// only its own record keywords.
+    fn parts_at(
+        &mut self,
+        ns: &str,
+        at: &RefTarget,
+        hint: &[String],
+        whole: &RefTarget,
+    ) -> Option<Parts> {
         let ws = self.ws;
         let resolved = ws.deref(at)?;
         let value = ws.get(&resolved)?;
         let named = resolved != *at
             || self.by_target.contains_key(&resolved)
             || ws.graph.nodes.contains(&resolved);
-        let hint = if named {
+        let (hint, id) = if named {
             let id = self.register(ns, &resolved, hint);
-            self.name_words(&id)
+            (self.name_words(&id), Some(id))
         } else {
-            hint.to_vec()
+            (hint.to_vec(), None)
         };
         if !self.expanding.insert(resolved.clone()) {
             return None;
         }
-        let conv = self.convert(ns, &resolved, value, &hint);
-        let parts = self.parts_of(ns, conv, &hint);
+        let parts = match value.as_object() {
+            Some(map) if self.lists_member(&resolved, map, whole) => {
+                let own: Object = map
+                    .iter()
+                    .filter(|(k, _)| !matches!(k.as_str(), "oneOf" | "anyOf" | "discriminator"))
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect();
+                let conv = self.convert_object(ns, &resolved, &own, &hint);
+                self.parts_of(ns, conv, &hint, whole)
+            }
+            _ => {
+                let conv = match id.and_then(|id| self.built(&id)) {
+                    Some(conv) => conv,
+                    None => self.convert(ns, &resolved, value, &hint),
+                };
+                self.parts_of(ns, conv, &hint, whole)
+            }
+        };
         self.expanding.remove(&resolved);
         parts
     }
 
-    fn parts_of(&mut self, ns: &str, conv: Conv, hint: &[String]) -> Option<Parts> {
+    /// The converted schema of a named type whose build has finished.
+    fn built(&self, id: &super::TypeId) -> Option<Conv> {
+        let e = self.entries.get(id)?;
+        if e.state != State::Done {
+            return None;
+        }
+        let body = match &e.alias {
+            Some(other) => Body::Named(other.clone()),
+            None => Body::Shape(e.ty.shape.clone()),
+        };
+        Some(Conv {
+            body,
+            nullable: e.nullable,
+        })
+    }
+
+    fn parts_of(
+        &mut self,
+        ns: &str,
+        conv: Conv,
+        hint: &[String],
+        whole: &RefTarget,
+    ) -> Option<Parts> {
         let (fields, additional) = match conv.body {
             Body::Shape(Shape::Record { fields, additional }) => (fields, additional),
             Body::Shape(Shape::Map { values }) if is_any(&values) => (vec![], Additional::Open),
@@ -287,7 +410,7 @@ impl<'a> TypeBuilder<'a> {
             Body::Shape(Shape::Any) => (vec![], Additional::Open),
             Body::Named(id) => {
                 let at = self.entries.get(&id)?.target.clone();
-                let mut parts = self.parts_at(ns, &at, hint)?;
+                let mut parts = self.parts_at(ns, &at, hint, whole)?;
                 parts.nullable |= conv.nullable;
                 return Some(parts);
             }
@@ -339,6 +462,78 @@ impl<'a> TypeBuilder<'a> {
             body: Body::Shape(Shape::Intersection { members: refs }),
             nullable,
         }
+    }
+
+    /// The narrower of two field types where one refines the other without
+    /// changing its JSON type (see the module docs), or `None`.
+    fn refine(&self, a: &TypeRef, b: &TypeRef) -> Option<TypeRef> {
+        let inline = |shape: Shape| TypeRef::Inline(Box::new(shape));
+        if let (TypeRef::Inline(x), TypeRef::Inline(y)) = (a, b) {
+            match (x.as_ref(), y.as_ref()) {
+                (
+                    Shape::Primitive {
+                        primitive: p,
+                        constraints: c,
+                    },
+                    Shape::Primitive {
+                        primitive: q,
+                        constraints: d,
+                    },
+                ) => {
+                    return Some(inline(Shape::Primitive {
+                        primitive: narrower_primitive(p, q)?,
+                        constraints: conjoin(c, d),
+                    }));
+                }
+                (
+                    Shape::Array {
+                        items: i,
+                        min: a_min,
+                        max: a_max,
+                        unique: a_unique,
+                    },
+                    Shape::Array {
+                        items: j,
+                        min: b_min,
+                        max: b_max,
+                        unique: b_unique,
+                    },
+                ) => {
+                    if !self.same_type(i, j, 0) {
+                        return None;
+                    }
+                    return Some(inline(Shape::Array {
+                        items: i.clone(),
+                        min: tighter(*a_min, *b_min, u64::max),
+                        max: tighter(*a_max, *b_max, u64::min),
+                        unique: *a_unique || *b_unique,
+                    }));
+                }
+                _ => {}
+            }
+        }
+        // A primitive and an enum or const of its JSON type: the values.
+        let (primitive, values) = match (a, b) {
+            (TypeRef::Inline(x), other) | (other, TypeRef::Inline(x))
+                if matches!(x.as_ref(), Shape::Primitive { .. }) =>
+            {
+                (x.as_ref(), other)
+            }
+            _ => return None,
+        };
+        let Shape::Primitive { primitive, .. } = primitive else {
+            return None;
+        };
+        let admits = match self.shape_of(values)? {
+            Shape::Enum { base, .. } => json_type(base) == json_type(primitive),
+            Shape::Const { value } => {
+                let t = JsonType::of(value);
+                t == json_type(primitive)
+                    || (t == JsonType::Integer && json_type(primitive) == JsonType::Number)
+            }
+            _ => false,
+        };
+        admits.then(|| values.clone())
     }
 
     // ----- structural type equality -------------------------------------
@@ -421,5 +616,73 @@ impl<'a> TypeBuilder<'a> {
             }
             (x, y) => x == y,
         }
+    }
+}
+
+/// The JSON type a primitive's values have.
+fn json_type(p: &Primitive) -> JsonType {
+    match p {
+        Primitive::String { .. } | Primitive::Bytes => JsonType::String,
+        Primitive::Int32 | Primitive::Int64 | Primitive::Integer => JsonType::Integer,
+        Primitive::Float | Primitive::Double | Primitive::Number => JsonType::Number,
+        Primitive::Bool => JsonType::Boolean,
+    }
+}
+
+/// The narrower of two primitives of one kind: equal ones, a string and
+/// the same string with a format, an unsized integer or number and a sized
+/// one, a number and an integer.
+fn narrower_primitive(p: &Primitive, q: &Primitive) -> Option<Primitive> {
+    use Primitive::*;
+    Some(match (p, q) {
+        _ if p == q => p.clone(),
+        (String { format: None }, String { format: Some(_) }) => q.clone(),
+        (String { format: Some(_) }, String { format: None }) => p.clone(),
+        (Integer | Number, Int32 | Int64) | (Number, Integer) => q.clone(),
+        (Int32 | Int64, Integer | Number) | (Integer, Number) => p.clone(),
+        (Number, Float | Double) => q.clone(),
+        (Float | Double, Number) => p.clone(),
+        _ => return None,
+    })
+}
+
+/// Both bounds apply: the tighter one by `pick` (min or max).
+fn tighter<T: Copy>(a: Option<T>, b: Option<T>, pick: fn(T, T) -> T) -> Option<T> {
+    match (a, b) {
+        (Some(x), Some(y)) => Some(pick(x, y)),
+        (x, y) => x.or(y),
+    }
+}
+
+/// The tighter of two numeric bounds: the larger lower bound or the
+/// smaller upper bound.
+fn tighter_number(
+    a: &Option<serde_json::Number>,
+    b: &Option<serde_json::Number>,
+    lower: bool,
+) -> Option<serde_json::Number> {
+    match (a, b) {
+        (Some(x), Some(y)) => {
+            let (fx, fy) = (x.as_f64().unwrap_or(0.0), y.as_f64().unwrap_or(0.0));
+            let x_wins = if lower { fx >= fy } else { fx <= fy };
+            Some(if x_wins { x.clone() } else { y.clone() })
+        }
+        (x, y) => x.clone().or_else(|| y.clone()),
+    }
+}
+
+/// The constraints of two `allOf` members that both apply. Bounds take the
+/// tighter value; `pattern` and `multipleOf` keep the later member's when
+/// both are set (one field can carry only one).
+fn conjoin(c: &Constraints, d: &Constraints) -> Constraints {
+    Constraints {
+        pattern: d.pattern.clone().or_else(|| c.pattern.clone()),
+        min_length: tighter(c.min_length, d.min_length, u64::max),
+        max_length: tighter(c.max_length, d.max_length, u64::min),
+        minimum: tighter_number(&c.minimum, &d.minimum, true),
+        maximum: tighter_number(&c.maximum, &d.maximum, false),
+        exclusive_minimum: tighter_number(&c.exclusive_minimum, &d.exclusive_minimum, true),
+        exclusive_maximum: tighter_number(&c.exclusive_maximum, &d.exclusive_maximum, false),
+        multiple_of: d.multiple_of.clone().or_else(|| c.multiple_of.clone()),
     }
 }

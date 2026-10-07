@@ -8,7 +8,7 @@
 //! rendered name in one scope unique by appending a numeric word. All
 //! functions are pure: the same input always yields the same output.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::Ident;
 
@@ -277,21 +277,28 @@ pub fn builtin_types(target: Target) -> &'static [&'static str] {
 /// original rendering of any entry nor a name already assigned by this
 /// call. Returns the wire names of the entries that changed, in input
 /// order, for TG0401.
+///
+/// The search for `n` resumes, per word list, after the last number it
+/// assigned: names only ever become taken, so every smaller number is
+/// still taken, and `k` entries that render alike cost `O(k)` renders
+/// instead of `O(k²)`.
 pub fn disambiguate(idents: &mut [Ident], target: Target, role: Role) -> Vec<String> {
     let rendered: Vec<String> = idents.iter().map(|i| render(i, target, role)).collect();
     let mut taken: BTreeSet<String> = rendered.iter().cloned().collect();
     let mut claimed: BTreeSet<&str> = BTreeSet::new();
+    let mut next: BTreeMap<Vec<String>, u64> = BTreeMap::new();
     let mut changed = vec![];
     for (ident, name) in idents.iter_mut().zip(&rendered) {
         if claimed.insert(name.as_str()) {
             continue;
         }
-        let mut n: u64 = 2;
+        let mut n: u64 = next.get(&ident.words).copied().unwrap_or(2);
         loop {
             let mut words = ident.words.clone();
             words.push(n.to_string());
             let candidate = render_words(&words, target, role);
             if taken.insert(candidate) {
+                next.insert(ident.words.clone(), n + 1);
                 ident.words = words;
                 break;
             }

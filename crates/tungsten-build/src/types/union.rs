@@ -5,11 +5,16 @@
 //! left the union is that member. Otherwise the strategy is, in order:
 //!
 //! 1. `Tagged` by an explicit `discriminator` (mapping values resolve like
-//!    `$ref`s or name a component; variants without a mapping entry use
-//!    their component name, or their `const` value of the property).
+//!    `$ref`s or name a component; a variant without a mapping entry uses
+//!    its `const` value of the property, else its component name: a const
+//!    is the only value the variant admits, so a component name that
+//!    differs from it could never match).
 //! 2. `Tagged` on a property every variant record requires with a distinct
-//!    `const` (or one-value `enum`), with the mapping derived from those
-//!    values. This is the RPC envelope shape (ZROtext workflow tools).
+//!    string `const` (or one-value `enum`), with the mapping derived from
+//!    those values. This is the RPC envelope shape (ZROtext workflow
+//!    tools). Tags are strings, like OpenAPI discriminator values: boolean
+//!    or numeric consts (`ok: true` / `ok: false`) do not tag, because a
+//!    string tag would not equal the JSON value on the wire.
 //! 3. `Literal` when every variant is a primitive, enum or const and no two
 //!    can accept the same JSON value.
 //! 4. `Untagged`, with candidates ordered most constrained first (more
@@ -407,10 +412,15 @@ impl<'a> TypeBuilder<'a> {
             let TypeRef::Named(id) = &v.ty else {
                 continue;
             };
-            let implicit = if self.is_component(id) {
-                self.entries.get(id).map(|e| e.ty.name.wire.clone())
-            } else {
-                self.const_field(&v.ty, property)
+            let constant = self
+                .const_field(&v.ty, property)
+                .or_else(|| self.raw_const_field(id, property));
+            let implicit = match constant {
+                Some(c) => Some(c),
+                None if self.is_component(id) => {
+                    self.entries.get(id).map(|e| e.ty.name.wire.clone())
+                }
+                None => None,
             };
             match implicit {
                 Some(t) => values.push(t),
@@ -474,10 +484,23 @@ impl<'a> TypeBuilder<'a> {
         self.literal_text(&field.ty)
     }
 
-    /// The text of a scalar `Const` type.
+    /// The literal value of `property` in the raw schema of a named type,
+    /// for a variant that is still being built (a union in a cycle).
+    fn raw_const_field(&self, id: &tungsten_ir::TypeId, property: &str) -> Option<String> {
+        let ws = self.ws;
+        let source = ws.deref(&self.entries.get(id)?.source)?;
+        let prop = ws.deref(&child(&source, &["properties", property]))?;
+        ws.get(&prop)
+            .and_then(Value::as_object)
+            .and_then(raw_literal)
+    }
+
+    /// The text of a string `Const` type (a tag value).
     fn literal_text(&self, ty: &TypeRef) -> Option<String> {
         match self.shape_of(ty)? {
-            Shape::Const { value } if is_scalar(value) => Some(schema::value_text(value)),
+            Shape::Const {
+                value: Value::String(s),
+            } => Some(s.clone()),
             _ => None,
         }
     }
@@ -526,17 +549,13 @@ fn requires(map: &Object, property: &str) -> bool {
         .is_some_and(|r| r.iter().any(|v| v.as_str() == Some(property)))
 }
 
-fn is_scalar(value: &Value) -> bool {
-    matches!(value, Value::String(_) | Value::Number(_) | Value::Bool(_))
-}
-
-/// The literal of `const: x` or a one-value `enum`, as text.
+/// The string of `const: "x"` or a one-value string `enum` (a tag value).
 fn raw_literal(map: &Object) -> Option<String> {
-    if let Some(v) = map.get("const").filter(|v| is_scalar(v)) {
-        return Some(schema::value_text(v));
+    if let Some(Value::String(s)) = map.get("const") {
+        return Some(s.clone());
     }
     match map.get("enum")?.as_array()?.as_slice() {
-        [v] if is_scalar(v) => Some(schema::value_text(v)),
+        [Value::String(s)] => Some(s.clone()),
         _ => None,
     }
 }

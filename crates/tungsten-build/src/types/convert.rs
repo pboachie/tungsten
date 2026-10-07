@@ -13,7 +13,7 @@ use tungsten_ir::{
 use tungsten_openapi::RefTarget;
 
 use super::schema::{self, Inferred, JsonType, Object};
-use super::{At, Body, Conv, MAX_ALIAS_CHAIN, Resolved, TypeBuilder, child, names};
+use super::{At, Body, Conv, Resolved, TypeBuilder, child, names};
 
 /// How a schema admits `null`.
 #[derive(Debug, Clone, Copy)]
@@ -191,11 +191,21 @@ impl<'a> TypeBuilder<'a> {
     /// A syntactic estimate of whether the schema at `target` admits
     /// `null`, used for a named type before it is converted (references
     /// met while converting a cycle). Conversion sets the final value.
-    pub(super) fn admits_null(&self, target: &RefTarget) -> bool {
+    /// Every schema of a followed alias chain shares the answer, which is
+    /// memoized so long chains are walked once.
+    pub(super) fn admits_null(&mut self, target: &RefTarget) -> bool {
         let mut cur = target.clone();
-        for _ in 0..MAX_ALIAS_CHAIN {
+        let mut path = vec![];
+        let answer = loop {
+            if let Some(&known) = self.null_estimates.get(&cur) {
+                break known;
+            }
+            if path.contains(&cur) {
+                break false;
+            }
+            path.push(cur.clone());
             let Some(Value::Object(map)) = self.ws.get(&cur) else {
-                return false;
+                break false;
             };
             if let Some(r) = map.get("$ref").and_then(Value::as_str) {
                 let annotated_only = !map.keys().any(|k| k != "$ref" && schema::is_structural(k));
@@ -204,13 +214,16 @@ impl<'a> TypeBuilder<'a> {
                         cur = next;
                         continue;
                     }
-                    _ => return false,
+                    _ => break false,
                 }
             }
             let n = self.nullness(&cur, map);
-            return n.nullable && !n.only_null;
+            break n.nullable && !n.only_null;
+        };
+        for t in path {
+            self.null_estimates.insert(t, answer);
         }
-        false
+        answer
     }
 
     // ----- typed schemas ------------------------------------------------
@@ -289,7 +302,10 @@ impl<'a> TypeBuilder<'a> {
             constraints: schema::constraints_of(map),
         };
         Conv::shape(match ty {
-            JsonType::String => primitive(self.string_primitive(target, format)),
+            JsonType::String => primitive(match schema::content_primitive(map) {
+                Some(p) if format.is_none() => p,
+                _ => self.string_primitive(target, format),
+            }),
             JsonType::Integer => primitive(schema::integer_primitive(format)),
             JsonType::Number => primitive(schema::number_primitive(format)),
             JsonType::Boolean => Shape::Primitive {
