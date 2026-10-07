@@ -200,6 +200,12 @@ pub mod codes {
             "TG0305",
             "schema type could not be determined; treated as any",
         ),
+        ("TG0306", "discriminator could not be applied as written"),
+        ("TG0307", "schema admits no value (empty enum or union)"),
+        (
+            "TG0308",
+            "types.break_cycles entry names no component property",
+        ),
         ("TG0401", "identifier collision disambiguated"),
         (
             "TG0402",
