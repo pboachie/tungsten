@@ -30,6 +30,7 @@ tungsten-config.workspace = true
 tungsten-openapi.workspace = true
 tungsten-ir.workspace = true
 tungsten-build.workspace = true
+tungsten-agent.workspace = true
 tungsten-emit.workspace = true
 tungsten-emit-ts.workspace = true
 tungsten-emit-docs.workspace = true

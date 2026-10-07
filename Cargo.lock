@@ -717,6 +717,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "tungsten-agent",
  "tungsten-build",
  "tungsten-config",
  "tungsten-core",

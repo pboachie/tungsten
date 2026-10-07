@@ -277,6 +277,8 @@ pub enum TargetStatus {
 pub struct MockResult {
     /// `http://127.0.0.1:<port>`.
     pub base_url: String,
+    /// Runtime gates served as on (`--gate`), in the order given.
+    pub enabled_gates: Vec<String>,
 }
 
 /// The `$ref` graph: schema nodes (every `$ref` target and every component

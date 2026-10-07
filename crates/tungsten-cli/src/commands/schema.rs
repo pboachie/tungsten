@@ -37,6 +37,7 @@ pub(crate) fn run(args: &SchemaArgs) -> Report {
 fn schema_for(name: SchemaName) -> Value {
     match name {
         SchemaName::Tungsten => TungstenConfig::json_schema(),
+        SchemaName::Agent => tungsten_agent::json_schema(),
         SchemaName::Ir => Ir::json_schema(),
         SchemaName::CliOutput => cli_output_schema(),
     }

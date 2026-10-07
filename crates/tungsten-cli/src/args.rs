@@ -149,6 +149,11 @@ pub(crate) struct MockArgs {
     /// responses.
     #[arg(long, default_value_t = 0)]
     pub seed: u64,
+    /// Treat this runtime gate (its environment variable, e.g.
+    /// SEALED_WEBHOOK_DELIVERY_ENABLED) as on; repeat for several. Gates
+    /// not listed keep their default.
+    #[arg(long = "gate", value_name = "ENV")]
+    pub gates: Vec<String>,
 }
 
 #[derive(Debug, Args)]
@@ -188,6 +193,8 @@ pub(crate) struct SchemaArgs {
 pub enum SchemaName {
     /// The tungsten.yml manifest.
     Tungsten,
+    /// The agent.yml manifest.
+    Agent,
     /// The intermediate representation written by `ir dump`.
     Ir,
     /// The `--json` output of this CLI.
