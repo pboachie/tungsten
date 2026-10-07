@@ -155,10 +155,14 @@ export interface RemediationEntry {
 export interface VerifyDescriptor {
   /** Operation id of the read operation to call. */
   operation: string;
-  /** Argument mapping; string values starting with `$response.` or
-   * `$args.` are resolved against the call. */
+  /** Argument mapping, keyed by the read operation's parameter wire names
+   * (or generated names); string values starting with `$response.` or
+   * `$args.` are resolved against the call, `$args` by generated or wire
+   * name. */
   args: Record<string, unknown>;
-  /** Field path → predicate (`{in: [...]}`, `{equals: x}`, `{contains: {...}}`). */
+  /** Field path → predicate (`{in: [...]}`, `{equals: x}`, `{contains: {...}}`).
+   * `$response.` and `$args.` references in `expect` and `terminal` are
+   * resolved against the call; an unresolved one never matches. */
   expect: Record<string, unknown>;
   terminal: Record<string, unknown>;
   pollIntervalMs: number | null;

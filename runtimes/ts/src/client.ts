@@ -24,7 +24,7 @@ import {
 } from "./classify.js";
 import { checkToken, CONFIRMATION_TTL_MS, issueToken } from "./confirm.js";
 import { diagnostic, scrubDiagnostic, scrubText } from "./envelope.js";
-import { evaluateExpr, evaluatePredicate, type Scope } from "./expr.js";
+import { evaluateExpr, evaluatePredicate, resolveRef, type Scope } from "./expr.js";
 import { checkKeyFormat, hasReplayProtection, keyFormatDescription, keyHeader, MemoryIdempotencyStore } from "./idempotency.js";
 import {
   bodyValue,
@@ -102,6 +102,9 @@ const MACRO_CONFIRMED: unique symbol = Symbol("tungsten.macroConfirmed");
 type StepOptions = CallOptions & { [MACRO_CONFIRMED]?: true };
 
 const SAFETY_RANK: Readonly<Record<string, number>> = { read_only: 0, mutating: 1, destructive: 2, irreversible: 3 };
+
+/** Stands in for a verification reference that did not resolve; equal to nothing. */
+const UNRESOLVED: unique symbol = Symbol("tungsten.unresolved");
 
 /** Placeholder for macro step arguments only known after earlier steps. */
 const LATER = "<from an earlier step>";
@@ -210,11 +213,32 @@ function sensitiveArg(op: OperationDescriptor, path: ReadonlyArray<string | numb
   return path.some((segment) => typeof segment === "string" && looksSensitive(segment));
 }
 
+/** `args` plus each parameter's value under its wire name, so references
+ * written against the API (agent.yml `{device_id}`, `$args.endpoint_id`)
+ * find arguments whose generated name differs (`deviceId`). */
+function withWireNames(op: OperationDescriptor, args: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...args };
+  for (const p of Array.isArray(op.params) ? op.params : []) {
+    if (!isRecord(p) || typeof p.name !== "string" || typeof p.wire !== "string") continue;
+    if (args[p.name] !== undefined && !Object.prototype.hasOwnProperty.call(out, p.wire)) out[p.wire] = args[p.name];
+  }
+  return out;
+}
+
+/** A path whose first segment is a parameter's wire name, rewritten to
+ * the parameter's generated name. */
+function argPath(op: OperationDescriptor, path: string[]): string[] {
+  const [head, ...rest] = path;
+  const param = op.params.find((p) => p.wire === head && p.name !== head);
+  return param ? [param.name, ...rest] : path;
+}
+
 function interpolate(template: string, args: Record<string, unknown>, op: OperationDescriptor): string {
   return template.replace(/\{([^{}]+)\}/g, (_m, field: string) => {
-    const value = getPath(args, field.trim());
+    const path = argPath(op, field.trim().split("."));
+    const value = getPath(args, path);
     if (value === undefined || value === null) return "<unset>";
-    if (sensitiveArg(op, field.trim().split("."))) return REDACTED;
+    if (sensitiveArg(op, path)) return REDACTED;
     const shown = envelopeValue(value, false);
     return typeof shown === "string" ? shown : JSON.stringify(shown);
   });
@@ -1276,10 +1300,26 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     if (!hook || typeof hook.operation !== "string") return unchecked;
     const target = this.#registry.get(hook.operation);
     if (!target) return unchecked;
-    const mapped = evaluateExpr(hook.args ?? {}, { response: value, args });
-    if (!isRecord(mapped)) return unchecked;
-    const terminal = isRecord(hook.terminal) && Object.keys(hook.terminal).length > 0 ? hook.terminal : null;
-    const expect = isRecord(hook.expect) ? hook.expect : {};
+    // The hook is written against the API: argument keys and `$args`
+    // references use wire names, and predicates may reference the call.
+    const scope = { response: value, args: withWireNames(op, args) };
+    const evaluated = evaluateExpr(hook.args ?? {}, scope);
+    if (!isRecord(evaluated)) return unchecked;
+    const mapped: Record<string, unknown> = {};
+    for (const [key, arg] of Object.entries(evaluated)) mapped[this.#argName(target, key)] = arg;
+    // A reference that does not resolve never matches (it is not dropped,
+    // which would make the predicate hold vacuously).
+    const refs = (node: unknown, depth = 0): unknown => {
+      if (depth > 64) return UNRESOLVED;
+      if (typeof node === "string" && node.startsWith("$")) return resolveRef(node, scope) ?? UNRESOLVED;
+      if (Array.isArray(node)) return node.map((item) => refs(item, depth + 1));
+      if (isRecord(node)) return Object.fromEntries(Object.entries(node).map(([k, v]) => [k, refs(v, depth + 1)]));
+      return node;
+    };
+    const resolve = (predicate: unknown): Record<string, unknown> | null =>
+      isRecord(predicate) && Object.keys(predicate).length > 0 ? (refs(predicate) as Record<string, unknown>) : null;
+    const terminal = resolve(hook.terminal);
+    const expect = resolve(hook.expect) ?? {};
     const interval = bounded(hook.pollIntervalMs, DEFAULT_POLL_INTERVAL_MS, 0);
     const budget = bounded(hook.pollBudgetMs, terminal ? DEFAULT_VERIFY_BUDGET_MS : 0, 0);
     const { confirm: _confirm, idempotencyKey: _key, ...rest } = opts;
