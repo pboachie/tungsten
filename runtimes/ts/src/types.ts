@@ -87,7 +87,17 @@ export interface Verification {
  * operation can also answer with a body). */
 export type Result<T> =
   | { ok: true; value: T; meta: ResponseMeta; verification?: Verification }
-  | { ok: false; error: Diagnostic };
+  | {
+      ok: false;
+      error: Diagnostic;
+      /** What the failed call or macro already produced, when its effect
+       * happened: the success body of a mutation whose response failed
+       * strict validation, or a macro's completed step results by their
+       * `as` names. It can hold values the API shows only once (a signing
+       * secret), so store them before acting on the error; they are never
+       * repeated in the envelope. */
+      partial?: unknown;
+    };
 
 // ----------------------------------------------------------- descriptors
 
@@ -183,6 +193,11 @@ export interface AgentMeta {
   remediation: Record<string, RemediationEntry>;
   remediationNote: string | null;
   sensitiveResponseFields: string[];
+  /** Arguments marked sensitive (`x-agent-sensitive` on request body
+   * fields), as dotted paths into the args object (`pin`, `body.pin`,
+   * `profile.recovery_phrase`; array items are not indexed). Redacted in
+   * `received_value`, previews, middleware and diagnostics. */
+  sensitiveRequestFields?: string[];
   shownOnce: boolean;
 }
 
@@ -281,6 +296,9 @@ export interface IdempotencyStore {
   put(scope: string, logicalId: string, key: string): Promise<void>;
 }
 
+/** What middleware sees of one attempt. Secrets are redacted: secret
+ * headers, auth query values, and in a JSON or form body the arguments
+ * marked sensitive (or named like credentials) as `<redacted>`. */
 export interface RequestContext {
   operation: OperationDescriptor;
   attempt: number;
@@ -340,7 +358,10 @@ export interface CallOptions {
   /** Required for `caller_owned` operations with `persistRequired`. */
   idempotencyKey?: string;
   /** Token from `preview()`; required for `irreversible`, and for
-   * `destructive` unless `true` is given. */
+   * `destructive` unless `true` is given. A token authorizes one intent:
+   * the first call that sends spends it, and it is accepted again only for
+   * a retry with the same idempotency key (or the identical body of a
+   * `content_identity` operation). */
   confirm?: string | true;
   signal?: AbortSignal;
   timeoutMs?: number;
@@ -441,8 +462,10 @@ export interface ClientCoreExtensions {
   /** A registered operation by id. */
   operation(id: string): OperationDescriptor | undefined;
   /** Run a compiled macro; returns its output or the first failing step's
-   * envelope. A `destructive` or `irreversible` macro needs `opts.confirm`
-   * (see {@link MacroDescriptor}). */
+   * envelope, with the completed steps' results as `partial` (a rerun is
+   * never offered when a completed mutating step has no replay
+   * protection). A `destructive` or `irreversible` macro needs
+   * `opts.confirm` (see {@link MacroDescriptor}). */
   runMacro<T>(macro: MacroDescriptor, input: Record<string, unknown>, opts?: CallOptions): Promise<Result<T>>;
   /** Preview a macro without sending anything: validates and renders its
    * first step, lists every step's effects and, unless the macro is

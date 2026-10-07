@@ -11,14 +11,19 @@ import { isRecord } from "./util.js";
 export class TungstenError extends Error {
   /** The envelope, exactly as the non-throwing API returns it. */
   readonly diagnostic: Diagnostic;
+  /** The failed result's `partial`: what the call or macro already
+   * produced (it can hold values the API shows only once). */
+  readonly partial: unknown;
 
-  constructor(diagnostic: Diagnostic) {
+  constructor(diagnostic: Diagnostic, partial?: unknown) {
     super(`${diagnostic.category} (${diagnostic.operation}): ${diagnostic.remediation}`);
     this.name = "TungstenError";
     this.diagnostic = diagnostic;
+    this.partial = partial;
   }
 
-  /** Serializes to the envelope, so logging the error logs the envelope. */
+  /** Serializes to the envelope, so logging the error logs the envelope
+   * (never `partial`, which can hold secrets). */
   toJSON(): Diagnostic {
     return this.diagnostic;
   }
@@ -27,7 +32,7 @@ export class TungstenError extends Error {
 /** The value of a successful result; throws {@link TungstenError} otherwise. */
 export function unwrap<T>(result: Result<T>): T {
   if (result.ok) return result.value;
-  throw new TungstenError(result.error);
+  throw new TungstenError(result.error, result.partial);
 }
 
 function isResult(value: unknown): value is Result<unknown> {

@@ -122,13 +122,15 @@ export interface EncodedBody {
   body: BodyInit | null;
   /** Content-Type to set, or null (multipart: fetch sets the boundary). */
   contentType: string | null;
-  /** JSON-friendly rendering for previews (binary summarised). */
+  /** JSON-friendly rendering for previews (binary summarised), redacted. */
   display: unknown;
+  /** The same rendering before redaction (never shown). */
+  raw: unknown;
   /** Bytes or text whose SHA-256 is the `content_hash` key. */
   hashMaterial: string | Uint8Array | null;
 }
 
-const NO_BODY: EncodedBody = { body: null, contentType: null, display: null, hashMaterial: null };
+const NO_BODY: EncodedBody = { body: null, contentType: null, display: null, raw: null, hashMaterial: null };
 
 /** The body value before encoding: merged fields picked from the args, or
  * the whole `args[arg]`; wrapped in the rpc envelope when the operation
@@ -209,20 +211,24 @@ export async function encodeBody(
         throw new SerializationError(parameter, "a JSON-serializable value", value);
       }
       if (text === undefined) throw new SerializationError(parameter, "a JSON-serializable value", value);
+      const raw = JSON.parse(text) as unknown;
       return {
         body: text,
         contentType: mediaType,
-        display: redactDisplay(JSON.parse(text) as unknown),
+        display: redactDisplay(raw),
+        raw,
         hashMaterial: canonicalJson(JSON.parse(text) as unknown),
       };
     }
     case "form": {
       const params = new URLSearchParams(formPairs(value, parameter));
       const text = params.toString();
+      const raw = Object.fromEntries(params.entries());
       return {
         body: text,
         contentType: mediaType,
-        display: redactDisplay(Object.fromEntries(params.entries())),
+        display: redactDisplay(raw),
+        raw,
         hashMaterial: text,
       };
     }
@@ -249,7 +255,7 @@ export async function encodeBody(
         }
         display[k] = Array.isArray(v) ? shown : shown[0];
       }
-      return { body: form, contentType: null, display: redactDisplay(display), hashMaterial: canonicalJson(value) };
+      return { body: form, contentType: null, display: redactDisplay(display), raw: display, hashMaterial: canonicalJson(value) };
     }
     case "bytes": {
       let bytes: Uint8Array | Blob;
@@ -263,6 +269,7 @@ export async function encodeBody(
         body: toBlob(material, mediaType),
         contentType: mediaType,
         display: binaryDisplay(material, mediaType),
+        raw: binaryDisplay(material, mediaType),
         hashMaterial: material,
       };
     }
@@ -271,7 +278,7 @@ export async function encodeBody(
         throw new SerializationError(parameter, "a string", value);
       }
       const text = String(value);
-      return { body: text, contentType: mediaType, display: text, hashMaterial: text };
+      return { body: text, contentType: mediaType, display: text, raw: text, hashMaterial: text };
     }
   }
 }

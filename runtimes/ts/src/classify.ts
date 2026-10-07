@@ -5,6 +5,7 @@
  * "Unknown outcome", planning/04 "Remediation table resolution").
  */
 import { categoryForStatus, diagnostic, GENERIC_REMEDIATION, isCategory, isRetryable } from "./envelope.js";
+import { hasReplayProtection } from "./idempotency.js";
 import type {
   ApiDescriptor,
   Category,
@@ -118,13 +119,28 @@ export interface CallContext {
   attempts: number;
 }
 
-/** What resolves an unknown outcome: the verification hook when there is
- * one, else repeating the call under its replay protection (the same key,
- * or the identical body), which answers the original result instead of
- * applying the effect twice. Null when nothing can resolve it safely. */
+/** Whether the verification hook's arguments can be built without the
+ * call's response: after a lost or ambiguous answer there is no success
+ * body, so a hook whose args reference `$response` cannot be called. */
+function verifyCallable(verify: unknown): boolean {
+  const refersToResponse = (node: unknown, depth: number): boolean => {
+    if (depth > 32) return true;
+    if (typeof node === "string") return node === "$response" || node.startsWith("$response.");
+    if (Array.isArray(node)) return node.some((item) => refersToResponse(item, depth + 1));
+    if (isRecord(node)) return Object.values(node).some((item) => refersToResponse(item, depth + 1));
+    return false;
+  };
+  return isRecord(verify) && !refersToResponse(verify.args, 0);
+}
+
+/** What resolves an unknown outcome: the verification hook when it can be
+ * called without the lost response, else repeating the call under its
+ * replay protection (the same key, or the identical body), which answers
+ * the original result instead of applying the effect twice. Null when
+ * nothing can resolve it safely. */
 function nextActionHint(ctx: CallContext): string | null {
   const verify = ctx.op.agent.verify;
-  if (verify && typeof verify.operation === "string") {
+  if (verify && typeof verify.operation === "string" && verifyCallable(verify)) {
     const keys = isRecord(verify.args) ? Object.keys(verify.args) : [];
     const withArgs = keys.length > 0 ? ` with ${keys.join(", ")}` : "";
     return `Call ${verify.operation}${withArgs} to check whether ${ctx.op.id} took effect before doing anything else.`;
@@ -138,7 +154,10 @@ function nextActionHint(ctx: CallContext): string | null {
   return null;
 }
 
-/** OUTCOME_UNKNOWN for a mutation whose effect cannot be known. */
+/** OUTCOME_UNKNOWN for a mutation whose effect cannot be known. Without
+ * replay protection (no key, no identity body) a repeat can apply the
+ * effect twice, so the envelope never offers one: `retryable` is
+ * `after_remediation` (check the state first), not `same_key_only`. */
 export function outcomeUnknown(ctx: CallContext, cause: string, fields: Partial<Diagnostic> = {}): Diagnostic {
   const op = ctx.op;
   let rule: string;
@@ -147,11 +166,11 @@ export function outcomeUnknown(ctx: CallContext, cause: string, fields: Partial<
   } else if (ctx.key !== null) {
     rule = `If you retry, reuse the SAME ${ctx.keyHeader} value; a new key can apply the effect twice.`;
   } else {
-    rule = "This operation has no idempotency key, so repeating it can apply the effect twice; do not repeat it before checking.";
+    rule = "This operation has no idempotency key, so repeating it can apply the effect twice: do not call it again until you have checked whether it took effect.";
   }
   return diagnostic(op.id, "OUTCOME_UNKNOWN", {
     remediation: `${cause} The server may or may not have applied ${op.id}. ${rule}`,
-    retryable: "same_key_only",
+    retryable: hasReplayProtection(op, ctx.key) ? "same_key_only" : "after_remediation",
     next_action: fields.next_action ?? nextActionHint(ctx),
     http_status: fields.http_status ?? null,
     code: fields.code ?? null,
@@ -159,6 +178,28 @@ export function outcomeUnknown(ctx: CallContext, cause: string, fields: Partial<
     retry_after_ms: fields.retry_after_ms ?? null,
     trace: { attempts: ctx.attempts },
   });
+}
+
+/** Categories that say the request was not applied, or that a repeat is
+ * pointless: a manifest entry with one of them (or with `retryable`
+ * `never` / `after_remediation`) is a definite answer even for a status
+ * that is otherwise ambiguous. */
+const DEFINITE_CATEGORIES: ReadonlySet<string> = new Set([
+  "VALIDATION_FAILED",
+  "MALFORMED_REQUEST",
+  "REQUEST_TOO_LARGE",
+  "AUTH_FAILED",
+  "NOT_FOUND",
+  "CONFLICT",
+  "PRECONDITION_FAILED",
+  "RATE_LIMITED",
+  "GATE_DISABLED",
+]);
+
+function definite(entry: { category?: unknown; retryable?: unknown } | undefined): boolean {
+  if (!entry) return false;
+  if (entry.retryable === "never" || entry.retryable === "after_remediation") return true;
+  return typeof entry.category === "string" && DEFINITE_CATEGORIES.has(entry.category);
 }
 
 export function isMutation(op: OperationDescriptor): boolean {
@@ -178,7 +219,11 @@ export function classifyError(
   const base = { http_status: status, request_id: requestId, retry_after_ms: retryAfterMs, trace: { attempts: ctx.attempts } };
   const code = decoded.json ? errorCode(op, decoded.value) : null;
 
-  if (op.status.kind === "gated" && status === op.status.disabledStatus) {
+  // A disabled gate answers its status without the API's error document
+  // (ZROtext: the route is not mounted, so axum's bare 404). An answer
+  // with an error code comes from the mounted route, so it is classified
+  // by its code like any other error (an unknown id is NOT_FOUND).
+  if (op.status.kind === "gated" && status === op.status.disabledStatus && code === null) {
     const gates = isRecord(api.gates) ? api.gates : {};
     const text = typeof gates[op.status.envVar] === "string" ? (gates[op.status.envVar] as string) : null;
     return diagnostic(op.id, "GATE_DISABLED", {
@@ -199,8 +244,17 @@ export function classifyError(
         (n) => isRecord(n) && n.status === status && (n.media === media || (n.media === "none" && decoded.empty)),
       );
   const declared = matchResponse(op.responses, status);
-  const ambiguous = (Array.isArray(api.ambiguousStatuses) && api.ambiguousStatuses.includes(status)) || declared?.kind === "ambiguous";
-  if (ambiguous && isMutation(op)) {
+  // On a mutation, a status listed as ambiguous, a response declared
+  // ambiguous, and any 5xx leave the outcome unknown (a gateway's 502/504
+  // or an intermediary's 500 says nothing about whether the origin
+  // committed), unless the manifest's entry for the answer's code or
+  // non-JSON shape says it is a definite rejection (billing_pending,
+  // retryable: never).
+  const ambiguous =
+    (Array.isArray(api.ambiguousStatuses) && api.ambiguousStatuses.includes(status)) ||
+    declared?.kind === "ambiguous" ||
+    (status >= 500 && status <= 599);
+  if (ambiguous && isMutation(op) && !definite(entry ?? (isRecord(nonJson) ? nonJson : undefined))) {
     // The manifest's text for this answer still explains it.
     const said = entry && typeof entry.text === "string" ? entry.text : nonJson && typeof nonJson.text === "string" ? nonJson.text : null;
     return outcomeUnknown(ctx, `HTTP ${status} leaves the outcome of this call unknown.${said ? ` ${said}` : ""}`, {

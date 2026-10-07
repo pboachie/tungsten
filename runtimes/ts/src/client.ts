@@ -76,10 +76,11 @@ import {
   redactSensitiveKeys,
   sha256Hex,
   sleep,
+  splitPath,
 } from "./util.js";
 import { RUNTIME_VERSION } from "./version.js";
 
-type Failure = { ok: false; error: Diagnostic };
+type Failure = { ok: false; error: Diagnostic; partial?: unknown };
 type Step<T> = { ok: true; value: T } | Failure;
 
 const METHODS: ReadonlySet<string> = new Set(["GET", "PUT", "POST", "DELETE", "OPTIONS", "HEAD", "PATCH", "TRACE"]);
@@ -92,6 +93,9 @@ const DEFAULT_POLL_INTERVAL_MS = 1000;
 const DEFAULT_VERIFY_BUDGET_MS = 30_000;
 const DEFAULT_MACRO_BUDGET_MS = 30_000;
 const MACRO_PAGE_LIMIT = 100;
+/** Same-origin redirects followed for one read attempt. */
+const MAX_REDIRECTS = 5;
+const REDIRECT_STATUSES: ReadonlySet<number> = new Set([301, 302, 303, 307, 308]);
 
 /** Why a request is being prepared. */
 type Purpose = "call" | "preview" | "server_preview";
@@ -118,9 +122,16 @@ interface Prepared {
   displayUrl: string;
   headers: HeaderBag;
   body: BodyInit | null;
+  /** The body middleware sees: `body`, or its redacted rendering when
+   * redaction changed a JSON or form body. */
+  observedBody: BodyInit | null;
   displayBody: unknown;
   key: string | null;
   keyHeader: string;
+  /** Auth query parameters (API keys in the query), re-applied on a followed redirect. */
+  authQuery: Array<{ name: string; value: string }>;
+  /** Wire names of query parameters whose values are shown redacted. */
+  hiddenQuery: string[];
   secrets: Set<string>;
 }
 
@@ -207,10 +218,83 @@ function argumentPath(op: OperationDescriptor, path: ReadonlyArray<string | numb
   return path.length === 0 ? "args" : `args${format(path)}`;
 }
 
+/** The operation's sensitive argument paths (`AgentMeta.sensitiveRequestFields`). */
+function sensitiveRequestPaths(op: OperationDescriptor): string[] {
+  const listed: unknown = isRecord(op.agent) ? op.agent.sensitiveRequestFields : undefined;
+  return Array.isArray(listed) ? listed.filter((p): p is string => typeof p === "string" && p !== "") : [];
+}
+
+/** An args path without array indices, dotted (`users.0.pin` → `users.pin`). */
+function dottedArgPath(path: ReadonlyArray<string | number>): string {
+  return path.filter((s) => typeof s === "string" && !/^\d+$/.test(s)).join(".");
+}
+
 function sensitiveArg(op: OperationDescriptor, path: ReadonlyArray<string | number>): boolean {
   const head = path[0];
   if (op.params.some((p) => p.sensitive === true && p.name === head)) return true;
+  const dotted = dottedArgPath(path);
+  if (dotted !== "" && sensitiveRequestPaths(op).some((f) => dotted === f || dotted.startsWith(`${f}.`))) return true;
   return path.some((segment) => typeof segment === "string" && looksSensitive(segment));
+}
+
+/** `value` (the argument at `path`) with the sensitive fields below it redacted. */
+function redactBelow(op: OperationDescriptor, path: ReadonlyArray<string | number>, value: unknown): unknown {
+  const dotted = dottedArgPath(path);
+  const prefix = dotted === "" ? "" : `${dotted}.`;
+  const below = sensitiveRequestPaths(op)
+    .filter((f) => f.startsWith(prefix))
+    .map((f) => f.slice(prefix.length));
+  return below.length > 0 ? redactPaths(value, below) : value;
+}
+
+/** Sensitive argument paths relative to the request body as sent (the
+ * rpc envelope's params member for rpc operations); `""` is the whole body. */
+function sensitiveBodyPaths(op: OperationDescriptor): string[] {
+  const body = op.body;
+  const paths = sensitiveRequestPaths(op);
+  let relative: string[];
+  if (body?.shape.kind === "merged") {
+    const fields = new Set(body.shape.fields);
+    relative = paths.filter((p) => fields.has(splitPath(p)[0] ?? ""));
+  } else if (body?.shape.kind === "arg") {
+    const arg = body.shape.arg;
+    relative = paths.filter((p) => p === arg || p.startsWith(`${arg}.`)).map((p) => (p === arg ? "" : p.slice(arg.length + 1)));
+  } else {
+    relative = op.rpc ? paths : [];
+  }
+  return op.rpc ? relative.map((p) => (p === "" ? op.rpc!.paramsField : `${op.rpc!.paramsField}.${p}`)) : relative;
+}
+
+/** Every string or number found at a dotted path, through arrays. */
+function valuesAt(value: unknown, segments: string[], out: string[], depth = 0): void {
+  if (depth > 64) return;
+  if (Array.isArray(value)) {
+    for (const item of value) valuesAt(item, segments, out, depth + 1);
+    return;
+  }
+  if (segments.length === 0) {
+    if (typeof value === "string" || typeof value === "number") out.push(String(value));
+    else if (isRecord(value)) for (const v of Object.values(value)) valuesAt(v, [], out, depth + 1);
+    return;
+  }
+  if (!isRecord(value)) return;
+  const [head, ...rest] = segments as [string, ...string[]];
+  valuesAt(value[head], rest, out, depth + 1);
+}
+
+/** A copy of the args without `undefined` members at any depth: an
+ * optional argument set to `undefined` (`{cursor: maybe}`) is absent, as
+ * TypeScript callers without `exactOptionalPropertyTypes` expect. Only
+ * plain objects and arrays are copied; dates, bytes and blobs are kept. */
+function withoutUndefined(value: unknown, depth = 0): unknown {
+  if (depth > 64) return value;
+  if (Array.isArray(value)) return value.map((item) => withoutUndefined(item, depth + 1));
+  if (!isRecord(value)) return value;
+  const proto: unknown = Object.getPrototypeOf(value);
+  if (proto !== Object.prototype && proto !== null) return value;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(value)) if (v !== undefined) out[k] = withoutUndefined(v, depth + 1);
+  return out;
 }
 
 /** `args` plus each parameter's value under its wire name, so references
@@ -244,6 +328,24 @@ function interpolate(template: string, args: Record<string, unknown>, op: Operat
   });
 }
 
+/** What middleware may see of an encoded body: the body itself, unless
+ * the preview rendering redacted something in it (sensitive arguments,
+ * credential-like keys); then that rendering, serialized like the body. */
+function observableBody(encoding: string, encoded: { body: BodyInit | null; display: unknown; raw: unknown }): BodyInit | null {
+  if (encoded.body === null) return null;
+  let changed: boolean;
+  try {
+    changed = canonicalJson(encoded.display) !== canonicalJson(encoded.raw);
+  } catch {
+    changed = true;
+  }
+  if (!changed) return encoded.body;
+  if (encoding === "form" && isRecord(encoded.display)) {
+    return new URLSearchParams(Object.entries(encoded.display).map(([k, v]) => [k, typeof v === "string" ? v : JSON.stringify(v)])).toString();
+  }
+  return typeof encoded.display === "string" ? encoded.display : JSON.stringify(encoded.display);
+}
+
 function trimTrailingSlash(base: string): string {
   return base.replace(/\/+$/, "");
 }
@@ -261,6 +363,9 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
   readonly #confirmationKey: Uint8Array;
   readonly #tokenCache = new Map<string, { token: string; expiresAt: number }>();
   readonly #tokenInflight = new Map<string, Promise<string>>();
+  /** Confirmation tokens already used to send, with the replay protection
+   * of their first use, until they expire. */
+  readonly #usedTokens = new Map<string, { bind: string | null; expiry: number }>();
 
   constructor(api: ApiDescriptor, options: ClientOptions = {}) {
     this.api = isRecord(api) ? api : ({} as ApiDescriptor);
@@ -448,7 +553,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     return fail(
       diagnostic(op.id, "VALIDATION_FAILED", {
         failed_parameter: argumentPath(op, path),
-        received_value: envelopeValue(value, sensitiveArg(op, path)),
+        received_value: envelopeValue(redactBelow(op, path, value), sensitiveArg(op, path)),
         expected,
         remediation,
       }),
@@ -558,6 +663,35 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     return required(`The confirmation token was not issued by this client for ${id} with exactly these arguments: ${how}.`);
   }
 
+  /** Spend a valid confirmation token on the call about to be sent. A
+   * token authorizes one intent: its first use binds it to that call's
+   * replay protection (`bind`: the idempotency key sent, or the identity
+   * of an identity body), and a later use is accepted only as a retry of
+   * the same intent under the same protection. A call without protection
+   * (no key) can use a token once. */
+  #claimToken(id: string, token: string, bind: string | null, previewCall: string): Failure | null {
+    const now = this.#now();
+    for (const [used, entry] of this.#usedTokens) if (entry.expiry <= now) this.#usedTokens.delete(used);
+    const previous = this.#usedTokens.get(token);
+    if (previous) {
+      if (previous.bind !== null && previous.bind === bind) return null;
+      const why =
+        previous.bind === null
+          ? "This call has no idempotency key, so a repeat can apply the effect twice"
+          : `It was used with ${bind === null ? "an idempotency key" : "another idempotency key"}; only a retry with that same key may reuse it`;
+      return fail(
+        diagnostic(id, "CONFIRMATION_REQUIRED", {
+          failed_parameter: "confirm",
+          expected: "a confirmation_token from preview()",
+          remediation: `This confirmation token was already used for one ${id} call. ${why}. Check whether that call took effect; to send again, call ${previewCall} and confirm with its new token.`,
+        }),
+      );
+    }
+    const expiry = Number(/^tgc1\.(\d{1,16})\./.exec(token)?.[1] ?? now + CONFIRMATION_TTL_MS);
+    this.#usedTokens.set(token, { bind, expiry });
+    return null;
+  }
+
   // ------------------------------------------------------------- building
 
   async #prepare(
@@ -591,12 +725,12 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
         }),
       );
     }
-    const args = rawArgs;
     try {
-      canonicalJson(args);
+      canonicalJson(rawArgs);
     } catch {
       return this.#validation(op, [], "<cyclic value>", "a JSON-like value without cycles", "Pass arguments without circular references.");
     }
+    const args = withoutUndefined(rawArgs) as Record<string, unknown>;
     const invalid = this.#validateArgs(op, args) ?? this.#checkKey(op, opts, purpose);
     if (invalid) return invalid;
     if (purpose === "call") {
@@ -612,6 +746,11 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
       const value = args[p.name];
       if (p.sensitive === true && (typeof value === "string" || typeof value === "number")) secrets.add(String(value));
     }
+    for (const path of sensitiveRequestPaths(op)) {
+      const found: string[] = [];
+      valuesAt(args, splitPath(path), found);
+      for (const value of found) secrets.add(value);
+    }
 
     const url = this.#buildUrl(op, args, auth.plan, urlOverride);
     if (!url.ok) return url;
@@ -622,7 +761,10 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     let encoded;
     try {
       const value = isSafeMethod(method) && method !== "OPTIONS" ? undefined : bodyValue(op, args, new Set(argParams(op).map((p) => p.name)));
-      encoded = await encodeBody(op.body ?? null, value, (display) => redactSensitiveKeys(display));
+      const bodyPaths = sensitiveBodyPaths(op);
+      encoded = await encodeBody(op.body ?? null, value, (display) =>
+        redactSensitiveKeys(bodyPaths.includes("") ? REDACTED : redactPaths(display, bodyPaths.filter((p) => p !== ""))),
+      );
     } catch (error) {
       if (error instanceof SerializationError) {
         return this.#validation(op, error.parameter === "body" && op.body?.shape.kind === "arg" ? [op.body.shape.arg] : [], error.value, error.expected, `Pass ${error.parameter} as ${error.expected}.`);
@@ -630,6 +772,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
       throw error;
     }
     if (encoded.contentType) headers.set("Content-Type", encoded.contentType);
+    const observedBody = observableBody(op.body?.encoding ?? "json", encoded);
 
     const header = keyHeader(op);
     const key = await this.#idempotencyKey(op, args, opts, purpose, encoded.hashMaterial);
@@ -660,6 +803,14 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
         );
       }
     }
+    if (purpose === "call" && typeof opts.confirm === "string" && (opts as StepOptions)[MACRO_CONFIRMED] !== true) {
+      if (op.agent.safety === "destructive" || op.agent.safety === "irreversible") {
+        const policy = op.agent.idempotency.policy;
+        const bind = key.value ?? (policy === "content_identity" ? "content-identity" : null);
+        const spent = this.#claimToken(op.id, opts.confirm, bind, "preview(...)");
+        if (spent) return spent;
+      }
+    }
     return {
       ok: true,
       value: {
@@ -670,9 +821,12 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
         displayUrl: url.value.display,
         headers,
         body: encoded.body,
+        observedBody,
         displayBody: encoded.display,
         key: key.value,
         keyHeader: header,
+        authQuery: auth.plan.query.map((q) => ({ name: q.name, value: q.value })),
+        hiddenQuery: [...auth.plan.query.map((q) => q.name), ...op.params.filter((x) => x.in === "query" && x.sensitive === true).map((x) => x.wire)],
         secrets: new Set([...secrets, ...headers.secrets()]),
       },
     };
@@ -713,6 +867,27 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
       if (missing !== null) {
         const p: ParamDescriptor = missing;
         return this.#validation(op, [p.name], undefined, `a value for path parameter ${p.wire}`, `Pass ${p.name}.`);
+      }
+      // A path segment that is empty or a dot segment (`.`, `..`, also
+      // percent-encoded) would be removed or resolved by URL parsing, so
+      // the request would reach another resource (DELETE /items/.. is
+      // DELETE /): refuse it before anything is built or confirmed.
+      const templateSegments = op.path.split("/");
+      const builtSegments = path.split("/");
+      if (templateSegments.length === builtSegments.length) {
+        for (const [i, segment] of builtSegments.entries()) {
+          const template = templateSegments[i] ?? "";
+          if (!template.includes("{") || !(segment === "" || /^(?:\.|%2e){1,2}$/i.test(segment))) continue;
+          const wire = /\{([^{}]+)\}/.exec(template)?.[1];
+          const p = params.find((x) => x.in === "path" && (x.wire === wire || x.name === wire));
+          return this.#validation(
+            op,
+            p ? [p.name] : [],
+            p ? args[p.name] : segment,
+            "a non-empty path segment other than . and ..",
+            `Pass ${p ? p.name : "the path parameter"} as the identifier of one resource; "${segment}" would change the request path.`,
+          );
+        }
       }
       const parts: string[] = [];
       const shown: string[] = [];
@@ -897,29 +1072,53 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
         method: prepared.method,
         url: prepared.displayUrl,
         headers: prepared.headers.toRecord(true),
-        body: prepared.body,
+        body: prepared.observedBody,
       };
       const headers = await this.#beforeRequest(ctx, prepared);
-      const outcome = await attempt(this.#fetch(), {
+      // Redirects are never followed by fetch: it would forward custom
+      // credential headers (API keys, CSRF headers) to another origin. A
+      // read follows same-origin redirects here; a mutation follows none.
+      let outcome = await attempt(this.#fetch(), {
         url: prepared.url,
         method: prepared.method,
         headers,
         body: prepared.body,
-        redirect: mutation ? "manual" : "follow",
+        redirect: "manual",
         timeoutMs,
         signal: opts.signal,
       });
+      let current = { url: prepared.url, method: prepared.method, body: prepared.body };
+      for (let hops = 0; !mutation && hops < MAX_REDIRECTS && outcome.kind === "response" && REDIRECT_STATUSES.has(outcome.status); hops += 1) {
+        const next = this.#redirectTarget(prepared, current.url, outcome.headers.location);
+        if (next === null) break;
+        const rewrite = outcome.status !== 307 && outcome.status !== 308 && current.method !== "GET" && current.method !== "HEAD";
+        current = { url: next.url, method: rewrite ? "GET" : current.method, body: rewrite ? null : current.body };
+        ctx.url = next.display;
+        ctx.method = current.method;
+        const hopHeaders = { ...headers };
+        if (rewrite) for (const name of Object.keys(hopHeaders)) if (name.toLowerCase() === "content-type") delete hopHeaders[name];
+        outcome = await attempt(this.#fetch(), {
+          url: current.url,
+          method: current.method,
+          headers: hopHeaders,
+          body: current.body,
+          redirect: "manual",
+          timeoutMs,
+          signal: opts.signal,
+        });
+      }
       const callCtx: CallContext = { api: this.api, op, key: prepared.key, keyHeader: prepared.keyHeader, attempts };
       const result = await this.#classify<T>(callCtx, prepared, outcome, ctx, timeoutMs);
       if (result.ok) return result;
       const error = scrubDiagnostic(result.error, prepared.secrets);
+      const done = (): Failure => (result.partial === undefined ? fail(error) : { ok: false, error, partial: result.partial });
       const cancelled = opts.signal?.aborted === true;
-      if (cancelled || attempts > retries.max || !RETRY_CATEGORIES.has(error.category)) return fail(error);
-      if (error.retryable === "never" || error.retryable === "after_remediation") return fail(error);
-      if (mutation && !protectedReplay) return fail(error);
+      if (cancelled || attempts > retries.max || !RETRY_CATEGORIES.has(error.category)) return done();
+      if (error.retryable === "never" || error.retryable === "after_remediation") return done();
+      if (mutation && !protectedReplay) return done();
       let delay: number;
       if (retries.honorRetryAfter && error.retry_after_ms !== null) {
-        if (error.retry_after_ms > retries.maxMs) return fail(error);
+        if (error.retry_after_ms > retries.maxMs) return done();
         delay = error.retry_after_ms;
       } else {
         const ceiling = Math.min(retries.maxMs, retries.baseMs * 2 ** (attempts - 1));
@@ -933,8 +1132,28 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
           // Observers never change the call.
         }
       }
-      if (!(await sleep(delay, opts.signal))) return fail(error);
+      if (!(await sleep(delay, opts.signal))) return done();
     }
+  }
+
+  /** The URL a read's redirect points to, when it stays on the request's
+   * origin (scheme, host and port), with the auth query re-applied; null
+   * for any other origin, which is reported instead of followed. */
+  #redirectTarget(prepared: Prepared, from: string, location: string | undefined): { url: string; display: string } | null {
+    if (typeof location !== "string" || location === "") return null;
+    let target: URL;
+    let origin: string;
+    try {
+      origin = new URL(from).origin;
+      target = new URL(location, from);
+    } catch {
+      return null;
+    }
+    if (target.origin !== origin || target.username !== "" || target.password !== "") return null;
+    for (const q of prepared.authQuery) if (!target.searchParams.has(q.name)) target.searchParams.set(q.name, q.value);
+    const shown = new URL(target.toString());
+    for (const name of prepared.hiddenQuery) if (shown.searchParams.has(name)) shown.searchParams.set(name, REDACTED);
+    return { url: target.toString(), display: shown.toString() };
   }
 
   /** Run `onRequest` with redacted headers; headers a middleware adds or
@@ -1066,11 +1285,14 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     if (!success) {
       const isRedirect = status === 0 || (status >= 300 && status <= 399) || outcome.response.type === "opaqueredirect";
       if (isRedirect) {
+        const to = headers.location ? ` to ${headers.location.slice(0, 200)}` : "";
         return fail(
           diagnostic(op.id, "UNEXPECTED_RESPONSE", {
             http_status: status || null,
             request_id: requestId,
-            remediation: `The server answered with a redirect${headers.location ? ` to ${headers.location.slice(0, 200)}` : ""}. Redirects are never followed on mutations; check baseUrl (scheme, host, trailing slash). Whether the call took effect is unknown only if the server applied it before redirecting.`,
+            remediation: mutation
+              ? `The server answered with a redirect${to}. Redirects are never followed on mutations; check baseUrl (scheme, host, trailing slash). Whether the call took effect is unknown only if the server applied it before redirecting.`
+              : `The server answered with a redirect${to} that leaves the API's origin (or too many redirects). It is not followed, so credentials never leave the API's host; check baseUrl.`,
             next_action: mutation ? hint : null,
             trace: { attempts },
           }),
@@ -1107,20 +1329,23 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
         const path = issue && Array.isArray(issue.path) ? issue.path.map(String) : [];
         const message = issue && typeof issue.message === "string" ? issue.message : "a valid response";
         const pathText = path.map((s) => (/^\d+$/.test(s) ? `[${s}]` : `.${s}`)).join("");
+        const kept = mutation && mode === "strict" ? " The decoded body is in the result's partial; store any value shown only once from it before anything else." : "";
         problem = diagnostic(op.id, "UNEXPECTED_RESPONSE", {
           http_status: status,
           request_id: requestId,
           failed_parameter: `response${pathText}`,
           received_value: envelopeValue(getPath(redactPaths(decoded.value, sensitive), path), path.some(looksSensitive)),
           expected: message,
-          remediation: `The success response does not match the API description at response${pathText} (${message}).${afterEffect}`,
+          remediation: `The success response does not match the API description at response${pathText} (${message}).${afterEffect}${kept}`,
           trace: { attempts },
         });
       }
     }
     if (problem) {
       const scrubbed = scrubDiagnostic(problem, prepared.secrets);
-      if (mode === "strict") return fail(scrubbed);
+      // The effect of a mutation happened: its body is never dropped, since
+      // it can hold the only copy of a value (a one-time signing secret).
+      if (mode === "strict") return mutation && !decoded.invalidJson ? { ok: false, error: scrubbed, partial: decoded.value } : fail(scrubbed);
       this.#emit(scrubbed);
     }
     const meta: ResponseMeta = { status, headers, requestId, attempts };
@@ -1394,7 +1619,9 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     }
     const { confirm: _confirm, verify: _verify, ...rest } = opts;
     const prepared = await this.#prepare(first.op, firstArgs, rest, "preview", null);
-    if (!prepared.ok) return prepared;
+    if (!prepared.ok) {
+      return fail({ ...prepared.error, operation: name, remediation: `${prepared.error.remediation} (step 1 of ${name}: ${first.op.id})` });
+    }
     const p = prepared.value;
     const effects: string[] = [];
     if (typeof macro.summary === "string" && macro.summary !== "") effects.push(macro.summary);
@@ -1425,6 +1652,16 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     return { ok: true, value, meta: { status: 0, headers: {}, requestId: null, attempts: 0 } };
   }
 
+  /** Whether running this step again (by rerunning its macro with the
+   * same input and options) answers the first result instead of applying
+   * the effect twice: an identity or content-hash body, a caller's key, or
+   * an automatic key (the store maps identical arguments to one key). */
+  #rerunProtected(op: OperationDescriptor, opts: CallOptions): boolean {
+    const policy = op.agent?.idempotency?.policy;
+    if (policy === "content_identity" || policy === "content_hash" || policy === "auto") return true;
+    return typeof opts.idempotencyKey === "string" && (policy === "caller_owned" || op.params.some((p) => p.role === "idempotency_key"));
+  }
+
   async #runMacro<T>(macro: MacroDescriptor, input: Record<string, unknown>, opts: CallOptions): Promise<Result<T>> {
     const name = safeName(macro, "name", "<unknown macro>");
     const plan = this.#macroPlan(macro, name);
@@ -1434,8 +1671,16 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     const { steps, safety } = plan.value;
     const unconfirmed = await this.#confirmed(name, `macro:${name}`, safety, effective.value, opts.confirm, `the macro's preview(...)`);
     if (unconfirmed) return unconfirmed;
+    if (typeof opts.confirm === "string") {
+      const spent = this.#claimToken(name, opts.confirm, typeof opts.idempotencyKey === "string" ? opts.idempotencyKey : null, "the macro's preview(...)");
+      if (spent) return spent;
+    }
     const scope: Record<string, unknown> = { input: effective.value };
     const completed: string[] = [];
+    /** Results of completed steps by `as` name: returned as `partial` when a later step fails. */
+    const produced: Record<string, unknown> = {};
+    /** Completed mutating steps that a rerun of the macro would apply again. */
+    const unprotected: string[] = [];
     let keyUsed = false;
     let meta: ResponseMeta = { status: 0, headers: {}, requestId: null, attempts: 0 };
     for (const [index, { step, op }] of steps.entries()) {
@@ -1456,6 +1701,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
       else if (opts.idempotencyKey !== undefined) keyUsed = true;
       let value: unknown;
       let failure: Diagnostic | null = null;
+      let failedPartial: unknown;
       if (step.kind === "poll") {
         const budget = evaluateExpr(step.budget_ms, scope as Scope);
         const result = await this.#poll<unknown>(
@@ -1490,14 +1736,40 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
         if (result.ok) {
           value = result.value;
           meta = result.meta;
-        } else failure = result.error;
+        } else {
+          failure = result.error;
+          failedPartial = result.partial;
+        }
       }
       if (failure) {
+        if (failedPartial !== undefined && typeof step.as === "string" && step.as !== "") produced[step.as] = failedPartial;
         const done = completed.length > 0 ? `completed before it: ${completed.join(", ")}` : "no step completed before it";
-        return fail({ ...failure, remediation: `${failure.remediation} Macro ${name} stopped at step ${index + 1} of ${steps.length} (${op.id}); ${done}.` });
+        let remediation = `${failure.remediation} Macro ${name} stopped at step ${index + 1} of ${steps.length} (${op.id}); ${done}.`;
+        let retryable = failure.retryable;
+        let nextAction = failure.next_action;
+        const kept = Object.keys(produced);
+        if (kept.length > 0) {
+          remediation += ` The result's partial holds the completed steps' results (${kept.join(", ")})${macro.shownOnce === true ? ", including values the API shows only once: store them now" : ""}.`;
+        }
+        if (unprotected.length > 0) {
+          // Rerunning the macro would apply these steps again (a second
+          // endpoint, a lost one-time secret): finish from here instead.
+          remediation += ` Do not run ${name} again: ${unprotected.join(", ")} already took effect and has no replay protection.`;
+          if (retryable === "after_delay" || retryable === "same_key_only") retryable = "after_remediation";
+          const finish = `Finish ${name} without rerunning it: call ${op.id} yourself with the values from the result's partial.`;
+          nextAction = nextAction === null ? finish : `${nextAction} ${finish}`;
+        }
+        // The envelope names what was called (the macro); the remediation
+        // names the step that failed.
+        const error: Diagnostic = { ...failure, operation: name, remediation, retryable, next_action: nextAction };
+        return kept.length > 0 ? { ok: false, error, partial: { ...produced } } : fail(error);
       }
       completed.push(op.id);
-      if (typeof step.as === "string" && step.as !== "") scope[step.as] = value;
+      if (typeof step.as === "string" && step.as !== "") {
+        scope[step.as] = value;
+        produced[step.as] = value;
+      }
+      if (isMutation(op) && !this.#rerunProtected(op, stepOpts)) unprotected.push(op.id);
     }
     return { ok: true, value: evaluateExpr(macro.output, scope as Scope) as T, meta };
   }
