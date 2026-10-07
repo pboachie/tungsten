@@ -11,12 +11,14 @@ use crate::output::CommandName;
 const EXIT_CODES: &str = "\
 Exit codes:
   0  success
-  1  the input has errors (or warnings with --strict), or the item asked
-     for does not exist (explain target not found)
+  1  the input has errors (or warnings with --strict), generated output is
+     stale (generate --check, check --ci), or the item asked for does not
+     exist (explain target not found, unknown generate target)
   2  usage error: the command line could not be parsed
-  3  I/O or internal failure (for example --out is not writable)
+  3  I/O or internal failure (for example --out is not writable, or the
+     mock server cannot start)
   4  the command refused to act without confirmation (init over existing
-     files: pass --force)
+     files, generate into a directory tungsten did not write: pass --force)
 
 Output:
   Without --json, results go to stdout and diagnostics to stderr. With
@@ -57,6 +59,8 @@ impl Cli {
             Command::Schema(_) => CommandName::Schema,
             Command::Init(_) => CommandName::Init,
             Command::Doctor => CommandName::Doctor,
+            Command::Generate(_) => CommandName::Generate,
+            Command::Mock(_) => CommandName::Mock,
         }
     }
 }
@@ -78,6 +82,10 @@ pub(crate) enum Command {
     Init(InitArgs),
     /// Report which optional external tools are installed.
     Doctor,
+    /// Generate every configured target (SDKs, docs) from the project.
+    Generate(GenerateArgs),
+    /// Serve a mock of the API from the compiled IR.
+    Mock(MockArgs),
 }
 
 #[derive(Debug, Subcommand)]
@@ -86,7 +94,7 @@ pub(crate) enum IrCommand {
     Dump(DumpArgs),
 }
 
-/// Input selection shared by `check` and `ir dump`.
+/// Input selection shared by the commands that compile a project.
 #[derive(Debug, Args)]
 pub(crate) struct InputArgs {
     /// A directory with a tungsten.yml, a tungsten*.yml manifest, or a
@@ -99,12 +107,48 @@ pub(crate) struct InputArgs {
 pub(crate) struct CheckArgs {
     #[command(flatten)]
     pub input: InputArgs,
-    /// CI mode: never prompt, never color.
+    /// CI mode: never prompt, never color, and fail (TG0901) when the
+    /// generated output of a target differs from what `generate` would
+    /// write.
     #[arg(long)]
     pub ci: bool,
     /// Treat warnings as errors.
     #[arg(long)]
     pub strict: bool,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct GenerateArgs {
+    #[command(flatten)]
+    pub input: InputArgs,
+    /// Only these targets, comma-separated (`typescript,docs`; `ts`, `py`
+    /// and `rs` are accepted). Default: every target in tungsten.yml.
+    #[arg(long, value_name = "TARGETS", value_delimiter = ',')]
+    pub target: Vec<String>,
+    /// Report what would be written or removed without touching the disk.
+    #[arg(long, conflicts_with = "check")]
+    pub dry_run: bool,
+    /// Compare the output directories with what would be generated; write
+    /// nothing and exit 1 when they differ.
+    #[arg(long)]
+    pub check: bool,
+    /// Write into a non-empty output directory that tungsten did not
+    /// generate (one without .tungsten/manifest.json).
+    #[arg(long, conflicts_with = "check")]
+    pub force: bool,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct MockArgs {
+    #[command(flatten)]
+    pub input: InputArgs,
+    /// Port on 127.0.0.1 to listen on; 0 picks a free port.
+    #[arg(long, default_value_t = 0)]
+    pub port: u16,
+    /// Seed for generated response values; the same seed gives the same
+    /// responses.
+    #[arg(long, default_value_t = 0)]
+    pub seed: u64,
 }
 
 #[derive(Debug, Args)]

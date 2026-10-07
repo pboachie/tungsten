@@ -5,8 +5,10 @@
 pub(crate) mod check;
 pub(crate) mod doctor;
 pub(crate) mod explain;
+pub(crate) mod generate;
 pub(crate) mod init;
 mod ir;
+pub(crate) mod mock;
 mod schema;
 
 use crate::args::{Cli, Command, IrCommand};
@@ -22,5 +24,7 @@ pub(crate) fn dispatch(cli: &Cli, env: &CliEnv) -> Report {
         Command::Schema(args) => schema::run(args),
         Command::Init(args) => init::run(args),
         Command::Doctor => doctor::run(env),
+        Command::Generate(args) => generate::run(args),
+        Command::Mock(args) => mock::start(args),
     }
 }

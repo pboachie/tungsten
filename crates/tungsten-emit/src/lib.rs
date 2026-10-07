@@ -6,15 +6,20 @@
 //! [`Writer`] (blocks, indentation, doc comments) and an [`Imports`]
 //! collector. [`write_output`] puts a file set on disk together with
 //! `.tungsten/manifest.json`; [`check_stale`] compares it without writing.
+//! [`schema`] renders IR types as JSON Schema and [`args`] says how an
+//! operation's arguments object is laid out, for every emitter that
+//! describes operations to agents.
 //!
 //! PHASE-2 CONTRACT: the public signatures in this crate are shared by every
 //! emitter. The emit-core work package completes the implementations
 //! (header contents, manifest, stale-file removal, custom-file protection,
 //! writer features) without changing existing signatures.
 
+pub mod args;
 mod fileset;
 mod imports;
 mod output;
+pub mod schema;
 mod writer;
 
 use std::path::PathBuf;
@@ -24,7 +29,11 @@ use tungsten_ir::Ir;
 
 pub use fileset::{FileSet, FileSetError};
 pub use imports::Imports;
-pub use output::{WriteOptions, WriteReport, check_stale, header, write_output};
+pub use output::{
+    MANIFEST_FORMAT, MANIFEST_PATH, ManifestFile, OutputManifest, StaleFile, StaleReason,
+    WriteOptions, WriteReport, check_stale, header, header_text, is_custom_path, stale_files,
+    write_output,
+};
 pub use writer::{CommentStyle, Writer};
 
 /// Options for one target, from `tungsten.yml` `targets.<name>`.

@@ -344,10 +344,39 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
         "Check the target's `out` path and its permissions, then run `tungsten generate` again.",
     ),
     e(
+        "TG0702",
+        "tungsten.yml configures a target (python, rust, mcp or mock) for which this version \
+         of tungsten has no emitter yet. `tungsten generate` skips it and `check --ci` does \
+         not compare its output.",
+        "Nothing to fix. Remove the target from tungsten.yml to silence the notice, or \
+         generate it once a tungsten release ships its emitter.",
+    ),
+    e(
+        "TG0703",
+        "The target's output directory is not empty and has no `.tungsten/manifest.json` (or \
+         an unreadable one), so tungsten cannot tell its own files from yours. Writing would \
+         mix generated files into a directory it does not own, so nothing was written.",
+        "Point the target's `out` at a new or empty directory, or pass `--force` to write \
+         into it anyway; files tungsten did not generate are then left alone.",
+    ),
+    e(
+        "TG0704",
+        "A generated file would be written outside the target's output directory: a \
+         directory on its path is a symlink leading elsewhere, the file itself is a \
+         symlink, or the path is inside the reserved `.tungsten/` directory. Nothing was \
+         written.",
+        "Remove the symlink from the output directory. If the path is under `.tungsten/`, \
+         the emitter is at fault: report it.",
+    ),
+    e(
         "TG0901",
-        "Generated output was produced from inputs whose digests differ from the current \
-         inputs, so it no longer matches the spec and manifests.",
-        "Regenerate and commit the output.",
+        "A target's output directory differs from what `tungsten generate` would write now: \
+         a generated file is missing or has other content, a file of the previous \
+         generation would be removed, or `.tungsten/manifest.json` is missing. Usually the \
+         spec or a manifest changed after the last generation, or a generated file was \
+         edited by hand.",
+        "Run `tungsten generate` and commit the result. Put hand-written code in the \
+         target's `custom/` files, which generation never overwrites.",
     ),
 ];
 
