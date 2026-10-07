@@ -8,7 +8,7 @@ use tungsten_core::{Diagnostic, Severity};
 
 use crate::args::CheckArgs;
 use crate::output::{CheckResult, CommandName, CommandResult, DiagnosticCounts};
-use crate::stats::{describe, ir_stats, plural};
+use crate::stats::{describe, describe_refs, ir_stats, plural, ref_stats};
 use crate::{Report, exit, input};
 
 pub(crate) fn run(args: &CheckArgs) -> Report {
@@ -27,6 +27,7 @@ pub(crate) fn run(args: &CheckArgs) -> Report {
         promoted,
         strict: args.strict,
         ci: args.ci,
+        refs: ref_stats(&compiled.workspace.graph),
         stats: compiled.ir.as_ref().map(ir_stats),
     };
     let mut report = Report::new(CommandName::Check);
@@ -104,6 +105,7 @@ fn human(path: &str, r: &CheckResult) -> String {
     if !r.inputs.is_empty() {
         let _ = writeln!(out, "  {:<9}{}", "inputs", r.inputs.join("  "));
     }
+    let _ = writeln!(out, "  {:<9}{}", "refs", describe_refs(&r.refs));
     let ir = match &r.stats {
         Some(s) => describe(s),
         None => "not built".to_string(),

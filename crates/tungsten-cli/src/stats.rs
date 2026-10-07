@@ -2,8 +2,35 @@
 //! Counts summarizing an IR, shared by `check` and `ir dump`.
 
 use tungsten_ir::{Ir, Operation, OperationStatus, Resource};
+use tungsten_openapi::RefGraph;
 
-use crate::output::{IrStats, OperationCounts};
+use crate::output::{IrStats, OperationCounts, RefStats};
+
+pub(crate) fn ref_stats(graph: &RefGraph) -> RefStats {
+    let edges = graph
+        .edges
+        .iter()
+        .flat_map(|(from, tos)| tos.iter().map(move |to| (from, to)));
+    RefStats {
+        schemas: graph.nodes.len(),
+        edges: edges.clone().count(),
+        cross_document: edges.filter(|(from, to)| from.doc != to.doc).count(),
+        cycles: graph.cycles.len(),
+        recursive: graph.recursive.len(),
+    }
+}
+
+/// One-line human summary of the `$ref` graph.
+pub(crate) fn describe_refs(r: &RefStats) -> String {
+    format!(
+        "{} · {} · {} ({} recursive) · {} cross-document",
+        plural(r.schemas, "schema", "schemas"),
+        plural(r.edges, "edge", "edges"),
+        plural(r.cycles, "cycle", "cycles"),
+        r.recursive,
+        r.cross_document,
+    )
+}
 
 pub(crate) fn ir_stats(ir: &Ir) -> IrStats {
     fn walk(r: &Resource, resources: &mut usize, ops: &mut OperationCounts) {

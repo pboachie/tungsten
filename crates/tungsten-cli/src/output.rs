@@ -182,8 +182,26 @@ pub struct CheckResult {
     pub promoted: usize,
     pub strict: bool,
     pub ci: bool,
+    /// The `$ref` graph of the loaded documents.
+    pub refs: RefStats,
     /// Summary of the IR; null when errors prevented building it.
     pub stats: Option<IrStats>,
+}
+
+/// The `$ref` graph: schema nodes (every `$ref` target and every component
+/// schema), edges (a node references or contains another) and cycles.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct RefStats {
+    pub schemas: usize,
+    pub edges: usize,
+    /// Edges whose ends are in different documents.
+    pub cross_document: usize,
+    /// Strongly connected components with more than one schema, or a
+    /// self-edge.
+    pub cycles: usize,
+    /// Schemas that take part in a cycle.
+    pub recursive: usize,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, JsonSchema)]
