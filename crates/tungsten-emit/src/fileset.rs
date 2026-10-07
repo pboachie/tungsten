@@ -24,6 +24,20 @@ impl std::fmt::Display for FileSetError {
 
 impl std::error::Error for FileSetError {}
 
+/// Whether `path` is a plain relative path that stays inside the output
+/// directory: not empty or absolute, no backslash, NUL byte, drive prefix,
+/// empty, `.` or `..` segment.
+pub(crate) fn valid_path(path: &str) -> bool {
+    !(path.is_empty()
+        || path.starts_with('/')
+        || path.contains('\\')
+        || path.contains('\0')
+        || path
+            .split('/')
+            .any(|s| s.is_empty() || s == "." || s == "..")
+        || path.chars().nth(1) == Some(':'))
+}
+
 /// Generated files keyed by relative path (forward slashes), iterated in
 /// sorted order.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -43,15 +57,7 @@ impl FileSet {
         contents: impl Into<Vec<u8>>,
     ) -> Result<(), FileSetError> {
         let path = path.into();
-        let bad = path.is_empty()
-            || path.starts_with('/')
-            || path.contains('\\')
-            || path.contains('\0')
-            || path
-                .split('/')
-                .any(|s| s.is_empty() || s == "." || s == "..")
-            || path.chars().nth(1) == Some(':');
-        if bad {
+        if !valid_path(&path) {
             return Err(FileSetError::InvalidPath(path));
         }
         if self.files.contains_key(&path) {

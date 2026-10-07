@@ -8,8 +8,11 @@ use tungsten_core::{Diagnostic, Severity};
 use tungsten_openapi::SpecVersion;
 
 use crate::args::CheckArgs;
-use crate::output::{CheckResult, CommandName, CommandResult, DiagnosticCounts};
-use crate::stats::{describe, describe_refs, ir_stats, plural, ref_stats};
+use crate::commands::generate::{Mode, Project, run_targets};
+use crate::output::{
+    CheckResult, CommandName, CommandResult, DiagnosticCounts, TargetReport, TargetStatus,
+};
+use crate::stats::{describe, describe_refs, headline, ir_stats, plural, ref_stats};
 use crate::{Report, exit, input};
 
 pub(crate) fn run(args: &CheckArgs) -> Report {
@@ -20,6 +23,26 @@ pub(crate) fn run(args: &CheckArgs) -> Report {
     } else {
         0
     };
+    // `--ci`: the emitters run in memory and their output is compared with
+    // the target directories (TG0901), once the project itself is clean.
+    let mut outputs = vec![];
+    let mut io_failed = false;
+    if let Some(ir) = compiled
+        .ir
+        .as_ref()
+        .filter(|_| args.ci && !has_errors(&diagnostics))
+    {
+        let names: Vec<String> = compiled
+            .config
+            .as_ref()
+            .map(|c| c.targets.keys().cloned().collect())
+            .unwrap_or_default();
+        let project = Project::of(&args.input.path);
+        let outcome = run_targets(&compiled, ir, &project, &names, Mode::Check);
+        io_failed = outcome.io_failed;
+        diagnostics.extend(outcome.diagnostics);
+        outputs = outcome.reports;
+    }
     let counts = count(&diagnostics);
     let result = CheckResult {
         inputs: input_names(&compiled),
@@ -31,9 +54,12 @@ pub(crate) fn run(args: &CheckArgs) -> Report {
         ci: args.ci,
         refs: ref_stats(&compiled.workspace.graph),
         stats: compiled.ir.as_ref().map(ir_stats),
+        outputs,
     };
     let mut report = Report::new(CommandName::Check);
-    report.exit = if counts.errors > 0 {
+    report.exit = if io_failed {
+        exit::INTERNAL
+    } else if counts.errors > 0 {
         exit::FAILED
     } else {
         exit::OK
@@ -56,6 +82,10 @@ pub(crate) fn promote_warnings(diagnostics: &mut [Diagnostic]) -> usize {
         n += 1;
     }
     n
+}
+
+fn has_errors(diagnostics: &[Diagnostic]) -> bool {
+    diagnostics.iter().any(|d| d.severity == Severity::Error)
 }
 
 pub(crate) fn count(diagnostics: &[Diagnostic]) -> DiagnosticCounts {
@@ -92,30 +122,8 @@ fn input_names(compiled: &Compiled) -> Vec<String> {
 }
 
 fn human(path: &str, r: &CheckResult) -> String {
-    let mut out = String::new();
-    let docs = plural(r.documents, "document", "documents");
-    match &r.stats {
-        Some(s) => {
-            let o = &s.operations;
-            let _ = writeln!(
-                out,
-                "tungsten {} · {} · {docs} · {} ({} implemented, {} planned, {} gated)",
-                tungsten_build::TUNGSTEN_VERSION,
-                s.api,
-                plural(o.total, "operation", "operations"),
-                o.implemented,
-                o.planned,
-                o.gated,
-            );
-        }
-        None => {
-            let _ = writeln!(
-                out,
-                "tungsten {} · {path} · {docs}",
-                tungsten_build::TUNGSTEN_VERSION
-            );
-        }
-    }
+    let mut out = headline(path, r.documents, r.stats.as_ref());
+    out.push('\n');
     if !r.inputs.is_empty() {
         let inputs: Vec<String> = r
             .inputs
@@ -136,6 +144,14 @@ fn human(path: &str, r: &CheckResult) -> String {
         None => "not built".to_string(),
     };
     let _ = writeln!(out, "  {:<9}{ir}", "ir");
+    if !r.outputs.is_empty() {
+        let outputs: Vec<String> = r
+            .outputs
+            .iter()
+            .map(|t| format!("{} {}", t.target, output_state(t)))
+            .collect();
+        let _ = writeln!(out, "  {:<9}{}", "output", outputs.join(" · "));
+    }
     let c = &r.counts;
     let status = if c.errors > 0 { "failed" } else { "ok" };
     let mut line = format!(
@@ -148,4 +164,17 @@ fn human(path: &str, r: &CheckResult) -> String {
     }
     let _ = writeln!(out, "  {:<9}{line}", "result");
     out
+}
+
+/// `fresh`, `stale (2 files)`, `skipped`, ... for the human `output` line.
+fn output_state(t: &TargetReport) -> String {
+    match t.status {
+        TargetStatus::Fresh => "fresh".into(),
+        TargetStatus::Stale => format!("stale ({})", plural(t.stale.len(), "file", "files")),
+        TargetStatus::Skipped => "skipped".into(),
+        TargetStatus::Failed => "failed".into(),
+        TargetStatus::Generated | TargetStatus::DryRun | TargetStatus::Refused => {
+            "not checked".into()
+        }
+    }
 }

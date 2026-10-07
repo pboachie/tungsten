@@ -513,7 +513,11 @@ dependencies = [
  "tungsten-build",
  "tungsten-config",
  "tungsten-core",
+ "tungsten-emit",
+ "tungsten-emit-docs",
+ "tungsten-emit-ts",
  "tungsten-ir",
+ "tungsten-mock",
  "tungsten-openapi",
 ]
 

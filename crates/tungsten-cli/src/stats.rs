@@ -67,6 +67,30 @@ fn count(op: &Operation, c: &mut OperationCounts) {
     }
 }
 
+/// The first line of `check` and `generate`: version, API, documents and
+/// the operation split, or the path when no IR was built.
+pub(crate) fn headline(path: &str, documents: usize, stats: Option<&IrStats>) -> String {
+    let docs = plural(documents, "document", "documents");
+    match stats {
+        Some(s) => {
+            let o = &s.operations;
+            format!(
+                "tungsten {} · {} · {docs} · {} ({} implemented, {} planned, {} gated)",
+                tungsten_build::TUNGSTEN_VERSION,
+                s.api,
+                plural(o.total, "operation", "operations"),
+                o.implemented,
+                o.planned,
+                o.gated,
+            )
+        }
+        None => format!(
+            "tungsten {} · {path} · {docs}",
+            tungsten_build::TUNGSTEN_VERSION
+        ),
+    }
+}
+
 /// `1 document`, `2 documents`.
 pub(crate) fn plural(n: usize, one: &str, many: &str) -> String {
     format!("{n} {}", if n == 1 { one } else { many })

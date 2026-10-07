@@ -12,6 +12,7 @@ fn main() -> ExitCode {
         // https://no-color.org: set and non-empty disables color.
         no_color: std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty()),
         search_path: None,
+        serve_until: None,
     };
     let mut stdout = std::io::stdout().lock();
     let mut stderr = std::io::stderr().lock();

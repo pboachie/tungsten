@@ -20,6 +20,7 @@ mod input;
 pub mod output;
 pub mod render;
 mod stats;
+pub mod targets;
 
 #[cfg(feature = "testing")]
 pub mod __testing;
@@ -27,6 +28,7 @@ pub mod __testing;
 use std::ffi::OsString;
 use std::io::Write;
 use std::panic::{self, AssertUnwindSafe};
+use std::sync::Arc;
 
 use clap::Parser;
 use clap::error::ErrorKind as ClapErrorKind;
@@ -45,11 +47,25 @@ pub mod exit {
     pub const FAILED: i32 = 1;
     /// The command line could not be parsed.
     pub const USAGE: i32 = 2;
-    /// An I/O failure (for example `--out` not writable) or an internal error.
+    /// An I/O failure (for example `--out` not writable, or the mock server
+    /// cannot start) or an internal error.
     pub const INTERNAL: i32 = 3;
     /// The command refused to act without confirmation (for example `init`
-    /// over existing files without `--force`); it never prompts.
+    /// over existing files, or `generate` into a directory tungsten did not
+    /// write, without `--force`); it never prompts.
     pub const REFUSED: i32 = 4;
+}
+
+/// How long `tungsten mock` serves after printing its address: until this
+/// function, called with the base URL, returns. Lets an in-process caller
+/// drive the server; the binary uses the default (until stdin closes).
+#[derive(Clone)]
+pub struct ServeUntil(pub Arc<dyn Fn(&str) + Send + Sync>);
+
+impl std::fmt::Debug for ServeUntil {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ServeUntil(..)")
+    }
 }
 
 /// The environment the CLI runs in. Passing it explicitly keeps [`run`]
@@ -63,6 +79,9 @@ pub struct CliEnv {
     /// Search path for external tools (`doctor`). `None` uses the process
     /// `PATH`.
     pub search_path: Option<OsString>,
+    /// When `mock` stops serving. `None`: when stdin reaches end of file
+    /// (or the process is interrupted).
+    pub serve_until: Option<ServeUntil>,
 }
 
 impl CliEnv {
@@ -85,6 +104,8 @@ pub(crate) struct Report {
     pub error: Option<CliError>,
     /// Human-mode stdout text.
     pub human: String,
+    /// A mock server started by `mock`, served after the report is printed.
+    pub serving: Option<tungsten_mock::MockServer>,
 }
 
 impl Report {
@@ -97,6 +118,7 @@ impl Report {
             result: None,
             error: None,
             human: String::new(),
+            serving: None,
         }
     }
 
@@ -136,10 +158,30 @@ pub fn run(
                     .with_help("this is a bug in tungsten; please report it with the input"),
             )
         });
-    if cli.json {
+    let mut report = report;
+    let serving = report.serving.take();
+    let code = if cli.json {
         emit_json(report, stdout)
     } else {
         emit_human(report, color && !cli.forces_plain(), stdout, stderr)
+    };
+    if let Some(server) = serving {
+        if code == exit::OK {
+            serve(&server.base_url(), env);
+        }
+        server.shutdown();
+    }
+    code
+}
+
+/// Block until the mock should stop: `env.serve_until` returns, or stdin
+/// reaches end of file. Read errors end serving too.
+fn serve(base_url: &str, env: &CliEnv) {
+    match &env.serve_until {
+        Some(until) => (until.0)(base_url),
+        None => {
+            let _ = std::io::copy(&mut std::io::stdin().lock(), &mut std::io::sink());
+        }
     }
 }
 
