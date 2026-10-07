@@ -42,6 +42,17 @@ const RESERVED_HEADERS: [&str; 4] = [
     "connection",
 ];
 
+/// Response headers a program may not set: they frame the message, so a
+/// wrong value corrupts the response instead of shaping it.
+const FRAMING_HEADERS: [&str; 6] = [
+    "content-length",
+    "transfer-encoding",
+    "connection",
+    "keep-alive",
+    "upgrade",
+    "trailer",
+];
+
 /// What the connection does with a request.
 #[derive(Debug)]
 pub(crate) enum Outcome {
@@ -387,8 +398,13 @@ fn operation(state: &State, entry: &OpEntry, request: &Exchange<'_>) -> Reply {
     if let OperationStatus::Gated { gate } = &entry.op.status
         && !model.gate_on(gate)
     {
+        // The gate's route is not mounted while it is off (ZROtext's
+        // conditional axum routes), so the answer is the framework's bare
+        // status, without the API's error document: that is how clients
+        // tell a disabled gate from the mounted route's own errors.
         let reason = format!("runtime gate {} is off", gate.env_var);
-        return op_error(model, entry, gate.disabled_status, None, &[], &reason);
+        return Reply::empty(gate.disabled_status)
+            .with_header("x-tungsten-reason", &header_text(&reason));
     }
     match auth::check(model, &entry.op, request.view) {
         Ok(()) => {}
@@ -745,6 +761,13 @@ fn parse_program(model: &Model, item: &Value) -> Result<(String, Program), Strin
                     || HeaderValue::from_str(value).is_err()
                 {
                     return Err(format!("header `{name}` is not a valid HTTP header"));
+                }
+                // Framing is the server's: a programmed Content-Length that
+                // does not match the body leaves the client waiting.
+                if FRAMING_HEADERS.iter().any(|h| name.eq_ignore_ascii_case(h)) {
+                    return Err(format!(
+                        "header `{name}` frames the response and is set by the mock; remove it"
+                    ));
                 }
                 headers.push((name.clone(), value.to_string()));
             }

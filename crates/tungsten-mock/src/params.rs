@@ -2,8 +2,8 @@
 //! The request as the validators see it, and parameter checks: presence,
 //! parsing by IR type and style, then value validation.
 
-use serde_json::{Number, Value};
-use tungsten_ir::{Operation, Param, ParamStyle, Primitive, Shape, TypeRef};
+use serde_json::{Map, Number, Value};
+use tungsten_ir::{Additional, Field, Operation, Param, ParamStyle, Primitive, Shape, TypeRef};
 
 use crate::model::Model;
 use crate::validate::{Context, Validator};
@@ -129,6 +129,24 @@ pub(crate) fn check(model: &Model, op: &Operation, req: &RequestView<'_>) -> Res
     ];
     for (location, params) in lists {
         for param in params {
+            if location == "query"
+                && param.media_type.is_none()
+                && let Some(object) = object_param(model, op, param, req)
+            {
+                if object.as_object().is_some_and(Map::is_empty) {
+                    if param.required {
+                        return Err(format!(
+                            "missing required query parameter `{}`",
+                            param.wire_name
+                        ));
+                    }
+                    continue;
+                }
+                Validator::new(model, Context::Request)
+                    .check(&param.ty, &object)
+                    .map_err(|e| format!("query parameter `{}`: {e}", param.wire_name))?;
+                continue;
+            }
             let values: Vec<String> = match location {
                 "path" => req
                     .path_params
@@ -170,6 +188,155 @@ pub(crate) fn check(model: &Model, op: &Operation, req: &RequestView<'_>) -> Res
         }
     }
     Ok(())
+}
+
+/// The fixed fields of an object type and the type of its other members
+/// (`None` for a closed record), following nullables.
+fn object_shape<'m>(
+    model: &'m Model,
+    ty: &'m TypeRef,
+    depth: usize,
+) -> Option<(&'m [Field], Option<&'m TypeRef>, bool)> {
+    if depth > MAX_PARAM_DEPTH {
+        return None;
+    }
+    match model.shape(ty)? {
+        Shape::Record { fields, additional } => Some(match additional {
+            Additional::Closed => (fields.as_slice(), None, false),
+            Additional::Open => (fields.as_slice(), None, true),
+            Additional::Typed { values } => (fields.as_slice(), Some(values), true),
+        }),
+        Shape::Map { values } => Some((&[], Some(values), true)),
+        Shape::Nullable { inner } => object_shape(model, inner, depth + 1),
+        _ => None,
+    }
+}
+
+/// An object-typed query parameter rebuilt from the request the way
+/// `@tungsten/runtime` serializes it: `deepObject` as `name[key]=v`
+/// (nested `name[a][b]=v`), `form` with `explode` as the members' own keys
+/// (`size=10`; for open objects every key no other parameter claims), and
+/// `form` without `explode` as `name=k,v,k2,v2`. An empty object when the
+/// parameter is absent; `None` when the parameter is not object-typed.
+fn object_param(
+    model: &Model,
+    op: &Operation,
+    param: &Param,
+    req: &RequestView<'_>,
+) -> Option<Value> {
+    let (fields, extra, open) = object_shape(model, &param.ty, 0)?;
+    let mut pairs: Vec<(Vec<String>, &str)> = vec![];
+    match (param.style, param.explode) {
+        (ParamStyle::DeepObject, _) => {
+            let prefix = format!("{}[", param.wire_name);
+            for (name, value) in &req.query {
+                let Some(rest) = name.strip_prefix(&prefix) else {
+                    continue;
+                };
+                let mut path = vec![];
+                let mut rest = format!("[{rest}");
+                while let Some(inner) = rest.strip_prefix('[') {
+                    let Some((segment, tail)) = inner.split_once(']') else {
+                        break;
+                    };
+                    path.push(segment.to_string());
+                    rest = tail.to_string();
+                }
+                if !path.is_empty() && rest.is_empty() {
+                    pairs.push((path, value.as_str()));
+                }
+            }
+        }
+        (ParamStyle::Form, true) => {
+            let others: Vec<&str> = op
+                .params
+                .query
+                .iter()
+                .filter(|p| p.wire_name != param.wire_name)
+                .map(|p| p.wire_name.as_str())
+                .collect();
+            for (name, value) in &req.query {
+                let member = fields.iter().any(|f| f.wire_name == *name)
+                    || (open && !others.contains(&name.as_str()));
+                if member {
+                    pairs.push((vec![name.clone()], value.as_str()));
+                }
+            }
+        }
+        _ => {
+            for raw in req.query_values(&param.wire_name) {
+                let items: Vec<&str> = raw.split(',').collect();
+                for kv in items.chunks(2) {
+                    if let [k, v] = kv {
+                        pairs.push((vec![(*k).to_string()], v));
+                    }
+                }
+            }
+        }
+    }
+    Some(object_value(model, param, fields, extra, &pairs, 0))
+}
+
+/// The object built from `(path, raw value)` pairs, members typed by the
+/// record's fields (repeated keys are arrays).
+fn object_value(
+    model: &Model,
+    param: &Param,
+    fields: &[Field],
+    extra: Option<&TypeRef>,
+    pairs: &[(Vec<String>, &str)],
+    depth: usize,
+) -> Value {
+    let mut keys: Vec<&str> = vec![];
+    for (path, _) in pairs {
+        if let Some(k) = path.first()
+            && !keys.contains(&k.as_str())
+        {
+            keys.push(k);
+        }
+    }
+    let mut out = Map::new();
+    for key in keys {
+        let ty = fields
+            .iter()
+            .find(|f| f.wire_name == key)
+            .map(|f| &f.ty)
+            .or(extra);
+        let nested: Vec<(Vec<String>, &str)> = pairs
+            .iter()
+            .filter(|(p, _)| p.first().map(String::as_str) == Some(key) && p.len() > 1)
+            .map(|(p, v)| (p[1..].to_vec(), *v))
+            .collect();
+        let flat: Vec<&str> = pairs
+            .iter()
+            .filter(|(p, _)| p.len() == 1 && p[0] == key)
+            .map(|(_, v)| *v)
+            .collect();
+        let value = match ty {
+            Some(ty) if !nested.is_empty() && depth < MAX_PARAM_DEPTH => {
+                match object_shape(model, ty, 0) {
+                    Some((f, e, _)) => object_value(model, param, f, e, &nested, depth + 1),
+                    None => Value::String(nested[0].1.to_string()),
+                }
+            }
+            Some(ty) if !flat.is_empty() => parse_typed(model, ty, param, &flat, 0)
+                .unwrap_or_else(|| Value::String(flat[0].to_string())),
+            _ if flat.len() > 1 => Value::Array(
+                flat.iter()
+                    .map(|v| Value::String((*v).to_string()))
+                    .collect(),
+            ),
+            _ => Value::String(
+                flat.first()
+                    .or(nested.first().map(|(_, v)| v))
+                    .copied()
+                    .unwrap_or("")
+                    .to_string(),
+            ),
+        };
+        out.insert(key.to_string(), value);
+    }
+    Value::Object(out)
 }
 
 /// Parse raw parameter values into JSON by the parameter's type. `None`
