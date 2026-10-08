@@ -153,6 +153,9 @@ export interface HttpOptions {
   maxSessions?: number;
   /** Largest request body in bytes. Default 4 MiB. */
   maxBodyBytes?: number;
+  /** A session with no open request or stream for this long is closed
+   * (clients that vanish without DELETE). 0 disables. Default 1800000. */
+  idleTimeoutMs?: number;
 }
 
 /** A listening Streamable HTTP endpoint. */

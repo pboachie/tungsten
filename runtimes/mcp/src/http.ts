@@ -2,7 +2,9 @@
 /**
  * Streamable HTTP transport (planning/05 "MCP server"): one MCP session,
  * with its own `ClientCore`, per `Mcp-Session-Id`. Loopback by default,
- * with Host and Origin checks against DNS rebinding.
+ * with Host and Origin checks against DNS rebinding. Sessions without an
+ * open request or stream for `idleTimeoutMs` are closed, so clients that
+ * vanish without DELETE do not hold session slots.
  */
 import { randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
@@ -19,6 +21,16 @@ export interface SessionFactory {
 
 const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
 const DEFAULT_MAX_BODY = 4 * 1024 * 1024;
+const DEFAULT_IDLE_MS = 30 * 60 * 1000;
+
+interface Entry {
+  transport: StreamableHTTPServerTransport;
+  session: { close(): Promise<void> };
+  /** Requests and streams of this session whose response is still open. */
+  active: number;
+  idle: ReturnType<typeof setTimeout> | null;
+  closed: boolean;
+}
 
 function hostname(value: string): string | null {
   try {
@@ -62,11 +74,37 @@ export async function serveHttp(options: HttpOptions, factory: SessionFactory): 
   const path = typeof options.path === "string" && options.path.startsWith("/") ? options.path : "/mcp";
   const maxSessions = typeof options.maxSessions === "number" && options.maxSessions >= 1 ? Math.floor(options.maxSessions) : 64;
   const maxBody = typeof options.maxBodyBytes === "number" && options.maxBodyBytes >= 1 ? Math.floor(options.maxBodyBytes) : DEFAULT_MAX_BODY;
+  const idleMs =
+    typeof options.idleTimeoutMs === "number" && Number.isFinite(options.idleTimeoutMs) && options.idleTimeoutMs >= 0
+      ? Math.floor(options.idleTimeoutMs)
+      : DEFAULT_IDLE_MS;
   const allowedHosts = new Set((options.allowedHosts ?? []).map((h) => h.toLowerCase()));
   const allowedOrigins = new Set(options.allowedOrigins ?? []);
   const boundLoopback = LOOPBACK.has(host.toLowerCase());
-  const sessions = new Map<string, { transport: StreamableHTTPServerTransport; session: { close(): Promise<void> } }>();
+  const sessions = new Map<string, Entry>();
   const pending = new Set<{ close(): Promise<void> }>();
+
+  /** Forget a session and close it (idempotent). */
+  const drop = async (id: string, entry: Entry): Promise<void> => {
+    if (entry.idle !== null) clearTimeout(entry.idle);
+    entry.idle = null;
+    if (sessions.get(id) === entry) sessions.delete(id);
+    if (entry.closed) return;
+    entry.closed = true;
+    await entry.session.close().catch(() => undefined);
+  };
+  /** Count `res` as activity of the session until it closes. */
+  const hold = (id: string, entry: Entry, res: ServerResponse): void => {
+    entry.active += 1;
+    if (entry.idle !== null) clearTimeout(entry.idle);
+    entry.idle = null;
+    res.once("close", () => {
+      entry.active -= 1;
+      if (entry.active > 0 || idleMs === 0 || entry.closed || sessions.get(id) !== entry) return;
+      entry.idle = setTimeout(() => void drop(id, entry), idleMs);
+      entry.idle.unref();
+    });
+  };
 
   const hostAllowed = (value: string | undefined): boolean => {
     if (!boundLoopback && allowedHosts.size === 0) return true;
@@ -103,6 +141,7 @@ export async function serveHttp(options: HttpOptions, factory: SessionFactory): 
       if (sessionId !== undefined) {
         const entry = sessions.get(sessionId);
         if (!entry) return sendError(res, 404, -32001, "Session not found");
+        hold(sessionId, entry, res);
         return entry.transport.handleRequest(req, res, body);
       }
       if (!initializes(body)) return sendError(res, 400, -32000, "Bad Request: no valid Mcp-Session-Id; start with initialize");
@@ -111,12 +150,18 @@ export async function serveHttp(options: HttpOptions, factory: SessionFactory): 
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => randomUUID(),
         onsessioninitialized: (id) => {
-          if (opened) sessions.set(id, { transport, session: opened });
+          if (!opened) return;
+          const entry: Entry = { transport, session: opened, active: 0, idle: null, closed: false };
+          sessions.set(id, entry);
+          hold(id, entry, res);
         },
       });
       transport.onclose = () => {
         const id = transport.sessionId;
-        if (id !== undefined) sessions.delete(id);
+        const entry = id === undefined ? undefined : sessions.get(id);
+        if (id === undefined || entry === undefined || entry.transport !== transport) return;
+        if (entry.idle !== null) clearTimeout(entry.idle);
+        sessions.delete(id);
       };
       opened = await factory.open(transport);
       pending.add(opened);
@@ -132,11 +177,9 @@ export async function serveHttp(options: HttpOptions, factory: SessionFactory): 
       if (sessionId === undefined) return sendError(res, 400, -32000, "Bad Request: Mcp-Session-Id required");
       const entry = sessions.get(sessionId);
       if (!entry) return sendError(res, 404, -32001, "Session not found");
+      hold(sessionId, entry, res);
       await entry.transport.handleRequest(req, res);
-      if (req.method === "DELETE") {
-        sessions.delete(sessionId);
-        await entry.session.close();
-      }
+      if (req.method === "DELETE") await drop(sessionId, entry);
       return;
     }
     return sendError(res, 405, -32000, "Method not allowed", { allow: "GET, POST, DELETE" });
@@ -163,9 +206,7 @@ export async function serveHttp(options: HttpOptions, factory: SessionFactory): 
     async close() {
       if (closed) return;
       closed = true;
-      const open = [...sessions.values()];
-      sessions.clear();
-      await Promise.all(open.map((entry) => entry.session.close().catch(() => undefined)));
+      await Promise.all([...sessions.entries()].map(([id, entry]) => drop(id, entry)));
       await Promise.all([...pending].map((s) => s.close().catch(() => undefined)));
       server.closeAllConnections();
       await new Promise<void>((resolve) => server.close(() => resolve()));
