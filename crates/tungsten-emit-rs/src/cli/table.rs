@@ -204,13 +204,17 @@ pub(crate) fn source(model: &Model, meta: &Meta<'_>) -> String {
     s.push_str(
         "//! the API. The kit builds the command tree, parses the flags and runs the SDK.\n\n",
     );
-    s.push_str("use serde_json::Value;\n");
-    s.push_str(&format!("use tungsten_cli_kit::{{{}}};\n", kit.join(", ")));
+    if has_commands {
+        s.push_str("use serde_json::Value;\n");
+    }
+    if let [one] = kit.as_slice() {
+        s.push_str(&format!("use tungsten_cli_kit::{one};\n"));
+    } else {
+        s.push_str(&format!("use tungsten_cli_kit::{{{}}};\n", kit.join(", ")));
+    }
     if has_commands {
         s.push_str("use tungsten_runtime::Safety;\n");
-    }
-    s.push_str("\nfn schema(text: &str) -> Value {\n    serde_json::from_str(text).unwrap_or(Value::Null)\n}\n");
-    if has_commands {
+        s.push_str("\nfn schema(text: &str) -> Value {\n    serde_json::from_str(text).unwrap_or(Value::Null)\n}\n");
         s.push_str("\nfn path(segments: &[&str]) -> Vec<String> {\n    segments.iter().map(|s| (*s).to_string()).collect()\n}\n");
     }
     if has_enum {
