@@ -91,8 +91,12 @@ export interface McpManifest {
   tools: ToolEntry[];
   clusters: ClusterEntry[];
   index: SearchIndex;
-  /** Instructions sent in the MCP `initialize` result (short). */
+  /** Instructions sent in the MCP `initialize` result (short), for `mode`. */
   instructions: string;
+  /** The instructions of each mode; the runtime sends the entry of the mode
+   * in effect (an overridden mode included), else `instructions`.
+   * Additive: optional for manifests written before it. */
+  instructionsByMode?: { discrete: string; progressive: string };
 }
 
 /** Query/document tokenizer shared with the Rust index builder: split on

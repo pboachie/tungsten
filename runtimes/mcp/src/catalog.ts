@@ -116,6 +116,13 @@ function readIndex(raw: unknown, warnings: string[]): SearchIndex {
   };
 }
 
+/** The instructions of `mode`: its `instructionsByMode` entry, else `instructions`. */
+function instructionsFor(manifest: Partial<McpManifest>, mode: Mode): string {
+  const byMode: unknown = manifest.instructionsByMode;
+  if (isRecord(byMode) && typeof byMode[mode] === "string") return byMode[mode] as string;
+  return typeof manifest.instructions === "string" ? manifest.instructions : "";
+}
+
 /** Read the manifest; never throws. Invalid entries are skipped with a warning. */
 export function buildCatalog(options: ServerOptions): Catalog {
   const warnings: string[] = [];
@@ -160,7 +167,7 @@ export function buildCatalog(options: ServerOptions): Catalog {
     documents,
     clusters,
     index: readIndex(manifest.index, warnings),
-    instructions: typeof manifest.instructions === "string" ? manifest.instructions : "",
+    instructions: instructionsFor(manifest, mode),
     warnings,
   };
 }

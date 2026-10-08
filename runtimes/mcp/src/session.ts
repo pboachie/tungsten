@@ -12,7 +12,7 @@
  */
 import { createHash } from "node:crypto";
 
-import type { ClientCore, CallOptions, Diagnostic, MacroDescriptor, OperationDescriptor, PreviewResult, Result } from "@tungsten/runtime";
+import type { ClientCore, CallOptions, Diagnostic, MacroDescriptor, MacroStepPreview, OperationDescriptor, PreviewResult, Result } from "@tungsten/runtime";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 
 import { inCluster, PROGRESSIVE_TOOLS, verifies, type Catalog, type CatalogTool } from "./catalog.js";
@@ -61,6 +61,26 @@ interface Prepared {
 }
 
 type ArgSpec = Record<string, { type: "string" | "integer" | "object"; required?: boolean }>;
+
+function describeRequest(request: MacroStepPreview["request"]): string {
+  if (request === null) return "its request is built from an earlier step's whole result, so it cannot be shown before it runs";
+  const body = request.body === undefined || request.body === null ? "" : ` with body ${compactJson(request.body)}`;
+  return `${request.method} ${request.url}${body}`;
+}
+
+/** A macro preview's steps as text: each step's request and effects, with
+ * the placeholders of values that earlier steps produce. */
+export function stepLines(preview: PreviewResult): string[] {
+  const steps = Array.isArray(preview.steps) ? preview.steps : [];
+  if (steps.length === 0) return [];
+  const lines = [`Steps (nothing is sent by this preview; <from step NAME: path> is a value an earlier step returns):`];
+  for (const step of steps) {
+    const bound = step.as ? `, result as ${step.as}` : "";
+    lines.push(`${step.step}. ${step.kind} ${step.operation} (${step.safety}${bound}): ${describeRequest(step.request)}`);
+    for (const effect of Array.isArray(step.effects) ? step.effects : []) lines.push(`   - ${effect}`);
+  }
+  return lines;
+}
 
 export class Session {
   readonly #catalog: Catalog;
@@ -156,9 +176,17 @@ export class Session {
 
   // ------------------------------------------------------------- results
 
-  #success(structured: Record<string, unknown> | null, lines: string[]): CallToolResult {
+  /** A success result. `rendered` names a member of `structured` that
+   * `lines` already render, left out of the text's JSON (it stays in
+   * `structuredContent`). */
+  #success(structured: Record<string, unknown> | null, lines: string[], rendered: string | null = null): CallToolResult {
     const { value, note } = truncate(structured, this.#maxChars);
-    const text = [structured === null ? "OK (no content)." : compactJson(value), ...lines, ...(note ? [note] : [])].join("\n");
+    let shown: unknown = value;
+    if (rendered !== null && isRecord(value) && rendered in value) {
+      const { [rendered]: _omitted, ...rest } = value;
+      shown = rest;
+    }
+    const text = [structured === null ? "OK (no content)." : compactJson(shown), ...lines, ...(note ? [note] : [])].join("\n");
     const result: CallToolResult = { content: [{ type: "text", text }] };
     if (structured !== null) result.structuredContent = value as Record<string, unknown>;
     return result;
@@ -183,9 +211,12 @@ export class Session {
     return { content: [{ type: "text", text: lines.join("\n") }], structuredContent: error as unknown as Record<string, unknown>, isError: true };
   }
 
-  /** The runtime names `CallOptions`; say which tool fields they are here. */
+  /** The runtime names `CallOptions` and SDK operations; say which tool
+   * fields and tools they are here. */
   #mcpHints(tool: CatalogTool, error: Diagnostic): string[] {
     const hints: string[] = [];
+    const named = this.#namedTools(`${error.remediation} ${error.next_action ?? ""}`);
+    if (named.length > 0) hints.push(`Here ${named.map((t) => `${t.target} is called as ${this.#callForm(t)}`).join("; ")}.`);
     const keyField = tool.reserved.idempotencyKey;
     if (error.failed_parameter === "idempotencyKey" && keyField) hints.push(`In this tool the idempotency key is the argument "${keyField}".`);
     if (error.category === "CONFIRMATION_REQUIRED") {
@@ -197,6 +228,18 @@ export class Session {
       );
     }
     return hints;
+  }
+
+  /** Tools whose SDK operation id or macro name `text` mentions (as a
+   * whole dotted name), at most three, in order of first mention. */
+  #namedTools(text: string): CatalogTool[] {
+    const found: Array<[number, CatalogTool]> = [];
+    for (const t of this.#catalog.tools) {
+      if (t.target === t.name || !t.target.includes(".")) continue;
+      const at = text.search(new RegExp(`(?<![\\w.])${t.target.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\w])`));
+      if (at >= 0) found.push([at, t]);
+    }
+    return found.sort((a, b) => a[0] - b[0]).slice(0, 3).map(([, t]) => t);
   }
 
   #previewForm(tool: CatalogTool): string {
@@ -435,7 +478,7 @@ export class Session {
     if (!result.ok) return this.#failure(tool, result.error, result.partial);
     const preview = result.value;
     const field = tool.reserved.confirmationToken;
-    const lines: string[] = [];
+    const lines: string[] = stepLines(preview);
     const confirmed = [tool.safety, preview.safety].some((tier) => tier === "destructive" || tier === "irreversible");
     if (confirmed && field && preview.confirmation_token !== null) {
       const seconds = preview.expires_in_ms === null ? null : Math.round(preview.expires_in_ms / 1000);
@@ -449,7 +492,7 @@ export class Session {
     } else {
       lines.push(`No confirmation is needed: call ${this.#callForm(tool)} with the same arguments to execute.`);
     }
-    return this.#success(preview as unknown as Record<string, unknown>, lines);
+    return this.#success(preview as unknown as Record<string, unknown>, lines, Array.isArray(preview.steps) ? "steps" : null);
   }
 
   // ------------------------------------------------------ progressive mode
