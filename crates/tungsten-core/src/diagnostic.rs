@@ -298,6 +298,19 @@ pub mod codes {
             "TG0724",
             "MCP tool names collide; each is named with a digest of its operation",
         ),
+        (
+            "TG0730",
+            "macro not emitted by the Python SDK (not in the canonical form)",
+        ),
+        ("TG0731", "invalid Python target option; default used"),
+        (
+            "TG0732",
+            "OpenID Connect scheme sent as a bearer token by the Python SDK",
+        ),
+        (
+            "TG0733",
+            "inline record typed as a plain mapping by the Python SDK",
+        ),
         ("TG0901", "generated output is stale relative to its inputs"),
         (
             "TG0902",
