@@ -191,6 +191,15 @@ pub(crate) struct MockArgs {
     /// not listed keep their default.
     #[arg(long = "gate", value_name = "ENV")]
     pub gates: Vec<String>,
+    /// Recorded calls kept for `/__tungsten/calls`; past it the oldest is
+    /// dropped. 0 records nothing.
+    #[arg(long, value_name = "N", default_value_t = tungsten_mock::DEFAULT_MAX_RECORDED_CALLS)]
+    pub max_recorded_calls: usize,
+    /// Stored idempotent responses kept for replays; past it the oldest is
+    /// dropped and a later request with its key is served as new. 0 stores
+    /// nothing.
+    #[arg(long, value_name = "N", default_value_t = tungsten_mock::DEFAULT_MAX_IDEMPOTENT_RESPONSES)]
+    pub max_idempotent_responses: usize,
 }
 
 #[derive(Debug, Args)]

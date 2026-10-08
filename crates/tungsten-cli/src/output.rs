@@ -289,6 +289,10 @@ pub struct MockResult {
     pub base_url: String,
     /// Runtime gates served as on (`--gate`), in the order given.
     pub enabled_gates: Vec<String>,
+    /// Cap on recorded calls (`--max-recorded-calls`).
+    pub max_recorded_calls: usize,
+    /// Cap on stored idempotent responses (`--max-idempotent-responses`).
+    pub max_idempotent_responses: usize,
 }
 
 /// The `$ref` graph: schema nodes (every `$ref` target and every component

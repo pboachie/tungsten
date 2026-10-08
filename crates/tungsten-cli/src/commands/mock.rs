@@ -66,6 +66,8 @@ pub(crate) fn start(args: &MockArgs) -> Report {
         addr,
         seed: args.seed,
         enabled_gates: enabled_gates.clone(),
+        max_recorded_calls: args.max_recorded_calls,
+        max_idempotent_responses: args.max_idempotent_responses,
         ..MockOptions::default()
     };
     let server = match MockServer::start(ir, opts) {
@@ -87,8 +89,17 @@ pub(crate) fn start(args: &MockArgs) -> Report {
     } else {
         format!("  gates on {}\n", enabled_gates.join(", "))
     };
+    let caps = format!(
+        "  keeps {} and {}\n",
+        plural(args.max_recorded_calls, "recorded call", "recorded calls"),
+        plural(
+            args.max_idempotent_responses,
+            "idempotent response",
+            "idempotent responses"
+        )
+    );
     report.human = format!(
-        "mock server listening on {base_url}\n  serving {} · {} · seed {}\n{gates_line}  stop with Ctrl-C or by closing stdin\n",
+        "mock server listening on {base_url}\n  serving {} · {} · seed {}\n{gates_line}{caps}  stop with Ctrl-C or by closing stdin\n",
         stats.api,
         plural(
             stats.operations.total - stats.operations.planned,
@@ -100,6 +111,8 @@ pub(crate) fn start(args: &MockArgs) -> Report {
     report.result = Some(CommandResult::Mock(MockResult {
         base_url,
         enabled_gates,
+        max_recorded_calls: args.max_recorded_calls,
+        max_idempotent_responses: args.max_idempotent_responses,
     }));
     report.serving = Some(server);
     report
