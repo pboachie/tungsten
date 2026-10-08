@@ -378,7 +378,7 @@ fn pack_items(out: &mut String, items: &[Rx], indent: usize) {
     let pad = " ".repeat(indent + 4);
     let all = flat_args(items);
     // All on one line: up to the full width. Over several lines: 99 columns.
-    if indent + 4 + all.len() + 1 <= MAX_WIDTH {
+    if indent + 4 + all.len() < MAX_WIDTH {
         out.push_str(&format!("{pad}{all},\n"));
         return;
     }
