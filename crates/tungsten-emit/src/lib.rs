@@ -8,7 +8,8 @@
 //! `.tungsten/manifest.json`; [`check_stale`] compares it without writing.
 //! [`schema`] renders IR types as JSON Schema and [`args`] says how an
 //! operation's arguments object is laid out, for every emitter that
-//! describes operations to agents.
+//! describes operations to agents. [`surface`] snapshots the API surface
+//! (`.tungsten/surface.json`) and classifies changes between snapshots.
 //!
 //! PHASE-2 CONTRACT: the public signatures in this crate are shared by every
 //! emitter. The emit-core work package completes the implementations
@@ -20,6 +21,7 @@ mod fileset;
 mod imports;
 mod output;
 pub mod schema;
+pub mod surface;
 mod writer;
 
 use std::path::PathBuf;
