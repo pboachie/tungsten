@@ -104,7 +104,8 @@ pub(crate) struct OpShape<'a> {
     /// Item type of `<method>_pages` (hint flavor).
     pub page_item: Option<PyTy>,
     /// The page item validator's type (schema flavor), when the items are
-    /// typed (`PAGE_ITEMS` in `_descriptors.py`).
+    /// typed (`OperationDescriptor["page_item"]`: the runtime validates each
+    /// item of a page into it).
     pub page_item_schema: Option<String>,
     /// Imports of the arguments' hint-flavor types (signatures).
     pub hint_uses: Uses,
@@ -247,7 +248,7 @@ pub(crate) fn op_shape<'a>(plan: &Plan<'a>, info: &OpInfo<'a>) -> OpShape<'a> {
             let name = free_name(&taken, "body");
             taken.push(name.clone());
             let (value, schema_text, json) = match content.encoding {
-                BodyEncoding::Bytes => (PyTy::one("bytes"), "bytes".to_string(), false),
+                BodyEncoding::Bytes => (PyTy::one("bytes"), schema.internal("Binary"), false),
                 BodyEncoding::Text => (PyTy::one("str"), "str".to_string(), false),
                 BodyEncoding::Json | BodyEncoding::Form | BodyEncoding::Multipart => (
                     hint.ty(&content.ty, Flavor::Hint),
@@ -876,6 +877,12 @@ pub(crate) fn descriptor_py(plan: &Plan<'_>, info: &OpInfo<'_>, shape: &OpShape<
             Py::Raw(format!("_internal.Response(lambda: {s})")),
         ));
     }
+    if let Some(s) = &shape.page_item_schema {
+        entries.push((
+            "page_item",
+            Py::Raw(format!("_internal.Response(lambda: {s})")),
+        ));
+    }
     let summary = op_summary(op);
     entries.push((
         "summary",
@@ -1151,27 +1158,6 @@ pub(crate) fn descriptors_file(
         &mut body,
         "Every callable operation. The client registers them as `ClientOptions.operations`, so the runtime resolves operations by id (verification hooks, endpoint previews, macro steps).",
     );
-    let items: Vec<(String, Py)> = plan
-        .ops
-        .iter()
-        .zip(shapes)
-        .filter_map(|(info, shape)| {
-            let s = shape.page_item_schema.as_ref()?;
-            Some((
-                info.op.id.0.clone(),
-                Py::Raw(format!("_internal.Response(lambda: {s})")),
-            ))
-        })
-        .collect();
-    if !items.is_empty() {
-        two_blank(&mut body);
-        let prefix = "PAGE_ITEMS: dict[str, _internal.Response] = ";
-        body.line(format!("{prefix}{}", Py::Dict(items).render(prefix.len())));
-        docstring(
-            &mut body,
-            "The item type of each paginated operation's pages, by operation id: `<method>_pages` turns the items the runtime reads from the page body into these types.",
-        );
-    }
 
     let mut imports = PyImports::default();
     imports.add("__future__", "annotations");

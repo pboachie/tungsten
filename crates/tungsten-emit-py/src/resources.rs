@@ -250,30 +250,6 @@ pub(crate) fn call_lines(
     core_call(prefix, method, target, fields, indent)
 }
 
-/// `return <wrap>(self._core.pages(...), _d.PAGE_ITEMS["<id>"])`: pages
-/// whose items are turned into their type.
-fn typed_pages_lines(
-    wrap: &str,
-    target: &str,
-    id: &str,
-    fields: &[ArgField],
-    indent: usize,
-) -> Vec<String> {
-    let inner = core_call("", "pages", target, fields, indent + 4);
-    let mut lines = vec![format!("return {wrap}(")];
-    let last = inner.len() - 1;
-    for (i, l) in inner.into_iter().enumerate() {
-        lines.push(if i == last {
-            format!("    {l},")
-        } else {
-            format!("    {l}")
-        });
-    }
-    lines.push(format!("    _d.PAGE_ITEMS[{}],", crate::py::string_lit(id)));
-    lines.push(")".into());
-    lines
-}
-
 /// Doc of a resource class or attribute.
 pub(crate) fn resource_doc(r: &ResInfo<'_>) -> String {
     let text = doc_text(r.res.doc.as_ref());
@@ -325,7 +301,7 @@ fn write_method(
                 "pages",
                 paragraphs([
                     format!(
-                        "Every page of `{}`, following the cursor until the last page. A failed page is yielded as its error result and ends the iteration. Items are validated into their type; an item that does not match stays as decoded.",
+                        "Every page of `{}`, following the cursor until the last page. A failed page is yielded as its error result and ends the iteration. With response validation on, the runtime validates each item into its type; an item that does not match stays as decoded.",
                         info.op.id.0
                     ),
                     args_section(&shape.fields),
@@ -346,22 +322,8 @@ fn write_method(
     }
     w.indent();
     docstring(w, &doc);
-    let typed_items = method == "pages" && shape.page_item_schema.is_some();
-    if typed_items {
-        // The runtime reads the items from the page body; they become the
-        // item type here (`_internal.page_items`).
-        let wrap = if mode == Mode::Async {
-            "_internal.apage_items"
-        } else {
-            "_internal.page_items"
-        };
-        for l in typed_pages_lines(wrap, &target, &info.op.id.0, &shape.fields, 8) {
-            w.line(l);
-        }
-    } else {
-        for l in call_lines(method_mode, method, &target, &shape.fields, 8) {
-            w.line(l);
-        }
+    for l in call_lines(method_mode, method, &target, &shape.fields, 8) {
+        w.line(l);
     }
     w.dedent();
 }
@@ -400,9 +362,6 @@ pub(crate) fn resource_file(
                 imports.add("collections.abc", "AsyncIterator");
                 imports.add("collections.abc", "Iterator");
                 imports.add("tungsten_runtime", "Page");
-                if shapes[o].page_item_schema.is_some() {
-                    imports.add("..", "_internal");
-                }
                 if shapes[o].page_item.is_none() {
                     imports.add("typing", "Any");
                 }

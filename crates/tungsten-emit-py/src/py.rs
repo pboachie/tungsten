@@ -346,27 +346,6 @@ pub(crate) fn dunder_all_cmp(a: &str, b: &str) -> Ordering {
         .then_with(|| natural_cmp(a, b))
 }
 
-/// Names `tungsten_runtime` exports itself; every other runtime name is
-/// imported from the contract module `tungsten_runtime.types`, where it is
-/// defined (type checkers do not treat the package's `import *` of it as a
-/// re-export).
-const RUNTIME_ROOT: &[&str] = &[
-    "AsyncClientCore",
-    "ClientCore",
-    "TungstenError",
-    "UNSET",
-    "Unset",
-    "unwrap",
-];
-
-fn runtime_module<'m>(module: &'m str, name: &str) -> &'m str {
-    if module == "tungsten_runtime" && !RUNTIME_ROOT.contains(&name) {
-        "tungsten_runtime.types"
-    } else {
-        module
-    }
-}
-
 /// The import section of a module.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Section {
@@ -390,8 +369,9 @@ pub(crate) struct PyImports {
 
 impl PyImports {
     /// `from module import name`.
+    /// Runtime names come from `tungsten_runtime`, which re-exports the
+    /// contract types (`__all__`).
     pub(crate) fn add(&mut self, module: &str, name: &str) {
-        let module = runtime_module(module, name);
         self.from
             .entry(module.to_string())
             .or_default()
@@ -400,7 +380,6 @@ impl PyImports {
 
     /// `from module import name as alias`.
     pub(crate) fn add_as(&mut self, module: &str, name: &str, alias: &str) {
-        let module = runtime_module(module, name);
         self.from
             .entry(module.to_string())
             .or_default()

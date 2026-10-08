@@ -83,7 +83,7 @@ import base64
 import binascii
 import dataclasses
 import re
-from collections.abc import AsyncIterator, Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from types import ModuleType
 from typing import Annotated, Any, Literal, cast
@@ -100,19 +100,19 @@ from pydantic import (
     SerializerFunctionWrapHandler,
     TypeAdapter,
     ValidationError,
+    ValidatorFunctionWrapHandler,
+    WrapValidator,
     model_serializer,
 )
-from tungsten_runtime import UNSET
-from tungsten_runtime.types import (
+from pydantic_core import PydanticCustomError
+from tungsten_runtime import (
+    UNSET,
     AuthConfig,
     ClientOptions,
     Invalid,
     Issue,
     MacroDescriptor,
-    Ok,
     OperationDescriptor,
-    Page,
-    Result,
     Valid,
 )
 
@@ -121,7 +121,8 @@ class Model(BaseModel):
     """Base of the generated models.
 
     Validation is strict (no coercion between JSON types: ``"1"`` is not an
-    integer), fields accept their Python name or their wire name, and fields
+    integer; an integral number such as ``1.0`` is, as in JSON Schema and
+    the TypeScript SDK: see ``Int``), fields accept their Python name or their wire name, and fields
     left ``UNSET`` are omitted when the model is dumped, so
     ``model_dump(by_alias=True)`` and ``model_dump(mode="json", by_alias=True)``
     give the wire form.
@@ -150,15 +151,73 @@ def _decode_base64(value: object) -> object:
     return value
 
 
-def _encode_base64(value: bytes) -> str:
-    return base64.b64encode(value).decode("ascii")
+def _is_file(value: object) -> bool:
+    """A binary value the runtime reads itself (``tungsten_runtime``
+    ``Validator``): a bytearray or memoryview, a binary file object, or a
+    ``(filename, content[, content_type])`` tuple."""
+    if isinstance(value, bytearray | memoryview):
+        return True
+    if isinstance(value, tuple):
+        parts = cast("tuple[object, ...]", value)
+        return len(parts) in (2, 3) and (parts[0] is None or isinstance(parts[0], str))
+    return callable(getattr(value, "read", None))
 
 
-type Bytes = Annotated[bytes, BeforeValidator(_decode_base64), PlainSerializer(_encode_base64, when_used="json")]
-"""Bytes; a base64 string in JSON."""
+def _bytes_or_file(value: Any, handler: ValidatorFunctionWrapHandler) -> Any:
+    return value if _is_file(value) else handler(value)
 
-type Int32 = Annotated[int, Field(ge=-(2**31), le=2**31 - 1)]
-"""A 32-bit integer."""
+
+def _serialize_bytes(value: Any) -> Any:
+    return base64.b64encode(value).decode("ascii") if isinstance(value, bytes) else value
+
+
+def _plain(value: Any) -> Any:
+    """A non-JSON body's value for the runtime to encode: models as mappings
+    by wire name without ``UNSET`` fields (extras kept), lists as lists, and
+    everything else (bytes, files, file tuples, dates) as it is."""
+    if isinstance(value, BaseModel):
+        out: dict[str, Any] = {}
+        for name, field in type(value).model_fields.items():
+            item = getattr(value, name)
+            if item is not UNSET:
+                out[field.serialization_alias or name] = _plain(item)
+        for key, item in (value.model_extra or {}).items():
+            out[key] = _plain(item)
+        return out
+    if isinstance(value, Mapping):
+        return {k: _plain(v) for k, v in cast("Mapping[object, object]", value).items()}
+    if isinstance(value, list):
+        return [_plain(v) for v in cast("list[object]", value)]
+    return value
+
+
+type Bytes = Annotated[
+    bytes,
+    WrapValidator(_bytes_or_file),
+    BeforeValidator(_decode_base64),
+    PlainSerializer(_serialize_bytes, when_used="json"),
+]
+"""Bytes; a base64 string in JSON. A file object or a ``(filename, content[,
+content_type])`` tuple is kept as given (a multipart file the runtime
+reads)."""
+
+type Binary = Annotated[bytes, WrapValidator(_bytes_or_file)]
+"""A whole binary request body: bytes, or a file object or ``(filename,
+content[, content_type])`` tuple the runtime reads."""
+
+def _integral(value: object) -> object:
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    return value
+
+
+type Int = Annotated[int, BeforeValidator(_integral)]
+"""An integer. JSON Schema's ``integer`` is any number without a fractional
+part, so ``1.0`` (what a JSON parser may give for ``1.0`` on the wire) is the
+integer ``1``; ``1.5``, ``"1"`` and ``True`` are not integers."""
+
+type Int32 = Annotated[int, BeforeValidator(_integral), Field(ge=-(2**31), le=2**31 - 1)]
+"""A 32-bit integer (see ``Int``)."""
 
 
 def _reject(value: Any) -> Any:
@@ -184,7 +243,48 @@ def pattern(source: str) -> AfterValidator:
 
     def check(value: str) -> str:
         if compiled.search(value) is None:
-            raise ValueError(f"must match the pattern {source}")
+            # The pattern between slashes, as the TypeScript SDK quotes it.
+            raise PydanticCustomError(
+                "string_pattern_mismatch", "String should match pattern /{pattern}/", {"pattern": source}
+            )
+        return value
+
+    return AfterValidator(check)
+
+
+_DATE = (
+    r"(?:(?:[0-9][0-9][2468][048]|[0-9][0-9][13579][26]|[0-9][0-9]0[48]|[02468][048]00|[13579][26]00)-02-29"
+    r"|[0-9]{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12][0-9]|3[01])|(?:0[469]|11)-(?:0[1-9]|[12][0-9]|30)"
+    r"|(?:02)-(?:0[1-9]|1[0-9]|2[0-8])))"
+)
+_IPV4_PART = r"(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])"
+_H16 = r"[0-9a-fA-F]{1,4}"
+_FORMATS: dict[str, re.Pattern[str]] = {
+    "uuid": re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"),
+    "email": re.compile(r"[^\s@\"]{1,64}@[^\s@]{1,255}"),
+    "date-time": re.compile(
+        _DATE + r"T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\.[0-9]+)?(?:Z|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])"
+    ),
+    "date": re.compile(_DATE),
+    "ipv4": re.compile(rf"(?:{_IPV4_PART}\.){{3}}{_IPV4_PART}"),
+    "ipv6": re.compile(
+        rf"(?:(?:{_H16}:){{7}}{_H16}|(?:{_H16}:){{1,7}}:|(?:{_H16}:){{1,6}}:{_H16}|(?:{_H16}:){{1,5}}(?::{_H16}){{1,2}}"
+        rf"|(?:{_H16}:){{1,4}}(?::{_H16}){{1,3}}|(?:{_H16}:){{1,3}}(?::{_H16}){{1,4}}|(?:{_H16}:){{1,2}}(?::{_H16}){{1,5}}"
+        rf"|{_H16}:(?:(?::{_H16}){{1,6}})|:(?:(?::{_H16}){{1,7}}|:))"
+    ),
+}
+
+
+def string_format(name: str) -> AfterValidator:
+    """A JSON Schema string ``format`` the SDK checks (``uuid`` as any
+    8-4-4-4-12 hex form, ``email``, ``date-time`` with a ``Z`` or numeric
+    offset, ``date``, ``ipv4``, ``ipv6``), with the same rules as the
+    TypeScript SDK, so both accept the same values."""
+    compiled = _FORMATS[name]
+
+    def check(value: str) -> str:
+        if compiled.fullmatch(value) is None:
+            raise PydanticCustomError("string_format", "String should be a valid {format}", {"format": name})
         return value
 
     return AfterValidator(check)
@@ -229,7 +329,7 @@ def all_of(members: Callable[[], Sequence[Any]]) -> AfterValidator:
         if not adapters:
             adapters.extend(TypeAdapter[Any](m) for m in members())
         for adapter in adapters:
-            adapter.validate_python(value)
+            adapter.validate_python(value, strict=True)
         return value
 
     return AfterValidator(check)
@@ -277,13 +377,15 @@ def args(values: Mapping[str, object]) -> dict[str, object]:
     return {k: v for k, v in values.items() if v is not UNSET}
 
 
-def _path(loc: Sequence[str | int], value: object) -> list[str | int]:
+def _path(loc: Sequence[str | int], value: object, missing: bool = False) -> list[str | int]:
     """The path of an error location in the validated value: the segments
     that step into it (keys and list indexes), without the union member and
-    validator labels pydantic adds."""
+    validator labels pydantic adds. For a missing field (``missing``), the
+    last segment is the absent key, so the path names the field as the
+    TypeScript SDK does (``response.deliveries``)."""
     out: list[str | int] = []
     current = value
-    for segment in loc:
+    for i, segment in enumerate(loc):
         if isinstance(current, BaseModel):
             current = current.model_dump(by_alias=True)
         if isinstance(current, Mapping):
@@ -291,6 +393,8 @@ def _path(loc: Sequence[str | int], value: object) -> list[str | int]:
             if segment in mapping:
                 out.append(segment)
                 current = mapping[segment]
+            elif missing and i == len(loc) - 1:
+                out.append(segment)
             continue
         if isinstance(current, list | tuple) and isinstance(segment, int):
             items = cast("Sequence[object]", current)
@@ -306,7 +410,10 @@ def _issues(error: ValidationError, prefix: list[str | int], value: object) -> l
     second error is left out."""
     errors = error.errors(include_url=False)
     kept = [e for e in errors if "literal[UNSET]" not in e["loc"]] or errors
-    return [{"path": prefix + _path(e["loc"], value), "message": e["msg"], "code": e["type"]} for e in kept]
+    return [
+        {"path": prefix + _path(e["loc"], value, e["type"] == "missing"), "message": e["msg"], "code": e["type"]}
+        for e in kept
+    ]
 
 
 @dataclass(frozen=True, slots=True)
@@ -322,7 +429,9 @@ class Arg:
 
 class Request:
     """Validates the arguments of an operation (a mapping by argument name)
-    and normalizes them: models dumped by wire name, ``UNSET`` removed."""
+    in strict mode (no coercion between JSON types, as the TypeScript SDK's
+    schemas) and normalizes them: models dumped by wire name, ``UNSET``
+    removed."""
 
     def __init__(self, args: Callable[[], Mapping[str, Arg]]) -> None:
         self._args = args
@@ -347,11 +456,11 @@ class Request:
                     issues.append({"path": [name], "message": "Field required", "code": "missing"})
                 continue
             try:
-                parsed = adapter.validate_python(raw)
+                parsed = adapter.validate_python(raw, strict=True)
             except ValidationError as error:
                 issues.extend(_issues(error, [name], raw))
                 continue
-            data[name] = adapter.dump_python(parsed, mode="json" if arg.json else "python", by_alias=True)
+            data[name] = adapter.dump_python(parsed, mode="json", by_alias=True) if arg.json else _plain(parsed)
         for key, raw in given.items():
             if key not in adapters and raw is not UNSET:
                 expected = ", ".join(adapters) or "no arguments"
@@ -379,34 +488,9 @@ class Response:
 
     def validate(self, value: object) -> Valid[Any] | Invalid:
         try:
-            return Valid(self._ready().validate_python(value))
+            return Valid(self._ready().validate_python(value, strict=True))
         except ValidationError as error:
             return Invalid(_issues(error, [], value))
-
-    def coerce(self, value: object) -> Any:
-        """The typed value, or ``value`` as decoded when it does not match."""
-        result = self.validate(value)
-        return result.data if isinstance(result, Valid) else value
-
-
-def _typed_page(result: Result[Page[Any]], item: Response) -> Result[Page[Any]]:
-    if not isinstance(result, Ok):
-        return result
-    page = result.value
-    return dataclasses.replace(result, value=dataclasses.replace(page, items=[item.coerce(i) for i in page.items]))
-
-
-def page_items(pages: Iterator[Result[Page[Any]]], item: Response) -> Iterator[Result[Page[Any]]]:
-    """``pages`` with each page's items (as the runtime reads them from the
-    page body) turned into the item type."""
-    for result in pages:
-        yield _typed_page(result, item)
-
-
-async def apage_items(pages: AsyncIterator[Result[Page[Any]]], item: Response) -> AsyncIterator[Result[Page[Any]]]:
-    """The async twin of ``page_items``."""
-    async for result in pages:
-        yield _typed_page(result, item)
 
 
 def client_options(

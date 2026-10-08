@@ -4,7 +4,8 @@
 //!
 //! A shape renders in two flavors. The schema flavor is what Pydantic
 //! validates: constraints as `Annotated` metadata, `_internal.Bytes`
-//! (base64 in JSON), `_internal.Int32`, discriminated and left-to-right
+//! (base64 in JSON), `_internal.Int` and `_internal.Int32` (integral
+//! floats are integers), discriminated and left-to-right
 //! unions. The hint flavor is the plain type a signature shows (`str`,
 //! `bytes`, `A | B`). Models are written in the schema flavor; method
 //! signatures and `Result` types in the hint flavor.
@@ -204,7 +205,8 @@ impl<'p, 'a> Cx<'p, 'a> {
         self.uses.borrow_mut().runtime.insert(name);
     }
 
-    fn internal(&self, name: &str) -> String {
+    /// `_internal.<name>`, recording that the module uses `_internal`.
+    pub(crate) fn internal(&self, name: &str) -> String {
         self.uses.borrow_mut().internal = true;
         format!("_internal.{name}")
     }
@@ -339,7 +341,7 @@ impl<'p, 'a> Cx<'p, 'a> {
                     PyTy::one(self.internal("Bytes"))
                 }
             }
-            Primitive::String { .. } => {
+            Primitive::String { format } => {
                 let base = PyTy::one("str");
                 if hint {
                     return base;
@@ -355,6 +357,13 @@ impl<'p, 'a> Cx<'p, 'a> {
                 if !args.is_empty() {
                     self.pydantic("Field");
                     meta.push(format!("Field({})", args.join(", ")));
+                }
+                if let Some(name) = format.as_ref().and_then(checked_format) {
+                    meta.push(format!(
+                        "{}({})",
+                        self.internal("string_format"),
+                        string_lit(name)
+                    ));
                 }
                 if let Some(pattern) = &c.pattern {
                     meta.push(format!(
@@ -373,7 +382,7 @@ impl<'p, 'a> Cx<'p, 'a> {
                 let base = if *p == Primitive::Int32 {
                     PyTy::one(self.internal("Int32"))
                 } else {
-                    PyTy::one("int")
+                    PyTy::one(self.internal("Int"))
                 };
                 self.with_field(&base, &number_args(c))
             }
@@ -877,4 +886,20 @@ pub(crate) fn models_init(plan: &Plan<'_>, header: &str) -> String {
     w.blank();
     w.line(dunder_all(&exported));
     w.finish()
+}
+
+/// The string formats the SDK checks (`_internal.string_format`): the
+/// ones the TypeScript SDK checks with Zod, with the same rules, so both
+/// SDKs accept and reject the same values. Other formats are documented
+/// only.
+fn checked_format(format: &StringFormat) -> Option<&'static str> {
+    match format {
+        StringFormat::Uuid => Some("uuid"),
+        StringFormat::Email => Some("email"),
+        StringFormat::DateTime => Some("date-time"),
+        StringFormat::Date => Some("date"),
+        StringFormat::Ipv4 => Some("ipv4"),
+        StringFormat::Ipv6 => Some("ipv6"),
+        _ => None,
+    }
 }

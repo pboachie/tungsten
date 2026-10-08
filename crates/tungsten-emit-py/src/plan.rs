@@ -233,7 +233,7 @@ pub(crate) struct Plan<'a> {
 }
 
 /// Names `_descriptors.py` defines besides the descriptor constants.
-pub(crate) const DESCRIPTOR_RESERVED: &[&str] = &["API", "OPERATIONS", "PAGE_ITEMS"];
+pub(crate) const DESCRIPTOR_RESERVED: &[&str] = &["API", "OPERATIONS"];
 
 /// Attribute names of the client besides its resources or namespaces.
 const CLIENT_RESERVED: &[&str] = &["aclose", "close", "core", "macros"];
