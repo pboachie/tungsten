@@ -282,6 +282,10 @@ pub mod codes {
         ),
         ("TG0713", "tool schema over the agent schema token budget"),
         ("TG0901", "generated output is stale relative to its inputs"),
+        (
+            "TG0902",
+            "API surface snapshot of the last generation is missing or unreadable; the change is not classified",
+        ),
     ];
 
     pub fn describe(code: &str) -> Option<&'static str> {

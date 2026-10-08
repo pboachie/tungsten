@@ -16,11 +16,13 @@
 mod args;
 mod commands;
 mod explain_table;
+mod html;
 mod input;
 pub mod output;
 pub mod render;
 mod stats;
 pub mod targets;
+mod textdiff;
 
 #[cfg(feature = "testing")]
 pub mod __testing;

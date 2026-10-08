@@ -3,12 +3,14 @@
 //! output streams.
 
 pub(crate) mod check;
+pub(crate) mod diff;
 pub(crate) mod doctor;
 pub(crate) mod explain;
 pub(crate) mod generate;
 pub(crate) mod init;
 mod ir;
 pub(crate) mod mock;
+pub(crate) mod report;
 mod schema;
 
 use crate::args::{Cli, Command, IrCommand};
@@ -26,5 +28,7 @@ pub(crate) fn dispatch(cli: &Cli, env: &CliEnv) -> Report {
         Command::Doctor => doctor::run(env),
         Command::Generate(args) => generate::run(args),
         Command::Mock(args) => mock::start(args),
+        Command::Report(args) => report::run(args),
+        Command::Diff(args) => diff::run(args),
     }
 }

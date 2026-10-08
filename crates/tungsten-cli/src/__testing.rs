@@ -51,3 +51,39 @@ pub fn relative_path(target: &Path, base: &Path) -> Option<PathBuf> {
 pub fn yaml_scalar(s: &str) -> String {
     crate::commands::init::yaml_scalar(s)
 }
+
+/// The unified diff `tungsten diff` shows for a changed file (`a/<path>`
+/// to `b/<path>`): the text, lines added, lines removed and hunk lines cut
+/// after `max_lines`.
+pub fn unified_diff(
+    path: &str,
+    old: &str,
+    new: &str,
+    max_lines: usize,
+) -> (String, usize, usize, usize) {
+    use crate::textdiff::{Side, unified};
+    let p = unified(Side::File(path), Side::File(path), old, new, max_lines);
+    (p.text, p.added, p.removed, p.truncated)
+}
+
+/// Escape text for the HTML report.
+pub fn html_escape(text: &str) -> String {
+    crate::html::escape(text)
+}
+
+/// The report's MCP budgets for an MCP target's files (`None`: no MCP
+/// manifest among them).
+pub fn report_mcp_budgets(
+    files: &tungsten_emit::FileSet,
+    schema_budget: u32,
+) -> Option<crate::output::McpBudgets> {
+    crate::commands::report::mcp_budgets(files, schema_budget)
+}
+
+/// The report's tools.json budgets for a docs target's files.
+pub fn report_tool_budgets(
+    files: &tungsten_emit::FileSet,
+    schema_budget: u32,
+) -> Option<crate::output::ToolBudgets> {
+    crate::commands::report::tool_budgets(files, schema_budget)
+}
