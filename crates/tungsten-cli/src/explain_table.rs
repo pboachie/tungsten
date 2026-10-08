@@ -505,6 +505,38 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
          model.",
     ),
     e(
+        "TG0750",
+        "An argument of an operation has no plain flag form in the generated CLI: a parameter \
+         whose type is an object, a map, a union or a list of those, or a multipart body whose \
+         parts are files. The CLI takes it as JSON text (`--filter '{\"a\":1}'`, \
+         `--filter @filter.json` or `-` for standard input); a multipart file cannot be given \
+         from the command line at all.",
+        "Use the JSON form, or the SDK for multipart uploads. Nested fields of a request body are \
+         JSON-text flags by design and are not reported.",
+    ),
+    e(
+        "TG0751",
+        "A resource, or a namespace, has the name of a command the generated CLI provides itself \
+         (`auth`, `help`, `operations`, `schema`). Its commands are under `<name>-resource` so \
+         that both exist.",
+        "Rename the resource under `resources` in tungsten.yml.",
+    ),
+    e(
+        "TG0752",
+        "The flag derived from an argument has the name of a flag the CLI adds to every command \
+         (`--json`, `--body`, `--yes`, `--dry-run`, `--idempotency-key`, `--timeout`, ...) or of \
+         another flag of the same command. The argument keeps its name in the SDK; its flag gets \
+         the suffix `-arg`.",
+        "Use the renamed flag, or rename the parameter in the spec or an overlay.",
+    ),
+    e(
+        "TG0753",
+        "Two operations or macros end up with the same command path in the generated CLI (an \
+         operation and a macro with the same name, or a resource renamed onto another). The \
+         later one gets a numeric suffix so that both stay reachable.",
+        "Give the operations distinct names with `naming.operations` in tungsten.yml.",
+    ),
+    e(
         "TG0901",
         "A target's output directory differs from what `tungsten generate` would write now: \
          a generated file is missing or has other content, a file of the previous \

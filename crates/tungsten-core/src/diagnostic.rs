@@ -312,6 +312,22 @@ pub mod codes {
             "inline record typed as a plain mapping by the Python SDK",
         ),
         ("TG0740", "invalid Rust target option; default used"),
+        (
+            "TG0750",
+            "argument given as JSON text on the command line of the generated CLI",
+        ),
+        (
+            "TG0751",
+            "resource named like a command of the generated CLI; renamed",
+        ),
+        (
+            "TG0752",
+            "flag renamed in the generated CLI because its name is taken",
+        ),
+        (
+            "TG0753",
+            "two commands of the generated CLI share a path; the later one is numbered",
+        ),
         ("TG0901", "generated output is stale relative to its inputs"),
         (
             "TG0902",

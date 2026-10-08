@@ -16,7 +16,7 @@ tungsten-runtime.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
-clap = { version = "4", default-features = false, features = ["std", "help", "usage", "error-context", "suggestions", "wrap_help"] }
+clap = { version = "4", default-features = false, features = ["std", "string", "help", "usage", "error-context", "suggestions", "wrap_help"] }
 
 [lints]
 workspace = true
