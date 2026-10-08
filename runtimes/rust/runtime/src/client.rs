@@ -83,6 +83,9 @@ pub(crate) struct Inner {
     pub now: Option<Arc<dyn Fn() -> u64 + Send + Sync>>,
     pub random: Option<Arc<dyn Fn() -> f64 + Send + Sync>>,
     pub registry: Mutex<BTreeMap<String, Arc<OperationDescriptor>>>,
+    /// Makes "find or create the key of a logical call" atomic, so concurrent
+    /// identical calls share one key.
+    pub key_lock: Mutex<()>,
     /// Confirmation tokens already used to send, with the replay protection of
     /// their first use, until they expire.
     pub used_tokens: Mutex<HashMap<String, (Option<String>, u64)>>,
@@ -171,6 +174,7 @@ impl ClientCore {
                 now: options.now,
                 random: options.random,
                 registry: Mutex::new(BTreeMap::new()),
+                key_lock: Mutex::new(()),
                 used_tokens: Mutex::new(HashMap::new()),
                 oauth_tokens: tokio::sync::Mutex::new(HashMap::new()),
             }),

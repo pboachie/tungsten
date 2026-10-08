@@ -1110,6 +1110,7 @@ impl ClientCore {
                 };
                 let logical = sha256_hex(canonical_json(&Value::Object(args.clone())).as_bytes());
                 let store = &self.inner.store;
+                let _atomic = crate::idempotency::lock(&self.inner.key_lock);
                 if let Some(existing) = store.get(&op.id, &logical).filter(|k| !k.is_empty()) {
                     return Ok(Some(existing));
                 }
