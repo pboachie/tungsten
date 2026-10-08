@@ -38,9 +38,11 @@
 
 mod cli;
 pub mod options;
-pub mod sdk;
+mod sdk;
 
 pub use options::{CliOptions, Dep, Options};
+#[cfg(feature = "testing")]
+pub use sdk::testing as __testing;
 
 use tungsten_core::Diagnostics;
 use tungsten_emit::{Emitter, FileSet, TargetConfig};

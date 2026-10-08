@@ -148,7 +148,7 @@ pub(crate) fn emit(ir: &Ir, cfg: &TargetConfig, out: &mut FileSet) -> Diagnostic
 
 /// Every file of the SDK half: (path relative to the target directory,
 /// contents), in a deterministic order.
-pub fn generate(ir: &Ir, opts: &Options) -> Vec<(String, String)> {
+fn generate(ir: &Ir, opts: &Options) -> Vec<(String, String)> {
     let plan = plan::Plan::new(ir);
     let hdr_slash = header(CommentStyle::DoubleSlash, ir);
     let hdr_hash = header(CommentStyle::Hash, ir);
@@ -218,4 +218,123 @@ pub fn generate(ir: &Ir, opts: &Options) -> Vec<(String, String)> {
         ));
     }
     files
+}
+
+/// Internals exposed to the private test harness.
+#[cfg(feature = "testing")]
+pub mod testing {
+    use tungsten_ir::{Ir, Presence, TypeRef};
+
+    /// One field of an operation's request struct.
+    #[derive(Debug, Clone, PartialEq)]
+    pub struct Arg {
+        /// Field name (the key in the arguments object).
+        pub key: String,
+        /// Wire name of a parameter or merged body field.
+        pub wire: Option<String>,
+        pub optional: bool,
+        /// The Rust type of the field.
+        pub ty: String,
+        /// The IR type behind it (none for raw bodies).
+        pub type_ref: Option<TypeRef>,
+        pub presence: Option<Presence>,
+    }
+
+    /// The request struct of an operation and its body shape.
+    #[derive(Debug, Clone, PartialEq)]
+    pub struct OpArgs {
+        pub args: Vec<Arg>,
+        /// (argument, wire name) pairs of a merged body.
+        pub merged: Option<Vec<(String, String)>>,
+        /// The argument carrying a whole body.
+        pub body_arg: Option<String>,
+        /// Index constant in `descriptors.rs`.
+        pub konst: String,
+        /// The request struct name.
+        pub request: String,
+        /// Its module under `resources`.
+        pub module: String,
+        /// The typed result's value type.
+        pub success: String,
+    }
+
+    /// The arguments of the callable operation `id`, if any.
+    pub fn op_args(ir: &Ir, id: &str) -> Option<OpArgs> {
+        let plan = crate::sdk::plan::Plan::new(ir);
+        let i = *plan.op_by_id.get(id)?;
+        let info = &plan.ops[i];
+        let shape = crate::sdk::ops::op_shape(&plan, info);
+        let (merged, body_arg) = match shape.body.as_ref().map(|b| &b.shape) {
+            Some(crate::sdk::ops::BodyShape::Merged(pairs)) => (Some(pairs.clone()), None),
+            Some(crate::sdk::ops::BodyShape::Arg(a)) => (None, Some(a.clone())),
+            None => (None, None),
+        };
+        let wire_of = |key: &str| {
+            shape
+                .params
+                .iter()
+                .find(|p| p.name == key)
+                .map(|p| p.param.wire_name.clone())
+                .or_else(|| {
+                    merged
+                        .as_ref()
+                        .and_then(|m| m.iter().find(|(a, _)| a == key).map(|(_, w)| w.clone()))
+                })
+        };
+        Some(OpArgs {
+            args: shape
+                .fields
+                .iter()
+                .map(|f| Arg {
+                    key: f.key.clone(),
+                    wire: wire_of(&f.key),
+                    optional: f.optional,
+                    ty: f.slot.ty.clone(),
+                    type_ref: f.check.map(|c| c.ty.clone()),
+                    presence: f.check.map(|c| c.presence),
+                })
+                .collect(),
+            merged,
+            body_arg,
+            konst: info.konst.clone(),
+            request: info.request.clone(),
+            module: plan.resources[info.res].module.clone(),
+            success: shape.success.clone(),
+        })
+    }
+
+    /// The Rust names of every named type: (type id, module, name,
+    /// whether it has a check function).
+    pub fn type_names(ir: &Ir) -> Vec<(String, String, String, bool)> {
+        let plan = crate::sdk::plan::Plan::new(ir);
+        plan.types
+            .iter()
+            .map(|(id, t)| {
+                let module = plan
+                    .model_ns(&t.ns)
+                    .map(|m| m.file.clone())
+                    .unwrap_or_default();
+                (
+                    id.0.clone(),
+                    module,
+                    t.name.clone(),
+                    plan.graph.needs_check.contains(id),
+                )
+            })
+            .collect()
+    }
+
+    /// The client's type name and the `Dispatch` accessor chain of every
+    /// operation (`["public", "webhooks"]`), by operation id.
+    pub fn client_info(ir: &Ir) -> (String, Vec<(String, Vec<String>)>) {
+        let plan = crate::sdk::plan::Plan::new(ir);
+        let paths = crate::sdk::dispatch::client_paths(&plan);
+        let ops = plan
+            .ops
+            .iter()
+            .zip(paths)
+            .map(|(o, p)| (o.op.id.0.clone(), p))
+            .collect();
+        (plan.client_class.clone(), ops)
+    }
 }
