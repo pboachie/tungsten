@@ -577,7 +577,7 @@ class Engine:
                     diagnostic(
                         op_id,
                         "VALIDATION_FAILED",
-                        failed_parameter="idempotencyKey",
+                        failed_parameter="idempotency_key",
                         expected=key_format_description(fmt),
                         remediation=(
                             f"Generate a random {fresh}, persist it with the intent of this {op_id} call, and pass "
@@ -601,7 +601,7 @@ class Engine:
                 diagnostic(
                     op_id,
                     "VALIDATION_FAILED",
-                    failed_parameter="idempotencyKey",
+                    failed_parameter="idempotency_key",
                     received_value=envelope_value(key, False),
                     expected=expected,
                     remediation=(
@@ -1760,7 +1760,12 @@ class Engine:
                     if origin is None or origin_of(resolved) != origin:
                         yield from sink(
                             PageAnswer(
-                                Ok(value=Page(items=items, body=result.value, next=None), meta=result.meta),
+                                Ok(
+                                    value=Page(
+                                        items=self._page_items(op, items), body=result.value, next=None
+                                    ),
+                                    meta=result.meta,
+                                ),
                                 items,
                             )
                         )
@@ -1785,10 +1790,32 @@ class Engine:
                         return
                     next_value = resolved
                     override = resolved
-            page_result = Ok(value=Page(items=items, body=result.value, next=next_value), meta=result.meta)
+            page_result = Ok(
+                value=Page(items=self._page_items(op, items), body=result.value, next=next_value),
+                meta=result.meta,
+            )
             more = yield from sink(PageAnswer(page_result, items))
             if next_value is None or not more:
                 return
+
+    def _page_items(self, op: OperationDescriptor, items: list[object]) -> list[object]:
+        """A page's items as the caller receives them (``Page.items``): each
+        item the operation's ``page_item`` validator accepts is its
+        ``Valid.data`` (a model instance) when ``validate_responses`` is
+        ``warn`` or ``strict``; any other item, and every item with validation
+        off, is the decoded item. Macros and predicates read the decoded items
+        (``PageAnswer.items``) whatever the mode."""
+        validate = _hook(op.get("page_item"), "validate")
+        if self.options.validate_responses == "off" or not callable(validate):
+            return items
+        out: list[object] = []
+        for item in items:
+            try:
+                checked = validate(item)
+            except Exception:
+                checked = None
+            out.append(cast(Valid[object], checked).data if isinstance(checked, Valid) else item)
+        return out
 
     def _poll(
         self,

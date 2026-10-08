@@ -344,6 +344,11 @@ class OperationDescriptor(TypedDict):
     agent: AgentMeta
     request: NotRequired[Validator[dict[str, Any]]]
     response: NotRequired[Validator[Any]]
+    #: Paginated operations: the validator of one page item. ``pages()``
+    #: yields each item as its ``Valid.data`` (with response validation on;
+    #: an item that does not match stays as decoded), so ``Page[T].items``
+    #: holds ``T`` without help from generated code.
+    page_item: NotRequired[Validator[Any]]
     summary: NotRequired[str | None]
 
 
@@ -587,6 +592,12 @@ class PreviewResult(TypedDict):
 
 @dataclass(frozen=True, slots=True)
 class Page[T]:
+    """One page of a paginated operation. ``items`` are read from the page
+    body at the pagination's ``items_field`` and validated with the
+    operation's ``page_item`` validator (``OperationDescriptor``); ``body`` is
+    the page's value as a call returns it; ``next`` is the next cursor, offset,
+    page number or URL, None after the last page."""
+
     items: list[T]
     body: Any
     next: Any

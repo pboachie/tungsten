@@ -4,12 +4,14 @@ documented member order, default ``retryable`` per category, the status to
 category mapping and the generic remediation texts used when neither the
 operation nor the API has a specific entry (``runtimes/ts/src/envelope.ts``).
 
-Envelope identifiers are shared by every runtime: ``failed_parameter`` names
-the call options ``idempotencyKey`` and ``confirm``, the descriptors
-(``operation``, ``macro``), the whole ``args`` or macro ``input``, and paths
-``args.<name>`` / ``body.<path>`` / ``response.<path>``; argument paths use
-the Python argument names. Remediation prose names the Python spellings of
-SDK options (``idempotency_key``, ``confirm=True``, ``ClientOptions.base_url``).
+Envelope identifiers are shared by every runtime except where they name
+something the caller passes: ``failed_parameter`` names the call options as
+this SDK spells them (``idempotency_key``, where the TypeScript runtime says
+``idempotencyKey``; ``confirm``), the descriptors (``operation``,
+``macro``), the whole ``args`` or macro ``input``, and paths
+``args.<name>`` (the Python argument name) / ``body.<path>`` (wire names) /
+``response.<path>``. Remediation prose names the Python spellings of SDK
+options (``idempotency_key``, ``confirm=True``, ``ClientOptions.base_url``).
 """
 
 from __future__ import annotations

@@ -144,11 +144,15 @@ def _format_path(segments: Sequence[str | int]) -> str:
 
 
 def argument_path(op: OperationDescriptor, path: Sequence[str | int]) -> str:
-    """JSON path of an argument issue: ``body.x`` for body fields, else ``args.x``."""
+    """JSON path of an argument issue: ``body.<wire>`` for a merged body
+    field (its wire name, as every runtime reports it: the path is in the
+    request body), ``body.x`` inside a whole-body argument, else ``args.x``
+    (the argument name of this SDK)."""
     if len(path) > 0:
         head = str(path[0])
-        if head in {arg for arg, _ in merged_fields(op)}:
-            return f"body{_format_path(path)}"
+        wire = next((w for a, w in merged_fields(op) if a == head), None)
+        if wire is not None:
+            return f"body{_format_path([wire, *path[1:]])}"
         if body_arg(op) == head:
             return f"body{_format_path(path[1:])}"
     return "args" if len(path) == 0 else f"args{_format_path(path)}"
