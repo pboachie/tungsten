@@ -411,43 +411,42 @@ impl ClientCore {
             );
         } else if mode != ValidateResponses::Off
             && let (Some(validator), Some(value)) = (&op.response, decoded.value.as_ref())
-        {
-            if let crate::types::Validation::Invalid(issues) =
+            && let crate::types::Validation::Invalid(issues) =
                 crate::validate::judge(validator.as_ref(), value)
-            {
-                let issue = issues.first();
-                let path: Vec<String> = issue
-                    .map(|i| {
-                        i.path
-                            .iter()
-                            .map(|s| match s {
-                                crate::types::PathSegment::Key(k) => k.clone(),
-                                crate::types::PathSegment::Index(n) => n.to_string(),
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                let message = issue.map_or("a valid response", |i| i.message.as_str());
-                let path_text: String = path
-                    .iter()
-                    .map(|s| {
-                        if !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()) {
-                            format!("[{s}]")
-                        } else {
-                            format!(".{s}")
-                        }
-                    })
-                    .collect();
-                let kept = if mutation && mode == ValidateResponses::Strict {
-                    " The decoded body is in the result's partial; store any value shown only once from it before anything else."
-                } else {
-                    ""
-                };
-                let redacted = redact_paths(value, sensitive);
-                let received = get_path(Some(&redacted), &path)
-                    .cloned()
-                    .unwrap_or(Value::Null);
-                problem = Some(
+        {
+            let issue = issues.first();
+            let path: Vec<String> = issue
+                .map(|i| {
+                    i.path
+                        .iter()
+                        .map(|s| match s {
+                            crate::types::PathSegment::Key(k) => k.clone(),
+                            crate::types::PathSegment::Index(n) => n.to_string(),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            let message = issue.map_or("a valid response", |i| i.message.as_str());
+            let path_text: String = path
+                .iter()
+                .map(|s| {
+                    if !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()) {
+                        format!("[{s}]")
+                    } else {
+                        format!(".{s}")
+                    }
+                })
+                .collect();
+            let kept = if mutation && mode == ValidateResponses::Strict {
+                " The decoded body is in the result's partial; store any value shown only once from it before anything else."
+            } else {
+                ""
+            };
+            let redacted = redact_paths(value, sensitive);
+            let received = get_path(Some(&redacted), &path)
+                .cloned()
+                .unwrap_or(Value::Null);
+            problem = Some(
                     Diag::new(op.id.clone(), Category::UnexpectedResponse)
                         .http_status(Some(status))
                         .request_id(request_id.clone())
@@ -463,7 +462,6 @@ impl ClientCore {
                         .attempts(attempts)
                         .build(),
                 );
-            }
         }
         if let Some(problem) = problem {
             let scrubbed = scrub_diagnostic(problem, &prepared.secrets);
