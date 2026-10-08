@@ -376,11 +376,16 @@ fn mixed_items(items: &[Rx]) -> bool {
 /// ending with a comma, indented four columns past `indent`.
 fn pack_items(out: &mut String, items: &[Rx], indent: usize) {
     let pad = " ".repeat(indent + 4);
+    let all = flat_args(items);
+    // All on one line: up to the full width. Over several lines: 99 columns.
+    if indent + 4 + all.len() + 1 <= MAX_WIDTH {
+        out.push_str(&format!("{pad}{all},\n"));
+        return;
+    }
     let mut line = String::new();
-    for (i, item) in items.iter().enumerate() {
+    for item in items {
         let text = item.flat();
-        let after = if i + 1 == items.len() { 1 } else { 2 };
-        if !line.is_empty() && indent + 4 + line.len() + 2 + text.len() + after > MAX_WIDTH {
+        if !line.is_empty() && indent + 4 + line.len() + 2 + text.len() + 1 > MAX_WIDTH - 1 {
             out.push_str(&pad);
             out.push_str(&line);
             out.push_str(",\n");
@@ -708,11 +713,13 @@ pub(crate) fn use_line(module: &str, names: &[&str]) -> String {
     }
     let mut out = format!("use {module}::{{\n");
     let mut line = String::new();
-    let count = sorted.len();
-    for (i, n) in sorted.into_iter().enumerate() {
-        // An item that is not the last needs `, ` after it; the last one `,`.
-        let after = if i + 1 == count { 1 } else { 2 };
-        if !line.is_empty() && 4 + line.len() + 2 + n.len() + after > MAX_WIDTH {
+    // All on one line: up to the full width. Over several lines: 99 columns.
+    let one_line = format!("    {},", sorted.join(", "));
+    if one_line.len() <= MAX_WIDTH {
+        return format!("{out}{one_line}\n}};");
+    }
+    for n in sorted {
+        if !line.is_empty() && 4 + line.len() + 2 + n.len() + 1 > MAX_WIDTH - 1 {
             out.push_str(&format!("    {line},\n"));
             line.clear();
         }
