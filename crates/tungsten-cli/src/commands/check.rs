@@ -177,8 +177,9 @@ fn output_state(t: &TargetReport) -> String {
         TargetStatus::Stale => format!("stale ({})", plural(t.stale.len(), "file", "files")),
         TargetStatus::Skipped => "skipped".into(),
         TargetStatus::Failed => "failed".into(),
-        TargetStatus::Generated | TargetStatus::DryRun | TargetStatus::Refused => {
-            "not checked".into()
-        }
+        TargetStatus::Generated
+        | TargetStatus::DryRun
+        | TargetStatus::Refused
+        | TargetStatus::Withheld => "not checked".into(),
     }
 }

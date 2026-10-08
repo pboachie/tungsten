@@ -146,7 +146,7 @@ pub(crate) struct GenerateArgs {
     #[arg(long, conflicts_with = "check")]
     pub force: bool,
     /// Treat warnings (the compiler's and the emitters') as errors: nothing
-    /// is written when there are any.
+    /// is written when there are any, in any target.
     #[arg(long)]
     pub strict: bool,
 }
