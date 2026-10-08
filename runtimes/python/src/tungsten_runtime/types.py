@@ -91,12 +91,20 @@ class Verification:
 
 @dataclass(frozen=True, slots=True)
 class Ok[T]:
-    """A successful call. ``value`` is ``None`` for a bodiless success."""
+    """A successful call. ``value`` is ``None`` for a bodiless success.
+
+    ``value`` is the response validator's ``Valid.data`` when the operation
+    has a response validator and ``ClientOptions.validate_responses`` is
+    ``warn`` or ``strict`` and the body conforms; otherwise the decoded body
+    (parsed JSON, text, or bytes)."""
 
     value: T
     meta: ResponseMeta
     verification: Verification | None = None
     ok: Literal[True] = True
+    #: ``poll()`` only: True when the budget ran out before ``until`` held
+    #: (the value is the last answer), False when it held; None elsewhere.
+    timed_out: bool | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,12 +113,20 @@ class Err:
 
     error: Diagnostic
     ok: Literal[False] = False
+    #: What the failed call or macro already produced, when its effect
+    #: happened: the decoded success body of a mutation whose response failed
+    #: strict validation, or a macro's completed step results by their ``as``
+    #: names. It can hold values the API shows only once (a signing secret),
+    #: so store them before acting on the error; they are never repeated in
+    #: the envelope. None otherwise.
+    partial: Any = None
 
 
 type Result[T] = Ok[T] | Err
 """Generated methods return ``Result[T]`` and never raise for API or
 transport errors. ``TungstenError`` and ``unwrap`` (runtime) give raising
-ergonomics."""
+ergonomics. Branch with ``isinstance(result, Ok)`` or ``result.ok is True``
+(type checkers narrow both; a bare ``if result.ok:`` does not narrow)."""
 
 # ------------------------------------------------------------- descriptors
 
@@ -284,8 +300,14 @@ class Validator[T](Protocol):
     """What the runtime needs from a schema; the emitter implements it with
     Pydantic v2 ``TypeAdapter``s. For requests, ``Valid.data`` is the
     normalized args mapping keyed by argument name, with every value already
-    JSON-ready (models dumped by alias, ``UNSET`` removed). For responses,
-    ``Valid.data`` is the typed value (a model instance)."""
+    JSON-ready (models dumped by alias, ``UNSET`` removed); binary values
+    (bytes, file objects, ``(filename, content[, content_type])`` tuples)
+    pass through untouched. The runtime removes ``UNSET`` mapping members
+    (at any depth through mappings and lists) before validating, sends
+    ``Valid.data``, and reports
+    an ``Invalid`` issue's path (argument names) as ``args.<path>`` or
+    ``body.<path>``. For responses, ``Valid.data`` is the typed value (a
+    model instance) the caller receives."""
 
     def validate(self, value: object) -> Valid[T] | Invalid: ...
 
@@ -451,7 +473,9 @@ class MacroDescriptor(TypedDict):
 AuthConfig = Mapping[str, str | Mapping[str, str]]
 """Credentials per auth scheme name: a string secret for api_key / bearer /
 basic (``user:password``), or a mapping keyed by cookie name or config key
-for composite profiles (``bearer`` for a composite bearer part)."""
+for composite profiles (``bearer`` for a composite bearer part). An oauth2
+scheme takes an access token, or ``{"client_id": ..., "client_secret": ...}``
+to fetch client-credentials tokens from its token URL."""
 
 
 class IdempotencyStore(Protocol):
@@ -475,7 +499,11 @@ class RequestContext:
 
 
 class Middleware(Protocol):
-    """All hooks optional; implement the ones you need."""
+    """All hooks optional; implement the ones you need. Hooks observe: their
+    exceptions are ignored, and secrets are redacted in what they see
+    (``RequestContext.headers`` and ``body``). Headers ``on_request`` adds or
+    changes in ``ctx.headers`` (other than redacted ones) are sent.
+    ``AsyncClientCore`` awaits a hook that returns an awaitable."""
 
     def on_request(self, ctx: RequestContext) -> None: ...
     def on_response(self, ctx: RequestContext, status: int, headers: Mapping[str, str]) -> None: ...
@@ -496,7 +524,10 @@ class ClientOptions:
     base_url: str | None = None
     auth: AuthConfig | None = None
     timeout_ms: int = 30_000
-    retries: RetryOptions | None = None
+    #: Overrides the API's per-tier retry defaults (``ApiDescriptor.retries``)
+    #: for every tier: a ``RetryPolicy`` mapping field by field, a
+    #: ``RetryOptions`` instance as a whole.
+    retries: RetryOptions | RetryPolicy | None = None
     idempotency_store: IdempotencyStore | AsyncIdempotencyStore | None = None
     middleware: Sequence[Middleware] = ()
     validate_responses: Literal["off", "warn", "strict"] = "warn"
@@ -507,7 +538,9 @@ class ClientOptions:
     macros: Sequence[MacroDescriptor] = ()
     #: Injected transport (``httpx.BaseTransport`` / ``httpx.AsyncBaseTransport``) for tests.
     transport: Any = None
+    #: Clock in epoch milliseconds (token expiry, Retry-After dates).
     now: Callable[[], float] | None = None
+    #: Random number in [0, 1) for retry jitter.
     random: Callable[[], float] | None = None
 
 
@@ -560,3 +593,81 @@ class Page[T]:
 
 
 Predicate = dict[str, Any]
+
+
+__all__ = [
+    "AgentMeta",
+    "ApiDescriptor",
+    "ApiKeyScheme",
+    "ApiRetries",
+    "ArgBodyShape",
+    "AsyncIdempotencyStore",
+    "AuthConfig",
+    "AuthSchemeDescriptor",
+    "BasicScheme",
+    "BearerPart",
+    "BearerScheme",
+    "BodyDescriptor",
+    "BodyEncoding",
+    "CallOptions",
+    "Category",
+    "ClientOptions",
+    "CompositeScheme",
+    "ConfirmationMeta",
+    "CookiePart",
+    "CursorPagination",
+    "Diagnostic",
+    "Err",
+    "GatedStatus",
+    "HeaderPart",
+    "HttpMethod",
+    "IdempotencyKind",
+    "IdempotencyMeta",
+    "IdempotencyStore",
+    "ImplementedStatus",
+    "Invalid",
+    "Issue",
+    "LinkHeaderPagination",
+    "MacroDescriptor",
+    "MacroInput",
+    "MacroStep",
+    "MacroStepPreview",
+    "MergedBodyField",
+    "MergedBodyShape",
+    "Middleware",
+    "NonJsonError",
+    "OAuth2Scheme",
+    "OffsetPagination",
+    "Ok",
+    "OperationDescriptor",
+    "Page",
+    "PagePagination",
+    "PaginationDescriptor",
+    "ParamDescriptor",
+    "ParamLocation",
+    "ParamRole",
+    "ParamStyle",
+    "Predicate",
+    "PreviewEndpoint",
+    "PreviewHeader",
+    "PreviewLocal",
+    "PreviewNone",
+    "PreviewResult",
+    "RemediationEntry",
+    "RenderedRequest",
+    "RequestContext",
+    "ResponseDescriptor",
+    "ResponseMeta",
+    "Result",
+    "RetryOptions",
+    "RetryPolicy",
+    "Retryable",
+    "RpcBinding",
+    "Safety",
+    "StatusMatch",
+    "Trace",
+    "Valid",
+    "Validator",
+    "Verification",
+    "VerifyDescriptor",
+]
