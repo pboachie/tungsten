@@ -482,13 +482,6 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
         "Fix the option under `targets.python` in tungsten.yml.",
     ),
     e(
-        "TG0740",
-        "An option of the `rust` target is not valid (for example a `crate` that is not a \
-         crate name, a `version` that is not semver, or a `cli` that is neither a boolean nor \
-         an object), so its default is used.",
-        "Fix the option under `targets.rust` in tungsten.yml.",
-    ),
-    e(
         "TG0732",
         "The API declares an OpenID Connect security scheme. The Python SDK sends the \
          configured credential as a bearer token and does not run discovery or obtain tokens \
@@ -503,6 +496,55 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
          `dict[str, Any]` and its fields are not validated client-side.",
         "Move the schema to `components/schemas` (or name it with an overlay) so it gets a \
          model.",
+    ),
+    e(
+        "TG0740",
+        "An option of the `rust` target is not valid (for example a `crate` that is not a \
+         crate name, a `version` that is not semver, or a `cli` that is neither a boolean nor \
+         an object), so its default is used.",
+        "Fix the option under `targets.rust` in tungsten.yml.",
+    ),
+    e(
+        "TG0741",
+        "A schema has no Rust type of its own: an enum whose values are not all strings or all \
+         integers, a union without variants, an `allOf` that could not be merged into one \
+         record, a schema no value satisfies, or an inline enum, union or record without a \
+         name. The Rust SDK types it `serde_json::Value` and checks its constraints (enum \
+         membership, `allOf` members) when the request or response is validated.",
+        "Move the schema to `components/schemas` (or name it with an overlay) so it gets a \
+         Rust type; make an enum's values all strings or all integers.",
+    ),
+    e(
+        "TG0742",
+        "A macro in the IR does not fit the canonical form the Rust SDK compiles: a step names \
+         an operation that is not callable, a reference names a later or unknown step, an \
+         `{expr}` is not `<ref> in [..]`, `<ref> == x` or `<ref> != x`, or the input extends \
+         an operation that is not callable. The SDK is generated without that macro.",
+        "Fix the macro in agent.yml so every step calls a callable operation and every \
+         reference names `$input` or an earlier step's `as`.",
+    ),
+    e(
+        "TG0743",
+        "The API declares an OpenID Connect security scheme. The Rust SDK sends the \
+         configured credential as a bearer token and does not run discovery or obtain tokens \
+         itself.",
+        "Obtain the token with your OpenID Connect client and pass it in `auth` under the \
+         scheme's name.",
+    ),
+    e(
+        "TG0744",
+        "An operation's success responses have different bodies (for example 200 returns a \
+         record and 201 an array). The Rust SDK cannot give the typed method one return \
+         type, so it returns `serde_json::Value` and does not validate the response.",
+        "Describe one success body, or call the operation through `Dispatch::invoke`, which \
+         returns JSON.",
+    ),
+    e(
+        "TG0745",
+        "A union has a discriminator, but not every variant is a named record the tag can be \
+         read from. The Rust SDK cannot select a variant by its tag, so it tries the variants \
+         in order like an untagged union.",
+        "Give every variant a named object schema that carries the discriminator property.",
     ),
     e(
         "TG0901",
