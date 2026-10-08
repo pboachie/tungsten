@@ -303,23 +303,36 @@ pub mod testing {
         })
     }
 
-    /// The Rust names of every named type: (type id, module, name,
-    /// whether it has a check function).
-    pub fn type_names(ir: &Ir) -> Vec<(String, String, String, bool)> {
+    /// The Rust name of a named type.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct TypeName {
+        /// The IR type id.
+        pub id: String,
+        /// The module under `models` (a namespace's file).
+        pub module: String,
+        /// The Rust type name.
+        pub name: String,
+        /// The type's check function in the same module, if it has one.
+        pub check: Option<String>,
+    }
+
+    /// The Rust names of every named type.
+    pub fn type_names(ir: &Ir) -> Vec<TypeName> {
         let plan = crate::sdk::plan::Plan::new(ir);
         plan.types
             .iter()
-            .map(|(id, t)| {
-                let module = plan
+            .map(|(id, t)| TypeName {
+                id: id.0.clone(),
+                module: plan
                     .model_ns(&t.ns)
                     .map(|m| m.file.clone())
-                    .unwrap_or_default();
-                (
-                    id.0.clone(),
-                    module,
-                    t.name.clone(),
-                    plan.graph.needs_check.contains(id),
-                )
+                    .unwrap_or_default(),
+                name: t.name.clone(),
+                check: plan
+                    .graph
+                    .needs_check
+                    .contains(id)
+                    .then(|| t.check_fn.clone()),
             })
             .collect()
     }
