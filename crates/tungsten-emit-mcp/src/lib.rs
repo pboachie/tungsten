@@ -36,6 +36,8 @@ use tungsten_core::{Diagnostic, Diagnostics};
 use tungsten_emit::{Emitter, FileSet, TargetConfig};
 use tungsten_ir::Ir;
 
+pub use budget::{INDEX_BUDGET, instructions, listing_tokens, tools_list};
+pub use manifest::Mode;
 pub use options::Options;
 
 /// Emits the `mcp` target.
@@ -98,11 +100,13 @@ pub mod __testing {
     use tungsten_core::Diagnostics;
     use tungsten_ir::Ir;
 
-    pub use crate::budget::{Budget, INDEX_BUDGET, discrete_tools, meta_tools};
+    pub use crate::budget::{
+        Budget, INDEX_BUDGET, REDACTED_REPEAT, instructions, listing_tokens, tools_list,
+    };
     pub use crate::index::{B, K1, STOP_WORDS, SearchIndex, build as build_index, tokenize};
     pub use crate::manifest::{
-        COUNTER_NAME, ClusterEntry, McpManifest, Mode, Reserved, ToolAnnotations, ToolEntry,
-        ToolKind, tokens,
+        COUNTER_NAME, ClusterEntry, InstructionsByMode, McpManifest, Mode, Reserved,
+        ToolAnnotations, ToolEntry, ToolKind, tokens,
     };
     pub use crate::names::{MAX_TOOL_NAME, sanitize, shorten};
 

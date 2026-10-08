@@ -800,12 +800,15 @@ pub struct McpBudgets {
     pub manifest_counter: String,
     /// Tools in manifest order: `tokens` is the manifest's `schemaTokens`.
     pub tools: Vec<ToolCost>,
-    /// Every tool as `tools/list` returns it in discrete mode (name,
-    /// description, input schema, annotations), as one JSON array.
+    /// What a client receives in discrete mode before its first call: the
+    /// `tools/list` tools `@tungsten/mcp` serves (every tool with its
+    /// input and advertised output schema and annotations, and `preview`)
+    /// as compact JSON, plus that mode's `initialize` instructions.
     pub discrete_tokens: usize,
-    /// The progressive index: the server instructions and every cluster
-    /// with its summary and tool names, as compact JSON.
-    pub index_tokens: usize,
+    /// The same in progressive mode: the meta tools (`search_tools`,
+    /// `describe_tool`, `invoke`, `preview`, `list_clusters`) plus the
+    /// instructions, which carry the cluster index (NFR-3 budget 2,000).
+    pub progressive_tokens: usize,
     /// Tools over `schema_budget`.
     pub over_budget: usize,
 }

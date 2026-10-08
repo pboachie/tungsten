@@ -122,7 +122,16 @@ pub struct McpManifest {
     pub tools: Vec<ToolEntry>,
     pub clusters: Vec<ClusterEntry>,
     pub index: SearchIndex,
+    /// The `initialize` instructions of the selected mode.
     pub instructions: String,
+    /// The instructions of each mode, for servers whose mode is overridden.
+    pub instructions_by_mode: InstructionsByMode,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct InstructionsByMode {
+    pub discrete: String,
+    pub progressive: String,
 }
 
 /// The manifest of `ir` and its diagnostics (TG0723 for macros the
@@ -183,7 +192,14 @@ pub fn build(ir: &Ir) -> (McpManifest, Diagnostics) {
         DisclosureMode::Auto if tools.len() <= d.threshold as usize => Mode::Discrete,
         DisclosureMode::Auto => Mode::Progressive,
     };
-    let instructions = instructions(ir, mode, &tools, &clusters);
+    let instructions_by_mode = InstructionsByMode {
+        discrete: instructions(ir, Mode::Discrete, &tools, &clusters),
+        progressive: instructions(ir, Mode::Progressive, &tools, &clusters),
+    };
+    let instructions = match mode {
+        Mode::Discrete => instructions_by_mode.discrete.clone(),
+        Mode::Progressive => instructions_by_mode.progressive.clone(),
+    };
     let manifest = McpManifest {
         manifest_version: 1,
         api: ir.api.name.wire.clone(),
@@ -196,6 +212,7 @@ pub fn build(ir: &Ir) -> (McpManifest, Diagnostics) {
         tools,
         clusters,
         instructions,
+        instructions_by_mode,
     };
     (manifest, diags)
 }
@@ -361,7 +378,7 @@ fn key_field(p: &IdempotencyPolicy) -> Value {
 fn confirmation_field() -> Value {
     json!({
         "type": "string",
-        "description": "Token from preview(name, args) for exactly these arguments.",
+        "description": "Token from preview for exactly these arguments.",
     })
 }
 
@@ -472,6 +489,19 @@ fn arg_names(schema: &Value, reserved: &Reserved) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// The description note of a tool whose result holds values the API
+/// returns once: the fields by name (at most three), so a client without
+/// the output schema (a discrete macro, a progressive search result) knows
+/// which value to store.
+fn shown_once_note(fields: &[String]) -> String {
+    match fields {
+        [] => "returns a secret once".into(),
+        [one] => format!("returns {one} once"),
+        many if many.len() <= 3 => format!("returns {} once", many.join(", ")),
+        _ => "returns secrets once".into(),
+    }
+}
+
 fn schema_tokens(description: &str, input: &Value) -> usize {
     tokens(description) + tokens(&serde_json::to_string(input).unwrap_or_default())
 }
@@ -503,7 +533,7 @@ fn operation_tool(
         notes.push(format!("gated by {}", gate.env_var));
     }
     if a.shown_once {
-        notes.push("returns a secret once".into());
+        notes.push(shown_once_note(&a.sensitive_response_fields));
     }
     if op.deprecated {
         notes.push("deprecated".into());
@@ -584,7 +614,7 @@ fn macro_tool(
         ));
     }
     if mac.shown_once {
-        notes.push("returns a secret once".into());
+        notes.push(shown_once_note(&mac.sensitive_response_fields));
     }
     let text = {
         let s = collapse_whitespace(&mac.summary);
@@ -679,7 +709,7 @@ fn instructions(ir: &Ir, mode: Mode, tools: &[ToolEntry], clusters: &[ClusterEnt
     let mut out = vec![];
     match mode {
         Mode::Progressive => out.push(format!(
-            "{title} API, {} tools behind search. Find tools with search_tools(query, cluster?, limit?), read one with describe_tool(name), call it with invoke(name, args).",
+            "{title} API, {} tools behind search. Find tools with search_tools(query, cluster?, limit?), read one with describe_tool(name), call it with invoke(name, arguments).",
             tools.len()
         )),
         Mode::Discrete => out.push(format!(
@@ -691,7 +721,11 @@ fn instructions(ir: &Ir, mode: Mode, tools: &[ToolEntry], clusters: &[ClusterEnt
         .iter()
         .any(|t| t.reserved.confirmation_token.is_some())
     {
-        out.push("Destructive and irreversible tools need preview(name, args) first; pass its confirmation_token with the same arguments.".into());
+        let preview = match mode {
+            Mode::Progressive => "preview(name, arguments)",
+            Mode::Discrete => "preview(tool, arguments)",
+        };
+        out.push(format!("Destructive and irreversible tools need {preview} first; pass its confirmation_token with the same arguments."));
     }
     let keyed = tools.iter().any(|t| t.reserved.idempotency_key.is_some());
     if keyed {

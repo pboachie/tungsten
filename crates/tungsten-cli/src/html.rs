@@ -508,13 +508,13 @@ fn budgets(h: &mut String, r: &ReportResult) {
             h.push_str("<div class=\"cards\">");
             card(h, &m.mode, "mode");
             card(h, m.tools.len(), "tools");
-            card(h, m.index_tokens, "progressive index");
-            card(h, m.discrete_tokens, "discrete tool list");
+            card(h, m.progressive_tokens, "progressive tools/list");
+            card(h, m.discrete_tokens, "discrete tools/list");
             card(h, m.over_budget, "over budget");
             h.push_str("</div>\n");
             let _ = writeln!(
                 h,
-                "<p class=\"note\">Per-tool costs are the manifest's <code>schemaTokens</code> ({}); the index and list sizes are counted here.</p>",
+                "<p class=\"note\">Per-tool costs are the manifest's <code>schemaTokens</code> ({}); the list sizes are what the server sends before the first call (<code>tools/list</code> and the <code>initialize</code> instructions, the progressive ones carrying the cluster index), counted as the generated README counts them.</p>",
                 escape(&m.manifest_counter)
             );
             let scale = m

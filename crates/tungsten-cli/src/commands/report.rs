@@ -703,29 +703,9 @@ fn mcp_tools(manifest: &Value) -> Vec<ToolCost> {
 
 pub(crate) fn mcp_budgets(files: &FileSet, budget: u32) -> Option<McpBudgets> {
     let manifest = mcp_manifest(files)?;
-    let tools = manifest.get("tools").and_then(Value::as_array)?;
-    let discrete: Vec<Value> = tools
-        .iter()
-        .map(|t| {
-            json!({
-                "name": t.get("name"),
-                "description": t.get("description"),
-                "inputSchema": t.get("inputSchema"),
-                "annotations": t.get("annotations"),
-            })
-        })
-        .collect();
-    let clusters: Vec<Value> = manifest
-        .get("clusters")
-        .and_then(Value::as_array)
-        .map(|cs| {
-            cs.iter()
-                .map(|c| json!({ "name": c.get("name"), "summary": c.get("summary"), "tools": c.get("tools") }))
-                .collect()
-        })
-        .unwrap_or_default();
-    let index = json!({ "instructions": manifest.get("instructions"), "clusters": clusters });
     let costs = mcp_tools(&manifest);
+    // What `@tungsten/mcp` serves for this manifest in each mode, counted
+    // the way the emitter's budgets and the generated README count it.
     Some(McpBudgets {
         mode: str_of(&manifest, "mode"),
         threshold: manifest
@@ -734,8 +714,14 @@ pub(crate) fn mcp_budgets(files: &FileSet, budget: u32) -> Option<McpBudgets> {
             .and_then(|n| u32::try_from(n).ok())
             .unwrap_or(0),
         manifest_counter: str_of(&manifest, "tokenCounter"),
-        discrete_tokens: count(&Value::Array(discrete).to_string(), COUNTER),
-        index_tokens: count(&index.to_string(), COUNTER),
+        discrete_tokens: tungsten_emit_mcp::listing_tokens(
+            &manifest,
+            tungsten_emit_mcp::Mode::Discrete,
+        ),
+        progressive_tokens: tungsten_emit_mcp::listing_tokens(
+            &manifest,
+            tungsten_emit_mcp::Mode::Progressive,
+        ),
         over_budget: costs.iter().filter(|t| t.tokens > budget as usize).count(),
         tools: costs,
     })
@@ -828,10 +814,10 @@ fn human(path: &str, documents: usize, r: &ReportResult) -> String {
             &mut out,
             "mcp",
             format!(
-                "{} · {} · index {} tok · discrete list {} tok · {} over {}",
+                "{} · {} · progressive list {} tok · discrete list {} tok · {} over {}",
                 m.mode,
                 plural(m.tools.len(), "tool", "tools"),
-                m.index_tokens,
+                m.progressive_tokens,
                 m.discrete_tokens,
                 m.over_budget,
                 b.schema_budget

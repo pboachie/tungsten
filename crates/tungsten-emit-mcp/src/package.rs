@@ -3,10 +3,11 @@
 //! `src/server.ts`, the hand-editable `src/custom/index.ts`, `README.md`
 //! and `.env.example`.
 //!
-//! `src/server.ts` reads `manifest.json`, builds one `ClientCore` per MCP
-//! session from the generated SDK's descriptors with `ClientOptions` taken
-//! from the environment (`crate::env`), and serves the manifest through
-//! `createTungstenMcpServer(...).connectStdio()`.
+//! `src/server.ts` reads `manifest.json` (`loadManifest`), builds one
+//! `ClientCore` per MCP session from the generated SDK's descriptors with
+//! `ClientOptions` taken from the environment (`crate::env`), and serves the
+//! manifest through `createTungstenMcpServer` over stdio, or Streamable HTTP
+//! with `--http <port> [--host <host>]` (`parseServeArgs`, `serve`).
 
 use std::collections::BTreeSet;
 
@@ -124,9 +125,8 @@ pub(crate) fn server_ts(ir: &Ir, opts: &Options, manifest: &McpManifest) -> Stri
          // (README.md, .env.example).\n\n",
         title(ir)
     ));
-    out.push_str("import { readFileSync } from \"node:fs\";\n");
     out.push_str(
-        "import { createTungstenMcpServer, type McpManifest, type ServerOptions } from \"@tungsten/mcp\";\n",
+        "import { createTungstenMcpServer, loadManifest, parseServeArgs, serve, type ServerOptions } from \"@tungsten/mcp\";\n",
     );
     if has_macros {
         out.push_str(
@@ -183,8 +183,12 @@ pub(crate) fn server_ts(ir: &Ir, opts: &Options, manifest: &McpManifest) -> Stri
     out.push_str(SERVER_HELPERS);
     out.push('\n');
     out.push_str("async function main(): Promise<void> {\n");
+    out.push_str(
+        "  // stdio by default; `--http <port> [--host <host>]` serves Streamable HTTP.\n",
+    );
+    out.push_str("  const args = parseServeArgs(process.argv.slice(2));\n");
     out.push_str("  const options: ServerOptions = {\n");
-    out.push_str("    manifest: loadManifest(),\n");
+    out.push_str("    manifest: loadManifest(new URL(\"../manifest.json\", import.meta.url)),\n");
     out.push_str("    // One core per MCP session: confirmation tokens and shown-once state are per session.\n");
     out.push_str("    createCore: () => new ClientCore(descriptors.api, clientOptions()),\n");
     if has_macros {
@@ -198,7 +202,10 @@ pub(crate) fn server_ts(ir: &Ir, opts: &Options, manifest: &McpManifest) -> Stri
     out.push_str("  };\n");
     out.push_str("  const mode = modeOverride();\n");
     out.push_str("  if (mode !== undefined) options.mode = mode;\n");
-    out.push_str("  await createTungstenMcpServer(customize(options)).connectStdio();\n");
+    out.push_str(&format!(
+        "  await serve(createTungstenMcpServer(customize(options)), args, {});\n",
+        ts_string(&opts.bin)
+    ));
     out.push_str("}\n\n");
     out.push_str("main().catch((error: unknown) => {\n");
     out.push_str(&format!(
@@ -245,22 +252,6 @@ function modeOverride(): "discrete" | "progressive" | undefined {
   const mode = env(MODE_ENV);
   if (mode === undefined || mode === "discrete" || mode === "progressive") return mode;
   throw new Error(`${MODE_ENV} must be "discrete" or "progressive", not ${JSON.stringify(mode)}`);
-}
-
-/** manifest.json next to this package's dist/ directory. */
-function loadManifest(): McpManifest {
-  const url = new URL("../manifest.json", import.meta.url);
-  let text: string;
-  try {
-    text = readFileSync(url, "utf8");
-  } catch {
-    throw new Error(`cannot read ${url.pathname}; reinstall the package`);
-  }
-  const manifest: unknown = JSON.parse(text);
-  if (typeof manifest !== "object" || manifest === null || (manifest as { manifestVersion?: unknown }).manifestVersion !== 1) {
-    throw new Error(`${url.pathname} is not a version 1 tungsten MCP manifest`);
-  }
-  return manifest as McpManifest;
 }
 "#;
 
@@ -360,8 +351,12 @@ pub(crate) fn readme(ir: &Ir, opts: &Options, manifest: &McpManifest, budget: &B
 
     out.push_str("## Run\n\n");
     out.push_str(&format!(
-        "```sh\nnpm install\nnpm run build\nnode dist/server.js    # or `{}` once installed\n```\n\n",
-        opts.bin
+        "```sh\nnpm install\nnpm run build\nnode dist/server.js    # or `{bin}` once installed\n```\n\n\
+         The server speaks MCP over stdio by default. `node dist/server.js --http 3000` serves \
+         Streamable HTTP at `http://127.0.0.1:3000/mcp` instead (one session, with its own \
+         confirmation tokens, per `Mcp-Session-Id`; `--host <host>` binds another interface, \
+         `--help` lists the flags).\n\n",
+        bin = opts.bin
     ));
     out.push_str("Client configuration (the `mcpServers` entry of Claude Desktop, Claude Code and other MCP clients):\n\n");
     let mut env_map = Map::new();
@@ -399,7 +394,7 @@ pub(crate) fn readme(ir: &Ir, opts: &Options, manifest: &McpManifest, budget: &B
         manifest.threshold
     ));
     out.push_str("- `discrete`: one MCP tool per operation and macro, with input and output schemas and annotations from the safety tier.\n");
-    out.push_str("- `progressive`: a few tools instead of the whole list. `search_tools(query, cluster?, limit?)` searches a BM25 index built at generation time, `describe_tool(name)` returns one tool's schemas and rules, `invoke(name, args)` calls it, `preview(name, args)` shows a call without sending it, `list_clusters()` lists the groups of tools.\n\n");
+    out.push_str("- `progressive`: a few tools instead of the whole list. `search_tools(query, cluster?, limit?)` searches a BM25 index built at generation time, `describe_tool(name)` returns one tool's schemas and rules, `invoke(name, arguments)` calls it, `preview(name, arguments)` shows a call without sending it, `list_clusters()` lists the groups of tools.\n\n");
     out.push_str(&format!(
         "Set `{}` to `discrete` or `progressive` to override the mode.\n\n",
         env::mode(ir)
@@ -438,15 +433,15 @@ pub(crate) fn readme(ir: &Ir, opts: &Options, manifest: &McpManifest, budget: &B
 
     out.push_str("## Token budget\n\n");
     out.push_str(&format!(
-        "Measured at generation time with the `{COUNTER_NAME}` counter of tungsten-tokens.\n\n"
+        "What a client receives before its first call (the `tools/list` answer of each mode and its `initialize` instructions) and each tool's description and input schema, measured at generation time with the `{COUNTER_NAME}` counter of tungsten-tokens.\n\n"
     ));
     out.push_str("| Measure | Tokens | Budget |\n|---|---|---|\n");
     out.push_str(&format!(
-        "| Progressive tool list and index summary | {} | {INDEX_BUDGET} |\n",
+        "| Progressive `tools/list` and instructions (with the cluster index) | {} | {INDEX_BUDGET} |\n",
         budget.progressive
     ));
     out.push_str(&format!(
-        "| Discrete tool list ({} tools) | {} | |\n",
+        "| Discrete `tools/list` and instructions ({} tools) | {} | |\n",
         manifest.tools.len(),
         budget.discrete
     ));
