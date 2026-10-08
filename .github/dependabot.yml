@@ -1,0 +1,52 @@
+# Dependency updates for pboachie/tungsten: weekly, grouped, few open PRs.
+# Minor and patch updates arrive as one PR per ecosystem and directory; major
+# updates arrive one by one, because they can change generated output or the
+# runtime contract. Security updates are separate and not limited.
+# A cooldown lets a new release age a week before it is proposed.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      cargo-minor-patch:
+        patterns: ["*"]
+        update-types: [minor, patch]
+
+  - package-ecosystem: npm
+    directories:
+      - /runtimes/ts
+      - /runtimes/mcp
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      npm-minor-patch:
+        patterns: ["*"]
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 2
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: "ci(deps)"
+    groups:
+      actions:
+        patterns: ["*"]
