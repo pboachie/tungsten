@@ -8,11 +8,27 @@
 //! macros, with the same semantics as `@tungsten/runtime` and the Python
 //! `tungsten-runtime`.
 
+mod auth;
 pub mod b64;
+mod classify;
 mod client;
+mod confirm;
 mod dispatch;
+mod envelope;
+mod expr;
+mod helpers;
 mod idempotency;
+mod macros;
+mod pages;
+mod prepare;
+mod preview;
+mod send;
+mod serialize;
+mod transport;
+mod util;
+mod validate;
 mod value;
+mod verify;
 
 pub mod types;
 
@@ -24,3 +40,24 @@ pub use value::{Binary, Patch};
 
 /// Version of this runtime, sent as `X-Tungsten-Runtime: tungsten-rs/<version>`.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Pure building blocks of the runtime (canonical JSON, digests, tokens,
+/// parameter and body encoding, predicates, response decoding), exposed for
+/// cross-runtime parity checks. Not part of the stable API.
+#[doc(hidden)]
+pub mod internals {
+    pub use crate::classify::{DecodedBody, decode_body};
+    pub use crate::confirm::{
+        CONFIRMATION_TTL_MS, TokenCheck, args_digest, check_token, issue_token, token_payload,
+    };
+    pub use crate::expr::{
+        describe_predicate, evaluate_dry, evaluate_expr, evaluate_predicate, resolve_ref,
+    };
+    pub use crate::idempotency::{check_key_format, key_format_description};
+    pub use crate::serialize::{
+        EncodedBody, Payload, encode_body, serialize_cookie_param, serialize_header_param,
+        serialize_path_param, serialize_query_param,
+    };
+    pub use crate::transport::{next_link, parse_http_date, parse_retry_after};
+    pub use crate::util::{canonical_json, envelope_value, js_number, json_text, sha256_hex};
+}
