@@ -482,13 +482,6 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
         "Fix the option under `targets.python` in tungsten.yml.",
     ),
     e(
-        "TG0740",
-        "An option of the `rust` target is not valid (for example a `crate` that is not a \
-         crate name, a `version` that is not semver, or a `cli` that is neither a boolean nor \
-         an object), so its default is used.",
-        "Fix the option under `targets.rust` in tungsten.yml.",
-    ),
-    e(
         "TG0732",
         "The API declares an OpenID Connect security scheme. The Python SDK sends the \
          configured credential as a bearer token and does not run discovery or obtain tokens \
@@ -503,6 +496,13 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
          `dict[str, Any]` and its fields are not validated client-side.",
         "Move the schema to `components/schemas` (or name it with an overlay) so it gets a \
          model.",
+    ),
+    e(
+        "TG0740",
+        "An option of the `rust` target is not valid (for example a `crate` that is not a \
+         crate name, a `version` that is not semver, or a `cli` that is neither a boolean nor \
+         an object), so its default is used.",
+        "Fix the option under `targets.rust` in tungsten.yml.",
     ),
     e(
         "TG0750",
