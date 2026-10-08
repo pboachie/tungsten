@@ -371,6 +371,10 @@ export interface CallOptions {
    * a retry with the same idempotency key (or the identical body of a
    * `content_identity` operation). */
   confirm?: string | true;
+  /** `false`: `confirm: true` does not confirm a destructive operation
+   * either, and remediation never offers it (callers that only forward
+   * preview tokens, such as an MCP server). Default `true`. */
+  allowConfirmTrue?: boolean;
   signal?: AbortSignal;
   timeoutMs?: number;
   /** Run the operation's verification hook after success. */

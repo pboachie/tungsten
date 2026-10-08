@@ -9,7 +9,7 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import { CallToolRequestSchema, ListToolsRequestSchema, type Tool as McpTool } from "@modelcontextprotocol/sdk/types.js";
+import { ErrorCode, ListToolsRequestSchema, McpError, type Tool as McpTool } from "@modelcontextprotocol/sdk/types.js";
 
 import { buildCatalog, listTools, type Mode } from "./catalog.js";
 import { serveHttp } from "./http.js";
@@ -81,7 +81,15 @@ export function createTungstenMcpServer(options: ServerOptions): TungstenMcpServ
       catalog.instructions === "" ? { capabilities: { tools: { listChanged: false } } } : { capabilities: { tools: { listChanged: false } }, instructions: catalog.instructions },
     );
     server.setRequestHandler(ListToolsRequestSchema, () => ({ tools: structuredClone(listed) }));
-    server.setRequestHandler(CallToolRequestSchema, (request) => session.call(request.params.name, request.params.arguments));
+    // tools/call is answered by the fallback handler, not setRequestHandler:
+    // the SDK validates a registered tools/call handler's params itself and
+    // answers a protocol error for arguments sent as JSON text or a
+    // non-string name, where this server answers an envelope (planning/05).
+    server.fallbackRequestHandler = async (request) => {
+      if (request.method !== "tools/call") throw new McpError(ErrorCode.MethodNotFound, "Method not found");
+      const params = isRecord(request.params) ? request.params : {};
+      return session.call(params.name, params.arguments);
+    };
     server.onclose = () => {
       open.delete(server);
     };

@@ -34,6 +34,8 @@ import { bm25, suggest } from "./search.js";
 import type { ClusterEntry, ServerOptions } from "./types.js";
 
 export const DEFAULT_MAX_RESULT_CHARS = 50000;
+/** The `maxLength` of run_script's `code`. */
+const MAX_SCRIPT_CHARS = 100000;
 const DEFAULT_SEARCH_LIMIT = 10;
 const SEARCH_HINT =
   "Call describe_tool(name) for the schema, preview(name, arguments) before destructive or irreversible calls, invoke(name, arguments) to execute.";
@@ -58,6 +60,19 @@ interface Prepared {
   args: unknown;
   idempotencyKey: unknown;
   confirm: string | undefined;
+  /** An argument this layer could not decode (nothing is sent). */
+  invalid?: Diagnostic;
+}
+
+const BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+const BASE64URL = /^[A-Za-z0-9_-]*$/;
+
+/** The bytes of base64 (standard, padded) or base64url (unpadded) text, or
+ * null when `text` is neither. */
+function decodeBase64(text: string): Uint8Array | null {
+  if (BASE64.test(text)) return new Uint8Array(Buffer.from(text, "base64"));
+  if (BASE64URL.test(text) && text.length % 4 !== 1) return new Uint8Array(Buffer.from(text, "base64url"));
+  return null;
 }
 
 type ArgSpec = Record<string, { type: "string" | "integer" | "object"; required?: boolean }>;
@@ -89,8 +104,9 @@ export class Session {
   readonly #maxChars: number;
   readonly #core: ClientCore | null;
   readonly #coreError: string | null;
-  /** Digests of identical calls whose sensitive or shown-once results this
-   * session has already returned. Digests only: no argument or secret is kept. */
+  /** Digests of identical replayable calls whose sensitive or shown-once
+   * results this session has already returned. Digests only: no argument
+   * or secret is kept. */
   readonly #shown = new Set<string>();
 
   constructor(catalog: Catalog, options: ServerOptions, sandbox: SandboxConfig | null) {
@@ -112,10 +128,41 @@ export class Session {
     this.#coreError = coreError;
   }
 
-  /** Handle one `tools/call`; never throws. */
-  async call(name: string, args: Record<string, unknown> | undefined): Promise<CallToolResult> {
+  /** Handle one `tools/call` with its raw `name` and `arguments`; never
+   * throws. Arguments may be an object or its JSON text. */
+  async call(name: unknown, args: unknown): Promise<CallToolResult> {
+    if (typeof name !== "string" || name === "") {
+      return this.#failure(
+        null,
+        envelope("tools/call", "VALIDATION_FAILED", {
+          failed_parameter: "name",
+          received_value: name,
+          expected: "a tool name from tools/list",
+          remediation: "Pass the tool's name as a string, from tools/list.",
+        }),
+      );
+    }
+    let parsed: unknown = args === undefined || args === null ? {} : args;
+    if (typeof parsed === "string") {
+      try {
+        parsed = JSON.parse(parsed);
+      } catch {
+        // Reported below.
+      }
+    }
+    if (!isRecord(parsed)) {
+      return this.#failure(
+        null,
+        envelope(name, "VALIDATION_FAILED", {
+          failed_parameter: "arguments",
+          received_value: args,
+          expected: "a JSON object (or its JSON text)",
+          remediation: `Pass arguments as a JSON object of ${clip(name)}'s input schema and call it again.`,
+        }),
+      );
+    }
     try {
-      return await this.#dispatch(name, args ?? {});
+      return await this.#dispatch(name, parsed);
     } catch (error) {
       return this.#failure(
         null,
@@ -130,7 +177,18 @@ export class Session {
     const catalog = this.#catalog;
     if (name === "run_script" && this.#sandbox) {
       const bad = this.#checkArgs(name, args, { code: { type: "string", required: true } });
-      return bad ?? (await this.#runScript(args.code as string));
+      if (bad) return bad;
+      if ((args.code as string).length > MAX_SCRIPT_CHARS) {
+        return this.#failure(
+          null,
+          envelope(name, "VALIDATION_FAILED", {
+            failed_parameter: "code",
+            expected: `at most ${MAX_SCRIPT_CHARS} characters`,
+            remediation: `The script is longer than ${MAX_SCRIPT_CHARS} characters; split the work into several scripts. Nothing ran.`,
+          }),
+        );
+      }
+      return await this.#runScript(args.code as string);
     }
     if (catalog.mode === "discrete") {
       if (name === "preview" && catalog.tools.some((t) => t.safety !== "read_only")) {
@@ -370,17 +428,37 @@ export class Session {
     const sdkArgs: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(args)) if (key !== keyField && key !== tokenField) sdkArgs[key] = value;
     const token = tokenField ? args[tokenField] : undefined;
-    return {
+    const prepared: Prepared = {
       tool,
       args: sdkArgs,
       idempotencyKey: keyField ? args[keyField] : undefined,
       // Only a string token is forwarded: `true` never confirms through MCP.
       confirm: typeof token === "string" && token !== "" ? token : undefined,
     };
+    // A binary body travels as base64 text in JSON (its input schema says
+    // `contentEncoding: base64`); the SDK takes the bytes. Decoded here, so
+    // preview and call digest the same value.
+    const op = tool.kind === "operation" && this.#core && typeof this.#core.operation === "function" ? this.#core.operation(tool.target) : undefined;
+    const body = op?.body;
+    if (body && body.encoding === "bytes" && body.shape.kind === "arg" && typeof sdkArgs[body.shape.arg] === "string") {
+      const name = body.shape.arg;
+      const bytes = decodeBase64(sdkArgs[name] as string);
+      if (bytes) sdkArgs[name] = bytes;
+      else {
+        prepared.invalid = envelope(tool.target, "VALIDATION_FAILED", {
+          failed_parameter: name,
+          received_value: clip(sdkArgs[name] as string),
+          expected: "the raw bytes as base64 text",
+          remediation: `Pass ${name} as the base64 encoding of the raw bytes (standard with padding, or base64url); this server decodes it and sends the bytes. Nothing was sent.`,
+        });
+      }
+    }
+    return prepared;
   }
 
   #callOptions(prepared: Prepared, withConfirm: boolean): CallOptions {
-    const opts: CallOptions = {};
+    // Only preview tokens are forwarded, so the runtime must not offer `true`.
+    const opts: CallOptions = { allowConfirmTrue: false };
     // A non-string key is passed through so the runtime reports it.
     if (prepared.idempotencyKey !== undefined && prepared.idempotencyKey !== null) opts.idempotencyKey = prepared.idempotencyKey as string;
     if (withConfirm && prepared.confirm !== undefined) opts.confirm = prepared.confirm;
@@ -409,6 +487,7 @@ export class Session {
   }
 
   async #execute(prepared: Prepared): Promise<Outcome> {
+    if (prepared.invalid) return { ok: false, error: prepared.invalid };
     const target = this.#resolve(prepared.tool);
     if ("error" in target) return target.error;
     const core = this.#core as ClientCore;
@@ -437,21 +516,36 @@ export class Session {
     return createHash("sha256").update(`${prepared.tool.name}\n${args}\n${key}`).digest("hex");
   }
 
+  /** Whether an identical repeat of this call is a replay of the first
+   * (the same answer, no new effect): a read; an operation the server
+   * deduplicates by content; or a keyed one called with the caller's key
+   * (without one, `auto` keys are fresh per call). */
+  #replays(prepared: Prepared): boolean {
+    const tool = prepared.tool;
+    if (tool.safety === "read_only") return true;
+    if (tool.idempotency === "content_identity" || tool.idempotency === "content_hash") return true;
+    if (tool.idempotency === "caller_owned" || tool.idempotency === "auto") return typeof prepared.idempotencyKey === "string" && prepared.idempotencyKey !== "";
+    return false;
+  }
+
   #render(tool: CatalogTool, outcome: Outcome, prepared: Prepared): CallToolResult {
     if (!outcome.ok) return this.#failure(tool, outcome.error, outcome.partial);
     let body = outcome.value;
     const lines: string[] = [];
     const sensitive = tool.sensitiveResponseFields;
     if (sensitive.length > 0 || tool.shownOnce) {
-      const id = this.#identity(prepared);
-      if (this.#shown.has(id)) {
+      // Only a replay returns what an earlier identical call returned; a
+      // repeat that is a new effect (a second rotate or create) returns a
+      // new secret, which must be shown.
+      const id = this.#replays(prepared) ? this.#identity(prepared) : null;
+      if (id !== null && this.#shown.has(id)) {
         const redacted = redactPaths(body, sensitive, REDACTED_REPEAT);
         body = redacted.value;
         if (redacted.found.length > 0) {
           lines.push(`${redacted.found.join(", ")} ${redacted.found.length === 1 ? "was" : "were"} returned by the first identical call in this session and ${redacted.found.length === 1 ? "is" : "are"} redacted here.`);
         }
       } else if (sensitive.length === 0 || holdsAny(body, sensitive)) {
-        this.#shown.add(id);
+        if (id !== null) this.#shown.add(id);
         if (tool.shownOnce) lines.push(SHOWN_ONCE_LINE);
       }
     }
@@ -468,6 +562,7 @@ export class Session {
 
   async #preview(tool: CatalogTool, raw: unknown): Promise<CallToolResult> {
     const prepared = this.#prepare(tool, raw);
+    if (prepared.invalid) return this.#failure(tool, prepared.invalid);
     const target = this.#resolve(tool);
     if ("error" in target) return this.#render(tool, target.error, prepared);
     const core = this.#core as ClientCore;
@@ -642,8 +737,27 @@ export class Session {
         }),
       }),
     });
-    if (outcome.status === "done") return this.#success({ value: outcome.value, logs: outcome.logs, calls: outcome.calls }, []);
-    const calls = outcome.calls.length > 0 ? ` Completed calls: ${outcome.calls.map((c) => `${c.method} ${c.name} (${c.ok ? "ok" : "error"})`).join(", ")}; check their effects before running it again.` : " No tool call completed.";
+    // Results of calls that completed after the script ended: the script
+    // never saw them, so they (and any one-time secret) are returned here.
+    const lateLines = outcome.unreceived.map((late) => `${late.method} ${late.name} (${late.result.ok ? "ok" : "error"}): ${String(late.result.text ?? "")}`);
+    const unreceived = outcome.unreceived.map((late) => {
+      const { text: _text, ...result } = late.result;
+      return { method: late.method, name: late.name, ...result };
+    });
+    const open = outcome.calls.filter((c) => c.ok === null).map((c) => `${c.method} ${c.name}`);
+    if (outcome.status === "done") {
+      const structured: Record<string, unknown> = { value: outcome.value, logs: outcome.logs, calls: outcome.calls };
+      if (unreceived.length > 0) structured.unreceived = unreceived;
+      const lines: string[] = [];
+      if (lateLines.length > 0) lines.push("Results of calls the script did not receive (it returned before they completed):", ...lateLines);
+      if (open.length > 0) lines.push(`Still in flight when the script returned (outcome unknown): ${open.join(", ")}; check their effects before running it again.`);
+      return this.#success(structured, lines);
+    }
+    const completed = outcome.calls.filter((c) => c.ok !== null).map((c) => `${c.method} ${c.name} (${c.ok ? "ok" : "error"})`);
+    const parts: string[] = [];
+    if (completed.length > 0) parts.push(`Completed calls: ${completed.join(", ")}`);
+    if (open.length > 0) parts.push(`${completed.length > 0 ? "still" : "Still"} in flight (outcome unknown): ${open.join(", ")}`);
+    const calls = parts.length > 0 ? ` ${parts.join("; ")}; check their effects before running it again.` : " No tool call completed.";
     const error = envelope("run_script", "VALIDATION_FAILED", {
       failed_parameter: "code",
       expected: "a script that returns a JSON value within the limits",
@@ -652,6 +766,7 @@ export class Session {
     });
     const result = this.#failure(null, error);
     if (outcome.logs.length > 0) result.content.push({ type: "text", text: `logs:\n${outcome.logs.join("\n")}` });
+    if (lateLines.length > 0) result.content.push({ type: "text", text: ["Results of calls the script did not receive (they completed after it ended):", ...lateLines].join("\n") });
     return result;
   }
 }

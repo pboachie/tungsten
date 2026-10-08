@@ -709,23 +709,24 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
 
   async #checkConfirmation(op: OperationDescriptor, args: Record<string, unknown>, opts: CallOptions): Promise<Failure | null> {
     if ((opts as StepOptions)[MACRO_CONFIRMED] === true) return null;
-    return this.#confirmed(op.id, op.id, op.agent.safety, args, opts.confirm, "preview(...)");
+    return this.#confirmed(op.id, op.id, op.agent.safety, args, opts.confirm, "preview(...)", opts.allowConfirmTrue !== false);
   }
 
   /** The confirmation rule of planning/04 for one tier: `destructive`
-   * accepts `true` or a token, `irreversible` only a token issued for
-   * `subject` (an operation id, or `macro:<name>`) and these exact args. */
-  async #confirmed(id: string, subject: string, safety: string, args: unknown, confirm: unknown, previewCall: string): Promise<Failure | null> {
+   * accepts `true` (unless `allowTrue` is false) or a token, `irreversible`
+   * only a token issued for `subject` (an operation id, or `macro:<name>`)
+   * and these exact args. */
+  async #confirmed(id: string, subject: string, safety: string, args: unknown, confirm: unknown, previewCall: string, allowTrue: boolean): Promise<Failure | null> {
     if (safety !== "destructive" && safety !== "irreversible") return null;
     const how = `call ${previewCall} with the same arguments and pass its confirmation_token as confirm`;
     const required = (remediation: string): Failure =>
       fail(diagnostic(id, "CONFIRMATION_REQUIRED", { failed_parameter: "confirm", expected: "a confirmation_token from preview()", remediation }));
     if (confirm === true) {
-      if (safety === "destructive") return null;
-      return required(`${id} is irreversible, so confirm: true is not accepted: ${how}.`);
+      if (safety === "destructive" && allowTrue) return null;
+      return required(`${id} is ${safety}, so confirm: true is not accepted: ${how}.`);
     }
     if (typeof confirm !== "string" || confirm === "") {
-      return required(`${id} is ${safety}: ${how}${safety === "destructive" ? " (or pass confirm: true)" : ""}.`);
+      return required(`${id} is ${safety}: ${how}${safety === "destructive" && allowTrue ? " (or pass confirm: true)" : ""}.`);
     }
     const check = await checkToken(this.#confirmationKey, confirm, subject, args, this.#now());
     if (check === "valid") return null;
@@ -1841,7 +1842,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     const effective = this.#macroInput(macro, input, name);
     if (!effective.ok) return effective;
     const { steps, safety } = plan.value;
-    const unconfirmed = await this.#confirmed(name, `macro:${name}`, safety, effective.value, opts.confirm, `the macro's preview(...)`);
+    const unconfirmed = await this.#confirmed(name, `macro:${name}`, safety, effective.value, opts.confirm, `the macro's preview(...)`, opts.allowConfirmTrue !== false);
     if (unconfirmed) return unconfirmed;
     // The token is spent by the first step that sends (as an operation's
     // token is): a step failing pre-flight, before anything was sent,
