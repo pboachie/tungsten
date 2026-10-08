@@ -109,8 +109,12 @@ export interface SandboxOptions {
   enabled: boolean;
   /** Path to the deno executable. Default "deno". */
   denoPath?: string;
+  /** Wall-clock limit of one script. Default 30000. */
   timeoutMs?: number;
+  /** V8 heap limit of one script. Default 128. */
   memoryMb?: number;
+  /** Tool calls one script may make. Default 50. */
+  maxCalls?: number;
 }
 
 export interface ServerOptions {
@@ -126,4 +130,40 @@ export interface ServerOptions {
   /** Override the manifest's mode. */
   mode?: "discrete" | "progressive";
   sandbox?: SandboxOptions;
+  /** Cap, in characters, on the JSON of one tool result; larger results
+   * are cut (arrays to their first items, then long strings) with a note.
+   * Default 50000. */
+  maxResultChars?: number;
+}
+
+/** Options of `TungstenMcpServer.connectHttp` (Streamable HTTP). */
+export interface HttpOptions {
+  /** Interface to bind. Default "127.0.0.1". */
+  host?: string;
+  /** Port to bind; 0 picks a free one. Default 0. */
+  port?: number;
+  /** Endpoint path. Default "/mcp". */
+  path?: string;
+  /** Host header values accepted besides the loopback names (DNS
+   * rebinding protection). Entries are `host` or `host:port`. */
+  allowedHosts?: string[];
+  /** Origin header values accepted besides loopback origins. */
+  allowedOrigins?: string[];
+  /** Concurrent sessions; further initialize requests get 503. Default 64. */
+  maxSessions?: number;
+  /** Largest request body in bytes. Default 4 MiB. */
+  maxBodyBytes?: number;
+  /** A session with no open request or stream for this long is closed
+   * (clients that vanish without DELETE). 0 disables. Default 1800000. */
+  idleTimeoutMs?: number;
+}
+
+/** A listening Streamable HTTP endpoint. */
+export interface HttpEndpoint {
+  /** `http://<host>:<port><path>`. */
+  url: string;
+  host: string;
+  port: number;
+  /** Stop listening and close every session of this endpoint. */
+  close(): Promise<void>;
 }
