@@ -117,12 +117,24 @@ export interface CallContext {
   /** The key's header name, for remediation text. */
   keyHeader: string;
   attempts: number;
+  /** For a mutation without replay protection: the read that shows
+   * whether it took effect (see {@link OutcomeCheck}), or null. */
+  check?: OutcomeCheck | null;
+}
+
+/** How to find out whether an unprotected mutation took effect, in words:
+ * `call` names the read and its arguments (`public.listWebhookEndpoints`,
+ * `public.getAlphaMessageStatus with message_id "m1"`), `shows` what to
+ * look for in its answer (`whether endpoints contains {...}`). */
+export interface OutcomeCheck {
+  call: string;
+  shows: string;
 }
 
 /** Whether the verification hook's arguments can be built without the
  * call's response: after a lost or ambiguous answer there is no success
  * body, so a hook whose args reference `$response` cannot be called. */
-function verifyCallable(verify: unknown): boolean {
+export function verifyCallable(verify: unknown): boolean {
   const refersToResponse = (node: unknown, depth: number): boolean => {
     if (depth > 32) return true;
     if (typeof node === "string") return node === "$response" || node.startsWith("$response.");
@@ -154,24 +166,44 @@ function nextActionHint(ctx: CallContext): string | null {
   return null;
 }
 
+/** The change an operation makes, in words, for remediation text: its
+ * summary when it has one (`the change "Rotate an endpoint's signing
+ * secret"`). */
+export function changeOf(op: OperationDescriptor): string {
+  const summary = typeof op.summary === "string" ? op.summary.trim().replace(/\.$/, "") : "";
+  return summary === "" ? `the change ${op.id} makes` : `the change ${JSON.stringify(summary)}`;
+}
+
 /** OUTCOME_UNKNOWN for a mutation whose effect cannot be known. Without
  * replay protection (no key, no identity body) a repeat can apply the
  * effect twice, so the envelope never offers one: `retryable` is
- * `after_remediation` (check the state first), not `same_key_only`. */
+ * `after_remediation` (check the state first), not `same_key_only`, and
+ * the remediation and `next_action` say what to check before repeating:
+ * `ctx.check` when the client found a read that shows it, else the
+ * operation's own change in words. */
 export function outcomeUnknown(ctx: CallContext, cause: string, fields: Partial<Diagnostic> = {}): Diagnostic {
   const op = ctx.op;
   let rule: string;
+  let hint: string | null = null;
   if (op.agent.idempotency.policy === "content_identity") {
     rule = "If you retry, resend the identical bytes only; the body is its own identity.";
   } else if (ctx.key !== null) {
     rule = `If you retry, reuse the SAME ${ctx.keyHeader} value; a new key can apply the effect twice.`;
+  } else if (ctx.check) {
+    // What to verify, specific to the operation: its verification hook, or
+    // a read of the resource it changes.
+    const { call, shows } = ctx.check;
+    rule = `This operation has no idempotency key, so repeating it can apply the effect twice. Before calling ${op.id} again, call ${call} and check ${shows}: if it does, ${op.id} took effect and must not be repeated; call it again only if it did not.`;
+    hint = `Call ${call} and check ${shows}; call ${op.id} again only if it did not take effect.`;
   } else {
-    rule = "This operation has no idempotency key, so repeating it can apply the effect twice: do not call it again until you have checked whether it took effect.";
+    const change = changeOf(op);
+    rule = `This operation has no idempotency key, so repeating it can apply the effect twice: do not call it again until you have checked whether it took effect, by reading the resource it changes and looking for ${change}.`;
+    hint = `Read the resource ${op.id} changes and look for ${change}; call ${op.id} again only if it is not there.`;
   }
   return diagnostic(op.id, "OUTCOME_UNKNOWN", {
     remediation: `${cause} The server may or may not have applied ${op.id}. ${rule}`,
     retryable: hasReplayProtection(op, ctx.key) ? "same_key_only" : "after_remediation",
-    next_action: fields.next_action ?? nextActionHint(ctx),
+    next_action: fields.next_action ?? hint ?? nextActionHint(ctx),
     http_status: fields.http_status ?? null,
     code: fields.code ?? null,
     request_id: fields.request_id ?? null,

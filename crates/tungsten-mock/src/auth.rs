@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Credential presence checks for an operation's security requirements.
+//! Credential checks for an operation's security requirements: presence,
+//! shape, and the required prefix of bearer tokens.
 
 use tungsten_ir::{ApiKeyIn, AuthScheme, CompositePart, Operation, SchemeUse};
 
@@ -9,7 +10,8 @@ use crate::params::RequestView;
 /// Why no security alternative was satisfied.
 #[derive(Debug)]
 pub(crate) enum AuthFailure {
-    /// No credential of any alternative was sent (401).
+    /// No credential of any alternative was sent, or a credential was
+    /// rejected (a bearer token without its required prefix) (401).
     Unauthenticated(String),
     /// Some credentials were sent, but no alternative is complete and
     /// correct (403).
@@ -21,7 +23,12 @@ pub(crate) enum AuthFailure {
 enum Element {
     Present,
     Absent(String),
+    /// Sent in the wrong shape, or not matching another part (403).
     Invalid(String),
+    /// Sent in the right shape but not a credential the API accepts: a
+    /// bearer token without the profile's required prefix (401, as the API
+    /// answers an unknown token).
+    Rejected(String),
 }
 
 pub(crate) fn check(
@@ -85,6 +92,11 @@ fn alternative(
     {
         return Err(AuthFailure::Forbidden(reason.clone()));
     }
+    if let Some(Element::Rejected(reason)) =
+        elements.iter().find(|e| matches!(e, Element::Rejected(_)))
+    {
+        return Err(AuthFailure::Unauthenticated(reason.clone()));
+    }
     let first_absent = elements
         .iter()
         .find_map(|e| match e {
@@ -123,8 +135,8 @@ fn scheme_element(scheme: &AuthScheme, req: &RequestView<'_>) -> Element {
             }
         }
         AuthScheme::HttpBasic { .. } => authorization(req, "Basic"),
-        AuthScheme::HttpBearer { .. }
-        | AuthScheme::OAuth2 { .. }
+        AuthScheme::HttpBearer { prefix, .. } => bearer(req, prefix.as_deref()),
+        AuthScheme::OAuth2 { .. }
         | AuthScheme::OpenIdConnect { .. }
         | AuthScheme::Composite { .. } => authorization(req, "Bearer"),
     }
@@ -161,23 +173,50 @@ fn composite_elements(parts: &[CompositePart], req: &RequestView<'_>) -> Vec<Ele
                     (Some(_), None) => Element::Present,
                 });
             }
-            CompositePart::Bearer { .. } => out.push(authorization(req, "Bearer")),
+            CompositePart::Bearer { prefix, .. } => out.push(bearer(req, prefix.as_deref())),
         }
     }
     out
 }
 
+/// `Authorization: Bearer <token>` whose token starts with `prefix` when
+/// the profile requires one (`HttpBearer.prefix`, `CompositePart::Bearer`).
+fn bearer(req: &RequestView<'_>, prefix: Option<&str>) -> Element {
+    match credentials(req, "Bearer") {
+        Ok(token) => match prefix {
+            Some(prefix) if !prefix.is_empty() && !token.starts_with(prefix) => {
+                Element::Rejected(format!("bearer token does not start with `{prefix}`"))
+            }
+            _ => Element::Present,
+        },
+        Err(element) => element,
+    }
+}
+
 /// `Authorization: <scheme> <credentials>` with non-empty credentials.
 fn authorization(req: &RequestView<'_>, scheme: &str) -> Element {
+    match credentials(req, scheme) {
+        Ok(_) => Element::Present,
+        Err(element) => element,
+    }
+}
+
+/// The credentials of `Authorization: <scheme> <credentials>`, trimmed and
+/// non-empty, or the element saying why there are none.
+fn credentials(req: &RequestView<'_>, scheme: &str) -> Result<String, Element> {
     match req.header("authorization") {
-        None => Element::Absent(format!("missing `Authorization: {scheme}` credentials")),
+        None => Err(Element::Absent(format!(
+            "missing `Authorization: {scheme}` credentials"
+        ))),
         Some(value) => match value.trim().split_once(' ') {
             Some((given, credentials))
                 if given.eq_ignore_ascii_case(scheme) && !credentials.trim().is_empty() =>
             {
-                Element::Present
+                Ok(credentials.trim().to_string())
             }
-            _ => Element::Invalid(format!("Authorization is not `{scheme}` credentials")),
+            _ => Err(Element::Invalid(format!(
+                "Authorization is not `{scheme}` credentials"
+            ))),
         },
     }
 }

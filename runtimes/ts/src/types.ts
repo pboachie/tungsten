@@ -232,7 +232,15 @@ export interface OperationDescriptor {
   agent: AgentMeta;
   /** Validates the args object before any network call. */
   request?: SchemaLike;
-  /** Validates the success body (per `ClientOptions.validateResponses`). */
+  /** Validates the success body (per `ClientOptions.validateResponses`).
+   *
+   * Untagged unions (IR `UnionStrategy::Untagged`, TG0301) are emitted as
+   * `z.union([...])` with the variants in IR order, and Zod tries them in
+   * that order: the body is accepted when any variant accepts it, and the
+   * first variant that does decides which refinements applied. The
+   * result's `value` is always the decoded wire body itself, never the
+   * schema's output, so an earlier variant that overlaps a later one (or
+   * strips unknown members) cannot drop or rewrite members of the body. */
   response?: SchemaLike;
   /** One-line summary (compacted description); the last line of preview effects. */
   summary?: string | null;
@@ -380,9 +388,36 @@ export interface RenderedRequest {
   body: unknown;
 }
 
+/** One step of a macro preview (`ClientCore.previewMacro`). */
+export interface MacroStepPreview {
+  /** 1-based position in the macro. */
+  step: number;
+  kind: MacroStep["kind"];
+  /** The step's operation id. */
+  operation: string;
+  /** The name the step's result is bound to, or null. */
+  as: string | null;
+  safety: Safety;
+  /** The request the step sends (a `poll` or `paginate` step's first
+   * request), rendered without sending anything. Arguments taken from an
+   * earlier step's result show as `<from step NAME: path>` (NAME is that
+   * step's `as` name; `<from step NAME>` for the whole result), shown as
+   * written in the URL, headers and body, and exempt from pre-flight
+   * validation. Null when the step's whole argument object comes from an
+   * earlier result, or a value from an earlier result would have to be
+   * encoded before it is known (a `bytes` or `multipart` body). */
+  request: RenderedRequest | null;
+  /** The step's own effects: its confirmation message (with the same
+   * placeholders), what a `poll` or `paginate` step repeats
+   * (`Repeats <op> every N ms until <predicate>, for at most M ms.`,
+   * `Reads up to N pages of <op>.`) and its remediation note. */
+  effects: string[];
+}
+
 export interface PreviewResult {
   operation: string;
   safety: Safety;
+  /** For a macro: the first step's request (also `steps[0].request`). */
   request: RenderedRequest;
   /** Side-effect summary from the manifest's confirmation message, the
    * remediation note and the operation's summary. */
@@ -392,6 +427,10 @@ export interface PreviewResult {
   expires_in_ms: number | null;
   /** For `header`/`endpoint` previews: the server's answer. */
   server_preview?: unknown;
+  /** Macro previews only: every step's rendered request and effects, in
+   * order. `effects` above lists them all, each step's under a
+   * `Step N: <kind> <operation> (<safety>).` line. */
+  steps?: MacroStepPreview[];
 }
 
 export interface Page<T> {
@@ -436,7 +475,10 @@ export interface MacroStep {
  * tier, with a token from `previewMacro` bound to the macro name and its
  * exact input. That one confirmation authorizes every step of the run;
  * steps never ask for their own tokens, since their arguments may depend on
- * earlier steps' results. */
+ * earlier steps' results. The token is spent (bound to the run's
+ * idempotency key) by the first step that passes pre-flight and sends, so
+ * a run refused before sending anything can be corrected and repeated with
+ * the same token. */
 export interface MacroDescriptor {
   name: string;
   summary: string;
@@ -467,10 +509,13 @@ export interface ClientCoreExtensions {
    * protection). A `destructive` or `irreversible` macro needs
    * `opts.confirm` (see {@link MacroDescriptor}). */
   runMacro<T>(macro: MacroDescriptor, input: Record<string, unknown>, opts?: CallOptions): Promise<Result<T>>;
-  /** Preview a macro without sending anything: validates and renders its
-   * first step, lists every step's effects and, unless the macro is
-   * read-only, returns a confirmation token bound to the macro and this
-   * exact input. */
+  /** Preview a macro without sending anything: validates and renders
+   * every step's request (arguments from earlier results as
+   * `<from step NAME: path>` placeholders, from a dry evaluation), lists
+   * every step's effects and, unless the macro is read-only, returns a
+   * confirmation token bound to the macro and this exact input. A step
+   * whose arguments fail pre-flight for reasons other than a placeholder
+   * fails the preview, naming the step. */
   previewMacro(macro: MacroDescriptor, input: Record<string, unknown>, opts?: CallOptions): Promise<Result<PreviewResult>>;
 }
 
