@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! Shared mutable state: recorded calls, queued programs and stored
-//! idempotent responses.
+//! idempotent responses. Recorded calls and stored responses are capped
+//! ([`crate::MockOptions::max_recorded_calls`],
+//! [`crate::MockOptions::max_idempotent_responses`]): past the cap the oldest
+//! entry is dropped, so a long-running mock stays bounded.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -9,6 +12,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 use serde_json::Value;
 
 use crate::RecordedCall;
+use crate::handler::Injection;
 use crate::model::Model;
 use crate::reply::Reply;
 
@@ -17,14 +21,29 @@ pub(crate) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// A scripted response queued with `/__tungsten/program`.
+/// A scripted behaviour queued with `/__tungsten/program`.
 #[derive(Debug, Clone)]
 pub(crate) struct Program {
+    pub action: Action,
+    pub remaining: u64,
+}
+
+/// What a program does with a matching call.
+#[derive(Debug, Clone)]
+pub(crate) enum Action {
+    /// Answer this instead of processing the request.
+    Answer(Answer),
+    /// Apply an injection, as `X-Tungsten-Inject` would.
+    Inject(Injection),
+}
+
+/// A scripted response.
+#[derive(Debug, Clone)]
+pub(crate) struct Answer {
     pub status: u16,
     pub body: Option<Value>,
     pub headers: Vec<(String, String)>,
     pub code: Option<String>,
-    pub remaining: u64,
 }
 
 /// The outcome of looking up an idempotency key.
@@ -43,24 +62,30 @@ struct Stored {
 
 #[derive(Debug, Default)]
 struct Inner {
-    /// Sorted by arrival sequence number.
-    calls: Vec<(u64, RecordedCall)>,
+    /// Sorted by arrival sequence number; at most `max_calls`.
+    calls: VecDeque<(u64, RecordedCall)>,
     programs: BTreeMap<String, VecDeque<Program>>,
     idempotent: BTreeMap<(String, String), Stored>,
+    /// Keys of `idempotent` in the order they were stored, oldest first.
+    stored_order: VecDeque<(String, String)>,
 }
 
 #[derive(Debug)]
 pub(crate) struct State {
     pub model: Model,
     sequence: AtomicU64,
+    max_calls: usize,
+    max_idempotent: usize,
     inner: Mutex<Inner>,
 }
 
 impl State {
-    pub fn new(model: Model) -> State {
+    pub fn new(model: Model, max_calls: usize, max_idempotent: usize) -> State {
         State {
             model,
             sequence: AtomicU64::new(0),
+            max_calls,
+            max_idempotent,
             inner: Mutex::new(Inner::default()),
         }
     }
@@ -70,11 +95,15 @@ impl State {
         self.sequence.fetch_add(1, Ordering::SeqCst)
     }
 
-    /// Record a call at its arrival position.
+    /// Record a call at its arrival position, dropping the oldest calls
+    /// beyond the cap.
     pub fn record(&self, sequence: u64, call: RecordedCall) {
         let mut inner = lock(&self.inner);
         let at = inner.calls.partition_point(|(s, _)| *s < sequence);
         inner.calls.insert(at, (sequence, call));
+        while inner.calls.len() > self.max_calls {
+            inner.calls.pop_front();
+        }
     }
 
     pub fn calls(&self) -> Vec<RecordedCall> {
@@ -130,10 +159,21 @@ impl State {
         }
     }
 
+    /// Store the response of a key's first request, dropping the oldest
+    /// stored responses beyond the cap (a later repeat of a dropped key is
+    /// served as a fresh request).
     pub fn store(&self, operation: &str, key: &str, fingerprint: Vec<u8>, reply: Reply) {
-        lock(&self.inner).idempotent.insert(
-            (operation.to_string(), key.to_string()),
-            Stored { fingerprint, reply },
-        );
+        let mut inner = lock(&self.inner);
+        let id = (operation.to_string(), key.to_string());
+        let stored = Stored { fingerprint, reply };
+        if inner.idempotent.insert(id.clone(), stored).is_none() {
+            inner.stored_order.push_back(id);
+        }
+        while inner.idempotent.len() > self.max_idempotent {
+            let Some(oldest) = inner.stored_order.pop_front() else {
+                break;
+            };
+            inner.idempotent.remove(&oldest);
+        }
     }
 }

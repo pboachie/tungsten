@@ -20,7 +20,7 @@ use crate::model::{Model, OpEntry};
 use crate::params::{self, RequestView, media_essence};
 use crate::reply::{self, Reply, header_text, value_text};
 use crate::route::{Routed, route};
-use crate::state::{Idempotent, Program, State};
+use crate::state::{Action, Answer, Idempotent, Program, State};
 use crate::validate::{Context, Validator, empty_object, json_eq};
 
 /// Hold of `timeout` without a duration.
@@ -62,7 +62,7 @@ pub(crate) enum Outcome {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-enum Injection {
+pub(crate) enum Injection {
     Timeout(u64),
     DropAfterWrite,
     Reset,
@@ -212,7 +212,23 @@ pub(crate) async fn handle(state: Arc<State>, req: Request<Incoming>) -> Outcome
         view: &view,
     };
 
-    let (reply, after) = match injection.map(|(_, parsed)| parsed) {
+    // A header injection wins and leaves programs queued; otherwise the
+    // operation's next program either injects or answers.
+    let mut applied = injection.map(|(_, parsed)| parsed);
+    let program = match (&applied, &routed) {
+        (None, Routed::Op { index, .. }) => state.take_program(model.ops[*index].id()),
+        _ => None,
+    };
+    let answer = match program.map(|p| p.action) {
+        Some(Action::Inject(injection)) => {
+            call.injected = Some("program".into());
+            applied = Some(Ok(injection));
+            None
+        }
+        Some(Action::Answer(answer)) => Some(answer),
+        None => None,
+    };
+    let (reply, after) = match applied {
         Some(Err(reason)) => (
             Reply::text(400, &reason).with_header("x-tungsten-reason", &header_text(&reason)),
             After::Send,
@@ -239,19 +255,13 @@ pub(crate) async fn handle(state: Arc<State>, req: Request<Incoming>) -> Outcome
         Some(Ok(Injection::DropAfterWrite | Injection::Reset)) => {
             (process(&state, &routed, &request), After::Drop)
         }
-        None => {
-            let program = match &routed {
-                Routed::Op { index, .. } => state.take_program(model.ops[*index].id()),
-                _ => None,
-            };
-            match (program, &routed) {
-                (Some(program), Routed::Op { index, .. }) => {
-                    call.injected = Some("program".into());
-                    (programmed(model, &model.ops[*index], &program), After::Send)
-                }
-                _ => (process(&state, &routed, &request), After::Send),
+        None => match (answer, &routed) {
+            (Some(answer), Routed::Op { index, .. }) => {
+                call.injected = Some("program".into());
+                (programmed(model, &model.ops[*index], &answer), After::Send)
             }
-        }
+            _ => (process(&state, &routed, &request), After::Send),
+        },
     };
     call.body = body;
     call.response_status = if after == After::Drop {
@@ -646,7 +656,7 @@ fn injected_status(model: &Model, routed: &Routed, status: u16, code: Option<&st
     }
 }
 
-fn programmed(model: &Model, entry: &OpEntry, program: &Program) -> Reply {
+fn programmed(model: &Model, entry: &OpEntry, program: &Answer) -> Reply {
     let mut reply = match &program.body {
         Some(Value::String(text)) => Reply::text(program.status, text),
         Some(value) => Reply::json(program.status, value),
@@ -733,7 +743,15 @@ fn parse_program(model: &Model, item: &Value) -> Result<(String, Program), Strin
     let Some(object) = item.as_object() else {
         return Err("a program must be a JSON object".into());
     };
-    const MEMBERS: [&str; 6] = ["operation", "status", "body", "headers", "times", "code"];
+    const MEMBERS: [&str; 7] = [
+        "operation",
+        "status",
+        "body",
+        "headers",
+        "times",
+        "code",
+        "inject",
+    ];
     if let Some(unknown) = object.keys().find(|k| !MEMBERS.contains(&k.as_str())) {
         return Err(format!("unknown program member `{unknown}`"));
     }
@@ -743,6 +761,41 @@ fn parse_program(model: &Model, item: &Value) -> Result<(String, Program), Strin
         .ok_or("a program needs `operation` (an operation id)")?;
     if model.op_index(operation).is_none() {
         return Err(format!("`{operation}` is not a callable operation"));
+    }
+    let times = match object.get("times") {
+        None => 1,
+        Some(v) => v
+            .as_u64()
+            .filter(|t| *t >= 1)
+            .ok_or("`times` must be a positive integer")?,
+    };
+    if let Some(inject) = object.get("inject") {
+        if ["status", "body", "headers", "code"]
+            .iter()
+            .any(|m| object.contains_key(*m))
+        {
+            return Err(
+                "a program with `inject` takes no `status`, `body`, `headers` or `code`".into(),
+            );
+        }
+        let value = inject
+            .as_str()
+            .ok_or("`inject` must be an X-Tungsten-Inject value")?;
+        let injection = Injection::parse(value).map_err(|reason| format!("`inject`: {reason}"))?;
+        if injection == Injection::Reset {
+            return Err(
+                "`inject: reset` closes the connection before the body is read, \
+                 before a program is chosen; send `X-Tungsten-Inject: reset` instead"
+                    .into(),
+            );
+        }
+        return Ok((
+            operation.to_string(),
+            Program {
+                action: Action::Inject(injection),
+                remaining: times,
+            },
+        ));
     }
     let status = object
         .get("status")
@@ -774,13 +827,6 @@ fn parse_program(model: &Model, item: &Value) -> Result<(String, Program), Strin
         }
         Some(_) => return Err("`headers` must be an object of strings".into()),
     }
-    let times = match object.get("times") {
-        None => 1,
-        Some(v) => v
-            .as_u64()
-            .filter(|t| *t >= 1)
-            .ok_or("`times` must be a positive integer")?,
-    };
     let code = match object.get("code") {
         None => None,
         Some(Value::String(code)) => Some(code.clone()),
@@ -789,10 +835,12 @@ fn parse_program(model: &Model, item: &Value) -> Result<(String, Program), Strin
     Ok((
         operation.to_string(),
         Program {
-            status,
-            body: object.get("body").cloned(),
-            headers,
-            code,
+            action: Action::Answer(Answer {
+                status,
+                body: object.get("body").cloned(),
+                headers,
+                code,
+            }),
             remaining: times,
         },
     ))

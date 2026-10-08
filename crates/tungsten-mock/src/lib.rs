@@ -25,8 +25,8 @@
 //!    routed.
 //! 4. Any other `X-Tungsten-Inject` value is applied here (see
 //!    "Injections").
-//! 5. A queued program for the matched operation answers (see
-//!    `/__tungsten/program`).
+//! 5. A queued program for the matched operation answers, or applies its
+//!    injection as step 4 would (see `/__tungsten/program`).
 //! 6. No route answers `404`; a path served only under other methods answers
 //!    `405` with `Allow`; an rpc body whose method no operation serves
 //!    answers `400`.
@@ -42,9 +42,13 @@
 //!    instead: cookie parts need the cookie, a header part with
 //!    `equals_cookie` needs the header equal to that cookie's value, a
 //!    header part with `mutation_only` is only needed on unsafe methods, a
-//!    bearer part needs a bearer token. When no alternative is satisfied the
-//!    answer is `401` if no credential of any alternative was sent, and
-//!    `403` if some were sent but an alternative is incomplete or wrong.
+//!    bearer part needs a bearer token. A bearer scheme or part with a
+//!    required prefix (`HttpBearer.prefix`, `CompositePart::Bearer.prefix`,
+//!    ZROtext's `ztw_`) rejects a token without it. When no alternative is
+//!    satisfied the answer is `401` if no credential of any alternative was
+//!    sent or a bearer token lacks its prefix (the API does not know such a
+//!    token), and `403` if some were sent but an alternative is incomplete
+//!    or wrong (wrong scheme, a CSRF header that differs from its cookie).
 //! 9. Parameters: required path, query, header and cookie parameters must be
 //!    present, and present ones must parse as their IR type (integers,
 //!    numbers, booleans, enums, constants, arrays split by their style) and
@@ -68,7 +72,9 @@
 //!     repeat with the same key, path, query and body replays the stored
 //!     response, with a top-level boolean `created` of a JSON object body
 //!     set to `false`. The same key with a different path, query or body
-//!     answers `409`. Injected and programmed answers are never stored.
+//!     answers `409`. Injected and programmed answers are never stored. At
+//!     most [`MockOptions::max_idempotent_responses`] responses are kept;
+//!     storing one more drops the oldest, whose key then counts as new.
 //! 12. Success: the operation's lowest 2xx response (an exact status, else
 //!     `2XX` or `default` as `200`). Its JSON body is generated from the IR
 //!     type, deterministically from the seed, the operation id and the
@@ -125,34 +131,43 @@
 //!   ambiguous answer of a server that applied the request and then failed.
 //!
 //! An unknown value answers `400` (text/plain). Injections apply to routed
-//! and unrouted requests alike and never consume a program.
+//! and unrouted requests alike and never consume a program. A program can
+//! apply the same injections (except `reset`) to the next calls of one
+//! operation, for clients that cannot set request headers (an MCP server
+//! between the test and the mock).
 //!
 //! # Control endpoints
 //!
 //! - `GET /__tungsten/calls`: `200` with a JSON array of the recorded calls
-//!   in arrival order. Each element is a serialized [`RecordedCall`] (header
+//!   in arrival order (at most [`MockOptions::max_recorded_calls`], the
+//!   most recent ones). Each element is a serialized [`RecordedCall`] (header
 //!   pairs as two-element arrays, the body as an array of bytes) plus
 //!   `body_text`, the body as a string when it is UTF-8, else `null`.
 //! - `POST /__tungsten/reset`: `204`; clears the recorded calls, the queued
 //!   programs and the stored idempotent responses.
 //! - `POST /__tungsten/program`: queues scripted responses. The body is one
 //!   object or an array of objects `{operation, status, body?, headers?,
-//!   times?, code?}`: `operation` is a callable operation id, `status`
-//!   200-599, `body` any JSON value (a string is sent as `text/plain`,
-//!   anything else as `application/json`), `headers` an object of string
-//!   values, `times` how many matching calls it answers (default 1), `code`
-//!   the error code used by the error rule when `body` is absent (a 2xx
-//!   status without `body` answers the operation's generated body). Programs
-//!   for one operation answer in the order they were queued. Answers `200`
-//!   with `{"queued": <number of programs>}`, or `400` (text/plain) naming
-//!   the problem, in which case nothing is queued.
+//!   times?, code?}` or `{operation, inject, times?}`: `operation` is a
+//!   callable operation id, `status` 200-599, `body` any JSON value (a
+//!   string is sent as `text/plain`, anything else as `application/json`),
+//!   `headers` an object of string values, `times` how many matching calls
+//!   it applies to (default 1), `code` the error code used by the error rule
+//!   when `body` is absent (a 2xx status without `body` answers the
+//!   operation's generated body). `inject` is an `X-Tungsten-Inject` value
+//!   other than `reset` (`drop-after-write`, `timeout=<ms>`,
+//!   `status=<code>[;...][;apply]`), applied to the matching calls exactly
+//!   as the header would be; it takes no `status`, `body`, `headers` or
+//!   `code`. Programs for one operation apply in the order they were
+//!   queued. Answers `200` with `{"queued": <number of programs>}`, or `400`
+//!   (text/plain) naming the problem, in which case nothing is queued.
 //!
 //! Control requests are not recorded. Recorded calls hold every other
-//! request, including rejected, injected and dropped ones, in arrival order;
+//! request, including rejected, injected and dropped ones, in arrival order,
+//! up to [`MockOptions::max_recorded_calls`] (past it the oldest is dropped);
 //! a call is recorded as soon as its answer is decided (before a `timeout`
 //! hold). Header names are lowercased and the pairs sorted by name, then
 //! value. `injected` holds the trimmed `X-Tungsten-Inject` value, or
-//! `program` when a program answered.
+//! `program` when a program answered or injected.
 
 mod auth;
 mod generate;
@@ -174,6 +189,12 @@ use tungsten_ir::Ir;
 /// Default for [`MockOptions::max_body_bytes`]: 1 MiB.
 pub const DEFAULT_MAX_BODY_BYTES: usize = 1024 * 1024;
 
+/// Default for [`MockOptions::max_recorded_calls`].
+pub const DEFAULT_MAX_RECORDED_CALLS: usize = 10_000;
+
+/// Default for [`MockOptions::max_idempotent_responses`].
+pub const DEFAULT_MAX_IDEMPOTENT_RESPONSES: usize = 10_000;
+
 /// Options for [`MockServer::start`].
 #[derive(Debug, Clone)]
 pub struct MockOptions {
@@ -186,6 +207,13 @@ pub struct MockOptions {
     pub enabled_gates: Vec<String>,
     /// Largest request body accepted; larger bodies answer `413`.
     pub max_body_bytes: usize,
+    /// Recorded calls kept for `/__tungsten/calls`; past it the oldest call
+    /// is dropped. 0 records nothing.
+    pub max_recorded_calls: usize,
+    /// Stored idempotent responses kept for replays; past it the oldest
+    /// stored response is dropped, and a later request with its key is
+    /// served as a fresh one. 0 stores nothing.
+    pub max_idempotent_responses: usize,
 }
 
 impl Default for MockOptions {
@@ -195,6 +223,8 @@ impl Default for MockOptions {
             seed: 0,
             enabled_gates: vec![],
             max_body_bytes: DEFAULT_MAX_BODY_BYTES,
+            max_recorded_calls: DEFAULT_MAX_RECORDED_CALLS,
+            max_idempotent_responses: DEFAULT_MAX_IDEMPOTENT_RESPONSES,
         }
     }
 }
@@ -230,7 +260,11 @@ impl MockServer {
     /// Start serving `ir` on a background thread. Returns once the address
     /// is bound; binding errors are returned here.
     pub fn start(ir: Ir, opts: MockOptions) -> std::io::Result<MockServer> {
-        let state = Arc::new(state::State::new(model::Model::new(ir, &opts)));
+        let state = Arc::new(state::State::new(
+            model::Model::new(ir, &opts),
+            opts.max_recorded_calls,
+            opts.max_idempotent_responses,
+        ));
         let (addr, running) = server::spawn(opts.addr, state.clone())?;
         Ok(MockServer {
             addr,

@@ -141,7 +141,7 @@ export function parseRetryAfter(value: string | undefined, now: number): number 
   if (/^\d+$/.test(trimmed)) return Number(trimmed) * 1000;
   const date = Date.parse(trimmed);
   if (Number.isNaN(date)) return null;
-  return Math.max(0, date - now);
+  return Math.max(0, Math.round(date - now));
 }
 
 /** Next page URL from a `Link` header (`rel="next"`), or null. */

@@ -15,16 +15,28 @@
 import { type AuthPlan, isSafeMethod, resolveAuth, TokenError, type TokenSource } from "./auth.js";
 import {
   type CallContext,
+  changeOf,
   classifyError,
   decodeBody,
   isMutation,
   matchResponse,
+  type OutcomeCheck,
   outcomeUnknown,
   requestIdOf,
+  verifyCallable,
 } from "./classify.js";
 import { checkToken, CONFIRMATION_TTL_MS, issueToken } from "./confirm.js";
 import { diagnostic, scrubDiagnostic, scrubText } from "./envelope.js";
-import { evaluateExpr, evaluatePredicate, resolveRef, type Scope } from "./expr.js";
+import {
+  containsPlaceholder,
+  describePredicate,
+  evaluateDry,
+  evaluateExpr,
+  evaluatePredicate,
+  placeholdersIn,
+  resolveRef,
+  type Scope,
+} from "./expr.js";
 import { checkKeyFormat, hasReplayProtection, keyFormatDescription, keyHeader, MemoryIdempotencyStore } from "./idempotency.js";
 import {
   bodyValue,
@@ -50,6 +62,7 @@ import type {
   IdempotencyStore,
   MacroDescriptor,
   MacroStep,
+  MacroStepPreview,
   Middleware,
   OperationDescriptor,
   Page,
@@ -97,21 +110,24 @@ const MACRO_PAGE_LIMIT = 100;
 const MAX_REDIRECTS = 5;
 const REDIRECT_STATUSES: ReadonlySet<number> = new Set([301, 302, 303, 307, 308]);
 
-/** Why a request is being prepared. */
-type Purpose = "call" | "preview" | "server_preview";
+/** Why a request is being prepared. `macro_preview` renders a macro step
+ * from a dry evaluation: argument values that are placeholders for earlier
+ * results are not validated. */
+type Purpose = "call" | "preview" | "server_preview" | "macro_preview";
 
 /** Marks the call options of a macro step whose run was confirmed at the
  * macro level. Module-private, so callers cannot set it. */
 const MACRO_CONFIRMED: unique symbol = Symbol("tungsten.macroConfirmed");
-type StepOptions = CallOptions & { [MACRO_CONFIRMED]?: true };
+/** A macro step's hook that spends the macro's confirmation token; called
+ * once a step's request passed pre-flight and is about to be sent, so a
+ * step that fails pre-flight leaves the token unspent. */
+const MACRO_CLAIM: unique symbol = Symbol("tungsten.macroClaim");
+type StepOptions = CallOptions & { [MACRO_CONFIRMED]?: true; [MACRO_CLAIM]?: () => Failure | null };
 
 const SAFETY_RANK: Readonly<Record<string, number>> = { read_only: 0, mutating: 1, destructive: 2, irreversible: 3 };
 
 /** Stands in for a verification reference that did not resolve; equal to nothing. */
 const UNRESOLVED: unique symbol = Symbol("tungsten.unresolved");
-
-/** Placeholder for macro step arguments only known after earlier steps. */
-const LATER = "<from an earlier step>";
 
 /** A request ready to send, with its redacted rendering. */
 interface Prepared {
@@ -346,6 +362,52 @@ function observableBody(encoding: string, encoded: { body: BodyInit | null; disp
   return typeof encoded.display === "string" ? encoded.display : JSON.stringify(encoded.display);
 }
 
+/** A preview's display URL with the placeholders of `args` shown as
+ * written (`/v1/webhooks/<from step created: endpoint_id>/enable`) instead
+ * of percent-encoded. Only renderings change; nothing with placeholders
+ * is ever sent. */
+function unescapePlaceholders(url: string, args: unknown): string {
+  let out = url;
+  for (const text of new Set(placeholdersIn(args))) {
+    // Parameters are encoded with encodeURIComponent (serialize.ts).
+    out = out.split(encodeURIComponent(text)).join(text);
+  }
+  return out;
+}
+
+/** ` with name "value", ...` for remediation text naming a call's
+ * arguments; "" when there are none. */
+function withArguments(args: unknown): string {
+  if (!isRecord(args)) return "";
+  const shown = Object.entries(args).map(([k, v]) => `${k} ${shortJson(v)}`);
+  return shown.length > 0 ? ` with ${shown.join(", ")}` : "";
+}
+
+/** ` (name "value", ...)`: the scalar, non-sensitive arguments a call was
+ * made with (at most four, by wire name), to recognize what it created. */
+function sentArguments(op: OperationDescriptor, args: Record<string, unknown>): string {
+  const shown: string[] = [];
+  for (const [key, value] of Object.entries(args)) {
+    if (shown.length === 4) break;
+    if (!(typeof value === "string" || typeof value === "number" || typeof value === "boolean")) continue;
+    if (sensitiveArg(op, [key])) continue;
+    const wire = op.params.find((p) => p.name === key)?.wire ?? key;
+    shown.push(`${wire} ${shortJson(value)}`);
+  }
+  return shown.length > 0 ? ` (${shown.join(", ")})` : "";
+}
+
+/** JSON for remediation text, cut to 80 characters. */
+function shortJson(value: unknown): string {
+  let text: string;
+  try {
+    text = JSON.stringify(value) ?? String(value);
+  } catch {
+    text = String(value);
+  }
+  return text.length > 80 ? `${text.slice(0, 77)}...` : text;
+}
+
 function trimTrailingSlash(base: string): string {
   return base.replace(/\/+$/, "");
 }
@@ -560,7 +622,10 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     );
   }
 
-  #validateArgs(op: OperationDescriptor, args: Record<string, unknown>): Failure | null {
+  /** Pre-flight validation of the args. With `placeholders`, an issue at
+   * (or below) a value that is a dry evaluation's placeholder is not a
+   * failure: the value is only known once the earlier step has run. */
+  #validateArgs(op: OperationDescriptor, args: Record<string, unknown>, placeholders: boolean): Failure | null {
     const params = argParams(op);
     for (const p of params) {
       if (p.required && (args[p.name] === undefined || args[p.name] === null)) {
@@ -582,9 +647,14 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
       const parsed = request.safeParse(args);
       if (!parsed.success) {
         const issues = isRecord(parsed.error) && Array.isArray(parsed.error.issues) ? parsed.error.issues : [];
-        const issue = issues[0];
-        const path = issue && Array.isArray(issue.path) ? issue.path.filter((s) => typeof s === "string" || typeof s === "number") : [];
-        const message = issue && typeof issue.message === "string" ? issue.message : "a valid value";
+        const pathOf = (issue: unknown): Array<string | number> =>
+          isRecord(issue) && Array.isArray(issue.path) ? issue.path.filter((s): s is string | number => typeof s === "string" || typeof s === "number") : [];
+        const pending = (path: Array<string | number>): boolean =>
+          placeholders && path.some((_, i) => containsPlaceholder(getPath(args, path.slice(0, i + 1).map(String))));
+        const issue = placeholders ? issues.find((candidate) => !pending(pathOf(candidate))) : issues[0];
+        if (placeholders && issue === undefined) return null;
+        const path = pathOf(issue);
+        const message = isRecord(issue) && typeof issue.message === "string" ? issue.message : "a valid value";
         return this.#validation(op, path, getPath(args, path.map(String)), message, `Fix ${argumentPath(op, path)} (${message}) and call again.`);
       }
       return null;
@@ -731,7 +801,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
       return this.#validation(op, [], "<cyclic value>", "a JSON-like value without cycles", "Pass arguments without circular references.");
     }
     const args = withoutUndefined(rawArgs) as Record<string, unknown>;
-    const invalid = this.#validateArgs(op, args) ?? this.#checkKey(op, opts, purpose);
+    const invalid = this.#validateArgs(op, args, purpose === "macro_preview") ?? this.#checkKey(op, opts, purpose);
     if (invalid) return invalid;
     if (purpose === "call") {
       const unconfirmed = await this.#checkConfirmation(op, args, opts);
@@ -803,7 +873,11 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
         );
       }
     }
-    if (purpose === "call" && typeof opts.confirm === "string" && (opts as StepOptions)[MACRO_CONFIRMED] !== true) {
+    const claimMacro = (opts as StepOptions)[MACRO_CLAIM];
+    if (purpose === "call" && typeof claimMacro === "function") {
+      const spent = claimMacro();
+      if (spent) return spent;
+    } else if (purpose === "call" && typeof opts.confirm === "string" && (opts as StepOptions)[MACRO_CONFIRMED] !== true) {
       if (op.agent.safety === "destructive" || op.agent.safety === "irreversible") {
         const policy = op.agent.idempotency.policy;
         const bind = key.value ?? (policy === "content_identity" ? "content-identity" : null);
@@ -1062,6 +1136,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     const retries = this.#retryOptions(op);
     const mutation = isMutation(op);
     const protectedReplay = hasReplayProtection(op, prepared.key);
+    const check = mutation && !protectedReplay ? this.#outcomeCheck(op, prepared.args) : null;
     const timeoutMs = this.#timeout(opts);
     let attempts = 0;
     for (;;) {
@@ -1107,7 +1182,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
           signal: opts.signal,
         });
       }
-      const callCtx: CallContext = { api: this.api, op, key: prepared.key, keyHeader: prepared.keyHeader, attempts };
+      const callCtx: CallContext = { api: this.api, op, key: prepared.key, keyHeader: prepared.keyHeader, attempts, check };
       const result = await this.#classify<T>(callCtx, prepared, outcome, ctx, timeoutMs);
       if (result.ok) return result;
       const error = scrubDiagnostic(result.error, prepared.secrets);
@@ -1134,6 +1209,73 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
       }
       if (!(await sleep(delay, opts.signal))) return done();
     }
+  }
+
+  /** How to find out whether `op` (a mutation without replay protection)
+   * took effect after its answer was lost: its verification hook when it
+   * can be called without the lost response, else a registered read of the
+   * same resource. Null when neither exists. */
+  #outcomeCheck(op: OperationDescriptor, args: Record<string, unknown>): OutcomeCheck | null {
+    const sent = sentArguments(op, args);
+    const hook = op.agent.verify;
+    if (hook && typeof hook.operation === "string" && verifyCallable(hook)) {
+      const scope = { args: withWireNames(op, args) };
+      const call = `${hook.operation}${withArguments(evaluateExpr(hook.args ?? {}, scope))}`;
+      // `expect` is what a successful call leaves behind; references to the
+      // call's arguments are known, references to its response are not.
+      const lost: string[] = [];
+      const resolve = (node: unknown, depth = 0): unknown => {
+        if (depth > 32) return null;
+        if (typeof node === "string" && node.startsWith("$response")) {
+          lost.push(node.slice("$response".length).replace(/^\./, "") || "body");
+          return `<${node.slice(1)}>`;
+        }
+        if (typeof node === "string" && node.startsWith("$")) return resolveRef(node, scope) ?? `<${node.slice(1)}>`;
+        if (Array.isArray(node)) return node.map((item) => resolve(item, depth + 1));
+        if (isRecord(node)) return Object.fromEntries(Object.entries(node).map(([k, v]) => [k, resolve(v, depth + 1)]));
+        return node;
+      };
+      const expect = isRecord(hook.expect) ? (resolve(hook.expect) as Record<string, unknown>) : {};
+      const fields = Object.keys(expect);
+      let shows: string;
+      if (fields.length === 0) shows = `whether it shows ${changeOf(op)}`;
+      else if (lost.length > 0) {
+        shows = `whether ${fields.join(" and ")} holds what ${op.id} creates, matching the arguments you sent${sent} (its ${[...new Set(lost)].join(", ")} was in the lost response)`;
+      } else shows = `whether ${describePredicate(expect)}`;
+      return { call, shows };
+    }
+    const read = this.#resourceRead(op, args);
+    return read ? { call: `${read.id}${withArguments(read.args)}`, shows: `whether it shows ${changeOf(op)}` } : null;
+  }
+
+  /** A registered read of the resource `op` changes: a `GET` whose path is
+   * the longest prefix of `op`'s path (`/v1/items/{id}/cancel` →
+   * `/v1/items/{id}`, then `/v1/items`), never the API root, whose required
+   * parameters are all path parameters `op` was called with. Candidates on
+   * one path are taken in id order. rpc methods have no resource paths. */
+  #resourceRead(op: OperationDescriptor, args: Record<string, unknown>): { id: string; args: Record<string, unknown> } | null {
+    if (op.rpc) return null;
+    const known = new Map<string, unknown>();
+    for (const p of op.params) if (p.in === "path" && args[p.name] !== undefined && args[p.name] !== null) known.set(p.wire, args[p.name]);
+    const segments = op.path.split("/");
+    const root = (s: string): boolean => s === "" || s === "api" || /^v\d+(?:\.\d+)*$/i.test(s);
+    const reads = [...this.#registry.values()]
+      .filter((r) => r !== op && r.method === "GET" && r.agent?.safety === "read_only" && !r.rpc && Array.isArray(r.params))
+      .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    for (let end = segments.length; end > 0; end -= 1) {
+      const prefix = segments.slice(0, end);
+      if (prefix.every(root)) break;
+      const path = prefix.join("/");
+      for (const read of reads) {
+        if (read.path !== path) continue;
+        const required = argParams(read).filter((p) => p.required);
+        if (!required.every((p) => p.in === "path" && known.has(p.wire))) continue;
+        const readArgs: Record<string, unknown> = {};
+        for (const p of argParams(read)) if (p.in === "path" && known.has(p.wire)) readArgs[p.wire] = known.get(p.wire);
+        return { id: read.id, args: readArgs };
+      }
+    }
+    return null;
   }
 
   /** The URL a read's redirect points to, when it stays on the request's
@@ -1589,10 +1731,11 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     return { ok: true, value: { steps, safety } };
   }
 
-  /** Step arguments evaluated against `scope`; for the step whose args the
+  /** Step arguments evaluated against `scope` (a dry evaluation when
+   * `pending` names results not produced yet); for the step whose args the
    * input extends, the fields the macro adds are removed. */
-  #stepArgs(macro: MacroDescriptor, step: MacroStep, op: OperationDescriptor, scope: Scope): unknown {
-    let args = evaluateExpr(step.args ?? {}, scope);
+  #stepArgs(macro: MacroDescriptor, step: MacroStep, op: OperationDescriptor, scope: Scope, pending?: ReadonlySet<string>): unknown {
+    let args = pending ? evaluateDry(step.args ?? {}, scope, pending) : evaluateExpr(step.args ?? {}, scope);
     if (args === undefined || args === null) args = {};
     const extendsOp = isRecord(macro.input) && typeof macro.input.extends === "string" ? macro.input.extends : null;
     const added = isRecord(macro.input) && isRecord(macro.input.add) ? Object.keys(macro.input.add) : [];
@@ -1611,43 +1754,72 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     const effective = this.#macroInput(macro, input, name);
     if (!effective.ok) return effective;
     const { steps, safety } = plan.value;
-    const first = steps[0];
-    if (!first) return fail(diagnostic(name, "VALIDATION_FAILED", { failed_parameter: "macro", expected: "a valid macro descriptor", remediation: `${name} has no steps; regenerate the SDK.` }));
-    const firstArgs = this.#stepArgs(macro, first.step, first.op, { input: effective.value });
-    if (!isRecord(firstArgs)) {
-      return fail(diagnostic(name, "VALIDATION_FAILED", { failed_parameter: "input", expected: "an object", remediation: `Step 1 of ${name} does not evaluate to an argument object.` }));
+    if (steps.length === 0) {
+      return fail(diagnostic(name, "VALIDATION_FAILED", { failed_parameter: "macro", expected: "a valid macro descriptor", remediation: `${name} has no steps; regenerate the SDK.` }));
     }
     const { confirm: _confirm, verify: _verify, ...rest } = opts;
-    const prepared = await this.#prepare(first.op, firstArgs, rest, "preview", null);
-    if (!prepared.ok) {
-      return fail({ ...prepared.error, operation: name, remediation: `${prepared.error.remediation} (step 1 of ${name}: ${first.op.id})` });
-    }
-    const p = prepared.value;
+    // A dry evaluation: the input is known, earlier steps' results are
+    // placeholders (`<from step NAME: path>`).
+    const scope: Record<string, unknown> = { input: effective.value };
+    const pending = new Set<string>();
+    const previews: MacroStepPreview[] = [];
     const effects: string[] = [];
     if (typeof macro.summary === "string" && macro.summary !== "") effects.push(macro.summary);
+    let keyUsed = false;
     for (const [index, { step, op }] of steps.entries()) {
-      const kind = typeof step.kind === "string" ? step.kind : "call";
-      effects.push(`Step ${index + 1}: ${kind} ${op.id} (${op.agent.safety}).`);
+      const kind = step.kind === "poll" || step.kind === "paginate" ? step.kind : "call";
+      const where = `step ${index + 1} of ${name}: ${op.id}`;
+      const args = this.#stepArgs(macro, step, op, scope, pending);
+      const stepOpts: CallOptions = { ...rest, verify: false };
+      const usesKey = op.agent?.idempotency?.policy === "caller_owned" || op.agent?.idempotency?.policy === "auto";
+      if (!usesKey || keyUsed) delete stepOpts.idempotencyKey;
+      else if (opts.idempotencyKey !== undefined) keyUsed = true;
+      let request: RenderedRequest | null = null;
+      if (isRecord(args)) {
+        const encoding = op.body?.encoding;
+        // Bytes and multipart bodies cannot be encoded from a value not known yet.
+        const unrenderable = (encoding === "bytes" || encoding === "multipart") && containsPlaceholder(args);
+        if (!unrenderable) {
+          const prepared = await this.#prepare(op, args, stepOpts, "macro_preview", null);
+          if (!prepared.ok) return fail({ ...prepared.error, operation: name, remediation: `${prepared.error.remediation} (${where})` });
+          const p = prepared.value;
+          request = { method: p.method, url: unescapePlaceholders(p.displayUrl, args), headers: p.headers.toRecord(true), body: p.displayBody };
+        }
+      } else if (!containsPlaceholder(args)) {
+        return fail(diagnostic(name, "VALIDATION_FAILED", { failed_parameter: "input", expected: "an object", remediation: `Step ${index + 1} of ${name} does not evaluate to an argument object.` }));
+      }
+      const own: string[] = [];
       const confirmation = op.agent.confirmation;
       if (confirmation && typeof confirmation.message === "string" && confirmation.message !== "") {
-        // Later steps' arguments that come from earlier results are not known yet.
-        const evaluated = index === 0 ? firstArgs : this.#stepArgs(macro, step, op, { input: effective.value });
-        const args: Record<string, unknown> = isRecord(evaluated) ? { ...evaluated } : {};
-        if (index > 0 && isRecord(step.args)) for (const key of Object.keys(step.args)) if (args[key] === undefined) args[key] = LATER;
-        effects.push(interpolate(confirmation.message, args, op));
+        own.push(interpolate(confirmation.message, isRecord(args) ? args : {}, op));
       }
-      if (typeof op.agent.remediationNote === "string" && op.agent.remediationNote !== "") effects.push(op.agent.remediationNote);
+      if (kind === "poll") {
+        const until = describePredicate(step.until);
+        const budget = bounded(evaluateExpr(step.budget_ms, scope), DEFAULT_MACRO_BUDGET_MS, 0);
+        const interval = bounded(step.interval_ms, DEFAULT_POLL_INTERVAL_MS, 0);
+        own.push(`Repeats ${op.id} every ${interval} ms${until ? ` until ${until}` : ""}, for at most ${budget} ms.`);
+      } else if (kind === "paginate") {
+        own.push(`Reads up to ${Math.floor(bounded(step.max_pages, MACRO_PAGE_LIMIT, 1, 10_000))} pages of ${op.id}.`);
+      }
+      if (typeof op.agent.remediationNote === "string" && op.agent.remediationNote !== "") own.push(op.agent.remediationNote);
+      const as = typeof step.as === "string" && step.as !== "" ? step.as : null;
+      previews.push({ step: index + 1, kind, operation: op.id, as, safety: op.agent.safety, request, effects: own });
+      effects.push(`Step ${index + 1}: ${kind} ${op.id} (${op.agent.safety}).`, ...own);
+      if (as !== null) pending.add(as);
     }
     if (macro.shownOnce === true) effects.push("The result contains values the API shows only once; store them immediately.");
+    // Step 1 has no earlier results, so it is always rendered.
+    const first = previews[0]?.request;
+    if (!first) return fail(diagnostic(name, "VALIDATION_FAILED", { failed_parameter: "input", expected: "an object", remediation: `Step 1 of ${name} cannot be rendered.` }));
     const token = safety === "read_only" ? null : await issueToken(this.#confirmationKey, `macro:${name}`, effective.value, this.#now());
-    const request: RenderedRequest = { method: p.method, url: p.displayUrl, headers: p.headers.toRecord(true), body: p.displayBody };
     const value: PreviewResult = {
       operation: name,
       safety: safety as PreviewResult["safety"],
-      request,
+      request: first,
       effects,
       confirmation_token: token,
       expires_in_ms: token === null ? null : CONFIRMATION_TTL_MS,
+      steps: previews,
     };
     return { ok: true, value, meta: { status: 0, headers: {}, requestId: null, attempts: 0 } };
   }
@@ -1671,10 +1843,16 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     const { steps, safety } = plan.value;
     const unconfirmed = await this.#confirmed(name, `macro:${name}`, safety, effective.value, opts.confirm, `the macro's preview(...)`);
     if (unconfirmed) return unconfirmed;
-    if (typeof opts.confirm === "string") {
-      const spent = this.#claimToken(name, opts.confirm, typeof opts.idempotencyKey === "string" ? opts.idempotencyKey : null, "the macro's preview(...)");
-      if (spent) return spent;
-    }
+    // The token is spent by the first step that sends (as an operation's
+    // token is): a step failing pre-flight, before anything was sent,
+    // leaves it valid for the corrected run.
+    const token = typeof opts.confirm === "string" ? opts.confirm : null;
+    let claimed = false;
+    const claim = (): Failure | null => {
+      if (claimed || token === null) return null;
+      claimed = true;
+      return this.#claimToken(name, token, typeof opts.idempotencyKey === "string" ? opts.idempotencyKey : null, "the macro's preview(...)");
+    };
     const scope: Record<string, unknown> = { input: effective.value };
     const completed: string[] = [];
     /** Results of completed steps by `as` name: returned as `partial` when a later step fails. */
@@ -1696,7 +1874,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
       }
       const usesKey = op.agent?.idempotency?.policy === "caller_owned" || op.agent?.idempotency?.policy === "auto";
       const { confirm: _confirm, ...rest } = opts;
-      const stepOpts: StepOptions = { ...rest, verify: false, [MACRO_CONFIRMED]: true };
+      const stepOpts: StepOptions = { ...rest, verify: false, [MACRO_CONFIRMED]: true, [MACRO_CLAIM]: claim };
       if (!usesKey || keyUsed) delete stepOpts.idempotencyKey;
       else if (opts.idempotencyKey !== undefined) keyUsed = true;
       let value: unknown;
