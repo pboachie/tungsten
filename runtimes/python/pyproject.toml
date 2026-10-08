@@ -24,6 +24,9 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
+# `ruff format` enforces the line length; it keeps long string literals
+# (remediation texts) whole, which E501 would flag.
+ignore = ["E501"]
 
 [tool.pyright]
 typeCheckingMode = "strict"
