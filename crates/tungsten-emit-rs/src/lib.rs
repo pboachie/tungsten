@@ -36,7 +36,10 @@
 //! CLI half.
 
 mod cli;
+pub mod options;
 mod sdk;
+
+pub use options::{CliOptions, Dep, Options};
 
 use tungsten_core::Diagnostics;
 use tungsten_emit::{Emitter, FileSet, TargetConfig};

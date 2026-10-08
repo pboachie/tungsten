@@ -311,6 +311,7 @@ pub mod codes {
             "TG0733",
             "inline record typed as a plain mapping by the Python SDK",
         ),
+        ("TG0740", "invalid Rust target option; default used"),
         ("TG0901", "generated output is stale relative to its inputs"),
         (
             "TG0902",
