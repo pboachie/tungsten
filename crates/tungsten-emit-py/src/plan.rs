@@ -113,21 +113,60 @@ pub const FIELD_RESERVED: &[&str] = &[
 /// Python attribute names of a record's fields, in field order: rendered
 /// for [`Role::Field`], a leading digit prefixed with `field`, made unique,
 /// and [`FIELD_RESERVED`] names suffixed with `_`.
+///
+/// Models accept a field by its Python name and by its wire name
+/// (`populate_by_name`), so no Python name may equal another field's wire
+/// name: one key would fill both fields. A field whose Python name is its
+/// own wire name keeps it (`userId` and `user_id`: `user_id` is the
+/// `user_id` field's, the other one is `user_id_2`), and any name that
+/// still equals another field's wire name gets a numeric suffix.
 pub(crate) fn field_names<'f>(wires: impl IntoIterator<Item = &'f Ident>) -> Vec<String> {
-    let words: Vec<Vec<String>> = wires
-        .into_iter()
-        .map(|i| no_leading_digit(&i.words, "field"))
-        .collect();
-    unique(&[], &words, Role::Field)
-        .into_iter()
-        .map(|n| {
-            if FIELD_RESERVED.contains(&n.as_str()) {
-                format!("{n}_")
-            } else {
-                n
-            }
+    let idents: Vec<&Ident> = wires.into_iter().collect();
+    // The IR numbers names that collide in its own order (TG0401); the
+    // numbering is redone here, so a field can keep its wire name.
+    let words: Vec<Vec<String>> = idents
+        .iter()
+        .map(|i| {
+            let plain = naming::split_words(&i.wire);
+            let numbered = i.words.len() == plain.len() + 1
+                && i.words[..plain.len()] == plain[..]
+                && i.words
+                    .last()
+                    .is_some_and(|w| w.chars().all(|c| c.is_ascii_digit()));
+            let w = if numbered { &plain } else { &i.words };
+            no_leading_digit(w, "field")
         })
-        .collect()
+        .collect();
+    let own = |i: usize| naming::render(&ident(&words[i]), PY, Role::Field) == idents[i].wire;
+    let order: Vec<usize> = (0..idents.len())
+        .filter(|&i| own(i))
+        .chain((0..idents.len()).filter(|&i| !own(i)))
+        .collect();
+    let ordered: Vec<Vec<String>> = order.iter().map(|&i| words[i].clone()).collect();
+    let mut names = vec![String::new(); idents.len()];
+    for (&i, n) in order.iter().zip(unique(&[], &ordered, Role::Field)) {
+        names[i] = if FIELD_RESERVED.contains(&n.as_str()) {
+            format!("{n}_")
+        } else {
+            n
+        };
+    }
+    for i in 0..names.len() {
+        let taken = |name: &str, names: &[String]| {
+            FIELD_RESERVED.contains(&name)
+                || (0..names.len()).any(|j| j != i && (names[j] == name || idents[j].wire == name))
+        };
+        if !taken(&names[i], &names) {
+            continue;
+        }
+        let base = names[i].clone();
+        let mut n = 2;
+        while taken(&format!("{base}_{n}"), &names) {
+            n += 1;
+        }
+        names[i] = format!("{base}_{n}");
+    }
+    names
 }
 
 /// Names a models module uses unqualified, which a type cannot take.
@@ -233,10 +272,12 @@ pub(crate) struct Plan<'a> {
 }
 
 /// Names `_descriptors.py` defines besides the descriptor constants.
-pub(crate) const DESCRIPTOR_RESERVED: &[&str] = &["API", "OPERATIONS"];
+/// `I` and `O` are ambiguous names (ruff E741).
+pub(crate) const DESCRIPTOR_RESERVED: &[&str] = &["API", "I", "O", "OPERATIONS"];
 
 /// Attribute names of the client besides its resources or namespaces.
-const CLIENT_RESERVED: &[&str] = &["aclose", "close", "core", "macros"];
+/// `l` is an ambiguous name (ruff E741).
+const CLIENT_RESERVED: &[&str] = &["aclose", "close", "core", "l", "macros"];
 
 impl<'a> Plan<'a> {
     pub(crate) fn new(ir: &'a Ir) -> Self {
@@ -420,7 +461,7 @@ impl<'a> Plan<'a> {
                     member: names[k].clone(),
                     class: classes[2 + 2 * k].clone(),
                     async_class: classes[3 + 2 * k].clone(),
-                    members: top_members(&top[k], &[]),
+                    members: top_members(&top[k], &["l"]),
                 });
             }
         } else {

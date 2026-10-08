@@ -224,12 +224,15 @@ impl<'p, 'a> TypeCx<'p, 'a> {
     fn variant_ts(&self, u: &Union, v: &Variant) -> Ty {
         let base = self.ts_ref(&v.ty);
         match self.narrowing(u, v) {
-            Some((prop, tag)) => Ty {
+            Some((prop, tags)) => Ty {
                 text: format!(
                     "{} & {{ {}: {} }}",
                     base.at(Prec::Atom),
                     prop_key(prop),
-                    string_lit(tag)
+                    tags.iter()
+                        .map(|t| string_lit(t))
+                        .collect::<Vec<_>>()
+                        .join(" | ")
                 ),
                 prec: Prec::Intersection,
             },
@@ -237,15 +240,33 @@ impl<'p, 'a> TypeCx<'p, 'a> {
         }
     }
 
-    /// The (property, tag) a tagged variant must be narrowed with: none when
-    /// the union is not tagged or the variant record already requires that
-    /// constant.
-    fn narrowing<'u>(&self, u: &'u Union, v: &'u Variant) -> Option<(&'u str, &'u str)> {
+    /// The (property, tags) a tagged variant must be narrowed with: its tag
+    /// and every other tag value of the discriminator mapping that selects
+    /// it (`dog` and `puppy` both select `Dog`). None when the union is not
+    /// tagged or the variant record already requires its tag as a constant.
+    fn narrowing<'u>(&self, u: &'u Union, v: &'u Variant) -> Option<(&'u str, Vec<&'u str>)> {
         if u.strategy != UnionStrategy::Tagged {
             return None;
         }
-        let prop = u.discriminator.as_ref()?.property.as_str();
+        let d = u.discriminator.as_ref()?;
+        let prop = d.property.as_str();
         let tag = v.tag.as_deref()?;
+        let mut tags = vec![tag];
+        if let TypeRef::Named(id) = &v.ty
+            && u.variants.iter().filter(|w| w.ty == v.ty).count() == 1
+        {
+            for (value, target) in &d.mapping {
+                if target == id
+                    && !tags.contains(&value.as_str())
+                    && !u
+                        .variants
+                        .iter()
+                        .any(|w| w.tag.as_deref() == Some(value.as_str()))
+                {
+                    tags.push(value);
+                }
+            }
+        }
         let fixed = self.record_of(&v.ty).is_some_and(|(fields, _)| {
             fields.iter().any(|f| {
                 f.wire_name == prop
@@ -253,7 +274,7 @@ impl<'p, 'a> TypeCx<'p, 'a> {
                     && matches!(&f.ty, TypeRef::Inline(s) if matches!(s.as_ref(), Shape::Const { value } if value.as_str() == Some(tag)))
             })
         });
-        (!fixed).then_some((prop, tag))
+        (!fixed).then_some((prop, tags))
     }
 
     /// The record behind a reference (following one named type).
@@ -385,10 +406,10 @@ impl<'p, 'a> TypeCx<'p, 'a> {
             .map(|v| {
                 let base = self.zod_ref(&v.ty);
                 match self.narrowing(u, v) {
-                    Some((prop, tag)) => format!(
-                        "{base}.and(z.object({{ {}: z.literal({}) }}))",
+                    Some((prop, tags)) => format!(
+                        "{base}.and(z.object({{ {}: {} }}))",
                         prop_key(prop),
-                        string_lit(tag)
+                        zod_literal(&tags)
                     ),
                     None => base,
                 }
@@ -412,7 +433,10 @@ impl<'p, 'a> TypeCx<'p, 'a> {
                 return None;
             }
             tags.push(tag);
-            let narrowed = self.narrowing(u, v).is_some();
+            let narrowing = self.narrowing(u, v);
+            let narrowed = narrowing.is_some();
+            let literal =
+                narrowing.map_or_else(|| zod_literal(&[tag]), |(_, tags)| zod_literal(&tags));
             match &v.ty {
                 TypeRef::Named(id) => {
                     let info = self.plan.types.get(id)?;
@@ -424,10 +448,9 @@ impl<'p, 'a> TypeCx<'p, 'a> {
                     }
                     if narrowed {
                         out.push(format!(
-                            "{}.extend({{ {}: z.literal({}) }})",
+                            "{}.extend({{ {}: {literal} }})",
                             info.name,
-                            prop_key(prop),
-                            string_lit(tag)
+                            prop_key(prop)
                         ));
                     } else {
                         out.push(info.name.clone());
@@ -443,11 +466,7 @@ impl<'p, 'a> TypeCx<'p, 'a> {
                         .map(|f| format!("{}: {}", prop_key(&f.wire_name), self.field_zod(f)))
                         .collect();
                     if narrowed {
-                        body.push(format!(
-                            "{}: z.literal({})",
-                            prop_key(prop),
-                            string_lit(tag)
-                        ));
+                        body.push(format!("{}: {literal}", prop_key(prop)));
                     }
                     out.push(record_ctor(
                         &format!("{{ {} }}", body.join(", ")),
@@ -459,6 +478,20 @@ impl<'p, 'a> TypeCx<'p, 'a> {
             }
         }
         Some(out)
+    }
+}
+
+/// `z.literal("dog")`, or `z.literal(["dog", "puppy"])` for several tags.
+fn zod_literal(tags: &[&str]) -> String {
+    match tags {
+        [one] => format!("z.literal({})", string_lit(one)),
+        _ => format!(
+            "z.literal([{}])",
+            tags.iter()
+                .map(|t| string_lit(t))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
     }
 }
 

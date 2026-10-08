@@ -105,7 +105,11 @@ impl PyTy {
             if m == "None" {
                 continue;
             }
-            let inner = m.strip_prefix("Literal[")?.strip_suffix(']')?;
+            // `Literal[...]`, or `Annotated[Literal[...], _internal.exact([...])]`.
+            let inner = match m.strip_prefix("Annotated[Literal[") {
+                Some(rest) => rest.split_once("], _internal.exact([")?.0,
+                None => m.strip_prefix("Literal[")?.strip_suffix(']')?,
+            };
             out.push(inner.to_string());
         }
         Some(out)
@@ -387,10 +391,10 @@ impl<'p, 'a> Cx<'p, 'a> {
                 self.with_field(&base, &number_args(c))
             }
             Primitive::Float | Primitive::Double | Primitive::Number => {
-                let base = PyTy::one("float");
                 if hint {
-                    return base;
+                    return PyTy::one("float");
                 }
+                let base = PyTy::one(self.internal("Float"));
                 self.with_field(&base, &number_args(c))
             }
         }
@@ -441,13 +445,32 @@ impl<'p, 'a> Cx<'p, 'a> {
         }
         let mut parts = vec![];
         if !lits.is_empty() {
-            self.typing("Literal");
-            parts.push(PyTy::one(format!("Literal[{}]", lits.join(", "))));
+            parts.push(self.literal(&lits, flavor));
         }
         if null {
             parts.push(PyTy::one("None"));
         }
         PyTy::union(parts)
+    }
+
+    /// `Literal[lits]` (Python literal texts). In the schema flavor, a
+    /// literal with a boolean or integer member is also checked by
+    /// `_internal.exact`: Pydantic compares literals with Python's
+    /// equality, which takes `True` for `1` and `1` for `True`.
+    fn literal(&self, lits: &[String], flavor: Flavor) -> PyTy {
+        self.typing("Literal");
+        let base = PyTy::one(format!("Literal[{}]", lits.join(", ")));
+        // A text may hold several members (`1, True`, from a merged union);
+        // a string member that merely contains one only adds a check that
+        // admits every string.
+        let numeric = lits.iter().flat_map(|l| l.split(", ")).any(|l| {
+            l == "True" || l == "False" || l.parse::<i128>().is_ok() || l.parse::<u128>().is_ok()
+        });
+        if flavor == Flavor::Hint || !numeric {
+            return base;
+        }
+        let check = format!("{}([{}])", self.internal("exact"), lits.join(", "));
+        self.annotated(&base, &[check])
     }
 
     fn union(&self, u: &Union, flavor: Flavor) -> PyTy {
@@ -468,7 +491,7 @@ impl<'p, 'a> Cx<'p, 'a> {
                 match joined.literal_values() {
                     Some(values) if !values.is_empty() => {
                         let null = joined.members.iter().any(|m| m == "None");
-                        let mut parts = vec![PyTy::one(format!("Literal[{}]", values.join(", ")))];
+                        let mut parts = vec![self.literal(&values, Flavor::Schema)];
                         if null {
                             parts.push(PyTy::one("None"));
                         }
@@ -501,8 +524,25 @@ impl<'p, 'a> Cx<'p, 'a> {
             return self.any();
         };
         let prop = d.property.as_str();
+        // Other tag values of the mapping that select a variant (`puppy`
+        // and `dog` both select `Dog`): read as that variant's tag.
+        let mut aliases: Vec<(String, String)> = vec![];
+        for (value, id) in &d.mapping {
+            let tags: Vec<&str> = u
+                .variants
+                .iter()
+                .filter(|v| matches!(&v.ty, TypeRef::Named(t) if t == id))
+                .filter_map(|v| v.tag.as_deref())
+                .collect();
+            if let [tag] = tags.as_slice()
+                && tag != value
+                && !u.variants.iter().any(|v| v.tag.as_deref() == Some(value))
+            {
+                aliases.push((value.clone(), (*tag).to_string()));
+            }
+        }
         let mut attr: Option<String> = None;
-        let mut field_form = true;
+        let mut field_form = aliases.is_empty();
         let mut seen_tags: Vec<&str> = vec![];
         let mut seen_ids: Vec<&TypeId> = vec![];
         for v in &u.variants {
@@ -555,7 +595,20 @@ impl<'p, 'a> Cx<'p, 'a> {
             })
             .collect();
         let joined = PyTy::union(labelled);
-        let disc = format!("{}({})", self.internal("tag"), string_lit(prop));
+        let disc = if aliases.is_empty() {
+            format!("{}({})", self.internal("tag"), string_lit(prop))
+        } else {
+            let entries: Vec<String> = aliases
+                .iter()
+                .map(|(from, to)| format!("{}: {}", string_lit(from), string_lit(to)))
+                .collect();
+            format!(
+                "{}({}, {{{}}})",
+                self.internal("tag"),
+                string_lit(prop),
+                entries.join(", ")
+            )
+        };
         self.annotated(&joined, &[disc])
     }
 
@@ -698,26 +751,32 @@ pub(crate) fn field_doc(plan: &Plan<'_>, f: &Field, attr: &str) -> String {
 }
 
 /// `Field(...)` arguments for a model field: its default (`UNSET` when it
-/// may be left out) and its wire name when it differs. Both aliases are set
-/// separately rather than `alias=`, so type checkers take the Python name
-/// as the `__init__` parameter.
+/// may be left out), its wire name when it differs, and `repr=False` for a
+/// sensitive field (a one-time secret never shows in `repr()` or a log).
+/// Both aliases are set separately rather than `alias=`, so type checkers
+/// take the Python name as the `__init__` parameter.
 fn field_spec(cx: &Cx<'_, '_>, f: &Field, attr: &str) -> Option<String> {
     let optional = matches!(f.presence, Presence::Optional | Presence::OptionalNullable);
-    if attr == f.wire_name {
+    if attr == f.wire_name && !f.sensitive {
         return optional.then(|| {
             cx.runtime("UNSET");
             "UNSET".to_string()
         });
     }
     cx.pydantic("Field");
-    let wire = string_lit(&f.wire_name);
     let mut args = vec![];
     if optional {
         cx.runtime("UNSET");
         args.push("default=UNSET".to_string());
     }
-    args.push(format!("validation_alias={wire}"));
-    args.push(format!("serialization_alias={wire}"));
+    if attr != f.wire_name {
+        let wire = string_lit(&f.wire_name);
+        args.push(format!("validation_alias={wire}"));
+        args.push(format!("serialization_alias={wire}"));
+    }
+    if f.sensitive {
+        args.push("repr=False".to_string());
+    }
     Some(format!("Field({})", args.join(", ")))
 }
 

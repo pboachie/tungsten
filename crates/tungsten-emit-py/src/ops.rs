@@ -47,8 +47,9 @@ pub(crate) const CATEGORIES: &[&str] = &[
     "UNEXPECTED_RESPONSE",
 ];
 
-/// Keyword arguments every operation method takes besides its arguments.
-pub(crate) const ARG_RESERVED: &[&str] = &["opts", "self"];
+/// Keyword arguments every operation method takes besides its arguments,
+/// and the ambiguous names `I`, `O` and `l` (ruff E741).
+pub(crate) const ARG_RESERVED: &[&str] = &["I", "O", "l", "opts", "self"];
 
 /// One keyword argument of an operation.
 #[derive(Debug, Clone)]

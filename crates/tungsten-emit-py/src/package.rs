@@ -55,7 +55,7 @@ pub(crate) fn pyproject(plan: &Plan<'_>, opts: &Options, header: &str) -> String
         ));
     }
     out.push_str(&format!(
-        "\n[tool.ruff]\nline-length = {LINE_LENGTH}\ntarget-version = \"py312\"\n\n[tool.ruff.lint]\nselect = [\"E\", \"F\", \"I\", \"B\", \"UP\", \"SIM\", \"RUF\"]\n# Descriptor data and docstrings are not wrapped.\nignore = [\"E501\"]\n\n[tool.pyright]\ntypeCheckingMode = \"strict\"\npythonVersion = \"3.12\"\n"
+        "\n[tool.ruff]\nline-length = {LINE_LENGTH}\ntarget-version = \"py312\"\n\n[tool.ruff.lint]\nselect = [\"E\", \"F\", \"I\", \"B\", \"UP\", \"SIM\", \"RUF\"]\n# Descriptor data and docstrings are not wrapped; docstrings and literals\n# quote the API description's text, typographic characters included.\nignore = [\"E501\", \"RUF001\", \"RUF002\", \"RUF003\"]\n\n[tool.pyright]\ntypeCheckingMode = \"strict\"\npythonVersion = \"3.12\"\n"
     ));
     out
 }
@@ -100,11 +100,12 @@ from pydantic import (
     SerializerFunctionWrapHandler,
     TypeAdapter,
     ValidationError,
+    ValidationInfo,
     ValidatorFunctionWrapHandler,
     WrapValidator,
     model_serializer,
 )
-from pydantic_core import PydanticCustomError
+from pydantic_core import PydanticCustomError, PydanticSerializationError
 from tungsten_runtime import (
     UNSET,
     AuthConfig,
@@ -122,7 +123,8 @@ class Model(BaseModel):
 
     Validation is strict (no coercion between JSON types: ``"1"`` is not an
     integer; an integral number such as ``1.0`` is, as in JSON Schema and
-    the TypeScript SDK: see ``Int``), fields accept their Python name or their wire name, and fields
+    the TypeScript SDK: see ``Int``), fields accept their Python name or their
+    wire name (no field's Python name is another field's wire name), and fields
     left ``UNSET`` are omitted when the model is dumped, so
     ``model_dump(by_alias=True)`` and ``model_dump(mode="json", by_alias=True)``
     give the wire form.
@@ -138,17 +140,16 @@ class Model(BaseModel):
         out = cast("dict[str, Any]", data)
         for name, field in type(self).model_fields.items():
             if getattr(self, name, None) is UNSET:
-                out.pop((field.serialization_alias or name) if info.by_alias else name, None)
+                wire = field.serialization_alias if field.serialization_alias is not None else name
+                out.pop(wire if info.by_alias else name, None)
         return out
 
 
-def _decode_base64(value: object) -> object:
-    if isinstance(value, str):
-        try:
-            return base64.b64decode(value, validate=True)
-        except (binascii.Error, ValueError) as error:
-            raise ValueError("expected a base64 string") from error
-    return value
+def _decode_base64(value: str) -> bytes:
+    try:
+        return base64.b64decode(value, validate=True)
+    except (binascii.Error, ValueError) as error:
+        raise ValueError("expected a base64 string") from error
 
 
 def _is_file(value: object) -> bool:
@@ -163,12 +164,44 @@ def _is_file(value: object) -> bool:
     return callable(getattr(value, "read", None))
 
 
+#: Validation context of a request argument sent as JSON: a bytes field is
+#: base64 in the body, so it takes ``bytes`` (a bytearray or memoryview is
+#: copied), never text or a file.
+JSON_ARGUMENT = {"argument": "json"}
+#: Validation context of a multipart, form or binary body argument: a bytes
+#: field takes ``bytes`` or a file the runtime reads, never text.
+FILE_ARGUMENT = {"argument": "file"}
+
+
+def _bytes(value: object, handler: ValidatorFunctionWrapHandler, info: ValidationInfo) -> Any:
+    """A bytes field. As a request argument (``JSON_ARGUMENT``,
+    ``FILE_ARGUMENT``) it takes bytes, as the TypeScript SDK takes a
+    ``Uint8Array``, plus files in a multipart body; elsewhere (a response, a
+    model built by hand) a string is base64 as in JSON, and a file is kept
+    for a multipart body."""
+    context: object = info.context
+    argument = cast("Mapping[str, object]", context).get("argument") if isinstance(context, Mapping) else None
+    if isinstance(value, str):
+        if argument is not None:
+            raise PydanticCustomError("bytes_type", "Input should be bytes, not text")
+        return handler(_decode_base64(value))
+    if argument == "json":
+        if isinstance(value, bytearray | memoryview):
+            return handler(bytes(cast("bytes", value)))
+        if _is_file(value):
+            raise PydanticCustomError("bytes_type", "Input should be bytes: a file is sent only in a multipart body")
+        return handler(value)
+    return value if _is_file(value) else handler(value)
+
+
 def _bytes_or_file(value: Any, handler: ValidatorFunctionWrapHandler) -> Any:
     return value if _is_file(value) else handler(value)
 
 
 def _serialize_bytes(value: Any) -> Any:
-    return base64.b64encode(value).decode("ascii") if isinstance(value, bytes) else value
+    if isinstance(value, bytes | bytearray | memoryview):
+        return base64.b64encode(cast("bytes", value)).decode("ascii")
+    raise ValueError("a file or text cannot be sent as base64 bytes in JSON; pass bytes")
 
 
 def _plain(value: Any) -> Any:
@@ -180,7 +213,7 @@ def _plain(value: Any) -> Any:
         for name, field in type(value).model_fields.items():
             item = getattr(value, name)
             if item is not UNSET:
-                out[field.serialization_alias or name] = _plain(item)
+                out[field.serialization_alias if field.serialization_alias is not None else name] = _plain(item)
         for key, item in (value.model_extra or {}).items():
             out[key] = _plain(item)
         return out
@@ -193,13 +226,12 @@ def _plain(value: Any) -> Any:
 
 type Bytes = Annotated[
     bytes,
-    WrapValidator(_bytes_or_file),
-    BeforeValidator(_decode_base64),
+    WrapValidator(_bytes),
     PlainSerializer(_serialize_bytes, when_used="json"),
 ]
-"""Bytes; a base64 string in JSON. A file object or a ``(filename, content[,
-content_type])`` tuple is kept as given (a multipart file the runtime
-reads)."""
+"""Bytes; a base64 string in JSON. As a request argument it takes bytes; a
+file object or a ``(filename, content[, content_type])`` tuple only in a
+multipart body, where the runtime reads it."""
 
 type Binary = Annotated[bytes, WrapValidator(_bytes_or_file)]
 """A whole binary request body: bytes, or a file object or ``(filename,
@@ -210,6 +242,10 @@ def _integral(value: object) -> object:
         return int(value)
     return value
 
+
+type Float = Annotated[float, Field(allow_inf_nan=False)]
+"""A number: finite, as in JSON (``nan`` and infinities are not numbers
+there, and the TypeScript SDK rejects them)."""
 
 type Int = Annotated[int, BeforeValidator(_integral)]
 """An integer. JSON Schema's ``integer`` is any number without a fractional
@@ -320,6 +356,21 @@ def one_of(values: Sequence[object]) -> AfterValidator:
     return AfterValidator(check)
 
 
+def exact(values: Sequence[object]) -> BeforeValidator:
+    """Checks a ``Literal`` of booleans or integers without Python's
+    equality, before the ``Literal`` does: ``True`` is not ``1`` and ``1`` is
+    not ``True`` (JSON types), ``1.0`` is ``1``."""
+
+    def check(value: Any) -> Any:
+        if isinstance(value, bool | int | float) and not any(_same(value, v) for v in values):
+            raise PydanticCustomError(
+                "literal_error", "Input should be {expected}", {"expected": " or ".join(map(repr, values))}
+            )
+        return value
+
+    return BeforeValidator(check)
+
+
 def all_of(members: Callable[[], Sequence[Any]]) -> AfterValidator:
     """Admits a value every member type admits (an ``allOf`` that could not
     be merged into one model); the value is kept as given."""
@@ -335,20 +386,26 @@ def all_of(members: Callable[[], Sequence[Any]]) -> AfterValidator:
     return AfterValidator(check)
 
 
-def tag(wire: str) -> Discriminator:
+def tag(wire: str, aliases: Mapping[str, str] | None = None) -> Discriminator:
     """The discriminator of a tagged union whose variants do not all fix the
     tag as a literal field: the value of the ``wire`` property of a mapping,
-    or of the field with that wire name of a model."""
+    or of the field with that wire name of a model. ``aliases`` maps the
+    other tag values of the discriminator mapping to their variant's tag
+    (``{"puppy": "dog"}`` when both select ``Dog``)."""
+    others = dict(aliases or {})
 
     def read(value: Any) -> Any:
+        found: object = None
         if isinstance(value, Mapping):
-            return cast("Mapping[str, object]", value).get(wire)
-        if isinstance(value, BaseModel):
+            found = cast("Mapping[str, object]", value).get(wire)
+        elif isinstance(value, BaseModel):
             for name, field in type(value).model_fields.items():
                 if field.serialization_alias == wire or (field.serialization_alias is None and name == wire):
-                    return getattr(value, name)
-            return (value.model_extra or {}).get(wire)
-        return None
+                    found = getattr(value, name)
+                    break
+            else:
+                found = (value.model_extra or {}).get(wire)
+        return others.get(found, found) if isinstance(found, str) else found
 
     return Discriminator(read)
 
@@ -456,11 +513,14 @@ class Request:
                     issues.append({"path": [name], "message": "Field required", "code": "missing"})
                 continue
             try:
-                parsed = adapter.validate_python(raw, strict=True)
+                parsed = adapter.validate_python(
+                    raw, strict=True, context=JSON_ARGUMENT if arg.json else FILE_ARGUMENT
+                )
+                data[name] = adapter.dump_python(parsed, mode="json", by_alias=True) if arg.json else _plain(parsed)
             except ValidationError as error:
                 issues.extend(_issues(error, [name], raw))
-                continue
-            data[name] = adapter.dump_python(parsed, mode="json", by_alias=True) if arg.json else _plain(parsed)
+            except PydanticSerializationError as error:
+                issues.append({"path": [name], "message": str(error), "code": "serialization"})
         for key, raw in given.items():
             if key not in adapters and raw is not UNSET:
                 expected = ", ".join(adapters) or "no arguments"
