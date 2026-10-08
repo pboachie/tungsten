@@ -281,6 +281,19 @@ pub mod codes {
             "OpenID Connect scheme sent as a bearer token by the TypeScript SDK",
         ),
         ("TG0713", "tool schema over the agent schema token budget"),
+        ("TG0720", "invalid MCP target option; default used"),
+        (
+            "TG0721",
+            "MCP tool schema over the agent schema token budget",
+        ),
+        (
+            "TG0722",
+            "progressive MCP tool list and index summary over the 2,000-token budget",
+        ),
+        (
+            "TG0723",
+            "macro not exposed as an MCP tool (not emitted by the TypeScript SDK)",
+        ),
         ("TG0901", "generated output is stale relative to its inputs"),
     ];
 

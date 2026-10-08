@@ -420,6 +420,39 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
          operation, the spec for fields), split the operation, or raise the budget.",
     ),
     e(
+        "TG0720",
+        "An option of the `mcp` target is not valid (a `package` that is not an npm package \
+         name, a `version` that is not a semantic version, an `sdk` that is not \
+         `<package>` or `<package>@<range>`, an empty path or range, a `sandbox` that is not \
+         a boolean), so its default is used.",
+        "Fix the option under `targets.mcp` in tungsten.yml.",
+    ),
+    e(
+        "TG0721",
+        "An MCP tool (its description and input schema, measured with the tungsten-tokens \
+         estimate after repeated sub-schemas were moved to `$defs`) is larger than the \
+         per-tool schema budget of agent.yml (`defaults.disclosure.schema_budget_tokens`, \
+         600 by default). Agents pay this cost whenever the tool is listed or described.",
+        "Shorten the operation's and its fields' descriptions (`disclosure.prune` for the \
+         operation, the spec for fields), split the operation, or raise the budget.",
+    ),
+    e(
+        "TG0722",
+        "In progressive mode an MCP client first receives the meta tools (`search_tools`, \
+         `describe_tool`, `invoke`, `preview`, `list_clusters`) and the instructions with the \
+         cluster index. Together they exceed the 2,000 tokens of NFR-3, usually because of \
+         many clusters or long cluster summaries.",
+        "Shorten the cluster summaries in agent.yml (only their first sentence is used) or \
+         merge clusters.",
+    ),
+    e(
+        "TG0723",
+        "A macro of the IR is not served by the MCP server because the generated TypeScript \
+         SDK, which runs it, does not emit it (see TG0710 of the `typescript` target).",
+        "Fix the macro in agent.yml so every step calls a callable operation and every \
+         reference names `$input` or an earlier step's `as`.",
+    ),
+    e(
         "TG0901",
         "A target's output directory differs from what `tungsten generate` would write now: \
          a generated file is missing or has other content, a file of the previous \

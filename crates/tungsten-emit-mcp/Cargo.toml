@@ -20,6 +20,9 @@ testing = []
 tungsten-core.workspace = true
 tungsten-ir.workspace = true
 tungsten-emit.workspace = true
+# The server is built on the generated TypeScript SDK: its default package
+# name and the macros it emits.
+tungsten-emit-ts.workspace = true
 tungsten-tokens.workspace = true
 serde.workspace = true
 serde_json.workspace = true

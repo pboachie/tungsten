@@ -6,9 +6,10 @@
 //! [`Writer`] (blocks, indentation, doc comments) and an [`Imports`]
 //! collector. [`write_output`] puts a file set on disk together with
 //! `.tungsten/manifest.json`; [`check_stale`] compares it without writing.
-//! [`schema`] renders IR types as JSON Schema and [`args`] says how an
-//! operation's arguments object is laid out, for every emitter that
-//! describes operations to agents.
+//! [`schema`] renders IR types as JSON Schema, [`args`] says how an
+//! operation's arguments object is laid out and [`compact`] builds the
+//! compact tool schemas, for every emitter that describes operations to
+//! agents.
 //!
 //! PHASE-2 CONTRACT: the public signatures in this crate are shared by every
 //! emitter. The emit-core work package completes the implementations
@@ -16,6 +17,7 @@
 //! writer features) without changing existing signatures.
 
 pub mod args;
+pub mod compact;
 mod fileset;
 mod imports;
 mod output;
