@@ -137,8 +137,9 @@ pub fn build(ir: &Ir) -> (McpManifest, Diagnostics) {
         let mut words = vec![ns];
         words.extend(resources.iter().cloned());
         words.push(op.name.snake());
-        let name = names.assign(&words.join("_"));
-        let (tool, terms) = operation_tool(ir, op, name, &resources, budget);
+        let base = words.join("_");
+        let name = names.assign(&base);
+        let (tool, terms) = operation_tool(ir, op, &base, name, &resources, budget);
         tools.push(tool);
         docs.push(terms);
     }
@@ -157,8 +158,9 @@ pub fn build(ir: &Ir) -> (McpManifest, Diagnostics) {
             );
             continue;
         }
-        let name = names.assign(&macro_base(&mac.name.0));
-        let (tool, terms) = macro_tool(ir, mac, name, budget);
+        let base = macro_base(&mac.name.0);
+        let name = names.assign(&base);
+        let (tool, terms) = macro_tool(ir, mac, &base, name, budget);
         tools.push(tool);
         docs.push(terms);
     }
@@ -474,9 +476,13 @@ fn schema_tokens(description: &str, input: &Value) -> usize {
     tokens(description) + tokens(&serde_json::to_string(input).unwrap_or_default())
 }
 
+/// An operation's tool and its index terms. `base` is the name before
+/// shortening and numbering, whose words are indexed (a digest suffix is
+/// not a search term).
 fn operation_tool(
     ir: &Ir,
     op: &Operation,
+    base: &str,
     name: String,
     resources: &[String],
     budget: usize,
@@ -504,7 +510,7 @@ fn operation_tool(
     }
     let text = operation_text(op);
     let description = fit_description(&prune_sentences(&text, 1), &notes, budget);
-    let mut terms = index::tokenize(&name);
+    let mut terms = index::tokenize(base);
     terms.extend(index::tokenize(&text));
     for arg in arg_names(&input, &reserved) {
         terms.extend(index::tokenize(&arg));
@@ -555,7 +561,14 @@ fn macro_key_policy(ir: &Ir, mac: &Macro) -> IdempotencyPolicy {
         .unwrap_or_default()
 }
 
-fn macro_tool(ir: &Ir, mac: &Macro, name: String, budget: usize) -> (ToolEntry, Vec<String>) {
+/// A macro's tool and its index terms (`base` as for [`operation_tool`]).
+fn macro_tool(
+    ir: &Ir,
+    mac: &Macro,
+    base: &str,
+    name: String,
+    budget: usize,
+) -> (ToolEntry, Vec<String>) {
     let policy = macro_key_policy(ir, mac);
     let mut input = macro_parameters(ir, mac);
     let reserved = add_reserved(&mut input, &policy, mac.safety);
@@ -578,7 +591,7 @@ fn macro_tool(ir: &Ir, mac: &Macro, name: String, budget: usize) -> (ToolEntry, 
         if s.is_empty() { mac.name.0.clone() } else { s }
     };
     let description = fit_description(&prune_sentences(&text, 1), &notes, budget);
-    let mut terms = index::tokenize(&name);
+    let mut terms = index::tokenize(base);
     terms.extend(index::tokenize(&text));
     for arg in arg_names(&input, &reserved) {
         terms.extend(index::tokenize(&arg));
@@ -653,7 +666,8 @@ fn clusters(ir: &Ir, tools: &[ToolEntry]) -> Vec<ClusterEntry> {
         .collect()
 }
 
-/// The `initialize` instructions: how to find, preview and call tools and
+/// The `initialize` instructions: how to find and call tools, the
+/// confirmation and idempotency rules when some tool takes those fields, and
 /// how to read failures; in progressive mode also the cluster index.
 fn instructions(ir: &Ir, mode: Mode, tools: &[ToolEntry], clusters: &[ClusterEntry]) -> String {
     let title = collapse_whitespace(&ir.api.title);
@@ -673,9 +687,24 @@ fn instructions(ir: &Ir, mode: Mode, tools: &[ToolEntry], clusters: &[ClusterEnt
             tools.len()
         )),
     }
-    out.push("Destructive and irreversible tools need preview(name, args) first; pass its confirmation_token with the same arguments.".into());
-    out.push("Pass the idempotency key a tool asks for, persist it with your intent and reuse it on every retry; a new key can repeat a side effect.".into());
-    out.push("Failures are envelopes, not exceptions: follow category, retryable, remediation and next_action; after OUTCOME_UNKNOWN check or retry with the same key only.".into());
+    if tools
+        .iter()
+        .any(|t| t.reserved.confirmation_token.is_some())
+    {
+        out.push("Destructive and irreversible tools need preview(name, args) first; pass its confirmation_token with the same arguments.".into());
+    }
+    let keyed = tools.iter().any(|t| t.reserved.idempotency_key.is_some());
+    if keyed {
+        out.push("Pass the idempotency key a tool asks for, persist it with your intent and reuse it on every retry; a new key can repeat a side effect.".into());
+    }
+    out.push(format!(
+        "Failures are envelopes, not exceptions: follow category, retryable, remediation and next_action; after OUTCOME_UNKNOWN {}.",
+        if keyed {
+            "check or retry with the same key only"
+        } else {
+            "check the outcome before any retry"
+        }
+    ));
     if mode == Mode::Progressive && !clusters.is_empty() {
         let lines: Vec<String> = clusters
             .iter()
