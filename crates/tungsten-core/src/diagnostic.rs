@@ -313,6 +313,26 @@ pub mod codes {
         ),
         ("TG0740", "invalid Rust target option; default used"),
         (
+            "TG0741",
+            "type or schema typed as serde_json::Value by the Rust SDK",
+        ),
+        (
+            "TG0742",
+            "macro not emitted by the Rust SDK (not in the canonical form)",
+        ),
+        (
+            "TG0743",
+            "OpenID Connect scheme sent as a bearer token by the Rust SDK",
+        ),
+        (
+            "TG0744",
+            "operation with different success bodies returns serde_json::Value in the Rust SDK",
+        ),
+        (
+            "TG0745",
+            "tagged union emitted by the Rust SDK as an untagged one",
+        ),
+        (
             "TG0750",
             "argument given as JSON text on the command line of the generated CLI",
         ),

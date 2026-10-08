@@ -9,7 +9,8 @@
 //! .github/workflows/release.yml    release build matrix of the CLI (cli module)
 //! <package>/                       the SDK crate, `<api>-sdk` by default (sdk module)
 //!   Cargo.toml  src/lib.rs  src/client.rs  src/descriptors.rs  src/dispatch.rs
-//!   src/models/*.rs  src/resources/*.rs  src/macros.rs  src/custom.rs
+//!   src/models/*.rs  src/resources/*.rs  src/macros.rs  src/support.rs
+//!   src/custom/mod.rs     (hand-written; created once, never overwritten)
 //! <cli_package>/                   the CLI crate, `<api>-cli` by default (cli module)
 //!   Cargo.toml  src/main.rs  src/table.rs
 //! ```
@@ -40,6 +41,8 @@ pub mod options;
 mod sdk;
 
 pub use options::{CliOptions, Dep, Options};
+#[cfg(feature = "testing")]
+pub use sdk::testing as __testing;
 
 use tungsten_core::Diagnostics;
 use tungsten_emit::{Emitter, FileSet, TargetConfig};
