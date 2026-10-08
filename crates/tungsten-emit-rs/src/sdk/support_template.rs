@@ -213,12 +213,17 @@ pub fn issue_from(path: &serde_path_to_error::Path, message: &str) -> Issue {
         })
         .collect();
     segments.extend(inner);
+    // serde names a missing field at its parent's path; the path of an
+    // unknown field already ends with the field.
     for prefix in ["missing field `", "unknown field `"] {
         if let Some(key) = message
             .strip_prefix(prefix)
             .and_then(|rest| rest.split('`').next())
         {
-            segments.push(PathSegment::Key(key.to_string()));
+            let named = matches!(segments.last(), Some(PathSegment::Key(last)) if last == key);
+            if prefix.starts_with("missing") || !named {
+                segments.push(PathSegment::Key(key.to_string()));
+            }
             break;
         }
     }
@@ -673,18 +678,58 @@ impl<T> fmt::Debug for Typed<T> {
     }
 }
 
+/// Remove the member at `path` of `value`; false when there is none.
+fn remove_member(value: &mut Value, path: &[PathSegment]) -> bool {
+    let Some((PathSegment::Key(last), parents)) = path.split_last() else {
+        return false;
+    };
+    let mut node = value;
+    for segment in parents {
+        let next = match (segment, node) {
+            (PathSegment::Key(key), Value::Object(map)) => map.get_mut(key),
+            (PathSegment::Index(index), Value::Array(items)) => items.get_mut(*index),
+            _ => None,
+        };
+        let Some(next) = next else {
+            return false;
+        };
+        node = next;
+    }
+    node.as_object_mut()
+        .is_some_and(|map| map.remove(last).is_some())
+}
+
 impl<T: DeserializeOwned + Serialize + 'static> Validator for Typed<T> {
+    /// Issues come in the order of the other runtimes' schema libraries:
+    /// missing and invalid members and constraint violations first, members
+    /// the schema does not allow last (serde stops at an unknown member when
+    /// it meets it, so it is set aside and the rest is judged first).
     fn validate(&self, value: &Value) -> Validation {
-        let decoded: Result<T, _> = serde_path_to_error::deserialize(value);
-        let decoded = match decoded {
-            Ok(decoded) => decoded,
-            Err(e) => {
-                return Validation::Invalid(vec![issue_from(e.path(), &e.inner().to_string())]);
+        let mut rest: Option<Value> = None;
+        let mut unknown: Vec<Issue> = Vec::new();
+        let decoded = loop {
+            let current = rest.as_ref().unwrap_or(value);
+            match serde_path_to_error::deserialize::<_, T>(current) {
+                Ok(decoded) => break decoded,
+                Err(e) => {
+                    let message = e.inner().to_string();
+                    let issue = issue_from(e.path(), &message);
+                    if message.starts_with("unknown field `")
+                        && remove_member(rest.get_or_insert_with(|| value.clone()), &issue.path)
+                    {
+                        unknown.push(issue);
+                        continue;
+                    }
+                    let mut issues = vec![issue];
+                    issues.append(&mut unknown);
+                    return Validation::Invalid(issues);
+                }
             }
         };
         let mut checker = Checker::new();
         (self.check)(&decoded, &mut checker);
-        let issues = checker.finish();
+        let mut issues = checker.finish();
+        issues.append(&mut unknown);
         if !issues.is_empty() {
             return Validation::Invalid(issues);
         }
