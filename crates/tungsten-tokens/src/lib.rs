@@ -16,14 +16,17 @@
 //! word is one token when a lexicon of common English and API words knows
 //! it, else costs by length, case and what precedes it; punctuation is
 //! matched against runs known to be one token (`":{"`, `"},"`, `://`);
-//! whitespace and other characters cost by length. Costs are kept in
-//! thousandths of a token and rounded up once, so the result is an integer
-//! that depends only on the text.
+//! whitespace and other characters cost by length. A run of letters,
+//! digits, `_` and `-` that looks random (opaque ids, keys and encoded
+//! values such as `cus_NffrFeUfNV2Hib`, which `cl100k_base` splits at
+//! nearly every case flip) costs at least a fixed amount per character.
+//! Costs are kept in thousandths of a token and rounded up once, so the
+//! result is an integer that depends only on the text.
 //!
 //! The cost tables are calibrated on generated `tools.json`, `llms.txt`,
-//! `llms-full.txt` and JSON Schemas so that the estimate is within 10% of
-//! `cl100k_base` and leans high: a budget checked with the estimate is
-//! safe.
+//! `llms-full.txt`, JSON Schemas and identifier-heavy descriptions so that
+//! the estimate is within 10% of `cl100k_base` and leans high: a budget
+//! checked with the estimate is safe.
 //!
 //! PHASE-3 CONTRACT: `count` and `Counter` are shared by the docs and MCP
 //! emitters and the report.
@@ -46,7 +49,7 @@ impl Counter {
     pub fn id(self) -> &'static str {
         match self {
             Counter::CharsDiv4 => "chars-div-4",
-            Counter::Estimate => "tungsten-estimate-v1",
+            Counter::Estimate => "tungsten-estimate-v2",
         }
     }
 }
@@ -64,16 +67,93 @@ const UNIT: u64 = 1000;
 
 fn estimate(text: &str) -> usize {
     let chars: Vec<char> = text.chars().collect();
+    let blobs = opaque_runs(&chars);
+    let mut in_blob = vec![0u64; blobs.len()];
     let mut milli: u64 = 0;
     let mut i = 0;
+    let mut b = 0;
     while i < chars.len() {
         let (kind, end) = next_piece(&chars, i);
-        milli += cost(kind, &chars[i..end]);
+        let piece = cost(kind, &chars[i..end]);
+        // A piece belongs to the opaque run holding its last character.
+        while b < blobs.len() && blobs[b].1 < end {
+            b += 1;
+        }
+        match blobs.get(b) {
+            Some(&(start, stop)) if start < end && end <= stop => in_blob[b] += piece,
+            _ => milli += piece,
+        }
         i = end;
+    }
+    for (&(start, stop), &pieces) in blobs.iter().zip(&in_blob) {
+        milli += pieces.max((stop - start) as u64 * OPAQUE_CHAR_COST);
     }
     // Lean high by 3% so that a budget checked with the estimate is safe.
     let milli = milli.saturating_mul(103) / 100;
     usize::try_from(milli.div_ceil(UNIT)).unwrap_or(usize::MAX)
+}
+
+/// Cost of one character of an opaque run: random identifiers, keys and
+/// encoded values split at nearly every case flip and digit run, about
+/// one token per 1.4 characters in `cl100k_base`.
+const OPAQUE_CHAR_COST: u64 = 680;
+
+/// Shortest opaque run.
+const OPAQUE_MIN_LEN: usize = 8;
+
+/// The character classes whose alternation marks an opaque run.
+fn class(c: char) -> u8 {
+    if c.is_ascii_lowercase() {
+        0
+    } else if c.is_ascii_uppercase() {
+        1
+    } else if c.is_ascii_digit() {
+        2
+    } else {
+        3
+    }
+}
+
+/// Maximal runs of ASCII letters, digits, `_` and `-` (`cus_NffrFeUfNV2Hib`,
+/// base64url, `C024BE91L`) that look random rather than like words: at
+/// least [`OPAQUE_MIN_LEN`] characters whose class (lower, upper, digit,
+/// mark) changes at more than 40% of the positions with both cases present
+/// (random base62 changes at about 60%, camelCase words at 20 to 35%), or
+/// upper case with digits and no lower case. Sorted `(start, end)` index
+/// pairs.
+fn opaque_runs(chars: &[char]) -> Vec<(usize, usize)> {
+    let member = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '-';
+    let mut out = vec![];
+    let mut i = 0;
+    while i < chars.len() {
+        if !member(chars[i]) {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < chars.len() && member(chars[i]) {
+            i += 1;
+        }
+        let run = &chars[start..i];
+        if run.len() < OPAQUE_MIN_LEN {
+            continue;
+        }
+        let upper = run.iter().any(char::is_ascii_uppercase);
+        let lower = run.iter().any(char::is_ascii_lowercase);
+        let digit = run.iter().any(char::is_ascii_digit);
+        let flips = (run
+            .windows(2)
+            .filter(|w| class(w[0]) != class(w[1]))
+            .count()
+            * 100)
+            / (run.len() - 1);
+        // Mixed case alternates more than camelCase words; upper case with
+        // digits (`C024BE91L`) is never a word.
+        if (upper && lower && flips > 40) || (upper && digit && !lower) {
+            out.push((start, i));
+        }
+    }
+    out
 }
 
 /// The class of a pre-tokenizer piece.

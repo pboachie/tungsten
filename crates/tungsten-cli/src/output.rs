@@ -720,7 +720,7 @@ pub enum CellOrigin {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 #[schemars(deny_unknown_fields)]
 pub struct Budgets {
-    /// The counter of every count below (`tungsten-estimate-v1`).
+    /// The counter of every count below (`tungsten-estimate-v2`).
     pub counter: String,
     /// agent.yml `disclosure.schema_budget_tokens`.
     pub schema_budget: u32,
