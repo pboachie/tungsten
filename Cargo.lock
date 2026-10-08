@@ -771,6 +771,7 @@ dependencies = [
  "tungsten-core",
  "tungsten-emit",
  "tungsten-ir",
+ "tungsten-tokens",
 ]
 
 [[package]]
@@ -781,6 +782,7 @@ dependencies = [
  "serde_json",
  "tungsten-core",
  "tungsten-emit",
+ "tungsten-emit-ts",
  "tungsten-ir",
  "tungsten-tokens",
 ]
