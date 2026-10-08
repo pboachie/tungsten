@@ -276,7 +276,7 @@ impl ClientCore {
                 } else {
                     Diag::new(op.id.clone(), Category::UpstreamUnavailable)
                         .remediation(format!(
-                            "No response arrived within {ms} ms. This read has no side effects; call again later or with a larger timeout."
+                            "No response arrived within {ms} ms. This read has no side effects; call again later or with a larger `timeout`."
                         ))
                         .attempts(attempts)
                         .build()

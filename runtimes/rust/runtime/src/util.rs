@@ -314,6 +314,27 @@ pub fn js_number(value: f64) -> String {
     format!("{sign}{body}")
 }
 
+/// JSON has one number type: `5.0` and `5` are the same number, as in
+/// JavaScript. An integral number below 2^53 in magnitude becomes an integer,
+/// so integer fields accept it (wire-faithful integers, like `@tungsten/runtime`
+/// and the Python runtime).
+pub fn integral_numbers(value: &mut Value) {
+    match value {
+        Value::Number(number) => {
+            if number.is_f64()
+                && let Some(f) = number.as_f64()
+                && f.fract() == 0.0
+                && f.abs() < 9_007_199_254_740_992.0
+            {
+                *number = Number::from(f as i64);
+            }
+        }
+        Value::Array(items) => items.iter_mut().for_each(integral_numbers),
+        Value::Object(map) => map.values_mut().for_each(integral_numbers),
+        _ => {}
+    }
+}
+
 /// A JSON number as JavaScript writes it (`null` for a non-finite one).
 pub fn number_text(number: &Number) -> String {
     if let Some(i) = number.as_i64() {

@@ -29,8 +29,9 @@ use crate::types::{
     Safety, Validation,
 };
 use crate::util::{
-    MAX_ARG_DEPTH, REDACTED, SecretSet, canonical_json, envelope_value, get_path, looks_sensitive,
-    nests_deeper_than, redact_paths, redact_sensitive_keys, sha256_hex, split_path, uuid_v4,
+    MAX_ARG_DEPTH, REDACTED, SecretSet, canonical_json, envelope_value, get_path, integral_numbers,
+    looks_sensitive, nests_deeper_than, redact_paths, redact_sensitive_keys, sha256_hex,
+    split_path, uuid_v4,
 };
 
 /// A fallible step of the pipeline: the failure is the call's result.
@@ -252,7 +253,8 @@ impl ClientCore {
             ));
         }
         if let Some(validator) = &op.request {
-            let root = Value::Object(args.clone());
+            let mut root = Value::Object(args.clone());
+            integral_numbers(&mut root);
             let Ok(outcome) = crate::validate::run(validator.as_ref(), &root) else {
                 return Err(fail(
                     Diag::new(op.id.clone(), Category::UnexpectedResponse)
@@ -263,7 +265,7 @@ impl ClientCore {
             };
             return match outcome {
                 Validation::Valid(Value::Object(normalized)) => Ok(normalized),
-                Validation::Valid(_) => Ok(args.clone()),
+                Validation::Valid(_) => Ok(root.as_object().cloned().unwrap_or_default()),
                 Validation::Invalid(issues) => {
                     let pending = |path: &[PathSegment]| {
                         placeholders

@@ -166,6 +166,16 @@ pub async fn attempt(client: &reqwest::Client, req: &AttemptRequest<'_>) -> Atte
         builder = builder.header(name, value);
     }
     builder = match req.body {
+        // A method that defines a body says so even when it is empty
+        // (RFC 9110 8.6), as fetch and httpx do.
+        Payload::Empty
+            if matches!(
+                req.method,
+                HttpMethod::Post | HttpMethod::Put | HttpMethod::Patch
+            ) =>
+        {
+            builder.header(reqwest::header::CONTENT_LENGTH, "0")
+        }
         Payload::Empty => builder,
         Payload::Bytes(bytes) => builder.body(bytes.clone()),
         Payload::Multipart(parts) => builder.multipart(multipart_form(parts)),

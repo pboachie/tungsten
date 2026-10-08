@@ -14,7 +14,7 @@ use crate::types::{
     RemediationEntry, ResponseDescriptor, ResponseKind, Retryable, Safety, StatusMatch,
     VerifyDescriptor,
 };
-use crate::util::{get_path_str, json_text, number_text, take_units};
+use crate::util::{get_path_str, integral_numbers, json_text, number_text, take_units};
 use crate::value::Binary;
 
 /// Headers that carry a request id, in lookup order.
@@ -109,8 +109,11 @@ pub fn decode_body(
     if is_json_media(&media) {
         let raw = decode_text(bytes);
         return match serde_json::from_str::<Value>(&raw) {
-            Ok(value) => DecodedBody {
-                value: Some(value),
+            Ok(mut value) => DecodedBody {
+                value: Some({
+                    integral_numbers(&mut value);
+                    value
+                }),
                 json: true,
                 invalid_json: false,
                 empty: false,
@@ -132,8 +135,9 @@ pub fn decode_body(
         let raw = decode_text(bytes);
         if media.is_empty()
             && raw.trim_start().starts_with(['[', '{'])
-            && let Ok(value) = serde_json::from_str::<Value>(&raw)
+            && let Ok(mut value) = serde_json::from_str::<Value>(&raw)
         {
+            integral_numbers(&mut value);
             return DecodedBody {
                 value: Some(value),
                 json: true,
