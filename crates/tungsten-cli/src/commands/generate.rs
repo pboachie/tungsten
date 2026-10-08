@@ -5,13 +5,15 @@
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use tungsten_build::Compiled;
 use tungsten_core::{Diagnostic, Diagnostics, Severity};
-use tungsten_emit::{FileSet, WriteOptions, stale_files, write_output};
+use tungsten_emit::{FileSet, TargetConfig, WriteOptions, stale_files, write_output};
 use tungsten_ir::Ir;
 
 use crate::args::GenerateArgs;
+use crate::commands::check;
 use crate::input::{self, Input};
 use crate::output::{
     CliError, CommandName, CommandResult, ErrorKind, GenerateResult, TargetReport, TargetStatus,
@@ -65,24 +67,72 @@ pub(crate) struct Outcome {
     pub io_failed: bool,
     /// A directory was not written because tungsten does not own it.
     pub refused: bool,
+    /// Emitter warnings promoted to errors (`strict`).
+    pub promoted: usize,
 }
 
-/// Run `names` (target ids in manifest order) over `ir`.
+/// One target's emitter run in memory.
+pub(crate) struct Emitted {
+    pub cfg: TargetConfig,
+    /// The emitter's files; `None` when this version has no emitter for
+    /// the target.
+    pub files: Option<FileSet>,
+    /// `supports` and `emit` diagnostics.
+    pub diagnostics: Diagnostics,
+}
+
+impl Emitted {
+    /// Whether the emitter reported errors.
+    pub fn failed(&self) -> bool {
+        self.diagnostics.has_errors()
+    }
+}
+
+/// Run the emitter of target `name` over `ir` without touching the disk.
+pub(crate) fn emit_target(compiled: &Compiled, ir: &Ir, project: &Project, name: &str) -> Emitted {
+    let cfg = targets::target_config(compiled.config.as_ref(), name, &project.base_dir);
+    let Some(emitter) = targets::emitter(name) else {
+        return Emitted {
+            cfg,
+            files: None,
+            diagnostics: Diagnostics::new(),
+        };
+    };
+    let mut files = FileSet::new();
+    let mut diagnostics = emitter.supports(ir);
+    diagnostics.extend(emitter.emit(ir, &cfg, &mut files));
+    Emitted {
+        cfg,
+        files: Some(files),
+        diagnostics,
+    }
+}
+
+/// Run `names` (target ids in manifest order) over `ir`. With `strict`,
+/// an emitter's warnings are errors: the target fails and is not written.
 pub(crate) fn run_targets(
     compiled: &Compiled,
     ir: &Ir,
     project: &Project,
     names: &[String],
     mode: Mode,
+    strict: bool,
 ) -> Outcome {
     let mut outcome = Outcome {
         reports: vec![],
         diagnostics: vec![],
         io_failed: false,
         refused: false,
+        promoted: 0,
     };
+    // The surface snapshot is written next to every target's manifest.
+    let shared = matches!(mode, Mode::Write { .. }).then(|| Arc::new(ir.clone()));
     for name in names {
-        let cfg = targets::target_config(compiled.config.as_ref(), name, &project.base_dir);
+        let Emitted {
+            cfg,
+            files,
+            mut diagnostics,
+        } = emit_target(compiled, ir, project, name);
         let mut report = TargetReport {
             target: name.clone(),
             status: TargetStatus::Skipped,
@@ -94,19 +144,19 @@ pub(crate) fn run_targets(
             preserved: vec![],
             stale: vec![],
         };
-        let Some(emitter) = targets::emitter(name) else {
+        let Some(files) = files else {
             outcome
                 .diagnostics
                 .push(targets::not_implemented(name, &project.manifest));
             outcome.reports.push(report);
             continue;
         };
-        let mut files = FileSet::new();
-        let mut produced = emitter.supports(ir);
-        produced.extend(emitter.emit(ir, &cfg, &mut files));
+        if strict {
+            outcome.promoted += check::promote_warnings(&mut diagnostics.0);
+        }
         report.files = files.len();
-        let failed = produced.has_errors();
-        outcome.diagnostics.extend(produced.0);
+        let failed = diagnostics.has_errors();
+        outcome.diagnostics.extend(diagnostics.0);
         if failed {
             report.status = TargetStatus::Failed;
             outcome.reports.push(report);
@@ -130,6 +180,7 @@ pub(crate) fn run_targets(
                     dry_run,
                     force,
                     generator: Some(ir.generator.clone()),
+                    ir: shared.clone(),
                 };
                 match write_output(&files, &cfg.out_dir, &opts) {
                     Ok(w) => {
@@ -188,7 +239,15 @@ pub(crate) fn run(args: &GenerateArgs) -> Report {
     let mut report = Report::new(CommandName::Generate);
     report.diagnostics = compiled.diagnostics.0.clone();
     report.sources = std::mem::take(&mut compiled.workspace.sources);
-    let Some(ir) = compiled.ir.as_ref().filter(|_| !compiled.has_errors()) else {
+    let mut promoted = 0;
+    if args.strict {
+        promoted = check::promote_warnings(&mut report.diagnostics);
+    }
+    let clean = !report
+        .diagnostics
+        .iter()
+        .any(|d| d.severity == Severity::Error);
+    let Some(ir) = compiled.ir.as_ref().filter(|_| clean) else {
         report.exit = exit::FAILED;
         return report;
     };
@@ -205,7 +264,7 @@ pub(crate) fn run(args: &GenerateArgs) -> Report {
         }
     };
     let project = Project::of(&args.input.path);
-    let outcome = run_targets(&compiled, ir, &project, &names, mode);
+    let outcome = run_targets(&compiled, ir, &project, &names, mode, args.strict);
     report
         .diagnostics
         .extend(outcome.diagnostics.iter().cloned());
@@ -214,6 +273,8 @@ pub(crate) fn run(args: &GenerateArgs) -> Report {
         targets: outcome.reports,
         dry_run: args.dry_run,
         check: args.check,
+        strict: args.strict,
+        promoted: promoted + outcome.promoted,
     };
     let path = args.input.path.display().to_string();
     report.human = human(
@@ -230,7 +291,7 @@ pub(crate) fn run(args: &GenerateArgs) -> Report {
 
 /// The targets to run: the requested ones (aliases resolved, manifest
 /// order, each once) or every configured one.
-fn select(compiled: &Compiled, wanted: &[String]) -> Result<Vec<String>, CliError> {
+pub(crate) fn select(compiled: &Compiled, wanted: &[String]) -> Result<Vec<String>, CliError> {
     let configured: Vec<String> = compiled
         .config
         .as_ref()

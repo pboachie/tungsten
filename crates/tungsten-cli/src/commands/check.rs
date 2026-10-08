@@ -18,6 +18,9 @@ use crate::{Report, exit, input};
 pub(crate) fn run(args: &CheckArgs) -> Report {
     let compiled = input::compile(&args.input.path);
     let mut diagnostics = compiled.diagnostics.0.clone();
+    // Whether the project compiles, before `--strict` turns warnings into
+    // errors: the staleness comparison runs whenever the emitters can.
+    let compiles = !has_errors(&diagnostics);
     let mut promoted = if args.strict {
         promote_warnings(&mut diagnostics)
     } else {
@@ -27,18 +30,14 @@ pub(crate) fn run(args: &CheckArgs) -> Report {
     // the target directories (TG0901), once the project itself is clean.
     let mut outputs = vec![];
     let mut io_failed = false;
-    if let Some(ir) = compiled
-        .ir
-        .as_ref()
-        .filter(|_| args.ci && !has_errors(&diagnostics))
-    {
+    if let Some(ir) = compiled.ir.as_ref().filter(|_| args.ci && compiles) {
         let names: Vec<String> = compiled
             .config
             .as_ref()
             .map(|c| c.targets.keys().cloned().collect())
             .unwrap_or_default();
         let project = Project::of(&args.input.path);
-        let mut outcome = run_targets(&compiled, ir, &project, &names, Mode::Check);
+        let mut outcome = run_targets(&compiled, ir, &project, &names, Mode::Check, false);
         io_failed = outcome.io_failed;
         // The emitters' warnings (TG07xx, such as TG0713 over the schema
         // budget) are warnings like the compiler's: `--strict` fails on them.

@@ -462,6 +462,16 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
         "Run `tungsten generate` and commit the result. Put hand-written code in the \
          target's `custom/` files, which generation never overwrites.",
     ),
+    e(
+        "TG0902",
+        "`tungsten diff --semver` and `tungsten report` compare the API surface recorded by \
+         the last generation (`.tungsten/surface.json` in the target's output directory) with \
+         the current one. The target has no snapshot (it was never generated, or generated \
+         by a tungsten that did not record one), or the snapshot cannot be read or parsed, \
+         so the change since that generation is not classified as major, minor or patch.",
+        "Run `tungsten generate` to record a snapshot; later runs of `tungsten diff \
+         --semver` classify the changes made after it. Do not edit files under `.tungsten/`.",
+    ),
 ];
 
 /// The extended explanation of a code, if one exists.

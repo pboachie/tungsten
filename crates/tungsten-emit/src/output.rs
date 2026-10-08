@@ -18,17 +18,25 @@
 //! - no path may leave the output directory, also not through a symlink
 //!   (TG0704), and `.tungsten/` is reserved for the manifest.
 //!
+//! With [`WriteOptions::ir`], `.tungsten/surface.json` (the API surface
+//! snapshot of [`crate::surface`]) is written next to the manifest, so a
+//! later `tungsten diff --semver` can classify the changes since this
+//! generation. The snapshot is bookkeeping, not output: it is not listed in
+//! the manifest and not part of the staleness comparison.
+//!
 //! [`check_stale`] reports the same differences as TG0901 without writing.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use tungsten_core::{Diagnostic, Diagnostics, Digest};
 use tungsten_ir::{GeneratorStamp, Ir};
 
 use crate::fileset::valid_path;
+use crate::surface::{ApiSurface, SURFACE_PATH};
 use crate::{CommentStyle, FileSet};
 
 /// Where the output manifest lives, relative to the output directory.
@@ -99,6 +107,9 @@ pub struct WriteOptions {
     /// the IR's `generator`. `None` records this crate's version and no
     /// inputs.
     pub generator: Option<GeneratorStamp>,
+    /// The IR the files were generated from. When set, its API surface
+    /// snapshot is written to `.tungsten/surface.json`.
+    pub ir: Option<Arc<Ir>>,
 }
 
 /// What [`write_output`] did, paths relative to the output directory, sorted.
@@ -344,7 +355,8 @@ pub fn write_output(
             .iter()
             .map(|(rel, _)| rel)
             .chain(stale.iter().map(String::as_str))
-            .chain([MANIFEST_PATH]);
+            .chain([MANIFEST_PATH])
+            .chain(opts.ir.as_ref().map(|_| SURFACE_PATH));
         for rel in paths {
             errors.extend(Diagnostics(
                 check_inside(out_dir, &canonical, rel).into_iter().collect(),
@@ -392,10 +404,15 @@ pub fn write_output(
             .map_err(|e| fail(io_error(shown(out_dir, rel), "write", &e)))?;
     }
     let manifest = OutputManifest::new(files, opts.generator.as_ref()).to_bytes();
-    let manifest_path = out_dir.join(MANIFEST_PATH);
-    if std::fs::read(&manifest_path).ok().as_deref() != Some(manifest.as_slice()) {
-        write_file(&manifest_path, &manifest)
-            .map_err(|e| fail(io_error(shown(out_dir, MANIFEST_PATH), "write", &e)))?;
+    let surface = opts.ir.as_ref().map(|ir| ApiSurface::of(ir).to_bytes());
+    let bookkeeping = [(MANIFEST_PATH, Some(manifest)), (SURFACE_PATH, surface)];
+    for (rel, bytes) in bookkeeping {
+        let Some(bytes) = bytes else { continue };
+        let path = out_dir.join(rel);
+        if std::fs::read(&path).ok().as_deref() != Some(bytes.as_slice()) {
+            write_file(&path, &bytes)
+                .map_err(|e| fail(io_error(shown(out_dir, rel), "write", &e)))?;
+        }
     }
     Ok(report)
 }

@@ -36,6 +36,7 @@ tungsten-emit-ts.workspace = true
 tungsten-emit-docs.workspace = true
 tungsten-emit-mcp.workspace = true
 tungsten-mock.workspace = true
+tungsten-tokens.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 schemars.workspace = true

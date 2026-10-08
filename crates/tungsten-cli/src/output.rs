@@ -86,6 +86,10 @@ pub enum CommandName {
     Generate,
     #[serde(rename = "mock")]
     Mock,
+    #[serde(rename = "report")]
+    Report,
+    #[serde(rename = "diff")]
+    Diff,
 }
 
 /// A diagnostic flattened to its first label.
@@ -176,6 +180,8 @@ pub enum CommandResult {
     Doctor(DoctorResult),
     Generate(GenerateResult),
     Mock(MockResult),
+    Report(Box<ReportResult>),
+    Diff(DiffResult),
     Help(HelpResult),
 }
 
@@ -223,6 +229,10 @@ pub struct GenerateResult {
     pub dry_run: bool,
     /// `--check`: compared with the disk, nothing was written.
     pub check: bool,
+    /// `--strict`: warnings fail the run and nothing is written.
+    pub strict: bool,
+    /// Warnings promoted to errors by `--strict`.
+    pub promoted: usize,
 }
 
 /// One target of `generate`, or of `check --ci`.
@@ -424,8 +434,392 @@ pub struct ToolReport {
     pub purpose: String,
 }
 
+/// `tungsten diff`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct DiffResult {
+    /// The selected targets in manifest order.
+    pub changes: Vec<TargetDiff>,
+    /// `--semver` was given: each target with an emitter carries `semver`.
+    pub semver: bool,
+    /// With `--semver`: the highest level over the targets whose last
+    /// generation left a snapshot; null when none did (or without
+    /// `--semver`).
+    pub level: Option<SemverLevel>,
+}
+
+/// What regenerating one target would change.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct TargetDiff {
+    pub target: String,
+    pub status: DiffStatus,
+    /// Output directory, as in `TargetReport.out`.
+    pub out: String,
+    /// Files regeneration would create (also custom files that are
+    /// missing).
+    pub added: usize,
+    /// Generated files whose content would change.
+    pub changed: usize,
+    /// Files of the previous generation that would be removed.
+    pub removed: usize,
+    /// Every added, changed and removed file, sorted by path.
+    pub files: Vec<FileDiff>,
+    /// The API surface change since the last generation: with `diff
+    /// --semver` and in `report`; null otherwise and for targets without an
+    /// emitter.
+    pub semver: Option<SemverReport>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DiffStatus {
+    /// Regeneration would write the same bytes.
+    Unchanged,
+    /// Regeneration would add, change or remove files.
+    Changed,
+    /// The directory has no `.tungsten/manifest.json`: never generated (or
+    /// not by tungsten).
+    NotGenerated,
+    /// No emitter for this target in this version (TG0702).
+    Skipped,
+    /// The emitter reported errors.
+    Failed,
+}
+
+/// One file regeneration would touch.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct FileDiff {
+    /// Relative to the target's `out`.
+    pub path: String,
+    pub change: FileChange,
+    /// Lines only in the regenerated file.
+    pub lines_added: usize,
+    /// Lines only in the file on disk.
+    pub lines_removed: usize,
+    /// Unified diff (`--- a/<path>`, `+++ b/<path>`, hunks with three lines
+    /// of context), cut after a fixed number of lines. Null in `report`
+    /// and for files that are not UTF-8 text.
+    pub patch: Option<String>,
+    /// Diff lines left out of `patch`.
+    pub truncated_lines: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum FileChange {
+    Added,
+    Changed,
+    Removed,
+}
+
+/// Semantic versioning of the API surface change since a target's last
+/// generation (`.tungsten/surface.json` against the current IR).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct SemverReport {
+    pub snapshot: SnapshotState,
+    /// The highest level of `changes` (`none` when empty); null when there
+    /// is no usable snapshot.
+    pub level: Option<SemverLevel>,
+    /// Every classified difference, most severe first.
+    pub changes: Vec<SurfaceChange>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SnapshotState {
+    /// The last generation left a snapshot; it was compared.
+    Present,
+    /// No snapshot: never generated, or generated before snapshots were
+    /// written (TG0902).
+    Missing,
+    /// The snapshot could not be read or parsed (TG0902).
+    Unreadable,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SemverLevel {
+    /// The surfaces are equal.
+    None,
+    /// Documentation, wire bindings, gates or macro steps changed; the
+    /// signatures are the same.
+    Patch,
+    /// Additive: callers keep working.
+    Minor,
+    /// Callers can break.
+    Major,
+}
+
+/// One classified surface difference.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct SurfaceChange {
+    pub level: SemverLevel,
+    /// Stable rule id (`operation_removed`, `required_arg_added`,
+    /// `enum_value_removed`, ...).
+    pub rule: String,
+    /// An operation id, `operation(arg)`, `operation response`, a type or
+    /// macro id, followed by a path into the type (`.field`, `[]`, `{}`).
+    pub subject: String,
+    pub detail: String,
+}
+
+/// `tungsten report`: the generation report (planning/07).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ReportResult {
+    /// Version, API and IR counts; `stats` is null when errors prevented
+    /// building the IR.
+    pub summary: ReportSummary,
+    pub coverage: Coverage,
+    /// One row per callable operation, in IR order.
+    pub safety: Vec<SafetyRow>,
+    pub budgets: Budgets,
+    /// Diagnostics of the compiler and of the configured targets' emitters,
+    /// grouped by code (sorted).
+    pub diagnostic_groups: Vec<DiagnosticGroup>,
+    /// What regenerating each configured target would change since its
+    /// last generation (file lists without patches) and the API surface
+    /// change.
+    pub changes: Vec<TargetDiff>,
+    /// The HTML file written with `--html`, as given.
+    pub html: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ReportSummary {
+    /// API title; null when no IR was built.
+    pub title: Option<String>,
+    /// The first input document's `info.version`; null when no IR was
+    /// built.
+    pub api_version: Option<String>,
+    /// Documents loaded.
+    pub documents: usize,
+    pub stats: Option<IrStats>,
+    pub counts: DiagnosticCounts,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct Coverage {
+    /// Operations by namespace and status, in IR order.
+    pub namespaces: Vec<NamespaceCoverage>,
+    /// Every known target and what this version generates for it.
+    pub targets: Vec<TargetCoverage>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct NamespaceCoverage {
+    pub namespace: String,
+    pub implemented: usize,
+    pub planned: usize,
+    pub gated: usize,
+    pub total: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct TargetCoverage {
+    pub target: String,
+    /// Listed under `targets` in tungsten.yml.
+    pub configured: bool,
+    /// This version has an emitter for it.
+    pub emitter: bool,
+    pub status: CoverageStatus,
+    /// Callable operations the output covers: the tools of `docs` and
+    /// `mcp` (agents' hidden operations excluded), every callable
+    /// operation for the SDKs.
+    pub operations: usize,
+    /// Macros the output covers.
+    pub macros: usize,
+    /// Files the emitter produces.
+    pub files: usize,
+    /// Warnings of the emitter (feature gaps, budgets).
+    pub warnings: usize,
+    pub errors: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CoverageStatus {
+    /// The emitter produced output (computed in memory).
+    Generated,
+    /// The emitter exists but produced no files in this version.
+    NotGenerated,
+    /// No emitter for this target in this version.
+    NoEmitter,
+    /// The emitter reported errors, or the project has errors.
+    Failed,
+}
+
+/// The safety metadata of one operation (planning/07 "safety matrix").
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct SafetyRow {
+    pub operation: String,
+    pub namespace: String,
+    pub method: String,
+    pub path: String,
+    /// Callable only when a runtime gate is on.
+    pub gated: bool,
+    /// `read_only`, `mutating`, `destructive` or `irreversible`.
+    pub tier: SafetyCell,
+    /// The idempotency policy (`caller_owned (required)`, `none`, ...).
+    pub idempotency: SafetyCell,
+    /// The preview mode (`local`, `header`, `endpoint <op>`, `none`).
+    pub preview: SafetyCell,
+    /// `required` (with summary fields) for destructive and irreversible
+    /// operations, else `not required`.
+    pub confirmation: SafetyCell,
+    /// The verification operation, or `none`.
+    pub verify: SafetyCell,
+}
+
+/// One cell of the safety matrix and where its value comes from.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct SafetyCell {
+    pub value: String,
+    pub origin: CellOrigin,
+    /// The file the value was written in: the agent manifest or a spec
+    /// document, as named in diagnostics; null for built-in defaults and
+    /// inferred values.
+    pub file: Option<String>,
+    /// JSON Pointer of the node inside `file`.
+    pub pointer: Option<String>,
+    /// 1-based line of the node, when known.
+    pub line: Option<u32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CellOrigin {
+    /// An agent manifest `tools` entry.
+    Tool,
+    /// An `x-agent-*` extension of the operation in the spec.
+    Extension,
+    /// The agent manifest's `defaults`.
+    Defaults,
+    /// Inferred from the spec (a required `Idempotency-Key` header) or from
+    /// the tier (confirmation).
+    Inferred,
+    /// tungsten's built-in method defaults.
+    BuiltIn,
+}
+
+/// Token budgets (planning/01 NFR-3).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct Budgets {
+    /// The counter of every count below (`tungsten-estimate-v1`).
+    pub counter: String,
+    /// agent.yml `disclosure.schema_budget_tokens`.
+    pub schema_budget: u32,
+    /// agent.yml `disclosure.description_budget_tokens`.
+    pub description_budget: u32,
+    /// agent.yml `disclosure.threshold`.
+    pub threshold: u32,
+    /// The docs target's agent-facing files (`llms.txt`, `llms-full.txt`,
+    /// `tools.json`); empty when the docs emitter did not run.
+    pub documents: Vec<DocumentBudget>,
+    /// `tools.json`, one entry per tool; null when the docs emitter did not
+    /// run.
+    pub tools: Option<ToolBudgets>,
+    /// The MCP manifest; null when the MCP emitter produced none ("not
+    /// generated").
+    pub mcp: Option<McpBudgets>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct DocumentBudget {
+    pub file: String,
+    pub bytes: usize,
+    pub tokens: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ToolBudgets {
+    /// Tools in file order: name, description and parameters as compact
+    /// JSON, as a function-calling API receives them.
+    pub tools: Vec<ToolCost>,
+    /// All tools as one JSON array (a discrete tool list).
+    pub list_tokens: usize,
+    pub largest: usize,
+    pub median: usize,
+    /// Tools over `schema_budget`.
+    pub over_budget: usize,
+    /// Tool counts by cost, in 100-token buckets up to 600 and above.
+    pub histogram: Vec<HistogramBucket>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ToolCost {
+    pub name: String,
+    /// The IR operation id or macro name the tool calls.
+    pub target: String,
+    pub kind: ToolKind,
+    pub tokens: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolKind {
+    Operation,
+    Macro,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct HistogramBucket {
+    /// Lowest cost in the bucket.
+    pub min: usize,
+    /// Highest cost in the bucket; null for the last, open bucket.
+    pub max: Option<usize>,
+    pub tools: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct McpBudgets {
+    /// `discrete` or `progressive`, as the manifest selected.
+    pub mode: String,
+    pub threshold: u32,
+    /// The manifest's own counter (`tokenCounter`).
+    pub manifest_counter: String,
+    /// Tools in manifest order: `tokens` is the manifest's `schemaTokens`.
+    pub tools: Vec<ToolCost>,
+    /// Every tool as `tools/list` returns it in discrete mode (name,
+    /// description, input schema, annotations), as one JSON array.
+    pub discrete_tokens: usize,
+    /// The progressive index: the server instructions and every cluster
+    /// with its summary and tool names, as compact JSON.
+    pub index_tokens: usize,
+    /// Tools over `schema_budget`.
+    pub over_budget: usize,
+}
+
+/// The diagnostics of one code.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct DiagnosticGroup {
+    pub code: String,
+    /// The most severe severity in the group.
+    pub severity: Severity,
+    /// The registry's one-line description of the code.
+    pub summary: Option<String>,
+    pub diagnostics: Vec<JsonDiagnostic>,
+}
+
 /// Which `$defs` entry describes `result` for each command.
-const RESULT_DEFS: [(CommandName, &str); 8] = [
+const RESULT_DEFS: [(CommandName, &str); 10] = [
     (CommandName::Check, "CheckResult"),
     (CommandName::IrDump, "IrDumpResult"),
     (CommandName::Explain, "ExplainResult"),
@@ -434,6 +828,8 @@ const RESULT_DEFS: [(CommandName, &str); 8] = [
     (CommandName::Doctor, "DoctorResult"),
     (CommandName::Generate, "GenerateResult"),
     (CommandName::Mock, "MockResult"),
+    (CommandName::Report, "ReportResult"),
+    (CommandName::Diff, "DiffResult"),
 ];
 
 /// The JSON Schema (draft 2020-12) of [`CliOutput`]. Beyond the generated

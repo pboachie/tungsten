@@ -10,10 +10,11 @@ use crate::output::CommandName;
 
 const EXIT_CODES: &str = "\
 Exit codes:
-  0  success
+  0  success (also `diff` when regeneration would change files, and
+     `report` with warnings)
   1  the input has errors (or warnings with --strict), generated output is
      stale (generate --check, check --ci), or the item asked for does not
-     exist (explain target not found, unknown generate target)
+     exist (explain target not found, unknown target)
   2  usage error: the command line could not be parsed
   3  I/O or internal failure (for example --out is not writable, or the
      mock server cannot start)
@@ -61,6 +62,8 @@ impl Cli {
             Command::Doctor => CommandName::Doctor,
             Command::Generate(_) => CommandName::Generate,
             Command::Mock(_) => CommandName::Mock,
+            Command::Report(_) => CommandName::Report,
+            Command::Diff(_) => CommandName::Diff,
         }
     }
 }
@@ -86,6 +89,12 @@ pub(crate) enum Command {
     Generate(GenerateArgs),
     /// Serve a mock of the API from the compiled IR.
     Mock(MockArgs),
+    /// Coverage, safety matrix, token budgets, diagnostics and changes
+    /// since the last generation, as text, one static HTML file or JSON.
+    Report(ReportArgs),
+    /// Show what regeneration would add, change or remove in each target,
+    /// and with --semver how the API surface changed.
+    Diff(DiffArgs),
 }
 
 #[derive(Debug, Subcommand)]
@@ -136,6 +145,34 @@ pub(crate) struct GenerateArgs {
     /// generate (one without .tungsten/manifest.json).
     #[arg(long, conflicts_with = "check")]
     pub force: bool,
+    /// Treat warnings (the compiler's and the emitters') as errors: nothing
+    /// is written when there are any.
+    #[arg(long)]
+    pub strict: bool,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct ReportArgs {
+    #[command(flatten)]
+    pub input: InputArgs,
+    /// Write the report as one static HTML file (no external assets, no
+    /// scripts).
+    #[arg(long, value_name = "FILE")]
+    pub html: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct DiffArgs {
+    #[command(flatten)]
+    pub input: InputArgs,
+    /// Only these targets, comma-separated. Default: every target in
+    /// tungsten.yml.
+    #[arg(long, value_name = "TARGETS", value_delimiter = ',')]
+    pub target: Vec<String>,
+    /// Classify the API surface change since the last generation (from
+    /// .tungsten/surface.json) as major, minor, patch or none.
+    #[arg(long)]
+    pub semver: bool,
 }
 
 #[derive(Debug, Args)]
