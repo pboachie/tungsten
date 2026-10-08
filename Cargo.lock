@@ -725,6 +725,7 @@ dependencies = [
  "tungsten-emit-docs",
  "tungsten-emit-mcp",
  "tungsten-emit-py",
+ "tungsten-emit-rs",
  "tungsten-emit-ts",
  "tungsten-ir",
  "tungsten-mock",
@@ -791,6 +792,16 @@ dependencies = [
 
 [[package]]
 name = "tungsten-emit-py"
+version = "0.0.1"
+dependencies = [
+ "serde_json",
+ "tungsten-core",
+ "tungsten-emit",
+ "tungsten-ir",
+]
+
+[[package]]
+name = "tungsten-emit-rs"
 version = "0.0.1"
 dependencies = [
  "serde_json",

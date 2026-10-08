@@ -2,7 +2,7 @@
 //! The emitter registry and how `tungsten.yml` targets become emitter runs.
 //!
 //! Every target name of `tungsten.yml` is listed here; the ones without an
-//! emitter in this version (`rust`, `mock`) are reported
+//! emitter in this version (`mock`) are reported
 //! with TG0702 and skipped.
 
 use std::collections::BTreeMap;
@@ -15,6 +15,7 @@ use tungsten_emit::{Emitter, TargetConfig};
 use tungsten_emit_docs::DocsEmitter;
 use tungsten_emit_mcp::McpEmitter;
 use tungsten_emit_py::PythonEmitter;
+use tungsten_emit_rs::RustEmitter;
 use tungsten_emit_ts::TypeScriptEmitter;
 use tungsten_ir::Ir;
 
@@ -22,6 +23,7 @@ static TYPESCRIPT: TypeScriptEmitter = TypeScriptEmitter;
 static DOCS: DocsEmitter = DocsEmitter;
 static MCP: McpEmitter = McpEmitter;
 static PYTHON: PythonEmitter = PythonEmitter;
+static RUST: RustEmitter = RustEmitter;
 
 /// The emitter for a target id, if this version has one.
 pub fn emitter(id: &str) -> Option<&'static dyn Emitter> {
@@ -30,6 +32,7 @@ pub fn emitter(id: &str) -> Option<&'static dyn Emitter> {
         "docs" => Some(&DOCS),
         "mcp" => Some(&MCP),
         "python" => Some(&PYTHON),
+        "rust" => Some(&RUST),
         _ => None,
     }
 }

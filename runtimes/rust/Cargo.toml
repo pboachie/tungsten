@@ -1,0 +1,37 @@
+[workspace]
+resolver = "3"
+members = ["runtime", "cli-kit"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "Apache-2.0"
+repository = "https://github.com/pboachie/tungsten"
+publish = false
+
+[workspace.dependencies]
+tungsten-runtime = { path = "runtime" }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+serde_path_to_error = "0.1"
+tokio = { version = "1", default-features = false, features = ["rt", "time", "sync", "macros"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "multipart"] }
+hmac = "0.12"
+sha2 = "0.10"
+base64 = "0.22"
+regex = "1"
+url = "2"
+getrandom = "0.3"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

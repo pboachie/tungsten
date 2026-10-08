@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = ["crates/*"]
+exclude = ["runtimes"]
 
 [workspace.package]
 version = "0.0.1"
@@ -23,6 +24,7 @@ tungsten-emit-docs = { path = "crates/tungsten-emit-docs" }
 tungsten-mock = { path = "crates/tungsten-mock" }
 tungsten-emit-mcp = { path = "crates/tungsten-emit-mcp" }
 tungsten-emit-py = { path = "crates/tungsten-emit-py" }
+tungsten-emit-rs = { path = "crates/tungsten-emit-rs" }
 tungsten-tokens = { path = "crates/tungsten-tokens" }
 
 serde = { version = "1", features = ["derive"] }
