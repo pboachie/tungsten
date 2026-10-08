@@ -463,6 +463,41 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
         "Give the operations distinct method names with `naming.operations` in tungsten.yml.",
     ),
     e(
+        "TG0730",
+        "A macro in the IR does not fit the canonical form the Python SDK compiles: a step \
+         names an operation that is not callable, a reference names a later or unknown step, \
+         an `{expr}` is not `<ref> in [..]`, `<ref> == x` or `<ref> != x`, or a field the \
+         macro adds to its input is not a free Python keyword argument name (not an \
+         identifier, a keyword, or an argument the extended operation already takes). The \
+         SDK is generated without that macro.",
+        "Fix the macro in agent.yml so every step calls a callable operation, every reference \
+         names `$input` or an earlier step's `as`, and added input fields have identifier names.",
+    ),
+    e(
+        "TG0731",
+        "An option of the `python` target is not valid (for example a `package` that is not a \
+         PEP 508 distribution name, a `module` that is not a lowercase identifier, a `version` \
+         that is not a PEP 440 version, or `models: dataclasses`, which this version does not \
+         emit), so its default is used.",
+        "Fix the option under `targets.python` in tungsten.yml.",
+    ),
+    e(
+        "TG0732",
+        "The API declares an OpenID Connect security scheme. The Python SDK sends the \
+         configured credential as a bearer token and does not run discovery or obtain tokens \
+         itself.",
+        "Obtain the token with your OpenID Connect client and pass it in `auth` under the \
+         scheme's name.",
+    ),
+    e(
+        "TG0733",
+        "A record schema without a name (inline, not a component) has fixed fields. The Python \
+         SDK declares a model class per named record only, so this one is typed \
+         `dict[str, Any]` and its fields are not validated client-side.",
+        "Move the schema to `components/schemas` (or name it with an overlay) so it gets a \
+         model.",
+    ),
+    e(
         "TG0901",
         "A target's output directory differs from what `tungsten generate` would write now: \
          a generated file is missing or has other content, a file of the previous \
