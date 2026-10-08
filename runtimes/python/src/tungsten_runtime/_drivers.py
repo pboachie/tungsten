@@ -9,12 +9,13 @@ the server."""
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import errno
 import inspect
 import socket
 import ssl
 import time
-from collections.abc import AsyncIterator, Awaitable, Iterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from dataclasses import dataclass
 from http.cookiejar import CookieJar, DefaultCookiePolicy
 from typing import Any, Literal, cast
@@ -74,6 +75,9 @@ _NOT_SENT = (
     httpx.UnsupportedProtocol,
     httpx.ProxyError,
 )
+#: Errnos of a failed ``connect()``; they mean nothing was sent only when
+#: a transport raises them bare (httpx's own transports report the connect
+#: phase as ``ConnectError``).
 _NOT_SENT_ERRNOS = frozenset(
     getattr(errno, name)
     for name in ("ECONNREFUSED", "EHOSTUNREACH", "ENETUNREACH", "ENETDOWN", "EHOSTDOWN", "EADDRNOTAVAIL")
@@ -115,15 +119,22 @@ def _detail(error: BaseException) -> str:
 
 
 def _send_failure(error: Exception) -> AttemptOutcome:
+    """Classify a failed attempt by the phase it failed in. Only errors of
+    the connect phase mean nothing was sent: httpx's connect errors, and a
+    bare DNS, certificate or connect errno from another transport. Any
+    other httpx transport error (read, write, protocol) can follow a
+    request the server already read, whatever TLS alert or errno it wraps,
+    so it is lost."""
     if isinstance(error, httpx.ConnectTimeout | httpx.PoolTimeout):
         return NotSent(_detail(error) if len(_codes(error)) > 0 else "connect timeout")
     if isinstance(error, httpx.TimeoutException):
         return TimedOut()
-    chain = _chain(error)
-    if isinstance(error, _NOT_SENT) or any(
-        isinstance(e, socket.gaierror | ssl.SSLError)
-        or (isinstance(e, OSError) and e.errno in _NOT_SENT_ERRNOS)
-        for e in chain
+    if isinstance(error, _NOT_SENT):
+        return NotSent(_detail(error))
+    if isinstance(error, httpx.HTTPError):
+        return Lost(_detail(error))
+    if isinstance(error, socket.gaierror | ssl.SSLCertVerificationError) or (
+        isinstance(error, OSError) and not isinstance(error, ssl.SSLError) and error.errno in _NOT_SENT_ERRNOS
     ):
         return NotSent(_detail(error))
     return Lost(_detail(error))
@@ -171,6 +182,53 @@ def _advance(flow: Flow[Any], sent: object, thrown: Exception | None) -> Effect 
         return flow.throw(thrown) if thrown is not None else flow.send(sent)
     except StopIteration as stop:
         return _Finished(stop.value)
+
+
+def _drain(flow: Flow[Any], outcome: AttemptOutcome) -> object:
+    """Finish a flow without I/O after its request's task was cancelled:
+    every send is lost, sleeps are skipped, observers and stores are called
+    without waiting. The envelope of the last failure the flow produced, or
+    None."""
+    from .types import Err
+
+    failure: object = None
+    sent: object = outcome
+    thrown: Exception | None = None
+    for _ in range(10_000):
+        try:
+            effect = _advance(flow, sent, thrown)
+        except Exception:
+            return failure
+        sent, thrown = None, None
+        if isinstance(effect, _Finished):
+            return effect.value.error if isinstance(effect.value, Err) else failure
+        if isinstance(effect, Emit):
+            if isinstance(effect.item, Err):
+                failure = effect.item.error
+        elif isinstance(effect, Send):
+            sent = Lost("cancelled")
+        elif isinstance(effect, StoreGet | StorePut | Observe):
+            try:
+                result = _store_call(effect) if not isinstance(effect, Observe) else effect.fn(*effect.args)
+            except Exception:
+                result = None
+            if inspect.isawaitable(result):
+                _discard(result)
+                result = None
+            sent = None if isinstance(effect, Observe) else result
+        elif isinstance(effect, Shared):
+            thrown = RuntimeError("the call was cancelled")
+    flow.close()
+    return failure
+
+
+async def _quietly(awaitable: Awaitable[object]) -> None:
+    with contextlib.suppress(Exception):
+        await awaitable
+
+
+#: Observer tasks started by a cancelled call, kept until they finish.
+_REPORTS: set[asyncio.Future[None]] = set()
 
 
 # ------------------------------------------------------------------ sync
@@ -281,11 +339,16 @@ class AsyncDriver:
     """Performs effects with ``httpx.AsyncClient``; observers and stores may
     be plain or return awaitables."""
 
-    __slots__ = ("_inflight", "http")
+    __slots__ = ("_inflight", "http", "on_cancelled")
 
-    def __init__(self, http: httpx.AsyncClient) -> None:
+    def __init__(
+        self, http: httpx.AsyncClient, on_cancelled: Callable[[object], object] | None = None
+    ) -> None:
         self.http = http
         self._inflight: dict[str, asyncio.Future[str]] = {}
+        #: Receives the envelope of a call cancelled while a request was in
+        #: flight (``ClientOptions.on_diagnostic``).
+        self.on_cancelled = on_cancelled
 
     async def run[T](self, flow: Flow[T]) -> T:
         """Run a flow that never emits to its result."""
@@ -298,7 +361,7 @@ class AsyncDriver:
             if isinstance(effect, Emit):
                 flow.close()
                 raise RuntimeError("a flow emitted an item outside an iteration")
-            sent, thrown = await self._perform_safely(effect)
+            sent, thrown = await self._perform_cancellable(flow, effect)
 
     async def iterate(self, flow: Flow[None]) -> AsyncIterator[object]:
         """The items a flow emits, in order."""
@@ -313,9 +376,35 @@ class AsyncDriver:
                     sent, thrown = None, None
                     yield effect.item
                     continue
-                sent, thrown = await self._perform_safely(effect)
+                sent, thrown = await self._perform_cancellable(flow, effect)
         finally:
             flow.close()
+
+    async def _perform_cancellable(self, flow: Flow[Any], effect: Effect) -> tuple[object, Exception | None]:
+        """Perform an effect; when the task is cancelled while a request is
+        in flight (``asyncio.timeout``, ``wait_for``), the request may have
+        reached the server: the flow is finished without I/O as if the
+        connection was lost, its envelope (``OUTCOME_UNKNOWN`` for a
+        mutation) goes to ``on_cancelled``, and the cancellation propagates."""
+        try:
+            return await self._perform_safely(effect)
+        except asyncio.CancelledError:
+            if isinstance(effect, Send):
+                self._report(_drain(flow, Lost("cancelled")))
+            flow.close()
+            raise
+
+    def _report(self, error: object) -> None:
+        if error is None or self.on_cancelled is None:
+            return
+        try:
+            result = self.on_cancelled(error)
+        except Exception:
+            return
+        if inspect.isawaitable(result):
+            task = asyncio.ensure_future(_quietly(cast(Awaitable[object], result)))
+            _REPORTS.add(task)
+            task.add_done_callback(_REPORTS.discard)
 
     async def _perform_safely(self, effect: Effect) -> tuple[object, Exception | None]:
         try:

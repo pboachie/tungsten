@@ -368,4 +368,4 @@ def display_form(display: object) -> bytes:
 
 
 def parse_json_bytes(data: bytes) -> object:
-    return parse_json(data.decode("utf-8", "replace"))
+    return parse_json(data.decode("utf-8-sig", "replace"))

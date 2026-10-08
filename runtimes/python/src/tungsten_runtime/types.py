@@ -105,6 +105,15 @@ class Ok[T]:
     #: ``poll()`` only: True when the budget ran out before ``until`` held
     #: (the value is the last answer), False when it held; None elsewhere.
     timed_out: bool | None = None
+    #: The operation's sensitive response field paths (wire names): redacted
+    #: in ``repr()``, so logging a result never prints a one-time secret.
+    sensitive_fields: tuple[str, ...] = field(default=(), repr=False, compare=False, kw_only=True)
+
+    def __repr__(self) -> str:
+        return (
+            f"Ok(value={_shown(self.value, self.sensitive_fields)}, meta={self.meta!r}, "
+            f"verification={self.verification!r}, ok=True, timed_out={self.timed_out!r})"
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,8 +127,28 @@ class Err:
     #: strict validation, or a macro's completed step results by their ``as``
     #: names. It can hold values the API shows only once (a signing secret),
     #: so store them before acting on the error; they are never repeated in
-    #: the envelope. None otherwise.
+    #: the envelope. None otherwise. Never shown by ``repr()``.
     partial: Any = None
+
+    def __repr__(self) -> str:
+        partial = "None" if self.partial is None else "<not shown: store it, never log it>"
+        return f"Err(error={self.error!r}, ok=False, partial={partial})"
+
+
+def _shown(value: object, sensitive: Sequence[str]) -> str:
+    """``repr(value)`` with sensitive fields redacted: the listed paths and
+    members whose names look secret, also inside a model's JSON form."""
+    from ._util import redact_paths, redact_sensitive_keys
+
+    dump = getattr(value, "model_dump", None)
+    try:
+        plain: object = dump(mode="json", by_alias=True) if callable(dump) else value
+    except Exception:
+        return f"<{type(value).__name__}: not shown>"
+    redacted = redact_sensitive_keys(redact_paths(plain, sensitive))
+    if redacted == plain:
+        return repr(value)
+    return f"{type(value).__name__}({redacted!r})" if plain is not value else repr(redacted)
 
 
 type Result[T] = Ok[T] | Err

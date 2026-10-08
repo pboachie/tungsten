@@ -17,6 +17,7 @@ from __future__ import annotations
 import math
 import random
 import re
+import threading
 import time
 import uuid
 from collections.abc import Callable, Mapping, Sequence
@@ -291,6 +292,9 @@ class Engine:
         #: Confirmation tokens already used to send, with the replay
         #: protection of their first use, until they expire.
         self._used_tokens: dict[str, tuple[str | None, float]] = {}
+        #: Guards the spend of a token: a sync client shared by threads must
+        #: not let two calls both see a token unused.
+        self._tokens_lock = threading.Lock()
         store: object = self.options.idempotency_store
         get, put = _hook(store, "get"), _hook(store, "put")
         self.store: object = store if callable(get) and callable(put) else MemoryIdempotencyStore()
@@ -665,34 +669,38 @@ class Engine:
         is accepted only as a retry under the same protection. A call without
         protection can use a token once."""
         now = self.now()
-        for used, (_, expiry) in list(self._used_tokens.items()):
-            if expiry <= now:
-                del self._used_tokens[used]
-        previous = self._used_tokens.get(token)
-        if previous is not None:
-            previous_bind = previous[0]
-            if previous_bind is not None and previous_bind == bind:
-                return None
-            if previous_bind is None:
-                why = "This call has no idempotency key, so a repeat can apply the effect twice"
-            else:
-                other = "an idempotency key" if bind is None else "another idempotency key"
-                why = f"It was used with {other}; only a retry with that same key may reuse it"
-            return _fail(
-                diagnostic(
-                    subject_id,
-                    "CONFIRMATION_REQUIRED",
-                    failed_parameter="confirm",
-                    expected="a confirmation_token from preview()",
-                    remediation=(
-                        f"This confirmation token was already used for one {subject_id} call. {why}. Check whether "
-                        f"that call took effect; to send again, call {preview_call} and confirm with its new token."
-                    ),
+        with self._tokens_lock:
+            for used, (_, expiry) in list(self._used_tokens.items()):
+                if expiry <= now:
+                    self._used_tokens.pop(used, None)
+            previous = self._used_tokens.get(token)
+            if previous is None:
+                expiry = token_expiry(token)
+                self._used_tokens[token] = (
+                    bind,
+                    float(expiry) if expiry is not None else now + CONFIRMATION_TTL_MS,
                 )
+                return None
+        previous_bind = previous[0]
+        if previous_bind is not None and previous_bind == bind:
+            return None
+        if previous_bind is None:
+            why = "This call has no idempotency key, so a repeat can apply the effect twice"
+        else:
+            other = "an idempotency key" if bind is None else "another idempotency key"
+            why = f"It was used with {other}; only a retry with that same key may reuse it"
+        return _fail(
+            diagnostic(
+                subject_id,
+                "CONFIRMATION_REQUIRED",
+                failed_parameter="confirm",
+                expected="a confirmation_token from preview()",
+                remediation=(
+                    f"This confirmation token was already used for one {subject_id} call. {why}. Check whether "
+                    f"that call took effect; to send again, call {preview_call} and confirm with its new token."
+                ),
             )
-        expiry = token_expiry(token)
-        self._used_tokens[token] = (bind, float(expiry) if expiry is not None else now + CONFIRMATION_TTL_MS)
-        return None
+        )
 
     # ---------------------------------------------------------- building
 
@@ -1611,7 +1619,10 @@ class Engine:
                 return Answer(_fail(scrubbed, partial), decoded.value)
             yield from self._emit(scrubbed)
         meta = ResponseMeta(status=status, headers=dict(headers), request_id=request_id, attempts=attempts)
-        return Answer(Ok(value=None if value is UNSET else value, meta=meta), decoded.value)
+        return Answer(
+            Ok(value=None if value is UNSET else value, meta=meta, sensitive_fields=tuple(sensitive)),
+            decoded.value,
+        )
 
     # ----------------------------------------------------------- preview
 
@@ -2132,6 +2143,26 @@ class Engine:
             policy == "caller_owned" or has_key_param(op)
         )
 
+    def _macro_bind(self, ops: list[OperationDescriptor], opts: Mapping[str, object]) -> str | None:
+        """The replay protection a macro's confirmation token is bound to:
+        the run's idempotency key when a step sends it and every mutating
+        step is protected against a rerun; otherwise none, so the token is
+        used once (a key no step sends protects nothing)."""
+        run_key = _opt(opts, "idempotency_key")
+        if not isinstance(run_key, str):
+            return None
+        sent = False
+        for op in ops:
+            uses_key = policy_of(op) in ("caller_owned", "auto")
+            step_opts = dict(opts)
+            if not uses_key or sent:
+                step_opts.pop("idempotency_key", None)
+            else:
+                sent = True
+            if is_mutation(op) and not self._rerun_protected(op, step_opts):
+                return None
+        return run_key if sent else None
+
     def _run_macro(
         self, macro: MacroDescriptor, input: object, opts: Mapping[str, object]
     ) -> Flow[Ok[Any] | Err]:
@@ -2159,16 +2190,14 @@ class Engine:
         # corrected run.
         confirm = _opt(opts, "confirm")
         token = confirm if isinstance(confirm, str) else None
-        run_key = _opt(opts, "idempotency_key")
+        bind = self._macro_bind([op for _, op in steps], opts)
         claimed = [False]
 
         def claim() -> Err | None:
             if claimed[0] or token is None:
                 return None
             claimed[0] = True
-            return self._claim_token(
-                name, token, run_key if isinstance(run_key, str) else None, "the macro's preview(...)"
-            )
+            return self._claim_token(name, token, bind, "the macro's preview(...)")
 
         control = StepControl(claim)
         scope: dict[str, object] = {"input": effective}

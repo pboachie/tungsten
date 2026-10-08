@@ -69,12 +69,18 @@ class DecodedBody:
 _JSON_START = re.compile(r"\s*[\[{]")
 
 
+def _text(data: bytes) -> str:
+    """UTF-8 text as ``TextDecoder`` reads it: one leading byte order mark
+    dropped, invalid sequences replaced."""
+    return data.decode("utf-8-sig", "replace")
+
+
 def decode_body(data: bytes, headers: Mapping[str, str], declared: str | None) -> DecodedBody:
     if len(data) == 0:
         return DecodedBody(UNSET, False, False, True)
     media = media_type_of(headers) or (declared or "").lower()
     if is_json_media(media):
-        raw = data.decode("utf-8", "replace")
+        raw = _text(data)
         try:
             return DecodedBody(parse_json(raw), True, False, False)
         except ValueError:
@@ -86,7 +92,7 @@ def decode_body(data: bytes, headers: Mapping[str, str], declared: str | None) -
         or media.endswith("+xml")
         or media == "application/xml"
     ):
-        raw = data.decode("utf-8", "replace")
+        raw = _text(data)
         if media == "" and _JSON_START.match(raw) is not None:
             try:
                 return DecodedBody(parse_json(raw), True, False, False)

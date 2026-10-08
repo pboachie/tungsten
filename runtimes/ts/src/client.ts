@@ -1835,6 +1835,23 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     return typeof opts.idempotencyKey === "string" && (policy === "caller_owned" || op.params.some((p) => p.role === "idempotency_key"));
   }
 
+  /** The replay protection a macro's confirmation token is bound to: the
+   * run's idempotency key when a step sends it and every mutating step is
+   * protected against a rerun; otherwise none, so the token is used once
+   * (a key no step sends protects nothing). */
+  #macroBind(ops: OperationDescriptor[], opts: CallOptions): string | null {
+    if (typeof opts.idempotencyKey !== "string") return null;
+    let sent = false;
+    for (const op of ops) {
+      const usesKey = op.agent?.idempotency?.policy === "caller_owned" || op.agent?.idempotency?.policy === "auto";
+      const stepOpts: CallOptions = { ...opts };
+      if (!usesKey || sent) delete stepOpts.idempotencyKey;
+      else sent = true;
+      if (isMutation(op) && !this.#rerunProtected(op, stepOpts)) return null;
+    }
+    return sent ? opts.idempotencyKey : null;
+  }
+
   async #runMacro<T>(macro: MacroDescriptor, input: Record<string, unknown>, opts: CallOptions): Promise<Result<T>> {
     const name = safeName(macro, "name", "<unknown macro>");
     const plan = this.#macroPlan(macro, name);
@@ -1848,11 +1865,15 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     // token is): a step failing pre-flight, before anything was sent,
     // leaves it valid for the corrected run.
     const token = typeof opts.confirm === "string" ? opts.confirm : null;
+    const bind = this.#macroBind(
+      steps.map(({ op }) => op),
+      opts,
+    );
     let claimed = false;
     const claim = (): Failure | null => {
       if (claimed || token === null) return null;
       claimed = true;
-      return this.#claimToken(name, token, typeof opts.idempotencyKey === "string" ? opts.idempotencyKey : null, "the macro's preview(...)");
+      return this.#claimToken(name, token, bind, "the macro's preview(...)");
     };
     const scope: Record<string, unknown> = { input: effective.value };
     const completed: string[] = [];

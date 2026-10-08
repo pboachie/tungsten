@@ -25,6 +25,7 @@ from .types import (
     ApiDescriptor,
     CallOptions,
     ClientOptions,
+    Diagnostic,
     Err,
     MacroDescriptor,
     Ok,
@@ -154,13 +155,26 @@ class ClientCore:
 
 
 class AsyncClientCore:
-    """Asynchronous runtime core with the same semantics as ``ClientCore``."""
+    """Asynchronous runtime core with the same semantics as ``ClientCore``.
+
+    Bound a call with ``timeout_ms`` (the result is an envelope). When the
+    task running a call is cancelled instead (``asyncio.timeout``,
+    ``wait_for``) while a request is in flight, the request may have reached
+    the server: the cancellation propagates and the call's envelope
+    (``OUTCOME_UNKNOWN`` for a mutation, with how to check it) goes to
+    ``ClientOptions.on_diagnostic``. A confirmation token it carried is spent."""
 
     def __init__(self, api: ApiDescriptor, options: ClientOptions | None = None) -> None:
         self.api = api
         self.options = options if options is not None else ClientOptions()
         self._engine = Engine(api, self.options)
-        self._driver = AsyncDriver(async_http(getattr(self.options, "transport", None)))
+        self._driver = AsyncDriver(async_http(getattr(self.options, "transport", None)), self._cancelled)
+
+    def _cancelled(self, error: object) -> object:
+        """A call was cancelled with a request in flight: its envelope goes to
+        ``on_diagnostic``, since the caller gets no result."""
+        observer = self.options.on_diagnostic
+        return observer(cast(Diagnostic, error)) if callable(observer) else None
 
     def register(self, *operations: OperationDescriptor) -> None:
         """Make operations resolvable by id."""
