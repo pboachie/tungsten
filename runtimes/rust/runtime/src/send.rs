@@ -201,7 +201,7 @@ impl ClientCore {
             for m in &self.inner.middleware {
                 m.on_retry(&ctx, &diagnostic);
             }
-            tokio::time::sleep(Duration::from_secs_f64(delay_ms.max(0.0) / 1000.0)).await;
+            tokio::time::sleep(crate::util::duration_from_ms(delay_ms)).await;
         }
     }
 
@@ -413,7 +413,7 @@ impl ClientCore {
             && let (Some(validator), Some(value)) = (&op.response, decoded.value.as_ref())
         {
             if let crate::types::Validation::Invalid(issues) =
-                crate::validate::run(validator.as_ref(), value)
+                crate::validate::judge(validator.as_ref(), value)
             {
                 let issue = issues.first();
                 let path: Vec<String> = issue

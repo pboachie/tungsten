@@ -61,7 +61,7 @@ pub(crate) struct PollSpec<'a> {
 }
 
 fn millis(ms: f64) -> Duration {
-    Duration::from_secs_f64(ms.max(0.0) / 1000.0)
+    crate::util::duration_from_ms(ms)
 }
 
 impl ClientCore {
@@ -84,7 +84,7 @@ impl ClientCore {
         loop {
             let response = self.call_with(op, args, &once, None, step).await?;
             let done = evaluate_predicate(until, response.value.as_ref());
-            let out_of_time = !done && started.elapsed() + interval > budget;
+            let out_of_time = !done && started.elapsed().saturating_add(interval) > budget;
             if done || out_of_time {
                 return Ok(Response {
                     value: Polled {

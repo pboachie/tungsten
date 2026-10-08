@@ -29,8 +29,8 @@ use crate::types::{
     Safety, Validation,
 };
 use crate::util::{
-    MAX_ARG_DEPTH, REDACTED, SecretSet, canonical_json, envelope_value, get_path, json_depth,
-    looks_sensitive, redact_paths, redact_sensitive_keys, sha256_hex, split_path, uuid_v4,
+    MAX_ARG_DEPTH, REDACTED, SecretSet, canonical_json, envelope_value, get_path, looks_sensitive,
+    nests_deeper_than, redact_paths, redact_sensitive_keys, sha256_hex, split_path, uuid_v4,
 };
 
 /// A fallible step of the pipeline: the failure is the call's result.
@@ -50,7 +50,6 @@ pub(crate) enum Purpose {
 /// A macro run's one-time spend of its confirmation token: the first step
 /// whose request passed pre-flight and is about to be sent claims it, so a
 /// step that fails pre-flight leaves the token unspent.
-#[derive(Debug)]
 pub(crate) struct MacroClaim {
     pub name: String,
     pub token: Option<String>,
@@ -254,7 +253,15 @@ impl ClientCore {
         }
         if let Some(validator) = &op.request {
             let root = Value::Object(args.clone());
-            return match crate::validate::run(validator.as_ref(), &root) {
+            let Ok(outcome) = crate::validate::run(validator.as_ref(), &root) else {
+                return Err(fail(
+                    Diag::new(op.id.clone(), Category::UnexpectedResponse)
+                        .retryable(Retryable::Never)
+                        .remediation("The SDK failed while building or sending the request (the request validator panicked). This is a bug in the generated SDK or the runtime; report it. Nothing was sent.")
+                        .build(),
+                ));
+            };
+            return match outcome {
                 Validation::Valid(Value::Object(normalized)) => Ok(normalized),
                 Validation::Valid(_) => Ok(args.clone()),
                 Validation::Invalid(issues) => {
@@ -577,7 +584,7 @@ impl ClientCore {
                 ));
             }
         };
-        if json_depth(raw_args) > MAX_ARG_DEPTH {
+        if nests_deeper_than(raw_args, MAX_ARG_DEPTH) {
             return Err(self.validation(
                 op,
                 &[],

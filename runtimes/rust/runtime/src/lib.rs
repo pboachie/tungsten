@@ -36,7 +36,7 @@ pub use client::{ClientCore, ConfigError, Pages, Polled, TypedPages};
 pub use dispatch::{Dispatch, decode, decode_page};
 pub use idempotency::{FileIdempotencyStore, MemoryIdempotencyStore};
 pub use types::*;
-pub use value::{Binary, Patch};
+pub use value::{BINARY_KEY, Binary, Patch};
 
 /// Version of this runtime, sent as `X-Tungsten-Runtime: tungsten-rs/<version>`.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

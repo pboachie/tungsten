@@ -102,13 +102,32 @@ pub fn binary_of(value: &Value) -> Option<Binary> {
     }
 }
 
-/// Number of nested containers, counting `value` itself.
-pub fn json_depth(value: &Value) -> usize {
-    match value {
-        Value::Array(items) => 1 + items.iter().map(json_depth).max().unwrap_or(0),
-        Value::Object(map) => 1 + map.values().map(json_depth).max().unwrap_or(0),
-        _ => 0,
+/// Whether `value` nests more than `limit` containers. Stops looking at the
+/// limit, so the recursion is as deep as the limit and no deeper.
+pub fn nests_deeper_than(value: &Value, limit: usize) -> bool {
+    fn deeper(value: &Value, remaining: usize) -> bool {
+        match value {
+            Value::Array(items) => {
+                remaining == 0 || items.iter().any(|child| deeper(child, remaining - 1))
+            }
+            Value::Object(map) => {
+                remaining == 0 || map.values().any(|child| deeper(child, remaining - 1))
+            }
+            _ => false,
+        }
     }
+    deeper(value, limit)
+}
+
+/// A duration of `ms` milliseconds; negative and NaN values are zero and huge
+/// ones are capped (about 136 years), so no duration arithmetic can overflow.
+pub fn duration_from_ms(ms: f64) -> std::time::Duration {
+    let seconds = if ms.is_nan() {
+        0.0
+    } else {
+        (ms / 1000.0).clamp(0.0, f64::from(u32::MAX))
+    };
+    std::time::Duration::from_secs_f64(seconds)
 }
 
 /// Split a field path (`a.b`, `items[0].id`, `items.0.id`) into segments.

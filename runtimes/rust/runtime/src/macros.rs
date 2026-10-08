@@ -4,7 +4,6 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
-use std::time::Duration;
 
 use serde_json::{Map, Value};
 
@@ -22,7 +21,7 @@ use crate::types::{
     MacroStep, MacroStepKind, MacroStepPreview, OperationDescriptor, Outcome, ParamRole,
     PreviewResult, RenderedRequest, Response, ResponseMeta, Result, Retryable, Safety,
 };
-use crate::util::js_number;
+use crate::util::{MAX_ARG_DEPTH, duration_from_ms, js_number, nests_deeper_than};
 use crate::verify::PollSpec;
 
 const DEFAULT_POLL_INTERVAL_MS: f64 = 1000.0;
@@ -64,6 +63,20 @@ impl ClientCore {
         macro_: &MacroDescriptor,
         input: &Value,
     ) -> std::result::Result<Map<String, Value>, Error> {
+        if nests_deeper_than(input, MAX_ARG_DEPTH) {
+            return Err(fail(
+                Diag::new(macro_.name.clone(), Category::ValidationFailed)
+                    .failed_parameter("input")
+                    .expected(format!(
+                        "a JSON value nested at most {MAX_ARG_DEPTH} levels"
+                    ))
+                    .remediation(format!(
+                        "Pass the input of {} without such deep nesting.",
+                        macro_.name
+                    ))
+                    .build(),
+            ));
+        }
         let mut effective = match input {
             Value::Object(map) => map.clone(),
             Value::Null => Map::new(),
@@ -475,8 +488,8 @@ impl ClientCore {
                     };
                     let spec = PollSpec {
                         until: &until,
-                        interval: Duration::from_secs_f64(interval / 1000.0),
-                        budget: Duration::from_secs_f64(budget / 1000.0),
+                        interval: duration_from_ms(interval),
+                        budget: duration_from_ms(budget),
                     };
                     match self
                         .poll_with(op, &args, &spec, &step_opts, Some(&claim))

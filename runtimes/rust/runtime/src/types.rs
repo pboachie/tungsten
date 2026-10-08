@@ -127,10 +127,23 @@ impl std::error::Error for Diagnostic {}
 /// their `as` names). `partial` can hold values the API shows only once (a
 /// signing secret), so store them before acting on the error; they are never
 /// repeated in the envelope. Boxed members keep `Result<_, Error>` small.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct Error {
     pub diagnostic: Box<Diagnostic>,
     pub partial: Option<Box<Value>>,
+}
+
+impl fmt::Debug for Error {
+    /// The envelope; `partial` is never printed (it can hold a secret).
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Error")
+            .field("diagnostic", &self.diagnostic)
+            .field(
+                "partial",
+                &self.partial.as_ref().map(|_| "<kept, not shown>"),
+            )
+            .finish()
+    }
 }
 
 impl Error {
@@ -750,7 +763,10 @@ pub struct ClientOptions {
     /// Operations the core can resolve by id: verification hooks, endpoint
     /// previews and macro steps.
     pub operations: Vec<Arc<OperationDescriptor>>,
-    /// Use this HTTP client (proxies, TLS roots); default: a new one.
+    /// Use this HTTP client (proxies, TLS roots); default: a new one. It must
+    /// not follow redirects (`reqwest::redirect::Policy::none()`): the runtime
+    /// follows same-origin redirects of reads itself and never on mutations,
+    /// and a client that follows them would forward credentials.
     pub http_client: Option<reqwest::Client>,
     /// Clock in epoch milliseconds (token expiry, Retry-After dates).
     pub now: Option<Arc<dyn Fn() -> u64 + Send + Sync>>,
@@ -791,7 +807,7 @@ impl fmt::Debug for ClientOptions {
 }
 
 /// How a destructive or irreversible operation is confirmed.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum Confirm {
     /// A token from `preview()`, bound to the operation and the exact arguments.
     Token(String),
@@ -799,7 +815,16 @@ pub enum Confirm {
     Yes,
 }
 
-#[derive(Debug, Clone)]
+impl fmt::Debug for Confirm {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Confirm::Token(_) => f.write_str("Confirm::Token(<redacted>)"),
+            Confirm::Yes => f.write_str("Confirm::Yes"),
+        }
+    }
+}
+
+#[derive(Clone)]
 pub struct CallOptions {
     /// Required for `caller_owned` operations with `persist_required`.
     pub idempotency_key: Option<String>,
@@ -816,6 +841,23 @@ pub struct CallOptions {
     /// Run the operation's verification hook after success.
     pub verify: bool,
     pub headers: BTreeMap<String, String>,
+}
+
+impl fmt::Debug for CallOptions {
+    /// Keys and tokens are never printed; headers show their names only.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CallOptions")
+            .field(
+                "idempotency_key",
+                &self.idempotency_key.as_ref().map(|_| "<redacted>"),
+            )
+            .field("confirm", &self.confirm)
+            .field("allow_confirm_true", &self.allow_confirm_true)
+            .field("timeout", &self.timeout)
+            .field("verify", &self.verify)
+            .field("headers", &self.headers.keys().collect::<Vec<_>>())
+            .finish()
+    }
 }
 
 impl Default for CallOptions {

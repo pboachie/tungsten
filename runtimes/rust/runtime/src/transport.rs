@@ -148,7 +148,10 @@ fn multipart_form(parts: &[MultipartPart]) -> reqwest::multipart::Form {
 
 /// Send once. Never fails: every outcome is an [`AttemptOutcome`].
 pub async fn attempt(client: &reqwest::Client, req: &AttemptRequest<'_>) -> AttemptOutcome {
-    let deadline = Instant::now() + req.timeout;
+    let now = Instant::now();
+    let deadline = now
+        .checked_add(req.timeout)
+        .unwrap_or_else(|| now + Duration::from_secs(86_400 * 365));
     let Ok(method) = reqwest::Method::from_bytes(req.method.as_str().as_bytes()) else {
         return AttemptOutcome::NotSent("INVALID_METHOD".to_owned());
     };
@@ -271,7 +274,11 @@ fn parse_iso_date(text: &str) -> Option<i64> {
     let year: i64 = fields.next()?.parse().ok()?;
     let month: i64 = fields.next()?.parse().ok()?;
     let day: i64 = fields.next()?.parse().ok()?;
-    if fields.next().is_some() || !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+    if fields.next().is_some()
+        || !(1..=12).contains(&month)
+        || !(1..=31).contains(&day)
+        || !(0..=9999).contains(&year)
+    {
         return None;
     }
     let mut clock = 0;
@@ -328,7 +335,7 @@ pub fn parse_http_date(text: &str) -> Option<i64> {
         }
     }
     let (day, month, year) = (day?, month?, year?);
-    if !(1..=31).contains(&day) {
+    if !(1..=31).contains(&day) || !(0..=9999).contains(&year) {
         return None;
     }
     Some(days_from_civil(year, month, day) * 86_400_000 + clock.unwrap_or(0) - zone)

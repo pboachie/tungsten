@@ -19,7 +19,6 @@ use crate::types::{
 use crate::util::{SecretSet, canonical_json, get_path_str};
 
 /// Where a page iteration stands.
-#[derive(Debug)]
 pub(crate) struct PageState {
     pub args: Value,
     pub override_url: Option<String>,
@@ -43,12 +42,21 @@ impl PageState {
 
 /// An asynchronous page iterator: call [`Pages::next`] until it returns
 /// `None`. After an error item it returns `None`.
-#[derive(Debug)]
 pub struct Pages {
     core: ClientCore,
     pub(crate) op: Arc<OperationDescriptor>,
     opts: CallOptions,
     state: PageState,
+}
+
+impl std::fmt::Debug for Pages {
+    /// The operation only: arguments and options can hold secrets.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Pages")
+            .field("operation", &self.op.id)
+            .field("done", &self.state.done)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Pages {
@@ -283,7 +291,8 @@ impl ClientCore {
             return None;
         }
         for (index, item) in items.iter().enumerate() {
-            let Validation::Invalid(issues) = crate::validate::run(validator.as_ref(), item) else {
+            let Validation::Invalid(issues) = crate::validate::judge(validator.as_ref(), item)
+            else {
                 continue;
             };
             let issue = issues.first();
