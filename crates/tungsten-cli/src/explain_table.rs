@@ -453,6 +453,16 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
          reference names `$input` or an earlier step's `as`.",
     ),
     e(
+        "TG0724",
+        "Two or more operations or macros give the same MCP tool name once their namespace, \
+         resource path and method are reduced to `[a-z0-9_]` (`/a-b/c` and `/a/b-c` both \
+         become `..._a_b_c_get`). Numbering them in IR order would hand a name to another \
+         operation when one of them is added or removed, so each is named with the first \
+         eight hex digits of the digest of its operation id or macro name instead \
+         (`..._a_b_c_get_1f3e9a0c`): stable, but not descriptive.",
+        "Give the operations distinct method names with `naming.operations` in tungsten.yml.",
+    ),
+    e(
         "TG0901",
         "A target's output directory differs from what `tungsten generate` would write now: \
          a generated file is missing or has other content, a file of the previous \

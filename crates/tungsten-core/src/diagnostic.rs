@@ -294,6 +294,10 @@ pub mod codes {
             "TG0723",
             "macro not exposed as an MCP tool (not emitted by the TypeScript SDK)",
         ),
+        (
+            "TG0724",
+            "MCP tool names collide; each is named with a digest of its operation",
+        ),
         ("TG0901", "generated output is stale relative to its inputs"),
         (
             "TG0902",

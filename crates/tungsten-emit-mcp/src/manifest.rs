@@ -41,7 +41,7 @@ use tungsten_ir::{
 use tungsten_tokens::{Counter, count};
 
 use crate::index::{self, SearchIndex};
-use crate::names::{ToolNames, macro_base};
+use crate::names::{self, macro_base};
 
 /// The counter every token figure of the manifest uses.
 pub const COUNTER: Counter = Counter::Estimate;
@@ -140,20 +140,55 @@ pub struct InstructionsByMode {
 pub fn build(ir: &Ir) -> (McpManifest, Diagnostics) {
     let mut diags = Diagnostics::new();
     let budget = ir.agent.disclosure.description_budget_tokens as usize;
-    let mut names = ToolNames::default();
     let mut tools = vec![];
     let mut docs: Vec<Vec<String>> = vec![];
-    for (ns, resources, op) in callable(ir) {
-        let mut words = vec![ns];
-        words.extend(resources.iter().cloned());
-        words.push(op.name.snake());
-        let base = words.join("_");
-        let name = names.assign(&base);
-        let (tool, terms) = operation_tool(ir, op, &base, name, &resources, budget);
+    let ops = callable(ir);
+    let skipped = macros_without_sdk(ir);
+    let macros: Vec<&Macro> = ir
+        .agent
+        .macros
+        .iter()
+        .filter(|m| !skipped.contains(&m.name.0))
+        .collect();
+    let op_bases: Vec<String> = ops
+        .iter()
+        .map(|(ns, resources, op)| {
+            let mut words = vec![ns.clone()];
+            words.extend(resources.iter().cloned());
+            words.push(op.name.snake());
+            words.join("_")
+        })
+        .collect();
+    let entries: Vec<(String, String)> = op_bases
+        .iter()
+        .zip(&ops)
+        .map(|(base, (_, _, op))| (base.clone(), op.id.0.clone()))
+        .chain(
+            macros
+                .iter()
+                .map(|m| (macro_base(&m.name.0), m.name.0.clone())),
+        )
+        .collect();
+    let (names, collisions) = names::assign(&entries);
+    for (shared, keys) in &collisions {
+        diags.push(
+            Diagnostic::warning(
+                "TG0724",
+                format!(
+                    "{} would all be the MCP tool `{shared}`; each is named with a digest of its id instead",
+                    keys.iter().map(|k| format!("`{k}`")).collect::<Vec<_>>().join(", ")
+                ),
+            )
+            .with_help("Give them distinct method names with `naming.operations` in tungsten.yml, so their tool names say what they do."),
+        );
+    }
+    let mut names = names.into_iter();
+    for (base, (_, resources, op)) in op_bases.iter().zip(&ops) {
+        let name = names.next().unwrap_or_default();
+        let (tool, terms) = operation_tool(ir, op, base, name, resources, budget);
         tools.push(tool);
         docs.push(terms);
     }
-    let skipped = macros_without_sdk(ir);
     for mac in &ir.agent.macros {
         if skipped.contains(&mac.name.0) {
             diags.push(
@@ -169,7 +204,7 @@ pub fn build(ir: &Ir) -> (McpManifest, Diagnostics) {
             continue;
         }
         let base = macro_base(&mac.name.0);
-        let name = names.assign(&base);
+        let name = names.next().unwrap_or_default();
         let (tool, terms) = macro_tool(ir, mac, &base, name, budget);
         tools.push(tool);
         docs.push(terms);

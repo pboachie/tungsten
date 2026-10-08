@@ -18,9 +18,9 @@
 //!
 //! [`McpEmitter::supports`] reports the budgets (TG0721 per tool over
 //! `schema_budget_tokens`, TG0722 for a progressive listing over 2,000
-//! tokens) and macros the SDK does not emit (TG0723); `emit` reports only
-//! invalid target options (TG0720) and file errors, so a caller running
-//! both sees each problem once. Output is deterministic: tools in IR order,
+//! tokens), macros the SDK does not emit (TG0723) and tools whose names
+//! collide (TG0724); `emit` reports only invalid target options (TG0720)
+//! and file errors, so a caller running both sees each problem once. Output is deterministic: tools in IR order,
 //! sorted index terms, fixed float rounding, no timestamps or paths.
 
 mod budget;
@@ -31,6 +31,8 @@ mod manifest;
 mod names;
 mod options;
 mod package;
+
+use std::collections::BTreeMap;
 
 use tungsten_core::{Diagnostic, Diagnostics};
 use tungsten_emit::{Emitter, FileSet, TargetConfig};
@@ -69,6 +71,18 @@ impl Emitter for McpEmitter {
 
 fn schema_budget(ir: &Ir) -> usize {
     ir.agent.disclosure.schema_budget_tokens as usize
+}
+
+/// The tools the server of `ir` serves: tool name → operation id or macro
+/// name (recorded in the target's API surface snapshot, so `tungsten diff
+/// --semver` sees renamed, removed and reassigned tool names).
+pub fn tool_names(ir: &Ir) -> BTreeMap<String, String> {
+    let (manifest, _) = manifest::build(ir);
+    manifest
+        .tools
+        .into_iter()
+        .map(|t| (t.name, t.target))
+        .collect()
 }
 
 /// Every file of the server package: (path relative to the target
@@ -121,10 +135,14 @@ pub mod __testing {
         crate::budget::measure(&m, super::schema_budget(ir))
     }
 
-    /// Tool names assigned in order to `bases`.
-    pub fn assign_names(bases: &[&str]) -> Vec<String> {
-        let mut names = crate::names::ToolNames::default();
-        bases.iter().map(|b| names.assign(b)).collect()
+    /// Tool names assigned to `(base, key)` entries (key: operation id or
+    /// macro name), in order.
+    pub fn assign_names(entries: &[(&str, &str)]) -> Vec<String> {
+        let owned: Vec<(String, String)> = entries
+            .iter()
+            .map(|(b, k)| (b.to_string(), k.to_string()))
+            .collect();
+        crate::names::assign(&owned).0
     }
 
     /// The environment variable names of `ir`'s server: base URL, every

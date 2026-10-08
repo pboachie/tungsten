@@ -6,10 +6,13 @@
 //! A name is a pure function of the IR: characters outside `[a-z0-9_]` become
 //! `_`; a name over the limit keeps its start and ends with `_` and eight hex
 //! digits of the digest of the full name (so it is stable across
-//! regenerations); a name already taken gets the smallest free suffix `_2`,
-//! `_3`, ... in tool order.
+//! regenerations). Tools whose names would collide (`/a-b/c` and `/a/b-c`
+//! both give `..._a_b_c_get`) all end with `_` and eight hex digits of the
+//! digest of their operation id or macro name instead, so a name never
+//! passes to another operation when one of them is added or removed
+//! (TG0724 reports the collision).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use tungsten_core::Digest;
 
@@ -19,32 +22,70 @@ pub const MAX_TOOL_NAME: usize = 48;
 /// Hex digits of the digest suffix of a shortened name.
 const HASH_LEN: usize = 8;
 
-/// Assigns unique tool names.
-#[derive(Debug, Default)]
-pub(crate) struct ToolNames {
-    used: BTreeSet<String>,
-}
+/// Tool names that collide: the shared name and the keys that share it.
+pub(crate) type Collision = (String, Vec<String>);
 
-impl ToolNames {
-    /// The name for `base` (snake_case words joined by `_`).
-    pub fn assign(&mut self, base: &str) -> String {
-        let base = shorten(&sanitize(base), MAX_TOOL_NAME);
-        let name = if self.used.contains(&base) {
+/// Unique names for `(base, key)` entries, in entry order (`base` is
+/// snake_case words joined by `_`, `key` the operation id or macro name).
+/// A name only one entry has is kept; entries sharing a name are each named
+/// with the digest of their key. Also returns the collisions.
+pub(crate) fn assign(entries: &[(String, String)]) -> (Vec<String>, Vec<Collision>) {
+    let plain: Vec<String> = entries
+        .iter()
+        .map(|(base, _)| shorten(&sanitize(base), MAX_TOOL_NAME))
+        .collect();
+    let mut sharing: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for (name, (_, key)) in plain.iter().zip(entries) {
+        sharing.entry(name.as_str()).or_default().push(key.as_str());
+    }
+    let mut used: BTreeSet<String> = plain
+        .iter()
+        .filter(|n| sharing[n.as_str()].len() == 1)
+        .cloned()
+        .collect();
+    let mut names = Vec::with_capacity(entries.len());
+    for (name, (_, key)) in plain.iter().zip(entries) {
+        if sharing[name.as_str()].len() == 1 {
+            names.push(name.clone());
+            continue;
+        }
+        let hash: String = Digest::of(key.as_bytes())
+            .short()
+            .chars()
+            .take(HASH_LEN)
+            .collect();
+        let mut stem = name.clone();
+        stem.truncate(MAX_TOOL_NAME - HASH_LEN - 1);
+        let keyed = format!("{}_{hash}", stem.trim_end_matches('_'));
+        // Only a digest collision or a literal name equal to a keyed one
+        // can still clash.
+        let unique = if used.contains(&keyed) {
             (2..)
                 .map(|n| {
                     let suffix = format!("_{n}");
-                    let mut stem = base.clone();
-                    stem.truncate(MAX_TOOL_NAME.saturating_sub(suffix.len()));
-                    format!("{}{suffix}", stem.trim_end_matches('_'))
+                    let mut s = keyed.clone();
+                    s.truncate(MAX_TOOL_NAME.saturating_sub(suffix.len()));
+                    format!("{}{suffix}", s.trim_end_matches('_'))
                 })
-                .find(|candidate| !self.used.contains(candidate))
-                .unwrap_or(base)
+                .find(|c| !used.contains(c))
+                .unwrap_or(keyed)
         } else {
-            base
+            keyed
         };
-        self.used.insert(name.clone());
-        name
+        used.insert(unique.clone());
+        names.push(unique);
     }
+    let collisions = sharing
+        .into_iter()
+        .filter(|(_, keys)| keys.len() > 1)
+        .map(|(name, keys)| {
+            (
+                name.to_string(),
+                keys.into_iter().map(str::to_string).collect(),
+            )
+        })
+        .collect();
+    (names, collisions)
 }
 
 /// `name` restricted to `[a-z0-9_]`: other characters become `_`, runs of
