@@ -3,11 +3,15 @@
 //! versioning of its changes (`tungsten diff --semver`).
 //!
 //! [`ApiSurface::of`] reduces the IR to what callers of a generated SDK
-//! depend on: every callable operation with its arguments (the shared
-//! [`crate::args`] layout: names, presence, types), whether it needs a
-//! caller-owned idempotency key, its safety tier, its success response
-//! shape; every named type; every macro's signature. Documentation is kept
-//! only as digests, so a docs-only change is visible without storing text.
+//! depend on: every callable operation with its accessor (namespace,
+//! resource path and method name, which every SDK names it by), its
+//! arguments (the shared [`crate::args`] layout: names, presence, types),
+//! whether it needs a caller-owned idempotency key, its safety tier, its
+//! success response shape; every named type (union discriminators and
+//! variant tags included); every macro's signature. A target that serves
+//! agent tools adds their names ([`ApiSurface::with_tools`]). Documentation
+//! is kept only as digests, so a docs-only change is visible without
+//! storing text.
 //! [`write_output`](crate::write_output) stores it next to the output
 //! manifest when [`WriteOptions::ir`](crate::WriteOptions::ir) is set.
 //!
@@ -16,22 +20,27 @@
 //! may widen but not narrow, a response type may narrow but not widen.
 //!
 //! Major (callers can break):
-//! - an operation, macro or named type is removed;
+//! - an operation, macro or named type is removed; an operation's accessor
+//!   changes (a method renamed or moved to another resource); an agent tool
+//!   name disappears or names another operation;
 //! - a required argument is added (also a newly required caller-owned
 //!   idempotency key), an optional argument becomes required, an argument
 //!   is removed, the arguments object stops accepting extra keys;
-//! - a request type narrows (a format, a tighter bound, `number` →
-//!   `integer`, nullability or a union variant removed, any → a type) or
-//!   changes incompatibly (`string` → `integer`); an enum value is removed
+//! - a request type narrows (a format, a tighter or exclusive bound, a
+//!   `multipleOf` that the old one does not divide, `uniqueItems`, `number`
+//!   → `integer`, nullability, a union variant or a discriminator tag
+//!   removed, any → a type) or changes incompatibly (`string` →
+//!   `integer`, another discriminator property); an enum value is removed
 //!   from a request; a required field is added to a request object;
 //! - a response field is removed or becomes optional or nullable, a
-//!   response type widens (a union variant added, any) or changes
+//!   response type widens (a union variant or tag added, any) or changes
 //!   incompatibly, a response body disappears;
 //! - an operation starts to need confirmation (its tier becomes
-//!   `destructive` or `irreversible`);
+//!   `destructive` or `irreversible`), or becomes `read_only` (its preview
+//!   and its literal `safety` go away);
 //! - a macro's input or output changes.
 //!
-//! Minor (additive): an operation, macro or named type is added; an
+//! Minor (additive): an operation, macro, named type or tool is added; an
 //! optional argument or request field is added; a requirement is relaxed;
 //! a request type widens; a response type narrows; an enum value is added
 //! (in a request or a response: clients must tolerate unknown values); a
@@ -50,7 +59,7 @@ use serde_json::Value;
 use tungsten_core::Digest;
 use tungsten_ir::{
     Additional, BodyEncoding, Constraints, IdempotencyKind, Ir, Operation, OperationStatus,
-    Presence, Primitive, ResponseKind, Safety, Shape, StringFormat, TypeRef,
+    Presence, Primitive, Resource, ResponseKind, Safety, Shape, StringFormat, TypeRef,
 };
 
 use crate::args::{BodyArg, args_layout};
@@ -59,7 +68,7 @@ use crate::args::{BodyArg, args_layout};
 pub const SURFACE_PATH: &str = ".tungsten/surface.json";
 
 /// Version of the [`ApiSurface`] format.
-pub const SURFACE_FORMAT: u32 = 1;
+pub const SURFACE_FORMAT: u32 = 2;
 
 /// What callers of the generated code depend on. Maps are sorted by key.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -76,11 +85,18 @@ pub struct ApiSurface {
     pub macros: BTreeMap<String, MacroSurface>,
     /// Named types by IR id.
     pub types: BTreeMap<String, TypeSurface>,
+    /// Agent tool names (MCP) and the operation id or macro name each one
+    /// calls, for targets that serve tools; empty otherwise.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub tools: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OperationSurface {
+    /// How SDKs reach the operation: namespace, resource path and method
+    /// name (`pets.items.list`), as snake_case identifiers.
+    pub accessor: String,
     pub method: String,
     pub path: String,
     /// Callable only when a runtime gate is on.
@@ -181,6 +197,8 @@ pub enum Ty {
         min: Option<u64>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         max: Option<u64>,
+        #[serde(default, skip_serializing_if = "is_false")]
+        unique: bool,
     },
     Map {
         values: Box<Ty>,
@@ -192,6 +210,12 @@ pub enum Ty {
     },
     Union {
         variants: Vec<Ty>,
+        /// The discriminator property of a tagged union.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        discriminator: Option<String>,
+        /// The tag of each variant (same order), when any is tagged.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        tags: Vec<Option<String>>,
     },
     Intersection {
         members: Vec<Ty>,
@@ -241,6 +265,12 @@ pub struct Bounds {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub maximum: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exclusive_minimum: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exclusive_maximum: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub multiple_of: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pattern: Option<String>,
 }
 
@@ -254,9 +284,33 @@ impl Bounds {
         Bounds {
             min_length: c.min_length,
             max_length: c.max_length,
-            minimum: num(&c.minimum).or(num(&c.exclusive_minimum)),
-            maximum: num(&c.maximum).or(num(&c.exclusive_maximum)),
+            minimum: num(&c.minimum),
+            maximum: num(&c.maximum),
+            exclusive_minimum: num(&c.exclusive_minimum),
+            exclusive_maximum: num(&c.exclusive_maximum),
+            multiple_of: num(&c.multiple_of),
             pattern: c.pattern.clone(),
+        }
+    }
+
+    /// The effective lower bound: its value and whether it is exclusive
+    /// (the tighter of `minimum` and `exclusiveMinimum`).
+    fn lower(&self) -> Option<(f64, bool)> {
+        match (self.minimum, self.exclusive_minimum) {
+            (Some(m), Some(e)) if e >= m => Some((e, true)),
+            (Some(m), _) => Some((m, false)),
+            (None, Some(e)) => Some((e, true)),
+            (None, None) => None,
+        }
+    }
+
+    /// The effective upper bound: its value and whether it is exclusive.
+    fn upper(&self) -> Option<(f64, bool)> {
+        match (self.maximum, self.exclusive_maximum) {
+            (Some(m), Some(e)) if e <= m => Some((e, true)),
+            (Some(m), _) => Some((m, false)),
+            (None, Some(e)) => Some((e, true)),
+            (None, None) => None,
         }
     }
 }
@@ -275,11 +329,15 @@ fn digest_of(value: &Value) -> String {
 impl ApiSurface {
     /// The surface of `ir`.
     pub fn of(ir: &Ir) -> ApiSurface {
+        let accessors = accessors(ir);
         let operations = ir
             .operations()
             .into_iter()
             .filter(|op| !matches!(op.status, OperationStatus::Planned { .. }))
-            .map(|op| (op.id.0.clone(), operation(ir, op)))
+            .map(|op| {
+                let accessor = accessors.get(op.id.0.as_str()).cloned().unwrap_or_default();
+                (op.id.0.clone(), operation(ir, op, accessor))
+            })
             .collect();
         let macros = ir
             .agent
@@ -332,7 +390,15 @@ impl ApiSurface {
             operations,
             macros,
             types,
+            tools: BTreeMap::new(),
         }
+    }
+
+    /// The surface with the agent tool names a target serves (tool name →
+    /// operation id or macro name).
+    pub fn with_tools(mut self, tools: BTreeMap<String, String>) -> ApiSurface {
+        self.tools = tools;
+        self
     }
 
     /// Compact JSON with a trailing newline.
@@ -369,7 +435,31 @@ impl ApiSurface {
     }
 }
 
-fn operation(ir: &Ir, op: &Operation) -> OperationSurface {
+/// `namespace.resource….method` of every operation, by IR id.
+fn accessors(ir: &Ir) -> BTreeMap<&str, String> {
+    fn walk<'a>(r: &'a Resource, path: &mut Vec<String>, out: &mut BTreeMap<&'a str, String>) {
+        path.push(r.name.snake());
+        for op in &r.operations {
+            out.insert(
+                op.id.0.as_str(),
+                format!("{}.{}", path.join("."), op.name.snake()),
+            );
+        }
+        for c in &r.children {
+            walk(c, path, out);
+        }
+        path.pop();
+    }
+    let mut out = BTreeMap::new();
+    for ns in &ir.namespaces {
+        for r in &ns.resources {
+            walk(r, &mut vec![ns.name.snake()], &mut out);
+        }
+    }
+    out
+}
+
+fn operation(ir: &Ir, op: &Operation, accessor: String) -> OperationSurface {
     let layout = args_layout(ir, op);
     let mut args = BTreeMap::new();
     for p in &layout.params {
@@ -427,6 +517,7 @@ fn operation(ir: &Ir, op: &Operation) -> OperationSurface {
         .map(|c| ty_of(&c.ty));
     let docs = serde_json::json!([op.doc, op.agent.compact_doc]);
     OperationSurface {
+        accessor,
         method: serde_json::to_value(op.method)
             .ok()
             .and_then(|v| v.as_str().map(str::to_string))
@@ -517,11 +608,15 @@ fn shape_ty(shape: &Shape) -> Ty {
             value: value.clone(),
         },
         Shape::Array {
-            items, min, max, ..
+            items,
+            min,
+            max,
+            unique,
         } => Ty::Array {
             items: Box::new(ty_of(items)),
             min: *min,
             max: *max,
+            unique: *unique,
         },
         Shape::Map { values } => Ty::Map {
             values: Box::new(ty_of(values)),
@@ -556,6 +651,12 @@ fn shape_ty(shape: &Shape) -> Ty {
         },
         Shape::Union(u) => Ty::Union {
             variants: u.variants.iter().map(|v| ty_of(&v.ty)).collect(),
+            discriminator: u.discriminator.as_ref().map(|d| d.property.clone()),
+            tags: if u.variants.iter().any(|v| v.tag.is_some()) {
+                u.variants.iter().map(|v| v.tag.clone()).collect()
+            } else {
+                Vec::new()
+            },
         },
         Shape::Intersection { members } => Ty::Intersection {
             members: members.iter().map(ty_of).collect(),
@@ -629,6 +730,7 @@ pub fn compare(old: &ApiSurface, new: &ApiSurface) -> Vec<SurfaceChange> {
     cx.operations();
     cx.macros();
     cx.types();
+    cx.tools();
     let mut changes: Vec<SurfaceChange> = cx.out.into_iter().collect();
     changes.sort_by(|a, b| {
         b.level
@@ -676,6 +778,10 @@ impl Cx<'_> {
         let detail = format!("{} → {}", safety_name(old), safety_name(new));
         if needs_confirmation(new) && !needs_confirmation(old) {
             self.push(Level::Major, "confirmation_required", subject, detail);
+        } else if new == Safety::ReadOnly {
+            // SDKs offer `preview()` and a literal `safety` only on
+            // non-read-only operations, and MCP previews only those tools.
+            self.push(Level::Major, "preview_removed", subject, detail);
         } else {
             self.push(Level::Minor, "safety_changed", subject, detail);
         }
@@ -688,6 +794,14 @@ impl Cx<'_> {
                 self.push(Level::Major, "operation_removed", id, "operation removed");
                 continue;
             };
+            if o.accessor != n.accessor {
+                self.push(
+                    Level::Major,
+                    "operation_renamed",
+                    id,
+                    format!("{} → {}", o.accessor, n.accessor),
+                );
+            }
             if (&o.method, &o.path) != (&n.method, &n.path) {
                 self.push(
                     Level::Patch,
@@ -862,6 +976,39 @@ impl Cx<'_> {
         }
     }
 
+    /// Agent tool names: a name that disappears or calls another operation
+    /// breaks every client and prompt that uses it.
+    fn tools(&mut self) {
+        let (old, new) = (self.old, self.new);
+        for (name, target) in &old.tools {
+            match new.tools.get(name) {
+                None => self.push(
+                    Level::Major,
+                    "tool_removed",
+                    name,
+                    format!("tool removed (it called {target})"),
+                ),
+                Some(now) if now != target => self.push(
+                    Level::Major,
+                    "tool_retargeted",
+                    name,
+                    format!("now calls {now} instead of {target}"),
+                ),
+                Some(_) => {}
+            }
+        }
+        for (name, target) in &new.tools {
+            if !old.tools.contains_key(name) {
+                self.push(
+                    Level::Minor,
+                    "tool_added",
+                    name,
+                    format!("tool added (calls {target})"),
+                );
+            }
+        }
+    }
+
     /// Named types: removal, addition, documentation, and their structure
     /// under every polarity they are used with (responses when unused).
     fn types(&mut self) {
@@ -1029,14 +1176,25 @@ impl Cx<'_> {
                     items: a,
                     min: mina,
                     max: maxa,
+                    unique: ua,
                 },
                 Ty::Array {
                     items: b,
                     min: minb,
                     max: maxb,
+                    unique: ub,
                 },
             ) => {
                 self.ty(&format!("{subject}[]"), a, b, polarity);
+                match (ua, ub) {
+                    (false, true) => {
+                        self.narrowed(subject, polarity, "items must be unique".into())
+                    }
+                    (true, false) => {
+                        self.widened(subject, polarity, "items need not be unique".into())
+                    }
+                    _ => {}
+                }
                 let ba = Bounds {
                     min_length: *mina,
                     max_length: *maxa,
@@ -1062,15 +1220,27 @@ impl Cx<'_> {
                     extra: eb,
                 },
             ) => self.object(subject, polarity, (fa, ea), (fb, eb)),
-            (Ty::Union { variants: a }, Ty::Union { variants: b }) => {
-                self.union(subject, polarity, a, b)
+            (
+                Ty::Union {
+                    variants: a,
+                    discriminator: da,
+                    tags: ta,
+                },
+                Ty::Union {
+                    variants: b,
+                    discriminator: db,
+                    tags: tb,
+                },
+            ) => {
+                self.union(subject, polarity, a, b);
+                self.tags(subject, polarity, (da, ta), (db, tb));
             }
-            (Ty::Union { variants }, other) if variants.contains(other) => self.narrowed(
+            (Ty::Union { variants, .. }, other) if variants.contains(other) => self.narrowed(
                 subject,
                 polarity,
                 format!("union → its variant {}", describe(other)),
             ),
-            (other, Ty::Union { variants }) if variants.contains(other) => self.widened(
+            (other, Ty::Union { variants, .. }) if variants.contains(other) => self.widened(
                 subject,
                 polarity,
                 format!("{} → a union including it", describe(other)),
@@ -1140,6 +1310,15 @@ impl Cx<'_> {
             (Some(x), Some(y)) if y > x => Some(false),
             _ => None,
         };
+        // An exclusive bound at the same value is the tighter one.
+        let lower_value = |x: Option<(f64, bool)>, y: Option<(f64, bool)>| match (x, y) {
+            (Some((x, ex)), Some((y, ey))) if x == y && ex != ey => Some(ey),
+            _ => lower(x.map(|b| b.0), y.map(|b| b.0)),
+        };
+        let upper_value = |x: Option<(f64, bool)>, y: Option<(f64, bool)>| match (x, y) {
+            (Some((x, ex)), Some((y, ey))) if x == y && ex != ey => Some(ey),
+            _ => upper(x.map(|b| b.0), y.map(|b| b.0)),
+        };
         let as_f = |n: Option<u64>| n.map(|n| n as f64);
         let checks = [
             (
@@ -1150,8 +1329,8 @@ impl Cx<'_> {
                 "maximum length",
                 upper(as_f(a.max_length), as_f(b.max_length)),
             ),
-            ("minimum", lower(a.minimum, b.minimum)),
-            ("maximum", upper(a.maximum, b.maximum)),
+            ("minimum", lower_value(a.lower(), b.lower())),
+            ("maximum", upper_value(a.upper(), b.upper())),
         ];
         for (what, verdict) in checks {
             match verdict {
@@ -1159,6 +1338,29 @@ impl Cx<'_> {
                 Some(false) => self.widened(subject, polarity, format!("{what} relaxed")),
                 None => {}
             }
+        }
+        // Values must be multiples of the step: a new step narrows unless it
+        // divides the old one.
+        let divides =
+            |step: f64, of: f64| step != 0.0 && ((of / step) - (of / step).round()).abs() < 1e-9;
+        match (a.multiple_of, b.multiple_of) {
+            (None, Some(m)) => self.narrowed(subject, polarity, format!("multipleOf {m} added")),
+            (Some(m), None) => self.widened(subject, polarity, format!("multipleOf {m} removed")),
+            (Some(x), Some(y)) if x != y => {
+                let detail = format!("multipleOf {x} → {y}");
+                if divides(y, x) {
+                    self.widened(subject, polarity, detail);
+                } else if divides(x, y) {
+                    self.narrowed(subject, polarity, detail);
+                } else {
+                    let rule = match polarity {
+                        Polarity::Request => "arg_type_changed",
+                        Polarity::Response => "response_type_changed",
+                    };
+                    self.push(Level::Major, rule, subject, detail);
+                }
+            }
+            _ => {}
         }
         match (&a.pattern, &b.pattern) {
             (None, Some(_)) => self.narrowed(subject, polarity, "pattern added".into()),
@@ -1209,6 +1411,38 @@ impl Cx<'_> {
         }
         if added > 0 {
             self.widened(subject, polarity, format!("{added} union variant(s) added"));
+        }
+    }
+
+    /// Discriminator tags of a tagged union: the property name is part of
+    /// every tagged value; a removed tag narrows, an added one widens.
+    fn tags(
+        &mut self,
+        subject: &str,
+        polarity: Polarity,
+        (da, ta): (&Option<String>, &[Option<String>]),
+        (db, tb): (&Option<String>, &[Option<String>]),
+    ) {
+        if da != db {
+            let show = |d: &Option<String>| d.clone().unwrap_or_else(|| "none".into());
+            let rule = match polarity {
+                Polarity::Request => "arg_type_changed",
+                Polarity::Response => "response_type_changed",
+            };
+            self.push(
+                Level::Major,
+                rule,
+                subject,
+                format!("discriminator {} → {}", show(da), show(db)),
+            );
+        }
+        let set = |t: &[Option<String>]| t.iter().flatten().cloned().collect::<BTreeSet<String>>();
+        let (old, new) = (set(ta), set(tb));
+        for tag in old.difference(&new) {
+            self.narrowed(subject, polarity, format!("tag {tag:?} removed"));
+        }
+        for tag in new.difference(&old) {
+            self.widened(subject, polarity, format!("tag {tag:?} added"));
         }
     }
 
@@ -1381,7 +1615,7 @@ fn polarities(surface: &ApiSurface) -> BTreeMap<&str, BTreeSet<Polarity>> {
                     walk(surface, t, polarity, out);
                 }
             }
-            Ty::Union { variants: list } | Ty::Intersection { members: list } => {
+            Ty::Union { variants: list, .. } | Ty::Intersection { members: list } => {
                 for t in list {
                     walk(surface, t, polarity, out);
                 }

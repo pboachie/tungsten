@@ -171,7 +171,7 @@ pub(crate) fn target_diff(
         DiffStatus::Changed
     };
     if opts.semver {
-        diff.semver = Some(semver(ir, out_dir, out));
+        diff.semver = Some(semver(name, ir, out_dir, out));
     }
     diff
 }
@@ -210,11 +210,11 @@ fn file_diff(path: &str, change: FileChange, old: &[u8], new: &[u8], patches: bo
 }
 
 /// The surface change since the snapshot in `out_dir`.
-fn semver(ir: &Ir, out_dir: &Path, out: &mut Vec<Diagnostic>) -> SemverReport {
+fn semver(target: &str, ir: &Ir, out_dir: &Path, out: &mut Vec<Diagnostic>) -> SemverReport {
     let shown = out_dir.join(surface::SURFACE_PATH).display().to_string();
     match ApiSurface::read(out_dir) {
         Ok(Some(previous)) => {
-            let changes = surface::compare(&previous, &ApiSurface::of(ir));
+            let changes = surface::compare(&previous, &crate::targets::surface(target, ir));
             SemverReport {
                 snapshot: SnapshotState::Present,
                 level: Some(level(surface::classify(&changes))),

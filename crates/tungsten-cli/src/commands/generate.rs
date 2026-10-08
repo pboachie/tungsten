@@ -181,6 +181,7 @@ pub(crate) fn run_targets(
                     force,
                     generator: Some(ir.generator.clone()),
                     ir: shared.clone(),
+                    tools: targets::tool_names(name, ir),
                 };
                 match write_output(&files, &cfg.out_dir, &opts) {
                     Ok(w) => {

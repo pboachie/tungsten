@@ -110,6 +110,9 @@ pub struct WriteOptions {
     /// The IR the files were generated from. When set, its API surface
     /// snapshot is written to `.tungsten/surface.json`.
     pub ir: Option<Arc<Ir>>,
+    /// The agent tool names the target serves (tool name → operation id or
+    /// macro name), recorded in the snapshot ([`ApiSurface::with_tools`]).
+    pub tools: BTreeMap<String, String>,
 }
 
 /// What [`write_output`] did, paths relative to the output directory, sorted.
@@ -404,7 +407,10 @@ pub fn write_output(
             .map_err(|e| fail(io_error(shown(out_dir, rel), "write", &e)))?;
     }
     let manifest = OutputManifest::new(files, opts.generator.as_ref()).to_bytes();
-    let surface = opts.ir.as_ref().map(|ir| ApiSurface::of(ir).to_bytes());
+    let surface = opts
+        .ir
+        .as_ref()
+        .map(|ir| ApiSurface::of(ir).with_tools(opts.tools.clone()).to_bytes());
     let bookkeeping = [(MANIFEST_PATH, Some(manifest)), (SURFACE_PATH, surface)];
     for (rel, bytes) in bookkeeping {
         let Some(bytes) = bytes else { continue };
