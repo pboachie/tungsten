@@ -105,8 +105,8 @@ pub mod __testing {
     };
     pub use crate::index::{B, K1, STOP_WORDS, SearchIndex, build as build_index, tokenize};
     pub use crate::manifest::{
-        COUNTER_NAME, ClusterEntry, InstructionsByMode, McpManifest, Mode, Reserved,
-        ToolAnnotations, ToolEntry, ToolKind, tokens,
+        BINARY_BODY_NOTE, COUNTER_NAME, ClusterEntry, InstructionsByMode, McpManifest, Mode,
+        Reserved, ToolAnnotations, ToolEntry, ToolKind, tokens,
     };
     pub use crate::names::{MAX_TOOL_NAME, sanitize, shorten};
 

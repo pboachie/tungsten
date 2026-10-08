@@ -28,6 +28,7 @@ use serde::Serialize;
 use serde_json::{Value, json};
 use tungsten_core::{Diagnostic, Diagnostics};
 use tungsten_emit::Emitter;
+use tungsten_emit::args::{BodyArg, args_layout};
 use tungsten_emit::compact::{
     callable_operation, hoist_repeats, macro_parameters, operation_parameters, set_required,
     tool_schema_options, without_dialect,
@@ -506,6 +507,35 @@ fn schema_tokens(description: &str, input: &Value) -> usize {
     tokens(description) + tokens(&serde_json::to_string(input).unwrap_or_default())
 }
 
+/// What a binary body argument is through MCP, prepended to its
+/// description: JSON carries it as base64 text, which `@tungsten/mcp`
+/// decodes into the bytes the SDK sends (a spec's "never base64-wrapped"
+/// is about the HTTP body).
+pub const BINARY_BODY_NOTE: &str =
+    "Pass the raw bytes base64-encoded; this server decodes them and sends the bytes.";
+
+/// Prefix [`BINARY_BODY_NOTE`] to the description of a binary (`bytes`
+/// encoded) body argument.
+fn note_binary_body(ir: &Ir, op: &Operation, input: &mut Value) {
+    let Some(BodyArg::Arg { key, content }) = args_layout(ir, op).body else {
+        return;
+    };
+    if content.encoding != BodyEncoding::Bytes {
+        return;
+    }
+    let Some(Value::Object(prop)) = input.pointer_mut(&format!(
+        "/properties/{}",
+        key.replace('~', "~0").replace('/', "~1")
+    )) else {
+        return;
+    };
+    let description = match prop.get("description").and_then(Value::as_str) {
+        Some(d) if !d.is_empty() => format!("{BINARY_BODY_NOTE} {d}"),
+        _ => BINARY_BODY_NOTE.to_string(),
+    };
+    prop.insert("description".into(), Value::String(description));
+}
+
 /// An operation's tool and its index terms. `base` is the name before
 /// shortening and numbering, whose words are indexed (a digest suffix is
 /// not a search term).
@@ -519,6 +549,7 @@ fn operation_tool(
 ) -> (ToolEntry, Vec<String>) {
     let a = &op.agent;
     let mut input = operation_parameters(ir, op);
+    note_binary_body(ir, op, &mut input);
     let reserved = add_reserved(&mut input, &a.idempotency, a.safety);
     let mut notes = vec![safety_name(a.safety).to_string()];
     if let Some(t) = &reserved.confirmation_token {
