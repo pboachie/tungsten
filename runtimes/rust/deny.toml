@@ -1,0 +1,41 @@
+# cargo-deny policy for the Apache-2.0 Rust runtimes (planning/09 "Dependency
+# policy"). The runtime crates are linked into every generated SDK and CLI, so
+# the licence list is permissive only: no copyleft of any kind.
+# Run: cargo deny --manifest-path runtimes/rust/Cargo.toml check --config runtimes/rust/deny.toml
+
+[graph]
+all-features = true
+
+[advisories]
+version = 2
+yanked = "deny"
+ignore = []
+
+[licenses]
+version = 2
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "MIT",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "CDLA-Permissive-2.0",
+]
+confidence-threshold = 0.9
+# The list is policy, not an inventory: allowed-but-unused entries are fine.
+unused-allowed-license = "allow"
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+# Workspace path dependencies carry no version requirement.
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

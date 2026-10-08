@@ -47,6 +47,20 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - run: cargo build --locked
+      # The Rust runtimes are their own workspace (runtimes/rust). No Cargo.lock
+      # is committed for it yet, so these steps do not pass --locked.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: runtimes/rust
+      - name: Rust runtimes (runtimes/rust) fmt
+        working-directory: runtimes/rust
+        run: cargo fmt --all --check
+      - name: Rust runtimes (runtimes/rust) clippy
+        working-directory: runtimes/rust
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Rust runtimes (runtimes/rust) build
+        working-directory: runtimes/rust
+        run: cargo build --workspace
 
   deny:
     name: cargo-deny
@@ -60,6 +74,13 @@ jobs:
           persist-credentials: false
       - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
         with:
+          command: check
+          arguments: --all-features
+      # The Apache-2.0 runtimes have their own policy: runtimes/rust/deny.toml
+      # (permissive licences only), found next to the manifest.
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          manifest-path: runtimes/rust/Cargo.toml
           command: check
           arguments: --all-features
 
