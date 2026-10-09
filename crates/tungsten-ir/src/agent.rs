@@ -319,7 +319,8 @@ impl Default for UnknownOutcomePolicy {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DisclosureMode {
-    /// Progressive above `threshold` tools, discrete otherwise.
+    /// Progressive when the discrete `tools/list` (with its instructions)
+    /// exceeds `list_budget_tokens`, discrete otherwise.
     Auto,
     Discrete,
     Progressive,
@@ -329,8 +330,14 @@ ir_struct! {
     /// agent.yml `defaults.disclosure` and `disclosure.prune`.
     pub struct DisclosurePolicy {
         pub mode: DisclosureMode,
-        /// Tool count above which `auto` selects progressive disclosure.
+        /// Tool count, kept for manifests and servers that decide by count
+        /// (the MCP runtime's fallback when a manifest has no mode); the
+        /// emitter's `auto` decides by `list_budget_tokens`.
         pub threshold: u32,
+        /// Tokens of the discrete MCP `tools/list` above which `auto`
+        /// selects progressive disclosure (default 10,000).
+        #[serde(default = "default_list_budget_tokens")]
+        pub list_budget_tokens: u32,
         /// Budget of `OperationAgentMeta.compact_doc` (tokens ≈ chars / 4).
         pub description_budget_tokens: u32,
         pub schema_budget_tokens: u32,
@@ -342,11 +349,19 @@ ir_struct! {
     }
 }
 
+/// Default `DisclosurePolicy.list_budget_tokens`.
+pub const DEFAULT_LIST_BUDGET_TOKENS: u32 = 10_000;
+
+fn default_list_budget_tokens() -> u32 {
+    DEFAULT_LIST_BUDGET_TOKENS
+}
+
 impl Default for DisclosurePolicy {
     fn default() -> Self {
         Self {
             mode: DisclosureMode::Auto,
             threshold: 24,
+            list_budget_tokens: DEFAULT_LIST_BUDGET_TOKENS,
             description_budget_tokens: 60,
             schema_budget_tokens: 600,
             drop_fields: vec![],

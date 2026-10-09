@@ -5,13 +5,16 @@
 //! |---|---|---|
 //! | `package` | npm package name of the server | `<api>-mcp` |
 //! | `version` | package version | `0.1.0` |
-//! | `sdk` | the generated TypeScript SDK: `<package>` or `<package>@<range>` | the `typescript` target's default package, `^0.1.0` |
+//! | `sdk` | the generated TypeScript SDK: `<package>` or `<package>@<range>` | the `typescript` target's `package` and `^<version>` when `tungsten.yml` configures them (TG0726), else its default package, `^0.1.0` |
 //! | `sdk_path` | depend on the SDK by path (`file:<path>`) instead of a range | |
 //! | `runtime` | `@tungsten/mcp` version range | `^0.1.0` |
 //! | `runtime_path` | depend on `@tungsten/mcp` by path | |
 //! | `sandbox` | enable the opt-in `run_script` sandbox (planning/02 D7) | `false` |
 //!
-//! An invalid value is a TG0720 warning and the default is used.
+//! The command line passes the sibling `typescript` target's options as the
+//! reserved option `typescript_target` (`{package, version}`); it is not a
+//! `tungsten.yml` key. An invalid value is a TG0720 warning and the default
+//! is used.
 
 use serde_json::Value;
 use tungsten_core::{Diagnostic, Diagnostics};
@@ -93,9 +96,35 @@ impl Options {
                 false
             }
         };
+        let sibling = cfg.options.get("typescript_target");
+        let sibling_str = |key: &str, valid: &dyn Fn(&str) -> bool| {
+            sibling
+                .and_then(|t| t.get(key))
+                .and_then(Value::as_str)
+                .filter(|s| valid(s))
+                .map(str::to_string)
+        };
         let (sdk_package, sdk_range) = match sdk_spec.as_deref().and_then(split_spec) {
             Some((name, range)) => (name.to_string(), range.map(str::to_string)),
-            None => (default_sdk_package(ir), None),
+            None => match sibling_str("package", &is_package_name) {
+                Some(package) => {
+                    let by_path = cfg.options.get("sdk_path").is_some();
+                    let range = sibling_str("version", &is_semver).map(|v| format!("^{v}"));
+                    if !by_path {
+                        diags.push(
+                            Diagnostic::info(
+                                "TG0726",
+                                format!(
+                                    "the MCP server depends on `{package}`, the package of the `typescript` target"
+                                ),
+                            )
+                            .with_help("set targets.mcp.sdk to depend on another package or range"),
+                        );
+                    }
+                    (package, range)
+                }
+                None => (default_sdk_package(ir), None),
+            },
         };
         let sdk = match sdk_path {
             Some(p) => format!("file:{p}"),

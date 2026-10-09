@@ -299,6 +299,14 @@ pub mod codes {
             "MCP tool names collide; each is named with a digest of its operation",
         ),
         (
+            "TG0725",
+            "disclosure.mode auto chose the MCP disclosure mode from the measured token size of the discrete tool list",
+        ),
+        (
+            "TG0726",
+            "the MCP server's SDK dependency defaults to the typescript target's package",
+        ),
+        (
             "TG0730",
             "macro not emitted by the Python SDK (not in the canonical form)",
         ),

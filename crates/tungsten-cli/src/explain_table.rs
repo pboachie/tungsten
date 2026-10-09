@@ -463,6 +463,25 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
         "Give the operations distinct method names with `naming.operations` in tungsten.yml.",
     ),
     e(
+        "TG0725",
+        "`defaults.disclosure.mode: auto` in agent.yml chooses between the discrete MCP tool \
+         list (every tool with its schema) and progressive disclosure (search_tools, \
+         describe_tool, invoke) by measuring the discrete `tools/list` plus its instructions \
+         with the tungsten token estimate. Progressive is chosen when that is above \
+         `defaults.disclosure.list_budget_tokens` (default 10000), whatever the number of \
+         tools. This note states the measured tokens, the budget and the decision.",
+        "Set `defaults.disclosure.mode` to `discrete` or `progressive` to decide yourself, or \
+         change `defaults.disclosure.list_budget_tokens`.",
+    ),
+    e(
+        "TG0726",
+        "The `mcp` target has no `sdk` option, so the server depends on the package the \
+         `typescript` target of the same tungsten.yml generates (its `package` and `version`) \
+         instead of the default `<api>-sdk`.",
+        "Set `targets.mcp.sdk` (`<package>` or `<package>@<range>`) or `targets.mcp.sdk_path` to \
+         depend on something else.",
+    ),
+    e(
         "TG0730",
         "A macro in the IR does not fit the canonical form the Python SDK compiles: a step \
          names an operation that is not callable, a reference names a later or unknown step, \

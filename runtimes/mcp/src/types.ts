@@ -82,10 +82,14 @@ export interface McpManifest {
   api: string;
   apiVersion: string;
   tungstenVersion: string;
-  /** Selected mode: `discrete` when the tool count is within the
-   * threshold, otherwise `progressive` (agent.yml disclosure.mode/threshold). */
+  /** Selected mode: the agent.yml `disclosure.mode`; for `auto`, `discrete`
+   * when the discrete tool list is within `listBudgetTokens`, otherwise
+   * `progressive`. */
   mode: "discrete" | "progressive";
+  /** Tool count; the fallback when a manifest has no `mode`. */
   threshold: number;
+  /** Tokens of the discrete tool list above which `auto` selects progressive. */
+  listBudgetTokens?: number;
   /** How token counts in this manifest were computed. */
   tokenCounter: string;
   tools: ToolEntry[];

@@ -426,11 +426,10 @@ fn budgets(h: &mut String, r: &ReportResult) {
     h.push_str("<section id=\"budgets\">\n<h2>Token budgets</h2>\n");
     let _ = writeln!(
         h,
-        "<p class=\"note\">Counted with <code>{}</code> (calibrated against <code>cl100k_base</code>, leaning high). Budgets from the agent manifest: {} tokens per tool schema, {} per description; progressive disclosure above {} tools.</p>",
+        "<p class=\"note\">Counted with <code>{}</code> (calibrated against <code>cl100k_base</code>, leaning high). Budgets from the agent manifest: {} tokens per tool schema, {} per description; with <code>mode: auto</code>, progressive disclosure when the discrete tool list is over its token budget.</p>",
         escape(&b.counter),
         b.schema_budget,
-        b.description_budget,
-        b.threshold
+        b.description_budget
     );
     if !b.documents.is_empty() {
         h.push_str("<h3>Agent documents</h3>\n");

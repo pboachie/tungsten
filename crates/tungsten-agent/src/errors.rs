@@ -279,6 +279,7 @@ pub(crate) fn model(
     agent.disclosure = DisclosurePolicy {
         mode: dd.mode.unwrap_or(base.mode),
         threshold: dd.threshold.unwrap_or(base.threshold),
+        list_budget_tokens: dd.list_budget_tokens.unwrap_or(base.list_budget_tokens),
         description_budget_tokens: dd
             .description_budget_tokens
             .unwrap_or(base.description_budget_tokens),
