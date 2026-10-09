@@ -74,9 +74,9 @@ pub(crate) fn apply(cx: &mut Ctx<'_>, op: &mut Operation, at: &RefTarget) {
         return;
     };
     let response_at = child(&child(at, "responses"), &code.to_string());
-    let media_at = cx
-        .deref(&response_at)
-        .map_or(response_at, |t| child(&child(&t, "content"), &content.media_type));
+    let media_at = cx.deref(&response_at).map_or(response_at, |t| {
+        child(&child(&t, "content"), &content.media_type)
+    });
     let media = cx.get(&media_at);
     let typed = media.is_some_and(|m| m.get("schema").is_some());
     if !typed {

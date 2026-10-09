@@ -11,7 +11,7 @@ use hyper::Request;
 use hyper::body::Incoming;
 use hyper::header::{HeaderName, HeaderValue};
 use serde_json::{Map, Value};
-use tungsten_ir::{BodyEncoding, OperationStatus, Response, ResponseKind, StatusMatch};
+use tungsten_ir::{BodyEncoding, OperationStatus, Response, ResponseKind, StatusMatch, StreamSpec};
 
 use crate::RecordedCall;
 use crate::auth::{self, AuthFailure};
@@ -65,6 +65,9 @@ pub(crate) enum Outcome {
 pub(crate) enum Injection {
     Timeout(u64),
     DropAfterWrite,
+    /// Process the request normally, then break an event stream answer
+    /// in the middle of its second event.
+    DropMidStream,
     Reset,
     Status {
         status: u16,
@@ -83,6 +86,7 @@ impl Injection {
         match value {
             "timeout" => return Ok(Injection::Timeout(DEFAULT_TIMEOUT_MS)),
             "drop-after-write" => return Ok(Injection::DropAfterWrite),
+            "drop-mid-stream" => return Ok(Injection::DropMidStream),
             "reset" => return Ok(Injection::Reset),
             _ => {}
         }
@@ -251,6 +255,9 @@ pub(crate) async fn handle(state: Arc<State>, req: Request<Incoming>) -> Outcome
             (reply, After::Send)
         }
         Some(Ok(Injection::Timeout(ms))) => (process(&state, &routed, &request), After::Hold(ms)),
+        Some(Ok(Injection::DropMidStream)) => {
+            (cut_stream(process(&state, &routed, &request)), After::Send)
+        }
         // A reset never gets here: it closed the connection before the body.
         Some(Ok(Injection::DropAfterWrite | Injection::Reset)) => {
             (process(&state, &routed, &request), After::Drop)
@@ -435,7 +442,7 @@ fn operation(state: &State, entry: &OpEntry, request: &Exchange<'_>) -> Reply {
         .idempotency_header()
         .and_then(|h| request.view.header(h).map(|k| (h, k)))
     else {
-        return success(model, entry, None);
+        return success(model, entry, None, streams(entry, request));
     };
     let mut fingerprint = format!("{}?{}\n", request.path, request.query).into_bytes();
     fingerprint.extend_from_slice(request.body);
@@ -450,7 +457,7 @@ fn operation(state: &State, entry: &OpEntry, request: &Exchange<'_>) -> Reply {
             &format!("{header} was used with a different request"),
         ),
         Idempotent::Fresh => {
-            let reply = success(model, entry, None);
+            let reply = success(model, entry, None, streams(entry, request));
             state.store(entry.id(), &key, fingerprint, reply.clone());
             reply
         }
@@ -568,13 +575,92 @@ fn select_response(responses: &[Response], status: Option<u16>) -> Option<(u16, 
         })
 }
 
+/// Whether the request asks for the event stream of an operation that has
+/// one: always when the operation has no other success body, else when it
+/// accepts `text/event-stream` or sets the request flag to `true`.
+fn streams(entry: &OpEntry, request: &Exchange<'_>) -> bool {
+    let Some(stream) = &entry.op.stream else {
+        return false;
+    };
+    if !stream.also_plain {
+        return true;
+    }
+    let accepts = request
+        .view
+        .header("accept")
+        .is_some_and(|accept| accept.to_ascii_lowercase().contains("text/event-stream"));
+    let flagged = stream.request_flag.as_ref().is_some_and(|flag| {
+        serde_json::from_slice::<Value>(request.body)
+            .ok()
+            .is_some_and(|body| body.get(flag) == Some(&Value::Bool(true)))
+    });
+    accepts || flagged
+}
+
+/// The generated event stream of an operation: one event per variant of
+/// the event type (two values of it otherwise), each as `event:` (the
+/// discriminator value, when the type is tagged), `id:` (1-based) and a
+/// JSON `data:` line, then the `data:` line of the done sentinel if the
+/// operation declares one.
+fn event_stream(model: &Model, entry: &OpEntry, code: u16, stream: &StreamSpec) -> Reply {
+    let generator = Generator::new(model, Context::Response);
+    let events = generator.events(&stream.event, entry.id(), &format!("/response/{code}"));
+    let mut text = String::new();
+    for (i, (tag, value)) in events.iter().enumerate() {
+        if let Some(tag) = tag {
+            text.push_str(&format!("event: {tag}\n"));
+        }
+        text.push_str(&format!("id: {}\ndata: {value}\n\n", i + 1));
+    }
+    if let Some(done) = &stream.done {
+        text.push_str(&format!("data: {done}\n\n"));
+    }
+    Reply {
+        status: code,
+        headers: vec![
+            ("content-type".into(), stream.media_type.clone()),
+            ("cache-control".into(), "no-store".into()),
+        ],
+        body: text.into_bytes(),
+        cut_after: None,
+    }
+}
+
+/// An event stream answer broken in the middle of its second event (of its
+/// only event when it has one); any other answer unchanged.
+fn cut_stream(reply: Reply) -> Reply {
+    let is_stream = reply.headers.iter().any(|(n, v)| {
+        n == "content-type" && v.to_ascii_lowercase().starts_with("text/event-stream")
+    });
+    if !is_stream {
+        return reply;
+    }
+    let text = String::from_utf8_lossy(&reply.body).into_owned();
+    let cut = match text.find("\n\n").map(|i| i + 2) {
+        Some(end) if end < text.len() => {
+            let line = text[end..].lines().next().map_or(0, str::len);
+            end + (line / 2).max(1)
+        }
+        Some(end) => end / 2,
+        None => text.len() / 2,
+    };
+    reply.cut_after(cut)
+}
+
 /// The generated success answer of an operation (for `status`, or its
-/// lowest 2xx).
-fn success(model: &Model, entry: &OpEntry, status: Option<u16>) -> Reply {
+/// lowest 2xx); its event stream when `stream` is set and the status is the
+/// one that carries it.
+fn success(model: &Model, entry: &OpEntry, status: Option<u16>, stream: bool) -> Reply {
     let op = &entry.op;
     let Some((code, response)) = select_response(&op.responses, status) else {
         return Reply::empty(status.unwrap_or(200));
     };
+    if stream
+        && let Some(spec) = &op.stream
+        && spec.status == StatusMatch::Exact(code)
+    {
+        return event_stream(model, entry, code, spec);
+    }
     let generator = Generator::new(model, Context::Response);
     let base = format!("/response/{code}");
     let content = response
@@ -596,6 +682,7 @@ fn success(model: &Model, entry: &OpEntry, status: Option<u16>) -> Reply {
                     status: code,
                     headers: vec![("content-type".into(), content.media_type.clone())],
                     body: text.into_bytes(),
+                    cut_after: None,
                 }
             }
             BodyEncoding::Bytes | BodyEncoding::Form | BodyEncoding::Multipart => {
@@ -634,7 +721,7 @@ fn replayed(mut stored: Reply) -> Reply {
 fn injected_status(model: &Model, routed: &Routed, status: u16, code: Option<&str>) -> Reply {
     match routed {
         Routed::Op { index, .. } if (200..300).contains(&status) => {
-            success(model, &model.ops[*index], Some(status))
+            success(model, &model.ops[*index], Some(status), false)
         }
         Routed::Op { index, .. } => op_error(
             model,
@@ -660,7 +747,9 @@ fn programmed(model: &Model, entry: &OpEntry, program: &Answer) -> Reply {
     let mut reply = match &program.body {
         Some(Value::String(text)) => Reply::text(program.status, text),
         Some(value) => Reply::json(program.status, value),
-        None if (200..300).contains(&program.status) => success(model, entry, Some(program.status)),
+        None if (200..300).contains(&program.status) => {
+            success(model, entry, Some(program.status), false)
+        }
         None => op_error(
             model,
             entry,
@@ -673,7 +762,10 @@ fn programmed(model: &Model, entry: &OpEntry, program: &Answer) -> Reply {
     for (name, value) in &program.headers {
         reply = reply.with_header(name, value);
     }
-    reply
+    match program.cut_after {
+        Some(bytes) => reply.cut_after(bytes),
+        None => reply,
+    }
 }
 
 fn control(state: &State, method: &str, path: &str, body: Result<Vec<u8>, BodyError>) -> Outcome {
@@ -743,7 +835,7 @@ fn parse_program(model: &Model, item: &Value) -> Result<(String, Program), Strin
     let Some(object) = item.as_object() else {
         return Err("a program must be a JSON object".into());
     };
-    const MEMBERS: [&str; 7] = [
+    const MEMBERS: [&str; 8] = [
         "operation",
         "status",
         "body",
@@ -751,6 +843,7 @@ fn parse_program(model: &Model, item: &Value) -> Result<(String, Program), Strin
         "times",
         "code",
         "inject",
+        "cut_after",
     ];
     if let Some(unknown) = object.keys().find(|k| !MEMBERS.contains(&k.as_str())) {
         return Err(format!("unknown program member `{unknown}`"));
@@ -770,12 +863,13 @@ fn parse_program(model: &Model, item: &Value) -> Result<(String, Program), Strin
             .ok_or("`times` must be a positive integer")?,
     };
     if let Some(inject) = object.get("inject") {
-        if ["status", "body", "headers", "code"]
+        if ["status", "body", "headers", "code", "cut_after"]
             .iter()
             .any(|m| object.contains_key(*m))
         {
             return Err(
-                "a program with `inject` takes no `status`, `body`, `headers` or `code`".into(),
+                "a program with `inject` takes no `status`, `body`, `headers`, `code` or `cut_after`"
+                    .into(),
             );
         }
         let value = inject
@@ -832,6 +926,15 @@ fn parse_program(model: &Model, item: &Value) -> Result<(String, Program), Strin
         Some(Value::String(code)) => Some(code.clone()),
         Some(_) => return Err("`code` must be a string".into()),
     };
+    let cut_after = match object.get("cut_after") {
+        None => None,
+        Some(value) => Some(
+            value
+                .as_u64()
+                .and_then(|n| usize::try_from(n).ok())
+                .ok_or("`cut_after` must be a non-negative integer (a number of body bytes)")?,
+        ),
+    };
     Ok((
         operation.to_string(),
         Program {
@@ -840,6 +943,7 @@ fn parse_program(model: &Model, item: &Value) -> Result<(String, Program), Strin
                 body: object.get("body").cloned(),
                 headers,
                 code,
+                cut_after,
             }),
             remaining: times,
         },

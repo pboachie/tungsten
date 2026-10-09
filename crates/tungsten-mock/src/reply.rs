@@ -2,9 +2,15 @@
 //! Responses, and the error rule: a generated error envelope carrying the
 //! best matching code, or text/plain when the namespace has no envelope.
 
+use std::fmt;
+use std::future::Future;
+use std::pin::Pin;
+use std::task::{Context as TaskContext, Poll};
+use std::time::Duration;
+
 use bytes::Bytes;
-use http_body_util::Full;
 use hyper::Response;
+use hyper::body::{Body, Frame, SizeHint};
 use hyper::header::{HeaderName, HeaderValue};
 use serde_json::{Map, Value};
 use tungsten_ir::{ErrorModel, TypeRef};
@@ -16,11 +22,74 @@ use crate::validate::Context;
 /// Longest `X-Tungsten-Reason` value.
 const MAX_REASON_CHARS: usize = 300;
 
+/// Time the body of a cut reply waits after its last bytes before the
+/// connection is dropped, so they are on the wire first.
+const CUT_DELAY: Duration = Duration::from_millis(25);
+
 #[derive(Debug, Clone)]
 pub(crate) struct Reply {
     pub status: u16,
     pub headers: Vec<(String, String)>,
     pub body: Vec<u8>,
+    /// Send only this many bytes of the body, then drop the connection
+    /// (the body then has no length, so the client sees a stream that
+    /// breaks).
+    pub cut_after: Option<usize>,
+}
+
+/// The error that drops a connection in the middle of a body.
+#[derive(Debug)]
+pub(crate) struct BodyCut;
+
+impl fmt::Display for BodyCut {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("response cut by injection")
+    }
+}
+
+impl std::error::Error for BodyCut {}
+
+/// The body of a [`Reply`]: all of it with its length, or the start of it
+/// and then an error that drops the connection.
+#[derive(Debug)]
+pub(crate) struct ReplyBody {
+    data: Option<Bytes>,
+    cut: Option<Pin<Box<tokio::time::Sleep>>>,
+}
+
+impl Body for ReplyBody {
+    type Data = Bytes;
+    type Error = BodyCut;
+
+    fn poll_frame(
+        mut self: Pin<&mut Self>,
+        cx: &mut TaskContext<'_>,
+    ) -> Poll<Option<Result<Frame<Bytes>, BodyCut>>> {
+        if let Some(data) = self.data.take() {
+            return Poll::Ready(Some(Ok(Frame::data(data))));
+        }
+        match self.cut.as_mut() {
+            Some(delay) => match delay.as_mut().poll(cx) {
+                Poll::Ready(()) => {
+                    self.cut = None;
+                    Poll::Ready(Some(Err(BodyCut)))
+                }
+                Poll::Pending => Poll::Pending,
+            },
+            None => Poll::Ready(None),
+        }
+    }
+
+    fn is_end_stream(&self) -> bool {
+        self.data.is_none() && self.cut.is_none()
+    }
+
+    fn size_hint(&self) -> SizeHint {
+        match (&self.cut, &self.data) {
+            (None, data) => SizeHint::with_exact(data.as_ref().map_or(0, |d| d.len() as u64)),
+            (Some(_), _) => SizeHint::default(),
+        }
+    }
 }
 
 impl Reply {
@@ -29,6 +98,7 @@ impl Reply {
             status,
             headers: vec![],
             body: vec![],
+            cut_after: None,
         }
     }
 
@@ -37,6 +107,7 @@ impl Reply {
             status,
             headers: vec![("content-type".into(), "text/plain; charset=utf-8".into())],
             body: text.as_bytes().to_vec(),
+            cut_after: None,
         }
     }
 
@@ -49,6 +120,7 @@ impl Reply {
             status,
             headers: vec![("content-type".into(), media_type.into())],
             body: serde_json::to_vec(value).unwrap_or_default(),
+            cut_after: None,
         }
     }
 
@@ -60,8 +132,24 @@ impl Reply {
         self
     }
 
-    pub fn into_response(self) -> Response<Full<Bytes>> {
-        let mut response = Response::new(Full::new(Bytes::from(self.body)));
+    /// Cut the body after `bytes` bytes.
+    pub fn cut_after(mut self, bytes: usize) -> Reply {
+        self.cut_after = Some(bytes);
+        self
+    }
+
+    pub fn into_response(self) -> Response<ReplyBody> {
+        let body = match self.cut_after {
+            Some(n) => ReplyBody {
+                data: Some(Bytes::from(self.body[..n.min(self.body.len())].to_vec())),
+                cut: Some(Box::pin(tokio::time::sleep(CUT_DELAY))),
+            },
+            None => ReplyBody {
+                data: Some(Bytes::from(self.body)),
+                cut: None,
+            },
+        };
+        let mut response = Response::new(body);
         *response.status_mut() = hyper::StatusCode::from_u16(self.status)
             .unwrap_or(hyper::StatusCode::INTERNAL_SERVER_ERROR);
         let headers = response.headers_mut();
