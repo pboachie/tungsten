@@ -427,6 +427,7 @@ defaults:
   disclosure:
     mode: auto
     threshold: 24
+    list_budget_tokens: 10000
     description_budget_tokens: 60
     schema_budget_tokens: 600
 ";

@@ -296,10 +296,16 @@ pub struct BackoffConfig {
 pub struct DisclosureDefaultsConfig {
     #[serde(default)]
     pub mode: Option<DisclosureMode>,
-    /// Tool count above which `auto` selects progressive disclosure.
+    /// Tool count, kept for compatibility: `auto` decides by
+    /// `list_budget_tokens`.
     #[serde(default)]
     #[schemars(range(min = 1))]
     pub threshold: Option<u32>,
+    /// Tokens of the discrete MCP tool list above which `auto` selects
+    /// progressive disclosure (default 10000).
+    #[serde(default)]
+    #[schemars(range(min = 100))]
+    pub list_budget_tokens: Option<u32>,
     /// Budget of each operation's compact description (tokens ≈ chars / 4).
     #[serde(default)]
     #[schemars(range(min = 10))]

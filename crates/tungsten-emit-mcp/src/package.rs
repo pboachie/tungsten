@@ -390,12 +390,12 @@ pub(crate) fn readme(ir: &Ir, opts: &Options, manifest: &McpManifest, budget: &B
         Mode::Progressive => "progressive",
     };
     out.push_str(&format!(
-        "This server starts in **{selected}** mode ({} tools, threshold {}; agent.yml `defaults.disclosure`).\n\n",
+        "This server starts in **{selected}** mode ({} tools, list budget {} tokens; agent.yml `defaults.disclosure`: `auto` is progressive when the discrete tool list is over the budget).\n\n",
         manifest.tools.len(),
-        manifest.threshold
+        manifest.list_budget_tokens
     ));
     out.push_str("- `discrete`: one MCP tool per operation and macro, with input and output schemas and annotations from the safety tier.\n");
-    out.push_str("- `progressive`: a few tools instead of the whole list. `search_tools(query, cluster?, limit?)` searches a BM25 index built at generation time, `describe_tool(name)` returns one tool's schemas and rules, `invoke(name, arguments)` calls it, `preview(name, arguments)` shows a call without sending it, `list_clusters()` lists the groups of tools.\n\n");
+    out.push_str("- `progressive`: a few tools instead of the whole list. `search_tools(query, cluster?, limit?)` searches a BM25 index built at generation time, `describe_tool(name)` returns one tool's schemas and rules, `invoke(name, arguments)` calls it (`invoke_read(name, arguments)` calls read-only tools and is annotated `readOnlyHint`, so a host can allow it without confirmation; `search_tools` and `describe_tool` results carry each tool's safety tier and annotations, and `invoke`, `invoke_read` and `preview` results carry them in `_meta[\"tungsten/tool\"]`), `preview(name, arguments)` shows a call without sending it, `list_clusters()` lists the groups of tools.\n\n");
     out.push_str(&format!(
         "Set `{}` to `discrete` or `progressive` to override the mode.\n\n",
         env::mode(ir)

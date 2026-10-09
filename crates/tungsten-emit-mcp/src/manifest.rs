@@ -119,6 +119,8 @@ pub struct McpManifest {
     pub tungsten_version: String,
     pub mode: Mode,
     pub threshold: u32,
+    /// Tokens of the discrete tool list above which `auto` selects progressive.
+    pub list_budget_tokens: u32,
     pub token_counter: &'static str,
     pub tools: Vec<ToolEntry>,
     pub clusters: Vec<ClusterEntry>,
@@ -222,34 +224,56 @@ pub fn build(ir: &Ir) -> (McpManifest, Diagnostics) {
     }
     let clusters = clusters(ir, &tools);
     let d = &ir.agent.disclosure;
-    let mode = match d.mode {
-        DisclosureMode::Discrete => Mode::Discrete,
-        DisclosureMode::Progressive => Mode::Progressive,
-        DisclosureMode::Auto if tools.len() <= d.threshold as usize => Mode::Discrete,
-        DisclosureMode::Auto => Mode::Progressive,
-    };
     let instructions_by_mode = InstructionsByMode {
         discrete: instructions(ir, Mode::Discrete, &tools, &clusters),
         progressive: instructions(ir, Mode::Progressive, &tools, &clusters),
     };
-    let instructions = match mode {
-        Mode::Discrete => instructions_by_mode.discrete.clone(),
-        Mode::Progressive => instructions_by_mode.progressive.clone(),
-    };
-    let manifest = McpManifest {
+    let mut manifest = McpManifest {
         manifest_version: 1,
         api: ir.api.name.wire.clone(),
         api_version: ir.api.version.clone(),
         tungsten_version: ir.generator.tungsten_version.clone(),
-        mode,
+        mode: Mode::Discrete,
         threshold: d.threshold,
+        list_budget_tokens: d.list_budget_tokens,
         token_counter: COUNTER_NAME,
         index: index::build(&docs),
         tools,
         clusters,
-        instructions,
+        instructions: instructions_by_mode.discrete.clone(),
         instructions_by_mode,
     };
+    manifest.mode = match d.mode {
+        DisclosureMode::Discrete => Mode::Discrete,
+        DisclosureMode::Progressive => Mode::Progressive,
+        DisclosureMode::Auto => {
+            let value = serde_json::to_value(&manifest).unwrap_or_default();
+            let measured = crate::budget::listing_tokens(&value, Mode::Discrete);
+            let mode = if measured > d.list_budget_tokens as usize {
+                Mode::Progressive
+            } else {
+                Mode::Discrete
+            };
+            let (name, cmp) = match mode {
+                Mode::Discrete => ("discrete", "within"),
+                Mode::Progressive => ("progressive", "over"),
+            };
+            diags.push(
+                Diagnostic::info(
+                    "TG0725",
+                    format!(
+                        "disclosure.mode auto selected {name}: the discrete MCP tool list is about {measured} tokens, {cmp} the list budget of {}",
+                        d.list_budget_tokens
+                    ),
+                )
+                .with_help("set defaults.disclosure.mode to discrete or progressive, or change defaults.disclosure.list_budget_tokens in agent.yml"),
+            );
+            mode
+        }
+    };
+    if manifest.mode == Mode::Progressive {
+        manifest.instructions = manifest.instructions_by_mode.progressive.clone();
+    }
     (manifest, diags)
 }
 
@@ -776,8 +800,13 @@ fn instructions(ir: &Ir, mode: Mode, tools: &[ToolEntry], clusters: &[ClusterEnt
     let mut out = vec![];
     match mode {
         Mode::Progressive => out.push(format!(
-            "{title} API, {} tools behind search. Find tools with search_tools(query, cluster?, limit?), read one with describe_tool(name), call it with invoke(name, arguments).",
-            tools.len()
+            "{title} API, {} tools behind search. Find tools with search_tools(query, cluster?, limit?), read one with describe_tool(name), call it with invoke(name, arguments){}.",
+            tools.len(),
+            if tools.iter().any(|t| t.safety == "read_only") {
+                " (invoke_read for read_only tools)"
+            } else {
+                ""
+            }
         )),
         Mode::Discrete => out.push(format!(
             "{title} API, {} tools, one per operation or macro.",
