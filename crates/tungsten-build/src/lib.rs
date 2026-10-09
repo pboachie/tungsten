@@ -34,6 +34,7 @@ mod params;
 mod resources;
 mod responses;
 mod rpc;
+mod streams;
 
 use std::collections::{BTreeMap, BTreeSet};
 

@@ -203,6 +203,10 @@ ir_struct! {
         pub pagination: Option<Pagination>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub streaming: Option<Streaming>,
+        /// The event stream of a `text/event-stream` success response.
+        /// Present exactly when `streaming` is `Sse`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub stream: Option<StreamSpec>,
         #[serde(default)]
         pub deprecated: bool,
         pub status: OperationStatus,
@@ -571,6 +575,33 @@ pub enum Streaming {
     Sse,
     Ndjson,
     Bytes,
+}
+
+ir_struct! {
+    /// The server-sent events of an operation (WHATWG HTML 9.2): the success
+    /// response that carries `text/event-stream`, the type each event's
+    /// `data` decodes to, and what selects the stream on the request.
+    pub struct StreamSpec {
+        /// The success response that carries the stream.
+        pub status: StatusMatch,
+        /// The event stream media type as the spec wrote it.
+        pub media_type: String,
+        /// The type every event's `data` (JSON) is checked against: the
+        /// schema of the media type, usually a union tagged by `type`.
+        pub event: TypeRef,
+        /// A `data` value that ends the stream and is not an event
+        /// (`[DONE]`); declared with `x-tungsten-stream-done`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub done: Option<String>,
+        /// Wire name of the boolean request body field that selects the
+        /// stream (`stream`), when the request body has one.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub request_flag: Option<String>,
+        /// Whether the same status also declares a body that is not a
+        /// stream, which the plain method returns.
+        #[serde(default)]
+        pub also_plain: bool,
+    }
 }
 
 ir_struct! {

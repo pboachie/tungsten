@@ -25,7 +25,7 @@ use crate::filter::{self, Disposition};
 use crate::names::{pascal, synthesize_operation_id};
 use crate::responses::RawResponse;
 use crate::rpc::{self, RpcVariant};
-use crate::{NamespaceInput, bodies, params, responses};
+use crate::{NamespaceInput, bodies, params, responses, streams};
 
 /// Path item members that are operations, in visiting order.
 pub(crate) const METHODS: [(&str, HttpMethod); 8] = [
@@ -326,7 +326,7 @@ fn build_op(
                 .collect()
         })
         .unwrap_or_default();
-    let op = Operation {
+    let mut op = Operation {
         id: OperationId(id.clone()),
         name: Ident::new(&local),
         operation_id: sk.operation_id.clone(),
@@ -340,6 +340,7 @@ fn build_op(
         security,
         pagination: None,
         streaming: None,
+        stream: None,
         deprecated: flag(value, "deprecated"),
         status,
         rpc: None,
@@ -350,6 +351,7 @@ fn build_op(
             pointer: sk.target.pointer.clone(),
         },
     };
+    streams::apply(cx, &mut op, &sk.target);
     BuiltOp {
         op,
         responses: raw,

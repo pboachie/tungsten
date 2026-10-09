@@ -236,6 +236,14 @@ pub mod codes {
         ),
         ("TG0508", "malformed operation element ignored"),
         ("TG0509", "unsupported security scheme ignored"),
+        (
+            "TG0530",
+            "event stream declares no schema; events decoded as any JSON value",
+        ),
+        (
+            "TG0531",
+            "event stream declared for more than one success status; the first is streamed",
+        ),
         ("TG0601", "manifest is not valid YAML"),
         ("TG0602", "manifest does not match its schema"),
         ("TG0603", "manifest references an unknown operation"),
