@@ -479,7 +479,7 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
         "TG0722",
         "In progressive mode an MCP client first receives the meta tools (`search_tools`, \
          `describe_tool`, `invoke`, `preview`, `list_clusters`) and the instructions with the \
-         cluster index. Together they exceed the 2,000 tokens of NFR-3, usually because of \
+         cluster index. Together they exceed the 2,000-token budget of the progressive index, usually because of \
          many clusters or long cluster summaries.",
         "Shorten the cluster summaries in agent.yml (only their first sentence is used) or \
          merge clusters.",
