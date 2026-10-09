@@ -1,0 +1,50 @@
+name: Bug report
+description: Something does not work as expected
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. For security problems, do not use this form:
+        see SECURITY.md and report privately.
+  - type: input
+    id: version
+    attributes:
+      label: tungsten version
+      description: Output of `tungsten --version`, or the commit you built.
+    validations:
+      required: true
+  - type: textarea
+    id: openapi
+    attributes:
+      label: OpenAPI snippet
+      description: The smallest OpenAPI (or tungsten.yml) excerpt that reproduces the problem. Remove secrets and private hostnames.
+      render: yaml
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Command
+      description: The exact command you ran.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour
+      description: Include the full output, diagnostics and any generated code that is wrong.
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Operating system and Rust toolchain version.

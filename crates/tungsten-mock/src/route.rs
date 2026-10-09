@@ -5,7 +5,7 @@ use serde_json::Value;
 use tungsten_ir::{PathSegment, PathTemplate};
 
 use crate::model::{Model, method_str};
-use crate::params::percent_decode;
+use crate::params::{parse_query, percent_decode};
 
 /// Captured path parameters, in segment order.
 pub(crate) type Captures = Vec<(String, String)>;
@@ -14,6 +14,8 @@ pub(crate) type Captures = Vec<(String, String)>;
 #[derive(Debug)]
 pub(crate) struct PathPattern {
     segments: Vec<Seg>,
+    /// Constant query pairs of the path key; a request must carry them all.
+    query: Vec<(String, String)>,
 }
 
 #[derive(Debug)]
@@ -49,14 +51,28 @@ impl PathPattern {
                 ),
             })
             .collect();
-        PathPattern { segments }
+        let query = path
+            .query
+            .iter()
+            .map(|q| {
+                (
+                    percent_decode(&q.name, true),
+                    percent_decode(&q.value, true),
+                )
+            })
+            .collect();
+        PathPattern { segments, query }
     }
 
-    /// Match decoded request segments. Returns the specificity score (one
-    /// entry per segment, higher is more literal) and the captured
-    /// parameters.
-    fn matches(&self, request: &[String]) -> Option<(Vec<u8>, Captures)> {
-        if request.len() != self.segments.len() {
+    /// Match decoded request segments and query pairs. Returns the
+    /// specificity score (one entry per segment, higher is more literal,
+    /// then one per constant query pair) and the captured parameters.
+    fn matches(
+        &self,
+        request: &[String],
+        query: &[(String, String)],
+    ) -> Option<(Vec<u8>, Captures)> {
+        if request.len() != self.segments.len() || !self.query.iter().all(|c| query.contains(c)) {
             return None;
         }
         let mut score = Vec::with_capacity(request.len());
@@ -84,6 +100,7 @@ impl PathPattern {
                 }
             }
         }
+        score.extend(self.query.iter().map(|_| 4));
         Some((score, captures))
     }
 }
@@ -143,13 +160,20 @@ pub(crate) enum Routed {
 
 /// Route a request. `body` is `None` when it has not been read; rpc
 /// operations then cannot be told apart.
-pub(crate) fn route(model: &Model, method: &str, path: &str, body: Option<&[u8]>) -> Routed {
+pub(crate) fn route(
+    model: &Model,
+    method: &str,
+    path: &str,
+    query: &str,
+    body: Option<&[u8]>,
+) -> Routed {
     let segments = split_path(path);
+    let query = parse_query(query);
     let mut best: Option<Vec<u8>> = None;
     let mut group: Vec<(usize, Captures)> = vec![];
     let mut other_methods: Vec<&'static str> = vec![];
     for (index, entry) in model.ops.iter().enumerate() {
-        let Some((score, params)) = entry.path.matches(&segments) else {
+        let Some((score, params)) = entry.path.matches(&segments, &query) else {
             continue;
         };
         let op_method = method_str(entry.op.method);

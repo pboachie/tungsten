@@ -26,17 +26,23 @@ from ._effects import (
     Answered,
     AttemptOutcome,
     AttemptRequest,
+    Chunk,
     Effect,
     Emit,
     Flow,
     Lost,
     NotSent,
     Observe,
+    ReadChunk,
+    ReadOutcome,
     Send,
     Shared,
     Sleep,
     StoreGet,
     StorePut,
+    StreamEnded,
+    StreamFailed,
+    Streaming,
     TimedOut,
 )
 
@@ -156,6 +162,15 @@ def _deadline(req: AttemptRequest) -> tuple[float, float]:
     return seconds, time.monotonic() + seconds
 
 
+def _is_event_stream(response: httpx.Response) -> bool:
+    media = response.headers.get("content-type", "").split(";")[0].strip().lower()
+    return media == "text/event-stream"
+
+
+def _read_failure(error: Exception) -> StreamFailed:
+    return StreamFailed("timeout" if isinstance(error, httpx.TimeoutException) else "lost")
+
+
 def _store_call(effect: StoreGet | StorePut) -> object:
     store = cast(Any, effect.store)
     if isinstance(effect, StoreGet):
@@ -207,6 +222,8 @@ def _drain(flow: Flow[Any], outcome: AttemptOutcome) -> object:
                 failure = effect.item.error
         elif isinstance(effect, Send):
             sent = Lost("cancelled")
+        elif isinstance(effect, ReadChunk):
+            sent = StreamFailed("lost")
         elif isinstance(effect, StoreGet | StorePut | Observe):
             try:
                 result = _store_call(effect) if not isinstance(effect, Observe) else effect.fn(*effect.args)
@@ -229,6 +246,50 @@ async def _quietly(awaitable: Awaitable[object]) -> None:
 
 #: Observer tasks started by a cancelled call, kept until they finish.
 _REPORTS: set[asyncio.Future[None]] = set()
+
+
+class _SyncStream:
+    """The unread body of an event stream on ``httpx.Client``. Each read waits
+    at most the attempt timeout (httpx's read timeout), so an idle stream
+    ends with a timeout."""
+
+    __slots__ = ("_chunks", "response")
+
+    def __init__(self, response: httpx.Response) -> None:
+        self.response = response
+        self._chunks = response.iter_bytes()
+
+    def read(self) -> ReadOutcome:
+        try:
+            return Chunk(next(self._chunks))
+        except StopIteration:
+            return StreamEnded()
+        except Exception as error:
+            return _read_failure(error)
+
+    def close(self) -> None:
+        self.response.close()
+
+
+class _AsyncStream:
+    """The unread body of an event stream on ``httpx.AsyncClient``."""
+
+    __slots__ = ("_chunks", "response")
+
+    def __init__(self, response: httpx.Response) -> None:
+        self.response = response
+        self._chunks = response.aiter_bytes()
+
+    async def read(self) -> ReadOutcome:
+        try:
+            return Chunk(await anext(self._chunks))
+        except StopAsyncIteration:
+            return StreamEnded()
+        except Exception as error:
+            return _read_failure(error)
+
+    async def aclose(self) -> None:
+        await self.response.aclose()
 
 
 # ------------------------------------------------------------------ sync
@@ -256,9 +317,11 @@ class SyncDriver:
             sent, thrown = self._perform_safely(effect)
 
     def iterate(self, flow: Flow[None]) -> Iterator[object]:
-        """The items a flow emits, in order."""
+        """The items a flow emits, in order. Event streams the flow opened
+        are closed when the iteration ends, however it ends."""
         sent: object = None
         thrown: Exception | None = None
+        opened: list[_SyncStream] = []
         try:
             while True:
                 effect = _advance(flow, sent, thrown)
@@ -269,8 +332,12 @@ class SyncDriver:
                     yield effect.item
                     continue
                 sent, thrown = self._perform_safely(effect)
+                if isinstance(sent, Streaming):
+                    opened.append(cast(_SyncStream, sent.stream))
         finally:
             flow.close()
+            for stream in opened:
+                stream.close()
 
     def _perform_safely(self, effect: Effect) -> tuple[object, Exception | None]:
         try:
@@ -281,6 +348,8 @@ class SyncDriver:
     def _perform(self, effect: Effect) -> object:
         if isinstance(effect, Send):
             return self._attempt(effect.request)
+        if isinstance(effect, ReadChunk):
+            return cast(_SyncStream, effect.stream).read()
         if isinstance(effect, Sleep):
             time.sleep(max(0.0, effect.ms) / 1000)
             return None
@@ -312,6 +381,8 @@ class SyncDriver:
             response = self.http.send(request, stream=True)
         except Exception as error:
             return _send_failure(error)
+        if req.stream and 200 <= response.status_code <= 299 and _is_event_stream(response):
+            return Streaming(response.status_code, _headers(response), _SyncStream(response))
         try:
             chunks: list[bytes] = []
             failure: Literal["timeout", "broken"] | None = None
@@ -364,9 +435,11 @@ class AsyncDriver:
             sent, thrown = await self._perform_cancellable(flow, effect)
 
     async def iterate(self, flow: Flow[None]) -> AsyncIterator[object]:
-        """The items a flow emits, in order."""
+        """The items a flow emits, in order. Event streams the flow opened
+        are closed when the iteration ends, however it ends."""
         sent: object = None
         thrown: Exception | None = None
+        opened: list[_AsyncStream] = []
         try:
             while True:
                 effect = _advance(flow, sent, thrown)
@@ -377,8 +450,12 @@ class AsyncDriver:
                     yield effect.item
                     continue
                 sent, thrown = await self._perform_cancellable(flow, effect)
+                if isinstance(sent, Streaming):
+                    opened.append(cast(_AsyncStream, sent.stream))
         finally:
             flow.close()
+            for stream in opened:
+                await stream.aclose()
 
     async def _perform_cancellable(self, flow: Flow[Any], effect: Effect) -> tuple[object, Exception | None]:
         """Perform an effect; when the task is cancelled while a request is
@@ -415,6 +492,8 @@ class AsyncDriver:
     async def _perform(self, effect: Effect) -> object:
         if isinstance(effect, Send):
             return await self._attempt(effect.request)
+        if isinstance(effect, ReadChunk):
+            return await cast(_AsyncStream, effect.stream).read()
         if isinstance(effect, Sleep):
             await asyncio.sleep(max(0.0, effect.ms) / 1000)
             return None
@@ -459,6 +538,8 @@ class AsyncDriver:
             response = await self.http.send(request, stream=True)
         except Exception as error:
             return _send_failure(error)
+        if req.stream and 200 <= response.status_code <= 299 and _is_event_stream(response):
+            return Streaming(response.status_code, _headers(response), _AsyncStream(response))
         try:
             chunks: list[bytes] = []
             failure: Literal["timeout", "broken"] | None = None

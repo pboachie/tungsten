@@ -15,6 +15,68 @@ export interface AttemptRequest {
   redirect: RequestRedirect;
   timeoutMs: number;
   signal: AbortSignal | undefined;
+  /** Hand a `text/event-stream` answer with a 2xx status back unread, as a
+   * {@link StreamBody}; any other answer is read as usual. */
+  stream?: boolean;
+}
+
+/** What one read of an event stream gives. */
+export type StreamRead =
+  | { kind: "chunk"; bytes: Uint8Array }
+  | { kind: "end" }
+  /** No bytes arrived within the attempt timeout. */
+  | { kind: "timeout" }
+  /** The caller's signal aborted. */
+  | { kind: "aborted" }
+  /** The connection failed or was closed before the stream ended. */
+  | { kind: "lost" };
+
+/** The unread body of an event stream: chunks of bytes with an idle
+ * timeout (the attempt timeout, restarted by every read) and the caller's
+ * signal. */
+export class StreamBody {
+  readonly #reader: ReadableStreamDefaultReader<Uint8Array>;
+  readonly #controller: AbortController;
+  readonly #signal: AbortSignal | undefined;
+  readonly #onAbort: () => void;
+  readonly #idleMs: number;
+  #timedOut = false;
+  #closed = false;
+
+  constructor(reader: ReadableStreamDefaultReader<Uint8Array>, controller: AbortController, signal: AbortSignal | undefined, onAbort: () => void, idleMs: number) {
+    this.#reader = reader;
+    this.#controller = controller;
+    this.#signal = signal;
+    this.#onAbort = onAbort;
+    this.#idleMs = Math.max(1, idleMs);
+  }
+
+  async read(): Promise<StreamRead> {
+    if (this.#closed) return { kind: "end" };
+    const timer = setTimeout(() => {
+      this.#timedOut = true;
+      this.#controller.abort();
+    }, this.#idleMs);
+    try {
+      const chunk = await this.#reader.read();
+      if (chunk.done) return { kind: "end" };
+      return { kind: "chunk", bytes: chunk.value };
+    } catch {
+      if (this.#timedOut) return { kind: "timeout" };
+      return this.#signal?.aborted === true ? { kind: "aborted" } : { kind: "lost" };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /** Release the connection. Safe to call more than once. */
+  close(): void {
+    if (this.#closed) return;
+    this.#closed = true;
+    this.#signal?.removeEventListener("abort", this.#onAbort);
+    this.#reader.cancel().catch(() => undefined);
+    this.#controller.abort();
+  }
 }
 
 export type AttemptOutcome =
@@ -27,6 +89,8 @@ export type AttemptOutcome =
       body: Uint8Array | null;
       /** Why the body could not be read: deadline, caller abort or a broken connection. */
       bodyFailure: "timeout" | "aborted" | "broken" | null;
+      /** The unread body of an event stream (`AttemptRequest.stream`); `body` is then null. */
+      stream?: StreamBody;
     }
   /** The request cannot have reached the server (DNS, refused, TLS). */
   | { kind: "not_sent"; detail: string }
@@ -101,6 +165,7 @@ export async function attempt(fetchImpl: typeof fetch, req: AttemptRequest): Pro
   );
   const onAbort = (): void => controller.abort();
   req.signal?.addEventListener("abort", onAbort, { once: true });
+  let handedOver = false;
   try {
     let response: Response;
     try {
@@ -120,6 +185,12 @@ export async function attempt(fetchImpl: typeof fetch, req: AttemptRequest): Pro
     response.headers.forEach((value, name) => {
       headers[name.toLowerCase()] = value;
     });
+    if (req.stream === true && response.status >= 200 && response.status <= 299 && response.body !== null && isEventStream(headers["content-type"])) {
+      handedOver = true;
+      clearTimeout(timer);
+      const stream = new StreamBody(response.body.getReader(), controller, req.signal, onAbort, req.timeoutMs);
+      return { kind: "response", response, status: response.status, headers, body: null, bodyFailure: null, stream };
+    }
     let body: Uint8Array | null = null;
     let bodyFailure: "timeout" | "aborted" | "broken" | null = null;
     try {
@@ -129,9 +200,16 @@ export async function attempt(fetchImpl: typeof fetch, req: AttemptRequest): Pro
     }
     return { kind: "response", response, status: response.status, headers, body, bodyFailure };
   } finally {
-    clearTimeout(timer);
-    req.signal?.removeEventListener("abort", onAbort);
+    if (!handedOver) {
+      clearTimeout(timer);
+      req.signal?.removeEventListener("abort", onAbort);
+    }
   }
+}
+
+/** Whether a `Content-Type` value is `text/event-stream` (parameters and case ignored). */
+export function isEventStream(contentType: string | undefined): boolean {
+  return (contentType ?? "").split(";")[0]?.trim().toLowerCase() === "text/event-stream";
 }
 
 /** Retry-After in milliseconds (delta seconds or HTTP date), or null. */

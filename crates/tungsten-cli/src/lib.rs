@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The `tungsten` command-line interface (planning/07).
+//! The `tungsten` command-line interface.
 //!
 //! [`run`] is the whole CLI as a function of its arguments, two output
 //! streams and a [`CliEnv`], so it can be driven in-process with

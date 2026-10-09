@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Classification of HTTP responses and lost requests into results and
-//! diagnostic envelopes (planning/06 "Diagnostic error envelope", "Unknown
-//! outcome", planning/04 "Remediation table resolution").
+//! diagnostic envelopes, including the unknown-outcome case and the
+//! resolution of the remediation table.
 
 use std::collections::BTreeMap;
 
@@ -47,6 +47,14 @@ pub fn is_json_media(media: &str) -> bool {
     media == "application/json" || media.ends_with("+json") || media == "text/json"
 }
 
+/// JSON Lines media types: one JSON value per line.
+pub fn is_jsonl_media(media: &str) -> bool {
+    matches!(
+        media,
+        "application/jsonl" | "application/x-jsonl" | "application/ndjson" | "application/x-ndjson"
+    )
+}
+
 /// The response descriptor matching a status: exact, then `NXX`, then
 /// `default`.
 pub fn match_response(
@@ -74,6 +82,11 @@ pub struct DecodedBody {
     /// JSON was announced but did not parse.
     pub invalid_json: bool,
     pub empty: bool,
+    /// The body is JSON Lines: `value` is the array of the lines' values, or
+    /// (when `invalid_json`) the text.
+    pub jsonl: bool,
+    /// The first line (1-based) that did not parse.
+    pub bad_line: usize,
 }
 
 fn decode_text(bytes: &[u8]) -> String {
@@ -86,26 +99,70 @@ pub fn decode_body(
     headers: &BTreeMap<String, String>,
     declared: Option<&str>,
 ) -> DecodedBody {
-    if bytes.is_empty() {
+    let announced = media_type_of(headers);
+    // An empty body is no body, unless the server says it is JSON Lines:
+    // then it is no lines.
+    if bytes.is_empty() && !is_jsonl_media(&announced) {
         return DecodedBody {
             value: None,
             json: false,
             invalid_json: false,
             empty: true,
+            jsonl: false,
+            bad_line: 0,
         };
     }
-    let announced = media_type_of(headers);
     let media = if announced.is_empty() {
         declared.unwrap_or("").to_lowercase()
     } else {
-        announced
+        announced.clone()
     };
     let plain = |value: Value| DecodedBody {
         value: Some(value),
         json: false,
         invalid_json: false,
         empty: false,
+        jsonl: false,
+        bad_line: 0,
     };
+    let jsonl_media = if announced.is_empty() {
+        media.split(';').next().unwrap_or("").trim()
+    } else {
+        announced.as_str()
+    };
+    if is_jsonl_media(jsonl_media) {
+        let raw = decode_text(bytes);
+        let mut values = Vec::new();
+        for (index, line) in raw.split('\n').enumerate() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            match serde_json::from_str::<Value>(line) {
+                Ok(mut value) => {
+                    integral_numbers(&mut value);
+                    values.push(value);
+                }
+                Err(_) => {
+                    return DecodedBody {
+                        value: Some(Value::String(raw)),
+                        json: false,
+                        invalid_json: true,
+                        empty: false,
+                        jsonl: true,
+                        bad_line: index + 1,
+                    };
+                }
+            }
+        }
+        return DecodedBody {
+            value: Some(Value::Array(values)),
+            json: false,
+            invalid_json: false,
+            empty: false,
+            jsonl: true,
+            bad_line: 0,
+        };
+    }
     if is_json_media(&media) {
         let raw = decode_text(bytes);
         return match serde_json::from_str::<Value>(&raw) {
@@ -117,12 +174,16 @@ pub fn decode_body(
                 json: true,
                 invalid_json: false,
                 empty: false,
+                jsonl: false,
+                bad_line: 0,
             },
             Err(_) => DecodedBody {
                 value: Some(Value::String(raw)),
                 json: false,
                 invalid_json: true,
                 empty: false,
+                jsonl: false,
+                bad_line: 0,
             },
         };
     }
@@ -143,6 +204,8 @@ pub fn decode_body(
                 json: true,
                 invalid_json: false,
                 empty: false,
+                jsonl: false,
+                bad_line: 0,
             };
         }
         return plain(Value::String(raw));
@@ -315,10 +378,11 @@ pub fn outcome_unknown(ctx: &CallContext<'_>, cause: &str, fields: UnknownFields
     } else {
         let change = change_of(op);
         rule = format!(
-            "This operation has no idempotency key, so repeating it can apply the effect twice: do not call it again until you have checked whether it took effect, by reading the resource it changes and looking for {change}."
+            "This operation has no idempotency key and no registered way to verify it, so {id} may have taken effect and a repeat can apply the effect twice: do not retry it blindly. Check the outcome by other means if you can (look for {change}); if you cannot, ask whoever owns the task before calling it again.",
+            id = op.id
         );
         hint = Some(format!(
-            "Read the resource {id} changes and look for {change}; call {id} again only if it is not there.",
+            "Do not retry {id} blindly: it may have taken effect. Check for {change} if you can; call {id} again only if it is not there, or after the task owner accepts that it may apply twice.",
             id = op.id
         ));
     }

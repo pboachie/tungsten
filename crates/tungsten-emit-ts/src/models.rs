@@ -3,8 +3,7 @@
 //! `src/models/<namespace>.ts` files.
 //!
 //! Every named type is written twice under one name: an explicit type
-//! alias (the documented source of truth, wire field names, presence per
-//! planning/03) and a Zod schema constant checked against it with
+//! alias (the documented source of truth, wire field names, presence) and a Zod schema constant checked against it with
 //! `satisfies z.ZodType<T>`. Schemas are declared dependencies first; a
 //! reference inside a cycle or to another namespace's module is wrapped in
 //! `z.lazy`, and the members of a cycle are annotated `z.ZodType<T>` so
@@ -525,7 +524,9 @@ pub(crate) fn ts_primitive(p: &Primitive) -> &'static str {
         | Primitive::Double
         | Primitive::Number => "number",
         Primitive::Bool => "boolean",
-        Primitive::Bytes => "Uint8Array",
+        // What a request takes (bytes, a Blob or File, a named binary); the
+        // runtime exports the type, `internal.ts` re-exports it.
+        Primitive::Bytes => "BinaryInput",
     }
 }
 
@@ -547,7 +548,7 @@ pub(crate) fn zod_primitive(p: &Primitive, c: &Constraints) -> String {
         Primitive::Int64 | Primitive::Integer => "integer()".to_string(),
         Primitive::Float | Primitive::Double | Primitive::Number => "z.number()".to_string(),
         Primitive::Bool => return "z.boolean()".to_string(),
-        Primitive::Bytes => return "z.instanceof(Uint8Array)".to_string(),
+        Primitive::Bytes => return "binary()".to_string(),
     };
     if matches!(p, Primitive::String { .. }) {
         if let Some(n) = c.min_length {
@@ -714,6 +715,10 @@ pub(crate) fn models_file(plan: &Plan<'_>, ns: &str, header: &str) -> String {
     if uses.pattern {
         imports.add("../internal.js", "withPattern");
     }
+    if uses.binary {
+        imports.add("../internal.js", "binary");
+        imports.add_type("../internal.js", "BinaryInput");
+    }
     let mut w = Writer::new("  ");
     w.line(header);
     w.blank();
@@ -772,6 +777,8 @@ pub(crate) struct Uses {
     pub integer: bool,
     /// The `withPattern()` helper.
     pub pattern: bool,
+    /// The `binary()` helper and the `BinaryInput` type.
+    pub binary: bool,
     /// Model namespaces referenced (other than the module's own).
     pub namespaces: std::collections::BTreeSet<String>,
 }
@@ -801,6 +808,7 @@ impl Uses {
                 self.integer |= matches!(primitive, Primitive::Int64 | Primitive::Integer);
                 self.pattern |=
                     matches!(primitive, Primitive::String { .. }) && constraints.pattern.is_some();
+                self.binary |= matches!(primitive, Primitive::Bytes);
             }
             Shape::Array { items, .. } => self.add_ref(plan, home, items),
             Shape::Map { values } => self.add_ref(plan, home, values),

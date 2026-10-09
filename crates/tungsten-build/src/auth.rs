@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! Security schemes, requirements and composite auth profiles
-//! (planning/03 "Auth", planning/06 "Auth profiles").
+//! (a composite profile combines several schemes that a request needs together).
 //!
 //! Schemes come from `components/securitySchemes` of every namespace. A
 //! name defined identically (ignoring descriptions) in several namespaces
@@ -16,6 +16,12 @@
 //! client cannot satisfy it; when every alternative of a list is dropped
 //! the operation keeps no requirement and the warning says so. TG0502 is
 //! only for names that no `securitySchemes` entry defines.
+//!
+//! A document that defines no scheme at all, declares no `security`, and
+//! documents a credential header (`x-api-key`, `api-key`, `apikey`) as a
+//! parameter gets an inferred `apiKey` header scheme required by every
+//! operation (TG0112, info), so the credential is configured once on the
+//! client and is not an argument of each call.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -27,6 +33,14 @@ use tungsten_openapi::RefTarget;
 
 use crate::NamespaceInput;
 use crate::ctx::{Ctx, child, doc_of, pointer, str_of};
+use crate::operations::METHODS;
+
+/// Header names that carry an API key when the document declares no
+/// security scheme (lowercase).
+const CREDENTIAL_HEADERS: [&str; 3] = ["x-api-key", "api-key", "apikey"];
+
+/// Name of an inferred scheme.
+const INFERRED_SCHEME: &str = "apiKey";
 
 /// The compiled schemes plus what operations need to resolve requirements
 /// and recognize credential parameters.
@@ -61,9 +75,17 @@ impl AuthTable {
     pub fn build(cx: &mut Ctx<'_>, namespaces: &[NamespaceInput]) -> Self {
         let mut table = AuthTable::default();
         let mut by_name: BTreeMap<String, Vec<Definition>> = BTreeMap::new();
+        let mut inferred: BTreeSet<usize> = BTreeSet::new();
         for (ns_index, ns) in namespaces.iter().enumerate() {
             let mut keys = vec![];
-            let (defs, unsupported) = definitions(cx, ns_index, ns.doc);
+            let (mut defs, unsupported) = definitions(cx, ns_index, ns.doc);
+            if defs.is_empty()
+                && unsupported.is_empty()
+                && let Some(def) = infer_api_key(cx, ns_index, ns.doc)
+            {
+                inferred.insert(ns_index);
+                defs.push(def);
+            }
             table
                 .unsupported
                 .extend(unsupported.into_iter().map(|name| (ns_index, name)));
@@ -98,6 +120,19 @@ impl AuthTable {
             };
             let root = match cx.get(&at) {
                 Some(_) => table.resolve(cx, ns_index, &at),
+                None if inferred.contains(&ns_index) => {
+                    let scheme = table
+                        .names
+                        .get(&(ns_index, INFERRED_SCHEME.to_string()))
+                        .cloned()
+                        .unwrap_or_else(|| INFERRED_SCHEME.to_string());
+                    vec![SecurityRequirement {
+                        all_of: vec![SchemeUse {
+                            scheme,
+                            scopes: vec![],
+                        }],
+                    }]
+                }
                 None => vec![],
             };
             table.root.push(root);
@@ -142,12 +177,15 @@ impl AuthTable {
 
     /// A non-composite profile with `bearer` configures the HTTP bearer
     /// scheme of the same name (spec or IR name): its required token
-    /// `prefix` and the `env` variable the token is read from.
+    /// `prefix` and the `env` variable the token is read from; `api_key`
+    /// likewise gives an apiKey scheme its `env`.
     fn apply_bearer_profiles(&mut self, cx: &Ctx<'_>) {
         for (profile_name, profile) in &cx.cfg.auth_profiles {
-            let (None, Some(bearer)) = (&profile.composite, &profile.bearer) else {
+            if profile.composite.is_some()
+                || (profile.bearer.is_none() && profile.api_key.is_none())
+            {
                 continue;
-            };
+            }
             let targets: BTreeSet<&String> = self
                 .names
                 .iter()
@@ -155,13 +193,21 @@ impl AuthTable {
                 .map(|(_, ir)| ir)
                 .collect();
             for scheme in &mut self.schemes {
-                if let AuthScheme::HttpBearer {
-                    name, prefix, env, ..
-                } = scheme
-                    && targets.contains(name)
-                {
-                    *prefix = bearer.prefix.clone();
-                    *env = bearer.env.clone();
+                match scheme {
+                    AuthScheme::HttpBearer {
+                        name, prefix, env, ..
+                    } if targets.contains(name) => {
+                        if let Some(bearer) = &profile.bearer {
+                            *prefix = bearer.prefix.clone();
+                            *env = bearer.env.clone();
+                        }
+                    }
+                    AuthScheme::ApiKey { name, env, .. } if targets.contains(name) => {
+                        if let Some(api_key) = &profile.api_key {
+                            *env = api_key.env.clone();
+                        }
+                    }
+                    _ => {}
                 }
             }
         }
@@ -406,6 +452,75 @@ fn definitions(cx: &mut Ctx<'_>, namespace: usize, doc: usize) -> (Vec<Definitio
     (out, unsupported)
 }
 
+/// The `apiKey` header scheme of a document that defines no scheme and no
+/// root `security` but documents a credential header as a parameter.
+/// Reports TG0112 at that parameter.
+fn infer_api_key(cx: &mut Ctx<'_>, namespace: usize, doc: usize) -> Option<Definition> {
+    let root = RefTarget {
+        doc,
+        pointer: String::new(),
+    };
+    if cx.get(&child(&root, "security")).is_some() {
+        return None;
+    }
+    let paths = child(&root, "paths");
+    let Some(Value::Object(map)) = cx.get(&paths) else {
+        return None;
+    };
+    let mut found: Option<(String, RefTarget)> = None;
+    'scan: for path in map.keys() {
+        let Some((item_at, item)) = cx.deref_value(&child(&paths, path)) else {
+            continue;
+        };
+        let owners = std::iter::once(item_at.clone()).chain(
+            METHODS
+                .iter()
+                .filter(|(word, _)| item.get(*word).is_some_and(Value::is_object))
+                .map(|(word, _)| child(&item_at, word)),
+        );
+        for owner in owners {
+            let list = child(&owner, "parameters");
+            let Some(Value::Array(items)) = cx.get(&list) else {
+                continue;
+            };
+            for i in 0..items.len() {
+                let Some((at, param)) = cx.deref_value(&child(&list, &i.to_string())) else {
+                    continue;
+                };
+                let name = str_of(param, "name").unwrap_or("");
+                if str_of(param, "in") == Some("header")
+                    && CREDENTIAL_HEADERS.contains(&name.to_ascii_lowercase().as_str())
+                {
+                    found = Some((name.to_string(), at));
+                    break 'scan;
+                }
+            }
+        }
+    }
+    let (wire_name, at) = found?;
+    cx.report(
+        Diagnostic::info(
+            "TG0112",
+            format!(
+                "no security scheme is defined, but header `{wire_name}` is documented as a parameter; inferred an apiKey header scheme `{INFERRED_SCHEME}` required by every operation"
+            ),
+        )
+        .with_help("define the scheme under components/securitySchemes and list it in `security`"),
+        &at,
+    );
+    Some(Definition {
+        namespace,
+        scheme: AuthScheme::ApiKey {
+            name: INFERRED_SCHEME.to_string(),
+            location: ApiKeyIn::Header,
+            wire_name,
+            doc: None,
+            env: None,
+        },
+        at,
+    })
+}
+
 /// Convert one Security Scheme Object.
 fn scheme_of(name: &str, v: &Value) -> Result<AuthScheme, String> {
     let name = name.to_string();
@@ -424,6 +539,7 @@ fn scheme_of(name: &str, v: &Value) -> Result<AuthScheme, String> {
                 location,
                 wire_name,
                 doc,
+                env: None,
             })
         }
         Some("http") => {

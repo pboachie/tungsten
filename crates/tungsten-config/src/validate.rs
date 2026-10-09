@@ -34,7 +34,7 @@ fn is_method_name(name: &str) -> bool {
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
-/// Check the rules of planning/04 that the schema cannot express. `file`
+/// Check the manifest rules that the JSON Schema cannot express. `file`
 /// names the manifest in labels; `source`, when given, adds line and
 /// column to each message.
 pub fn validate(

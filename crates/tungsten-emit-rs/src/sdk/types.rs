@@ -5,7 +5,7 @@
 //! Every named record is a struct, every string or integer enum a closed
 //! enum, every union an enum, and every other named type a `pub type`
 //! alias (a transparent newtype when the alias is on a reference cycle).
-//! Presence follows planning/03: `T`, `Option<T>` (null on the wire),
+//! Presence is one of `T`, `Option<T>` (null on the wire),
 //! `Option<T>` that is left out when `None`, and `Patch<T>`. Recursion is
 //! broken with `Box` at the edges of by-value cycles only.
 //!

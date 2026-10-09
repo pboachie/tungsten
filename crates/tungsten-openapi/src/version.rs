@@ -9,13 +9,15 @@ use crate::{LoadOptions, SpecVersion};
 
 /// Detect the version of an entry document and check the fields every
 /// document of that version needs. Errors: TG0103 (unsupported version,
-/// including Swagger 2.0) and TG0104 (missing required field).
+/// including Swagger 2.0) and TG0104 (missing required field). A missing
+/// `info.version` is only a TG0110 warning, returned with the version when
+/// nothing else is wrong; the compiler then uses `0.0.0`.
 pub(crate) fn detect(
     root: &Value,
     file: &str,
     spans: &SpanIndex,
     opts: &LoadOptions,
-) -> Result<SpecVersion, Vec<Diagnostic>> {
+) -> Result<(SpecVersion, Vec<Diagnostic>), Vec<Diagnostic>> {
     let at = |d: Diagnostic, pointer: &str| d.at(file, pointer, spans.nearest(pointer));
     let Value::Object(doc) = root else {
         return Err(vec![at(
@@ -42,6 +44,7 @@ pub(crate) fn detect(
         )]);
     }
     let mut errors = vec![];
+    let mut warnings = vec![];
     let version = match doc.get("openapi") {
         None => {
             errors.push(at(
@@ -79,16 +82,23 @@ pub(crate) fn detect(
             "",
         )),
         Some(Value::Object(info)) => {
-            for field in ["title", "version"] {
-                if !info.get(field).is_some_and(Value::is_string) {
-                    errors.push(at(
-                        Diagnostic::error(
-                            "TG0104",
-                            format!("missing required string field `info.{field}`"),
-                        ),
-                        "/info",
-                    ));
-                }
+            if !info.get("title").is_some_and(Value::is_string) {
+                errors.push(at(
+                    Diagnostic::error("TG0104", "missing required string field `info.title`"),
+                    "/info",
+                ));
+            }
+            match info.get("version") {
+                Some(Value::String(v)) if !v.trim().is_empty() => {}
+                None | Some(Value::Null) | Some(Value::String(_)) => warnings.push(at(
+                    Diagnostic::warning("TG0110", "missing `info.version`; using version 0.0.0")
+                        .with_help("add `info.version` to the document or an overlay"),
+                    "/info",
+                )),
+                Some(_) => errors.push(at(
+                    Diagnostic::error("TG0104", "missing required string field `info.version`"),
+                    "/info",
+                )),
             }
         }
         Some(_) => errors.push(at(
@@ -125,7 +135,7 @@ pub(crate) fn detect(
         }
     }
     match version {
-        Some(v) if errors.is_empty() => Ok(v),
+        Some(v) if errors.is_empty() => Ok((v, warnings)),
         _ => Err(errors),
     }
 }

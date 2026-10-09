@@ -103,6 +103,9 @@ pub(crate) enum MemberKind {
     Op(usize),
     /// Index into [`Plan::resources`].
     Child(usize),
+    /// The event stream of the operation at this index into [`Plan::ops`]
+    /// (`createStream`).
+    Stream(usize),
 }
 
 #[derive(Debug, Clone)]
@@ -316,11 +319,22 @@ impl<'a> Plan<'a> {
                     .iter()
                     .map(|&c| pending[c].res.name.words.clone()),
             );
+            let streams: Vec<usize> = op_indices
+                .iter()
+                .copied()
+                .filter(|&o| self.ops[o].op.stream.is_some())
+                .collect();
+            words.extend(
+                streams
+                    .iter()
+                    .map(|&o| with_word(&self.ops[o].op.name.words, "stream")),
+            );
             let names = unique(&[], &words, Role::Method);
             let kinds = op_indices
                 .iter()
                 .map(|&o| MemberKind::Op(o))
-                .chain(children_of[i].iter().map(|&c| MemberKind::Child(c)));
+                .chain(children_of[i].iter().map(|&c| MemberKind::Child(c)))
+                .chain(streams.iter().map(|&o| MemberKind::Stream(o)));
             let members = names
                 .into_iter()
                 .zip(kinds)
@@ -426,10 +440,11 @@ fn plan_types(ir: &Ir) -> (BTreeMap<TypeId, TypeInfo>, Vec<ModelNs>) {
     for ns in &ns_names {
         let members: Vec<&tungsten_ir::NamedType> =
             table.iter().filter(|t| &t.namespace == ns).collect();
-        // `Uint8Array` is used unqualified for bytes; the other globals the
-        // models use are naming builtins already.
+        // `Uint8Array` is used unqualified for bytes and `BinaryInput` for
+        // binary request fields; the other globals the models use are
+        // naming builtins already.
         let rendered = unique(
-            &["Uint8Array"],
+            &["Uint8Array", "BinaryInput"],
             &members
                 .iter()
                 .map(|t| t.name.words.clone())

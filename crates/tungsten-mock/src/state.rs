@@ -44,6 +44,8 @@ pub(crate) struct Answer {
     pub body: Option<Value>,
     pub headers: Vec<(String, String)>,
     pub code: Option<String>,
+    /// Send only this many bytes of the body, then drop the connection.
+    pub cut_after: Option<usize>,
 }
 
 /// The outcome of looking up an idempotency key.

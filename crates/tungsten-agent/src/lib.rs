@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The agent manifest (`agent.yml`, planning/04) and its compilation into
+//! The agent manifest (`agent.yml`) and its compilation into
 //! the IR's agent metadata (`Operation.agent`, `Ir.agent`, ambiguous
 //! responses, manifest-declared gates, sensitive fields).
 //!
@@ -19,8 +19,8 @@
 //! (TG0610, TG0611). A rule that cannot apply is dropped; the rest of the
 //! manifest still applies.
 //!
-//! PHASE-2 CONTRACT: `load`, `parse_str`, `apply` and `json_schema` are
-//! the API used by the driver and the CLI.
+//! Stability: `load`, `parse_str`, `apply` and `json_schema` are shared by the
+//! build driver and the CLI. Changes are additive.
 
 mod apply;
 mod check;

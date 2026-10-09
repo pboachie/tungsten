@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The `agent.yml` model (planning/04 "agent.yml").
+//! The `agent.yml` model: per-operation tool overrides, API-wide defaults
+//! (retries, disclosure, error handling), gates, macros and clusters.
 //!
 //! Every struct denies unknown keys. Shapes that a JSON Schema can express
 //! are declared here and published by [`crate::json_schema`]; the rules it
@@ -295,10 +296,16 @@ pub struct BackoffConfig {
 pub struct DisclosureDefaultsConfig {
     #[serde(default)]
     pub mode: Option<DisclosureMode>,
-    /// Tool count above which `auto` selects progressive disclosure.
+    /// Tool count, kept for compatibility: `auto` decides by
+    /// `list_budget_tokens`.
     #[serde(default)]
     #[schemars(range(min = 1))]
     pub threshold: Option<u32>,
+    /// Tokens of the discrete MCP tool list above which `auto` selects
+    /// progressive disclosure (default 10000).
+    #[serde(default)]
+    #[schemars(range(min = 100))]
+    pub list_budget_tokens: Option<u32>,
     /// Budget of each operation's compact description (tokens ≈ chars / 4).
     #[serde(default)]
     #[schemars(range(min = 10))]
@@ -406,6 +413,11 @@ pub struct RemediationConfig {
     /// What to do next, e.g. a verification operation or macro to call.
     #[serde(default)]
     pub next_action: Option<String>,
+    /// The HTTP status the API answers this code with, when the spec does
+    /// not say (`4XX` only). Read for `errors.codes` entries only; the mock
+    /// uses it to pick the code of an injected status.
+    #[serde(default)]
+    pub status: Option<StatusCode>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema)]
@@ -420,7 +432,7 @@ pub struct ResponseConfig {
     pub shown_once: bool,
 }
 
-/// The runtime's closed set of error categories (planning/06).
+/// The runtime's closed set of error categories.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum Category {
@@ -460,7 +472,7 @@ impl Category {
         }
     }
 
-    /// The default `retryable` of the category (planning/06).
+    /// The default `retryable` of the category.
     pub fn default_retryable(self) -> Retryable {
         match self {
             Category::RateLimited | Category::UpstreamUnavailable | Category::TransportFailed => {

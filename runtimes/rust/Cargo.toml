@@ -8,6 +8,11 @@ edition = "2024"
 rust-version = "1.88"
 license = "Apache-2.0"
 repository = "https://github.com/pboachie/tungsten"
+homepage = "https://github.com/pboachie/tungsten"
+documentation = "https://github.com/pboachie/tungsten#readme"
+authors = ["Prince Boachie"]
+keywords = ["openapi", "sdk", "agents", "mcp", "runtime"]
+categories = ["development-tools", "web-programming::http-client"]
 publish = false
 
 [workspace.dependencies]

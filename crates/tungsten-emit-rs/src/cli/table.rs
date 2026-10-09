@@ -169,6 +169,8 @@ pub(crate) struct Meta<'a> {
     pub version: &'a str,
     pub env_prefix: &'a str,
     pub config_dir: &'a str,
+    /// `(scheme, variable)` of the schemes whose profile names a variable.
+    pub credential_env: &'a [(String, String)],
 }
 
 pub(crate) fn source(model: &Model, meta: &Meta<'_>) -> String {
@@ -245,6 +247,19 @@ pub(crate) fn source(model: &Model, meta: &Meta<'_>) -> String {
         "        config_dir: {}.into(),\n",
         rs_str(meta.config_dir)
     ));
+    if meta.credential_env.is_empty() {
+        s.push_str("        credential_env: vec![],\n");
+    } else {
+        s.push_str("        credential_env: vec![\n");
+        for (scheme, variable) in meta.credential_env {
+            s.push_str(&format!(
+                "            ({}.into(), {}.into()),\n",
+                rs_str(scheme),
+                rs_str(variable)
+            ));
+        }
+        s.push_str("        ],\n");
+    }
     if model.ops.is_empty() {
         s.push_str("        ops: vec![],\n");
     } else {

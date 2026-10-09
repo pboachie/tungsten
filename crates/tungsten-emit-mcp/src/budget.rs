@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Token budgets of the MCP surface (planning/01 NFR-3, planning/10 P5).
+//! Token budgets of the MCP surface.
 //!
 //! - Per tool: `schemaTokens` (description and input schema) must stay
 //!   within agent.yml `defaults.disclosure.schema_budget_tokens`; a tool
@@ -26,7 +26,7 @@ use tungsten_core::{Diagnostic, Diagnostics};
 
 use crate::manifest::{McpManifest, Mode, tokens};
 
-/// NFR-3: tokens of the progressive tool list and index summary.
+/// Tokens of the progressive tool list and index summary.
 pub const INDEX_BUDGET: usize = 2000;
 
 /// Replacement of a sensitive response field on a repeated identical call
@@ -296,7 +296,11 @@ pub fn tools_list(manifest: &Value, mode: Mode) -> Value {
     let tools = catalog(manifest, mode);
     match mode {
         Mode::Discrete => discrete_list(&tools),
-        Mode::Progressive => progressive_list(manifest, tools.len()),
+        Mode::Progressive => progressive_list(
+            manifest,
+            tools.len(),
+            tools.iter().any(|t| t.safety == "read_only"),
+        ),
     }
 }
 
@@ -340,7 +344,7 @@ fn discrete_list(tools: &[Tool<'_>]) -> Value {
     Value::Array(listed)
 }
 
-fn progressive_list(manifest: &Value, tool_count: usize) -> Value {
+fn progressive_list(manifest: &Value, tool_count: usize, any_read: bool) -> Value {
     let mut clusters: Vec<&str> = manifest
         .get("clusters")
         .and_then(Value::as_array)
@@ -360,10 +364,10 @@ fn progressive_list(manifest: &Value, tool_count: usize) -> Value {
         cluster.insert("enum".into(), json!(clusters));
     }
     let name = || json!({ "type": "string", "minLength": 1 });
-    json!([
+    let mut list = json!([
         {
             "name": "search_tools",
-            "description": format!("Search the {tool_count} API tools by keywords. Returns name, summary, safety tier, idempotency policy and schema token cost."),
+            "description": format!("Search the {tool_count} API tools by keywords. Returns name, summary, safety tier, MCP annotations, idempotency policy, schema token cost and the tool to call it with."),
             "inputSchema": closed(
                 json!({
                     "query": { "type": "string", "minLength": 1, "description": "Words describing the task, e.g. \"replay a failed webhook\"." },
@@ -376,13 +380,13 @@ fn progressive_list(manifest: &Value, tool_count: usize) -> Value {
         },
         {
             "name": "describe_tool",
-            "description": "Full input and output schema of one tool, its safety tier, reserved fields, remediation table and an example invoke call.",
+            "description": "Full input and output schema of one tool, its safety tier and annotations, reserved fields, remediation table and an example call.",
             "inputSchema": closed(json!({ "name": name() }), Some(json!(["name"]))),
             "annotations": meta_read(),
         },
         {
             "name": "invoke",
-            "description": "Execute one tool. Returns the response body, or the error envelope with remediation. Destructive and irreversible tools need the confirmation_token from preview with the same arguments.",
+            "description": "Execute any tool. Returns the response body, or the error envelope with remediation. Destructive and irreversible tools need the confirmation_token from preview with the same arguments. Read-only tools: use invoke_read.",
             "inputSchema": closed(json!({ "name": name(), "arguments": arguments("Arguments of the tool") }), Some(json!(["name"]))),
             "annotations": meta_write(),
         },
@@ -398,7 +402,19 @@ fn progressive_list(manifest: &Value, tool_count: usize) -> Value {
             "inputSchema": closed(json!({}), None),
             "annotations": meta_read(),
         },
-    ])
+    ]);
+    if any_read && let Value::Array(items) = &mut list {
+        items.insert(
+            3,
+            json!({
+                "name": "invoke_read",
+                "description": "Execute one read-only tool (safety tier read_only); any other tier is refused, use invoke. Safe to allow without confirmation.",
+                "inputSchema": closed(json!({ "name": name(), "arguments": arguments("Arguments of the tool") }), Some(json!(["name"]))),
+                "annotations": meta_read(),
+            }),
+        );
+    }
+    list
 }
 
 /// The `initialize` instructions the runtime sends in `mode`: the

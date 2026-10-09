@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Builds the IR from loaded OpenAPI documents and `tungsten.yml`
-//! (planning/03).
+//! Builds the IR from loaded OpenAPI documents and `tungsten.yml`.
 //!
 //! Ownership inside this crate:
 //! - `types/`   schema → IR types (nullability, unions, allOf, enums, cycles,
@@ -31,9 +30,11 @@ mod names;
 mod operations;
 mod pagination;
 mod params;
+mod prune;
 mod resources;
 mod responses;
 mod rpc;
+mod streams;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -127,7 +128,7 @@ pub fn build_with_manifest(input: &BuildInput<'_>, manifest: &str) -> BuildOutpu
             },
             digest: doc.digest.clone(),
             title: info("title"),
-            version: info("version"),
+            version: version_of(info("version")),
             resources,
             planned: ops.planned.into_iter().map(|b| b.op).collect(),
             errors,
@@ -158,11 +159,13 @@ pub fn build_with_manifest(input: &BuildInput<'_>, manifest: &str) -> BuildOutpu
                 .clone()
                 .unwrap_or_else(|| cfg.api.name.clone()),
             description: cfg.api.description.clone(),
-            version: first_doc
-                .and_then(|d| d.root.get("info"))
-                .and_then(|i| str_of(i, "version"))
-                .unwrap_or("")
-                .to_string(),
+            version: version_of(
+                first_doc
+                    .and_then(|d| d.root.get("info"))
+                    .and_then(|i| str_of(i, "version"))
+                    .unwrap_or("")
+                    .to_string(),
+            ),
             servers: servers(cfg, first_doc.map(|d| &d.root)),
         },
         namespaces,
@@ -173,6 +176,17 @@ pub fn build_with_manifest(input: &BuildInput<'_>, manifest: &str) -> BuildOutpu
         diagnostics: vec![],
     };
     BuildOutput { ir, diagnostics }
+}
+
+/// The version recorded for a document without `info.version` (TG0110).
+const DEFAULT_VERSION: &str = "0.0.0";
+
+fn version_of(declared: String) -> String {
+    if declared.trim().is_empty() {
+        DEFAULT_VERSION.to_string()
+    } else {
+        declared
+    }
 }
 
 /// `servers.default` from the manifest, else the first document's servers.

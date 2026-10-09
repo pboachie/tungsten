@@ -2,14 +2,14 @@
 //! Operation parameters: path-level and operation-level declarations
 //! merged (the operation's declaration replaces the path item's with the
 //! same location and name), serialization defaults from OpenAPI, roles
-//! (planning/03 `ParamRole`) and names unique within the operation.
+//! (`ParamRole`) and names unique within the operation.
 
 use serde_json::Value;
 use tungsten_core::Diagnostic;
 use tungsten_ir::naming::Role;
 use tungsten_ir::{
-    ApiKeyIn, Ident, Param, ParamRole, ParamSet, ParamStyle, PathSegment, PathTemplate, Primitive,
-    Shape, TypeRef,
+    ApiKeyIn, ConstQuery, Ident, Param, ParamRole, ParamSet, ParamStyle, PathSegment, PathTemplate,
+    Primitive, Shape, TypeRef,
 };
 use tungsten_openapi::RefTarget;
 
@@ -111,7 +111,7 @@ pub(crate) fn build(
         }
     }
 
-    let in_template = template_params(&template.raw);
+    let in_template = template_params(split_query(&template.raw).0);
     let mut built: Vec<(Location, Param, RefTarget)> = vec![];
     for decl in &merged {
         if decl.location == Location::Path && !in_template.contains(&decl.wire) {
@@ -166,6 +166,23 @@ pub(crate) fn build(
             group.sort_by_key(|(_, p, _)| position(p));
         }
         ordered.extend(group);
+    }
+
+    let vendor = vendor_required_headers(cx, op);
+    for (location, p, _) in &mut ordered {
+        if *location != Location::Header
+            || !matches!(p.role, ParamRole::Plain | ParamRole::Constant)
+        {
+            continue;
+        }
+        let found = vendor
+            .iter()
+            .find(|(h, _)| h.eq_ignore_ascii_case(&p.wire_name));
+        if let Some((_, value)) = found {
+            p.required = true;
+            p.role = ParamRole::Constant;
+            p.constant = Some(Value::String(value.clone()));
+        }
     }
 
     let mut idents: Vec<Ident> = ordered.iter().map(|(_, p, _)| p.name.clone()).collect();
@@ -248,18 +265,72 @@ fn param(cx: &mut Ctx<'_>, auth: &AuthTable, scope: &OpScope<'_>, decl: &Declare
         .get("explode")
         .and_then(Value::as_bool)
         .unwrap_or(style == ParamStyle::Form);
+    let required = decl.location == Location::Path || flag(decl.value, "required");
+    let mut role = role(cx, auth, scope.ns_index, decl, schema.as_ref());
+    let mut constant = None;
+    if required && role == ParamRole::Plain && decl.location == Location::Header {
+        constant = schema.as_ref().and_then(|t| single_value(cx, t));
+        if constant.is_some() {
+            role = ParamRole::Constant;
+        }
+    }
     Param {
         wire_name: decl.wire.clone(),
         name: Ident::new(&decl.wire),
         ty,
-        required: decl.location == Location::Path || flag(decl.value, "required"),
+        required,
         doc: doc(None, str_of(decl.value, "description")),
         style,
         explode,
-        role: role(cx, auth, scope.ns_index, decl, schema.as_ref()),
+        role,
         deprecated: flag(decl.value, "deprecated"),
         media_type,
+        constant,
     }
+}
+
+/// The only value a scalar schema admits: its `const`, or an `enum` of one
+/// string, integer or boolean (a float has no single header text).
+fn single_value(cx: &Ctx<'_>, schema: &RefTarget) -> Option<Value> {
+    let (_, s) = cx.deref_value(schema)?;
+    let value = match (s.get("const"), s.get("enum").and_then(Value::as_array)) {
+        (Some(v), _) => v,
+        (None, Some(items)) if items.len() == 1 => &items[0],
+        _ => return None,
+    };
+    let sendable = match value {
+        Value::String(_) | Value::Bool(_) => true,
+        Value::Number(n) => n.is_i64() || n.is_u64(),
+        _ => false,
+    };
+    sendable.then(|| value.clone())
+}
+
+/// Vendor `x-<header>-required: <value>` members of an operation (the
+/// Claude API's `x-anthropic-beta-required`): the header named between
+/// `x-` and `-required` must carry that value (a string, or an array of
+/// strings joined with commas).
+fn vendor_required_headers(cx: &Ctx<'_>, op: &RefTarget) -> Vec<(String, String)> {
+    let Some(map) = cx.get(op).and_then(Value::as_object) else {
+        return vec![];
+    };
+    map.iter()
+        .filter_map(|(key, value)| {
+            let header = key.strip_prefix("x-")?.strip_suffix("-required")?;
+            let value = match value {
+                Value::String(s) if !s.is_empty() => s.clone(),
+                Value::Array(items) => {
+                    let parts: Vec<&str> = items.iter().filter_map(Value::as_str).collect();
+                    if parts.is_empty() || parts.len() != items.len() {
+                        return None;
+                    }
+                    parts.join(",")
+                }
+                _ => return None,
+            };
+            (!header.is_empty()).then(|| (header.to_string(), value))
+        })
+        .collect()
 }
 
 /// The parameter's schema: `schema`, or the schema of its single `content`
@@ -380,8 +451,14 @@ pub(crate) fn template_params(raw: &str) -> Vec<String> {
 /// `{name}` is a parameter, one without placeholders is literal text, and
 /// one that mixes both (`{date}.csv`, `{id}:archive`) is a template of
 /// literal and parameter parts. Unbalanced braces are literal text.
+///
+/// A query string in the key (`/v1/messages?beta=true`, which OpenAPI
+/// forbids but real documents use) is not part of the segments: its pairs
+/// are the template's constant query parameters, and `raw` keeps the whole
+/// key so the runtime sends them.
 pub(crate) fn path_template(raw: &str) -> PathTemplate {
-    let segments = raw
+    let (path, query) = split_query(raw);
+    let segments = path
         .split('/')
         .filter(|s| !s.is_empty())
         .map(segment)
@@ -389,7 +466,24 @@ pub(crate) fn path_template(raw: &str) -> PathTemplate {
     PathTemplate {
         raw: raw.to_string(),
         segments,
+        query: query
+            .split('&')
+            .filter(|p| !p.is_empty())
+            .map(|pair| {
+                let (name, value) = pair.split_once('=').unwrap_or((pair, ""));
+                ConstQuery {
+                    name: name.to_string(),
+                    value: value.to_string(),
+                }
+            })
+            .collect(),
     }
+}
+
+/// A path key split at its first `?` into the path and the query string
+/// (empty when there is none).
+pub(crate) fn split_query(key: &str) -> (&str, &str) {
+    key.split_once('?').unwrap_or((key, ""))
 }
 
 fn segment(text: &str) -> PathSegment {
@@ -452,5 +546,6 @@ fn undeclared_path_param(name: &str) -> Param {
         role: ParamRole::Plain,
         deprecated: false,
         media_type: None,
+        constant: None,
     }
 }

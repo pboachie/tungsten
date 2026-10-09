@@ -575,7 +575,7 @@ pub struct SurfaceChange {
     pub detail: String,
 }
 
-/// `tungsten report`: the generation report (planning/07).
+/// `tungsten report`: the generation report.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 #[schemars(deny_unknown_fields)]
 pub struct ReportResult {
@@ -665,7 +665,7 @@ pub enum CoverageStatus {
     Failed,
 }
 
-/// The safety metadata of one operation (planning/07 "safety matrix").
+/// The safety metadata of one operation (the report's safety matrix).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 #[schemars(deny_unknown_fields)]
 pub struct SafetyRow {
@@ -720,7 +720,7 @@ pub enum CellOrigin {
     BuiltIn,
 }
 
-/// Token budgets (planning/01 NFR-3).
+/// Token budgets of the generated agent surface.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 #[schemars(deny_unknown_fields)]
 pub struct Budgets {
@@ -811,7 +811,7 @@ pub struct McpBudgets {
     pub discrete_tokens: usize,
     /// The same in progressive mode: the meta tools (`search_tools`,
     /// `describe_tool`, `invoke`, `preview`, `list_clusters`) plus the
-    /// instructions, which carry the cluster index (NFR-3 budget 2,000).
+    /// instructions, which carry the cluster index (budget 2,000 tokens).
     pub progressive_tokens: usize,
     /// Tools over `schema_budget`.
     pub over_budget: usize,

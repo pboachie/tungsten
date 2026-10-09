@@ -4,7 +4,7 @@
  * header and cookie parameters) and request body encoding.
  */
 import type { BodyDescriptor, OperationDescriptor, ParamDescriptor } from "./types.js";
-import { binarySize, canonicalJson, isBinary, isBlob, isRecord, REDACTED, utf8 } from "./util.js";
+import { binarySize, canonicalJson, isBinary, isBlob, isNamedBinary, isRecord, REDACTED, utf8 } from "./util.js";
 
 /** Problem found while serializing an argument; becomes VALIDATION_FAILED. */
 export class SerializationError extends Error {
@@ -180,7 +180,7 @@ function formPairs(value: unknown, parameter: string): Array<[string, string]> {
 }
 
 function toBlob(value: Uint8Array | ArrayBuffer | Blob, type: string): Blob {
-  if (isBlob(value)) return value;
+  if (isBlob(value)) return type !== "" && value.type !== type ? value.slice(0, value.size, type) : value;
   const bytes = value instanceof ArrayBuffer ? new Uint8Array(value) : value;
   const copy = new Uint8Array(new ArrayBuffer(bytes.byteLength));
   copy.set(bytes);
@@ -240,11 +240,12 @@ export async function encodeBody(
         const items = Array.isArray(v) ? v.filter(present) : [v];
         const shown: unknown[] = [];
         for (const item of items) {
-          if (isBinary(item)) {
-            const blob = toBlob(item, "");
-            const filename = typeof File !== "undefined" && item instanceof File ? item.name : k;
-            form.append(k, blob, filename);
-            shown.push(binaryDisplay(item, blob.type));
+          if (isBinary(item) || isNamedBinary(item)) {
+            const { data, filename, contentType } = isNamedBinary(item) ? item : { data: item, filename: undefined, contentType: undefined };
+            const blob = toBlob(data, contentType ?? "");
+            const name = filename ?? (typeof File !== "undefined" && data instanceof File ? data.name : k);
+            form.append(k, blob, name);
+            shown.push(binaryDisplay(data, blob.type));
           } else if (isRecord(item) && !(item instanceof Date)) {
             form.append(k, new Blob([JSON.stringify(item)], { type: "application/json" }));
             shown.push(item);

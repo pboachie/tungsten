@@ -8,7 +8,7 @@
 //! | `version` | `0.1.0` | Package version (PEP 440 release, optional pre/post/dev). |
 //! | `runtime` | [`DEFAULT_RUNTIME_SPEC`] | Version specifier of `tungsten-runtime`. |
 //! | `runtime_path` | none | A local `tungsten-runtime` checkout, as a uv path source. |
-//! | `models` | `pydantic` | `dataclasses` (stdlib-only output) is planned and not supported yet. |
+//! | `models` | `pydantic` | `pydantic` (Pydantic v2 models), or `dataclasses`: stdlib dataclasses and `TypedDict` request shapes, validated by `tungsten_runtime.schema`, with no Pydantic dependency. |
 
 use tungsten_core::{Diagnostic, Diagnostics};
 use tungsten_emit::TargetConfig;
@@ -34,6 +34,17 @@ pub enum RuntimeDep {
     Path(String),
 }
 
+/// How the generated models are written and validated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Models {
+    /// Pydantic v2 models.
+    #[default]
+    Pydantic,
+    /// Stdlib dataclasses and `TypedDict` request shapes, validated by
+    /// `tungsten_runtime.schema`.
+    Dataclasses,
+}
+
 /// Resolved target options.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Options {
@@ -44,6 +55,8 @@ pub struct Options {
     /// Package version.
     pub version: String,
     pub runtime: RuntimeDep,
+    /// How models are written.
+    pub models: Models,
 }
 
 /// Module names a generated package must not take: they would shadow its
@@ -101,11 +114,14 @@ impl Options {
             &is_specifier,
             "a version specifier such as >=0.1,<0.2",
         );
-        read(
+        let models = match read(
             "models",
-            &|s| s == "pydantic",
-            "`pydantic` (`dataclasses` output is not supported yet)",
-        );
+            &|s| s == "pydantic" || s == "dataclasses",
+            "`pydantic` or `dataclasses`",
+        ) {
+            Some(m) if m == "dataclasses" => Models::Dataclasses,
+            _ => Models::Pydantic,
+        };
         let runtime = match runtime_path {
             Some(p) => RuntimeDep::Path(p),
             None => {
@@ -118,6 +134,7 @@ impl Options {
                 module,
                 version,
                 runtime,
+                models,
             },
             diags,
         )

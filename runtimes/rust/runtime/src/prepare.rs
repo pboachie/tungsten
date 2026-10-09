@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Pre-flight: validation, confirmation, auth, idempotency and the building
-//! of the request (planning/06 "Transport pipeline": call, preflight, auth,
-//! idempotency, send).
+//! of the request (the call pipeline is: call, preflight, auth, idempotency,
+//! send).
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -409,7 +409,7 @@ impl ClientCore {
         Ok(())
     }
 
-    /// The confirmation rule of planning/04 for one tier: `destructive`
+    /// The confirmation rule for one tier: `destructive`
     /// accepts `Confirm::Yes` (unless `allow_yes` is false) or a token,
     /// `irreversible` only a token issued for `subject` (an operation id, or
     /// `macro:<name>`) and these exact args.
@@ -1039,6 +1039,13 @@ impl ClientCore {
             format!("{api_name}-sdk/{api_version} tungsten/{tungsten} (rust)"),
             false,
         );
+        for p in &op.params {
+            if let (ParamRole::Constant, ParamLocation::Header, Some(value)) =
+                (p.role, p.location, &p.constant)
+            {
+                headers.set(&p.wire, value.clone(), p.sensitive);
+            }
+        }
         for extra in [&self.inner.headers, &opts.headers] {
             for (name, value) in extra {
                 headers.set(name, value.clone(), looks_sensitive(name));
