@@ -355,7 +355,7 @@ pub mod codes {
         ),
         (
             "TG0744",
-            "operation with different success bodies returns serde_json::Value in the Rust SDK",
+            "operation with different non-JSON or ranged success bodies returns serde_json::Value in the Rust SDK",
         ),
         (
             "TG0745",
