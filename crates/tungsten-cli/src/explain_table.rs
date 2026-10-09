@@ -691,6 +691,26 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
         "Run `tungsten generate` to record a snapshot; later runs of `tungsten diff \
          --semver` classify the changes made after it. Do not edit files under `.tungsten/`.",
     ),
+    e(
+        "TG0920",
+        "`tungsten overlay suggest` found a diagnostic that an overlay action could fix, but \
+         the value the action needs cannot be derived without guessing: the operation has no \
+         single id in the IR (its document is shared by several namespaces, or the operation \
+         is expanded from an rpc envelope), or its position cannot be written as an Overlay \
+         target. The overlay suggestion leaves it out; it never writes placeholder text.",
+        "Fix the diagnostic by hand in the spec (add or change the operationId), or in the \
+         overlay you maintain yourself.",
+    ),
+    e(
+        "TG0921",
+        "`tungsten overlay suggest` only writes actions whose fix the compiler has already \
+         decided: the id of an operation without operationId, and the unique id of an \
+         operation whose operationId is used more than once. Warnings of any other code, \
+         such as an inferred pagination (TG0501) or a renamed field or type (TG0401), need a \
+         decision or live in tungsten.yml; the count is reported once per code.",
+        "Use `tungsten explain` on the code for its usual fix, for example declare the \
+         pagination under `pagination` in tungsten.yml.",
+    ),
 ];
 
 /// The extended explanation of a code, if one exists.

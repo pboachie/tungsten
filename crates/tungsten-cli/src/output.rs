@@ -90,6 +90,8 @@ pub enum CommandName {
     Report,
     #[serde(rename = "diff")]
     Diff,
+    #[serde(rename = "overlay suggest")]
+    OverlaySuggest,
 }
 
 /// A diagnostic flattened to its first label.
@@ -182,6 +184,7 @@ pub enum CommandResult {
     Mock(MockResult),
     Report(Box<ReportResult>),
     Diff(DiffResult),
+    OverlaySuggest(OverlaySuggestResult),
     Help(HelpResult),
 }
 
@@ -395,6 +398,40 @@ pub enum ExplainResult {
 pub struct SchemaResult {
     pub name: SchemaName,
     pub schema: Value,
+}
+
+/// `overlay suggest`: the overlay for one input.
+#[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct OverlaySuggestResult {
+    /// The input (namespace) the overlay is for; null when nothing was
+    /// suggested.
+    pub namespace: Option<String>,
+    /// That input's `spec`, as written in tungsten.yml.
+    pub spec: Option<String>,
+    pub actions: Vec<SuggestedAction>,
+    /// Diagnostics (or codes) that got no action; each is also reported as
+    /// TG0920 or TG0921.
+    pub skipped: usize,
+    /// The file written by `--write`; null otherwise.
+    pub out: Option<String>,
+    /// The overlay document as YAML; null when it was written to `out` or
+    /// nothing was suggested.
+    pub overlay: Option<String>,
+}
+
+/// One action of a suggested overlay.
+#[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct SuggestedAction {
+    /// The diagnostics the action fixes.
+    pub codes: Vec<String>,
+    /// The Overlay target (JSONPath).
+    pub target: String,
+    /// JSON Pointer of the target node in the input document.
+    pub pointer: String,
+    /// The object merged into the target.
+    pub update: Value,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
@@ -830,7 +867,7 @@ pub struct DiagnosticGroup {
 }
 
 /// Which `$defs` entry describes `result` for each command.
-const RESULT_DEFS: [(CommandName, &str); 10] = [
+const RESULT_DEFS: [(CommandName, &str); 11] = [
     (CommandName::Check, "CheckResult"),
     (CommandName::IrDump, "IrDumpResult"),
     (CommandName::Explain, "ExplainResult"),
@@ -841,6 +878,7 @@ const RESULT_DEFS: [(CommandName, &str); 10] = [
     (CommandName::Mock, "MockResult"),
     (CommandName::Report, "ReportResult"),
     (CommandName::Diff, "DiffResult"),
+    (CommandName::OverlaySuggest, "OverlaySuggestResult"),
 ];
 
 /// The JSON Schema (draft 2020-12) of [`CliOutput`]. Beyond the generated
