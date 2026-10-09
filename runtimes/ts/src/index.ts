@@ -9,6 +9,19 @@ export * from "./types.js";
 export { ClientCore } from "./client.js";
 export { SseParser, type SseEvent } from "./sse.js";
 export { MemoryIdempotencyStore } from "./idempotency.js";
+export {
+  generatePkce,
+  MemoryTokenStore,
+  OAuthFlow,
+  pkceChallenge,
+  type AuthorizationUrlParams,
+  type ExchangeCodeParams,
+  type OAuthResult,
+  type Pkce,
+  type StoredToken,
+  type TokenInfo,
+  type TokenStore,
+} from "./oauth.js";
 export { TungstenError, unwrap, throwing, type Throwing } from "./errors.js";
 export { defineApi, defineMacro, defineOperation } from "./define.js";
 export { evaluatePredicate } from "./expr.js";

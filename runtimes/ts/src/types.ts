@@ -13,6 +13,7 @@
  * TypeScript emitter. Additive changes only (new optional fields, new
  * union members), and only with both sides updated.
  */
+import type { TokenStore } from "./oauth.js";
 
 // ---------------------------------------------------------------- errors
 
@@ -274,6 +275,15 @@ export interface StreamDescriptor {
   flag?: string;
 }
 
+/** The `authorizationCode` flow of an OAuth2 scheme (present only when the
+ * spec declares one). `refreshUrl` falls back to `tokenUrl`. */
+export interface AuthorizationCodeDescriptor {
+  authorizationUrl: string;
+  tokenUrl: string;
+  refreshUrl: string | null;
+  scopes: string[];
+}
+
 export type AuthSchemeDescriptor =
   | { kind: "api_key"; name: string; in: "header" | "query" | "cookie"; wire: string }
   /** `prefix`: the token must start with it (tungsten.yml
@@ -281,7 +291,7 @@ export type AuthSchemeDescriptor =
    * request is sent, and a mismatch is `AUTH_FAILED` with zero network calls. */
   | { kind: "http_bearer"; name: string; prefix: string | null }
   | { kind: "http_basic"; name: string }
-  | { kind: "oauth2"; name: string; tokenUrl: string | null; scopes: string[] }
+  | { kind: "oauth2"; name: string; tokenUrl: string | null; scopes: string[]; authorizationCode?: AuthorizationCodeDescriptor }
   | {
       kind: "composite";
       name: string;
@@ -363,6 +373,10 @@ export interface ClientOptions {
   /** Defaults to the first server. */
   baseUrl?: string;
   auth?: AuthConfig;
+  /** Holds the tokens of `authorizationCode` schemes (configure such a
+   * scheme as `{flow: "authorizationCode", clientId, clientSecret?,
+   * redirectUri?}`). Default: in memory, per client. */
+  tokenStore?: TokenStore;
   /** Defaults to `globalThis.fetch`. */
   fetch?: typeof fetch;
   /** Per-attempt timeout. Default 30000. */
