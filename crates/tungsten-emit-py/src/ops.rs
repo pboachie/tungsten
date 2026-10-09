@@ -454,6 +454,7 @@ fn role_str(r: ParamRole) -> &'static str {
         ParamRole::DryRun => "dry_run",
         ParamRole::Origin => "origin",
         ParamRole::Auth => "auth",
+        ParamRole::Constant => "constant",
     }
 }
 
@@ -757,7 +758,7 @@ pub(crate) fn descriptor_py(plan: &Plan<'_>, info: &OpInfo<'_>, shape: &OpShape<
             .params
             .iter()
             .map(|p| {
-                Py::dict(vec![
+                let mut members = vec![
                     ("name", Py::str(&p.name)),
                     ("wire", Py::str(&p.param.wire_name)),
                     ("location", Py::str(p.location)),
@@ -765,7 +766,11 @@ pub(crate) fn descriptor_py(plan: &Plan<'_>, info: &OpInfo<'_>, shape: &OpShape<
                     ("style", Py::str(style_str(p.param.style))),
                     ("explode", Py::bool(p.param.explode)),
                     ("role", Py::str(role_str(p.param.role))),
-                ])
+                ];
+                if let Some(value) = tungsten_emit::args::constant_text(p.param) {
+                    members.push(("constant", Py::str(&value)));
+                }
+                Py::dict(members)
             })
             .collect(),
     );

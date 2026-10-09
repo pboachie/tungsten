@@ -73,6 +73,10 @@ pub struct CliSpec {
     pub env_prefix: String,
     /// Directory name under the config home for `config.toml`.
     pub config_dir: String,
+    /// Credential variables named in `tungsten.yml`
+    /// (`auth_profiles.<name>.bearer.env` or `api_key.env`): scheme name,
+    /// variable. They replace `<PREFIX>_<SCHEME>` for that scheme.
+    pub credential_env: Vec<(String, String)>,
     pub ops: Vec<CliOp>,
     pub macros: Vec<CliMacro>,
 }

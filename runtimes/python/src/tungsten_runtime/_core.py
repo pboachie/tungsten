@@ -1065,6 +1065,10 @@ class Engine:
         headers.set("X-Tungsten-Operation", op["id"])
         tungsten = str_field(self.api, "tungsten_version") or RUNTIME_VERSION
         headers.set("User-Agent", f"{api_name}-sdk/{api_version} tungsten/{tungsten} (python)")
+        for p in op["params"]:
+            constant = p.get("constant")
+            if p.get("role") == "constant" and p["location"] == "header" and isinstance(constant, str):
+                headers.set(p["wire"], constant, p.get("sensitive") is True)
         for extra in (cast(object, self.options.headers), _opt(opts, "headers")):
             if not is_record(extra):
                 continue

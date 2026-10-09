@@ -276,12 +276,14 @@ pub enum ParamRole {
     DryRun,
     Origin,
     Auth,
+    /// A header the runtime sends itself: [`ParamDescriptor::constant`].
+    Constant,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ParamDescriptor {
     /// Key in the arguments object (the Rust field name of the request
-    /// struct). Roles `IdempotencyKey`, `Origin` and `Auth` are not
+    /// struct). Roles `IdempotencyKey`, `Origin`, `Auth` and `Constant` are not
     /// arguments: they come from [`CallOptions::idempotency_key`] and the
     /// auth profile ([`ClientOptions::auth`]); their `name` is informational.
     pub name: String,
@@ -292,6 +294,9 @@ pub struct ParamDescriptor {
     pub style: ParamStyle,
     pub explode: bool,
     pub role: ParamRole,
+    /// Header value of a `Constant` parameter, sent on every call;
+    /// `ClientOptions::headers` and `CallOptions::headers` replace it.
+    pub constant: Option<String>,
     pub sensitive: bool,
 }
 

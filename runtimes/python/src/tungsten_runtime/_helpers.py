@@ -119,7 +119,7 @@ def descriptor_problem(op: object) -> str | None:
 
 def arg_params(op: OperationDescriptor) -> list[ParamDescriptor]:
     """Parameters supplied by the caller (not auth, key or origin)."""
-    return [p for p in op["params"] if p.get("role") not in ("idempotency_key", "origin", "auth")]
+    return [p for p in op["params"] if p.get("role") not in ("idempotency_key", "origin", "auth", "constant")]
 
 
 def merged_fields(op: OperationDescriptor) -> list[tuple[str, str]]:

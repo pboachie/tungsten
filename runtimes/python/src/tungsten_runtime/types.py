@@ -162,13 +162,15 @@ ergonomics. Branch with ``isinstance(result, Ok)`` or ``result.ok is True``
 HttpMethod = Literal["GET", "PUT", "POST", "DELETE", "OPTIONS", "HEAD", "PATCH", "TRACE"]
 ParamLocation = Literal["path", "query", "header", "cookie"]
 ParamStyle = Literal["simple", "form", "label", "matrix", "space_delimited", "pipe_delimited", "deep_object"]
-ParamRole = Literal["plain", "idempotency_key", "dry_run", "origin", "auth"]
+ParamRole = Literal["plain", "idempotency_key", "dry_run", "origin", "auth", "constant"]
 
 
 class ParamDescriptor(TypedDict):
     """``name`` is the Python keyword argument. Params with the roles
-    ``idempotency_key``, ``origin`` and ``auth`` are not arguments: they come
-    from ``CallOptions.idempotency_key`` and the auth profile."""
+    ``idempotency_key``, ``origin``, ``auth`` and ``constant`` are not
+    arguments: they come from ``CallOptions.idempotency_key``, the auth
+    profile and, for ``constant``, the descriptor's ``constant`` header value
+    (``headers`` options replace it)."""
 
     name: str
     wire: str
@@ -177,6 +179,7 @@ class ParamDescriptor(TypedDict):
     style: ParamStyle
     explode: bool
     role: ParamRole
+    constant: NotRequired[str]
     sensitive: NotRequired[bool]
 
 

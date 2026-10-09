@@ -737,6 +737,7 @@ fn role_rs(r: ParamRole) -> &'static str {
         ParamRole::DryRun => "ParamRole::DryRun",
         ParamRole::Origin => "ParamRole::Origin",
         ParamRole::Auth => "ParamRole::Auth",
+        ParamRole::Constant => "ParamRole::Constant",
     }
 }
 
@@ -1137,6 +1138,10 @@ pub(crate) fn descriptor_rx(
                         ("style", Rx::atom(style_rs(p.param.style))),
                         ("explode", Rx::boolean(p.param.explode)),
                         ("role", Rx::atom(role_rs(p.param.role))),
+                        (
+                            "constant",
+                            Rx::opt_string(tungsten_emit::args::constant_text(p.param).as_deref()),
+                        ),
                         ("sensitive", Rx::boolean(false)),
                     ],
                 )

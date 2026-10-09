@@ -24,7 +24,7 @@ mod table;
 use tungsten_core::{Diagnostic, Diagnostics};
 use tungsten_emit::{CommentStyle, FileSet, TargetConfig, header};
 use tungsten_ir::naming::{self, Case, Role, Target};
-use tungsten_ir::{Ident, Ir};
+use tungsten_ir::{AuthScheme, Ident, Ir};
 
 use crate::options::{Dep, Options};
 
@@ -140,6 +140,29 @@ pub(crate) fn emit(ir: &Ir, cfg: &TargetConfig, out: &mut FileSet) -> Diagnostic
             tungsten_ir::title_stem(&ir.api.title)
         ),
     };
+    // A composite profile configures itself and the schemes it satisfies.
+    let composites: Vec<&str> = ir
+        .auth
+        .iter()
+        .filter_map(|s| match s {
+            AuthScheme::Composite {
+                name, satisfies, ..
+            } => Some(std::iter::once(name).chain(satisfies).map(String::as_str)),
+            _ => None,
+        })
+        .flatten()
+        .collect();
+    let credential_env: Vec<(String, String)> = ir
+        .auth
+        .iter()
+        .filter(|s| !composites.contains(&s.name()))
+        .filter_map(|s| match s {
+            AuthScheme::ApiKey { name, env, .. } | AuthScheme::HttpBearer { name, env, .. } => {
+                env.clone().map(|e| (name.clone(), e))
+            }
+            _ => None,
+        })
+        .collect();
     let meta = table::Meta {
         header: &rs_stamp,
         bin: &cli.bin,
@@ -147,6 +170,7 @@ pub(crate) fn emit(ir: &Ir, cfg: &TargetConfig, out: &mut FileSet) -> Diagnostic
         version: &opts.version,
         env_prefix: &naming::to_case(words, Case::ScreamingSnake),
         config_dir: &naming::to_case(words, Case::Kebab),
+        credential_env: &credential_env,
     };
     let files = [
         (

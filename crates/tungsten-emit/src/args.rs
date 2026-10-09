@@ -13,9 +13,10 @@
 //! - Parameters are keyed by their TypeScript parameter name (`endpointId`;
 //!   a reserved word is escaped, `class` → `class_`), in path, query,
 //!   header, cookie order, made unique within the operation (`id`, `id2`).
-//!   Parameters with the roles `idempotency_key`, `origin` and `auth` are
-//!   not arguments: the call options and the auth profile supply them, so
-//!   credentials never travel through an agent's arguments. They are named
+//!   Parameters with the roles `idempotency_key`, `origin`, `auth` and
+//!   `constant` are not arguments: the call options, the auth profile and
+//!   the runtime (a constant's value) supply them, so credentials never
+//!   travel through an agent's arguments. They are named
 //!   after the arguments, for descriptors only.
 //! - The body content is the first JSON one, else the first one.
 //! - A JSON body whose type is a record without typed extras is merged:
@@ -111,8 +112,20 @@ pub fn resolve<'a>(ir: &'a Ir, ty: &'a TypeRef) -> Option<&'a Shape> {
 pub fn is_supplied_param(param: &Param) -> bool {
     matches!(
         param.role,
-        ParamRole::IdempotencyKey | ParamRole::Origin | ParamRole::Auth
+        ParamRole::IdempotencyKey | ParamRole::Origin | ParamRole::Auth | ParamRole::Constant
     )
+}
+
+/// The header text a `constant` parameter carries (strings as they are,
+/// numbers and booleans as JSON text); `None` for any other parameter.
+pub fn constant_text(param: &Param) -> Option<String> {
+    if param.role != ParamRole::Constant {
+        return None;
+    }
+    match param.constant.as_ref()? {
+        serde_json::Value::String(s) => Some(s.clone()),
+        other => Some(other.to_string()),
+    }
 }
 
 /// The arguments object of `op`.
