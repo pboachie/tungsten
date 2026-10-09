@@ -85,7 +85,10 @@ pub mod types;
 pub use client::{ClientCore, ConfigError, Pages, Polled, TypedPages};
 pub use dispatch::{Dispatch, decode, decode_event, decode_page, no_stream};
 pub use idempotency::{FileIdempotencyStore, MemoryIdempotencyStore};
-pub use stream::{EventStream, StreamEvent, StreamResult, TypedEvents};
+pub use stream::{
+    DEFAULT_MAX_COLLECT_BYTES, DEFAULT_MAX_COLLECT_TIME, EventStream, StreamEvent, StreamResult,
+    TypedEvents,
+};
 pub use types::*;
 pub use value::{BINARY_KEY, Binary, Patch};
 
@@ -110,7 +113,7 @@ pub mod internals {
         EncodedBody, Payload, encode_body, serialize_cookie_param, serialize_header_param,
         serialize_path_param, serialize_query_param,
     };
-    pub use crate::sse::{SseEvent, SseParser, Utf8Decoder};
+    pub use crate::sse::{DEFAULT_MAX_EVENT_BYTES, SseEvent, SseParser, Utf8Decoder};
     pub use crate::transport::{next_link, parse_http_date, parse_retry_after};
     pub use crate::util::{canonical_json, envelope_value, js_number, json_text, sha256_hex};
 }

@@ -5,6 +5,19 @@
 //! blank line that dispatches the event. Several `data` lines are joined with
 //! LF; an event without `data` lines is not dispatched; an event still open
 //! when the stream ends is discarded. Same behaviour as `runtimes/ts/src/sse.ts`.
+//!
+//! An event may hold at most `max_event_bytes` (default
+//! [`DEFAULT_MAX_EVENT_BYTES`], 1 MiB): the UTF-8 bytes of its field lines
+//! (each counted with a one-byte terminator; a finished comment line is not
+//! kept and does not count) plus the line being read, whatever it turns out to
+//! be, so a comment longer than the limit with no line end also stops the
+//! parser. A parser that sees more stops:
+//! [`SseParser::exceeded`] becomes true, the events completed before the
+//! oversize one are still returned, and later input is ignored, so nothing is
+//! buffered without bound.
+
+/// The default size limit of one event, in UTF-8 bytes.
+pub const DEFAULT_MAX_EVENT_BYTES: usize = 1024 * 1024;
 
 /// One dispatched event.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -18,7 +31,7 @@ pub struct SseEvent {
     pub retry: Option<u64>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct SseParser {
     buffer: String,
     started: bool,
@@ -27,16 +40,50 @@ pub struct SseParser {
     has_data: bool,
     id: Option<String>,
     retry: Option<u64>,
+    event_bytes: usize,
+    exceeded: bool,
+    max: usize,
+}
+
+impl Default for SseParser {
+    fn default() -> Self {
+        Self::with_max_event_bytes(DEFAULT_MAX_EVENT_BYTES)
+    }
 }
 
 impl SseParser {
+    /// A parser with the default size limit.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// A parser that stops at events larger than `max_event_bytes`.
+    pub fn with_max_event_bytes(max_event_bytes: usize) -> Self {
+        SseParser {
+            buffer: String::new(),
+            started: false,
+            event: String::new(),
+            data: String::new(),
+            has_data: false,
+            id: None,
+            retry: None,
+            event_bytes: 0,
+            exceeded: false,
+            max: max_event_bytes,
+        }
+    }
+
+    /// The event being read is larger than the limit: the parser has stopped.
+    pub fn exceeded(&self) -> bool {
+        self.exceeded
     }
 
     /// Feed decoded text; returns the events it completes. A CR at the end of
     /// the text is held back until the next text shows whether an LF follows.
     pub fn push(&mut self, chunk: &str) -> Vec<SseEvent> {
+        if self.exceeded {
+            return Vec::new();
+        }
         let mut text = std::mem::take(&mut self.buffer);
         text.push_str(chunk);
         if !self.started && !text.is_empty() {
@@ -66,8 +113,15 @@ impl SseParser {
             start = i + 1;
             i += 1;
             self.line(line, &mut out);
+            if self.exceeded {
+                return out;
+            }
         }
         self.buffer = text[start..].to_owned();
+        if self.event_bytes + self.buffer.len() > self.max {
+            self.exceeded = true;
+            self.buffer.clear();
+        }
         out
     }
 
@@ -75,7 +129,9 @@ impl SseParser {
     /// is discarded.
     pub fn end(&mut self) -> Vec<SseEvent> {
         let mut out = Vec::new();
-        if let Some(line) = self.buffer.strip_suffix('\r') {
+        if !self.exceeded
+            && let Some(line) = self.buffer.strip_suffix('\r')
+        {
             let line = line.to_owned();
             self.line(&line, &mut out);
         }
@@ -105,9 +161,15 @@ impl SseParser {
             self.event.clear();
             self.data.clear();
             self.has_data = false;
+            self.event_bytes = 0;
             return;
         }
         if line.starts_with(':') {
+            return;
+        }
+        self.event_bytes += line.len() + 1;
+        if self.event_bytes > self.max {
+            self.exceeded = true;
             return;
         }
         let (name, value) = line.split_once(':').unwrap_or((line, ""));

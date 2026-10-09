@@ -50,7 +50,7 @@ import {
   validHeaderName,
   validHeaderValue,
 } from "./serialize.js";
-import { SseParser } from "./sse.js";
+import { DEFAULT_MAX_EVENT_BYTES, SseParser } from "./sse.js";
 import { attempt, type AttemptOutcome, nextLink, parseRetryAfter, StreamBody } from "./transport.js";
 import type {
   ApiDescriptor,
@@ -87,6 +87,7 @@ import {
   getPath,
   isRecord,
   looksSensitive,
+  mergeAccept,
   REDACTED,
   redactPaths,
   redactSensitiveKeys,
@@ -1691,6 +1692,24 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     }
   }
 
+  /** The headers of a stream call: the call's headers, with any casing of
+   * `Accept` (the call's, else the client's) merged into one `Accept` that
+   * lists `text/event-stream` (see {@link mergeAccept}). */
+  #streamHeaders(callHeaders: unknown): Record<string, string> {
+    const out: Record<string, string> = {};
+    let accept: string | undefined;
+    for (const [headers, own] of [[this.options.headers, false], [callHeaders, true]] as const) {
+      if (!isRecord(headers)) continue;
+      for (const [name, value] of Object.entries(headers)) {
+        if (typeof value !== "string") continue;
+        if (name.toLowerCase() === "accept") accept = value;
+        else if (own) out[name] = value;
+      }
+    }
+    out.Accept = mergeAccept(accept ?? "");
+    return out;
+  }
+
   async *#stream<T>(op: OperationDescriptor, rawArgs: Record<string, unknown>, opts: CallOptions): AsyncGenerator<StreamItem<T>> {
     const spec: StreamDescriptor | null = isRecord(op) && isRecord(op.stream) ? op.stream : null;
     if (spec === null) {
@@ -1703,7 +1722,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
       );
       return;
     }
-    const streamOpts: CallOptions = { ...opts, headers: { Accept: "text/event-stream", ...(isRecord(opts.headers) ? opts.headers : {}) } };
+    const streamOpts: CallOptions = { ...opts, headers: this.#streamHeaders(opts.headers) };
     const prepared = await this.#prepare(op, withStreamFlag(op, spec, rawArgs), streamOpts, "call", null);
     if (!prepared.ok) {
       yield fail(prepared.error);
@@ -1737,7 +1756,8 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     const timeoutMs = this.#timeout(streamOpts);
     const mode = this.options.validateResponses === "off" || this.options.validateResponses === "strict" ? this.options.validateResponses : "warn";
     const sensitive = Array.isArray(op.agent.sensitiveResponseFields) ? op.agent.sensitiveResponseFields : [];
-    const parser = new SseParser();
+    const maxEventBytes = Math.floor(bounded(this.options.maxEventBytes, DEFAULT_MAX_EVENT_BYTES, 1));
+    const parser = new SseParser(maxEventBytes);
     const decoder = new TextDecoder("utf-8");
     let count = 0;
     const interrupted = (kind: "timeout" | "aborted" | "lost"): StreamItem<T> => {
@@ -1822,6 +1842,21 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
       count += 1;
       return { ok: true, value: value as T, event: event.event, id: event.id, retry: event.retry, meta };
     };
+    const oversize = (): StreamItem<T> =>
+      fail(
+        scrubDiagnostic(
+          diagnostic(op.id, "UNEXPECTED_RESPONSE", {
+            http_status: meta.status,
+            request_id: meta.requestId,
+            retryable: "never",
+            trace: { attempts: meta.attempts },
+            failed_parameter: `events[${count}]`,
+            expected: `an event of at most ${maxEventBytes} bytes`,
+            remediation: `Event ${count} of the stream is larger than the limit of ${maxEventBytes} bytes (ClientOptions.maxEventBytes); the stream was abandoned.${afterEffect} Events before it were delivered. Raise maxEventBytes if the server sends events this large on purpose.`,
+          }),
+          prep.secrets,
+        ),
+      );
     try {
       for (;;) {
         const read = await body.read();
@@ -1832,6 +1867,10 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
             yield item;
             if (!item.ok) return;
           }
+          if (parser.exceeded) {
+            yield oversize();
+            return;
+          }
           continue;
         }
         if (read.kind === "end") {
@@ -1841,6 +1880,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
             yield item;
             if (!item.ok) return;
           }
+          if (parser.exceeded) yield oversize();
           return;
         }
         yield interrupted(read.kind);
