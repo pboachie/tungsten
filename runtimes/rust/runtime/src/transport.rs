@@ -34,7 +34,8 @@ pub enum BodyFailure {
 pub enum AttemptOutcome {
     Response {
         status: u16,
-        /// Lower-cased names; the last value of a repeated header wins.
+        /// Lower-cased names; the values of a repeated header are joined with
+        /// ", " (`set-cookie` keeps its last value).
         headers: BTreeMap<String, String>,
         /// The body, or `None` when reading it failed.
         body: Option<Vec<u8>>,
@@ -186,12 +187,19 @@ pub async fn attempt(client: &reqwest::Client, req: &AttemptRequest<'_>) -> Atte
         Ok(Ok(response)) => response,
     };
     let status = response.status().as_u16();
-    let mut headers = BTreeMap::new();
+    let mut headers: BTreeMap<String, String> = BTreeMap::new();
     for (name, value) in response.headers() {
-        headers.insert(
-            name.as_str().to_lowercase(),
-            String::from_utf8_lossy(value.as_bytes()).into_owned(),
-        );
+        let name = name.as_str().to_lowercase();
+        let value = String::from_utf8_lossy(value.as_bytes()).into_owned();
+        match headers.get_mut(&name) {
+            Some(known) if name != "set-cookie" => {
+                known.push_str(", ");
+                known.push_str(&value);
+            }
+            _ => {
+                headers.insert(name, value);
+            }
+        }
     }
     let (body, body_failure) = match timeout_at(deadline, response.bytes()).await {
         Err(_) => (None, Some(BodyFailure::Timeout)),

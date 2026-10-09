@@ -184,7 +184,8 @@ impl std::error::Error for Error {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResponseMeta {
     pub status: u16,
-    /// Response headers with lower-cased names (last value wins).
+    /// Response headers with lower-cased names; the values of a repeated
+    /// header are joined with ", " (`set-cookie` keeps its last value).
     pub headers: BTreeMap<String, String>,
     pub request_id: Option<String>,
     pub attempts: u32,

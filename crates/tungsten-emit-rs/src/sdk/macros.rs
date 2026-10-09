@@ -16,15 +16,16 @@ use serde_json::{Map, Value};
 use tungsten_core::{Diagnostic, Diagnostics};
 use tungsten_emit::Writer;
 use tungsten_ir::naming::{self, Role};
-use tungsten_ir::{IdempotencyKind, Macro, Safety};
+use tungsten_ir::{IdempotencyKind, Macro, Presence, Safety, Shape, TypeRef};
 
 use super::ops::{
     ArgField, BodyShape, Lets, OpShape, fn_sig, is_arg, safety_str, write_args_struct,
+    write_redacted_debug,
 };
 use super::plan::{Plan, RS, unique};
 use super::resources::write_holder;
 use super::rs::{Rx, doc, imports_for, paragraphs, put, reserved_names};
-use super::types::{Cx, Slot};
+use super::types::{Cx, Slot, serde_attr};
 
 static NULL: Value = Value::Null;
 
@@ -78,6 +79,10 @@ pub(crate) struct MacroPlan<'v> {
     pub konst: String,
     /// The input struct.
     pub input: String,
+    /// The output struct, when the output is a record.
+    output: String,
+    /// What the output is typed as; `None` when it stays `serde_json::Value`.
+    out: Option<Output>,
     /// The operation whose arguments the input extends.
     base: Option<usize>,
     /// Fields added to the input: (name, JSON Schema, field name).
@@ -94,6 +99,20 @@ impl MacroPlan<'_> {
     /// The `preview_<macro>` method name.
     pub(crate) fn preview_name(&self) -> &str {
         &self.preview
+    }
+
+    /// The output struct, when the output is a record.
+    pub(crate) fn output_struct(&self) -> Option<&str> {
+        matches!(self.out, Some(Output::Record(_))).then_some(self.output.as_str())
+    }
+
+    /// The Rust type of the macro's output value.
+    pub(crate) fn output_type(&self) -> String {
+        match &self.out {
+            Some(Output::Single(ty)) => ty.clone(),
+            Some(Output::Record(_)) => self.output.clone(),
+            None => "Value".to_string(),
+        }
     }
 }
 
@@ -137,24 +156,39 @@ pub(crate) fn plan_macros<'v>(
     }
     let names = unique(&["client", "new"], &words, Role::Method);
     let konsts = super::plan::unique_macro_konsts(&member_words);
-    let inputs = unique(
-        &[],
-        &member_words
-            .iter()
-            .map(|w| super::plan::with_word(w, "input"))
-            .collect::<Vec<_>>(),
-        Role::Type,
-    );
+    let both: Vec<Vec<String>> = ["input", "output"]
+        .iter()
+        .flat_map(|extra| {
+            member_words
+                .iter()
+                .map(|w| super::plan::with_word(w, extra))
+                .collect::<Vec<_>>()
+        })
+        .collect();
     let mut reserved = reserved_names();
     reserved.push("Macros");
-    let inputs = fix_reserved(inputs, &reserved);
+    let typed_names = fix_reserved(unique(&[], &both, Role::Type), &reserved);
+    let (inputs, outputs) = typed_names.split_at(parsed.len());
     let mut previews = names[parsed.len()..].iter();
     for (i, p) in parsed.iter_mut().enumerate() {
         p.member = names[i].clone();
         p.konst = konsts[i].clone();
         p.input = inputs[i].clone();
+        p.output = outputs[i].clone();
         if has_preview(p) {
             p.preview = previews.next().cloned().unwrap_or_default();
+        }
+    }
+    for p in &mut parsed {
+        match plan_output(plan, shapes, p) {
+            Ok(out) => p.out = Some(out),
+            Err(reason) => diags.push(Diagnostic::info(
+                "TG0746",
+                format!(
+                    "the output of macro `{}` is typed `serde_json::Value` in the Rust SDK: {reason}",
+                    p.m.name.0
+                ),
+            )),
         }
     }
     (parsed, diags)
@@ -173,6 +207,251 @@ fn fix_reserved(names: Vec<String>, reserved: &[&str]) -> Vec<String> {
         out.push(name);
     }
     out
+}
+
+/// The typed output of a macro.
+#[derive(Debug, Clone)]
+enum Output {
+    /// The output is one value of this Rust type.
+    Single(String),
+    /// The output is an object: the fields of the output struct.
+    Record(Vec<OutField>),
+}
+
+/// One member of the output struct.
+#[derive(Debug, Clone)]
+struct OutField {
+    /// Field name.
+    key: String,
+    /// The member's name in the output object.
+    wire: String,
+    slot: Slot,
+    doc: String,
+    sensitive: bool,
+}
+
+/// What an output expression evaluates to: the Rust slot, and whether the
+/// value is a field the API shows only once.
+struct OutValue {
+    slot: Slot,
+    sensitive: bool,
+}
+
+/// The presence of a value that may be missing (`undef`) or `null`.
+fn presence_of(undef: bool, null: bool) -> Presence {
+    match (undef, null) {
+        (false, false) => Presence::Required,
+        (false, true) => Presence::RequiredNullable,
+        (true, false) => Presence::Optional,
+        (true, true) => Presence::OptionalNullable,
+    }
+}
+
+/// The type reached by reading `path` (wire names, map keys, array indexes)
+/// from a value of type `ty`, its presence (`undef`: an earlier segment may
+/// be missing) and whether it is a sensitive field; `None` when the path
+/// does not resolve to a type.
+fn walk_type(
+    plan: &Plan<'_>,
+    ty: &TypeRef,
+    path: &[&str],
+    mut undef: bool,
+) -> Option<(TypeRef, Presence, bool)> {
+    let mut cur = ty.clone();
+    let mut null = false;
+    let mut sensitive = false;
+    for seg in path {
+        null = false;
+        sensitive = false;
+        let unwrapped = match plan.resolve(&cur)? {
+            Shape::Nullable { inner } => Some(inner.clone()),
+            _ => None,
+        };
+        if let Some(inner) = unwrapped {
+            undef = true;
+            cur = inner;
+        }
+        let next = match plan.resolve(&cur)? {
+            Shape::Record { fields, .. } => {
+                let f = fields.iter().find(|f| f.wire_name == *seg)?;
+                match f.presence {
+                    Presence::Required => {}
+                    Presence::RequiredNullable => null = true,
+                    Presence::Optional => undef = true,
+                    Presence::OptionalNullable => {
+                        undef = true;
+                        null = true;
+                    }
+                }
+                sensitive = f.sensitive;
+                f.ty.clone()
+            }
+            Shape::Map { values } => {
+                undef = true;
+                values.clone()
+            }
+            Shape::Array { items, .. } if seg.chars().all(|c| c.is_ascii_digit()) => {
+                undef = true;
+                items.clone()
+            }
+            _ => return None,
+        };
+        cur = next;
+    }
+    let unwrapped = match plan.resolve(&cur)? {
+        Shape::Nullable { inner } => Some(inner.clone()),
+        _ => None,
+    };
+    if let Some(inner) = unwrapped {
+        null = true;
+        cur = inner;
+    }
+    Some((cur, presence_of(undef, null), sensitive))
+}
+
+fn scalar(ty: &str) -> OutValue {
+    OutValue {
+        slot: Slot {
+            ty: ty.to_string(),
+            attrs: vec![],
+        },
+        sensitive: false,
+    }
+}
+
+/// The Rust slot of the reference `r` (`$input.x`, `$step`, `$step.a.b`).
+fn out_ref(
+    plan: &Plan<'_>,
+    shapes: &[OpShape<'_>],
+    mp: &MacroPlan<'_>,
+    fields: &[ArgField<'_>],
+    r: &str,
+) -> Result<OutValue, String> {
+    let cx = Cx::new(plan, None);
+    let body = r.strip_prefix('$').unwrap_or(r);
+    let (head, rest) = body.split_once('.').map_or((body, ""), |(h, t)| (h, t));
+    let path: Vec<&str> = rest.split('.').filter(|p| !p.is_empty()).collect();
+    if head == "input" {
+        let renamed = rename_input_ref(r, mp, mp.base.map(|b| &shapes[b]));
+        let key = renamed.strip_prefix("$input.").unwrap_or("");
+        if key.contains('.') || key.is_empty() {
+            return Err(format!("`{r}` reads inside the input"));
+        }
+        let f = fields
+            .iter()
+            .find(|f| f.key == key)
+            .ok_or(format!("`{r}` names no input field"))?;
+        return Ok(OutValue {
+            slot: f.slot.clone(),
+            sensitive: f.sensitive,
+        });
+    }
+    let step = mp
+        .steps
+        .iter()
+        .find(|s| s.as_name == Some(head))
+        .ok_or(format!("`{r}` names no step"))?;
+    let shape = &shapes[step.op];
+    let op = &plan.ops[step.op].op.id.0;
+    if step.kind == StepKind::Paginate {
+        if !path.is_empty() {
+            return Err(format!("`{r}` reads inside the items of a paginate step"));
+        }
+        let item = shape
+            .item_ref
+            .map_or_else(|| "Value".to_string(), |i| cx.ty(i));
+        return Ok(scalar(&format!("Vec<{item}>")));
+    }
+    let body_ty = shape
+        .success_ref
+        .ok_or(format!("`{op}` has no single JSON response type"))?;
+    let polled = step.kind == StepKind::Poll;
+    if path.is_empty() {
+        // A poll step is `null` when its budget ran out; a call without a
+        // response body is missing.
+        let presence = if polled {
+            Presence::RequiredNullable
+        } else if shape.bodiless {
+            Presence::Optional
+        } else {
+            Presence::Required
+        };
+        return Ok(OutValue {
+            slot: cx.slot(body_ty, presence, false),
+            sensitive: false,
+        });
+    }
+    let (leaf, presence, sensitive) = walk_type(plan, body_ty, &path, polled || shape.bodiless)
+        .ok_or(format!(
+            "`{r}` does not resolve to a type of `{op}`'s response"
+        ))?;
+    let shown_once = path
+        .last()
+        .is_some_and(|last| mp.m.sensitive_response_fields.iter().any(|f| f == last));
+    Ok(OutValue {
+        slot: cx.slot(&leaf, presence, false),
+        sensitive: sensitive || shown_once,
+    })
+}
+
+/// The typed output of a macro, or why it stays `serde_json::Value`.
+fn plan_output(
+    plan: &Plan<'_>,
+    shapes: &[OpShape<'_>],
+    mp: &MacroPlan<'_>,
+) -> Result<Output, String> {
+    let fields = input_fields(shapes, mp);
+    let value = |v: &Value| -> Result<OutValue, String> {
+        if bool_expr(v).is_some() {
+            return Ok(scalar("bool"));
+        }
+        match v {
+            Value::String(s) if s.starts_with('$') => out_ref(plan, shapes, mp, &fields, s),
+            Value::String(_) => Ok(scalar("String")),
+            Value::Bool(_) => Ok(scalar("bool")),
+            Value::Number(n) if n.is_i64() => Ok(scalar("i64")),
+            Value::Number(n) if n.is_f64() => Ok(scalar("f64")),
+            _ => {
+                Err("an output member is a null, a large number, a list or a nested object".into())
+            }
+        }
+    };
+    let output = &mp.m.output;
+    let Value::Object(map) = output else {
+        let one = value(output)?;
+        return if one.slot.ty.starts_with("Patch<") {
+            Err("the output may be missing or null".into())
+        } else {
+            Ok(Output::Single(one.slot.ty))
+        };
+    };
+    if bool_expr(output).is_some() {
+        return Ok(Output::Single("bool".into()));
+    }
+    if map.is_empty() {
+        return Err("the output is an empty object".into());
+    }
+    let words: Vec<Vec<String>> = map.keys().map(|k| naming::split_words(k)).collect();
+    let keys = unique(&[], &words, Role::Field);
+    let mut out = vec![];
+    for ((wire, expr), key) in map.iter().zip(keys) {
+        let v = value(expr)?;
+        let shown = match expr {
+            Value::String(s) if s.starts_with('$') => format!("The value of `{s}`."),
+            other => match bool_expr(other) {
+                Some(e) => format!("Whether `{e}`."),
+                None => "A constant of the macro.".to_string(),
+            },
+        };
+        out.push(OutField {
+            key,
+            wire: wire.clone(),
+            slot: v.slot,
+            doc: shown,
+            sensitive: v.sensitive || mp.m.sensitive_response_fields.contains(wire),
+        });
+    }
+    Ok(Output::Record(out))
 }
 
 fn parse<'v>(
@@ -287,6 +566,8 @@ fn parse<'v>(
         preview: String::new(),
         konst: String::new(),
         input: String::new(),
+        output: String::new(),
+        out: None,
         base,
         add,
         steps,
@@ -706,8 +987,49 @@ fn macro_doc(plan: &Plan<'_>, mp: &MacroPlan<'_>) -> String {
             .as_deref()
             .map(|c| format!("Cluster: `{c}`."))
             .unwrap_or_default(),
-        "The value is the macro's output expression evaluated by the runtime (the API description gives no type for it). The first failing step's envelope is returned; its remediation names the steps already completed.".to_string(),
+        match &mp.out {
+            Some(Output::Record(_)) => format!(
+                "The value is the macro's output, typed as `{}`. The first failing step's envelope is returned; its remediation names the steps already completed.",
+                mp.output
+            ),
+            Some(Output::Single(_)) => "The value is the macro's output, typed from the steps it reads. The first failing step's envelope is returned; its remediation names the steps already completed.".to_string(),
+            None => "The value is the macro's output expression evaluated by the runtime (its shape is not typed; see TG0746). The first failing step's envelope is returned; its remediation names the steps already completed.".to_string(),
+        },
     ])
+}
+
+/// The output struct of a macro: one field per member of the output object.
+fn write_output_struct(w: &mut Writer, name: &str, macro_name: &str, fields: &[OutField]) {
+    doc(w, &format!("Output of the macro `{macro_name}`."));
+    let sensitive = fields.iter().any(|f| f.sensitive);
+    let derives = if sensitive {
+        "Clone, PartialEq, Serialize, Deserialize"
+    } else {
+        "Debug, Clone, PartialEq, Serialize, Deserialize"
+    };
+    w.line(format!("#[derive({derives})]"));
+    w.line(format!("pub struct {name} {{"));
+    w.indent();
+    for f in fields {
+        doc(w, &f.doc);
+        if f.key.trim_start_matches("r#") != f.wire {
+            serde_attr(w, &[format!("rename = {}", super::rs::string_lit(&f.wire))]);
+        }
+        for a in &f.slot.attrs {
+            serde_attr(w, a);
+        }
+        w.line(format!("pub {}: {},", f.key, f.slot.ty));
+    }
+    w.dedent();
+    w.line("}");
+    if sensitive {
+        w.blank();
+        let shown: Vec<(&str, bool)> = fields
+            .iter()
+            .map(|f| (f.key.as_str(), f.sensitive))
+            .collect();
+        write_redacted_debug(w, name, &shown);
+    }
 }
 
 /// The source of `macros.rs`.
@@ -772,7 +1094,7 @@ pub(crate) fn macros_file(
             4,
             &format!("pub async fn {}", mp.member),
             &params,
-            "tungsten_runtime::Result<Value>",
+            &format!("tungsten_runtime::Result<{}>", mp.output_type()),
         );
         code.indent();
         code.line("let client = self.client;");
@@ -836,6 +1158,12 @@ pub(crate) fn macros_file(
             &fields,
             None,
         );
+    }
+    for mp in macros {
+        if let Some(Output::Record(fields)) = &mp.out {
+            code.blank();
+            write_output_struct(&mut code, &mp.output, &mp.m.name.0, fields);
+        }
     }
     let code = code.finish();
 
