@@ -1334,6 +1334,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
         const decoded = decodeBody(body, headers, null);
         const fields = Array.isArray(prepared.op.agent.sensitiveResponseFields) ? prepared.op.agent.sensitiveResponseFields : [];
         if (decoded.json) payload = scrubText(JSON.stringify(redactPaths(decoded.value, fields)), prepared.secrets);
+        else if (decoded.jsonl && Array.isArray(decoded.value)) payload = scrubText(`${decoded.value.map((line) => JSON.stringify(redactPaths(line, fields))).join("\n")}\n`, prepared.secrets);
         else if (typeof decoded.value === "string") payload = scrubText(decoded.value, prepared.secrets);
         else payload = body.slice() as Uint8Array<ArrayBuffer>;
       }
@@ -1455,8 +1456,10 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
         http_status: status,
         request_id: requestId,
         failed_parameter: "response",
-        expected: "a JSON body",
-        remediation: `The success response announced JSON but did not parse.${afterEffect}`,
+        expected: decoded.jsonl ? "a JSON Lines body" : "a JSON body",
+        remediation: decoded.jsonl
+          ? `The success response announced JSON Lines but line ${decoded.badLine ?? 1} did not parse.${afterEffect}`
+          : `The success response announced JSON but did not parse.${afterEffect}`,
         trace: { attempts },
       });
     } else if (mode !== "off" && isSchema(op.response) && !decoded.empty) {

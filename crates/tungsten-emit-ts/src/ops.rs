@@ -200,7 +200,7 @@ pub(crate) fn op_shape<'a>(plan: &Plan<'a>, info: &OpInfo<'a>) -> OpShape<'a> {
             None => {
                 let name = key.unwrap_or_else(|| "body".to_string());
                 let (ts, zod, ty) = match content.encoding {
-                    BodyEncoding::Bytes => (
+                    BodyEncoding::Bytes | BodyEncoding::Jsonl => (
                         "Uint8Array".to_string(),
                         "z.instanceof(Uint8Array)".to_string(),
                         None,
@@ -261,13 +261,15 @@ pub(crate) fn op_shape<'a>(plan: &Plan<'a>, info: &OpInfo<'a>) -> OpShape<'a> {
             continue;
         };
         match c.encoding {
-            BodyEncoding::Json => {
-                uses.add_ref(plan, None, &c.ty);
-                result_uses.add_ref(plan, None, &c.ty);
-                tys.push(cx.ts_ref(&c.ty));
-                let z = cx.zod_ref(&c.ty);
+            // JSON lines: the value is the array of the lines.
+            BodyEncoding::Json | BodyEncoding::Jsonl => {
+                let ty = c.value_type();
+                uses.add_ref(plan, None, &ty);
+                result_uses.add_ref(plan, None, &ty);
+                tys.push(cx.ts_ref(&ty));
+                let z = cx.zod_ref(&ty);
                 if !json.iter().any(|(s, _)| *s == z) {
-                    json.push((z, c.ty.clone()));
+                    json.push((z, ty));
                 }
             }
             BodyEncoding::Text => {
@@ -419,7 +421,9 @@ fn encoding_str(e: BodyEncoding) -> &'static str {
         BodyEncoding::Json => "json",
         BodyEncoding::Form => "form",
         BodyEncoding::Multipart => "multipart",
-        BodyEncoding::Bytes => "bytes",
+        // JSON Lines is a response encoding: a request body of that media
+        // type is bytes (the builder never says otherwise).
+        BodyEncoding::Bytes | BodyEncoding::Jsonl => "bytes",
         BodyEncoding::Text => "text",
     }
 }
@@ -473,7 +477,7 @@ pub(crate) fn sensitive_request_fields(plan: &Plan<'_>, shape: &OpShape<'_>) -> 
     };
     if matches!(
         body.content.encoding,
-        BodyEncoding::Bytes | BodyEncoding::Text
+        BodyEncoding::Bytes | BodyEncoding::Text | BodyEncoding::Jsonl
     ) {
         return vec![];
     }
@@ -1103,6 +1107,7 @@ pub(crate) fn descriptors_file(
     for (info, shape) in plan.ops.iter().zip(shapes) {
         uses.integer |= shape.uses.integer;
         uses.pattern |= shape.uses.pattern;
+        uses.binary |= shape.uses.binary;
         uses.namespaces
             .extend(shape.uses.namespaces.iter().cloned());
         body.blank();
@@ -1141,6 +1146,10 @@ pub(crate) fn descriptors_file(
     }
     if uses.pattern {
         imports.add("./internal.js", "withPattern");
+    }
+    if uses.binary {
+        imports.add("./internal.js", "binary");
+        imports.add_type("./internal.js", "BinaryInput");
     }
     let mut w = Writer::new("  ");
     w.line(header);

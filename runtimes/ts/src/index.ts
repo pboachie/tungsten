@@ -14,3 +14,4 @@ export { evaluatePredicate } from "./expr.js";
 export { DEFAULT_RETRYABLE } from "./envelope.js";
 export { CONFIRMATION_TTL_MS } from "./confirm.js";
 export { RUNTIME_VERSION } from "./version.js";
+export { isBinaryInput, type BinaryInput, type NamedBinary } from "./util.js";

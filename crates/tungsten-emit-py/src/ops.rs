@@ -249,7 +249,9 @@ pub(crate) fn op_shape<'a>(plan: &Plan<'a>, info: &OpInfo<'a>) -> OpShape<'a> {
             let name = free_name(&taken, "body");
             taken.push(name.clone());
             let (value, schema_text, json) = match content.encoding {
-                BodyEncoding::Bytes => (PyTy::one("bytes"), schema.internal("Binary"), false),
+                BodyEncoding::Bytes | BodyEncoding::Jsonl => {
+                    (PyTy::one("bytes"), schema.internal("Binary"), false)
+                }
                 BodyEncoding::Text => (PyTy::one("str"), "str".to_string(), false),
                 BodyEncoding::Json | BodyEncoding::Form | BodyEncoding::Multipart => (
                     hint.ty(&content.ty, Flavor::Hint),
@@ -300,11 +302,13 @@ pub(crate) fn op_shape<'a>(plan: &Plan<'a>, info: &OpInfo<'a>) -> OpShape<'a> {
             continue;
         };
         match c.encoding {
-            BodyEncoding::Json => {
-                tys.push(result.ty(&c.ty, Flavor::Hint));
-                let s = schema.ty(&c.ty, Flavor::Schema);
+            // JSON lines: the value is the list of the lines.
+            BodyEncoding::Json | BodyEncoding::Jsonl => {
+                let ty = c.value_type();
+                tys.push(result.ty(&ty, Flavor::Hint));
+                let s = schema.ty(&ty, Flavor::Schema);
                 if !json.iter().any(|(t, _)| *t == s) {
-                    json.push((s, c.ty.clone()));
+                    json.push((s, ty));
                 }
             }
             BodyEncoding::Text => {
@@ -462,7 +466,9 @@ fn encoding_str(e: BodyEncoding) -> &'static str {
         BodyEncoding::Json => "json",
         BodyEncoding::Form => "form",
         BodyEncoding::Multipart => "multipart",
-        BodyEncoding::Bytes => "bytes",
+        // JSON Lines is a response encoding: a request body of that media
+        // type is bytes (the builder never says otherwise).
+        BodyEncoding::Bytes | BodyEncoding::Jsonl => "bytes",
         BodyEncoding::Text => "text",
     }
 }
@@ -517,7 +523,7 @@ pub(crate) fn sensitive_request_fields(plan: &Plan<'_>, shape: &OpShape<'_>) -> 
     };
     if matches!(
         body.content.encoding,
-        BodyEncoding::Bytes | BodyEncoding::Text
+        BodyEncoding::Bytes | BodyEncoding::Text | BodyEncoding::Jsonl
     ) {
         return vec![];
     }

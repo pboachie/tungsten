@@ -345,6 +345,23 @@ ir_struct! {
     }
 }
 
+impl BodyContent {
+    /// The type of the value a call carries for this content: `ty`, or an
+    /// array of `ty` for a [`BodyEncoding::Jsonl`] content, whose `ty` is the
+    /// type of one line.
+    pub fn value_type(&self) -> TypeRef {
+        match self.encoding {
+            BodyEncoding::Jsonl => TypeRef::Inline(Box::new(Shape::Array {
+                items: self.ty.clone(),
+                min: None,
+                max: None,
+                unique: false,
+            })),
+            _ => self.ty.clone(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum BodyEncoding {
@@ -353,6 +370,11 @@ pub enum BodyEncoding {
     Multipart,
     Bytes,
     Text,
+    // A sequence of JSON values, one per line (`application/jsonl`,
+    // `application/x-ndjson`). Only response content: the `ty` of the
+    // content is the type of one line, the value of the response is the
+    // array of the lines (`BodyContent::value_type`).
+    Jsonl,
 }
 
 #[derive(

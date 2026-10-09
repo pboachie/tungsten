@@ -598,6 +598,20 @@ fn success(model: &Model, entry: &OpEntry, status: Option<u16>) -> Reply {
                     body: text.into_bytes(),
                 }
             }
+            BodyEncoding::Jsonl => {
+                // Two lines, so a decoder is seen to split them.
+                let lines: Vec<String> = (0..2)
+                    .map(|n| {
+                        let line = generator.value(&content.ty, entry.id(), &format!("{base}/{n}"));
+                        serde_json::to_string(&line).unwrap_or_default()
+                    })
+                    .collect();
+                Reply {
+                    status: code,
+                    headers: vec![("content-type".into(), content.media_type.clone())],
+                    body: format!("{}\n", lines.join("\n")).into_bytes(),
+                }
+            }
             BodyEncoding::Bytes | BodyEncoding::Form | BodyEncoding::Multipart => {
                 Reply::empty(code).with_header("content-type", &content.media_type)
             }

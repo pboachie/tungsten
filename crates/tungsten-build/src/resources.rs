@@ -272,12 +272,22 @@ struct Paths<'p> {
     collections: &'p BTreeSet<String>,
 }
 
-/// Whether a GET returns a collection: it is paginated, or its first
-/// success JSON body is an array or an object with exactly one array
-/// property, or (no JSON body says otherwise) an item path continues it
-/// or its last literal segment reads as a plural.
+/// Whether a GET returns a collection: it is paginated, it returns JSON
+/// Lines, or its first success JSON body is an array or an object with
+/// exactly one array property, or (no JSON body says otherwise) an item path
+/// continues it or its last literal segment reads as a plural.
 fn returns_collection(cx: &Ctx<'_>, index: &PathIndex, op: &Operation) -> bool {
     if op.pagination.is_some() {
+        return true;
+    }
+    // JSON Lines are a sequence of items.
+    if op
+        .responses
+        .iter()
+        .filter(|r| r.kind == ResponseKind::Success)
+        .flat_map(|r| &r.content)
+        .any(|c| c.encoding == BodyEncoding::Jsonl)
+    {
         return true;
     }
     let Some(body) = op

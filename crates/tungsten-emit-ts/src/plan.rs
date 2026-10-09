@@ -426,10 +426,11 @@ fn plan_types(ir: &Ir) -> (BTreeMap<TypeId, TypeInfo>, Vec<ModelNs>) {
     for ns in &ns_names {
         let members: Vec<&tungsten_ir::NamedType> =
             table.iter().filter(|t| &t.namespace == ns).collect();
-        // `Uint8Array` is used unqualified for bytes; the other globals the
-        // models use are naming builtins already.
+        // `Uint8Array` is used unqualified for bytes and `BinaryInput` for
+        // binary request fields; the other globals the models use are
+        // naming builtins already.
         let rendered = unique(
-            &["Uint8Array"],
+            &["Uint8Array", "BinaryInput"],
             &members
                 .iter()
                 .map(|t| t.name.words.clone())

@@ -402,10 +402,19 @@ impl ClientCore {
                     .http_status(Some(status))
                     .request_id(request_id.clone())
                     .failed_parameter("response")
-                    .expected("a JSON body")
-                    .remediation(format!(
-                        "The success response announced JSON but did not parse.{after_effect}"
-                    ))
+                    .expected(if decoded.jsonl {
+                        "a JSON Lines body"
+                    } else {
+                        "a JSON body"
+                    })
+                    .remediation(if decoded.jsonl {
+                        format!(
+                            "The success response announced JSON Lines but line {} did not parse.{after_effect}",
+                            decoded.bad_line
+                        )
+                    } else {
+                        format!("The success response announced JSON but did not parse.{after_effect}")
+                    })
                     .attempts(attempts)
                     .build(),
             );

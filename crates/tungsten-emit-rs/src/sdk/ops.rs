@@ -9,6 +9,7 @@
 //! (`Field`), merged body fields by their model field name (with a numeric
 //! suffix when that is a parameter's name), a whole body as `body`.
 
+use std::borrow::Cow;
 use std::collections::BTreeSet;
 
 use tungsten_core::{Diagnostic, Diagnostics};
@@ -254,7 +255,9 @@ pub(crate) fn op_shape<'a>(plan: &Plan<'a>, info: &OpInfo<'a>) -> OpShape<'a> {
                 Presence::Optional
             };
             let (ty, check): (String, Option<CheckSrc<'a>>) = match content.encoding {
-                BodyEncoding::Bytes => ("tungsten_runtime::Binary".into(), None),
+                BodyEncoding::Bytes | BodyEncoding::Jsonl => {
+                    ("tungsten_runtime::Binary".into(), None)
+                }
                 BodyEncoding::Text => ("String".into(), None),
                 BodyEncoding::Json | BodyEncoding::Form | BodyEncoding::Multipart => (
                     cx.ty(&content.ty),
@@ -286,7 +289,7 @@ pub(crate) fn op_shape<'a>(plan: &Plan<'a>, info: &OpInfo<'a>) -> OpShape<'a> {
     });
 
     // Success value.
-    let mut tys: Vec<(String, &TypeRef)> = vec![];
+    let mut tys: Vec<(String, Cow<'_, TypeRef>)> = vec![];
     let mut other: Vec<String> = vec![];
     let mut bodiless = false;
     let mut all_json = true;
@@ -308,7 +311,15 @@ pub(crate) fn op_shape<'a>(plan: &Plan<'a>, info: &OpInfo<'a>) -> OpShape<'a> {
             BodyEncoding::Json => {
                 let t = cx.ty(&c.ty);
                 if !tys.iter().any(|(x, _)| *x == t) {
-                    tys.push((t, &c.ty));
+                    tys.push((t, Cow::Borrowed(&c.ty)));
+                }
+            }
+            // JSON lines: the value is the list of the lines.
+            BodyEncoding::Jsonl => {
+                let ty = c.value_type();
+                let t = cx.ty(&ty);
+                if !tys.iter().any(|(x, _)| *x == t) {
+                    tys.push((t, Cow::Owned(ty)));
                 }
             }
             BodyEncoding::Text => {
@@ -371,7 +382,7 @@ pub(crate) fn op_shape<'a>(plan: &Plan<'a>, info: &OpInfo<'a>) -> OpShape<'a> {
         Validated { ty: text, check }
     };
     let response = (all_json && tys.len() == 1)
-        .then(|| validated(tys[0].1, bodiless, &format!("{}_response", info.builder)));
+        .then(|| validated(&tys[0].1, bodiless, &format!("{}_response", info.builder)));
     let items = op.pagination.as_ref().map(|p| {
         tys.first()
             .and_then(|(_, r)| items_ref(plan, r, &p.items_field))
@@ -754,7 +765,9 @@ fn encoding_rs(e: BodyEncoding) -> &'static str {
         BodyEncoding::Json => "BodyEncoding::Json",
         BodyEncoding::Form => "BodyEncoding::Form",
         BodyEncoding::Multipart => "BodyEncoding::Multipart",
-        BodyEncoding::Bytes => "BodyEncoding::Bytes",
+        // JSON Lines is a response encoding: a request body of that media
+        // type is bytes (the builder never says otherwise).
+        BodyEncoding::Bytes | BodyEncoding::Jsonl => "BodyEncoding::Bytes",
         BodyEncoding::Text => "BodyEncoding::Text",
     }
 }
@@ -869,7 +882,7 @@ pub(crate) fn sensitive_request_fields(plan: &Plan<'_>, shape: &OpShape<'_>) -> 
     };
     if matches!(
         body.content.encoding,
-        BodyEncoding::Bytes | BodyEncoding::Text
+        BodyEncoding::Bytes | BodyEncoding::Text | BodyEncoding::Jsonl
     ) {
         return vec![];
     }

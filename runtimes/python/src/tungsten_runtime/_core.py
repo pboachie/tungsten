@@ -1568,8 +1568,12 @@ class Engine:
                 http_status=status,
                 request_id=request_id,
                 failed_parameter="response",
-                expected="a JSON body",
-                remediation=f"The success response announced JSON but did not parse.{after_effect}",
+                expected="a JSON Lines body" if decoded.jsonl else "a JSON body",
+                remediation=(
+                    f"The success response announced JSON Lines but line {decoded.bad_line} did not parse.{after_effect}"
+                    if decoded.jsonl
+                    else f"The success response announced JSON but did not parse.{after_effect}"
+                ),
                 attempts=attempts,
             )
         elif mode != "off" and callable(validate) and not decoded.empty:

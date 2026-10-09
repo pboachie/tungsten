@@ -47,6 +47,14 @@ pub fn is_json_media(media: &str) -> bool {
     media == "application/json" || media.ends_with("+json") || media == "text/json"
 }
 
+/// JSON Lines media types: one JSON value per line.
+pub fn is_jsonl_media(media: &str) -> bool {
+    matches!(
+        media,
+        "application/jsonl" | "application/x-jsonl" | "application/ndjson" | "application/x-ndjson"
+    )
+}
+
 /// The response descriptor matching a status: exact, then `NXX`, then
 /// `default`.
 pub fn match_response(
@@ -74,6 +82,11 @@ pub struct DecodedBody {
     /// JSON was announced but did not parse.
     pub invalid_json: bool,
     pub empty: bool,
+    /// The body is JSON Lines: `value` is the array of the lines' values, or
+    /// (when `invalid_json`) the text.
+    pub jsonl: bool,
+    /// The first line (1-based) that did not parse.
+    pub bad_line: usize,
 }
 
 fn decode_text(bytes: &[u8]) -> String {
@@ -86,26 +99,70 @@ pub fn decode_body(
     headers: &BTreeMap<String, String>,
     declared: Option<&str>,
 ) -> DecodedBody {
-    if bytes.is_empty() {
+    let announced = media_type_of(headers);
+    // An empty body is no body, unless the server says it is JSON Lines:
+    // then it is no lines.
+    if bytes.is_empty() && !is_jsonl_media(&announced) {
         return DecodedBody {
             value: None,
             json: false,
             invalid_json: false,
             empty: true,
+            jsonl: false,
+            bad_line: 0,
         };
     }
-    let announced = media_type_of(headers);
     let media = if announced.is_empty() {
         declared.unwrap_or("").to_lowercase()
     } else {
-        announced
+        announced.clone()
     };
     let plain = |value: Value| DecodedBody {
         value: Some(value),
         json: false,
         invalid_json: false,
         empty: false,
+        jsonl: false,
+        bad_line: 0,
     };
+    let jsonl_media = if announced.is_empty() {
+        media.split(';').next().unwrap_or("").trim()
+    } else {
+        announced.as_str()
+    };
+    if is_jsonl_media(jsonl_media) {
+        let raw = decode_text(bytes);
+        let mut values = Vec::new();
+        for (index, line) in raw.split('\n').enumerate() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            match serde_json::from_str::<Value>(line) {
+                Ok(mut value) => {
+                    integral_numbers(&mut value);
+                    values.push(value);
+                }
+                Err(_) => {
+                    return DecodedBody {
+                        value: Some(Value::String(raw)),
+                        json: false,
+                        invalid_json: true,
+                        empty: false,
+                        jsonl: true,
+                        bad_line: index + 1,
+                    };
+                }
+            }
+        }
+        return DecodedBody {
+            value: Some(Value::Array(values)),
+            json: false,
+            invalid_json: false,
+            empty: false,
+            jsonl: true,
+            bad_line: 0,
+        };
+    }
     if is_json_media(&media) {
         let raw = decode_text(bytes);
         return match serde_json::from_str::<Value>(&raw) {
@@ -117,12 +174,16 @@ pub fn decode_body(
                 json: true,
                 invalid_json: false,
                 empty: false,
+                jsonl: false,
+                bad_line: 0,
             },
             Err(_) => DecodedBody {
                 value: Some(Value::String(raw)),
                 json: false,
                 invalid_json: true,
                 empty: false,
+                jsonl: false,
+                bad_line: 0,
             },
         };
     }
@@ -143,6 +204,8 @@ pub fn decode_body(
                 json: true,
                 invalid_json: false,
                 empty: false,
+                jsonl: false,
+                bad_line: 0,
             };
         }
         return plain(Value::String(raw));
