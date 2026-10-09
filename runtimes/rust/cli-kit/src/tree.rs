@@ -362,6 +362,19 @@ pub(crate) fn build(spec: &CliSpec) -> Tree {
         )
         .subcommand(Command::new("operations").about("List every operation and macro"))
         .subcommand(
+            Command::new("explain-error")
+                .about("Explain an error category, an API error code or an error envelope")
+                .arg(
+                    Arg::new("input")
+                        .value_name("CODE|-|@FILE")
+                        .required(true)
+                        .help(
+                            "An error category (VALIDATION_FAILED), an API error code, \
+                             or an envelope as JSON: `-` reads standard input, `@file` a file",
+                        ),
+                ),
+        )
+        .subcommand(
             Command::new("auth")
                 .about("Credentials")
                 .subcommand_required(true)

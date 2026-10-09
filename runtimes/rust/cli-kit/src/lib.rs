@@ -23,8 +23,12 @@
 //!   `--timeout`, `--no-color`;
 //! - `schema <command>` (the compact JSON Schema of the arguments),
 //!   `operations` (every command with its tier), `auth status` (which
-//!   credentials are present, never their values), and `macros <name>`
-//!   for the table's macros.
+//!   credentials are present, never their values), `macros <name>` for the
+//!   table's macros, and `explain-error <CODE|-|@file>` (an error category,
+//!   an API error code from the manifest's remediation tables, or a whole
+//!   envelope read from standard input or a file: its category,
+//!   retryability, what `--idempotency-key`, `--yes` and `--dry-run` mean
+//!   for it, the operation's remediation and the exit code).
 //!
 //! Secrets are never positional and never flag values. Credentials come
 //! from environment variables (`<PREFIX>_<SCHEME>[_<PART>]`, derived from the
@@ -84,6 +88,7 @@ mod config;
 mod ctx;
 mod exec;
 mod exit;
+mod explain;
 mod host;
 mod render;
 mod spec;
@@ -93,7 +98,7 @@ mod values;
 
 pub use check::{RESERVED_COMMANDS, RESERVED_FLAGS};
 pub use host::Host;
-pub use spec::{CliFlag, CliMacro, CliOp, CliSpec, FlagKind};
+pub use spec::{CliFlag, CliMacro, CliOp, CliRemediation, CliSpec, FlagKind};
 
 use std::process::ExitCode;
 

@@ -11,7 +11,7 @@
 //! Role::Field)`, made unique over the parameters and the merged body
 //! fields), and the flag is the kebab-case of the same words.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::Value;
 use tungsten_core::{Diagnostic, Diagnostics};
@@ -19,7 +19,8 @@ use tungsten_emit::args::{BodyArg, args_layout};
 use tungsten_emit::compact::{callable_operation, macro_parameters, operation_parameters};
 use tungsten_ir::naming::{self, Case, Role, Target};
 use tungsten_ir::{
-    BodyEncoding, Doc, Ident, Ir, Operation, OperationStatus, Presence, Resource, Safety,
+    BodyEncoding, Doc, Ident, Ir, Operation, OperationStatus, Presence, Remediation, Resource,
+    Retryable, Safety,
 };
 
 use crate::cli::kinds::{self, Kind};
@@ -45,7 +46,8 @@ pub(crate) const RESERVED_FLAGS: &[&str] = &[
 
 /// First path segments of the kit's own commands
 /// (`tungsten_cli_kit::RESERVED_COMMANDS`).
-pub(crate) const RESERVED_COMMANDS: &[&str] = &["auth", "help", "operations", "schema"];
+pub(crate) const RESERVED_COMMANDS: &[&str] =
+    &["auth", "explain-error", "help", "operations", "schema"];
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Flag {
@@ -55,6 +57,16 @@ pub(crate) struct Flag {
     pub required: bool,
     pub help: String,
     pub sensitive: bool,
+}
+
+/// One remediation entry (`explain-error`).
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Remedy {
+    pub code: String,
+    pub category: Option<String>,
+    pub text: Option<String>,
+    pub retryable: Option<&'static str>,
+    pub next_action: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -67,6 +79,8 @@ pub(crate) struct OpCommand {
     pub body_arg: Option<String>,
     pub paginated: bool,
     pub schema: Value,
+    pub remediation: Vec<Remedy>,
+    pub remediation_note: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -83,6 +97,30 @@ pub(crate) struct MacroCommand {
 pub(crate) struct Model {
     pub ops: Vec<OpCommand>,
     pub macros: Vec<MacroCommand>,
+    pub error_codes: Vec<Remedy>,
+}
+
+fn retryable_name(r: Retryable) -> &'static str {
+    match r {
+        Retryable::Never => "never",
+        Retryable::AfterDelay => "after_delay",
+        Retryable::SameKeyOnly => "same_key_only",
+        Retryable::AfterRemediation => "after_remediation",
+    }
+}
+
+/// A remediation table as rows, sorted by code.
+fn remedies(table: &BTreeMap<String, Remediation>) -> Vec<Remedy> {
+    table
+        .iter()
+        .map(|(code, r)| Remedy {
+            code: code.clone(),
+            category: r.category.clone(),
+            text: r.text.clone(),
+            retryable: r.retryable.map(retryable_name),
+            next_action: r.next_action.clone(),
+        })
+        .collect()
 }
 
 fn kebab(words: &[String]) -> String {
@@ -471,6 +509,8 @@ pub(crate) fn build(ir: &Ir) -> (Model, Diagnostics) {
             body_arg: built.body_arg,
             paginated: op.pagination.is_some(),
             schema: operation_parameters(ir, op),
+            remediation: remedies(&op.agent.remediation),
+            remediation_note: op.agent.remediation_note.clone(),
         });
     }
     let member_words: Vec<Vec<String>> = ir
@@ -501,5 +541,12 @@ pub(crate) fn build(ir: &Ir) -> (Model, Diagnostics) {
         .chain(macros.iter_mut().map(|m| &mut m.path))
         .collect();
     settle_paths(&mut paths, &mut diags);
-    (Model { ops, macros }, diags)
+    (
+        Model {
+            ops,
+            macros,
+            error_codes: remedies(&ir.agent.error_codes),
+        },
+        diags,
+    )
 }

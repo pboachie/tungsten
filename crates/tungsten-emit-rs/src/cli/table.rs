@@ -8,7 +8,7 @@
 use tungsten_ir::Safety;
 
 use crate::cli::kinds::Kind;
-use crate::cli::model::{Flag, MacroCommand, Model, OpCommand};
+use crate::cli::model::{Flag, MacroCommand, Model, OpCommand, Remedy};
 
 /// A Rust string literal.
 pub(crate) fn rs_str(s: &str) -> String {
@@ -141,8 +141,46 @@ fn op(o: &OpCommand) -> String {
     s.push_str(&field("body_arg", &body));
     s.push_str(&field("paginated", &o.paginated.to_string()));
     s.push_str(&field("schema", &schema(&o.schema)));
+    s.push_str(&remedy_list("remediation", &o.remediation, 16));
+    let note = match &o.remediation_note {
+        Some(n) => format!("Some({}.into())", rs_str(n)),
+        None => "None".to_string(),
+    };
+    s.push_str(&field("remediation_note", &note));
     s.push_str("            },\n");
     s
+}
+
+fn opt_str(v: Option<&str>) -> String {
+    match v {
+        Some(t) => format!("Some({}.into())", rs_str(t)),
+        None => "None".to_string(),
+    }
+}
+
+/// `name: vec![remedy(..), ..],` at `indent` spaces.
+fn remedy_list(name: &str, list: &[Remedy], indent: usize) -> String {
+    let pad = " ".repeat(indent);
+    if list.is_empty() {
+        return format!("{pad}{name}: vec![],\n");
+    }
+    let mut out = format!("{pad}{name}: vec![\n");
+    for r in list {
+        out.push_str(&call(
+            indent + 4,
+            "remedy",
+            &[
+                rs_str(&r.code),
+                opt_str(r.category.as_deref()),
+                opt_str(r.text.as_deref()),
+                opt_str(r.retryable),
+                opt_str(r.next_action.as_deref()),
+            ],
+        ));
+        out.push('\n');
+    }
+    out.push_str(&format!("{pad}],\n"));
+    out
 }
 
 fn mac(m: &MacroCommand) -> String {
@@ -185,6 +223,9 @@ pub(crate) fn source(model: &Model, meta: &Meta<'_>) -> String {
     let has_enum = all_flags.iter().any(|f| uses_enum(&f.kind));
     let has_commands = !model.ops.is_empty() || !model.macros.is_empty();
 
+    let has_remedies =
+        !model.error_codes.is_empty() || model.ops.iter().any(|o| !o.remediation.is_empty());
+
     let mut kit: Vec<&str> = vec![];
     if has_flags {
         kit.push("CliFlag");
@@ -194,6 +235,9 @@ pub(crate) fn source(model: &Model, meta: &Meta<'_>) -> String {
     }
     if !model.ops.is_empty() {
         kit.push("CliOp");
+    }
+    if has_remedies {
+        kit.push("CliRemediation");
     }
     kit.push("CliSpec");
     if has_flags {
@@ -221,6 +265,11 @@ pub(crate) fn source(model: &Model, meta: &Meta<'_>) -> String {
     }
     if has_enum {
         s.push_str("\nfn strings(values: &[&str]) -> Vec<String> {\n    values.iter().map(|s| (*s).to_string()).collect()\n}\n");
+    }
+    if has_remedies {
+        s.push_str(
+            "\nfn remedy(\n    code: &str,\n    category: Option<String>,\n    text: Option<String>,\n    retryable: Option<String>,\n    next_action: Option<String>,\n) -> CliRemediation {\n    CliRemediation {\n        code: code.to_string(),\n        category,\n        text,\n        retryable,\n        next_action,\n    }\n}\n",
+        );
     }
     if has_flags {
         s.push_str(
@@ -278,6 +327,7 @@ pub(crate) fn source(model: &Model, meta: &Meta<'_>) -> String {
         }
         s.push_str("        ],\n");
     }
+    s.push_str(&remedy_list("error_codes", &model.error_codes, 8));
     s.push_str("    }\n}\n");
     s
 }
