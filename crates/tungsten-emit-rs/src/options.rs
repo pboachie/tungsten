@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! Target options (`tungsten.yml` `targets.rust`), shared by the SDK and CLI
-//! halves (PHASE-5 CONTRACT).
+//! halves. The options are stable; new ones are additive.
 //!
 //! | Option | Default | Meaning |
 //! |---|---|---|

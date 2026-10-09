@@ -26,6 +26,36 @@ export function isBinary(value: unknown): value is Uint8Array | ArrayBuffer | Bl
   return value instanceof Uint8Array || value instanceof ArrayBuffer || isBlob(value);
 }
 
+/** Binary data with the file name and media type of its multipart part. A
+ * `File` carries its own name and type; use this for bytes or a plain
+ * `Blob`. Without a file name a part is named after its field. */
+export interface NamedBinary {
+  data: Uint8Array | ArrayBuffer | Blob;
+  filename?: string;
+  contentType?: string;
+}
+
+/** What a binary request field takes: bytes, a `Blob` or `File`, or
+ * {@link NamedBinary}. */
+export type BinaryInput = Uint8Array | ArrayBuffer | Blob | NamedBinary;
+
+export function isNamedBinary(value: unknown): value is NamedBinary {
+  if (!isRecord(value) || isBinary(value) || value instanceof Date) return false;
+  const keys = Object.keys(value);
+  return (
+    keys.includes("data") &&
+    keys.every((k) => k === "data" || k === "filename" || k === "contentType") &&
+    isBinary(value.data) &&
+    (value.filename === undefined || typeof value.filename === "string") &&
+    (value.contentType === undefined || typeof value.contentType === "string")
+  );
+}
+
+/** Whether `value` is a `BinaryInput`: bytes, a Blob or File, or `{ data, filename?, contentType? }`. */
+export function isBinaryInput(value: unknown): value is BinaryInput {
+  return isBinary(value) || isNamedBinary(value);
+}
+
 export function binarySize(value: Uint8Array | ArrayBuffer | Blob): number {
   return isBlob(value) ? value.size : value.byteLength;
 }

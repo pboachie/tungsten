@@ -21,6 +21,7 @@ use crate::idempotency::has_replay_protection;
 use crate::prepare::{Prepared, Step, fail, with_auth_query};
 use crate::serialize::Payload;
 use crate::serialize::encode_component;
+use crate::stream::{Sent, StreamStart};
 use crate::transport::{AttemptOutcome, AttemptRequest, BodyFailure, attempt, parse_retry_after};
 use crate::types::{
     CallOptions, Category, Diagnostic, Error, HttpMethod, Jitter, OperationDescriptor,
@@ -54,6 +55,28 @@ impl ClientCore {
         prepared: &Prepared<'_>,
         opts: &CallOptions,
     ) -> Step<Response<Option<Value>>> {
+        match self.send_with(prepared, opts, false).await? {
+            Sent::Response(response) => Ok(response),
+            Sent::Stream(_) => Err(fail(
+                Diag::new(prepared.op.id.clone(), Category::UnexpectedResponse)
+                    .remediation(
+                        "The SDK received an event stream it did not ask for. This is a bug in the runtime; report it. If the call may have been sent, check its effect before repeating it.",
+                    )
+                    .retryable(Retryable::Never)
+                    .build(),
+            )),
+        }
+    }
+
+    /// Send with retries. With `stream`, a 2xx `text/event-stream` answer is
+    /// returned unread as [`Sent::Stream`]; every other answer is classified
+    /// as usual.
+    pub(crate) async fn send_with(
+        &self,
+        prepared: &Prepared<'_>,
+        opts: &CallOptions,
+        stream: bool,
+    ) -> Step<Sent> {
         let op = prepared.op;
         let retries = self.retry_options(op);
         let mutation = is_mutation(op);
@@ -102,6 +125,7 @@ impl ClientCore {
                     headers: &headers,
                     body,
                     timeout,
+                    stream,
                 },
             )
             .await;
@@ -144,6 +168,7 @@ impl ClientCore {
                         headers: &headers,
                         body,
                         timeout,
+                        stream,
                     },
                 )
                 .await;
@@ -158,7 +183,7 @@ impl ClientCore {
                 check: check.as_ref(),
             };
             let error = match self.classify_response(&call_ctx, prepared, outcome, &ctx, timeout) {
-                Ok(response) => return Ok(response),
+                Ok(sent) => return Ok(sent),
                 Err(error) => error,
             };
             let Error {
@@ -237,7 +262,7 @@ impl ClientCore {
         outcome: AttemptOutcome,
         ctx: &RequestContext,
         timeout: Duration,
-    ) -> Step<Response<Option<Value>>> {
+    ) -> Step<Sent> {
         let op = prepared.op;
         let mutation = is_mutation(op);
         let attempts = call_ctx.attempts;
@@ -288,6 +313,31 @@ impl ClientCore {
                 body,
                 body_failure,
             } => (status, headers, body, body_failure),
+            AttemptOutcome::Streaming {
+                status,
+                headers,
+                body,
+            } => {
+                for m in &self.inner.middleware {
+                    m.on_response(
+                        ctx,
+                        &ResponseContext {
+                            status,
+                            headers: headers.clone(),
+                        },
+                    );
+                }
+                let request_id = request_id_of(&headers);
+                return Ok(Sent::Stream(StreamStart {
+                    meta: ResponseMeta {
+                        status,
+                        headers,
+                        request_id,
+                        attempts,
+                    },
+                    body,
+                }));
+            }
         };
         for m in &self.inner.middleware {
             m.on_response(
@@ -402,10 +452,19 @@ impl ClientCore {
                     .http_status(Some(status))
                     .request_id(request_id.clone())
                     .failed_parameter("response")
-                    .expected("a JSON body")
-                    .remediation(format!(
-                        "The success response announced JSON but did not parse.{after_effect}"
-                    ))
+                    .expected(if decoded.jsonl {
+                        "a JSON Lines body"
+                    } else {
+                        "a JSON body"
+                    })
+                    .remediation(if decoded.jsonl {
+                        format!(
+                            "The success response announced JSON Lines but line {} did not parse.{after_effect}",
+                            decoded.bad_line
+                        )
+                    } else {
+                        format!("The success response announced JSON but did not parse.{after_effect}")
+                    })
                     .attempts(attempts)
                     .build(),
             );
@@ -480,7 +539,7 @@ impl ClientCore {
             }
             self.emit(&scrubbed);
         }
-        Ok(Response {
+        Ok(Sent::Response(Response {
             value: decoded.value,
             meta: ResponseMeta {
                 status,
@@ -489,14 +548,14 @@ impl ClientCore {
                 attempts,
             },
             verification: None,
-        })
+        }))
     }
 
     /// How to find out whether `op` (a mutation without replay protection)
     /// took effect after its answer was lost: its verification hook when it
     /// can be called without the lost response, else a registered read of the
     /// same resource. `None` when neither exists.
-    fn outcome_check(
+    pub(crate) fn outcome_check(
         &self,
         op: &OperationDescriptor,
         args: &Map<String, Value>,
@@ -669,6 +728,7 @@ impl ClientCore {
                 headers: &headers,
                 body: &body,
                 timeout: self.inner.timeout.max(Duration::from_millis(1)),
+                stream: false,
             },
         )
         .await;

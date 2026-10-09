@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! `allOf` (planning/03 "Unions", last bullet).
+//! `allOf`.
 //!
 //! Members are the `allOf` items, a `$ref` next to them (3.1 applies
 //! both), the other sibling keywords (`properties`, `required`,

@@ -1,10 +1,45 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The tungsten intermediate representation (planning/03).
+//! The tungsten intermediate representation (IR).
 //!
-//! The IR is the only input emitters see. Every collection is ordered
-//! deterministically (sorted ids or source order), so serializing the same
-//! IR twice yields identical bytes. `ir_version` follows the stability
-//! policy in planning/03.
+//! The IR is the language-neutral description of a compiled API: the
+//! operations grouped into namespaces and resources, a table of named types,
+//! the auth schemes, the error model and the agent metadata (safety tiers,
+//! idempotency, retries, confirmation, macros). The builder produces it from
+//! OpenAPI documents, `tungsten-agent` enriches it from `agent.yml`, and it
+//! is the only input emitters see.
+//!
+//! Every collection is ordered deterministically (sorted ids or source
+//! order), so serializing the same IR twice yields identical bytes.
+//! `ir_version` follows semantic versioning: minor versions only add fields
+//! (with serde defaults), so older documents still load.
+//!
+//! # Layout
+//!
+//! - [`Ir`] is the root. [`Namespace`] is one input document; it owns a tree
+//!   of [`Resource`]s whose [`Operation`]s carry [`ParamSet`]s, an optional
+//!   [`Body`], [`Response`]s, security requirements and agent metadata.
+//!   [`Ir::operations`] walks all callable operations in a stable order.
+//! - [`types`] is the type system: a [`TypeTable`] of [`NamedType`]s keyed by
+//!   [`TypeId`], with [`Shape`]s (primitives, enums, records, maps, arrays,
+//!   unions, nullable wrappers) and per-[`Field`] [`Presence`], which keeps
+//!   "required", "nullable" and "optional" distinct.
+//! - [`agent`] holds the compiled agent metadata: [`OperationAgentMeta`] per
+//!   operation and [`AgentModel`] for the API-wide policy.
+//! - [`ident`] and [`naming`] store identifiers as a wire name plus
+//!   normalized words and render them in each target language's casing, with
+//!   keyword escaping and collision handling.
+//!
+//! # Usage
+//!
+//! The IR is plain data that implements `serde::Serialize` and
+//! `Deserialize`. [`Ir::json_schema`] returns its JSON Schema.
+//!
+//! ```text
+//! let ir: Ir = serde_json::from_str(&text)?;
+//! for op in ir.operations() {
+//!     println!("{} {:?}", op.id.0, op.method);
+//! }
+//! ```
 
 pub mod agent;
 pub mod ident;
@@ -203,6 +238,10 @@ ir_struct! {
         pub pagination: Option<Pagination>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub streaming: Option<Streaming>,
+        /// The event stream of a `text/event-stream` success response.
+        /// Present exactly when `streaming` is `Sse`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub stream: Option<StreamSpec>,
         #[serde(default)]
         pub deprecated: bool,
         pub status: OperationStatus,
@@ -223,6 +262,19 @@ ir_struct! {
         /// As written in the spec (`/v1/webhooks/{endpoint_id}/rotate`).
         pub raw: String,
         pub segments: Vec<PathSegment>,
+        /// Constant query parameters written in the spec's path key
+        /// (`/v1/messages?beta=true`). They are part of `raw`, so the
+        /// runtime sends them on every call; they are not arguments.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        pub query: Vec<ConstQuery>,
+    }
+}
+
+ir_struct! {
+    /// One `name=value` pair of the query string of a path key.
+    pub struct ConstQuery {
+        pub name: String,
+        pub value: String,
     }
 }
 
@@ -303,6 +355,10 @@ pub enum ParamRole {
     DryRun,
     Origin,
     Auth,
+    /// A required header with one admitted value: the runtime sends
+    /// `Param::constant` itself and it is not an argument. Call option
+    /// `headers` replace it.
+    Constant,
 }
 
 ir_struct! {
@@ -324,6 +380,9 @@ ir_struct! {
         /// and `explode` do not apply.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub media_type: Option<String>,
+        /// The value of a `ParamRole::Constant` parameter.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub constant: Option<serde_json::Value>,
     }
 }
 
@@ -345,6 +404,23 @@ ir_struct! {
     }
 }
 
+impl BodyContent {
+    /// The type of the value a call carries for this content: `ty`, or an
+    /// array of `ty` for a [`BodyEncoding::Jsonl`] content, whose `ty` is the
+    /// type of one line.
+    pub fn value_type(&self) -> TypeRef {
+        match self.encoding {
+            BodyEncoding::Jsonl => TypeRef::Inline(Box::new(Shape::Array {
+                items: self.ty.clone(),
+                min: None,
+                max: None,
+                unique: false,
+            })),
+            _ => self.ty.clone(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum BodyEncoding {
@@ -353,6 +429,11 @@ pub enum BodyEncoding {
     Multipart,
     Bytes,
     Text,
+    // A sequence of JSON values, one per line (`application/jsonl`,
+    // `application/x-ndjson`). Only response content: the `ty` of the
+    // content is the type of one line, the value of the response is the
+    // array of the lines (`BodyContent::value_type`).
+    Jsonl,
 }
 
 #[derive(
@@ -431,6 +512,10 @@ pub enum AuthScheme {
         wire_name: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         doc: Option<Doc>,
+        /// Environment variable the profile reads the key from
+        /// (`auth_profiles.<name>.api_key.env`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        env: Option<String>,
     },
     HttpBearer {
         name: String,
@@ -550,6 +635,9 @@ pub enum Exhausted {
     CursorNull,
     EmptyItems,
     NoLink,
+    /// The response's boolean `has_more_field` is false (the next cursor
+    /// can still be set on the last page).
+    HasMoreFalse,
 }
 
 ir_struct! {
@@ -560,6 +648,14 @@ ir_struct! {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub page_size_param: Option<String>,
         pub exhausted_when: Exhausted,
+        /// Cursor style only: the response boolean that says more pages
+        /// follow (`has_more`); the runtime stops when it is `false`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub has_more_field: Option<String>,
+        /// Cursor style only: when the response has no cursor field (or it
+        /// is null), the next cursor is this field of the last item (`id`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub cursor_item_field: Option<String>,
         /// True when inferred by heuristic rather than declared.
         pub inferred: bool,
     }
@@ -571,6 +667,33 @@ pub enum Streaming {
     Sse,
     Ndjson,
     Bytes,
+}
+
+ir_struct! {
+    /// The server-sent events of an operation (WHATWG HTML 9.2): the success
+    /// response that carries `text/event-stream`, the type each event's
+    /// `data` decodes to, and what selects the stream on the request.
+    pub struct StreamSpec {
+        /// The success response that carries the stream.
+        pub status: StatusMatch,
+        /// The event stream media type as the spec wrote it.
+        pub media_type: String,
+        /// The type every event's `data` (JSON) is checked against: the
+        /// schema of the media type, usually a union tagged by `type`.
+        pub event: TypeRef,
+        /// A `data` value that ends the stream and is not an event
+        /// (`[DONE]`); declared with `x-tungsten-stream-done`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub done: Option<String>,
+        /// Wire name of the boolean request body field that selects the
+        /// stream (`stream`), when the request body has one.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub request_flag: Option<String>,
+        /// Whether the same status also declares a body that is not a
+        /// stream, which the plain method returns.
+        #[serde(default)]
+        pub also_plain: bool,
+    }
 }
 
 ir_struct! {
@@ -624,5 +747,25 @@ impl Ir {
     /// JSON Schema of the IR, published as `specs/ir.schema.json`.
     pub fn json_schema() -> serde_json::Value {
         serde_json::to_value(schemars::schema_for!(Ir)).expect("schema serializes")
+    }
+}
+
+/// A title without a trailing `API` word, for text that appends ` API`
+/// itself ("the Things API"): `Things API` gives `Things`, so the text
+/// never reads "Things API API". A title that is only `API` is kept.
+pub fn title_stem(title: &str) -> &str {
+    let trimmed = title.trim_end();
+    match trimmed
+        .len()
+        .checked_sub(3)
+        .and_then(|at| trimmed.split_at_checked(at))
+    {
+        Some((head, tail))
+            if tail.eq_ignore_ascii_case("api") && head.ends_with(char::is_whitespace) =>
+        {
+            let stem = head.trim_end();
+            if stem.is_empty() { title } else { stem }
+        }
+        _ => title,
     }
 }

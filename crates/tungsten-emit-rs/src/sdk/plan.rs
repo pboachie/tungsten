@@ -144,6 +144,8 @@ pub(crate) enum MemberKind {
     Preview(usize),
     /// `<op>_pages`.
     Pages(usize),
+    /// `<op>_stream`.
+    Stream(usize),
     /// Index into [`Plan::resources`].
     Child(usize),
 }
@@ -220,8 +222,10 @@ pub(crate) struct Plan<'a> {
 /// Method names of the client besides its resources or namespaces: its own
 /// and those of `Dispatch`.
 const CLIENT_RESERVED: &[&str] = &[
+    "async_client",
     "core",
     "descriptors",
+    "from_client",
     "invoke",
     "macros",
     "new",
@@ -369,6 +373,10 @@ impl<'a> Plan<'a> {
                 if self.ops[o].op.pagination.is_some() {
                     words.push(with_word(&base, "pages"));
                     kinds.push(MemberKind::Pages(o));
+                }
+                if self.ops[o].op.stream.is_some() {
+                    words.push(with_word(&base, "stream"));
+                    kinds.push(MemberKind::Stream(o));
                 }
             }
             let names = unique(&[], &words, Role::Method);

@@ -90,6 +90,15 @@ pub(crate) struct ParamPlan<'a> {
     pub param: &'a Param,
 }
 
+/// The event stream of an operation.
+#[derive(Debug, Clone)]
+pub(crate) struct StreamShape {
+    /// Type of one event (hint flavor).
+    pub event: PyTy,
+    /// The event validator's type (schema flavor), when events are typed.
+    pub event_schema: Option<String>,
+}
+
 /// Everything about one operation's call signature.
 #[derive(Debug, Clone)]
 pub(crate) struct OpShape<'a> {
@@ -108,6 +117,8 @@ pub(crate) struct OpShape<'a> {
     /// typed (`OperationDescriptor["page_item"]`: the runtime validates each
     /// item of a page into it).
     pub page_item_schema: Option<String>,
+    /// The event stream, when the operation has one.
+    pub stream: Option<StreamShape>,
     /// Imports of the arguments' hint-flavor types (signatures).
     pub hint_uses: Uses,
     /// Imports of the result types (`Result[T]`, page items).
@@ -148,6 +159,13 @@ pub(crate) fn op_shape<'a>(plan: &Plan<'a>, info: &OpInfo<'a>) -> OpShape<'a> {
     let result = Cx::new(plan, None);
     let schema = Cx::new(plan, None);
     let layout = args_layout(plan.ir, op);
+    // What a request argument accepts: with dataclass models a record is
+    // also given as its `TypedDict`.
+    let arg_flavor = if plan.dataclasses() {
+        Flavor::Input
+    } else {
+        Flavor::Hint
+    };
     let located: Vec<_> = layout.params.iter().chain(&layout.supplied).collect();
     let keys = unique(
         ARG_RESERVED,
@@ -171,7 +189,7 @@ pub(crate) fn op_shape<'a>(plan: &Plan<'a>, info: &OpInfo<'a>) -> OpShape<'a> {
 
     let mut fields: Vec<ArgField> = vec![];
     for p in params.iter().filter(|p| is_arg(p.param)) {
-        let value = hint.ty(&p.param.ty, Flavor::Hint);
+        let value = hint.ty(&p.param.ty, arg_flavor);
         let mut notes = vec![doc_text(p.param.doc.as_ref())];
         if p.name != p.param.wire_name {
             notes.push(format!(
@@ -224,7 +242,7 @@ pub(crate) fn op_shape<'a>(plan: &Plan<'a>, info: &OpInfo<'a>) -> OpShape<'a> {
                 taken.push(key.clone());
                 let optional =
                     matches!(f.presence, Presence::Optional | Presence::OptionalNullable);
-                let value = hint.field_value(f, Flavor::Hint);
+                let value = hint.field_value(f, arg_flavor);
                 fields.push(ArgField {
                     key: key.clone(),
                     hint: if optional {
@@ -249,10 +267,13 @@ pub(crate) fn op_shape<'a>(plan: &Plan<'a>, info: &OpInfo<'a>) -> OpShape<'a> {
             let name = free_name(&taken, "body");
             taken.push(name.clone());
             let (value, schema_text, json) = match content.encoding {
-                BodyEncoding::Bytes => (PyTy::one("bytes"), schema.internal("Binary"), false),
+                BodyEncoding::Bytes | BodyEncoding::Jsonl => {
+                    hint.runtime("BinaryInput");
+                    (PyTy::one("BinaryInput"), schema.internal("Binary"), false)
+                }
                 BodyEncoding::Text => (PyTy::one("str"), "str".to_string(), false),
                 BodyEncoding::Json | BodyEncoding::Form | BodyEncoding::Multipart => (
-                    hint.ty(&content.ty, Flavor::Hint),
+                    hint.ty(&content.ty, arg_flavor),
                     schema.value(&schema.ty(&content.ty, Flavor::Schema)),
                     content.encoding == BodyEncoding::Json,
                 ),
@@ -300,11 +321,13 @@ pub(crate) fn op_shape<'a>(plan: &Plan<'a>, info: &OpInfo<'a>) -> OpShape<'a> {
             continue;
         };
         match c.encoding {
-            BodyEncoding::Json => {
-                tys.push(result.ty(&c.ty, Flavor::Hint));
-                let s = schema.ty(&c.ty, Flavor::Schema);
+            // JSON lines: the value is the list of the lines.
+            BodyEncoding::Json | BodyEncoding::Jsonl => {
+                let ty = c.value_type();
+                tys.push(result.ty(&ty, Flavor::Hint));
+                let s = schema.ty(&ty, Flavor::Schema);
                 if !json.iter().any(|(t, _)| *t == s) {
-                    json.push((s, c.ty.clone()));
+                    json.push((s, ty));
                 }
             }
             BodyEncoding::Text => {
@@ -334,12 +357,7 @@ pub(crate) fn op_shape<'a>(plan: &Plan<'a>, info: &OpInfo<'a>) -> OpShape<'a> {
         let joined = if json.len() == 1 {
             json[0].0.clone()
         } else {
-            schema.uses.borrow_mut().typing.insert("Annotated");
-            schema.uses.borrow_mut().pydantic.insert("Field");
-            PyTy::one(format!(
-                "Annotated[{}, Field(union_mode=\"left_to_right\")]",
-                PyTy::union(json.iter().map(|(s, _)| s.clone())).text()
-            ))
+            schema.left_to_right(PyTy::union(json.iter().map(|(s, _)| s.clone())))
         };
         schema.value(&if bodiless { joined.nullable() } else { joined })
     });
@@ -361,7 +379,22 @@ pub(crate) fn op_shape<'a>(plan: &Plan<'a>, info: &OpInfo<'a>) -> OpShape<'a> {
         .map(|items| schema.ty(items, Flavor::Schema))
         .filter(|t| !t.is_any())
         .map(|t| schema.value(&t));
-    if success.is_any() || page_item.as_ref().is_some_and(PyTy::is_any) {
+    let stream = op.stream.as_ref().map(|spec| {
+        let event = result.ty(&spec.event, Flavor::Hint);
+        // Untyped events (any JSON value) have no validator and import nothing.
+        let untyped =
+            matches!(&spec.event, TypeRef::Inline(shape) if matches!(**shape, Shape::Any));
+        let event_schema =
+            (!untyped).then(|| schema.value(&schema.ty(&spec.event, Flavor::Schema)));
+        StreamShape {
+            event,
+            event_schema,
+        }
+    });
+    if success.is_any()
+        || page_item.as_ref().is_some_and(PyTy::is_any)
+        || stream.as_ref().is_some_and(|s| s.event.is_any())
+    {
         result.uses.borrow_mut().typing.insert("Any");
     }
     OpShape {
@@ -373,6 +406,7 @@ pub(crate) fn op_shape<'a>(plan: &Plan<'a>, info: &OpInfo<'a>) -> OpShape<'a> {
         response_schema,
         page_item,
         page_item_schema,
+        stream,
         hint_uses: hint.uses.into_inner(),
         result_uses: result.uses.into_inner(),
         schema_uses: schema.uses.into_inner(),
@@ -454,6 +488,7 @@ fn role_str(r: ParamRole) -> &'static str {
         ParamRole::DryRun => "dry_run",
         ParamRole::Origin => "origin",
         ParamRole::Auth => "auth",
+        ParamRole::Constant => "constant",
     }
 }
 
@@ -462,7 +497,9 @@ fn encoding_str(e: BodyEncoding) -> &'static str {
         BodyEncoding::Json => "json",
         BodyEncoding::Form => "form",
         BodyEncoding::Multipart => "multipart",
-        BodyEncoding::Bytes => "bytes",
+        // JSON Lines is a response encoding: a request body of that media
+        // type is bytes (the builder never says otherwise).
+        BodyEncoding::Bytes | BodyEncoding::Jsonl => "bytes",
         BodyEncoding::Text => "text",
     }
 }
@@ -517,7 +554,7 @@ pub(crate) fn sensitive_request_fields(plan: &Plan<'_>, shape: &OpShape<'_>) -> 
     };
     if matches!(
         body.content.encoding,
-        BodyEncoding::Bytes | BodyEncoding::Text
+        BodyEncoding::Bytes | BodyEncoding::Text | BodyEncoding::Jsonl
     ) {
         return vec![];
     }
@@ -679,18 +716,27 @@ fn pagination_py(info: &OpInfo<'_>, shape: &OpShape<'_>) -> Py {
         PaginationStyle::Cursor {
             request_param,
             response_field,
-        } => Py::dict(vec![
-            ("style", Py::str("cursor")),
-            ("request_param", Py::str(&arg(request_param))),
-            ("response_field", Py::str(response_field)),
-            items,
-            (
-                "page_size_param",
-                p.page_size_param
-                    .as_deref()
-                    .map_or_else(Py::none, |s| Py::str(&arg(s))),
-            ),
-        ]),
+        } => {
+            let mut entries = vec![
+                ("style", Py::str("cursor")),
+                ("request_param", Py::str(&arg(request_param))),
+                ("response_field", Py::str(response_field)),
+                items,
+                (
+                    "page_size_param",
+                    p.page_size_param
+                        .as_deref()
+                        .map_or_else(Py::none, |s| Py::str(&arg(s))),
+                ),
+            ];
+            if let Some(f) = &p.has_more_field {
+                entries.push(("has_more_field", Py::str(f)));
+            }
+            if let Some(f) = &p.cursor_item_field {
+                entries.push(("cursor_item_field", Py::str(f)));
+            }
+            Py::dict(entries)
+        }
         PaginationStyle::Offset {
             offset_param,
             limit_param,
@@ -757,7 +803,7 @@ pub(crate) fn descriptor_py(plan: &Plan<'_>, info: &OpInfo<'_>, shape: &OpShape<
             .params
             .iter()
             .map(|p| {
-                Py::dict(vec![
+                let mut members = vec![
                     ("name", Py::str(&p.name)),
                     ("wire", Py::str(&p.param.wire_name)),
                     ("location", Py::str(p.location)),
@@ -765,7 +811,11 @@ pub(crate) fn descriptor_py(plan: &Plan<'_>, info: &OpInfo<'_>, shape: &OpShape<
                     ("style", Py::str(style_str(p.param.style))),
                     ("explode", Py::bool(p.param.explode)),
                     ("role", Py::str(role_str(p.param.role))),
-                ])
+                ];
+                if let Some(value) = tungsten_emit::args::constant_text(p.param) {
+                    members.push(("constant", Py::str(&value)));
+                }
+                Py::dict(members)
             })
             .collect(),
     );
@@ -883,6 +933,19 @@ pub(crate) fn descriptor_py(plan: &Plan<'_>, info: &OpInfo<'_>, shape: &OpShape<
             "page_item",
             Py::Raw(format!("_internal.Response(lambda: {s})")),
         ));
+    }
+    if let (Some(spec), Some(stream)) = (&op.stream, &shape.stream) {
+        let mut stream_entries = vec![];
+        if let Some(s) = &stream.event_schema {
+            stream_entries.push(("event", Py::Raw(format!("_internal.Response(lambda: {s})"))));
+        }
+        if let Some(done) = &spec.done {
+            stream_entries.push(("done", Py::str(done)));
+        }
+        if let Some(flag) = &spec.request_flag {
+            stream_entries.push(("flag", Py::str(flag)));
+        }
+        entries.push(("stream", Py::dict(stream_entries)));
     }
     let summary = op_summary(op);
     entries.push((
@@ -1133,7 +1196,10 @@ pub(crate) fn descriptors_file(
     ));
     docstring(
         &mut body,
-        &format!("The `{}` API as the runtime sees it.", plan.ir.api.title),
+        &format!(
+            "The `{}` API as the runtime sees it.",
+            tungsten_ir::title_stem(&plan.ir.api.title)
+        ),
     );
     for (info, shape) in plan.ops.iter().zip(shapes) {
         uses.merge(&shape.schema_uses);

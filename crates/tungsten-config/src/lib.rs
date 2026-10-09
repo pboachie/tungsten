@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The `tungsten.yml` shape manifest (planning/04).
+//! The `tungsten.yml` shape manifest: which OpenAPI documents to compile,
+//! how to name and shape the API, and which targets to emit.
 //!
 //! The structs here are the contract the builder consumes. Loading runs in
 //! three stages, each reporting diagnostics with the JSON Pointer of the
@@ -62,7 +63,7 @@ pub struct TungstenConfig {
     pub pagination: IndexMap<String, PaginationConfig>,
     #[serde(default)]
     pub types: TypesConfig,
-    /// Target name → target options. Typed per target in Phase 2.
+    /// Target name → target options, kept as raw JSON and typed by each emitter.
     #[serde(default)]
     pub targets: IndexMap<String, serde_json::Value>,
     #[serde(default)]
@@ -297,6 +298,10 @@ pub struct CursorPagination {
     pub items: String,
     #[serde(default)]
     pub page_size_param: Option<String>,
+    /// Response boolean that says more pages follow; iteration stops when
+    /// it is `false` (`has_more`).
+    #[serde(default)]
+    pub has_more: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -321,12 +326,32 @@ pub struct LinkHeaderPagination {
     pub items: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TypesConfig {
     /// `Type.field` edges to box explicitly when a cycle has no named type.
     #[serde(default)]
     pub break_cycles: Vec<String>,
+    /// Drop the types no operation reaches (the schemas only operations
+    /// excluded by `include` use, or none): they are not generated and their
+    /// diagnostics are not reported; one note (TG0760) counts them. Set to
+    /// `false` to generate every schema of the documents. A document
+    /// without operations keeps all its types either way.
+    #[serde(default = "default_prune_unreferenced")]
+    pub prune_unreferenced: bool,
+}
+
+fn default_prune_unreferenced() -> bool {
+    true
+}
+
+impl Default for TypesConfig {
+    fn default() -> Self {
+        Self {
+            break_cycles: vec![],
+            prune_unreferenced: true,
+        }
+    }
 }
 
 impl TungstenConfig {

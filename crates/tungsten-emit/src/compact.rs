@@ -2,7 +2,7 @@
 //! Compact agent tool schemas, shared by every emitter that describes tools
 //! to agents (`tools.json` and `llms-full.txt` in the docs target, the MCP
 //! server's tool manifest), so all of them describe exactly the same
-//! arguments object (planning/07 "MCP tool surface", NFR-3).
+//! arguments object.
 //!
 //! A tool's parameters are the SDK's arguments object ([`crate::args`])
 //! rendered on the request side with descriptions cut to two sentences and

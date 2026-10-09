@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Operations of one namespace (planning/03 "Operations").
+//! Operations of one namespace.
 //!
 //! Paths are visited in the order written, and the methods of a path item
 //! in the order get, put, post, delete, options, head, patch, trace. Before
@@ -25,7 +25,7 @@ use crate::filter::{self, Disposition};
 use crate::names::{pascal, synthesize_operation_id};
 use crate::responses::RawResponse;
 use crate::rpc::{self, RpcVariant};
-use crate::{NamespaceInput, bodies, params, responses};
+use crate::{NamespaceInput, bodies, params, responses, streams};
 
 /// Path item members that are operations, in visiting order.
 pub(crate) const METHODS: [(&str, HttpMethod); 8] = [
@@ -158,6 +158,19 @@ fn enumerate(cx: &mut Ctx<'_>, input: &NamespaceInput) -> Vec<Skeleton> {
             );
             continue;
         }
+        let (path_only, query) = params::split_query(path);
+        if !query.is_empty() {
+            cx.report(
+                Diagnostic::info(
+                    "TG0111",
+                    format!(
+                        "path key {path} carries a query string; `{query}` is sent on every call to {path_only} and is not an argument"
+                    ),
+                )
+                .with_help("OpenAPI path keys must not contain a query string; declare query parameters instead"),
+                &path_item,
+            );
+        }
         for (word, method) in METHODS {
             let Some(op) = item.get(word) else {
                 continue;
@@ -183,7 +196,7 @@ fn enumerate(cx: &mut Ctx<'_>, input: &NamespaceInput) -> Vec<Skeleton> {
             let local_id = match &operation_id {
                 Some(id) => id.clone(),
                 None => {
-                    let id = synthesize_operation_id(method, path);
+                    let id = synthesize_operation_id(method, params::split_query(path).0);
                     if !matches!(disposition, Disposition::Drop(_)) {
                         cx.report(
                             Diagnostic::warning(
@@ -288,7 +301,7 @@ fn build_op(
     // The shared parts of rpc methods are built under the envelope's id.
     let local = match (&sk.rpc, &sk.operation_id) {
         (Some(_), Some(id)) => id.clone(),
-        (Some(_), None) => synthesize_operation_id(sk.method, &sk.path),
+        (Some(_), None) => synthesize_operation_id(sk.method, params::split_query(&sk.path).0),
         (None, _) => sk.local_id.clone(),
     };
     let id = format!("{ns}.{local}");
@@ -326,7 +339,7 @@ fn build_op(
                 .collect()
         })
         .unwrap_or_default();
-    let op = Operation {
+    let mut op = Operation {
         id: OperationId(id.clone()),
         name: Ident::new(&local),
         operation_id: sk.operation_id.clone(),
@@ -340,6 +353,7 @@ fn build_op(
         security,
         pagination: None,
         streaming: None,
+        stream: None,
         deprecated: flag(value, "deprecated"),
         status,
         rpc: None,
@@ -350,6 +364,7 @@ fn build_op(
             pointer: sk.target.pointer.clone(),
         },
     };
+    streams::apply(cx, &mut op, &sk.target);
     BuiltOp {
         op,
         responses: raw,

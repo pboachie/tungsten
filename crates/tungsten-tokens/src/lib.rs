@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Token counting for agent-facing budgets (planning/01 NFR-3,
-//! planning/05 "MCP server").
+//! Token counting for agent-facing budgets: the tool schemas and
+//! documentation that tungsten generates for agents must fit a token budget.
 //!
 //! Budgets are enforced with a deterministic estimate so the compiler has no
 //! model-specific dependency; the test harness cross-checks the estimate
@@ -28,8 +28,8 @@
 //! the estimate is within 10% of `cl100k_base` and leans high: a budget
 //! checked with the estimate is safe.
 //!
-//! PHASE-3 CONTRACT: `count` and `Counter` are shared by the docs and MCP
-//! emitters and the report.
+//! Stability: `count` and `Counter` are shared by the docs and MCP emitters
+//! and the generation report. Changes are additive.
 
 mod lexicon;
 

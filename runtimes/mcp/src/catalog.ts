@@ -35,7 +35,7 @@ const SAFETIES = new Set<string>(["read_only", "mutating", "destructive", "irrev
 /** MCP tool names: 1-128 of `[A-Za-z0-9_.-]`. */
 const TOOL_NAME = /^[A-Za-z0-9_.-]{1,128}$/;
 
-export const PROGRESSIVE_TOOLS = ["search_tools", "describe_tool", "invoke", "preview", "list_clusters", "run_script"] as const;
+export const PROGRESSIVE_TOOLS = ["search_tools", "describe_tool", "invoke", "invoke_read", "preview", "list_clusters", "run_script"] as const;
 export const DISCRETE_META_TOOLS = ["preview", "run_script"] as const;
 
 function annotationsFor(safety: Safety): ToolAnnotations {
@@ -230,6 +230,10 @@ export function advertisedOutputSchema(tool: CatalogTool): JsonSchema | null {
 }
 
 const CLOSED = { additionalProperties: false } as const;
+/** The MCP annotations of the tool call a result belongs to, for hosts that
+ * gate by tier (`_meta["tungsten/tool"]` of invoke and preview results). */
+export const TOOL_META_KEY = "tungsten/tool";
+
 const META_READ = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
 
 function argumentsSchema(what: string): JsonSchema {
@@ -291,7 +295,7 @@ export function listTools(catalog: Catalog, sandbox: boolean): McpTool[] {
   const listed: McpTool[] = [
     {
       name: "search_tools",
-      description: `Search the ${catalog.tools.length} API tools by keywords. Returns name, summary, safety tier, idempotency policy and schema token cost.`,
+      description: `Search the ${catalog.tools.length} API tools by keywords. Returns name, summary, safety tier, MCP annotations, idempotency policy, schema token cost and the tool to call it with.`,
       inputSchema: {
         type: "object",
         properties: {
@@ -306,14 +310,14 @@ export function listTools(catalog: Catalog, sandbox: boolean): McpTool[] {
     },
     {
       name: "describe_tool",
-      description: "Full input and output schema of one tool, its safety tier, reserved fields, remediation table and an example invoke call.",
+      description: "Full input and output schema of one tool, its safety tier and annotations, reserved fields, remediation table and an example call.",
       inputSchema: { type: "object", properties: { name: { type: "string", minLength: 1 } }, required: ["name"], ...CLOSED },
       annotations: META_READ,
     },
     {
       name: "invoke",
       description:
-        "Execute one tool. Returns the response body, or the error envelope with remediation. Destructive and irreversible tools need the confirmation_token from preview with the same arguments.",
+        "Execute any tool. Returns the response body, or the error envelope with remediation. Destructive and irreversible tools need the confirmation_token from preview with the same arguments. Read-only tools: use invoke_read.",
       inputSchema: {
         type: "object",
         properties: { name: { type: "string", minLength: 1 }, arguments: argumentsSchema("Arguments of the tool") },
@@ -322,6 +326,21 @@ export function listTools(catalog: Catalog, sandbox: boolean): McpTool[] {
       },
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },
+    ...(catalog.tools.some((t) => t.safety === "read_only")
+      ? [
+          {
+            name: "invoke_read",
+            description: "Execute one read-only tool (safety tier read_only); any other tier is refused, use invoke. Safe to allow without confirmation.",
+            inputSchema: {
+              type: "object" as const,
+              properties: { name: { type: "string", minLength: 1 }, arguments: argumentsSchema("Arguments of the tool") },
+              required: ["name"],
+              ...CLOSED,
+            },
+            annotations: META_READ,
+          } satisfies McpTool,
+        ]
+      : []),
     {
       name: "preview",
       description:

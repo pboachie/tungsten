@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Structured indentation writer (planning/02 D1).
+//! Structured indentation writer.
 
 /// Comment syntax for doc comments and headers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

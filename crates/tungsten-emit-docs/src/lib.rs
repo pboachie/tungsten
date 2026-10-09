@@ -1,12 +1,40 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Machine-first documentation emitter (planning/05 "Docs"): `llms.txt`,
-//! `llms-full.txt`, `tools.json` and a README.
+//! Machine-first documentation emitter: [`DocsEmitter`] turns the IR into the
+//! `docs` target, a small set of files meant to be read by language models
+//! and by people.
 //!
-//! Honesty (NFR-8): planned operations are only ever listed under
-//! "Planned (not available)" and are never tools; gated operations name
-//! their environment variable wherever they appear. Agent metadata is
-//! rendered as the IR carries it (method defaults when no agent manifest
-//! was applied).
+//! # Output
+//!
+//! - `llms.txt`: the llms.txt index of the API (title, summary, auth,
+//!   operations per namespace and resource with their safety tier and
+//!   idempotency rule);
+//! - `llms-full.txt`: the full reference: arguments, responses, errors,
+//!   remediation and types of every operation;
+//! - `tools.json`: a provider-neutral function-calling manifest with one tool
+//!   per callable operation and macro (name, compacted description and the
+//!   JSON Schema of the arguments object as the SDK takes it);
+//! - `README.md`: the human index, with tables per namespace and the error
+//!   categories every SDK returns.
+//!
+//! # Usage
+//!
+//! The emitter implements [`tungsten_emit::Emitter`]. The `tungsten` CLI
+//! runs it for the `docs` target of `tungsten.yml`; embedding it looks like:
+//!
+//! ```text
+//! let diags = DocsEmitter.supports(&ir);          // budget warnings (TG0713)
+//! let mut files = FileSet::default();
+//! let diags = DocsEmitter.emit(&ir, &cfg, &mut files);
+//! // then tungsten_emit::write_output(...) puts the files on disk
+//! ```
+//!
+//! # Guarantees
+//!
+//! Output is deterministic. The docs are honest about what can be called:
+//! planned operations are only ever listed under "Planned (not available)"
+//! and are never tools, and gated operations name their environment variable
+//! wherever they appear. Agent metadata is rendered as the IR carries it
+//! (method defaults when no agent manifest was applied).
 
 mod compact;
 mod llms;

@@ -8,7 +8,26 @@ use serde::Serialize;
 
 use crate::output::CommandName;
 
-const EXIT_CODES: &str = "\
+macro_rules! examples_text {
+    () => {
+        "\
+Examples:
+  tungsten init --from openapi.yaml    Write tungsten.yml and agent.yml
+  tungsten check .                     Validate the project and print diagnostics
+  tungsten generate --target ts,py     Generate the TypeScript and Python SDKs
+  tungsten mock --port 4010            Serve a mock of the API from the IR
+  tungsten report --html report.html   Write a static coverage and safety report
+  tungsten diff --semver               Show how the API surface changed
+
+Repository: https://github.com/pboachie/tungsten
+
+"
+    };
+}
+
+macro_rules! exit_codes_text {
+    () => {
+        "\
 Exit codes:
   0  success (also `diff` when regeneration would change files, and
      `report` with warnings)
@@ -25,14 +44,21 @@ Output:
   Without --json, results go to stdout and diagnostics to stderr. With
   --json, stdout carries exactly one JSON document described by
   `tungsten schema cli-output`, help and version included. Color is used
-  only on a terminal and never when NO_COLOR is set.";
+  only on a terminal and never when NO_COLOR is set."
+    };
+}
+
+const SHORT_HELP: &str = examples_text!();
+
+const LONG_HELP: &str = concat!(examples_text!(), exit_codes_text!());
 
 #[derive(Debug, Parser)]
 #[command(
     name = "tungsten",
     version,
     about = "Agent-native SDK generator and MCP compiler",
-    after_long_help = EXIT_CODES,
+    after_help = SHORT_HELP,
+    after_long_help = LONG_HELP,
     arg_required_else_help = true,
     color = ColorChoice::Never
 )]

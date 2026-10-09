@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! `ClientCore`: validate, authenticate, apply idempotency and confirmation
-//! rules, send with retries, classify the response (PHASE-5 CONTRACT: the
-//! signatures below are final).
+//! rules, send with retries, classify the response (the signatures below are
+//! stable; changes are additive).
 
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
