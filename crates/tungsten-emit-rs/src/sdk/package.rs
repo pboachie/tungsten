@@ -485,54 +485,19 @@ pub(crate) fn readme(
 
 /// The helpers an API with event streams adds to the shared module.
 const STREAM_SUPPORT: &str = r#"
-use tungsten_runtime::{EventStream, StreamEvent, StreamResult, TypedEvents, no_stream};
+use tungsten_runtime::{EventStream, StreamResult, TypedEvents, no_stream};
 
-/// A typed event as a dynamic one.
-pub fn encode_event<T: Serialize>(result: StreamResult<T>) -> StreamResult<Value> {
-    let event = result?;
-    let StreamEvent {
-        value,
-        event: name,
-        id,
-        retry,
-        meta,
-    } = event;
-    match serde_json::to_value(&value) {
-        Ok(value) => Ok(StreamEvent {
-            value,
-            event: name,
-            id,
-            retry,
-            meta,
-        }),
-        Err(e) => Err(malformed(
-            "event",
-            "event",
-            Value::Null,
-            "a value that serializes to JSON",
-            e.to_string(),
-        )),
-    }
-}
-
-/// Every event of a typed stream, as dynamic results.
+/// Every event of a typed stream, as dynamic results. The collection is
+/// bounded by `ClientOptions::max_collect_bytes` and `max_collect_time`.
 pub async fn collect_events<T: Serialize + DeserializeOwned>(
-    mut events: TypedEvents<T>,
+    events: TypedEvents<T>,
 ) -> Vec<StreamResult<Value>> {
-    let mut out = vec![];
-    while let Some(event) = events.next().await {
-        out.push(encode_event(event));
-    }
-    out
+    events.collect_values().await
 }
 
-/// Every event of an untyped stream.
-pub async fn collect_raw_events(mut events: EventStream) -> Vec<StreamResult<Value>> {
-    let mut out = vec![];
-    while let Some(event) = events.next().await {
-        out.push(event);
-    }
-    out
+/// Every event of an untyped stream, bounded the same way.
+pub async fn collect_raw_events(events: EventStream) -> Vec<StreamResult<Value>> {
+    events.collect_values().await
 }
 
 pub fn not_streamed(operation: &str) -> Error {

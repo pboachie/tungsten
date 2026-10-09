@@ -95,8 +95,11 @@
 //!     An operation with an event stream (`Operation.stream`) answers it as
 //!     `text/event-stream` (with `Cache-Control: no-store`) when it has no
 //!     other success body, or when the request has `Accept:
-//!     text/event-stream` or sets the stream's request flag to `true`.
-//!     There is one event per variant of the event type (two values of it
+//!     text/event-stream` (a range with `q=0` is "not acceptable" and does
+//!     not count) or sets the stream's request flag to `true`. The stream
+//!     is declared under an exact success status, a `2XX` range or
+//!     `default`; the answer has the status it is declared under (`200` for
+//!     a range or `default`). There is one event per variant of the event type (two values of it
 //!     when it is not a union), each as an optional `event:` line (the
 //!     variant's discriminator value), an `id:` line counting from 1 and a
 //!     `data:` line of JSON, then a `data:` line with the done sentinel, if
