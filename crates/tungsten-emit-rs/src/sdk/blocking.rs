@@ -99,7 +99,10 @@ pub(crate) fn blocking_file(
     doc(
         &mut code,
         &paragraphs([
-            format!("Blocking client for the {} API.", plan.ir.api.title),
+            format!(
+                "Blocking client for the {} API.",
+                tungsten_ir::title_stem(&plan.ir.api.title)
+            ),
             format!(
                 "It has the resources, methods, arguments and results of `{async_client}`, and each call returns when the request is done. Calls run on a thread of their own that this client owns, so they work from any thread, including threads of an async runtime, which they block while they wait: from async code, prefer `{async_client}` or run them with `spawn_blocking`."
             ),
