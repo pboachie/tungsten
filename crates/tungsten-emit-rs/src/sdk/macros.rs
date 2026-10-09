@@ -359,11 +359,13 @@ fn out_ref(
         }
         let item = shape
             .item_ref
+            .as_ref()
             .map_or_else(|| "Value".to_string(), |i| cx.ty(i));
         return Ok(scalar(&format!("Vec<{item}>")));
     }
     let body_ty = shape
         .success_ref
+        .as_deref()
         .ok_or(format!("`{op}` has no single JSON response type"))?;
     let polled = step.kind == StepKind::Poll;
     if path.is_empty() {

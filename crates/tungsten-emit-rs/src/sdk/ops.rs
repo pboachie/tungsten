@@ -108,9 +108,9 @@ pub(crate) struct OpShape<'a> {
     pub success: String,
     /// The IR type of the success body, when every success response is JSON
     /// of that one type.
-    pub success_ref: Option<&'a TypeRef>,
+    pub success_ref: Option<Cow<'a, TypeRef>>,
     /// The IR type of a page's items, when they are typed.
-    pub item_ref: Option<&'a TypeRef>,
+    pub item_ref: Option<TypeRef>,
     /// A success may have no body.
     pub bodiless: bool,
     /// More than one distinct JSON success type: the result is `Value`.
@@ -294,7 +294,7 @@ pub(crate) fn op_shape<'a>(plan: &'a Plan<'a>, info: &OpInfo<'a>) -> OpShape<'a>
     });
 
     // Success value.
-    let mut tys: Vec<(String, Cow<'_, TypeRef>)> = vec![];
+    let mut tys: Vec<(String, Cow<'a, TypeRef>)> = vec![];
     let mut other: Vec<String> = vec![];
     let mut bodiless = false;
     let mut all_json = true;
@@ -396,14 +396,14 @@ pub(crate) fn op_shape<'a>(plan: &'a Plan<'a>, info: &OpInfo<'a>) -> OpShape<'a>
     let page_validator = items
         .flatten()
         .map(|items| validated(items, false, &format!("{}_item", info.builder)));
-    let success_ref = (all_json && tys.len() == 1).then(|| tys[0].1);
+    let success_ref = (all_json && tys.len() == 1).then(|| tys[0].1.clone());
     OpShape {
         params,
         body,
         fields,
         success,
         success_ref,
-        item_ref: items.flatten(),
+        item_ref: items.flatten().cloned(),
         bodiless,
         mixed_success,
         response,

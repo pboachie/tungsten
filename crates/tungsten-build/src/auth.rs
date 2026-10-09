@@ -515,6 +515,7 @@ fn infer_api_key(cx: &mut Ctx<'_>, namespace: usize, doc: usize) -> Option<Defin
             location: ApiKeyIn::Header,
             wire_name,
             doc: None,
+            env: None,
         },
         at,
     })
