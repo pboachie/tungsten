@@ -50,7 +50,8 @@ import {
   validHeaderName,
   validHeaderValue,
 } from "./serialize.js";
-import { attempt, type AttemptOutcome, nextLink, parseRetryAfter } from "./transport.js";
+import { SseParser } from "./sse.js";
+import { attempt, type AttemptOutcome, nextLink, parseRetryAfter, StreamBody } from "./transport.js";
 import type {
   ApiDescriptor,
   CallOptions,
@@ -75,6 +76,8 @@ import type {
   Result,
   RetryOptions,
   SchemaLike,
+  StreamDescriptor,
+  StreamItem,
   Verification,
 } from "./types.js";
 import {
@@ -204,6 +207,13 @@ function descriptorProblem(op: unknown): string | null {
   if (op.rpc !== null && op.rpc !== undefined) {
     const rpc = op.rpc;
     if (!isRecord(rpc) || typeof rpc.field !== "string" || typeof rpc.paramsField !== "string") return "`rpc` needs `field` and `paramsField`";
+  }
+  if (op.stream !== null && op.stream !== undefined) {
+    const stream = op.stream;
+    if (!isRecord(stream)) return "`stream` must be an object";
+    if (stream.done !== undefined && typeof stream.done !== "string") return "`stream.done` must be a string";
+    if (stream.flag !== undefined && typeof stream.flag !== "string") return "`stream.flag` must be a string";
+    if (stream.event !== undefined && !isSchema(stream.event)) return "`stream.event` must be a schema";
   }
   if (!isRecord(op.status) || (op.status.kind !== "implemented" && op.status.kind !== "gated")) return "`status.kind` must be implemented or gated";
   const agent = op.agent;
@@ -408,6 +418,17 @@ function shortJson(value: unknown): string {
   return text.length > 80 ? `${text.slice(0, 77)}...` : text;
 }
 
+/** The args of a stream call: the stream's request flag set to `true`, in
+ * the body field of a merged body or inside an object body argument. */
+function withStreamFlag(op: OperationDescriptor, spec: StreamDescriptor, args: Record<string, unknown>): Record<string, unknown> {
+  const flag = spec.flag;
+  const body = op.body;
+  if (flag === undefined || !isRecord(args) || !body) return args;
+  if (body.shape.kind === "merged") return body.shape.fields.includes(flag) ? { ...args, [flag]: true } : args;
+  const inner = args[body.shape.arg];
+  return isRecord(inner) ? { ...args, [body.shape.arg]: { ...inner, [flag]: true } } : args;
+}
+
 function trimTrailingSlash(base: string): string {
   return base.replace(/\/+$/, "");
 }
@@ -488,6 +509,17 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
       yield* this.#pages<T>(op, args, this.#callOptions(opts));
     } catch (error) {
       yield fail(this.#internal(op, error, "paginating"));
+    }
+  }
+
+  /** Iterate the events of the operation's event stream: one item per
+   * server-sent event, decoded from JSON, then the end of the stream or a
+   * final failure item. Never throws. */
+  async *stream<T>(op: OperationDescriptor, args: Record<string, unknown>, opts?: CallOptions): AsyncIterable<StreamItem<T>> {
+    try {
+      yield* this.#stream<T>(op, args, this.#callOptions(opts));
+    } catch (error) {
+      yield fail(this.#internal(op, error, "streaming"));
     }
   }
 
@@ -1132,7 +1164,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
 
   // -------------------------------------------------------------- sending
 
-  async #send<T>(prepared: Prepared, opts: CallOptions): Promise<Result<T>> {
+  async #send<T>(prepared: Prepared, opts: CallOptions, stream = false): Promise<Result<T>> {
     const { op } = prepared;
     const retries = this.#retryOptions(op);
     const mutation = isMutation(op);
@@ -1162,6 +1194,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
         redirect: "manual",
         timeoutMs,
         signal: opts.signal,
+        stream,
       });
       let current = { url: prepared.url, method: prepared.method, body: prepared.body };
       for (let hops = 0; !mutation && hops < MAX_REDIRECTS && outcome.kind === "response" && REDIRECT_STATUSES.has(outcome.status); hops += 1) {
@@ -1181,6 +1214,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
           redirect: "manual",
           timeoutMs,
           signal: opts.signal,
+          stream,
         });
       }
       const callCtx: CallContext = { api: this.api, op, key: prepared.key, keyHeader: prepared.keyHeader, attempts, check };
@@ -1401,6 +1435,9 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     const success = (status >= 200 && status <= 299) || (declared?.kind === "success" && status >= 100 && status <= 399);
     const hint = op.agent.verify ? `Call ${op.agent.verify.operation} to read the current state.` : null;
 
+    if (success && outcome.stream !== undefined) {
+      return { ok: true, value: outcome.stream as T, meta: { status, headers, requestId, attempts } };
+    }
     if (success && outcome.body === null) {
       if (!mutation) {
         return fail(
@@ -1639,6 +1676,166 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
       }
       yield { ok: true, value: { items, body, next }, meta: result.meta };
       if (next === null) return;
+    }
+  }
+
+  async *#stream<T>(op: OperationDescriptor, rawArgs: Record<string, unknown>, opts: CallOptions): AsyncGenerator<StreamItem<T>> {
+    const spec: StreamDescriptor | null = isRecord(op) && isRecord(op.stream) ? op.stream : null;
+    if (spec === null) {
+      yield fail(
+        diagnostic(safeId(op), "VALIDATION_FAILED", {
+          failed_parameter: "operation",
+          expected: "an operation with an event stream",
+          remediation: `${safeId(op)} has no event stream (its success response is not text/event-stream); use call() instead. Nothing was sent.`,
+        }),
+      );
+      return;
+    }
+    const streamOpts: CallOptions = { ...opts, headers: { Accept: "text/event-stream", ...(isRecord(opts.headers) ? opts.headers : {}) } };
+    const prepared = await this.#prepare(op, withStreamFlag(op, spec, rawArgs), streamOpts, "call", null);
+    if (!prepared.ok) {
+      yield fail(prepared.error);
+      return;
+    }
+    const sent = await this.#send<unknown>(prepared.value, streamOpts, true);
+    if (!sent.ok) {
+      yield fail(sent.error);
+      return;
+    }
+    const { meta } = sent;
+    const mutation = isMutation(op);
+    const afterEffect = mutation ? " The call took effect; do not repeat it." : "";
+    if (!(sent.value instanceof StreamBody)) {
+      yield fail(
+        diagnostic(op.id, "UNEXPECTED_RESPONSE", {
+          http_status: meta.status,
+          request_id: meta.requestId,
+          failed_parameter: "response",
+          received_value: envelopeValue(meta.headers["content-type"] ?? null, false),
+          expected: "a text/event-stream body",
+          remediation: `The success response is not an event stream (Content-Type ${meta.headers["content-type"] ?? "missing"}).${afterEffect}`,
+          retryable: "never",
+          trace: { attempts: meta.attempts },
+        }),
+      );
+      return;
+    }
+    const body = sent.value;
+    const prep = prepared.value;
+    const timeoutMs = this.#timeout(streamOpts);
+    const mode = this.options.validateResponses === "off" || this.options.validateResponses === "strict" ? this.options.validateResponses : "warn";
+    const sensitive = Array.isArray(op.agent.sensitiveResponseFields) ? op.agent.sensitiveResponseFields : [];
+    const parser = new SseParser();
+    const decoder = new TextDecoder("utf-8");
+    let count = 0;
+    const interrupted = (kind: "timeout" | "aborted" | "lost"): StreamItem<T> => {
+      const callCtx: CallContext = {
+        api: this.api,
+        op,
+        key: prep.key,
+        keyHeader: prep.keyHeader,
+        attempts: meta.attempts,
+        check: mutation && !hasReplayProtection(op, prep.key) ? this.#outcomeCheck(op, prep.args) : null,
+      };
+      const after = `after ${count} ${count === 1 ? "event" : "events"}`;
+      const trace = { attempts: meta.attempts };
+      const common = { http_status: meta.status, request_id: meta.requestId, trace };
+      let error: Diagnostic;
+      if (kind === "timeout") {
+        error = mutation
+          ? outcomeUnknown(callCtx, `No event arrived within ${timeoutMs} ms ${after}; the stream was abandoned.`, common)
+          : diagnostic(op.id, "UPSTREAM_UNAVAILABLE", {
+              ...common,
+              remediation: `No event arrived within ${timeoutMs} ms ${after}; the stream was abandoned. This read has no side effects; call again later or with a larger timeoutMs.`,
+            });
+      } else if (kind === "aborted") {
+        error =
+          mutation
+            ? outcomeUnknown(callCtx, `The caller's AbortSignal cancelled the stream ${after}.`, common)
+            : diagnostic(op.id, "TRANSPORT_FAILED", { ...common, retryable: "never", remediation: `The caller's AbortSignal cancelled the stream ${after}.` });
+      } else {
+        error = mutation
+          ? outcomeUnknown(callCtx, `The event stream was cut off ${after}: the connection failed before it ended.`, common)
+          : diagnostic(op.id, "TRANSPORT_FAILED", {
+              ...common,
+              remediation: `The event stream was cut off ${after}: the connection failed before it ended. This read has no side effects; call again.`,
+            });
+      }
+      return fail(scrubDiagnostic(error, prep.secrets));
+    };
+    const accept = (event: { event: string; data: string; id: string | null; retry: number | null }): StreamItem<T> | "done" => {
+      if (spec.done !== undefined && event.data === spec.done) return "done";
+      const index = count;
+      const failure = (fields: Partial<Diagnostic>): StreamItem<T> =>
+        fail(
+          scrubDiagnostic(
+            diagnostic(op.id, "UNEXPECTED_RESPONSE", { http_status: meta.status, request_id: meta.requestId, retryable: "never", trace: { attempts: meta.attempts }, ...fields }),
+            prep.secrets,
+          ),
+        );
+      let value: unknown;
+      try {
+        value = JSON.parse(event.data);
+      } catch {
+        return failure({
+          failed_parameter: `events[${index}]`,
+          received_value: envelopeValue(event.data, false),
+          expected: "JSON in the data of every event",
+          remediation: `Event ${index} of the stream (event "${event.event}") does not carry JSON in its data.${afterEffect} Events before it were delivered.`,
+        });
+      }
+      if (mode !== "off" && isSchema(spec.event)) {
+        let parsed: ReturnType<SchemaLike["safeParse"]>;
+        try {
+          parsed = spec.event.safeParse(value);
+        } catch (error) {
+          parsed = { success: false, error: { issues: [{ path: [], message: `the event schema failed (${describeError(error)})` }] } };
+        }
+        if (!parsed.success) {
+          const issues = isRecord(parsed.error) && Array.isArray(parsed.error.issues) ? parsed.error.issues : [];
+          const issue = issues[0];
+          const path = issue && Array.isArray(issue.path) ? issue.path.map(String) : [];
+          const message = issue && typeof issue.message === "string" ? issue.message : "a valid event";
+          const pathText = path.map((s) => (/^\d+$/.test(s) ? `[${s}]` : `.${s}`)).join("");
+          const problem = failure({
+            failed_parameter: `events[${index}]${pathText}`,
+            received_value: envelopeValue(getPath(redactPaths(value, sensitive), path), path.some(looksSensitive)),
+            expected: message,
+            remediation: `Event ${index} of the stream (event "${event.event}") does not match the API description at events[${index}]${pathText} (${message}).${afterEffect}`,
+          });
+          if (mode === "strict") return problem;
+          if (!problem.ok) this.#emit(problem.error);
+        }
+      }
+      count += 1;
+      return { ok: true, value: value as T, event: event.event, id: event.id, retry: event.retry, meta };
+    };
+    try {
+      for (;;) {
+        const read = await body.read();
+        if (read.kind === "chunk") {
+          for (const event of parser.push(decoder.decode(read.bytes, { stream: true }))) {
+            const item = accept(event);
+            if (item === "done") return;
+            yield item;
+            if (!item.ok) return;
+          }
+          continue;
+        }
+        if (read.kind === "end") {
+          for (const event of [...parser.push(decoder.decode()), ...parser.end()]) {
+            const item = accept(event);
+            if (item === "done") return;
+            yield item;
+            if (!item.ok) return;
+          }
+          return;
+        }
+        yield interrupted(read.kind);
+        return;
+      }
+    } finally {
+      body.close();
     }
   }
 

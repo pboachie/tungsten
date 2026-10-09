@@ -138,6 +138,7 @@ fn client_paths(plan: &Plan<'_>) -> Vec<(usize, String)> {
             match m.kind {
                 MemberKind::Op(o) => out.push((o, format!("{prefix}.{}", m.name))),
                 MemberKind::Child(c) => walk(plan, c, &format!("{prefix}.{}", m.name), out),
+                MemberKind::Stream(_) => {}
             }
         }
     }

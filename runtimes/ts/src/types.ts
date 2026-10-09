@@ -244,6 +244,20 @@ export interface OperationDescriptor {
   response?: SchemaLike;
   /** One-line summary (compacted description); the last line of preview effects. */
   summary?: string | null;
+  /** The operation's event stream (`ClientCore.stream`); absent when it has none. */
+  stream?: StreamDescriptor;
+}
+
+/** The server-sent events of an operation (IR `StreamSpec`). */
+export interface StreamDescriptor {
+  /** Validates the decoded `data` of every event (per
+   * `ClientOptions.validateResponses`); absent: events are any JSON value. */
+  event?: SchemaLike;
+  /** A `data` value that ends the stream without being an event (`[DONE]`). */
+  done?: string;
+  /** Wire name of the boolean request body field that selects the stream;
+   * `ClientCore.stream` sets it to `true`. */
+  flag?: string;
 }
 
 export type AuthSchemeDescriptor =
@@ -523,6 +537,23 @@ export interface ClientCoreExtensions {
   previewMacro(macro: MacroDescriptor, input: Record<string, unknown>, opts?: CallOptions): Promise<Result<PreviewResult>>;
 }
 
+/** One item of a stream: an event, or the failure that ends the stream
+ * (an envelope; a failure before the first event is the only item). */
+export type StreamItem<T> =
+  | {
+      ok: true;
+      /** The event's `data`, decoded from JSON (and validated). */
+      value: T;
+      /** The `event` field of the server-sent event, `message` when it has none. */
+      event: string;
+      /** The last event id the stream has set so far, or null. */
+      id: string | null;
+      /** The last `retry` value (milliseconds) the stream has set so far, or null. */
+      retry: number | null;
+      meta: ResponseMeta;
+    }
+  | { ok: false; error: Diagnostic };
+
 /** What `ClientCore` (implemented in `client.ts`) offers generated code. */
 export interface ClientCoreApi {
   readonly api: ApiDescriptor;
@@ -532,6 +563,15 @@ export interface ClientCoreApi {
   call<T>(op: OperationDescriptor, args: Record<string, unknown>, opts?: CallOptions): Promise<Result<T>>;
   /** Run the operation's preview mode. */
   preview(op: OperationDescriptor, args: Record<string, unknown>, opts?: CallOptions): Promise<Result<PreviewResult>>;
+  /** Iterate the events of an operation's event stream (`text/event-stream`).
+   * Errors before the stream starts (validation, auth, an error status) are
+   * the only item, as for `call`, and are retried by the same rules. The
+   * stream is never retried once it has started: a connection lost or an
+   * idle timeout afterwards ends it with a final failure item
+   * (`TRANSPORT_FAILED`, `UPSTREAM_UNAVAILABLE` for a read; `OUTCOME_UNKNOWN`
+   * for a mutation), as does an event that is not JSON or (with
+   * `validateResponses: "strict"`) does not match the event type. */
+  stream<T>(op: OperationDescriptor, args: Record<string, unknown>, opts?: CallOptions): AsyncIterable<StreamItem<T>>;
   /** Iterate pages; stops after the last page or the first error result. */
   pages<T>(op: OperationDescriptor, args: Record<string, unknown>, opts?: CallOptions): AsyncIterable<Result<Page<T>>>;
   /** Call a read operation until `until` holds or the budget runs out. */

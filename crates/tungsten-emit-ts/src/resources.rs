@@ -160,6 +160,73 @@ fn op_property_type(info: &OpInfo<'_>, shape: &OpShape<'_>) -> Vec<String> {
     lines
 }
 
+/// The TypeScript type of one event of an operation's stream.
+fn event_type(shape: &OpShape<'_>) -> String {
+    shape
+        .stream
+        .as_ref()
+        .map_or_else(|| "unknown".to_string(), |s| s.event.text.clone())
+}
+
+/// The declared type of the stream property of an operation.
+fn stream_property_type(info: &OpInfo<'_>, shape: &OpShape<'_>, event: &str) -> Vec<String> {
+    let args = format!(
+        "args{}: ops.{}",
+        if shape.all_optional { "?" } else { "" },
+        info.args_type
+    );
+    vec![
+        format!("(({args}, opts?: CallOptions) => AsyncIterable<StreamItem<{event}>>) & {{"),
+        "  readonly streamOf: OperationDescriptor;".into(),
+        "}".into(),
+    ]
+}
+
+/// The constructor assignment of a stream property.
+fn stream_assignment(
+    member: &str,
+    info: &OpInfo<'_>,
+    shape: &OpShape<'_>,
+    event: &str,
+) -> Vec<String> {
+    let param = if shape.all_optional {
+        format!("args: ops.{} = {{}}", info.args_type)
+    } else {
+        format!("args: ops.{}", info.args_type)
+    };
+    let d = format!("ops.{}", info.key);
+    vec![
+        format!("this.{member} = Object.assign("),
+        format!("  ({param}, opts?: CallOptions) => core.stream<{event}>({d}, args, opts),"),
+        format!("  {{ streamOf: {d} }},"),
+        ");".into(),
+    ]
+}
+
+/// The TSDoc of the stream property of an operation.
+fn stream_doc(info: &OpInfo<'_>) -> String {
+    let op = info.op;
+    let spec = op.stream.as_ref();
+    let mut parts = vec![format!(
+        "The events of `{}` (`{}`), as an async iterable of `StreamItem`s: one per server-sent event, then either the end of the stream or one final `{{ ok: false, error }}`. An error before the stream starts is the only item.",
+        op.id.0,
+        method_str(op.method)
+    )];
+    if let Some(done) = spec.and_then(|s| s.done.as_ref()) {
+        parts.push(format!(
+            "The stream ends at the event whose data is `{done}`, which is not delivered."
+        ));
+    }
+    if spec.is_some_and(|s| s.request_flag.is_some()) {
+        parts.push(format!(
+            "Sets `{}` in the request body.",
+            spec.and_then(|s| s.request_flag.as_deref())
+                .unwrap_or_default()
+        ));
+    }
+    paragraphs(parts)
+}
+
 /// The constructor assignment of an operation property.
 fn op_assignment(member: &str, info: &OpInfo<'_>, shape: &OpShape<'_>) -> Vec<String> {
     let param = if shape.all_optional {
@@ -236,6 +303,13 @@ pub(crate) fn resource_file(
                 }
                 namespaces.extend(shape.result_namespaces.iter().cloned());
             }
+            MemberKind::Stream(o) => {
+                has_ops = true;
+                for t in ["CallOptions", "OperationDescriptor", "StreamItem"] {
+                    imports.add_type("@tungsten/runtime", t);
+                }
+                namespaces.extend(shapes[o].result_namespaces.iter().cloned());
+            }
             MemberKind::Child(c) => {
                 let child = &plan.resources[c];
                 imports.add(&rel_import(&r.file, &child.file), &child.class);
@@ -282,6 +356,17 @@ pub(crate) fn resource_file(
                 w.doc(CommentStyle::JsDoc, &resource_doc(child));
                 w.line(format!("readonly {}: {};", m.name, child.class));
             }
+            MemberKind::Stream(o) => {
+                let info = &plan.ops[o];
+                let event = event_type(&shapes[o]);
+                w.doc(CommentStyle::JsDoc, &stream_doc(info));
+                let lines = stream_property_type(info, &shapes[o], &event);
+                w.line(format!("readonly {}: {}", m.name, lines[0]));
+                for l in &lines[1..lines.len() - 1] {
+                    w.line(l);
+                }
+                w.line("};");
+            }
         }
     }
     w.blank();
@@ -299,6 +384,12 @@ pub(crate) fn resource_file(
                     "this.{} = new {}(core);",
                     m.name, plan.resources[c].class
                 ));
+            }
+            MemberKind::Stream(o) => {
+                let event = event_type(&shapes[o]);
+                for l in stream_assignment(&m.name, &plan.ops[o], &shapes[o], &event) {
+                    w.line(l);
+                }
             }
         }
     }
@@ -437,7 +528,11 @@ pub(crate) fn index_file(plan: &Plan<'_>, has_macros: bool, header: &str) -> Str
         "export {{ {} }} from \"./client.js\";",
         plan.client_class
     ));
-    w.line("export type { CallOptions, ClientOptions, Diagnostic, Page, PreviewResult, Result } from \"@tungsten/runtime\";");
+    let streams = plan.ops.iter().any(|o| o.op.stream.is_some());
+    w.line(format!(
+        "export type {{ CallOptions, ClientOptions, Diagnostic, Page, PreviewResult, Result{} }} from \"@tungsten/runtime\";",
+        if streams { ", StreamItem" } else { "" }
+    ));
     // With one namespace its models are exported directly; otherwise each
     // namespace's models are a namespace export (`publicModels.Error`).
     let star = (!plan.multi())
