@@ -10,7 +10,7 @@
 
 /// `actions/checkout`, the SHA ci.yml of the tungsten repository pins.
 pub(crate) const CHECKOUT: &str =
-    "actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0";
+    "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1";
 
 /// The build matrix: (target, runner, archive extension).
 pub(crate) const TARGETS: &[(&str, &str, &str)] = &[

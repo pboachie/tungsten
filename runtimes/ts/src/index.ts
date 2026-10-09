@@ -7,7 +7,7 @@
 
 export * from "./types.js";
 export { ClientCore } from "./client.js";
-export { SseParser, type SseEvent } from "./sse.js";
+export { DEFAULT_MAX_EVENT_BYTES, SseParser, type SseEvent } from "./sse.js";
 export { MemoryIdempotencyStore } from "./idempotency.js";
 export {
   generatePkce,

@@ -392,6 +392,10 @@ export interface ClientOptions {
   onDiagnostic?: (d: Diagnostic) => void;
   /** Extra headers on every request. */
   headers?: Record<string, string>;
+  /** Largest server-sent event `stream()` accepts, in UTF-8 bytes (the field
+   * lines of one event plus the line being read). A larger one ends the
+   * stream with an `UNEXPECTED_RESPONSE` failure. Default 1048576 (1 MiB). */
+  maxEventBytes?: number;
   /** Overrides the key used to sign confirmation tokens. Default: random
    * per client instance. */
   confirmationKey?: Uint8Array;

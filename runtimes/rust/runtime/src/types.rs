@@ -801,6 +801,19 @@ pub struct ClientOptions {
     pub on_diagnostic: Option<DiagnosticSink>,
     /// Extra headers on every request.
     pub headers: BTreeMap<String, String>,
+    /// Largest server-sent event a stream accepts, in UTF-8 bytes (the field
+    /// lines of one event plus the line being read). A larger one ends the
+    /// stream with an `UNEXPECTED_RESPONSE` error. Default 1 MiB.
+    pub max_event_bytes: usize,
+    /// Most bytes of event JSON that collecting a stream
+    /// ([`Dispatch::stream`](crate::Dispatch::stream),
+    /// [`EventStream::collect_values`](crate::EventStream::collect_values))
+    /// keeps; past it the collection ends with an `UNEXPECTED_RESPONSE`
+    /// error. Default 4 MiB.
+    pub max_collect_bytes: usize,
+    /// Longest wall-clock time collecting a stream may take (same error).
+    /// Default 60 s.
+    pub max_collect_time: Duration,
     /// Overrides the key used to sign confirmation tokens. Default: random
     /// per client instance.
     pub confirmation_key: Option<Vec<u8>>,
@@ -831,6 +844,9 @@ impl Default for ClientOptions {
             validate_responses: ValidateResponses::default(),
             on_diagnostic: None,
             headers: BTreeMap::new(),
+            max_event_bytes: crate::sse::DEFAULT_MAX_EVENT_BYTES,
+            max_collect_bytes: crate::stream::DEFAULT_MAX_COLLECT_BYTES,
+            max_collect_time: crate::stream::DEFAULT_MAX_COLLECT_TIME,
             confirmation_key: None,
             operations: Vec::new(),
             http_client: None,

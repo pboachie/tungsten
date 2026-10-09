@@ -316,3 +316,15 @@ export function describeError(error: unknown): string {
   }
   return cut(typeof error === "string" ? error : "unknown error");
 }
+
+/** The `Accept` value of a stream call: the caller's media ranges in order
+ * without repeats, `text/event-stream` first when they do not name it. */
+export function mergeAccept(value: string): string {
+  const ranges: string[] = [];
+  for (const part of value.split(",")) {
+    const range = part.trim();
+    if (range !== "" && !ranges.includes(range)) ranges.push(range);
+  }
+  const names = ranges.some((range) => (range.split(";")[0] ?? "").trim().toLowerCase() === "text/event-stream");
+  return (names ? ranges : ["text/event-stream", ...ranges]).join(", ");
+}

@@ -112,6 +112,18 @@ export function stepLines(preview: PreviewResult): string[] {
  * has `truncated: true`). */
 const MAX_STREAM_EVENTS = 1000;
 
+/** Default `ServerOptions.maxStreamBytes`: the JSON bytes of the events a
+ * streamed call collects (4 MiB). */
+const DEFAULT_MAX_STREAM_BYTES = 4 * 1024 * 1024;
+
+/** Default `ServerOptions.maxStreamMs`: the wall-clock time a streamed call
+ * may take to collect its events (60 s), whatever the idle timeout. */
+const DEFAULT_MAX_STREAM_MS = 60000;
+
+function positive(value: unknown, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 1 ? Math.floor(value) : fallback;
+}
+
 /** Whether a call of `op` reads its event stream: when the operation only
  * answers a stream, or when it also answers a plain body and the arguments
  * set the stream's request flag to `true`. */
@@ -133,6 +145,8 @@ export class Session {
   readonly #options: ServerOptions;
   readonly #sandbox: SandboxConfig | null;
   readonly #maxChars: number;
+  readonly #maxStreamBytes: number;
+  readonly #maxStreamMs: number;
   readonly #core: ClientCore | null;
   readonly #coreError: string | null;
   /** Digests of identical replayable calls whose sensitive or shown-once
@@ -146,6 +160,8 @@ export class Session {
     this.#sandbox = sandbox;
     const cap = options.maxResultChars;
     this.#maxChars = typeof cap === "number" && Number.isFinite(cap) && cap >= 200 ? Math.floor(cap) : DEFAULT_MAX_RESULT_CHARS;
+    this.#maxStreamBytes = positive(options.maxStreamBytes, DEFAULT_MAX_STREAM_BYTES);
+    this.#maxStreamMs = positive(options.maxStreamMs, DEFAULT_MAX_STREAM_MS);
     let core: ClientCore | null = null;
     let coreError: string | null = null;
     try {
@@ -550,21 +566,60 @@ export class Session {
     if ("macro" in target) {
       result = await core.runMacro<unknown>(target.macro, args, opts);
     } else if (streamRequested(target.op, args)) {
-      // A stream is collected: the events in order, or the failure that ended
-      // the stream with the events before it as `partial`.
-      const events: unknown[] = [];
-      for await (const item of core.stream<unknown>(target.op, args, opts)) {
-        if (!item.ok) return { ok: false, error: item.error, partial: { events } };
-        events.push(item.value);
-        if (events.length >= MAX_STREAM_EVENTS) return { ok: true, value: { events, truncated: true } };
-      }
-      return { ok: true, value: { events } };
+      return this.#collectStream(target.op, args, opts, prepared.tool);
     } else {
       if (verifies(prepared.tool)) opts.verify = true;
       result = await core.call<unknown>(target.op, args, opts);
     }
     if (result.ok) return result.verification === undefined ? { ok: true, value: result.value } : { ok: true, value: result.value, verification: result.verification };
     return result.partial === undefined ? { ok: false, error: result.error } : { ok: false, error: result.error, partial: result.partial };
+  }
+
+  /** Collect the events of a stream in order: the events, or the failure
+   * that ended the stream with the events before it as `partial`. Stops at
+   * `MAX_STREAM_EVENTS` events (`truncated: true`) and fails when the events
+   * exceed `maxStreamBytes` of JSON or the collection runs past
+   * `maxStreamMs`. */
+  async #collectStream(op: OperationDescriptor, args: Record<string, unknown>, opts: CallOptions, tool: CatalogTool): Promise<Outcome> {
+    const core = this.#core as ClientCore;
+    const events: unknown[] = [];
+    let bytes = 0;
+    let expired = false;
+    const controller = new AbortController();
+    const started = Date.now();
+    const timer = setTimeout(() => {
+      expired = true;
+      controller.abort();
+    }, this.#maxStreamMs);
+    // The caller's own cancellation still ends the stream.
+    const caller = opts.signal;
+    const forward = (): void => controller.abort();
+    if (caller?.aborted === true) controller.abort();
+    else caller?.addEventListener("abort", forward, { once: true });
+    const exceeded = (what: string): Outcome => ({
+      ok: false,
+      error: envelope(op.id, "UNEXPECTED_RESPONSE", {
+        failed_parameter: "events",
+        expected: what,
+        remediation: `The stream was abandoned after ${events.length} ${events.length === 1 ? "event" : "events"} (${what}; ServerOptions.maxStreamBytes and maxStreamMs).${tool.safety === "read_only" ? " The events collected so far are in partial." : " The call took effect; do not repeat it. The events collected so far are in partial."}`,
+      }),
+      partial: { events },
+    });
+    try {
+      const streamOpts: CallOptions = { ...opts, signal: controller.signal };
+      for await (const item of core.stream<unknown>(op, args, streamOpts)) {
+        if (expired || Date.now() - started >= this.#maxStreamMs) return exceeded(`at most ${this.#maxStreamMs} ms to collect the events`);
+        if (!item.ok) return { ok: false, error: item.error, partial: { events } };
+        bytes += Buffer.byteLength(JSON.stringify(item.value) ?? "null", "utf8");
+        if (bytes > this.#maxStreamBytes) return exceeded(`at most ${this.#maxStreamBytes} bytes of events`);
+        events.push(item.value);
+        if (events.length >= MAX_STREAM_EVENTS) return { ok: true, value: { events, truncated: true } };
+      }
+      return expired ? exceeded(`at most ${this.#maxStreamMs} ms to collect the events`) : { ok: true, value: { events } };
+    } finally {
+      clearTimeout(timer);
+      caller?.removeEventListener("abort", forward);
+    }
   }
 
   /** Digest identifying an identical call: tool, SDK arguments and key. */
