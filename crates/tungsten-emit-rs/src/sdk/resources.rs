@@ -515,7 +515,7 @@ pub(crate) fn client_file(plan: &Plan<'_>, has_macros: bool, header: &str) -> St
         code.line(".iter()");
         code.line(".find(|(i, _)| *i == index)");
         code.line(".map(|(_, spec)| spec.clone())");
-        code.line(".unwrap_or_default()");
+        code.line(".expect(\"a descriptor for every streaming operation\")");
         code.dedent();
         code.dedent();
         code.line("}");

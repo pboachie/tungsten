@@ -317,7 +317,6 @@ impl<'a> Generator<'a> {
     }
 }
 
-/// A discriminator value as the tag text the IR records.
 /// The discriminator value that selects a variant of a tagged union.
 fn tag_of(union: &Union, variant: &Variant) -> Option<String> {
     let discriminator = union.discriminator.as_ref()?;
@@ -334,6 +333,7 @@ fn tag_of(union: &Union, variant: &Variant) -> Option<String> {
     })
 }
 
+/// A discriminator value as the tag text the IR records.
 pub(crate) fn tag_text(value: &Value) -> String {
     match value {
         Value::String(s) => s.clone(),

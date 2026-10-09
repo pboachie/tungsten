@@ -113,32 +113,41 @@ impl EventStream {
     }
 
     /// The next event, the final error, or `None` at the end of the stream.
+    /// Dropping the returned future before it completes loses nothing: the
+    /// state only changes once an await has finished.
     pub async fn next(&mut self) -> Option<StreamResult<Value>> {
         loop {
-            match std::mem::replace(&mut self.state, State::Done) {
+            match &mut self.state {
                 State::Done => return None,
                 State::Idle { args, opts } => {
                     match self
                         .core
-                        .open_stream(&self.op, &self.spec, &args, &opts)
+                        .open_stream(&self.op, &self.spec, args, opts)
                         .await
                     {
                         Ok(open) => self.state = State::Open(Box::new(open)),
-                        Err(error) => return Some(Err(error)),
+                        Err(error) => {
+                            self.state = State::Done;
+                            return Some(Err(error));
+                        }
                     }
                 }
-                State::Open(mut open) => {
+                State::Open(open) => {
                     if let Some(event) = open.queue.pop_front() {
-                        match self.core.accept(&self.op, &self.spec, &mut open, event) {
-                            Accepted::Event(item) => {
-                                self.state = State::Open(open);
-                                return Some(Ok(item));
+                        match self.core.accept(&self.op, &self.spec, open, event) {
+                            Accepted::Event(item) => return Some(Ok(item)),
+                            Accepted::Done => {
+                                self.state = State::Done;
+                                return None;
                             }
-                            Accepted::Done => return None,
-                            Accepted::Failed(error) => return Some(Err(error)),
+                            Accepted::Failed(error) => {
+                                self.state = State::Done;
+                                return Some(Err(error));
+                            }
                         }
                     }
                     if open.ended {
+                        self.state = State::Done;
                         return None;
                     }
                     match open.body.read().await {
@@ -146,7 +155,6 @@ impl EventStream {
                             let text = open.decoder.decode(&bytes);
                             let events = open.parser.push(&text);
                             open.queue.extend(events);
-                            self.state = State::Open(open);
                         }
                         BodyRead::End => {
                             let text = open.decoder.finish();
@@ -154,13 +162,16 @@ impl EventStream {
                             events.extend(open.parser.end());
                             open.queue.extend(events);
                             open.ended = true;
-                            self.state = State::Open(open);
                         }
                         BodyRead::Timeout => {
-                            return Some(Err(self.core.interrupted(&self.op, &open, true)));
+                            let error = self.core.interrupted(&self.op, open, true);
+                            self.state = State::Done;
+                            return Some(Err(error));
                         }
                         BodyRead::Lost => {
-                            return Some(Err(self.core.interrupted(&self.op, &open, false)));
+                            let error = self.core.interrupted(&self.op, open, false);
+                            self.state = State::Done;
+                            return Some(Err(error));
                         }
                     }
                 }
