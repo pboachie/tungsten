@@ -9,25 +9,67 @@ changes.
 
 ## [Unreleased]
 
+## [0.1.0] - Unreleased
+
+First release. The compiler, the three SDK runtimes (`@tungsten/runtime`,
+`tungsten-runtime` on PyPI and `tungsten-runtime` on crates.io), the MCP
+runtime (`@tungsten/mcp`) and the installers ship together at 0.1.0.
+
 ### Added
 
-- Compiler: OpenAPI and `tungsten.yml` configuration frontend with diagnostics
-  (`tungsten check`, `tungsten explain`) and a versioned intermediate
-  representation (`tungsten ir dump`).
+- Compiler: OpenAPI 3.0 and 3.1 frontend, `tungsten.yml` and `agent.yml`
+  manifests, a versioned intermediate representation (`tungsten ir dump`,
+  `tungsten schema`) and diagnostics with stable codes (`tungsten check`,
+  `tungsten explain`).
+- Commands: `init`, `check`, `generate` (with `--check` for stale output),
+  `diff`, `report` (text, JSON and a self-contained HTML report), `doctor`,
+  `ir dump`, `schema`, `explain` and `mock`.
 - TypeScript SDK emitter and the `@tungsten/runtime` client runtime
-  (Apache-2.0).
-- Python SDK emitter (sync and async clients) and the `tungsten-runtime`
-  Python package (Apache-2.0).
-- Rust SDK emitter and the `tungsten-runtime` Rust crate (Apache-2.0).
-- Generated command-line interface for the Rust SDK, with a stable output
-  contract, exit codes, confirmation for destructive operations, configuration
-  and pagination.
-- MCP server emitter and runtime: token-budgeted tool surfaces for AI agents,
-  sandboxed execution and confirmation of destructive operations.
-- Documentation emitter for generated SDKs.
+  (Apache-2.0): `Result` values, Zod validation, the diagnostic error
+  envelope, safety tiers, previews with confirmation tokens, idempotency keys,
+  unknown-outcome reporting and retries.
+- Python SDK emitter (sync and async clients, strict Pydantic v2 models or
+  plain dataclasses) and the `tungsten-runtime` Python package (Apache-2.0).
+- Rust SDK emitter (async client, a blocking client and typed macro outputs)
+  and the `tungsten-runtime` crate (Apache-2.0).
+- Generated command-line interface for the Rust SDK, built on
+  `tungsten-cli-kit`, with a stable output contract, exit codes,
+  confirmation for destructive operations (`--yes`, `--i-understand`),
+  configuration and pagination.
+- MCP server emitter and the `@tungsten/mcp` runtime: discrete or
+  token-budgeted progressive tool surfaces, an automatic mode chosen from the
+  tool count, stdio and Streamable HTTP transports, a sandboxed script tool
+  and confirmation of destructive operations.
+- Streaming: server-sent events and JSON Lines responses in all three SDK
+  runtimes (`stream()` and `<method>_stream` methods) and in the MCP server,
+  which returns the collected events.
+- Pagination: opaque string cursors and `after_id` / `has_more` styles are
+  inferred from the OpenAPI description.
+- Documentation emitter: `llms.txt`, `llms-full.txt`, `tools.json` and a
+  README for each generated SDK.
 - `tungsten mock`: a mock server generated from the OpenAPI description, for
-  trying a generated SDK or CLI without a live API.
+  trying a generated SDK, CLI or MCP server without a live API.
+- Behaviour that is identical across the TypeScript, Python and Rust
+  runtimes, checked by a shared contract suite.
+- Release pipeline: prebuilt archives for Linux (x86_64, aarch64), macOS
+  (x86_64, aarch64) and Windows (x86_64) with a checksum file, a CycloneDX
+  SBOM and build provenance attestations, plus `install.sh` and `install.ps1`
+  installers that verify checksums.
 - Repository guard and community files (contributing guide, security policy,
   code of conduct, issue forms and pull request template).
 
-[Unreleased]: https://github.com/pboachie/tungsten/commits/main
+### Changed
+
+- `tungsten init` writes a default `targets` block.
+- Documents that omit `info.version`, use query-style path keys, or leave out
+  an API title now compile, with a warning where the result is inferred.
+- Types no operation reaches are pruned from the generated models.
+- Required constant headers and API-key environment variables are carried
+  into the generated clients.
+- Error codes are found through tagged unions, and unknown-outcome messages
+  describe what the caller should verify.
+- The compiler warns when a `gates` entry in `agent.yml` matches no
+  operation.
+
+[Unreleased]: https://github.com/pboachie/tungsten/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/pboachie/tungsten/commits/main
