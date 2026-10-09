@@ -2,10 +2,10 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 """Repository guard for the public tungsten repository (CI job "repository-guard").
 
-The public repository is code only: tests, test data, documentation and plans
-live in the private operations repository. This guard enforces that rule and
-the licence headers on a commit's tree, and rejects AI attribution in commit
-messages.
+The public repository is code plus the standard community files: tests, test
+data, documentation and plans live in the private operations repository. This
+guard enforces that rule and the licence headers on a commit's tree, and
+rejects AI attribution in commit messages.
 
     repository_guard.py                     check the tree of HEAD
     repository_guard.py --ref REF           check the tree of REF
@@ -17,9 +17,18 @@ Tree rules:
   - no test directories, test files, Rust test attributes (#[cfg(test)],
     #[test], ...), [dev-dependencies], [[test]] or [[bench]] targets, and
     every crate library keeps `doctest = false`;
-  - no documentation files: the only allowed ones are README.md at the root,
-    LICENSE at the root and the Apache-2.0 LICENSE in runtimes/ (and a copy
-    of it in a runtime package directory, for npm packaging);
+  - no documentation files and no documentation directories (doc/, docs/,
+    documentation/). The only documentation files allowed are the community
+    files: README.md, LICENSE, CONTRIBUTING.md, SECURITY.md,
+    CODE_OF_CONDUCT.md and CHANGELOG.md at the root; the Apache-2.0 LICENSE
+    in runtimes/ (and a copy of it in a runtime package directory, for npm
+    packaging); Markdown directly in .github/ (pull request template and the
+    like); .github/ISSUE_TEMPLATE/*.md and *.yml; and examples/<name>/README.md.
+    Everything else with a documentation extension or name stays forbidden,
+    wherever it is (docs/CONTRIBUTING.md, CHANGELOG.txt, assets/notes.md);
+  - assets/ holds images only (.svg and .png); examples/ holds code (and the
+    per-example README.md above), and test directories are refused there as
+    anywhere else;
   - every .rs file outside runtimes/ starts with
     `// SPDX-License-Identifier: AGPL-3.0-only`, and every source file under
     runtimes/ with `// SPDX-License-Identifier: Apache-2.0` (`#` for Python).
@@ -66,7 +75,16 @@ DOC_NAME = re.compile(
     r"|authors|security|code_of_conduct|support|governance|maintainers)(?:[-_].*)?$",
     re.IGNORECASE,
 )
-ALLOWED_DOCS = re.compile(r"^(?:README\.md|LICENSE|runtimes/LICENSE|runtimes/[^/]+/LICENSE)$")
+# Community files, matched against the whole path: nothing else may be
+# documentation, and a documentation directory is refused even around these.
+ALLOWED_DOCS = re.compile(
+    r"^(?:README\.md|LICENSE|CONTRIBUTING\.md|SECURITY\.md|CODE_OF_CONDUCT\.md|CHANGELOG\.md"
+    r"|runtimes/LICENSE|runtimes/[^/]+/LICENSE"
+    r"|\.github/[^/]+\.md"
+    r"|\.github/ISSUE_TEMPLATE/[^/]+\.(?:md|ya?ml)"
+    r"|examples/[^/]+/README\.md)$"
+)
+ASSET_EXTENSIONS = {".svg", ".png"}
 
 AGPL_HEADER = "// SPDX-License-Identifier: AGPL-3.0-only"
 APACHE_HEADER = "// SPDX-License-Identifier: Apache-2.0"
@@ -84,16 +102,18 @@ def path_violations(path: str) -> list[str]:
         found.append(f"test directory '{test_dir}/' (tests live in the private repository)")
     elif TEST_FILE.search(name):
         found.append("test file (tests live in the private repository)")
-    if not ALLOWED_DOCS.match(path):
-        doc_dir = next((p for p in parts[:-1] if p.lower() in DOC_DIRS), None)
-        suffix = PurePosixPath(name).suffix.lower()
-        if doc_dir:
-            found.append(f"documentation directory '{doc_dir}/' (docs live in the private repository)")
-        elif suffix in DOC_EXTENSIONS or (not suffix and DOC_NAME.match(name)):
-            found.append(
-                "documentation file (only README.md, LICENSE and runtimes/LICENSE are allowed;"
-                " docs live in the private repository)"
-            )
+    suffix = PurePosixPath(name).suffix.lower()
+    doc_dir = next((p for p in parts[:-1] if p.lower() in DOC_DIRS), None)
+    if doc_dir:
+        found.append(f"documentation directory '{doc_dir}/' (docs live in the private repository)")
+    elif not ALLOWED_DOCS.match(path) and (suffix in DOC_EXTENSIONS or (not suffix and DOC_NAME.match(name))):
+        found.append(
+            "documentation file (only the community files are allowed: README.md, LICENSE, CONTRIBUTING.md,"
+            " SECURITY.md, CODE_OF_CONDUCT.md and CHANGELOG.md at the root, Markdown in .github/ and"
+            " .github/ISSUE_TEMPLATE/, examples/<name>/README.md; docs live in the private repository)"
+        )
+    if parts[0] == "assets" and len(parts) > 1 and suffix not in ASSET_EXTENSIONS:
+        found.append("assets/ holds .svg and .png images only")
     return found
 
 
@@ -274,9 +294,9 @@ def main(argv: list[str] | None = None) -> int:
               file=sys.stderr)
         for finding in findings:
             print(f"  {finding}", file=sys.stderr)
-        print("This repository is source code only (README.md, Contributing): tests, test data and documentation"
-              " are maintained in the private repository. Commits carry no AI attribution: reword them"
-              " (git rebase -i) and push again.", file=sys.stderr)
+        print("This repository is source code and the standard community files (see CONTRIBUTING.md): tests,"
+              " test data and documentation are maintained in the private repository. Commits carry no AI"
+              " attribution: reword them (git rebase -i) and push again.", file=sys.stderr)
         return 1
     print(f"repository guard passed ({summary})")
     return 0
