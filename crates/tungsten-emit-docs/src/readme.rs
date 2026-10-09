@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! `README.md`: the human index of the docs target. Callable operations in
 //! tables per namespace, planned ones in their own table with the reason
-//! they are not callable (NFR-8), and the error categories every SDK
+//! they are not callable, and the error categories every SDK
 //! returns.
 
 use std::fmt::Write as _;
@@ -15,7 +15,7 @@ use crate::model::{
     overview, planned_reason, safety, summary,
 };
 
-/// The error categories of the runtime envelope (planning/06), with their
+/// The error categories of the runtime envelope, with their
 /// default `retryable`.
 const CATEGORIES: &[(&str, &str, &str)] = &[
     (

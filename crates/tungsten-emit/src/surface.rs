@@ -513,8 +513,8 @@ fn operation(ir: &Ir, op: &Operation, accessor: String) -> OperationSurface {
         .iter()
         .filter(|r| matches!(r.kind, ResponseKind::Success))
         .flat_map(|r| r.content.iter())
-        .find(|c| c.encoding == BodyEncoding::Json)
-        .map(|c| ty_of(&c.ty));
+        .find(|c| matches!(c.encoding, BodyEncoding::Json | BodyEncoding::Jsonl))
+        .map(|c| ty_of(&c.value_type()));
     let docs = serde_json::json!([op.doc, op.agent.compact_doc]);
     OperationSurface {
         accessor,

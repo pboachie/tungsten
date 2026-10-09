@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Python SDK emitter (planning/05 "Python SDK").
+//! Python SDK emitter.
 //!
 //! Generated packages are mostly data for `tungsten-runtime`
 //! (`runtimes/python/src/tungsten_runtime/types.py` is the contract):
@@ -9,8 +9,12 @@
 //!   response validator built on `pydantic.TypeAdapter`) and the
 //!   `ApiDescriptor`;
 //! - `<module>/models/<namespace>.py`: a Pydantic v2 model per record and a
-//!   PEP 695 `type` alias per other named type (presence per planning/03:
-//!   `T`, `T | None`, `T | Unset = UNSET`, `T | None | Unset = UNSET`);
+//!   PEP 695 `type` alias per other named type (presence:
+//!   `T`, `T | None`, `T | Unset = UNSET`, `T | None | Unset = UNSET`). With
+//!   `models: dataclasses` a record is a `kw_only` dataclass instead
+//!   (`@_internal.model`), with its request shape as a nested `TypedDict`
+//!   (`Name.Input`), validated by `tungsten_runtime.schema` so that the
+//!   package needs no Pydantic;
 //! - `<module>/resources/<resource>.py`: a sync and an async class per
 //!   resource; each operation is a method with keyword-only arguments
 //!   returning `Result[T]`, with `preview_<method>` and `<method>_pages`
@@ -30,8 +34,9 @@
 //! treats `_` attributes as private), and a field named like a
 //! `BaseModel` attribute or a builtin the annotations use gets `_` appended
 //! (`json_`, `list_`). Enums are `Literal` unions, which round-trip any wire
-//! value exactly. The `models: dataclasses` option (stdlib-only output) is
-//! not implemented yet; TG0731 reports it and Pydantic models are emitted.
+//! value exactly. Binary request values are `tungsten_runtime.BinaryInput`
+//! (bytes, a binary file object, or a `(filename, content[, content_type])`
+//! tuple).
 //!
 //! Output is deterministic: names come from `tungsten_ir::naming`, every
 //! collection is iterated in IR or sorted order, and files carry the
@@ -53,7 +58,7 @@ use tungsten_core::{Diagnostic, Diagnostics};
 use tungsten_emit::{CommentStyle, Emitter, FileSet, TargetConfig, header};
 use tungsten_ir::{Additional, Ir, Shape, TypeRef};
 
-pub use options::{Options, RuntimeDep};
+pub use options::{Models, Options, RuntimeDep};
 
 /// Emits the `python` target.
 #[derive(Debug, Clone, Copy, Default)]
@@ -171,7 +176,7 @@ fn inline_record_notes(ir: &Ir) -> Diagnostics {
 /// Every file of the package: (path relative to the target directory,
 /// contents), in a deterministic order.
 pub fn generate(ir: &Ir, opts: &Options) -> Vec<(String, String)> {
-    let plan = plan::Plan::new(ir);
+    let plan = plan::Plan::new(ir).with_models(opts.models);
     let header = header(CommentStyle::Hash, ir);
     let shapes: Vec<ops::OpShape<'_>> = plan.ops.iter().map(|o| ops::op_shape(&plan, o)).collect();
     let (macro_plans, _) = macros::plan_macros(&plan, &shapes);
@@ -203,7 +208,10 @@ pub fn generate(ir: &Ir, opts: &Options) -> Vec<(String, String)> {
             format!("{m}/_descriptors.py"),
             ops::descriptors_file(&plan, &shapes, opts, &header),
         ),
-        (format!("{m}/_internal.py"), package::internal_file(&header)),
+        (
+            format!("{m}/_internal.py"),
+            package::internal_file(&header, opts.models),
+        ),
         (
             format!("{m}/models/__init__.py"),
             types::models_init(&plan, &header),
@@ -239,6 +247,7 @@ pub fn generate(ir: &Ir, opts: &Options) -> Vec<(String, String)> {
 pub mod __testing {
     use tungsten_ir::{Ident, Ir, TypeRef};
 
+    pub use crate::options::Models;
     pub use crate::plan::{FIELD_RESERVED, MODELS_RESERVED};
 
     /// Python attribute names of a record's fields, in order.
@@ -275,7 +284,12 @@ pub mod __testing {
 
     /// The arguments of the callable operation `id`, if any.
     pub fn op_args(ir: &Ir, id: &str) -> Option<OpArgs> {
-        let plan = crate::plan::Plan::new(ir);
+        op_args_in(ir, id, Models::Pydantic)
+    }
+
+    /// [`op_args`] for a package whose models are written as `models`.
+    pub fn op_args_in(ir: &Ir, id: &str, models: Models) -> Option<OpArgs> {
+        let plan = crate::plan::Plan::new(ir).with_models(models);
         let i = *plan.op_by_id.get(id)?;
         let info = &plan.ops[i];
         let shape = crate::ops::op_shape(&plan, info);
@@ -318,7 +332,12 @@ pub mod __testing {
     /// The `OperationDescriptor` of the callable operation `id` as JSON:
     /// Python literals as their values, code (validators) as strings.
     pub fn descriptor_json(ir: &Ir, id: &str) -> Option<serde_json::Value> {
-        let plan = crate::plan::Plan::new(ir);
+        descriptor_json_in(ir, id, Models::Pydantic)
+    }
+
+    /// [`descriptor_json`] for a package whose models are written as `models`.
+    pub fn descriptor_json_in(ir: &Ir, id: &str, models: Models) -> Option<serde_json::Value> {
+        let plan = crate::plan::Plan::new(ir).with_models(models);
         let info = &plan.ops[*plan.op_by_id.get(id)?];
         let shape = crate::ops::op_shape(&plan, info);
         Some(crate::ops::descriptor_py(&plan, info, &shape).to_json())
@@ -332,11 +351,20 @@ pub mod __testing {
 
     /// `(hint, schema)` renderings of a type outside the models package.
     pub fn render(ir: &Ir, ty: &TypeRef) -> (String, String) {
-        let plan = crate::plan::Plan::new(ir);
+        let (hint, schema, _) = render_in(ir, ty, Models::Pydantic);
+        (hint, schema)
+    }
+
+    /// `(hint, schema, input)` renderings of a type outside the models
+    /// package, for models written as `models`; `input` is what a request
+    /// argument accepts.
+    pub fn render_in(ir: &Ir, ty: &TypeRef, models: Models) -> (String, String, String) {
+        let plan = crate::plan::Plan::new(ir).with_models(models);
         let cx = crate::types::Cx::new(&plan, None);
         (
             cx.ty(ty, crate::types::Flavor::Hint).text(),
             cx.ty(ty, crate::types::Flavor::Schema).text(),
+            cx.ty(ty, crate::types::Flavor::Input).text(),
         )
     }
 

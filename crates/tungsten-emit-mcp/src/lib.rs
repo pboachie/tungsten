@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! MCP server emitter (planning/05 "MCP server", planning/07 "MCP tool
-//! surface", planning/01 NFR-3).
+//! MCP server emitter.
 //!
 //! Compiles the IR into an `McpManifest` (the JSON contract in
 //! `runtimes/mcp/src/types.ts`): one tool entry per callable operation and

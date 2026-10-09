@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Idempotency (planning/04 "Idempotency policies", planning/06 "Idempotency
-//! store"): the stores, key formats and the header an operation's key
+//! Idempotency: the stores, key formats and the header an operation's key
 //! travels in.
 
 use std::collections::{BTreeMap, HashMap};

@@ -9,6 +9,11 @@ edition = "2024"
 rust-version = "1.95"
 license = "AGPL-3.0-only"
 repository = "https://github.com/pboachie/tungsten"
+homepage = "https://github.com/pboachie/tungsten"
+documentation = "https://github.com/pboachie/tungsten#readme"
+authors = ["Prince Boachie"]
+keywords = ["openapi", "sdk", "codegen", "mcp", "agents"]
+categories = ["development-tools", "command-line-utilities"]
 publish = false
 
 [workspace.dependencies]

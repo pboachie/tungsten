@@ -67,10 +67,24 @@ pub fn canonical(name: &str) -> &str {
 /// (an empty object when absent) and its output directory, the `out`
 /// option resolved against `base_dir` (default `generated/<name>`).
 pub fn target_config(config: Option<&TungstenConfig>, name: &str, base_dir: &Path) -> TargetConfig {
-    let options = config
+    let mut options = config
         .and_then(|c| c.targets.get(name))
         .cloned()
         .unwrap_or_else(|| serde_json::json!({}));
+    if name == "mcp" && options.is_null() {
+        options = serde_json::json!({});
+    }
+    if name == "mcp"
+        && let Some(map) = options.as_object_mut()
+        && let Some(ts) = config.and_then(|c| c.targets.get("typescript"))
+    {
+        // The server depends on the SDK the `typescript` target generates.
+        let pick: serde_json::Map<String, serde_json::Value> = ["package", "version"]
+            .iter()
+            .filter_map(|k| Some(((*k).to_string(), ts.get(*k)?.clone())))
+            .collect();
+        map.insert("typescript_target".into(), serde_json::Value::Object(pick));
+    }
     let out = options
         .get("out")
         .and_then(|v| v.as_str())

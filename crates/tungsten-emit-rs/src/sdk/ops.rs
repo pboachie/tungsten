@@ -9,6 +9,7 @@
 //! (`Field`), merged body fields by their model field name (with a numeric
 //! suffix when that is a parameter's name), a whole body as `body`.
 
+use std::borrow::Cow;
 use std::collections::BTreeSet;
 
 use tungsten_core::{Diagnostic, Diagnostics};
@@ -97,6 +98,15 @@ pub(crate) struct Validated {
     pub check: Option<String>,
 }
 
+/// The event stream of an operation.
+#[derive(Debug, Clone)]
+pub(crate) struct StreamShape {
+    /// Type of one event (`Value` when events are untyped).
+    pub event: String,
+    /// The event validator, when events are typed.
+    pub validator: Option<Validated>,
+}
+
 /// Everything about one operation's call signature.
 #[derive(Debug, Clone)]
 pub(crate) struct OpShape<'a> {
@@ -105,6 +115,11 @@ pub(crate) struct OpShape<'a> {
     pub fields: Vec<ArgField<'a>>,
     /// The value type of the typed result.
     pub success: String,
+    /// The IR type of the success body, when every success response is JSON
+    /// of that one type.
+    pub success_ref: Option<Cow<'a, TypeRef>>,
+    /// The IR type of a page's items, when they are typed.
+    pub item_ref: Option<TypeRef>,
     /// A success may have no body.
     pub bodiless: bool,
     /// More than one distinct JSON success type: the result is `Value`.
@@ -116,6 +131,8 @@ pub(crate) struct OpShape<'a> {
     pub page_item: Option<String>,
     /// The page item validator, when the items are typed.
     pub page_validator: Option<Validated>,
+    /// The event stream, when the operation has one.
+    pub stream: Option<StreamShape>,
     /// Helper check functions for inline types: (name, type, statements).
     pub helpers: Vec<(String, String, Vec<String>)>,
 }
@@ -145,7 +162,7 @@ fn free_name(taken: &[String], base: &str) -> String {
 }
 
 /// The shape of an operation's call.
-pub(crate) fn op_shape<'a>(plan: &Plan<'a>, info: &OpInfo<'a>) -> OpShape<'a> {
+pub(crate) fn op_shape<'a>(plan: &'a Plan<'a>, info: &OpInfo<'a>) -> OpShape<'a> {
     let op = info.op;
     let cx = Cx::new(plan, None);
     let layout = args_layout(plan.ir, op);
@@ -254,7 +271,9 @@ pub(crate) fn op_shape<'a>(plan: &Plan<'a>, info: &OpInfo<'a>) -> OpShape<'a> {
                 Presence::Optional
             };
             let (ty, check): (String, Option<CheckSrc<'a>>) = match content.encoding {
-                BodyEncoding::Bytes => ("tungsten_runtime::Binary".into(), None),
+                BodyEncoding::Bytes | BodyEncoding::Jsonl => {
+                    ("tungsten_runtime::Binary".into(), None)
+                }
                 BodyEncoding::Text => ("String".into(), None),
                 BodyEncoding::Json | BodyEncoding::Form | BodyEncoding::Multipart => (
                     cx.ty(&content.ty),
@@ -286,7 +305,7 @@ pub(crate) fn op_shape<'a>(plan: &Plan<'a>, info: &OpInfo<'a>) -> OpShape<'a> {
     });
 
     // Success value.
-    let mut tys: Vec<(String, &TypeRef)> = vec![];
+    let mut tys: Vec<(String, Cow<'a, TypeRef>)> = vec![];
     let mut other: Vec<String> = vec![];
     let mut bodiless = false;
     let mut all_json = true;
@@ -308,7 +327,15 @@ pub(crate) fn op_shape<'a>(plan: &Plan<'a>, info: &OpInfo<'a>) -> OpShape<'a> {
             BodyEncoding::Json => {
                 let t = cx.ty(&c.ty);
                 if !tys.iter().any(|(x, _)| *x == t) {
-                    tys.push((t, &c.ty));
+                    tys.push((t, Cow::Borrowed(&c.ty)));
+                }
+            }
+            // JSON lines: the value is the list of the lines.
+            BodyEncoding::Jsonl => {
+                let ty = c.value_type();
+                let t = cx.ty(&ty);
+                if !tys.iter().any(|(x, _)| *x == t) {
+                    tys.push((t, Cow::Owned(ty)));
                 }
             }
             BodyEncoding::Text => {
@@ -371,7 +398,7 @@ pub(crate) fn op_shape<'a>(plan: &Plan<'a>, info: &OpInfo<'a>) -> OpShape<'a> {
         Validated { ty: text, check }
     };
     let response = (all_json && tys.len() == 1)
-        .then(|| validated(tys[0].1, bodiless, &format!("{}_response", info.builder)));
+        .then(|| validated(&tys[0].1, bodiless, &format!("{}_response", info.builder)));
     let items = op.pagination.as_ref().map(|p| {
         tys.first()
             .and_then(|(_, r)| items_ref(plan, r, &p.items_field))
@@ -380,16 +407,31 @@ pub(crate) fn op_shape<'a>(plan: &Plan<'a>, info: &OpInfo<'a>) -> OpShape<'a> {
     let page_validator = items
         .flatten()
         .map(|items| validated(items, false, &format!("{}_item", info.builder)));
+    let success_ref = (all_json && tys.len() == 1).then(|| tys[0].1.clone());
+    let stream = op.stream.as_ref().map(|spec| {
+        let untyped = matches!(
+            &spec.event,
+            TypeRef::Inline(shape) if matches!(**shape, Shape::Any)
+        );
+        StreamShape {
+            event: cx.ty(&spec.event),
+            validator: (!untyped)
+                .then(|| validated(&spec.event, false, &format!("{}_event", info.builder))),
+        }
+    });
     OpShape {
         params,
         body,
         fields,
         success,
+        success_ref,
+        item_ref: items.flatten().cloned(),
         bodiless,
         mixed_success,
         response,
         page_item,
         page_validator,
+        stream,
         helpers,
     }
 }
@@ -454,6 +496,29 @@ pub(crate) fn write_request(
     write_args_struct(w, cx, &info.request, &intro, &shape.fields, Some(&check));
 }
 
+/// `impl Debug for <name>` that shows `<redacted>` for each sensitive field:
+/// (field, sensitive) in declaration order.
+pub(crate) fn write_redacted_debug(w: &mut Writer, name: &str, fields: &[(&str, bool)]) {
+    w.line(format!("impl std::fmt::Debug for {name} {{"));
+    w.indent();
+    w.line("fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {");
+    w.indent();
+    let mut calls = vec![format!("debug_struct({})", string_lit(name))];
+    for (key, sensitive) in fields {
+        if *sensitive {
+            calls.push(format!("field({}, &\"<redacted>\")", string_lit(key)));
+        } else {
+            calls.push(format!("field({}, &self.{key})", string_lit(key)));
+        }
+    }
+    calls.push("finish()".into());
+    chain_lines(w, "f", &calls);
+    w.dedent();
+    w.line("}");
+    w.dedent();
+    w.line("}");
+}
+
 /// Write a struct of arguments (`name`), its constructor and, when
 /// `check` names a function, the function that checks it.
 pub(crate) fn write_args_struct(
@@ -501,24 +566,11 @@ pub(crate) fn write_args_struct(
     }
     if sensitive {
         w.blank();
-        w.line(format!("impl std::fmt::Debug for {name} {{"));
-        w.indent();
-        w.line("fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {");
-        w.indent();
-        let mut calls = vec![format!("debug_struct({})", string_lit(name))];
-        for f in fields {
-            if f.sensitive {
-                calls.push(format!("field({}, &\"<redacted>\")", string_lit(&f.key)));
-            } else {
-                calls.push(format!("field({}, &self.{})", string_lit(&f.key), f.key));
-            }
-        }
-        calls.push("finish()".into());
-        chain_lines(w, "f", &calls);
-        w.dedent();
-        w.line("}");
-        w.dedent();
-        w.line("}");
+        let shown: Vec<(&str, bool)> = fields
+            .iter()
+            .map(|f| (f.key.as_str(), f.sensitive))
+            .collect();
+        write_redacted_debug(w, name, &shown);
     }
 
     // Constructor.
@@ -737,6 +789,7 @@ fn role_rs(r: ParamRole) -> &'static str {
         ParamRole::DryRun => "ParamRole::DryRun",
         ParamRole::Origin => "ParamRole::Origin",
         ParamRole::Auth => "ParamRole::Auth",
+        ParamRole::Constant => "ParamRole::Constant",
     }
 }
 
@@ -754,7 +807,9 @@ fn encoding_rs(e: BodyEncoding) -> &'static str {
         BodyEncoding::Json => "BodyEncoding::Json",
         BodyEncoding::Form => "BodyEncoding::Form",
         BodyEncoding::Multipart => "BodyEncoding::Multipart",
-        BodyEncoding::Bytes => "BodyEncoding::Bytes",
+        // JSON Lines is a response encoding: a request body of that media
+        // type is bytes (the builder never says otherwise).
+        BodyEncoding::Bytes | BodyEncoding::Jsonl => "BodyEncoding::Bytes",
         BodyEncoding::Text => "BodyEncoding::Text",
     }
 }
@@ -869,7 +924,7 @@ pub(crate) fn sensitive_request_fields(plan: &Plan<'_>, shape: &OpShape<'_>) -> 
     };
     if matches!(
         body.content.encoding,
-        BodyEncoding::Bytes | BodyEncoding::Text
+        BodyEncoding::Bytes | BodyEncoding::Text | BodyEncoding::Jsonl
     ) {
         return vec![];
     }
@@ -1052,6 +1107,18 @@ fn pagination_rs(info: &OpInfo<'_>, shape: &OpShape<'_>) -> Rx {
                         .as_deref()
                         .map_or_else(Rx::none, |s| Rx::some(Rx::string(&arg(s)))),
                 ),
+                (
+                    "has_more_field",
+                    p.has_more_field
+                        .as_deref()
+                        .map_or_else(Rx::none, |f| Rx::some(Rx::string(f))),
+                ),
+                (
+                    "cursor_item_field",
+                    p.cursor_item_field
+                        .as_deref()
+                        .map_or_else(Rx::none, |f| Rx::some(Rx::string(f))),
+                ),
             ],
         ),
         PaginationStyle::Offset {
@@ -1137,6 +1204,10 @@ pub(crate) fn descriptor_rx(
                         ("style", Rx::atom(style_rs(p.param.style))),
                         ("explode", Rx::boolean(p.param.explode)),
                         ("role", Rx::atom(role_rs(p.param.role))),
+                        (
+                            "constant",
+                            Rx::opt_string(tungsten_emit::args::constant_text(p.param).as_deref()),
+                        ),
                         ("sensitive", Rx::boolean(false)),
                     ],
                 )
@@ -1290,6 +1361,39 @@ pub(crate) fn descriptor_rx(
         Rx::opt_string((!summary.is_empty()).then_some(summary.as_str())),
     ));
     (lets.stmts, Rx::record("OperationDescriptor", fields))
+}
+
+/// The stream descriptor of one operation: the `let` of its event validator
+/// and the struct literal.
+pub(crate) fn stream_descriptor_rx(
+    info: &OpInfo<'_>,
+    shape: &StreamShape,
+) -> Option<(Vec<String>, Rx)> {
+    let spec = info.op.stream.as_ref()?;
+    let mut stmts = vec![];
+    let event = match &shape.validator {
+        Some(v) => {
+            let (line, value) = validator_let("event", "body", v);
+            stmts.push(line);
+            value
+        }
+        None => Rx::none(),
+    };
+    let done = match &spec.done {
+        Some(done) => Rx::some(Rx::string(done)),
+        None => Rx::none(),
+    };
+    let flag = match &spec.request_flag {
+        Some(flag) => Rx::some(Rx::string(flag)),
+        None => Rx::none(),
+    };
+    Some((
+        stmts,
+        Rx::record(
+            "StreamDescriptor",
+            vec![("event", event), ("done", done), ("flag", flag)],
+        ),
+    ))
 }
 
 /// Whether the request struct has a check function.
@@ -1570,6 +1674,7 @@ pub(crate) fn descriptors_file(
     header: &str,
 ) -> String {
     let cx = Cx::new(plan, None);
+    let streams = shapes.iter().any(|s| s.stream.is_some());
     let mut code = Writer::new("    ");
     for (i, info) in plan.ops.iter().enumerate() {
         code.line(format!("pub const {}: usize = {i};", info.konst));
@@ -1587,6 +1692,10 @@ pub(crate) fn descriptors_file(
     code.line("pub list: Vec<OperationDescriptor>,");
     code.line("/// Every macro, in IR order.");
     code.line("pub macros: Vec<MacroDescriptor>,");
+    if streams {
+        code.line("/// The event stream descriptors, by the index of their operation.");
+        code.line("pub streams: Vec<(usize, Arc<StreamDescriptor>)>,");
+    }
     code.dedent();
     code.line("}");
     code.blank();
@@ -1618,15 +1727,28 @@ pub(crate) fn descriptors_file(
         Rx::atom("Vec::new()")
     };
     put(&mut code, 4, "let macros = ", &macros, ";");
-    let build = Rx::record(
-        "Descriptors",
-        vec![
-            ("api", Rx::call("api", vec![])),
-            ("operations", Rx::atom("operations")),
-            ("list", Rx::atom("list")),
-            ("macros", Rx::atom("macros")),
-        ],
-    );
+    let mut build_fields = vec![
+        ("api", Rx::call("api", vec![])),
+        ("operations", Rx::atom("operations")),
+        ("list", Rx::atom("list")),
+        ("macros", Rx::atom("macros")),
+    ];
+    if streams {
+        let entries = Rx::list(
+            plan.ops
+                .iter()
+                .zip(shapes)
+                .enumerate()
+                .filter(|(_, (_, shape))| shape.stream.is_some())
+                .map(|(i, (info, _))| {
+                    Rx::atom(format!("({i}, Arc::new({}_stream()))", info.builder))
+                })
+                .collect(),
+        );
+        put(&mut code, 4, "let streams = ", &entries, ";");
+        build_fields.push(("streams", Rx::atom("streams")));
+    }
+    let build = Rx::record("Descriptors", build_fields);
     put(&mut code, 4, "", &build, "");
     code.dedent();
     code.line("}");
@@ -1652,6 +1774,24 @@ pub(crate) fn descriptors_file(
         put(&mut code, 4, "", &value, "");
         code.dedent();
         code.line("}");
+        if let Some((lets, value)) = shape
+            .stream
+            .as_ref()
+            .and_then(|stream| stream_descriptor_rx(info, stream))
+        {
+            code.blank();
+            code.line(format!(
+                "fn {}_stream() -> StreamDescriptor {{",
+                info.builder
+            ));
+            code.indent();
+            for l in &lets {
+                code.line(l);
+            }
+            put(&mut code, 4, "", &value, "");
+            code.dedent();
+            code.line("}");
+        }
         for (name, ty, stmts) in &shape.helpers {
             code.blank();
             code.line(format!("fn {name}(v: &{ty}, c: &mut Checker) {{"));

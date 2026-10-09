@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! Diagnostics with stable codes.
 //!
-//! Code ranges (planning/03): `TG01xx` parsing, `TG02xx` refs and cycles,
+//! Code ranges: `TG01xx` parsing, `TG02xx` refs and cycles,
 //! `TG03xx` type normalization, `TG04xx` naming, `TG05xx` pagination/auth
 //! inference, `TG06xx` manifests, `TG07xx` emitter limits, `TG09xx`
 //! staleness/CI. The registry of codes lives in [`codes`].
@@ -173,6 +173,18 @@ pub mod codes {
         ),
         ("TG0104", "document is missing a required OpenAPI field"),
         ("TG0105", "input exceeds a size or nesting limit"),
+        (
+            "TG0110",
+            "document has no info.version; version 0.0.0 is used",
+        ),
+        (
+            "TG0111",
+            "path key carries a query string; its pairs are sent on every call",
+        ),
+        (
+            "TG0112",
+            "apiKey header scheme inferred from a credential header parameter",
+        ),
         ("TG0201", "unresolvable $ref"),
         (
             "TG0202",
@@ -236,6 +248,14 @@ pub mod codes {
         ),
         ("TG0508", "malformed operation element ignored"),
         ("TG0509", "unsupported security scheme ignored"),
+        (
+            "TG0530",
+            "event stream declares no schema; events decoded as any JSON value",
+        ),
+        (
+            "TG0531",
+            "event stream declared for more than one success status; the first is streamed",
+        ),
         ("TG0601", "manifest is not valid YAML"),
         ("TG0602", "manifest does not match its schema"),
         ("TG0603", "manifest references an unknown operation"),
@@ -261,6 +281,7 @@ pub mod codes {
             "TG0613",
             "agent.yml option not applied by this version; ignored",
         ),
+        ("TG0614", "gates entry no operation is gated by"),
         ("TG0701", "generated output could not be written"),
         ("TG0702", "target has no emitter in this version; skipped"),
         (
@@ -299,6 +320,14 @@ pub mod codes {
             "MCP tool names collide; each is named with a digest of its operation",
         ),
         (
+            "TG0725",
+            "disclosure.mode auto chose the MCP disclosure mode from the measured token size of the discrete tool list",
+        ),
+        (
+            "TG0726",
+            "the MCP server's SDK dependency defaults to the typescript target's package",
+        ),
+        (
             "TG0730",
             "macro not emitted by the Python SDK (not in the canonical form)",
         ),
@@ -333,6 +362,10 @@ pub mod codes {
             "tagged union emitted by the Rust SDK as an untagged one",
         ),
         (
+            "TG0746",
+            "macro output typed as serde_json::Value by the Rust SDK",
+        ),
+        (
             "TG0750",
             "argument given as JSON text on the command line of the generated CLI",
         ),
@@ -347,6 +380,10 @@ pub mod codes {
         (
             "TG0753",
             "two commands of the generated CLI share a path; the later one is numbered",
+        ),
+        (
+            "TG0760",
+            "types no operation reaches were not generated (types.prune_unreferenced)",
         ),
         ("TG0901", "generated output is stale relative to its inputs"),
         (
