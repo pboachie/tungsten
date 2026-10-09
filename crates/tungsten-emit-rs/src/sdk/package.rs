@@ -351,6 +351,32 @@ pub(crate) fn readme(
              keyed by cookie name or configuration key (`Credential::Parts`).\n\n",
         );
     }
+    if let Some(scheme) = ir.auth.iter().find(|s| s.authorization_code().is_some()) {
+        let name = scheme.name();
+        out.push_str(&format!(
+            "## Sign in with OAuth2 (authorization code)\n\n\
+             `{name}` has an authorization-code flow. Configure its credential as \
+             `Credential::Parts` with `flow = \"authorizationCode\"`, `client_id`, `redirect_uri` and, for a \
+             confidential client, `client_secret`; send the user to the authorization URL and exchange the code \
+             they come back with. Tokens are kept in `ClientOptions::token_store` (in memory by default), \
+             sent on every call, refreshed before they expire and once after a 401.\n\n\
+             ```rust\n\
+             use tungsten_runtime::{{AuthorizationUrlParams, ExchangeCodeParams}};\n\n\
+             let flow = client.oauth({scheme});\n\
+             let pkce = flow.pkce()?;\n\
+             let url = flow.authorization_url(&AuthorizationUrlParams {{\n    \
+                 state: Some(state),\n    \
+                 code_challenge: Some(pkce.challenge.clone()),\n    \
+                 ..Default::default()\n}})?;\n\
+             // Redirect the user to `url`; the server sends them back with ?code=...\n\
+             flow.exchange_code(&ExchangeCodeParams {{\n    \
+                 code,\n    \
+                 code_verifier: Some(pkce.verifier.clone()),\n    \
+                 ..Default::default()\n}}).await?;\n\
+             ```\n\n",
+            scheme = string_lit(name),
+        ));
+    }
 
     let find = |pred: &dyn Fn(usize) -> bool| paths.iter().find(|(o, _)| pred(*o));
     if let Some((o, path)) = find(&|o| plan.ops[o].op.agent.safety == Safety::ReadOnly) {
