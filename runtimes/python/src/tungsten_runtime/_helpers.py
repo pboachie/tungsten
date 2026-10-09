@@ -91,6 +91,14 @@ def descriptor_problem(op: object) -> str | None:
                 return "`body.shape` must be {kind: merged, fields: [{arg, wire}]} or {kind: arg, arg}"
         elif not (kind == "arg" and isinstance(field(shape, "arg"), str)):
             return "`body.shape` must be {kind: merged, fields: [{arg, wire}]} or {kind: arg, arg}"
+    stream = op.get("stream")
+    if stream is not None:
+        if not is_record(stream):
+            return "`stream` must be a mapping"
+        if "done" in stream and not isinstance(stream["done"], str):
+            return "`stream.done` must be a string"
+        if "flag" in stream and not isinstance(stream["flag"], str):
+            return "`stream.flag` must be a string"
     if not is_array(op.get("responses")):
         return "`responses` must be a list"
     if not is_array(op.get("security")):
@@ -119,7 +127,7 @@ def descriptor_problem(op: object) -> str | None:
 
 def arg_params(op: OperationDescriptor) -> list[ParamDescriptor]:
     """Parameters supplied by the caller (not auth, key or origin)."""
-    return [p for p in op["params"] if p.get("role") not in ("idempotency_key", "origin", "auth")]
+    return [p for p in op["params"] if p.get("role") not in ("idempotency_key", "origin", "auth", "constant")]
 
 
 def merged_fields(op: OperationDescriptor) -> list[tuple[str, str]]:
@@ -137,6 +145,22 @@ def body_arg(op: OperationDescriptor) -> str | None:
         return None
     shape = body["shape"]
     return shape["arg"] if shape["kind"] == "arg" else None
+
+
+def with_stream_flag(op: OperationDescriptor, spec: object, args: object) -> object:
+    """The args of a stream call: the stream's request flag set to ``True``,
+    in the body field of a merged body or inside an object body argument."""
+    flag = str_field(spec, "flag")
+    if flag is None or not is_record(args):
+        return args
+    arg = next((name for name, wire in merged_fields(op) if wire == flag), None)
+    if arg is not None:
+        return {**args, arg: True}
+    whole = body_arg(op)
+    inner = args.get(whole) if whole is not None else None
+    if whole is not None and is_record(inner):
+        return {**args, whole: {**inner, flag: True}}
+    return args
 
 
 def _format_path(segments: Sequence[str | int]) -> str:

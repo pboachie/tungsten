@@ -98,8 +98,19 @@ pub(crate) struct OpShape<'a> {
     pub page_item: Option<Ty>,
     /// Model namespaces and helpers the args and response need.
     pub uses: Uses,
-    /// Model namespaces the success and page item types name.
+    /// Model namespaces the success, page item and event types name.
     pub result_namespaces: BTreeSet<String>,
+    /// The event stream, when the operation has one.
+    pub stream: Option<StreamShape>,
+}
+
+/// The event stream of an operation.
+#[derive(Debug, Clone)]
+pub(crate) struct StreamShape {
+    /// Type of one event.
+    pub event: Ty,
+    /// Schema of one event.
+    pub event_zod: String,
 }
 
 /// Whether a parameter is a key of the args object. Idempotency keys come
@@ -200,7 +211,7 @@ pub(crate) fn op_shape<'a>(plan: &Plan<'a>, info: &OpInfo<'a>) -> OpShape<'a> {
             None => {
                 let name = key.unwrap_or_else(|| "body".to_string());
                 let (ts, zod, ty) = match content.encoding {
-                    BodyEncoding::Bytes => (
+                    BodyEncoding::Bytes | BodyEncoding::Jsonl => (
                         "Uint8Array".to_string(),
                         "z.instanceof(Uint8Array)".to_string(),
                         None,
@@ -261,13 +272,15 @@ pub(crate) fn op_shape<'a>(plan: &Plan<'a>, info: &OpInfo<'a>) -> OpShape<'a> {
             continue;
         };
         match c.encoding {
-            BodyEncoding::Json => {
-                uses.add_ref(plan, None, &c.ty);
-                result_uses.add_ref(plan, None, &c.ty);
-                tys.push(cx.ts_ref(&c.ty));
-                let z = cx.zod_ref(&c.ty);
+            // JSON lines: the value is the array of the lines.
+            BodyEncoding::Json | BodyEncoding::Jsonl => {
+                let ty = c.value_type();
+                uses.add_ref(plan, None, &ty);
+                result_uses.add_ref(plan, None, &ty);
+                tys.push(cx.ts_ref(&ty));
+                let z = cx.zod_ref(&ty);
                 if !json.iter().any(|(s, _)| *s == z) {
-                    json.push((z, c.ty.clone()));
+                    json.push((z, ty));
                 }
             }
             BodyEncoding::Text => {
@@ -321,6 +334,14 @@ pub(crate) fn op_shape<'a>(plan: &Plan<'a>, info: &OpInfo<'a>) -> OpShape<'a> {
                 cx.ts_ref(items)
             })
     });
+    let stream = op.stream.as_ref().map(|s| {
+        uses.add_ref(plan, None, &s.event);
+        result_uses.add_ref(plan, None, &s.event);
+        StreamShape {
+            event: cx.ts_ref(&s.event),
+            event_zod: cx.zod_ref(&s.event),
+        }
+    });
     let all_optional = fields.iter().all(|f| f.optional);
     OpShape {
         params,
@@ -333,6 +354,7 @@ pub(crate) fn op_shape<'a>(plan: &Plan<'a>, info: &OpInfo<'a>) -> OpShape<'a> {
         page_item,
         uses,
         result_namespaces: result_uses.namespaces,
+        stream,
     }
 }
 
@@ -411,6 +433,7 @@ fn role_str(r: ParamRole) -> &'static str {
         ParamRole::DryRun => "dry_run",
         ParamRole::Origin => "origin",
         ParamRole::Auth => "auth",
+        ParamRole::Constant => "constant",
     }
 }
 
@@ -419,7 +442,9 @@ fn encoding_str(e: BodyEncoding) -> &'static str {
         BodyEncoding::Json => "json",
         BodyEncoding::Form => "form",
         BodyEncoding::Multipart => "multipart",
-        BodyEncoding::Bytes => "bytes",
+        // JSON Lines is a response encoding: a request body of that media
+        // type is bytes (the builder never says otherwise).
+        BodyEncoding::Bytes | BodyEncoding::Jsonl => "bytes",
         BodyEncoding::Text => "text",
     }
 }
@@ -473,7 +498,7 @@ pub(crate) fn sensitive_request_fields(plan: &Plan<'_>, shape: &OpShape<'_>) -> 
     };
     if matches!(
         body.content.encoding,
-        BodyEncoding::Bytes | BodyEncoding::Text
+        BodyEncoding::Bytes | BodyEncoding::Text | BodyEncoding::Jsonl
     ) {
         return vec![];
     }
@@ -638,18 +663,27 @@ fn pagination_js(info: &OpInfo<'_>, shape: &OpShape<'_>) -> Js {
         PaginationStyle::Cursor {
             request_param,
             response_field,
-        } => Js::obj(vec![
-            ("style", Js::str("cursor")),
-            ("requestParam", Js::str(&arg(request_param))),
-            ("responseField", Js::str(response_field)),
-            items,
-            (
-                "pageSizeParam",
-                p.page_size_param
-                    .as_deref()
-                    .map_or_else(|| Js::Raw("null".into()), |s| Js::str(&arg(s))),
-            ),
-        ]),
+        } => {
+            let mut entries = vec![
+                ("style", Js::str("cursor")),
+                ("requestParam", Js::str(&arg(request_param))),
+                ("responseField", Js::str(response_field)),
+                items,
+                (
+                    "pageSizeParam",
+                    p.page_size_param
+                        .as_deref()
+                        .map_or_else(|| Js::Raw("null".into()), |s| Js::str(&arg(s))),
+                ),
+            ];
+            if let Some(f) = &p.has_more_field {
+                entries.push(("hasMoreField", Js::str(f)));
+            }
+            if let Some(f) = &p.cursor_item_field {
+                entries.push(("cursorItemField", Js::str(f)));
+            }
+            Js::obj(entries)
+        }
         PaginationStyle::Offset {
             offset_param,
             limit_param,
@@ -721,7 +755,7 @@ fn descriptor_js(plan: &Plan<'_>, info: &OpInfo<'_>, shape: &OpShape<'_>) -> Js 
             .params
             .iter()
             .map(|p| {
-                Js::obj(vec![
+                let mut members = vec![
                     ("name", Js::str(&p.name)),
                     ("wire", Js::str(&p.param.wire_name)),
                     ("in", Js::str(p.location)),
@@ -729,7 +763,11 @@ fn descriptor_js(plan: &Plan<'_>, info: &OpInfo<'_>, shape: &OpShape<'_>) -> Js 
                     ("style", Js::str(style_str(p.param.style))),
                     ("explode", Js::bool(p.param.explode)),
                     ("role", Js::str(role_str(p.param.role))),
-                ])
+                ];
+                if let Some(value) = tungsten_emit::args::constant_text(p.param) {
+                    members.push(("constant", Js::str(&value)));
+                }
+                Js::obj(members)
             })
             .collect(),
     );
@@ -848,6 +886,19 @@ fn descriptor_js(plan: &Plan<'_>, info: &OpInfo<'_>, shape: &OpShape<'_>) -> Js 
     let summary = op_summary(op);
     if let Some(z) = &shape.response_zod {
         entries.push(("response", Js::Raw(format!("toSchemaLike({z})"))));
+    }
+    if let (Some(spec), Some(stream)) = (&op.stream, &shape.stream) {
+        let mut stream_entries = vec![(
+            "event",
+            Js::Raw(format!("toSchemaLike({})", stream.event_zod)),
+        )];
+        if let Some(done) = &spec.done {
+            stream_entries.push(("done", Js::str(done)));
+        }
+        if let Some(flag) = &spec.request_flag {
+            stream_entries.push(("flag", Js::str(flag)));
+        }
+        entries.push(("stream", Js::obj(stream_entries)));
     }
     entries.push((
         "summary",
@@ -1097,12 +1148,16 @@ pub(crate) fn descriptors_file(
     let api_text = api_js(plan, opts).render("  ", "export const api: ApiDescriptor = ".len());
     body.doc(
         CommentStyle::JsDoc,
-        &format!("The `{}` API as the runtime sees it.", plan.ir.api.title),
+        &format!(
+            "The `{}` API as the runtime sees it.",
+            tungsten_ir::title_stem(&plan.ir.api.title)
+        ),
     );
     body.line(format!("export const api: ApiDescriptor = {api_text};"));
     for (info, shape) in plan.ops.iter().zip(shapes) {
         uses.integer |= shape.uses.integer;
         uses.pattern |= shape.uses.pattern;
+        uses.binary |= shape.uses.binary;
         uses.namespaces
             .extend(shape.uses.namespaces.iter().cloned());
         body.blank();
@@ -1141,6 +1196,10 @@ pub(crate) fn descriptors_file(
     }
     if uses.pattern {
         imports.add("./internal.js", "withPattern");
+    }
+    if uses.binary {
+        imports.add("./internal.js", "binary");
+        imports.add_type("./internal.js", "BinaryInput");
     }
     let mut w = Writer::new("  ");
     w.line(header);

@@ -333,6 +333,7 @@ where
     let probe = make(options.clone()).map_err(|e| Fail::Usage(e.message))?;
     let (auth, found, warnings) = config::credentials(
         &ctx.spec.env_prefix,
+        &ctx.spec.credential_env,
         &probe.core().api().auth,
         &ctx.env,
         &settings,
@@ -446,10 +447,11 @@ where
 {
     let conn = connect(ctx, m, make)?;
     let api = conn.client.core().api();
-    let known: Vec<String> = config::slots(&ctx.spec.env_prefix, &api.auth)
-        .into_iter()
-        .map(|s| s.profile_key)
-        .collect();
+    let known: Vec<String> =
+        config::slots(&ctx.spec.env_prefix, &ctx.spec.credential_env, &api.auth)
+            .into_iter()
+            .map(|s| s.profile_key)
+            .collect();
     let unknown = conn.settings.unknown_keys(&known);
     let default_url = api.servers.first().map(String::as_str);
     Ok(builtin::auth_status(

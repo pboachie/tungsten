@@ -24,7 +24,7 @@ pub(crate) fn client_paths(plan: &Plan<'_>) -> Vec<Vec<String>> {
                     p.push(m.name.clone());
                     walk(plan, c, &p, out);
                 }
-                MemberKind::Preview(_) | MemberKind::Pages(_) => {}
+                MemberKind::Preview(_) | MemberKind::Pages(_) | MemberKind::Stream(_) => {}
             }
         }
     }
@@ -71,6 +71,13 @@ pub(crate) fn dispatch_file(plan: &Plan<'_>, macros: &[MacroPlan<'_>], header: &
         MemberKind::Pages(o) => Some(*o),
         _ => None,
     };
+    let stream_member = |k: &MemberKind| match k {
+        MemberKind::Stream(o) => Some(*o),
+        _ => None,
+    };
+    let streamed: Vec<usize> = (0..plan.ops.len())
+        .filter(|&o| method_of(o, stream_member).is_some())
+        .collect();
     let previews: Vec<usize> = (0..plan.ops.len())
         .filter(|&o| method_of(o, preview_member).is_some())
         .collect();
@@ -219,6 +226,38 @@ pub(crate) fn dispatch_file(plan: &Plan<'_>, macros: &[MacroPlan<'_>], header: &
     }
     code.dedent();
     code.line("}");
+
+    // stream
+    if !streamed.is_empty() {
+        code.blank();
+        fn_sig(
+            &mut code,
+            4,
+            "async fn stream",
+            &[
+                "&self".into(),
+                "operation: &str".into(),
+                "args: Value".into(),
+                "opts: CallOptions".into(),
+            ],
+            "Vec<StreamResult<Value>>",
+        );
+        code.indent();
+        code.line("match operation {");
+        code.indent();
+        for &o in &streamed {
+            await_arm(
+                &mut code,
+                &string_lit(&plan.ops[o].op.id.0),
+                format!("stream_{}(self, args, opts)", suffix(&plan.ops[o].builder)),
+            );
+        }
+        code.line("_ => vec![Err(s::not_streamed(operation))],");
+        code.dedent();
+        code.line("}");
+        code.dedent();
+        code.line("}");
+    }
 
     // run_macro
     code.blank();
@@ -386,6 +425,39 @@ pub(crate) fn dispatch_file(plan: &Plan<'_>, macros: &[MacroPlan<'_>], header: &
             );
             put(&mut code, 4, "let pages = ", &call, ";");
             code.line("s::collect_typed(pages).await");
+            code.dedent();
+            code.line("}");
+        }
+        if let Some(stream) = &names.stream {
+            code.blank();
+            fn_sig(
+                &mut code,
+                0,
+                &format!("async fn stream_{name}"),
+                &[
+                    format!("client: &{client}"),
+                    "args: Value".into(),
+                    "opts: CallOptions".into(),
+                ],
+                "Vec<StreamResult<Value>>",
+            );
+            code.indent();
+            code.line(format!("let op = client.operation({konst});"));
+            code.line("let Some(request) = s::decode_args(&args) else {");
+            code.indent();
+            let spec = Rx::call("client.stream_descriptor", vec![Rx::atom(konst.clone())]);
+            put(&mut code, 8, "let spec = ", &spec, ";");
+            code.line("let events = client.core.stream(op.clone(), spec, args, opts);");
+            code.line("return s::collect_raw_events(events).await;");
+            code.dedent();
+            code.line("};");
+            resource_lines(&mut code, &paths[o], "client");
+            let call = Rx::call(
+                format!("resource.{stream}"),
+                vec![Rx::atom("request"), Rx::atom("&opts")],
+            );
+            put(&mut code, 4, "let events = ", &call, ";");
+            code.line("s::collect_events(events).await");
             code.dedent();
             code.line("}");
         }

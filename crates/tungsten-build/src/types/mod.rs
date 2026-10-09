@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Schema → IR type conversion (planning/03 "Types", "Nullability and
-//! presence", "Unions", "Identifiers", "Cycles").
+//! Schema → IR type conversion: types, nullability and field presence,
+//! unions, identifiers and reference cycles.
 //!
 //! Model:
 //! - Every `#/components/schemas/<Key>` of an entry document is the named

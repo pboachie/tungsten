@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Word splitting, casing, keyword escaping and collision disambiguation
-//! (planning/03 "Identifiers").
+//! Word splitting, casing, keyword escaping and collision disambiguation.
 //!
 //! The pipeline is: [`split_words`] turns a wire name into lowercase words
 //! (stored in [`crate::Ident::words`]); [`render`] cases the words for a

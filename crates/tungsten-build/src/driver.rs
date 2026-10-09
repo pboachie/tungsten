@@ -380,6 +380,9 @@ fn compile_validated(
         let mut found = tungsten_agent::apply(&mut ir, agent_manifest, agent_name);
         attach_spec_spans(&workspace, &mut found);
         diagnostics.extend(found);
+        if config.types.prune_unreferenced {
+            crate::prune::prune_unreferenced(&mut ir, &mut diagnostics);
+        }
         Some(ir)
     };
     if let Some(m) = &manifest {

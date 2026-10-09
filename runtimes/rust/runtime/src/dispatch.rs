@@ -9,6 +9,7 @@ use serde_json::Value;
 
 use crate::client::ClientCore;
 use crate::envelope::Diag;
+use crate::stream::{StreamEvent, StreamResult};
 use crate::types::{
     CallOptions, Category, Error, MacroDescriptor, OperationDescriptor, Outcome, Page,
     PreviewResult, Response, Result, Retryable,
@@ -57,6 +58,20 @@ pub trait Dispatch: Send + Sync {
         opts: CallOptions,
     ) -> impl Future<Output = Vec<Result<Page<Value>>>> + Send;
 
+    /// Collect the events of an operation's event stream, each as its decoded
+    /// JSON value, through the typed `<method>_stream`. The final error, if
+    /// any, is the last item. A client whose API has no event stream keeps
+    /// this default, which answers `VALIDATION_FAILED`.
+    fn stream(
+        &self,
+        operation: &str,
+        _args: Value,
+        _opts: CallOptions,
+    ) -> impl Future<Output = Vec<StreamResult<Value>>> + Send {
+        let operation = operation.to_owned();
+        async move { vec![Err(no_stream(&operation))] }
+    }
+
     fn run_macro(
         &self,
         name: &str,
@@ -70,6 +85,19 @@ pub trait Dispatch: Send + Sync {
         input: Value,
         opts: CallOptions,
     ) -> impl Future<Output = Result<PreviewResult>> + Send;
+}
+
+/// `VALIDATION_FAILED` for an operation without an event stream.
+pub fn no_stream(operation: &str) -> Error {
+    Error::new(
+        Diag::new(operation, Category::ValidationFailed)
+            .failed_parameter("operation")
+            .expected("an operation with an event stream")
+            .remediation(format!(
+                "{operation} has no event stream (its success response is not text/event-stream); use invoke instead. Nothing was sent."
+            ))
+            .build(),
+    )
 }
 
 /// The spelling of a `serde_path_to_error` path as `.key` and `[index]`
@@ -170,6 +198,55 @@ pub fn decode<T: DeserializeOwned>(operation: &str, outcome: Outcome) -> Result<
             &body,
             &response.meta,
         )),
+    }
+}
+
+/// Decode the value of a stream event the same way; `index` is the event's
+/// position in the stream.
+pub fn decode_event<T: DeserializeOwned>(
+    operation: &str,
+    index: usize,
+    item: StreamResult<Value>,
+) -> StreamResult<T> {
+    let StreamEvent {
+        value,
+        event,
+        id,
+        retry,
+        meta,
+    } = item?;
+    match decode_value::<T>(&value) {
+        Ok(decoded) => Ok(StreamEvent {
+            value: decoded,
+            event,
+            id,
+            retry,
+            meta,
+        }),
+        Err(mismatch) => {
+            let location = format!("events[{index}]{}", mismatch.path);
+            let found = get_path(Some(&value), &mismatch.segments)
+                .cloned()
+                .unwrap_or(Value::Null);
+            Err(Error::new(
+                Diag::new(operation, Category::UnexpectedResponse)
+                    .http_status((meta.status > 0).then_some(meta.status))
+                    .request_id(meta.request_id.clone())
+                    .failed_parameter(location.clone())
+                    .received_value(envelope_value(
+                        &found,
+                        mismatch.segments.iter().any(|s| looks_sensitive(s)),
+                    ))
+                    .expected(mismatch.message.clone())
+                    .retryable(Retryable::Never)
+                    .remediation(format!(
+                        "Event {index} of the stream of {operation} could not be decoded into the SDK's type at {location} ({}). If the call changed state it already took effect; do not repeat it.",
+                        mismatch.message
+                    ))
+                    .attempts(meta.attempts)
+                    .build(),
+            ))
+        }
     }
 }
 

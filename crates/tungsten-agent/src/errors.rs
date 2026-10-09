@@ -125,18 +125,84 @@ pub(crate) fn envelope(ir: &mut Ir, cfg: &AgentConfig, r: &mut Reporter<'_>) {
     ir.errors = merge(ir.namespaces.iter().map(|n| &n.errors));
 }
 
-/// The values a string field admits: its enum or const values, empty for
-/// any string, `None` when the path is not a string field.
-fn string_values(types: &TypeTable, id: &TypeId, path: &str) -> Option<Vec<String>> {
-    let mut ty = TypeRef::Named(id.clone());
-    for segment in path.split('.') {
-        let fields = match shape(types, &ty)? {
-            Shape::Record { fields, .. } => fields,
-            _ => return None,
-        };
-        ty = fields.iter().find(|f| f.wire_name == segment)?.ty.clone();
+/// Statuses the `errors.codes` entries declare for codes the namespaces
+/// already list (the spec names only `4XX`, or none): added to the code,
+/// and `Ir.errors` is merged again.
+pub(crate) fn code_statuses(ir: &mut Ir, cfg: &AgentConfig) {
+    let mut changed = false;
+    for ns in &mut ir.namespaces {
+        for code in &mut ns.errors.codes {
+            let Some(status) = cfg.errors.codes.get(&code.code).and_then(|c| c.status) else {
+                continue;
+            };
+            if !code.statuses.contains(&status.0) {
+                code.statuses.push(status.0);
+                code.statuses.sort_unstable();
+                changed = true;
+            }
+        }
     }
-    match shape(types, &ty)? {
+    if changed {
+        ir.errors = merge(ir.namespaces.iter().map(|n| &n.errors));
+    }
+}
+
+/// The values a string field admits: its enum or const values, empty for
+/// any string, `None` when the path is not a string field. A segment may
+/// pass through a union (`error.type` with `error` a `oneOf` of records):
+/// every variant must have the field, and the values are the union of the
+/// variants' values.
+fn string_values(types: &TypeTable, id: &TypeId, path: &str) -> Option<Vec<String>> {
+    let mut tys = vec![TypeRef::Named(id.clone())];
+    for segment in path.split('.') {
+        let mut next = Vec::new();
+        for ty in &tys {
+            field_types(types, ty, segment, &mut next, 0)?;
+        }
+        tys = next;
+    }
+    let mut out = Vec::new();
+    for ty in &tys {
+        let values = leaf_values(types, ty)?;
+        if values.is_empty() {
+            return Some(values);
+        }
+        out.extend(values);
+    }
+    out.sort();
+    out.dedup();
+    Some(out)
+}
+
+/// The types of field `segment` in `ty`, in every variant when `ty` is a
+/// union; `None` when some record or variant lacks it.
+fn field_types(
+    types: &TypeTable,
+    ty: &TypeRef,
+    segment: &str,
+    out: &mut Vec<TypeRef>,
+    depth: usize,
+) -> Option<()> {
+    if depth > 8 {
+        return None;
+    }
+    match shape(types, ty)? {
+        Shape::Record { fields, .. } => {
+            out.push(fields.iter().find(|f| f.wire_name == segment)?.ty.clone());
+            Some(())
+        }
+        Shape::Union(u) if !u.variants.is_empty() => {
+            for v in &u.variants {
+                field_types(types, &v.ty, segment, out, depth + 1)?;
+            }
+            Some(())
+        }
+        _ => None,
+    }
+}
+
+fn leaf_values(types: &TypeTable, ty: &TypeRef) -> Option<Vec<String>> {
+    match shape(types, ty)? {
         Shape::Enum { values, .. } => Some(
             values
                 .iter()
@@ -279,6 +345,7 @@ pub(crate) fn model(
     agent.disclosure = DisclosurePolicy {
         mode: dd.mode.unwrap_or(base.mode),
         threshold: dd.threshold.unwrap_or(base.threshold),
+        list_budget_tokens: dd.list_budget_tokens.unwrap_or(base.list_budget_tokens),
         description_budget_tokens: dd
             .description_budget_tokens
             .unwrap_or(base.description_budget_tokens),
@@ -323,6 +390,23 @@ pub(crate) fn gates(agent: &mut AgentModel, cfg: &AgentConfig, ir: &Ir, r: &mut 
             );
         }
         agent.gates.insert(name.clone(), gate.text.clone());
+    }
+}
+
+/// `gates` entries no operation is gated by, after every tool's `gate` was
+/// applied: a text nobody can be shown, and 404s reported as NOT_FOUND.
+pub(crate) fn unused_gates(cfg: &AgentConfig, ir: &Ir, r: &mut Reporter<'_>) {
+    let used = spec_gates(ir.operations().into_iter());
+    for name in cfg.gates.keys() {
+        if !used.contains_key(name.as_str()) {
+            r.warning(
+                "TG0614",
+                &child("/gates", name),
+                format!(
+                    "gate `{name}` is used by no operation (no x-runtime-gate in the spec and no tools entry with `gate: {name}`); its text is never shown"
+                ),
+            );
+        }
     }
 }
 

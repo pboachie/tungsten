@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! TypeScript SDK emitter (planning/05 "TypeScript SDK").
+//! TypeScript SDK emitter.
 //!
 //! Generated packages are mostly data for `@tungsten/runtime`
 //! (`runtimes/ts/src/types.ts` is the contract):

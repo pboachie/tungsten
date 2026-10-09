@@ -17,7 +17,7 @@
 //! module, and `models/__init__.py` resolves every forward reference once
 //! all namespaces are loaded.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::BTreeSet;
 
 use serde_json::Value;
@@ -123,6 +123,17 @@ pub(crate) enum Flavor {
     Hint,
     /// The validated type for models and validators.
     Schema,
+    /// What a request argument accepts (`models: dataclasses`): like
+    /// [`Flavor::Hint`], but a record also takes its `TypedDict` shape and
+    /// collections their read-only abstract types.
+    Input,
+}
+
+impl Flavor {
+    /// Whether this is a plain-type rendering (not the validated type).
+    fn plain(self) -> bool {
+        self != Flavor::Schema
+    }
 }
 
 /// What a module imports for the types it renders.
@@ -134,6 +145,8 @@ pub(crate) struct Uses {
     pub pydantic: BTreeSet<&'static str>,
     /// Names from `tungsten_runtime`.
     pub runtime: BTreeSet<&'static str>,
+    /// Names from `collections.abc`.
+    pub abc: BTreeSet<&'static str>,
     /// The package's `_internal` module.
     pub internal: bool,
     /// Model namespaces referenced (other than the module's own).
@@ -145,6 +158,7 @@ impl Uses {
         self.typing.extend(other.typing.iter().copied());
         self.pydantic.extend(other.pydantic.iter().copied());
         self.runtime.extend(other.runtime.iter().copied());
+        self.abc.extend(other.abc.iter().copied());
         self.internal |= other.internal;
         self.namespaces.extend(other.namespaces.iter().cloned());
     }
@@ -159,6 +173,9 @@ impl Uses {
         parent: &str,
         models: &str,
     ) {
+        for a in &self.abc {
+            imports.add("collections.abc", a);
+        }
         for t in &self.typing {
             imports.add("typing", t);
         }
@@ -186,6 +203,12 @@ pub(crate) struct Cx<'p, 'a> {
     /// The model namespace being written; `None` outside `models/`.
     pub home: Option<&'p str>,
     pub uses: RefCell<Uses>,
+    /// Named aliases being expanded in the input flavor (a recursive alias
+    /// is written by name).
+    expanding: RefCell<Vec<TypeId>>,
+    /// Whether bytes take files (the `Input` shape of a form or multipart
+    /// record).
+    files: Cell<bool>,
 }
 
 impl<'p, 'a> Cx<'p, 'a> {
@@ -194,6 +217,8 @@ impl<'p, 'a> Cx<'p, 'a> {
             plan,
             home,
             uses: RefCell::new(Uses::default()),
+            expanding: RefCell::new(vec![]),
+            files: Cell::new(false),
         }
     }
 
@@ -203,6 +228,21 @@ impl<'p, 'a> Cx<'p, 'a> {
 
     fn pydantic(&self, name: &'static str) {
         self.uses.borrow_mut().pydantic.insert(name);
+    }
+
+    fn abc(&self, name: &'static str) {
+        self.uses.borrow_mut().abc.insert(name);
+    }
+
+    /// The constraints of a value as `Annotated` metadata: Pydantic's
+    /// `Field(...)`, or the runtime's `Limits(...)`.
+    fn limits(&self, args: &[String]) -> String {
+        if self.plan.dataclasses() {
+            format!("{}({})", self.internal("Limits"), args.join(", "))
+        } else {
+            self.pydantic("Field");
+            format!("Field({})", args.join(", "))
+        }
     }
 
     pub(crate) fn runtime(&self, name: &'static str) {
@@ -215,18 +255,17 @@ impl<'p, 'a> Cx<'p, 'a> {
         format!("_internal.{name}")
     }
 
-    fn any(&self) -> PyTy {
+    pub(crate) fn any(&self) -> PyTy {
         self.typing("Any");
         PyTy::any()
     }
 
     fn never(&self, flavor: Flavor) -> PyTy {
-        match flavor {
-            Flavor::Hint => {
-                self.typing("Never");
-                PyTy::one("Never")
-            }
-            Flavor::Schema => PyTy::one(self.internal("Never")),
+        if flavor.plain() {
+            self.typing("Never");
+            PyTy::one("Never")
+        } else {
+            PyTy::one(self.internal("Never"))
         }
     }
 
@@ -252,9 +291,35 @@ impl<'p, 'a> Cx<'p, 'a> {
 
     pub(crate) fn ty(&self, r: &TypeRef, flavor: Flavor) -> PyTy {
         match r {
+            TypeRef::Named(id) if flavor == Flavor::Input => self.named_input(id),
             TypeRef::Named(id) => self.type_name(id).map_or_else(|| self.any(), PyTy::one),
             TypeRef::Inline(s) => self.shape(s, flavor),
         }
+    }
+
+    /// What a request argument accepts for the named type `id`: a record
+    /// is its dataclass or its `TypedDict` shape (`Name.Input`); any other
+    /// type is written out, unless it refers to itself.
+    fn named_input(&self, id: &TypeId) -> PyTy {
+        let by_name = || self.type_name(id).map_or_else(|| self.any(), PyTy::one);
+        let Some(nt) = self.plan.ir.types.get(id) else {
+            return by_name();
+        };
+        if matches!(nt.shape, Shape::Record { .. }) {
+            return match self.type_name(id) {
+                Some(name) => {
+                    PyTy::union([PyTy::one(name.clone()), PyTy::one(format!("{name}.Input"))])
+                }
+                None => self.any(),
+            };
+        }
+        if self.expanding.borrow().contains(id) {
+            return by_name();
+        }
+        self.expanding.borrow_mut().push(id.clone());
+        let t = self.shape(&nt.shape, Flavor::Input);
+        self.expanding.borrow_mut().pop();
+        t
     }
 
     pub(crate) fn shape(&self, s: &Shape, flavor: Flavor) -> PyTy {
@@ -271,8 +336,12 @@ impl<'p, 'a> Cx<'p, 'a> {
             Shape::Array {
                 items, min, max, ..
             } => {
+                if flavor == Flavor::Input {
+                    self.abc("Sequence");
+                    return PyTy::one(format!("Sequence[{}]", self.ty(items, flavor).text()));
+                }
                 let list = PyTy::one(format!("list[{}]", self.ty(items, flavor).text()));
-                if flavor == Flavor::Hint {
+                if flavor.plain() {
                     return list;
                 }
                 let mut args = vec![];
@@ -284,25 +353,26 @@ impl<'p, 'a> Cx<'p, 'a> {
                 }
                 self.with_field(&list, &args)
             }
-            Shape::Map { values } => {
-                PyTy::one(format!("dict[str, {}]", self.ty(values, flavor).text()))
-            }
+            Shape::Map { values } => self.mapping(values, flavor),
             Shape::Record { fields, additional } => match additional {
                 // An inline record has no class (TG0733): a mapping of its
                 // extras' type when it has no fixed fields.
-                Additional::Typed { values } if fields.is_empty() => {
-                    PyTy::one(format!("dict[str, {}]", self.ty(values, flavor).text()))
-                }
+                Additional::Typed { values } if fields.is_empty() => self.mapping(values, flavor),
                 _ => {
                     self.typing("Any");
-                    PyTy::one("dict[str, Any]")
+                    if flavor == Flavor::Input {
+                        self.abc("Mapping");
+                        PyTy::one("Mapping[str, Any]")
+                    } else {
+                        PyTy::one("dict[str, Any]")
+                    }
                 }
             },
             Shape::Union(u) => self.union(u, flavor),
             Shape::Intersection { members } => match members.len() {
                 0 => self.any(),
                 1 => self.ty(&members[0], flavor),
-                _ if flavor == Flavor::Hint => self.any(),
+                _ if flavor.plain() => self.any(),
                 _ => {
                     let parts: Vec<String> = members
                         .iter()
@@ -323,23 +393,38 @@ impl<'p, 'a> Cx<'p, 'a> {
         }
     }
 
+    /// A mapping with string keys: `dict[str, V]`, `Mapping[str, V]` as a
+    /// request argument.
+    fn mapping(&self, values: &TypeRef, flavor: Flavor) -> PyTy {
+        let v = self.ty(values, flavor).text();
+        if flavor == Flavor::Input {
+            self.abc("Mapping");
+            PyTy::one(format!("Mapping[str, {v}]"))
+        } else {
+            PyTy::one(format!("dict[str, {v}]"))
+        }
+    }
+
     /// `Annotated[base, Field(args)]`, or `base` without arguments.
     fn with_field(&self, base: &PyTy, args: &[String]) -> PyTy {
         if args.is_empty() {
             return base.clone();
         }
-        self.pydantic("Field");
-        self.annotated(base, &[format!("Field({})", args.join(", "))])
+        let meta = self.limits(args);
+        self.annotated(base, &[meta])
     }
 
     fn primitive(&self, p: &Primitive, c: &Constraints, flavor: Flavor) -> PyTy {
-        let hint = flavor == Flavor::Hint;
+        let hint = flavor.plain();
         match p {
             Primitive::String {
                 format: Some(StringFormat::Byte),
             }
             | Primitive::Bytes => {
-                if hint {
+                if hint && flavor == Flavor::Input && self.files.get() {
+                    self.runtime("BinaryInput");
+                    PyTy::one("BinaryInput")
+                } else if hint {
                     PyTy::one("bytes")
                 } else {
                     PyTy::one(self.internal("Bytes"))
@@ -359,8 +444,7 @@ impl<'p, 'a> Cx<'p, 'a> {
                 }
                 let mut meta = vec![];
                 if !args.is_empty() {
-                    self.pydantic("Field");
-                    meta.push(format!("Field({})", args.join(", ")));
+                    meta.push(self.limits(&args));
                 }
                 if let Some(name) = format.as_ref().and_then(checked_format) {
                     meta.push(format!(
@@ -428,7 +512,7 @@ impl<'p, 'a> Cx<'p, 'a> {
             }
         }
         if other {
-            if flavor == Flavor::Hint {
+            if flavor.plain() {
                 return self.any();
             }
             let list = format!(
@@ -466,7 +550,7 @@ impl<'p, 'a> Cx<'p, 'a> {
         let numeric = lits.iter().flat_map(|l| l.split(", ")).any(|l| {
             l == "True" || l == "False" || l.parse::<i128>().is_ok() || l.parse::<u128>().is_ok()
         });
-        if flavor == Flavor::Hint || !numeric {
+        if flavor.plain() || !numeric {
             return base;
         }
         let check = format!("{}([{}])", self.internal("exact"), lits.join(", "));
@@ -477,8 +561,8 @@ impl<'p, 'a> Cx<'p, 'a> {
         if u.variants.is_empty() {
             return self.never(flavor);
         }
-        if flavor == Flavor::Hint {
-            return PyTy::union(u.variants.iter().map(|v| self.ty(&v.ty, Flavor::Hint)));
+        if flavor.plain() {
+            return PyTy::union(u.variants.iter().map(|v| self.ty(&v.ty, flavor)));
         }
         match u.strategy {
             UnionStrategy::Tagged
@@ -505,13 +589,22 @@ impl<'p, 'a> Cx<'p, 'a> {
                 if joined.members.len() < 2 {
                     return joined;
                 }
-                self.pydantic("Field");
-                self.annotated(
-                    &joined,
-                    &["Field(union_mode=\"left_to_right\")".to_string()],
-                )
+                self.left_to_right(joined)
             }
         }
+    }
+
+    /// A union validated member by member, in order. Pydantic needs it said
+    /// (`union_mode`); the runtime's validator always does.
+    pub(crate) fn left_to_right(&self, joined: PyTy) -> PyTy {
+        if self.plan.dataclasses() {
+            return joined;
+        }
+        self.pydantic("Field");
+        self.annotated(
+            &joined,
+            &["Field(union_mode=\"left_to_right\")".to_string()],
+        )
     }
 
     /// A tagged union: Pydantic's discriminator on a field when every
@@ -575,7 +668,10 @@ impl<'p, 'a> Cx<'p, 'a> {
                 _ => field_form = false,
             }
         }
-        if field_form && let Some(attr) = attr {
+        if field_form
+            && !self.plan.dataclasses()
+            && let Some(attr) = attr
+        {
             let joined = PyTy::union(u.variants.iter().map(|v| self.ty(&v.ty, Flavor::Schema)));
             self.pydantic("Field");
             return self.annotated(
@@ -583,13 +679,21 @@ impl<'p, 'a> Cx<'p, 'a> {
                 &[format!("Field(discriminator={})", string_lit(&attr))],
             );
         }
-        self.pydantic("Tag");
+        let tag_fn = if self.plan.dataclasses() {
+            self.internal("Tag")
+        } else {
+            self.pydantic("Tag");
+            "Tag".to_string()
+        };
         let labelled: Vec<PyTy> = u
             .variants
             .iter()
             .map(|v| {
                 let base = self.ty(&v.ty, Flavor::Schema);
-                let tag = format!("Tag({})", string_lit(v.tag.as_deref().unwrap_or_default()));
+                let tag = format!(
+                    "{tag_fn}({})",
+                    string_lit(v.tag.as_deref().unwrap_or_default())
+                );
                 self.typing("Annotated");
                 PyTy::one(format!("Annotated[{}, {tag}]", base.text()))
             })
@@ -794,6 +898,9 @@ fn write_named(w: &mut Writer, cx: &Cx<'_, '_>, nt: &NamedType, name: &str) {
     let notes = shape_notes(&nt.shape);
     let doc = paragraphs(std::iter::once(doc_text(nt.doc.as_ref())).chain(notes));
     match &nt.shape {
+        Shape::Record { fields, additional } if cx.plan.dataclasses() => {
+            write_dataclass(w, cx, nt, name, &doc, fields, additional);
+        }
         Shape::Record { fields, additional } => {
             cx.uses.borrow_mut().internal = true;
             w.line(format!("class {name}(_internal.Model):"));
@@ -842,6 +949,119 @@ fn write_named(w: &mut Writer, cx: &Cx<'_, '_>, nt: &NamedType, name: &str) {
             docstring(w, &doc);
         }
     }
+}
+
+/// The `field(...)` call of a dataclass field that needs one: its default
+/// (`UNSET` when it may be left out), its wire name when it differs and
+/// `repr=False` for a sensitive field (a one-time secret never shows in
+/// `repr()` or a log). A plain default is written as such.
+fn dataclass_field_spec(cx: &Cx<'_, '_>, f: &Field, attr: &str) -> Option<String> {
+    let optional = matches!(f.presence, Presence::Optional | Presence::OptionalNullable);
+    if attr == f.wire_name && !f.sensitive {
+        return optional.then(|| {
+            cx.runtime("UNSET");
+            "UNSET".to_string()
+        });
+    }
+    let mut args = vec![];
+    if optional {
+        cx.runtime("UNSET");
+        args.push("default=UNSET".to_string());
+    }
+    if attr != f.wire_name {
+        args.push(format!("wire={}", string_lit(&f.wire_name)));
+    }
+    if f.sensitive {
+        args.push("repr=False".to_string());
+    }
+    Some(format!("{}({})", cx.internal("field"), args.join(", ")))
+}
+
+/// A record as a `kw_only` dataclass (`_internal.model`) and, nested in it,
+/// the `TypedDict` (`Name.Input`) a request argument takes in its place.
+fn write_dataclass(
+    w: &mut Writer,
+    cx: &Cx<'_, '_>,
+    nt: &NamedType,
+    name: &str,
+    doc: &str,
+    fields: &[Field],
+    additional: &Additional,
+) {
+    cx.uses.borrow_mut().internal = true;
+    let policy = match additional {
+        Additional::Closed => "\"forbid\"".to_string(),
+        Additional::Open => "\"allow\"".to_string(),
+        Additional::Typed { values } => {
+            format!("lambda: {}", cx.value(&cx.ty(values, Flavor::Schema)))
+        }
+    };
+    w.line(format!("@_internal.model(extra={policy})"));
+    w.line(format!("class {name}(_internal.Model):"));
+    w.indent();
+    docstring(w, doc);
+    let names = field_names(fields.iter().map(|f| &f.name));
+    // A blank line around documented fields; undocumented fields stay
+    // together.
+    let mut spaced = !doc.is_empty();
+    let mut first = doc.is_empty();
+    for (f, attr) in fields.iter().zip(&names) {
+        let doc = field_doc(cx.plan, f, attr);
+        if (spaced || !doc.is_empty()) && !first {
+            w.blank();
+        }
+        first = false;
+        let ann = field_annotation(cx, f);
+        match dataclass_field_spec(cx, f, attr) {
+            Some(spec) => w.line(format!("{attr}: {ann} = {spec}")),
+            None => w.line(format!("{attr}: {ann}")),
+        };
+        docstring(w, &doc);
+        spaced = !doc.is_empty();
+    }
+    if !matches!(additional, Additional::Closed) {
+        let value = match additional {
+            Additional::Typed { values } => cx.ty(values, Flavor::Schema).text(),
+            _ => cx.any().text(),
+        };
+        if !first {
+            w.blank();
+        }
+        first = false;
+        w.line(format!(
+            "model_extra: dict[str, {value}] = {}(default_factory=dict)",
+            cx.internal("field")
+        ));
+        docstring(
+            w,
+            "Additional properties, by name (the members that are no field).",
+        );
+    }
+    if !first {
+        w.blank();
+    }
+    cx.typing("TypedDict");
+    w.line("class Input(TypedDict):");
+    w.indent();
+    docstring(
+        w,
+        "The fields as a mapping, for a request argument; keys are the attribute names.",
+    );
+    w.blank();
+    cx.files.set(cx.plan.file_records.contains(&nt.id));
+    for (f, attr) in fields.iter().zip(&names) {
+        let t = cx.field_value(f, Flavor::Input).text();
+        match f.presence {
+            Presence::Optional | Presence::OptionalNullable => {
+                cx.typing("NotRequired");
+                w.line(format!("{attr}: NotRequired[{t}]"))
+            }
+            Presence::Required | Presence::RequiredNullable => w.line(format!("{attr}: {t}")),
+        };
+    }
+    cx.files.set(false);
+    w.dedent();
+    w.dedent();
 }
 
 /// The source of `<module>/models/<file>.py` for one namespace.
@@ -899,7 +1119,9 @@ pub(crate) fn models_file(plan: &Plan<'_>, ns: &str, header: &str) -> String {
 pub(crate) fn models_init(plan: &Plan<'_>, header: &str) -> String {
     let mut imports = PyImports::default();
     imports.add("__future__", "annotations");
-    imports.add("..", "_internal");
+    if !plan.dataclasses() {
+        imports.add("..", "_internal");
+    }
     for m in &plan.models {
         imports.add(".", &m.file);
     }
@@ -934,15 +1156,17 @@ pub(crate) fn models_init(plan: &Plan<'_>, header: &str) -> String {
     w.blank();
     w.line(imports.render());
     w.blank();
-    w.line(format!(
-        "_internal.rebuild({})",
-        plan.models
-            .iter()
-            .map(|m| m.file.as_str())
-            .collect::<Vec<_>>()
-            .join(", ")
-    ));
-    w.blank();
+    if !plan.dataclasses() {
+        w.line(format!(
+            "_internal.rebuild({})",
+            plan.models
+                .iter()
+                .map(|m| m.file.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+        w.blank();
+    }
     w.line(dunder_all(&exported));
     w.finish()
 }

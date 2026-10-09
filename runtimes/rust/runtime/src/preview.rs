@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Previews (planning/06 "Preview and confirmation"): the rendered request,
+//! Previews: the rendered request,
 //! the side effects in words and a confirmation token bound to the exact
 //! arguments.
 

@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Shared emitter infrastructure (planning/02 D1, planning/05 "Common output
-//! contract").
+//! Shared emitter infrastructure.
 //!
 //! Every emitter implements [`Emitter`] and writes into a [`FileSet`] using a
 //! [`Writer`] (blocks, indentation, doc comments) and an [`Imports`]
@@ -12,10 +11,8 @@
 //! agents. [`surface`] snapshots the API surface (`.tungsten/surface.json`)
 //! and classifies changes between snapshots.
 //!
-//! PHASE-2 CONTRACT: the public signatures in this crate are shared by every
-//! emitter. The emit-core work package completes the implementations
-//! (header contents, manifest, stale-file removal, custom-file protection,
-//! writer features) without changing existing signatures.
+//! Stability: the public signatures in this crate are shared by every
+//! emitter. Changes are additive.
 
 pub mod args;
 pub mod compact;

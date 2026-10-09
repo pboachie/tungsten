@@ -37,6 +37,13 @@ export function isJsonMedia(media: string): boolean {
   return media === "application/json" || media.endsWith("+json") || media === "text/json";
 }
 
+const JSONL_MEDIA = new Set(["application/jsonl", "application/x-jsonl", "application/ndjson", "application/x-ndjson"]);
+
+/** JSON Lines media types: one JSON value per line. */
+export function isJsonlMedia(media: string): boolean {
+  return JSONL_MEDIA.has(media);
+}
+
 /** The response descriptor matching a status: exact, then `NXX`, then `default`. */
 export function matchResponse(responses: readonly ResponseDescriptor[], status: number): ResponseDescriptor | undefined {
   const list = Array.isArray(responses) ? (responses.filter(isRecord) as unknown as ResponseDescriptor[]) : [];
@@ -55,12 +62,33 @@ export interface DecodedBody {
   /** JSON was announced but did not parse. */
   invalidJson: boolean;
   empty: boolean;
+  /** The body is JSON Lines: `value` is the array of the lines' values, or
+   * (when `invalidJson`) the text. */
+  jsonl?: boolean;
+  /** The first line (1-based) that did not parse. */
+  badLine?: number;
 }
 
 export function decodeBody(bytes: Uint8Array, headers: Record<string, string>, declared: string | null): DecodedBody {
-  if (bytes.byteLength === 0) return { value: undefined, json: false, invalidJson: false, empty: true };
-  const media = mediaTypeOf(headers) || (declared ?? "").toLowerCase();
+  const announced = mediaTypeOf(headers);
+  const media = announced || (declared ?? "").toLowerCase();
   const text = (): string => new TextDecoder().decode(bytes);
+  // An empty body is no body, unless the server says it is JSON Lines: then it is no lines.
+  if (bytes.byteLength === 0 && !isJsonlMedia(announced)) return { value: undefined, json: false, invalidJson: false, empty: true };
+  if (isJsonlMedia(announced || media.split(";")[0]!.trim())) {
+    const raw = text();
+    const values: unknown[] = [];
+    const lines = raw.split("\n");
+    for (const [index, line] of lines.entries()) {
+      if (line.trim() === "") continue;
+      try {
+        values.push(JSON.parse(line) as unknown);
+      } catch {
+        return { value: raw, json: false, invalidJson: true, empty: false, jsonl: true, badLine: index + 1 };
+      }
+    }
+    return { value: values, json: false, invalidJson: false, empty: false, jsonl: true };
+  }
   if (isJsonMedia(media)) {
     const raw = text();
     try {
@@ -197,8 +225,8 @@ export function outcomeUnknown(ctx: CallContext, cause: string, fields: Partial<
     hint = `Call ${call} and check ${shows}; call ${op.id} again only if it did not take effect.`;
   } else {
     const change = changeOf(op);
-    rule = `This operation has no idempotency key, so repeating it can apply the effect twice: do not call it again until you have checked whether it took effect, by reading the resource it changes and looking for ${change}.`;
-    hint = `Read the resource ${op.id} changes and look for ${change}; call ${op.id} again only if it is not there.`;
+    rule = `This operation has no idempotency key and no registered way to verify it, so ${op.id} may have taken effect and a repeat can apply the effect twice: do not retry it blindly. Check the outcome by other means if you can (look for ${change}); if you cannot, ask whoever owns the task before calling it again.`;
+    hint = `Do not retry ${op.id} blindly: it may have taken effect. Check for ${change} if you can; call ${op.id} again only if it is not there, or after the task owner accepts that it may apply twice.`;
   }
   return diagnostic(op.id, "OUTCOME_UNKNOWN", {
     remediation: `${cause} The server may or may not have applied ${op.id}. ${rule}`,

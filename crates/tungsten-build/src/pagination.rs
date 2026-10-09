@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Pagination (planning/03 "Pagination"): an explicit `tungsten.yml` entry
+//! Pagination: an explicit `tungsten.yml` entry
 //! wins (`none: true` switches inference off); otherwise callable GET
 //! operations are matched against the heuristics below, which read the
 //! normalized schemas directly. Every inference is a TG0501 warning.
@@ -9,6 +9,14 @@
 //!   string; the request cursor is the query parameter named like the
 //!   property without `next_`, or else the only one of `before`, `cursor`,
 //!   `after`, `page_token` the operation has.
+//!   An open (not closed) response object qualifies too when the parameter
+//!   is a string named exactly like the property without `next_` (an opaque
+//!   `page` cursor next to `next_page`).
+//! - After id: query parameter `after_id`, and a response object with
+//!   exactly one array property and a boolean `has_more`; the next cursor is
+//!   the response's `last_id`, or the `id` of the last item when `last_id` is
+//!   absent or null. The
+//!   runtime stops as soon as `has_more` is false.
 //! - Link header: the 200 response declares a `Link` header and its JSON
 //!   body is an array or an object with exactly one array property; the
 //!   runtime follows `rel="next"` until there is none (GitHub style). Tried
@@ -16,13 +24,17 @@
 //!   authoritative when it sends them.
 //! - Offset: query parameters `offset` and `limit`, and a response that is
 //!   an array or an object with exactly one array property.
-//! - Page: query parameter `page` plus one of `page_size`, `per_page`,
-//!   `size`, `limit`, with the same response shape.
+//! - Page: query parameter `page` (not a string: a string `page` is an
+//!   opaque cursor) plus one of `page_size`, `per_page`, `size`, `limit`,
+//!   with the same response shape.
 
 use serde_json::{Map, Value};
 use tungsten_config::PaginationConfig;
 use tungsten_core::Diagnostic;
-use tungsten_ir::{Exhausted, HttpMethod, Operation, Pagination, PaginationStyle, StatusMatch};
+use tungsten_ir::{
+    Exhausted, HttpMethod, Operation, Pagination, PaginationStyle, Primitive, Shape, StatusMatch,
+    TypeRef,
+};
 use tungsten_openapi::RefTarget;
 
 use crate::ctx::{Ctx, child};
@@ -53,7 +65,18 @@ pub(crate) fn apply(cx: &mut Ctx<'_>, callable: &mut [BuiltOp], planned: &mut [B
                 PaginationStyle::Cursor {
                     request_param,
                     response_field,
-                } => format!("cursor pagination ({request_param} / {response_field})"),
+                } => {
+                    let next = match (response_field.as_str(), &p.cursor_item_field) {
+                        ("", Some(item)) => format!("last item {item}"),
+                        _ => response_field.clone(),
+                    };
+                    match &p.has_more_field {
+                        Some(more) => format!(
+                            "cursor pagination ({request_param} / {next}, stops when {more} is false)"
+                        ),
+                        None => format!("cursor pagination ({request_param} / {next})"),
+                    }
+                }
                 PaginationStyle::Offset { .. } => "offset pagination".to_string(),
                 PaginationStyle::Page { .. } => "page pagination".to_string(),
                 PaginationStyle::LinkHeader => "link-header pagination".to_string(),
@@ -89,7 +112,13 @@ fn configured(entry: &PaginationConfig) -> Option<Pagination> {
             },
             items_field: c.items.clone(),
             page_size_param: c.page_size_param.clone(),
-            exhausted_when: Exhausted::CursorNull,
+            exhausted_when: if c.has_more.is_some() {
+                Exhausted::HasMoreFalse
+            } else {
+                Exhausted::CursorNull
+            },
+            has_more_field: c.has_more.clone(),
+            cursor_item_field: None,
             inferred: false,
         });
     }
@@ -102,6 +131,8 @@ fn configured(entry: &PaginationConfig) -> Option<Pagination> {
             items_field: o.items.clone(),
             page_size_param: Some(o.limit_param.clone()),
             exhausted_when: Exhausted::EmptyItems,
+            has_more_field: None,
+            cursor_item_field: None,
             inferred: false,
         });
     }
@@ -114,6 +145,8 @@ fn configured(entry: &PaginationConfig) -> Option<Pagination> {
             items_field: p.items.clone(),
             page_size_param: Some(p.size_param.clone()),
             exhausted_when: Exhausted::EmptyItems,
+            has_more_field: None,
+            cursor_item_field: None,
             inferred: false,
         });
     }
@@ -122,6 +155,8 @@ fn configured(entry: &PaginationConfig) -> Option<Pagination> {
         items_field: l.items.clone(),
         page_size_param: None,
         exhausted_when: Exhausted::NoLink,
+        has_more_field: None,
+        cursor_item_field: None,
         inferred: false,
     })
 }
@@ -144,9 +179,11 @@ fn infer_for(cx: &Ctx<'_>, built: &BuiltOp) -> Option<Pagination> {
         .iter()
         .map(|p| p.wire_name.as_str())
         .collect();
-    cursor(cx, &target, schema, &query)
-        .or_else(|| link_header(cx, &built.op, &target, schema, &query))
-        .or_else(|| offset_or_page(cx, &target, schema, &query))
+    let op = &built.op;
+    cursor(cx, op, &target, schema, &query)
+        .or_else(|| after_id(cx, &target, schema, &query))
+        .or_else(|| link_header(cx, op, &target, schema, &query))
+        .or_else(|| offset_or_page(cx, op, &target, schema, &query))
 }
 
 fn link_header(
@@ -176,14 +213,20 @@ fn link_header(
         items_field: items,
         page_size_param: first_present(&PAGE_SIZE_PARAMS, query),
         exhausted_when: Exhausted::NoLink,
+        has_more_field: None,
+        cursor_item_field: None,
         inferred: true,
     })
 }
 
-fn cursor(cx: &Ctx<'_>, target: &RefTarget, schema: &Value, query: &[&str]) -> Option<Pagination> {
-    if !is_closed(schema) {
-        return None;
-    }
+fn cursor(
+    cx: &Ctx<'_>,
+    op: &Operation,
+    target: &RefTarget,
+    schema: &Value,
+    query: &[&str],
+) -> Option<Pagination> {
+    let closed = is_closed(schema);
     let props = schema.get("properties")?.as_object()?;
     let items = single_array_property(cx, target, props)?;
     let mut nexts = props.keys().filter(|k| k.starts_with("next_"));
@@ -196,13 +239,19 @@ fn cursor(cx: &Ctx<'_>, target: &RefTarget, schema: &Value, query: &[&str]) -> O
     }
     let suffix = &next["next_".len()..];
     let request = if query.contains(&suffix) {
+        // An open object is only trusted with an exact, string-typed match.
+        if !closed && !is_string_param(op, suffix) {
+            return None;
+        }
         suffix.to_string()
-    } else {
+    } else if closed {
         let mut known = CURSOR_PARAMS.iter().filter(|c| query.contains(c));
         match (known.next(), known.next()) {
             (Some(only), None) => only.to_string(),
             _ => return None,
         }
+    } else {
+        return None;
     };
     Some(Pagination {
         style: PaginationStyle::Cursor {
@@ -212,12 +261,93 @@ fn cursor(cx: &Ctx<'_>, target: &RefTarget, schema: &Value, query: &[&str]) -> O
         items_field: items,
         page_size_param: first_present(&PAGE_SIZE_PARAMS, query),
         exhausted_when: Exhausted::CursorNull,
+        has_more_field: None,
+        cursor_item_field: None,
         inferred: true,
     })
 }
 
+/// `after_id` request, `has_more` stop; the next cursor is `last_id` or the
+/// last item's `id`.
+fn after_id(
+    cx: &Ctx<'_>,
+    target: &RefTarget,
+    schema: &Value,
+    query: &[&str],
+) -> Option<Pagination> {
+    if !query.contains(&"after_id") {
+        return None;
+    }
+    let props = schema.get("properties")?.as_object()?;
+    let items = single_array_property(cx, target, props)?;
+    let (_, has_more) = cx.deref_value(&property(target, "has_more"))?;
+    if types(has_more) != ["boolean"] {
+        return None;
+    }
+    let has_last_id = cx
+        .deref_value(&property(target, "last_id"))
+        .is_some_and(|(t, s)| types(s) == ["string"] || is_nullable_string(cx, &t, s));
+    let item_id = items_have_string_id(cx, target, &items).then(|| "id".to_string());
+    if !has_last_id && item_id.is_none() {
+        return None;
+    }
+    let (response_field, cursor_item_field) = (if has_last_id { "last_id" } else { "" }, item_id);
+    Some(Pagination {
+        style: PaginationStyle::Cursor {
+            request_param: "after_id".into(),
+            response_field: response_field.into(),
+        },
+        items_field: items,
+        page_size_param: first_present(&PAGE_SIZE_PARAMS, query),
+        exhausted_when: Exhausted::HasMoreFalse,
+        has_more_field: Some("has_more".into()),
+        cursor_item_field,
+        inferred: true,
+    })
+}
+
+/// The array property's items are objects with a string `id` property.
+fn items_have_string_id(cx: &Ctx<'_>, target: &RefTarget, array: &str) -> bool {
+    let Some((array_target, _)) = cx.deref_value(&property(target, array)) else {
+        return false;
+    };
+    let Some((item_target, _)) = cx.deref_value(&child(&array_target, "items")) else {
+        return false;
+    };
+    cx.deref_value(&property(&item_target, "id"))
+        .is_some_and(|(_, id)| types(id) == ["string"])
+}
+
+/// The query parameter `name` is a string (possibly nullable).
+fn is_string_param(op: &Operation, name: &str) -> bool {
+    op.params
+        .query
+        .iter()
+        .find(|p| p.wire_name == name)
+        .is_some_and(|p| is_string_type(&p.ty))
+}
+
+fn is_string_type(ty: &TypeRef) -> bool {
+    let TypeRef::Inline(shape) = ty else {
+        return false;
+    };
+    match shape.as_ref() {
+        Shape::Primitive {
+            primitive: Primitive::String { .. },
+            ..
+        }
+        | Shape::Enum {
+            base: Primitive::String { .. },
+            ..
+        } => true,
+        Shape::Nullable { inner } => is_string_type(inner),
+        _ => false,
+    }
+}
+
 fn offset_or_page(
     cx: &Ctx<'_>,
+    op: &Operation,
     target: &RefTarget,
     schema: &Value,
     query: &[&str],
@@ -228,7 +358,7 @@ fn offset_or_page(
             limit_param: "limit".into(),
         };
         (style, "limit".to_string())
-    } else if query.contains(&"page") {
+    } else if query.contains(&"page") && !is_string_param(op, "page") {
         let size = first_present(&PAGE_PARAM_SIZES, query)?;
         let style = PaginationStyle::Page {
             page_param: "page".into(),
@@ -248,6 +378,8 @@ fn offset_or_page(
         items_field: items,
         page_size_param: Some(size),
         exhausted_when: Exhausted::EmptyItems,
+        has_more_field: None,
+        cursor_item_field: None,
         inferred: true,
     })
 }

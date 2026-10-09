@@ -113,6 +113,7 @@ struct Computed {
 
 pub(crate) fn run(ir: &mut Ir, cfg: &AgentConfig, r: &mut Reporter<'_>) {
     errors::envelope(ir, cfg, r);
+    errors::code_statuses(ir, cfg);
     let index = Index::build(ir);
     let mut computed: BTreeMap<String, Computed> = BTreeMap::new();
     let mut explicit_clusters = BTreeMap::new();
@@ -208,6 +209,7 @@ pub(crate) fn run(ir: &mut Ir, cfg: &AgentConfig, r: &mut Reporter<'_>) {
     for (id, field) in marks {
         mark_sensitive(&mut ir.types, &id, &field);
     }
+    errors::unused_gates(cfg, ir, r);
     ir.agent = agent;
 }
 
