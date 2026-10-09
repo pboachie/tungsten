@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The `tungsten.yml` shape manifest (planning/04).
+//! The `tungsten.yml` shape manifest: which OpenAPI documents to compile,
+//! how to name and shape the API, and which targets to emit.
 //!
 //! The structs here are the contract the builder consumes. Loading runs in
 //! three stages, each reporting diagnostics with the JSON Pointer of the
@@ -62,7 +63,7 @@ pub struct TungstenConfig {
     pub pagination: IndexMap<String, PaginationConfig>,
     #[serde(default)]
     pub types: TypesConfig,
-    /// Target name → target options. Typed per target in Phase 2.
+    /// Target name → target options, kept as raw JSON and typed by each emitter.
     #[serde(default)]
     pub targets: IndexMap<String, serde_json::Value>,
     #[serde(default)]

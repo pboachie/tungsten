@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! `x-agent-*` operation extensions (planning/04 "Vendor extensions").
+//! `x-agent-*` operation extensions.
 //!
 //! Each extension has the shape of the matching `tools` key:
 //! `x-agent-safety`, `x-agent-idempotency`, `x-agent-preview`,

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! MCP tool names (planning/07 "MCP tool surface"):
+//! MCP tool names:
 //! `<namespace>_<resource path>_<method>` in snake_case, at most
 //! [`MAX_TOOL_NAME`] characters, unique within the server.
 //!

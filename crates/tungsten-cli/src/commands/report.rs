@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! `tungsten report`: the generation report (planning/07 "Generation
-//! report"): coverage, the safety matrix with the source of every value,
+//! `tungsten report`: the generation report: coverage, the safety matrix with the source of every value,
 //! token budgets, diagnostics grouped by code and the changes since the
 //! last generation.
 //!

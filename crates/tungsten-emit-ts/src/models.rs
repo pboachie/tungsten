@@ -3,8 +3,7 @@
 //! `src/models/<namespace>.ts` files.
 //!
 //! Every named type is written twice under one name: an explicit type
-//! alias (the documented source of truth, wire field names, presence per
-//! planning/03) and a Zod schema constant checked against it with
+//! alias (the documented source of truth, wire field names, presence) and a Zod schema constant checked against it with
 //! `satisfies z.ZodType<T>`. Schemas are declared dependencies first; a
 //! reference inside a cycle or to another namespace's module is wrapped in
 //! `z.lazy`, and the members of a cycle are annotated `z.ZodType<T>` so

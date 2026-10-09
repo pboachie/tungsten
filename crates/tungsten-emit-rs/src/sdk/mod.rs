@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The SDK half of the `rust` target (planning/05 "Rust SDK and CLI").
+//! The SDK half of the `rust` target.
 //!
 //! Generated crates are mostly data for `tungsten-runtime`
 //! (`runtimes/rust/runtime/src/types.rs` is the contract):
@@ -8,8 +8,8 @@
 //!   (with validators that decode the arguments, a response or a page item
 //!   with `serde_path_to_error` and run the type's constraint checks) and
 //!   the `ApiDescriptor`, built once;
-//! - `src/models/<namespace>.rs`: serde types for every IR type (presence
-//!   per planning/03: `T`, `Option<T>`, `Option<T>` left out when `None`,
+//! - `src/models/<namespace>.rs`: serde types for every IR type (presence:
+//!   `T`, `Option<T>`, `Option<T>` left out when `None`,
 //!   `Patch<T>`) and a `check_<name>` function per type with constraints;
 //! - `src/resources/<resource>.rs`: a resource struct per resource with an
 //!   async method per operation `(request, &CallOptions)`, `preview_<method>`

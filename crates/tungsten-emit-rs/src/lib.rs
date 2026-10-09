@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Rust SDK and CLI emitter (planning/05 "Rust SDK and CLI").
+//! Rust SDK and CLI emitter.
 //!
-//! PHASE-5 CONTRACT. The `rust` target writes one Cargo workspace:
+//! The `rust` target writes one Cargo workspace:
 //!
 //! ```text
 //! Cargo.toml                       workspace: <package>, <cli_package>
@@ -32,6 +32,9 @@
 //! - The CLI crate depends on the SDK crate and `tungsten-cli-kit` (a version
 //!   or a path); its `main` builds the `CliSpec` from `table.rs` and calls
 //!   `tungsten_cli_kit::run(&spec, argv, <Api>Client::new)`.
+//!
+//! Stability: the workspace layout, the options and the runtime contract
+//! files these halves share are stable. Changes are additive.
 //!
 //! Diagnostics: TG0740–TG0749 belong to the SDK half, TG0750–TG0759 to the
 //! CLI half.

@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Request bodies and media-type content (planning/03 `Body`,
-//! `BodyContent`). One entry per media type, in spec order.
+//! Request bodies and media-type content (`Body`, `BodyContent`). One entry per media type, in spec order.
 
 use serde_json::Value;
 use tungsten_ir::{Body, BodyContent, BodyEncoding, Primitive, Shape, TypeRef};

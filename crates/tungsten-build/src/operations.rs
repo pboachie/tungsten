@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Operations of one namespace (planning/03 "Operations").
+//! Operations of one namespace.
 //!
 //! Paths are visited in the order written, and the methods of a path item
 //! in the order get, put, post, delete, options, head, patch, trace. Before

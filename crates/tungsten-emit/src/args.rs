@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! The arguments object of an operation as generated SDKs take it
-//! (planning/05 "Method shape", `runtimes/ts/src/types.ts`
-//! `ParamDescriptor` and `BodyDescriptor`).
+//! (the TypeScript runtime's
+//! `ParamDescriptor` and `BodyDescriptor` in `runtimes/ts/src/types.ts` are
+//! its contract).
 //!
 //! This layout is the single source of truth for every emitter: the
 //! TypeScript SDK's args types, request schemas and `BodyDescriptor`s, and

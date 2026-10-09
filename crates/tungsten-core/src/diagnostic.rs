@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! Diagnostics with stable codes.
 //!
-//! Code ranges (planning/03): `TG01xx` parsing, `TG02xx` refs and cycles,
+//! Code ranges: `TG01xx` parsing, `TG02xx` refs and cycles,
 //! `TG03xx` type normalization, `TG04xx` naming, `TG05xx` pagination/auth
 //! inference, `TG06xx` manifests, `TG07xx` emitter limits, `TG09xx`
 //! staleness/CI. The registry of codes lives in [`codes`].

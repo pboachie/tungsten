@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Compiled agent metadata (planning/04 "Compiled form in the IR").
+//! Compiled agent metadata: safety tier, idempotency, retries, previews and
+//! confirmation, verification hooks, remediation, macros and disclosure
+//! policy, in the form emitters and runtimes consume.
 //!
 //! The builder sets the method defaults ([`OperationAgentMeta::default_for`]);
 //! `tungsten-agent` fills the rest from `agent.yml` and the spec's
@@ -133,7 +135,7 @@ ir_struct! {
         pub sensitive_response_fields: Vec<String>,
         #[serde(default)]
         pub shown_once: bool,
-        /// Pruned description for agent tool schemas (Phase 2).
+        /// Pruned description for agent tool schemas, filled in by `tungsten-agent`.
         #[serde(default)]
         pub compact_doc: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -163,7 +165,9 @@ impl Default for OperationAgentMeta {
 }
 
 impl OperationAgentMeta {
-    /// Phase-1 default from the HTTP method alone (planning/04 defaults).
+    /// Default from the HTTP method alone: safe methods are `read_only`,
+    /// `DELETE` is `destructive`, everything else `mutating`; only
+    /// `read_only` operations skip the local preview.
     pub fn default_for(method: crate::HttpMethod) -> Self {
         let safety = match method {
             m if m.is_safe() => Safety::ReadOnly,
@@ -184,8 +188,8 @@ impl OperationAgentMeta {
 }
 
 ir_struct! {
-    /// A multi-step workflow exposed like an operation (planning/04
-    /// "macros"), in the canonical form shared with the emitters:
+    /// A multi-step workflow exposed like an operation (an `agent.yml`
+    /// macro), in the canonical form shared with the emitters:
     ///
     /// - `steps`: `[{kind: "call"|"poll"|"paginate", operation, args, as,
     ///   until, interval_ms, budget_ms, max_pages}]`, absent keys `null`;
@@ -234,7 +238,7 @@ ir_struct! {
         pub status: u16,
         /// A media type, or `none` for a bare status.
         pub media: String,
-        /// One of the runtime's error categories (planning/06).
+        /// One of the runtime's error categories (for example `RATE_LIMITED`).
         pub category: String,
         pub retryable: Retryable,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -262,7 +266,7 @@ ir_struct! {
 
 ir_struct! {
     /// Retry defaults by tier (agent.yml `defaults.retries`). Mutations are
-    /// retried only with an idempotency key (planning/06).
+    /// retried only with an idempotency key.
     pub struct RetryDefaults {
         pub read_only: RetryPolicy,
         pub mutating: RetryPolicy,

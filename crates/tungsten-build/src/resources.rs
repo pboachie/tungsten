@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The resource tree and method names (planning/04 "Resource tree
-//! inference").
+//! The resource tree and method names (inference of the resource tree).
 //!
 //! Placement of an operation:
 //! 1. `tungsten.yml` `resources` of the namespace: the configured resource

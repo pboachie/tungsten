@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! The environment variables the generated server reads (one per secret,
-//! never a command-line argument; planning/07 principle 4).
+//! never a command-line argument, so secrets stay out of process listings and shell history).
 //!
 //! `<API>` is the API name and `<SCHEME>` the auth scheme name in
 //! SCREAMING_SNAKE_CASE:

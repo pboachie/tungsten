@@ -1,10 +1,45 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The tungsten intermediate representation (planning/03).
+//! The tungsten intermediate representation (IR).
 //!
-//! The IR is the only input emitters see. Every collection is ordered
-//! deterministically (sorted ids or source order), so serializing the same
-//! IR twice yields identical bytes. `ir_version` follows the stability
-//! policy in planning/03.
+//! The IR is the language-neutral description of a compiled API: the
+//! operations grouped into namespaces and resources, a table of named types,
+//! the auth schemes, the error model and the agent metadata (safety tiers,
+//! idempotency, retries, confirmation, macros). The builder produces it from
+//! OpenAPI documents, `tungsten-agent` enriches it from `agent.yml`, and it
+//! is the only input emitters see.
+//!
+//! Every collection is ordered deterministically (sorted ids or source
+//! order), so serializing the same IR twice yields identical bytes.
+//! `ir_version` follows semantic versioning: minor versions only add fields
+//! (with serde defaults), so older documents still load.
+//!
+//! # Layout
+//!
+//! - [`Ir`] is the root. [`Namespace`] is one input document; it owns a tree
+//!   of [`Resource`]s whose [`Operation`]s carry [`ParamSet`]s, an optional
+//!   [`Body`], [`Response`]s, security requirements and agent metadata.
+//!   [`Ir::operations`] walks all callable operations in a stable order.
+//! - [`types`] is the type system: a [`TypeTable`] of [`NamedType`]s keyed by
+//!   [`TypeId`], with [`Shape`]s (primitives, enums, records, maps, arrays,
+//!   unions, nullable wrappers) and per-[`Field`] [`Presence`], which keeps
+//!   "required", "nullable" and "optional" distinct.
+//! - [`agent`] holds the compiled agent metadata: [`OperationAgentMeta`] per
+//!   operation and [`AgentModel`] for the API-wide policy.
+//! - [`ident`] and [`naming`] store identifiers as a wire name plus
+//!   normalized words and render them in each target language's casing, with
+//!   keyword escaping and collision handling.
+//!
+//! # Usage
+//!
+//! The IR is plain data that implements `serde::Serialize` and
+//! `Deserialize`. [`Ir::json_schema`] returns its JSON Schema.
+//!
+//! ```text
+//! let ir: Ir = serde_json::from_str(&text)?;
+//! for op in ir.operations() {
+//!     println!("{} {:?}", op.id.0, op.method);
+//! }
+//! ```
 
 pub mod agent;
 pub mod ident;

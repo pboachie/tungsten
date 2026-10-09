@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! `llms.txt` and `llms-full.txt` (planning/05 "Docs", NFR-8).
+//! `llms.txt` and `llms-full.txt`.
 //!
 //! Both follow the llms.txt layout: an H1 title, a blockquote summary, then
 //! sections. Callable operations are listed per namespace and resource as

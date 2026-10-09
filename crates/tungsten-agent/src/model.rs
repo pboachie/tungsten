@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The `agent.yml` model (planning/04 "agent.yml").
+//! The `agent.yml` model: per-operation tool overrides, API-wide defaults
+//! (retries, disclosure, error handling), gates, macros and clusters.
 //!
 //! Every struct denies unknown keys. Shapes that a JSON Schema can express
 //! are declared here and published by [`crate::json_schema`]; the rules it
@@ -420,7 +421,7 @@ pub struct ResponseConfig {
     pub shown_once: bool,
 }
 
-/// The runtime's closed set of error categories (planning/06).
+/// The runtime's closed set of error categories.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum Category {
@@ -460,7 +461,7 @@ impl Category {
         }
     }
 
-    /// The default `retryable` of the category (planning/06).
+    /// The default `retryable` of the category.
     pub fn default_retryable(self) -> Retryable {
         match self {
             Category::RateLimited | Category::UpstreamUnavailable | Category::TransportFailed => {

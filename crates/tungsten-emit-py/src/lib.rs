@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Python SDK emitter (planning/05 "Python SDK").
+//! Python SDK emitter.
 //!
 //! Generated packages are mostly data for `tungsten-runtime`
 //! (`runtimes/python/src/tungsten_runtime/types.py` is the contract):
@@ -9,7 +9,7 @@
 //!   response validator built on `pydantic.TypeAdapter`) and the
 //!   `ApiDescriptor`;
 //! - `<module>/models/<namespace>.py`: a Pydantic v2 model per record and a
-//!   PEP 695 `type` alias per other named type (presence per planning/03:
+//!   PEP 695 `type` alias per other named type (presence:
 //!   `T`, `T | None`, `T | Unset = UNSET`, `T | None | Unset = UNSET`);
 //! - `<module>/resources/<resource>.py`: a sync and an async class per
 //!   resource; each operation is a method with keyword-only arguments
