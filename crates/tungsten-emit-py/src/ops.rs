@@ -148,6 +148,13 @@ pub(crate) fn op_shape<'a>(plan: &Plan<'a>, info: &OpInfo<'a>) -> OpShape<'a> {
     let result = Cx::new(plan, None);
     let schema = Cx::new(plan, None);
     let layout = args_layout(plan.ir, op);
+    // What a request argument accepts: with dataclass models a record is
+    // also given as its `TypedDict`.
+    let arg_flavor = if plan.dataclasses() {
+        Flavor::Input
+    } else {
+        Flavor::Hint
+    };
     let located: Vec<_> = layout.params.iter().chain(&layout.supplied).collect();
     let keys = unique(
         ARG_RESERVED,
@@ -171,7 +178,7 @@ pub(crate) fn op_shape<'a>(plan: &Plan<'a>, info: &OpInfo<'a>) -> OpShape<'a> {
 
     let mut fields: Vec<ArgField> = vec![];
     for p in params.iter().filter(|p| is_arg(p.param)) {
-        let value = hint.ty(&p.param.ty, Flavor::Hint);
+        let value = hint.ty(&p.param.ty, arg_flavor);
         let mut notes = vec![doc_text(p.param.doc.as_ref())];
         if p.name != p.param.wire_name {
             notes.push(format!(
@@ -224,7 +231,7 @@ pub(crate) fn op_shape<'a>(plan: &Plan<'a>, info: &OpInfo<'a>) -> OpShape<'a> {
                 taken.push(key.clone());
                 let optional =
                     matches!(f.presence, Presence::Optional | Presence::OptionalNullable);
-                let value = hint.field_value(f, Flavor::Hint);
+                let value = hint.field_value(f, arg_flavor);
                 fields.push(ArgField {
                     key: key.clone(),
                     hint: if optional {
@@ -249,10 +256,13 @@ pub(crate) fn op_shape<'a>(plan: &Plan<'a>, info: &OpInfo<'a>) -> OpShape<'a> {
             let name = free_name(&taken, "body");
             taken.push(name.clone());
             let (value, schema_text, json) = match content.encoding {
-                BodyEncoding::Bytes => (PyTy::one("bytes"), schema.internal("Binary"), false),
+                BodyEncoding::Bytes => {
+                    hint.runtime("BinaryInput");
+                    (PyTy::one("BinaryInput"), schema.internal("Binary"), false)
+                }
                 BodyEncoding::Text => (PyTy::one("str"), "str".to_string(), false),
                 BodyEncoding::Json | BodyEncoding::Form | BodyEncoding::Multipart => (
-                    hint.ty(&content.ty, Flavor::Hint),
+                    hint.ty(&content.ty, arg_flavor),
                     schema.value(&schema.ty(&content.ty, Flavor::Schema)),
                     content.encoding == BodyEncoding::Json,
                 ),
@@ -334,12 +344,7 @@ pub(crate) fn op_shape<'a>(plan: &Plan<'a>, info: &OpInfo<'a>) -> OpShape<'a> {
         let joined = if json.len() == 1 {
             json[0].0.clone()
         } else {
-            schema.uses.borrow_mut().typing.insert("Annotated");
-            schema.uses.borrow_mut().pydantic.insert("Field");
-            PyTy::one(format!(
-                "Annotated[{}, Field(union_mode=\"left_to_right\")]",
-                PyTy::union(json.iter().map(|(s, _)| s.clone())).text()
-            ))
+            schema.left_to_right(PyTy::union(json.iter().map(|(s, _)| s.clone())))
         };
         schema.value(&if bodiless { joined.nullable() } else { joined })
     });

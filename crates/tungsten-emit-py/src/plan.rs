@@ -11,7 +11,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use tungsten_ir::naming::{self, Case, Role, Target};
-use tungsten_ir::{Ident, Ir, Operation, OperationStatus, Resource, TypeId};
+use tungsten_ir::{BodyEncoding, Ident, Ir, Operation, OperationStatus, Resource, TypeId, TypeRef};
+
+use crate::options::Models;
 
 const PY: Target = Target::Python;
 
@@ -173,12 +175,17 @@ pub(crate) fn field_names<'f>(wires: impl IntoIterator<Item = &'f Ident>) -> Vec
 pub const MODELS_RESERVED: &[&str] = &[
     "Annotated",
     "Any",
+    "BinaryInput",
     "ConfigDict",
     "Field",
     "I",
     "Literal",
+    "Mapping",
+    "NotRequired",
     "O",
+    "Sequence",
     "Tag",
+    "TypedDict",
     "Unset",
 ];
 
@@ -269,6 +276,11 @@ pub(crate) struct Plan<'a> {
     pub client_resources: Vec<(String, usize)>,
     pub client_class: String,
     pub async_client_class: String,
+    /// How models are written (`models` option).
+    pub models_kind: Models,
+    /// Records some operation sends as a form or multipart body: their
+    /// bytes fields take files in a request.
+    pub file_records: BTreeSet<TypeId>,
 }
 
 /// Names `_descriptors.py` defines besides the descriptor constants.
@@ -300,9 +312,22 @@ impl<'a> Plan<'a> {
             client_resources: vec![],
             client_class: String::new(),
             async_client_class: String::new(),
+            models_kind: Models::Pydantic,
+            file_records: file_records(ir),
         };
         plan.plan_resources(multi);
         plan
+    }
+
+    /// The plan for models written as `models`.
+    pub(crate) fn with_models(mut self, models: Models) -> Self {
+        self.models_kind = models;
+        self
+    }
+
+    /// Whether models are dataclasses.
+    pub(crate) fn dataclasses(&self) -> bool {
+        self.models_kind == Models::Dataclasses
     }
 
     pub(crate) fn multi(&self) -> bool {
@@ -469,6 +494,21 @@ impl<'a> Plan<'a> {
             self.client_resources = top_members(&all, CLIENT_RESERVED);
         }
     }
+}
+
+/// The named types some operation sends as a form or multipart body.
+fn file_records(ir: &Ir) -> BTreeSet<TypeId> {
+    let mut out = BTreeSet::new();
+    for op in ir.operations() {
+        for c in op.body.iter().flat_map(|b| &b.content) {
+            if let (BodyEncoding::Form | BodyEncoding::Multipart, TypeRef::Named(id)) =
+                (c.encoding, &c.ty)
+            {
+                out.insert(id.clone());
+            }
+        }
+    }
+    out
 }
 
 /// Type names and model namespaces.
