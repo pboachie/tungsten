@@ -3,8 +3,11 @@
 //! `text/event-stream` media type makes the operation streamable.
 //!
 //! - The stream is carried by the lowest success status (exact statuses
-//!   ascending) that declares the media type; another success status that
-//!   declares it too is ignored (TG0531).
+//!   ascending, then a `2XX` range, then `default`) that declares the media
+//!   type; another success status that declares it too is ignored (TG0531).
+//!   A `default` response that declares the media type counts as a success
+//!   (and its kind becomes `success`) when the operation has no other
+//!   success response: it is then the only thing a 2xx can be.
 //! - The event type is the media type's schema, usually a union tagged by
 //!   `type`. A media type without a schema gives events of any JSON type
 //!   (TG0530).
@@ -22,6 +25,7 @@ use tungsten_ir::{
 use tungsten_openapi::RefTarget;
 
 use crate::ctx::{Ctx, child};
+use crate::responses::parse_status;
 
 /// The extension that declares the end-of-stream sentinel.
 pub(crate) const DONE_EXTENSION: &str = "x-tungsten-stream-done";
@@ -39,15 +43,26 @@ pub(crate) fn is_event_stream(media_type: &str) -> bool {
 /// Set `streaming` and `stream` of an operation whose success responses
 /// carry an event stream.
 pub(crate) fn apply(cx: &mut Ctx<'_>, op: &mut Operation, at: &RefTarget) {
-    let carriers: Vec<&Response> = op
+    let carries = |r: &Response| r.content.iter().any(|c| is_event_stream(&c.media_type));
+    let has_success = op.responses.iter().any(|r| r.kind == ResponseKind::Success);
+    if !has_success {
+        // A `default` that declares the stream is the success response.
+        for response in &mut op.responses {
+            if response.status == StatusMatch::Default && carries(response) {
+                response.kind = ResponseKind::Success;
+            }
+        }
+    }
+    let mut carriers: Vec<&Response> = op
         .responses
         .iter()
-        .filter(|r| {
-            r.kind == ResponseKind::Success
-                && matches!(r.status, StatusMatch::Exact(_))
-                && r.content.iter().any(|c| is_event_stream(&c.media_type))
-        })
+        .filter(|r| r.kind == ResponseKind::Success && carries(r))
         .collect();
+    carriers.sort_by_key(|r| match r.status {
+        StatusMatch::Exact(code) => (0, code),
+        StatusMatch::Range(class) => (1, u16::from(class)),
+        StatusMatch::Default => (2, 0),
+    });
     let Some(response) = carriers.first() else {
         return;
     };
@@ -70,10 +85,9 @@ pub(crate) fn apply(cx: &mut Ctx<'_>, op: &mut Operation, at: &RefTarget) {
     else {
         return;
     };
-    let StatusMatch::Exact(code) = response.status else {
-        return;
-    };
-    let response_at = child(&child(at, "responses"), &code.to_string());
+    let responses_at = child(at, "responses");
+    let response_at = response_key(cx, &responses_at, response.status)
+        .map_or_else(|| responses_at.clone(), |key| child(&responses_at, &key));
     let media_at = cx.deref(&response_at).map_or(response_at, |t| {
         child(&child(&t, "content"), &content.media_type)
     });
@@ -116,6 +130,17 @@ pub(crate) fn apply(cx: &mut Ctx<'_>, op: &mut Operation, at: &RefTarget) {
         request_flag,
         also_plain,
     });
+}
+
+/// The key of the Responses Object that declares `status` (`200`, `2XX` or
+/// `2xx`, `default`), as the document spells it.
+fn response_key(cx: &Ctx<'_>, responses_at: &RefTarget, status: StatusMatch) -> Option<String> {
+    let Some(Value::Object(map)) = cx.get(responses_at) else {
+        return None;
+    };
+    map.keys()
+        .find(|key| parse_status(key) == Some(status))
+        .cloned()
 }
 
 /// `stream` when the JSON request body is a record with a boolean member of

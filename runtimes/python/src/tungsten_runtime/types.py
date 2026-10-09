@@ -616,6 +616,10 @@ class ClientOptions:
     now: Callable[[], float] | None = None
     #: Random number in [0, 1) for retry jitter.
     random: Callable[[], float] | None = None
+    #: Largest server-sent event ``stream()`` accepts, in UTF-8 bytes (the
+    #: field lines of one event plus the line being read). A larger one ends
+    #: the stream with an ``UNEXPECTED_RESPONSE`` failure. Default 1 MiB.
+    max_event_bytes: int = 1_048_576
 
 
 class CallOptions(TypedDict, total=False):

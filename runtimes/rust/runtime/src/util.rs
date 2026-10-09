@@ -612,3 +612,25 @@ pub fn scrub_value(value: &Value, secrets: &SecretSet) -> Value {
         other => other.clone(),
     }
 }
+
+/// The `Accept` value of a stream call: the caller's media ranges in order
+/// without repeats, `text/event-stream` first when they do not name it.
+pub(crate) fn merge_accept(value: &str) -> String {
+    let mut ranges: Vec<&str> = Vec::new();
+    for part in value.split(',') {
+        let range = part.trim();
+        if !range.is_empty() && !ranges.contains(&range) {
+            ranges.push(range);
+        }
+    }
+    let names = ranges.iter().any(|range| {
+        range
+            .split(';')
+            .next()
+            .is_some_and(|essence| essence.trim().eq_ignore_ascii_case("text/event-stream"))
+    });
+    if !names {
+        ranges.insert(0, "text/event-stream");
+    }
+    ranges.join(", ")
+}
