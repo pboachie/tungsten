@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! Security schemes, requirements and composite auth profiles
-//! (planning/03 "Auth", planning/06 "Auth profiles").
+//! (a composite profile combines several schemes that a request needs together).
 //!
 //! Schemes come from `components/securitySchemes` of every namespace. A
 //! name defined identically (ignoring descriptions) in several namespaces

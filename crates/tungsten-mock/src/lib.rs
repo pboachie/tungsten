@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! IR-driven mock HTTP server (planning/05 "Mock server", planning/08 L4).
+//! IR-driven mock HTTP server.
 //!
 //! Validates requests against the IR, answers with deterministic
 //! schema-derived values, records every call, and injects failures on

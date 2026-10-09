@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Polling and verification hooks (planning/06 "Verification").
+//! Polling and verification hooks.
 
 use std::time::{Duration, Instant};
 

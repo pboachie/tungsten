@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Responses (planning/03 `Response`): exact statuses ascending, then
+//! Responses: exact statuses ascending, then
 //! `NXX` ranges, then `default`. 1xx to 3xx are successes and everything
-//! else is an error; `Ambiguous` is decided by agent.yml in Phase 2.
+//! else is an error; `Ambiguous` is decided later by `agent.yml`
+//! (see `tungsten-agent`).
 
 use serde_json::Value;
 use tungsten_core::Diagnostic;

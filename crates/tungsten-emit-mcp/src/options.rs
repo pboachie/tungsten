@@ -9,7 +9,7 @@
 //! | `sdk_path` | depend on the SDK by path (`file:<path>`) instead of a range | |
 //! | `runtime` | `@tungsten/mcp` version range | `^0.1.0` |
 //! | `runtime_path` | depend on `@tungsten/mcp` by path | |
-//! | `sandbox` | enable the opt-in `run_script` sandbox (planning/02 D7) | `false` |
+//! | `sandbox` | enable the opt-in `run_script` sandbox | `false` |
 //!
 //! An invalid value is a TG0720 warning and the default is used.
 

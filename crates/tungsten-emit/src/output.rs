@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Generated-file headers, writing to disk and staleness checks
-//! (planning/05 "Common output contract").
+//! Generated-file headers, writing to disk and staleness checks.
 //!
 //! Every target directory written by [`write_output`] holds
 //! `.tungsten/manifest.json` ([`OutputManifest`]): the tungsten version, the

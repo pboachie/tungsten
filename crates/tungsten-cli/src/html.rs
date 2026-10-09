@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The static HTML form of `tungsten report` (planning/07 "Generation
-//! report").
+//! The static HTML form of `tungsten report` (the generation
+//! report).
 //!
 //! One self-contained file: inline CSS, no scripts, no external assets or
 //! links (only in-page anchors), light and dark through

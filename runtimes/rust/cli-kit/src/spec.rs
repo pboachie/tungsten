@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The command table a generated CLI hands to the kit (PHASE-5 CONTRACT;
-//! the CLI agent owns this file and may extend it additively).
+//! The command table a generated CLI hands to the kit (stable; extended
+//! additively).
 
 use serde_json::Value;
 use tungsten_runtime::Safety;

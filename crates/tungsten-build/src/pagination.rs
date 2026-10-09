@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Pagination (planning/03 "Pagination"): an explicit `tungsten.yml` entry
+//! Pagination: an explicit `tungsten.yml` entry
 //! wins (`none: true` switches inference off); otherwise callable GET
 //! operations are matched against the heuristics below, which read the
 //! normalized schemas directly. Every inference is a TG0501 warning.

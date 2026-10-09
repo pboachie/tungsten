@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The diagnostic error envelope (planning/06): construction with every field
+//! The diagnostic error envelope: construction with every field
 //! present, default `retryable` per category, status to category mapping and
 //! the generic remediation texts used when neither the operation nor the API
 //! has a specific entry.
@@ -9,7 +9,7 @@ use serde_json::Value;
 use crate::types::{Category, Diagnostic, Retryable, Status, Trace};
 use crate::util::{SecretSet, scrub_text, scrub_value};
 
-/// Default `retryable` per category (planning/06 table).
+/// Default `retryable` per category.
 pub fn default_retryable(category: Category) -> Retryable {
     match category {
         Category::RateLimited | Category::UpstreamUnavailable | Category::TransportFailed => {

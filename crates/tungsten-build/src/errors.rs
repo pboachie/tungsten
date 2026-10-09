@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Error models (planning/03 "Errors"), read from the normalized
+//! Error models, read from the normalized
 //! documents. Each namespace gets its own model, because each document
 //! declares its own error schema (ZROtext: `public.Error` and
 //! `sealed.Error` with different code sets, `workflow.WorkflowError` with

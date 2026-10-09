@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Builds the IR from loaded OpenAPI documents and `tungsten.yml`
-//! (planning/03).
+//! Builds the IR from loaded OpenAPI documents and `tungsten.yml`.
 //!
 //! Ownership inside this crate:
 //! - `types/`   schema → IR types (nullability, unions, allOf, enums, cycles,

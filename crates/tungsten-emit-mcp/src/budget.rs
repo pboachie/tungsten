@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Token budgets of the MCP surface (planning/01 NFR-3, planning/10 P5).
+//! Token budgets of the MCP surface.
 //!
 //! - Per tool: `schemaTokens` (description and input schema) must stay
 //!   within agent.yml `defaults.disclosure.schema_budget_tokens`; a tool
@@ -26,7 +26,7 @@ use tungsten_core::{Diagnostic, Diagnostics};
 
 use crate::manifest::{McpManifest, Mode, tokens};
 
-/// NFR-3: tokens of the progressive tool list and index summary.
+/// Tokens of the progressive tool list and index summary.
 pub const INDEX_BUDGET: usize = 2000;
 
 /// Replacement of a sensitive response field on a repeated identical call

@@ -2,7 +2,7 @@
 //! Operation parameters: path-level and operation-level declarations
 //! merged (the operation's declaration replaces the path item's with the
 //! same location and name), serialization defaults from OpenAPI, roles
-//! (planning/03 `ParamRole`) and names unique within the operation.
+//! (`ParamRole`) and names unique within the operation.
 
 use serde_json::Value;
 use tungsten_core::Diagnostic;

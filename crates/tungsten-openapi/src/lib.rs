@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! OpenAPI 3.0/3.1 frontend (planning/02, planning/03).
+//! OpenAPI 3.0/3.1 frontend.
 //!
 //! Loads documents (JSON or YAML) with a JSON-Pointer → byte-span index,
 //! applies overlays, normalizes 3.0 constructs to 3.1 form, resolves

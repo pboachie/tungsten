@@ -608,7 +608,7 @@ pub(crate) fn explanation(code: &str) -> Option<&'static Explanation> {
         .map(|i| &EXPLANATIONS[i])
 }
 
-/// The code range a diagnostic belongs to (planning/03).
+/// The code range a diagnostic belongs to.
 pub(crate) fn area(code: &str) -> &'static str {
     match code.get(..4) {
         Some("TG01") => "parsing and input limits (TG01xx)",

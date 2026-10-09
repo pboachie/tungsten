@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Auth resolution (planning/06 "Auth profiles"): an operation's security is
+//! Auth resolution: an operation's security is
 //! an OR of AND-sets of scheme names; the first alternative that
 //! `ClientOptions::auth` fully satisfies is applied. A composite profile
 //! satisfies the scheme names in its `satisfies` list when every part it
