@@ -50,6 +50,8 @@ class AuthPlan:
 class AuthOk:
     plan: AuthPlan
     secrets: list[str]
+    #: The authorization-code scheme whose stored token the plan carries, if any.
+    oauth: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,6 +61,9 @@ class AuthMissing:
 
 class TokenError(Exception):
     """Raised by a token source; the message is shown in the AUTH_FAILED envelope."""
+
+    #: The token endpoint refused the credential it was given (HTTP 4xx).
+    rejected: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,12 +75,15 @@ class OAuth2Client:
     scopes: list[str]
     client_id: str
     client_secret: str
+    #: True for the stored token of an authorization-code scheme (the other
+    #: fields are then not used).
+    authorization_code: bool = False
 
 
 #: Fetches (and caches) OAuth2 client-credentials tokens.
 type TokenSource = Callable[[OAuth2Client], Flow[str]]
 
-type _Apply = Callable[[AuthPlan, list[str], TokenSource], Flow[str | None]]
+type _Apply = Callable[[AuthPlan, list[str], TokenSource, list[str]], Flow[str | None]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,8 +149,8 @@ def _try_composite(c: Mapping[str, object], config: object, method: HttpMethod) 
     if len(missing) > 0:
         return _Missing(missing)
 
-    def apply(plan: AuthPlan, secrets: list[str], tokens: TokenSource) -> Flow[str | None]:
-        del tokens
+    def apply(plan: AuthPlan, secrets: list[str], tokens: TokenSource, oauth: list[str]) -> Flow[str | None]:
+        del tokens, oauth
         yield from ()
         for part in parts:
             value = str(values.get(_composite_key(part)))
@@ -170,6 +178,37 @@ def _try_direct(scheme: Mapping[str, object], config: object) -> _Satisfier | _M
     name = str_field(scheme, "name") or ""
     kind = scheme.get("kind")
     if kind == "oauth2" and is_record(config):
+        if config.get("flow") == "authorizationCode":
+            if not is_record(scheme.get("authorization_code")):
+                return _Missing(
+                    [
+                        f'auth.{name} (sets flow "authorizationCode", but the API descriptor has no '
+                        f"authorizationCode flow for {name})"
+                    ]
+                )
+            code_client_id = config.get("client_id")
+            if not isinstance(code_client_id, str) or code_client_id == "":
+                return _Missing([f"auth.{name} (a client_id for the authorizationCode flow)"])
+            code_secret = config.get("client_secret")
+            code_client = OAuth2Client(name, "", [], code_client_id, "", True)
+
+            def apply_code(
+                plan: AuthPlan, secrets: list[str], tokens: TokenSource, oauth: list[str]
+            ) -> Flow[str | None]:
+                if isinstance(code_secret, str) and code_secret != "":
+                    secrets.append(code_secret)
+                try:
+                    token = yield from tokens(code_client)
+                except TokenError as error:
+                    return str(error)
+                except Exception:
+                    return f"Could not obtain an OAuth2 token for {name}."
+                secrets.append(token)
+                oauth.append(name)
+                plan.headers.append(AuthHeader("Authorization", f"Bearer {token}", True))
+                return None
+
+            return _Satisfier(f"scheme:{name}", apply_code)
         client_id = config.get("client_id")
         client_secret = config.get("client_secret")
         token_url = scheme.get("token_url")
@@ -183,7 +222,10 @@ def _try_direct(scheme: Mapping[str, object], config: object) -> _Satisfier | _M
             scopes = [s for s in scopes_value if isinstance(s, str)] if is_array(scopes_value) else []
             client = OAuth2Client(name, token_url, scopes, client_id, client_secret)
 
-            def apply_oauth(plan: AuthPlan, secrets: list[str], tokens: TokenSource) -> Flow[str | None]:
+            def apply_oauth(
+                plan: AuthPlan, secrets: list[str], tokens: TokenSource, oauth: list[str]
+            ) -> Flow[str | None]:
+                del oauth
                 secrets.append(client.client_secret)
                 try:
                     token = yield from tokens(client)
@@ -196,7 +238,14 @@ def _try_direct(scheme: Mapping[str, object], config: object) -> _Satisfier | _M
                 return None
 
             return _Satisfier(f"scheme:{name}", apply_oauth)
-        return _Missing([f"auth.{name} (an access token, or {{client_id, client_secret}} for the token URL)"])
+        code = (
+            ', or {"flow": "authorizationCode", client_id, client_secret?, redirect_uri?}'
+            if is_record(scheme.get("authorization_code"))
+            else ""
+        )
+        return _Missing(
+            [f"auth.{name} (an access token, or {{client_id, client_secret}} for the token URL{code})"]
+        )
     if not isinstance(config, str) or config == "":
         if kind == "http_basic":
             what = f'"user:password" for HTTP Basic scheme {name}'
@@ -207,8 +256,8 @@ def _try_direct(scheme: Mapping[str, object], config: object) -> _Satisfier | _M
         return _Missing([f"auth.{name} ({what})"])
     secret = config
 
-    def apply(plan: AuthPlan, secrets: list[str], tokens: TokenSource) -> Flow[str | None]:
-        del tokens
+    def apply(plan: AuthPlan, secrets: list[str], tokens: TokenSource, oauth: list[str]) -> Flow[str | None]:
+        del tokens, oauth
         yield from ()
         secrets.append(secret)
         if kind == "api_key":
@@ -325,11 +374,12 @@ def resolve_auth(
         if len(missing) == 0:
             plan = AuthPlan()
             secrets: list[str] = []
+            used: list[str] = []
             for satisfier in satisfiers.values():
-                problem = yield from satisfier.apply(plan, secrets, tokens)
+                problem = yield from satisfier.apply(plan, secrets, tokens, used)
                 if problem is not None:
                     return AuthMissing(f"{problem} Operation {op_id} was not sent.")
-            return AuthOk(plan, secrets)
+            return AuthOk(plan, secrets, used[0] if len(used) > 0 else None)
         # Report the alternative the caller started to configure, then the
         # one with the fewest missing pieces.
         unique = list(dict.fromkeys(missing))

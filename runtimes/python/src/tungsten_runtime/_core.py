@@ -109,6 +109,7 @@ from ._helpers import (
 )
 from ._idempotency import check_key_format, has_key_param, key_format_description, key_header
 from ._json import canonical_json, display_json, js_number, parse_json
+from ._oauth import OAuthSession
 from ._serialize import (
     HeaderBag,
     SerializationError,
@@ -265,6 +266,8 @@ class Prepared:
     #: Wire names of query parameters whose values are shown redacted.
     hidden_query: list[str]
     secrets: frozenset[str]
+    #: The authorization-code scheme whose stored token this request carries.
+    oauth: str | None = None
 
 
 def _fail(error: Diagnostic, partial: object = None) -> Err:
@@ -297,6 +300,13 @@ class Engine:
         self.registry: dict[str, OperationDescriptor] = {}
         self.macros: dict[str, MacroDescriptor] = {}
         self._token_cache: dict[str, tuple[str, float]] = {}
+        self.oauth = OAuthSession(
+            self.api,
+            self.options,
+            getattr(self.options, "token_store", None),
+            self.now,
+            lambda: bounded(self.options.timeout_ms, _DEFAULT_TIMEOUT_MS, 1),
+        )
         #: Confirmation tokens already used to send, with the replay
         #: protection of their first use, until they expire.
         self._used_tokens: dict[str, tuple[str | None, float]] = {}
@@ -467,6 +477,14 @@ class Engine:
             return Answer(prepared)
         answer = yield from self._send(prepared, opts)
         if (
+            prepared.oauth is not None
+            and isinstance(answer.result, Err)
+            and answer.result.error["http_status"] == 401
+        ):
+            # An authorization-code token the server no longer accepts: refresh
+            # it and send once more. Never a second time.
+            answer = yield from self._retry_rejected(prepared, answer, opts)
+        if (
             isinstance(answer.result, Ok)
             and _opt(opts, "verify") is True
             and is_record(field(op["agent"], "verify"))
@@ -474,6 +492,24 @@ class Engine:
             verification = yield from self._verify(op, prepared.args, answer.raw, opts)
             return Answer(replace(answer.result, verification=verification), answer.raw)
         return answer
+
+    def _retry_rejected(
+        self, prepared: Prepared, rejected: Answer, opts: Mapping[str, object]
+    ) -> Flow[Answer]:
+        """The answer to a request whose stored OAuth2 token was rejected (401):
+        the refreshed token goes on the same request, which is sent once more;
+        ``rejected`` stands when nothing could be refreshed."""
+        current = prepared.headers.get("Authorization")
+        if prepared.oauth is None or current is None or not current.startswith("Bearer "):
+            return rejected
+        token = yield from self.oauth.refresh_after_rejection(prepared.oauth, current[len("Bearer ") :])
+        if token is None:
+            return rejected
+        prepared.headers.set("Authorization", f"Bearer {token}", True)
+        retried = yield from self._send(
+            replace(prepared, secrets=prepared.secrets | {token}, oauth=None), opts
+        )
+        return retried
 
     # --------------------------------------------------------- preflight
 
@@ -919,6 +955,7 @@ class Engine:
             auth_query=list(auth.plan.query),
             hidden_query=hidden,
             secrets=frozenset(secrets | set(headers.secrets())),
+            oauth=auth.oauth,
         )
 
     def _base_url(self) -> str | None:
@@ -1148,6 +1185,9 @@ class Engine:
             )
 
     def _token_source(self, client: OAuth2Client) -> Flow[str]:
+        if client.authorization_code:
+            token = yield from self.oauth.token(client.scheme)
+            return token
         cached = self._token_cache.get(client.scheme)
         if cached is not None and cached[1] > time.time() * 1000 + 30_000:
             return cached[0]

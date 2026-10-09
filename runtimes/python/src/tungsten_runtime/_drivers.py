@@ -14,6 +14,7 @@ import errno
 import inspect
 import socket
 import ssl
+import threading
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from dataclasses import dataclass
@@ -30,6 +31,7 @@ from ._effects import (
     Effect,
     Emit,
     Flow,
+    Invoke,
     Lost,
     NotSent,
     Observe,
@@ -233,6 +235,8 @@ def _drain(flow: Flow[Any], outcome: AttemptOutcome) -> object:
                 _discard(result)
                 result = None
             sent = None if isinstance(effect, Observe) else result
+        elif isinstance(effect, Invoke):
+            sent = None
         elif isinstance(effect, Shared):
             thrown = RuntimeError("the call was cancelled")
     flow.close()
@@ -295,13 +299,49 @@ class _AsyncStream:
 # ------------------------------------------------------------------ sync
 
 
+class _Flight:
+    """One run of a shared flow, awaited by the threads that asked for it."""
+
+    __slots__ = ("done", "error", "value")
+
+    def __init__(self) -> None:
+        self.done = threading.Event()
+        self.error: Exception | None = None
+        self.value = ""
+
+
 class SyncDriver:
     """Performs effects with ``httpx.Client``."""
 
-    __slots__ = ("http",)
+    __slots__ = ("_inflight", "_lock", "http")
 
     def __init__(self, http: httpx.Client) -> None:
         self.http = http
+        self._lock = threading.Lock()
+        self._inflight: dict[str, _Flight] = {}
+
+    def _shared(self, effect: Shared) -> str:
+        """Single flight: concurrent requests (threads) of one key share one run."""
+        with self._lock:
+            flight = self._inflight.get(effect.key)
+            leader = flight is None
+            if flight is None:
+                flight = _Flight()
+                self._inflight[effect.key] = flight
+        if leader:
+            try:
+                flight.value = self.run(effect.flow())
+            except Exception as error:
+                flight.error = error
+            finally:
+                with self._lock:
+                    self._inflight.pop(effect.key, None)
+                flight.done.set()
+        else:
+            flight.done.wait()
+        if flight.error is not None:
+            raise flight.error
+        return flight.value
 
     def run[T](self, flow: Flow[T]) -> T:
         """Run a flow that never emits to its result."""
@@ -367,8 +407,14 @@ class SyncDriver:
             except Exception:
                 pass  # observers never change the call
             return None
+        if isinstance(effect, Invoke):
+            result = effect.fn(*effect.args)
+            if inspect.isawaitable(result):
+                _discard(result)
+                raise TypeError("the token store is asynchronous; use it with AsyncClientCore")
+            return result
         if isinstance(effect, Shared):
-            return self.run(effect.flow())
+            return self._shared(effect)
         raise TypeError(f"unknown effect {type(effect).__name__}")
 
     def _attempt(self, req: AttemptRequest) -> AttemptOutcome:
@@ -510,6 +556,11 @@ class AsyncDriver:
             except Exception:
                 pass  # observers never change the call
             return None
+        if isinstance(effect, Invoke):
+            result = effect.fn(*effect.args)
+            if inspect.isawaitable(result):
+                return await cast(Awaitable[object], result)
+            return result
         if isinstance(effect, Shared):
             return await self._shared(effect)
         raise TypeError(f"unknown effect {type(effect).__name__}")
