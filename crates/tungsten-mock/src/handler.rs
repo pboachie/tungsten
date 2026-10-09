@@ -610,16 +610,14 @@ fn accepts_event_stream(accept: &str) -> bool {
         let quality = parts
             .find_map(|param| {
                 let (name, value) = param.split_once('=')?;
-                name.trim()
-                    .eq_ignore_ascii_case("q")
-                    .then(|| {
-                        value
-                            .trim()
-                            .parse::<f64>()
-                            .ok()
-                            .filter(|q| q.is_finite() && *q >= 0.0)
-                            .unwrap_or(1.0)
-                    })
+                name.trim().eq_ignore_ascii_case("q").then(|| {
+                    value
+                        .trim()
+                        .parse::<f64>()
+                        .ok()
+                        .filter(|q| q.is_finite() && *q >= 0.0)
+                        .unwrap_or(1.0)
+                })
             })
             .unwrap_or(1.0);
         quality > 0.0
