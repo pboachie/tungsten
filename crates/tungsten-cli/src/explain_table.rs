@@ -606,11 +606,13 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
     ),
     e(
         "TG0744",
-        "An operation's success responses have different bodies (for example 200 returns a \
-         record and 201 an array). The Rust SDK cannot give the typed method one return \
-         type, so it returns `serde_json::Value` and does not validate the response.",
-        "Describe one success body, or call the operation through `Dispatch::invoke`, which \
-         returns JSON.",
+        "An operation's success responses have different bodies, and they are not all JSON \
+         bodies under exact statuses (a body is text, binary or a form, or a status is a \
+         range such as `2XX`). The Rust SDK types an operation whose exact statuses answer \
+         with different JSON bodies as a response enum; for the shapes it cannot represent \
+         it returns `serde_json::Value` and does not validate the response.",
+        "Declare each success status exactly and describe its body as JSON, or call the \
+         operation through `Dispatch::invoke`, which returns JSON.",
     ),
     e(
         "TG0745",

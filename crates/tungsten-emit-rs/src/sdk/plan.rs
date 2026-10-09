@@ -134,6 +134,9 @@ pub(crate) struct OpInfo<'a> {
     pub res: usize,
     /// Request struct name in the resource's module.
     pub request: String,
+    /// Name of the response enum in the resource's module; empty unless
+    /// the success bodies differ by status (see `ops::status_bodies`).
+    pub response: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -260,7 +263,40 @@ impl<'a> Plan<'a> {
         };
         plan.plan_resources(multi);
         plan.graph = Graph::new(&plan);
+        plan.plan_responses();
         plan
+    }
+
+    /// Names the response enum of each operation whose success bodies
+    /// differ by status, unique across the package and apart from the
+    /// request structs and the resource and client structs.
+    fn plan_responses(&mut self) {
+        let wanted: Vec<usize> = (0..self.ops.len())
+            .filter(|&o| crate::sdk::ops::status_bodies(self, self.ops[o].op).is_some())
+            .collect();
+        if wanted.is_empty() {
+            return;
+        }
+        let words: Vec<Vec<String>> = wanted
+            .iter()
+            .map(|&o| {
+                let info = &self.ops[o];
+                let prefix = naming::split_words(&info.request);
+                let stem = prefix
+                    .strip_suffix(&["request".to_string()][..])
+                    .unwrap_or(&prefix);
+                with_word(stem, "response")
+            })
+            .collect();
+        let mut reserved: Vec<String> = self.ops.iter().map(|o| o.request.clone()).collect();
+        reserved.push(self.client_class.clone());
+        reserved.extend(self.resources.iter().map(|r| r.strukt.clone()));
+        reserved.extend(self.client_namespaces.iter().map(|n| n.strukt.clone()));
+        let reserved: Vec<&str> = reserved.iter().map(String::as_str).collect();
+        let names = unique(&reserved, &words, Role::Type);
+        for (&o, name) in wanted.iter().zip(names) {
+            self.ops[o].response = name;
+        }
     }
 
     pub(crate) fn multi(&self) -> bool {
@@ -581,6 +617,7 @@ fn plan_ops(ir: &Ir, multi: bool) -> Vec<OpInfo<'_>> {
             builder,
             res: 0,
             request: String::new(),
+            response: String::new(),
         })
         .collect()
 }

@@ -696,7 +696,7 @@ fn mentions(line: &str, word: &str) -> bool {
 }
 
 /// Write `fn check_x(v: &T, c: &mut Checker) { ... }`.
-fn write_check_fn(w: &mut Writer, name: &str, ty: &str, stmts: &[String]) {
+pub(crate) fn write_check_fn(w: &mut Writer, name: &str, ty: &str, stmts: &[String]) {
     w.blank();
     // `v` may be unused (a type no value satisfies).
     let v = if stmts.iter().any(|s| mentions(s, "v")) {
@@ -1008,48 +1008,84 @@ fn write_union(
         UnionKind::Literal => write_literal_impls(w, name, u, &names),
     }
     if plan.graph.needs_check.contains(&nt.id) {
-        let mut stmts = vec!["match v {".to_string()];
-        for (v, variant) in u.variants.iter().zip(&names) {
-            let mut inner = vec![];
-            let is_const =
-                matches!(&v.ty, TypeRef::Inline(s) if matches!(s.as_ref(), Shape::Const { .. }));
-            if !is_const {
-                cx.check_stmts(&v.ty, None, "x", 0, &mut inner);
-            }
-            let pat = if is_const {
-                format!("{name}::{variant}")
-            } else if inner.is_empty() {
-                format!("{name}::{variant}(_)")
-            } else {
-                format!("{name}::{variant}(x)")
-            };
-            match inner.as_slice() {
-                [] => stmts.push(format!("    {pat} => {{}}")),
-                [one] if one.starts_with("check_") || one.contains("::check_") => {
-                    // A call of a check function: `f(x, c);`.
-                    let call = one.trim_end_matches(';');
-                    let (callee, args) = call.split_once('(').unwrap_or((call, ")"));
-                    let args: Vec<Rx> = args
-                        .trim_end_matches(')')
-                        .split(", ")
-                        .map(Rx::atom)
-                        .collect();
-                    let mut tmp = Writer::new("    ");
-                    arm(&mut tmp, 8, &pat, &Rx::call(callee, args));
-                    for l in tmp.finish().lines() {
-                        stmts.push(format!("    {l}"));
-                    }
-                }
-                many => {
-                    stmts.push(format!("    {pat} => {{"));
-                    stmts.extend(many.iter().map(|l| format!("        {l}")));
-                    stmts.push("    }".into());
-                }
-            }
-        }
-        stmts.push("}".into());
+        let arms: Vec<(String, Option<&TypeRef>)> = u
+            .variants
+            .iter()
+            .zip(&names)
+            .map(|(v, variant)| {
+                let is_const = matches!(&v.ty, TypeRef::Inline(s) if matches!(s.as_ref(), Shape::Const { .. }));
+                (variant.clone(), (!is_const).then_some(&v.ty))
+            })
+            .collect();
+        let stmts = variant_match_stmts(cx, name, &arms);
         write_check_fn(w, &plan.types[&nt.id].check_fn, name, &stmts);
     }
+}
+
+/// The statements of the check function of an enum: a `match` over its
+/// variants. An arm with a payload type checks it; one without (a constant)
+/// is a unit variant.
+fn variant_match_stmts(
+    cx: &Cx<'_, '_>,
+    name: &str,
+    arms: &[(String, Option<&TypeRef>)],
+) -> Vec<String> {
+    let mut stmts = vec!["match v {".to_string()];
+    for (variant, ty) in arms {
+        let mut inner = vec![];
+        if let Some(ty) = ty {
+            cx.check_stmts(ty, None, "x", 0, &mut inner);
+        }
+        let pat = if ty.is_none() {
+            format!("{name}::{variant}")
+        } else if inner.is_empty() {
+            format!("{name}::{variant}(_)")
+        } else {
+            format!("{name}::{variant}(x)")
+        };
+        match inner.as_slice() {
+            [] => stmts.push(format!("    {pat} => {{}}")),
+            [one] if one.starts_with("check_") || one.contains("::check_") => {
+                // A call of a check function: `f(x, c);`.
+                let call = one.trim_end_matches(';');
+                let (callee, args) = call.split_once('(').unwrap_or((call, ")"));
+                let args: Vec<Rx> = args
+                    .trim_end_matches(')')
+                    .split(", ")
+                    .map(Rx::atom)
+                    .collect();
+                let mut tmp = Writer::new("    ");
+                arm(&mut tmp, 8, &pat, &Rx::call(callee, args));
+                for l in tmp.finish().lines() {
+                    stmts.push(format!("    {l}"));
+                }
+            }
+            many => {
+                stmts.push(format!("    {pat} => {{"));
+                stmts.extend(many.iter().map(|l| format!("        {l}")));
+                stmts.push("    }".into());
+            }
+        }
+    }
+    stmts.push("}".into());
+    stmts
+}
+
+/// The check function's statements for the enum `name` whose variants hold
+/// `arms`; `None` when no variant has anything to check.
+pub(crate) fn variant_check_stmts(
+    cx: &Cx<'_, '_>,
+    name: &str,
+    arms: &[(String, Option<&TypeRef>)],
+) -> Option<Vec<String>> {
+    let any = arms.iter().any(|(_, ty)| {
+        ty.is_some_and(|ty| {
+            let mut probe = vec![];
+            cx.check_stmts(ty, None, "x", 0, &mut probe);
+            !probe.is_empty()
+        })
+    });
+    any.then(|| variant_match_stmts(cx, name, arms))
 }
 
 fn write_tagged_impls(w: &mut Writer, cx: &Cx<'_, '_>, name: &str, u: &Union, names: &[String]) {

@@ -243,6 +243,9 @@ pub(crate) fn blocking_file(
             let req = &info.request;
             let module = &plan.resources[info.res].module;
             extra.push((format!("crate::resources::{module}"), req.clone()));
+            if let Some(e) = &shapes[o].by_status {
+                extra.push((format!("crate::resources::{module}"), e.name.clone()));
+            }
             let param = format!("request: {req}");
             let id = &info.op.id.0;
             let facts = format!(

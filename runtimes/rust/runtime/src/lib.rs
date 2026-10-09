@@ -83,7 +83,10 @@ mod verify;
 pub mod types;
 
 pub use client::{ClientCore, ConfigError, Pages, Polled, TypedPages};
-pub use dispatch::{Dispatch, decode, decode_event, decode_page, no_stream};
+pub use dispatch::{
+    ByStatus, Dispatch, Mismatch, StatusDecode, decode, decode_by_status, decode_event,
+    decode_page, decode_variant, no_stream,
+};
 pub use idempotency::{FileIdempotencyStore, MemoryIdempotencyStore};
 pub use stream::{
     DEFAULT_MAX_COLLECT_BYTES, DEFAULT_MAX_COLLECT_TIME, EventStream, StreamEvent, StreamResult,
