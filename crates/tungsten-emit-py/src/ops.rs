@@ -90,6 +90,15 @@ pub(crate) struct ParamPlan<'a> {
     pub param: &'a Param,
 }
 
+/// The event stream of an operation.
+#[derive(Debug, Clone)]
+pub(crate) struct StreamShape {
+    /// Type of one event (hint flavor).
+    pub event: PyTy,
+    /// The event validator's type (schema flavor), when events are typed.
+    pub event_schema: Option<String>,
+}
+
 /// Everything about one operation's call signature.
 #[derive(Debug, Clone)]
 pub(crate) struct OpShape<'a> {
@@ -108,6 +117,8 @@ pub(crate) struct OpShape<'a> {
     /// typed (`OperationDescriptor["page_item"]`: the runtime validates each
     /// item of a page into it).
     pub page_item_schema: Option<String>,
+    /// The event stream, when the operation has one.
+    pub stream: Option<StreamShape>,
     /// Imports of the arguments' hint-flavor types (signatures).
     pub hint_uses: Uses,
     /// Imports of the result types (`Result[T]`, page items).
@@ -361,7 +372,20 @@ pub(crate) fn op_shape<'a>(plan: &Plan<'a>, info: &OpInfo<'a>) -> OpShape<'a> {
         .map(|items| schema.ty(items, Flavor::Schema))
         .filter(|t| !t.is_any())
         .map(|t| schema.value(&t));
-    if success.is_any() || page_item.as_ref().is_some_and(PyTy::is_any) {
+    let stream = op.stream.as_ref().map(|spec| {
+        let event = result.ty(&spec.event, Flavor::Hint);
+        let event_schema = Some(schema.ty(&spec.event, Flavor::Schema))
+            .filter(|t| !t.is_any())
+            .map(|t| schema.value(&t));
+        StreamShape {
+            event,
+            event_schema,
+        }
+    });
+    if success.is_any()
+        || page_item.as_ref().is_some_and(PyTy::is_any)
+        || stream.as_ref().is_some_and(|s| s.event.is_any())
+    {
         result.uses.borrow_mut().typing.insert("Any");
     }
     OpShape {
@@ -373,6 +397,7 @@ pub(crate) fn op_shape<'a>(plan: &Plan<'a>, info: &OpInfo<'a>) -> OpShape<'a> {
         response_schema,
         page_item,
         page_item_schema,
+        stream,
         hint_uses: hint.uses.into_inner(),
         result_uses: result.uses.into_inner(),
         schema_uses: schema.uses.into_inner(),
@@ -883,6 +908,19 @@ pub(crate) fn descriptor_py(plan: &Plan<'_>, info: &OpInfo<'_>, shape: &OpShape<
             "page_item",
             Py::Raw(format!("_internal.Response(lambda: {s})")),
         ));
+    }
+    if let (Some(spec), Some(stream)) = (&op.stream, &shape.stream) {
+        let mut stream_entries = vec![];
+        if let Some(s) = &stream.event_schema {
+            stream_entries.push(("event", Py::Raw(format!("_internal.Response(lambda: {s})"))));
+        }
+        if let Some(done) = &spec.done {
+            stream_entries.push(("done", Py::str(done)));
+        }
+        if let Some(flag) = &spec.request_flag {
+            stream_entries.push(("flag", Py::str(flag)));
+        }
+        entries.push(("stream", Py::dict(stream_entries)));
     }
     let summary = op_summary(op);
     entries.push((

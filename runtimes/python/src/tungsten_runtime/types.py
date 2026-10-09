@@ -358,6 +358,20 @@ class GatedStatus(TypedDict):
     disabled_status: int
 
 
+class StreamDescriptor(TypedDict):
+    """The server-sent events of an operation (IR ``StreamSpec``)."""
+
+    #: Validates the decoded ``data`` of every event (per
+    #: ``ClientOptions.validate_responses``); its ``Valid.data`` is the
+    #: event's value. Absent: events are any JSON value.
+    event: NotRequired[Validator[Any]]
+    #: A ``data`` value that ends the stream without being an event (``[DONE]``).
+    done: NotRequired[str]
+    #: Wire name of the boolean request body field that selects the stream;
+    #: ``ClientCore.stream`` sets it to ``True``.
+    flag: NotRequired[str]
+
+
 class OperationDescriptor(TypedDict):
     id: str
     method: HttpMethod
@@ -379,6 +393,8 @@ class OperationDescriptor(TypedDict):
     #: holds ``T`` without help from generated code.
     page_item: NotRequired[Validator[Any]]
     summary: NotRequired[str | None]
+    #: The operation's event stream (``ClientCore.stream``); absent when it has none.
+    stream: NotRequired[StreamDescriptor]
 
 
 class ApiKeyScheme(TypedDict):
@@ -632,6 +648,26 @@ class Page[T]:
     next: Any
 
 
+@dataclass(frozen=True, slots=True)
+class StreamEvent[T]:
+    """One event of a stream."""
+
+    #: The event's ``data``, decoded from JSON (and validated).
+    value: T
+    #: The ``event`` field of the server-sent event, ``message`` when it has none.
+    event: str
+    #: The last event id the stream has set so far, or None.
+    id: str | None
+    #: The last ``retry`` value (milliseconds) the stream has set so far, or None.
+    retry: int | None
+    meta: ResponseMeta
+    ok: Literal[True] = True
+
+
+type StreamItem[T] = StreamEvent[T] | Err
+"""What iterating a stream yields: events, then the end of the stream or one
+final ``Err`` (an error before the stream starts is the only item)."""
+
 Predicate = dict[str, Any]
 
 
@@ -705,6 +741,9 @@ __all__ = [
     "RpcBinding",
     "Safety",
     "StatusMatch",
+    "StreamDescriptor",
+    "StreamEvent",
+    "StreamItem",
     "Trace",
     "Valid",
     "Validator",

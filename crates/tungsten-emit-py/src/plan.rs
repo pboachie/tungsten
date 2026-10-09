@@ -220,6 +220,8 @@ pub(crate) enum MemberKind {
     Preview(usize),
     /// `<op>_pages`.
     Pages(usize),
+    /// `<op>_stream`.
+    Stream(usize),
     /// Index into [`Plan::resources`].
     Child(usize),
 }
@@ -419,6 +421,10 @@ impl<'a> Plan<'a> {
                 if self.ops[o].op.pagination.is_some() {
                     words.push(with_word(&base, "pages"));
                     kinds.push(MemberKind::Pages(o));
+                }
+                if self.ops[o].op.stream.is_some() {
+                    words.push(with_word(&base, "stream"));
+                    kinds.push(MemberKind::Stream(o));
                 }
             }
             let names = unique(&["l"], &words, Role::Method);

@@ -27,6 +27,9 @@ class AttemptRequest:
     headers: Mapping[str, str]
     body: bytes | None
     timeout_ms: float
+    #: Hand a ``text/event-stream`` answer with a 2xx status back unread, as
+    #: a ``Streaming`` outcome; any other answer is read as usual.
+    stream: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,6 +41,17 @@ class Answered:
     body: bytes | None
     #: Why the body could not be read: the deadline or a broken connection.
     body_failure: Literal["timeout", "broken"] | None
+
+
+@dataclass(frozen=True, slots=True)
+class Streaming:
+    """A 2xx ``text/event-stream`` answer whose body has not been read.
+    ``stream`` is the driver's handle: read it with ``read_chunk`` (the
+    driver closes it when the iteration ends)."""
+
+    status: int
+    headers: Mapping[str, str]
+    stream: object
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,7 +73,7 @@ class TimedOut:
     """No response within the attempt's deadline, after the request was (possibly) sent."""
 
 
-type AttemptOutcome = Answered | NotSent | Lost | TimedOut
+type AttemptOutcome = Answered | Streaming | NotSent | Lost | TimedOut
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,7 +127,34 @@ class Emit:
     item: object
 
 
-type Effect = Send | Sleep | StoreGet | StorePut | Observe | Shared | Emit
+@dataclass(frozen=True, slots=True)
+class ReadChunk:
+    """Read the next chunk of the body of a ``Streaming`` outcome."""
+
+    stream: object
+
+
+@dataclass(frozen=True, slots=True)
+class Chunk:
+    data: bytes
+
+
+@dataclass(frozen=True, slots=True)
+class StreamEnded:
+    """The body ended."""
+
+
+@dataclass(frozen=True, slots=True)
+class StreamFailed:
+    """The body could not be read: no bytes within the attempt timeout, or the
+    connection failed before the stream ended."""
+
+    kind: Literal["timeout", "lost"]
+
+
+type ReadOutcome = Chunk | StreamEnded | StreamFailed
+
+type Effect = Send | Sleep | StoreGet | StorePut | Observe | Shared | Emit | ReadChunk
 
 type Flow[T] = Generator[Effect, object, T]
 
@@ -121,6 +162,11 @@ type Flow[T] = Generator[Effect, object, T]
 def send(request: AttemptRequest) -> Flow[AttemptOutcome]:
     outcome = yield Send(request)
     return cast(AttemptOutcome, outcome)
+
+
+def read_chunk(stream: object) -> Flow[ReadOutcome]:
+    outcome = yield ReadChunk(stream)
+    return cast(ReadOutcome, outcome)
 
 
 def sleep(ms: float) -> Flow[None]:
