@@ -214,7 +214,12 @@ impl<'o> Loader<'o> {
             );
         }
         let version = match version::detect(&root, name, &spans, self.opts) {
-            Ok(v) => v,
+            Ok((v, warnings)) => {
+                for w in warnings {
+                    self.ws.diagnostics.push(w);
+                }
+                v
+            }
             Err(errors) => {
                 for e in errors {
                     self.ws.diagnostics.push(e);

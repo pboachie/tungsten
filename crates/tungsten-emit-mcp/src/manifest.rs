@@ -772,6 +772,7 @@ fn instructions(ir: &Ir, mode: Mode, tools: &[ToolEntry], clusters: &[ClusterEnt
     } else {
         title
     };
+    let title = tungsten_ir::title_stem(&title);
     let mut out = vec![];
     match mode {
         Mode::Progressive => out.push(format!(

@@ -338,7 +338,7 @@ pub(crate) fn client_file(plan: &Plan<'_>, has_macros: bool, header: &str) -> St
     w.blank();
     write_imports(&mut w, &imports);
     w.blank();
-    let title = &ir.api.title;
+    let title = tungsten_ir::title_stem(&ir.api.title);
     w.doc(
         CommentStyle::JsDoc,
         &paragraphs([

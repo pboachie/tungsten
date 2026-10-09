@@ -33,7 +33,9 @@
 //! such as `deliveries`), `get` (any other GET of the resource's own
 //! path, a singleton such as `/users/me`), `create` (POST of the resource's own
 //! path), `update` (PATCH, PUT) and `delete` on a singleton path, `get` /
-//! `update` / `delete` on one item, the action for actions, and the last
+//! `update` / `delete` on one item (a POST to one item is `update` when
+//! no PUT or PATCH shares its path: the update convention of APIs that
+//! create with `POST /x`), the action for actions, and the last
 //! dotted part for rpc methods; anything else uses the operation id.
 //! Collisions inside a resource are renamed with TG0401.
 //!
@@ -61,7 +63,7 @@ use tungsten_openapi::{DocId, RefTarget};
 use crate::ctx::{Ctx, child, pointer};
 use crate::names::disambiguate_all;
 use crate::operations::{BuiltOp, METHODS};
-use crate::params::path_template;
+use crate::params::{path_template, split_query};
 
 /// Name of the resource holding operations with no literal path segment.
 const ROOT_RESOURCE: &str = "root";
@@ -197,7 +199,7 @@ pub(crate) fn build(
         .iter()
         .chain(planned.iter())
         .filter(|b| b.op.method == HttpMethod::Get && returns_collection(cx, &index, &b.op))
-        .map(|b| b.op.path.raw.clone())
+        .map(|b| split_query(&b.op.path.raw).0.to_string())
         .collect();
     let paths = Paths {
         index: &index,
@@ -238,6 +240,18 @@ impl PathIndex {
         Self { paths }
     }
 
+    /// Whether no PUT or PATCH is documented on the path of `segments`.
+    fn has_no_put_or_patch(&self, segments: &[PathSegment]) -> bool {
+        self.paths
+            .iter()
+            .filter(|(p, _)| same_path(p, segments))
+            .all(|(_, methods)| {
+                !methods
+                    .iter()
+                    .any(|m| matches!(m, HttpMethod::Put | HttpMethod::Patch))
+            })
+    }
+
     /// Whether `segments` is the prefix of some path of the document.
     fn has_prefix(&self, segments: &[PathSegment]) -> bool {
         self.paths.iter().any(|(p, _)| is_prefix(segments, p))
@@ -267,7 +281,7 @@ impl PathIndex {
 /// What placement knows about the namespace's paths.
 struct Paths<'p> {
     index: &'p PathIndex,
-    /// Raw paths whose GET returns a collection.
+    /// Raw paths (without a query string) whose GET returns a collection.
     collections: &'p BTreeSet<String>,
 }
 
@@ -492,9 +506,17 @@ fn place(cx: &Ctx<'_>, configured: &[Configured], paths: &Paths<'_>, op: &Operat
     let method = match &custom {
         Some((_, verb)) => override_name.unwrap_or_else(|| verb.clone()),
         None => {
-            let collection = paths.collections.contains(&op.path.raw);
+            let collection = paths.collections.contains(split_query(&op.path.raw).0);
             override_name
-                .or_else(|| crud_name(op.method, &relative, action.as_deref(), collection))
+                .or_else(|| {
+                    crud_name(
+                        op.method,
+                        &relative,
+                        action.as_deref(),
+                        collection,
+                        paths.index.has_no_put_or_patch(segments),
+                    )
+                })
                 .unwrap_or_else(|| local.to_string())
         }
     };
@@ -557,11 +579,14 @@ fn inferred(segments: &[PathSegment], has_action: bool) -> (Vec<Level>, Vec<Path
 
 /// CRUD and action names from the path relative to the resource.
 /// `collection`: a GET of this exact path returns a collection.
+/// `post_updates`: no PUT or PATCH is documented on the path, so a POST to
+/// an item is its update.
 fn crud_name(
     method: HttpMethod,
     relative: &[PathSegment],
     action: Option<&str>,
     collection: bool,
+    post_updates: bool,
 ) -> Option<String> {
     let name = match (relative, method) {
         ([], HttpMethod::Get) if collection => "list",
@@ -572,6 +597,7 @@ fn crud_name(
         ([item], HttpMethod::Get) if is_item(item) => "get",
         ([item], HttpMethod::Patch | HttpMethod::Put) if is_item(item) => "update",
         ([item], HttpMethod::Delete) if is_item(item) => "delete",
+        ([item], HttpMethod::Post) if is_item(item) && post_updates => "update",
         ([item, PathSegment::Literal { value }], HttpMethod::Post)
             if is_item(item) && action == Some(value.as_str()) =>
         {

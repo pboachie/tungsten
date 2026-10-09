@@ -1133,7 +1133,10 @@ pub(crate) fn descriptors_file(
     ));
     docstring(
         &mut body,
-        &format!("The `{}` API as the runtime sees it.", plan.ir.api.title),
+        &format!(
+            "The `{}` API as the runtime sees it.",
+            tungsten_ir::title_stem(&plan.ir.api.title)
+        ),
     );
     for (info, shape) in plan.ops.iter().zip(shapes) {
         uses.merge(&shape.schema_uses);
