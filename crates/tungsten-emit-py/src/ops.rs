@@ -374,9 +374,9 @@ pub(crate) fn op_shape<'a>(plan: &Plan<'a>, info: &OpInfo<'a>) -> OpShape<'a> {
         .map(|t| schema.value(&t));
     let stream = op.stream.as_ref().map(|spec| {
         let event = result.ty(&spec.event, Flavor::Hint);
-        let event_schema = Some(schema.ty(&spec.event, Flavor::Schema))
-            .filter(|t| !t.is_any())
-            .map(|t| schema.value(&t));
+        // Untyped events (any JSON value) have no validator and import nothing.
+        let untyped = matches!(&spec.event, TypeRef::Inline(shape) if matches!(**shape, Shape::Any));
+        let event_schema = (!untyped).then(|| schema.value(&schema.ty(&spec.event, Flavor::Schema)));
         StreamShape {
             event,
             event_schema,
