@@ -407,6 +407,11 @@ pub struct RemediationConfig {
     /// What to do next, e.g. a verification operation or macro to call.
     #[serde(default)]
     pub next_action: Option<String>,
+    /// The HTTP status the API answers this code with, when the spec does
+    /// not say (`4XX` only). Read for `errors.codes` entries only; the mock
+    /// uses it to pick the code of an injected status.
+    #[serde(default)]
+    pub status: Option<StatusCode>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema)]

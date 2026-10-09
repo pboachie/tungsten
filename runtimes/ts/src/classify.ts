@@ -197,8 +197,8 @@ export function outcomeUnknown(ctx: CallContext, cause: string, fields: Partial<
     hint = `Call ${call} and check ${shows}; call ${op.id} again only if it did not take effect.`;
   } else {
     const change = changeOf(op);
-    rule = `This operation has no idempotency key, so repeating it can apply the effect twice: do not call it again until you have checked whether it took effect, by reading the resource it changes and looking for ${change}.`;
-    hint = `Read the resource ${op.id} changes and look for ${change}; call ${op.id} again only if it is not there.`;
+    rule = `This operation has no idempotency key and no registered way to verify it, so ${op.id} may have taken effect and a repeat can apply the effect twice: do not retry it blindly. Check the outcome by other means if you can (look for ${change}); if you cannot, ask whoever owns the task before calling it again.`;
+    hint = `Do not retry ${op.id} blindly: it may have taken effect. Check for ${change} if you can; call ${op.id} again only if it is not there, or after the task owner accepts that it may apply twice.`;
   }
   return diagnostic(op.id, "OUTCOME_UNKNOWN", {
     remediation: `${cause} The server may or may not have applied ${op.id}. ${rule}`,

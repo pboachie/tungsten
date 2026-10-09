@@ -79,8 +79,11 @@ impl Reply {
 
 /// An error answer by the error rule, explained in `X-Tungsten-Reason`.
 /// `code` is used verbatim; otherwise `preferred` codes, then the
-/// conventional code for the status, then any code listed with the status
-/// are tried against the model's codes.
+/// conventional codes for the status (plain and `_error` forms), then any
+/// code the model lists with the status (the spec's descriptions or an
+/// agent.yml `status`) are tried against the model's codes. The code is
+/// written at the model's code field path (`error.type` for an error kept
+/// in a tagged union).
 pub(crate) fn error(
     model: &Model,
     ns: Option<usize>,
@@ -118,17 +121,23 @@ pub(crate) fn error(
 
 fn conventional(status: u16) -> &'static [&'static str] {
     match status {
-        400 => &["invalid_request", "bad_request", "validation_failed"],
-        401 => &["unauthorized", "unauthenticated"],
-        403 => &["forbidden", "permission_denied"],
-        404 => &["not_found"],
+        400 => &[
+            "invalid_request",
+            "invalid_request_error",
+            "bad_request",
+            "validation_failed",
+        ],
+        401 => &["unauthorized", "unauthenticated", "authentication_error"],
+        403 => &["forbidden", "permission_denied", "permission_error"],
+        404 => &["not_found", "not_found_error"],
         405 => &["method_not_allowed"],
         409 => &["conflict"],
         413 => &["payload_too_large", "request_too_large", "too_large"],
         415 => &["unsupported_media_type"],
-        429 => &["rate_limited", "too_many_requests"],
-        500 => &["internal_error", "internal"],
+        429 => &["rate_limited", "rate_limit_error", "too_many_requests"],
+        500 => &["internal_error", "internal", "api_error"],
         503 => &["unavailable", "service_unavailable"],
+        529 => &["overloaded_error", "overloaded"],
         _ => &[],
     }
 }

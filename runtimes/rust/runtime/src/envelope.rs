@@ -51,7 +51,7 @@ pub fn generic_remediation(category: Category) -> &'static str {
             "The service is temporarily unavailable. Wait, then call again."
         }
         Category::OutcomeUnknown => {
-            "The server may or may not have applied this call. Check whether it took effect before doing anything else."
+            "The server may or may not have applied this call; do not retry it blindly. Check whether it took effect before doing anything else."
         }
         Category::TransportFailed => {
             "The request could not be delivered (DNS, TLS or connection failure), so the server did not receive it. Check base_url and network access, then call again."

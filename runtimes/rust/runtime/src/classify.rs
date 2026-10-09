@@ -315,10 +315,11 @@ pub fn outcome_unknown(ctx: &CallContext<'_>, cause: &str, fields: UnknownFields
     } else {
         let change = change_of(op);
         rule = format!(
-            "This operation has no idempotency key, so repeating it can apply the effect twice: do not call it again until you have checked whether it took effect, by reading the resource it changes and looking for {change}."
+            "This operation has no idempotency key and no registered way to verify it, so {id} may have taken effect and a repeat can apply the effect twice: do not retry it blindly. Check the outcome by other means if you can (look for {change}); if you cannot, ask whoever owns the task before calling it again.",
+            id = op.id
         );
         hint = Some(format!(
-            "Read the resource {id} changes and look for {change}; call {id} again only if it is not there.",
+            "Do not retry {id} blindly: it may have taken effect. Check for {change} if you can; call {id} again only if it is not there, or after the task owner accepts that it may apply twice.",
             id = op.id
         ));
     }

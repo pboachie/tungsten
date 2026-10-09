@@ -63,7 +63,7 @@ export const GENERIC_REMEDIATION: Readonly<Record<Category, string>> = {
   RATE_LIMITED: "Rate limited. Wait retry_after_ms (or a few seconds when it is null) before calling again.",
   UPSTREAM_UNAVAILABLE: "The service is temporarily unavailable. Wait, then call again.",
   OUTCOME_UNKNOWN:
-    "The server may or may not have applied this call. Check whether it took effect before doing anything else.",
+    "The server may or may not have applied this call; do not retry it blindly. Check whether it took effect before doing anything else.",
   TRANSPORT_FAILED:
     "The request could not be delivered (DNS, TLS or connection failure), so the server did not receive it. Check baseUrl and network access, then call again.",
   CONFIRMATION_REQUIRED: "This operation needs confirmation: call preview(...) and pass its confirmation_token.",

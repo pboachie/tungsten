@@ -259,11 +259,15 @@ def outcome_unknown(
     else:
         change = change_of(op)
         rule = (
-            "This operation has no idempotency key, so repeating it can apply the effect twice: do not call it "
-            "again until you have checked whether it took effect, by reading the resource it changes and looking "
-            f"for {change}."
+            f"This operation has no idempotency key and no registered way to verify it, so {op_id} may have taken "
+            "effect and a repeat can apply the effect twice: do not retry it blindly. Check the outcome by other "
+            f"means if you can (look for {change}); if you cannot, ask whoever owns the task before calling it "
+            "again."
         )
-        hint = f"Read the resource {op_id} changes and look for {change}; call {op_id} again only if it is not there."
+        hint = (
+            f"Do not retry {op_id} blindly: it may have taken effect. Check for {change} if you can; call {op_id} "
+            "again only if it is not there, or after the task owner accepts that it may apply twice."
+        )
     action = next_action if next_action is not None else hint if hint is not None else _next_action_hint(ctx)
     return diagnostic(
         op_id,

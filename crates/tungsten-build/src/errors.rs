@@ -16,7 +16,10 @@
 //!   from `message`, `detail`, `error_description` next to it. A level
 //!   whose code admits more than one value wins over one whose code is a
 //!   single constant (`type: "error"` is a tag, not an error code), then a
-//!   level with a message field wins, then the top level;
+//!   level with a message field wins, then the top level. A property that
+//!   is a `oneOf` / `anyOf` of objects counts as a level when every
+//!   variant has the same code field (the discriminator property first);
+//!   the variants' values are the codes (`error.type` for the Claude API);
 //! - codes: the code field's `enum` (or `const`), each with the exact error statuses of
 //!   responses carrying the envelope whose description names the code as
 //!   a word followed by `:` or whitespace. Sorted by code.
@@ -149,20 +152,17 @@ fn type_id(cx: &mut Ctx<'_>, namespace: &str, target: &RefTarget) -> Option<Type
 fn code_field(cx: &Ctx<'_>, envelope: &RefTarget) -> Option<(String, Option<String>, Vec<String>)> {
     let (target, schema) = cx.deref_value(envelope)?;
     let props = schema.get("properties")?.as_object()?;
-    let mut levels = vec![fields_in(cx, &target, props, "")];
+    let mut levels = vec![fields_in(cx, &target, props, "", None)];
     for outer in props.keys() {
         let Some((inner_target, inner)) = cx.deref_value(&property(&target, outer)) else {
             continue;
         };
-        let Some(inner_props) = inner.get("properties").and_then(Value::as_object) else {
-            continue;
-        };
-        levels.push(fields_in(
-            cx,
-            &inner_target,
-            inner_props,
-            &format!("{outer}."),
-        ));
+        let prefix = format!("{outer}.");
+        if let Some(inner_props) = inner.get("properties").and_then(Value::as_object) {
+            levels.push(fields_in(cx, &inner_target, inner_props, &prefix, None));
+        } else {
+            levels.push(union_fields(cx, &inner_target, inner, &prefix));
+        }
     }
     // The first level with the best (not a single constant, has a message).
     let score = |(_, message, values): &(String, Option<String>, Vec<String>)| {
@@ -182,6 +182,7 @@ fn fields_in(
     target: &RefTarget,
     props: &Map<String, Value>,
     prefix: &str,
+    preferred: Option<&str>,
 ) -> Option<(String, Option<String>, Vec<String>)> {
     let string_prop = |name: &&&str| {
         props.contains_key(**name)
@@ -189,7 +190,10 @@ fn fields_in(
                 .deref_value(&property(target, name))
                 .is_some_and(|(_, s)| is_stringish(s))
     };
-    let code = CODE_FIELDS.iter().find(string_prop)?;
+    let code = preferred
+        .iter()
+        .find(string_prop)
+        .or_else(|| CODE_FIELDS.iter().find(string_prop))?;
     let values = cx
         .deref_value(&property(target, code))
         .and_then(|(_, s)| {
@@ -208,6 +212,54 @@ fn fields_in(
         .find(string_prop)
         .map(|m| format!("{prefix}{m}"));
     Some((format!("{prefix}{code}"), message, values))
+}
+
+/// The code field of a union of objects (`oneOf` / `anyOf`), the shape of
+/// an error kept as a tagged union: the discriminator property (else the
+/// usual code names) must be a string in every variant; the codes are the
+/// union of the variants' values (any string when one variant admits any),
+/// the message field the one every variant names.
+fn union_fields(
+    cx: &Ctx<'_>,
+    target: &RefTarget,
+    schema: &Value,
+    prefix: &str,
+) -> Option<(String, Option<String>, Vec<String>)> {
+    let key = ["oneOf", "anyOf"]
+        .into_iter()
+        .find(|k| schema.get(*k).is_some_and(Value::is_array))?;
+    let members = schema.get(key)?.as_array()?;
+    let discriminator = schema
+        .get("discriminator")
+        .and_then(|d| d.get("propertyName"))
+        .and_then(Value::as_str);
+    let mut path: Option<String> = None;
+    let mut message: Option<Option<String>> = None;
+    let mut values: Vec<String> = Vec::new();
+    let mut any_string = false;
+    for index in 0..members.len() {
+        let member = child(&child(target, key), &index.to_string());
+        let (variant, vschema) = cx.deref_value(&member)?;
+        let vprops = vschema.get("properties")?.as_object()?;
+        let (found, found_message, found_values) =
+            fields_in(cx, &variant, vprops, prefix, discriminator)?;
+        if path.get_or_insert_with(|| found.clone()) != &found {
+            return None;
+        }
+        // The message field counts only when every variant names it.
+        message = Some(match message.take() {
+            Some(m) if m != found_message => None,
+            _ => found_message,
+        });
+        any_string |= found_values.is_empty();
+        values.extend(found_values);
+    }
+    if any_string {
+        values.clear();
+    }
+    values.sort();
+    values.dedup();
+    Some((path?, message.flatten(), values))
 }
 
 fn property(object: &RefTarget, name: &str) -> RefTarget {
