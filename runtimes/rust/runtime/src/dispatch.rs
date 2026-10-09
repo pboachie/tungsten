@@ -128,7 +128,8 @@ fn path_parts(path: &serde_path_to_error::Path) -> (String, Vec<String>) {
 
 /// Why a value did not decode: the failing path as text and as segments,
 /// and the message.
-struct Mismatch {
+#[derive(Debug)]
+pub struct Mismatch {
     path: String,
     segments: Vec<String>,
     message: String,
@@ -186,6 +187,56 @@ pub fn decode<T: DeserializeOwned>(operation: &str, outcome: Outcome) -> Result<
     let response = outcome?;
     let body = response.value.unwrap_or(Value::Null);
     match decode_value::<T>(&body) {
+        Ok(value) => Ok(Response {
+            value,
+            meta: response.meta,
+            verification: response.verification,
+        }),
+        Err(mismatch) => Err(mismatch_error(
+            operation,
+            "",
+            &mismatch,
+            &body,
+            &response.meta,
+        )),
+    }
+}
+
+/// The result of picking the body type by status: `None` when the status
+/// has no declared body type.
+pub type StatusDecode<T> = Option<std::result::Result<T, Mismatch>>;
+
+/// A typed result whose body type depends on the response status (an
+/// operation whose success statuses answer with different bodies).
+/// Generated code implements it for the operation's response enum.
+pub trait ByStatus: Sized {
+    /// Decode `body` as the variant declared for `status`; `None` when no
+    /// variant is declared for it.
+    fn from_status(status: u16, body: &Value) -> StatusDecode<Self>;
+}
+
+/// Decode `body` as `V` and wrap it; the building block of
+/// [`ByStatus::from_status`].
+pub fn decode_variant<V: DeserializeOwned, T>(
+    body: &Value,
+    wrap: fn(V) -> T,
+) -> std::result::Result<T, Mismatch> {
+    decode_value::<V>(body).map(wrap)
+}
+
+/// Like [`decode`], choosing the body type by the response status. A status
+/// without a declared body type is `UNEXPECTED_RESPONSE`.
+pub fn decode_by_status<T: ByStatus>(operation: &str, outcome: Outcome) -> Result<T> {
+    let response = outcome?;
+    let body = response.value.unwrap_or(Value::Null);
+    let decoded = T::from_status(response.meta.status, &body).unwrap_or_else(|| {
+        Err(Mismatch {
+            path: String::new(),
+            segments: vec![],
+            message: format!("no body is declared for status {}", response.meta.status),
+        })
+    });
+    match decoded {
         Ok(value) => Ok(Response {
             value,
             meta: response.meta,

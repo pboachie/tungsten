@@ -67,6 +67,7 @@ mod expr;
 mod helpers;
 mod idempotency;
 mod macros;
+mod oauth;
 mod pages;
 mod prepare;
 mod preview;
@@ -83,8 +84,15 @@ mod verify;
 pub mod types;
 
 pub use client::{ClientCore, ConfigError, Pages, Polled, TypedPages};
-pub use dispatch::{Dispatch, decode, decode_event, decode_page, no_stream};
+pub use dispatch::{
+    ByStatus, Dispatch, Mismatch, StatusDecode, decode, decode_by_status, decode_event,
+    decode_page, decode_variant, no_stream,
+};
 pub use idempotency::{FileIdempotencyStore, MemoryIdempotencyStore};
+pub use oauth::{
+    AuthorizationUrlParams, ExchangeCodeParams, MemoryTokenStore, OAuthFlow, Pkce, StoredToken,
+    TokenInfo, TokenStore, generate_pkce, pkce_challenge,
+};
 pub use stream::{
     DEFAULT_MAX_COLLECT_BYTES, DEFAULT_MAX_COLLECT_TIME, EventStream, StreamEvent, StreamResult,
     TypedEvents,
@@ -104,6 +112,7 @@ pub mod internals {
     pub use crate::confirm::{
         CONFIRMATION_TTL_MS, TokenCheck, args_digest, check_token, issue_token, token_payload,
     };
+    pub use crate::envelope::{default_retryable, generic_remediation};
     pub use crate::expr::{
         describe_predicate, evaluate_dry, evaluate_expr, evaluate_predicate, resolve_ref,
     };

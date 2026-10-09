@@ -122,8 +122,11 @@ pub(crate) struct OpShape<'a> {
     pub item_ref: Option<TypeRef>,
     /// A success may have no body.
     pub bodiless: bool,
-    /// More than one distinct JSON success type: the result is `Value`.
+    /// Success bodies that differ and cannot be a response enum (a status
+    /// range, a body that is not JSON): the result is `Value`.
     pub mixed_success: bool,
+    /// Success bodies that differ by exact status: the response enum.
+    pub by_status: Option<StatusEnum>,
     /// The response validator's type, when every success body is JSON of
     /// one type.
     pub response: Option<Validated>,
@@ -135,6 +138,74 @@ pub(crate) struct OpShape<'a> {
     pub stream: Option<StreamShape>,
     /// Helper check functions for inline types: (name, type, statements).
     pub helpers: Vec<(String, String, Vec<String>)>,
+}
+
+/// The response enum of an operation whose success statuses answer with
+/// different bodies.
+#[derive(Debug, Clone)]
+pub(crate) struct StatusEnum {
+    /// The enum's name.
+    pub name: String,
+    /// One variant per declared success status, in IR order.
+    pub variants: Vec<StatusVariant>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct StatusVariant {
+    pub status: u16,
+    /// `Status<code>`.
+    pub name: String,
+    /// The body's IR type and Rust type; `None` for a status without body.
+    pub body: Option<(TypeRef, String)>,
+}
+
+/// The success bodies by status, when the operation can have a response
+/// enum: every success response has an exact status and a JSON (or JSON
+/// Lines) body or none, and at least two bodies have different Rust types.
+pub(crate) fn status_bodies(plan: &Plan<'_>, op: &Operation) -> Option<Vec<StatusVariant>> {
+    let cx = Cx::new(plan, None);
+    let mut out: Vec<StatusVariant> = vec![];
+    for r in op
+        .responses
+        .iter()
+        .filter(|r| r.kind == ResponseKind::Success)
+    {
+        let StatusMatch::Exact(status) = r.status else {
+            return None;
+        };
+        if out.iter().any(|v| v.status == status) {
+            return None;
+        }
+        let content = r
+            .content
+            .iter()
+            .find(|c| c.encoding == BodyEncoding::Json)
+            .or_else(|| r.content.first());
+        let body = match content {
+            None => None,
+            Some(c) => {
+                let ty = match c.encoding {
+                    BodyEncoding::Json => c.ty.clone(),
+                    BodyEncoding::Jsonl => c.value_type(),
+                    _ => return None,
+                };
+                let text = cx.ty(&ty);
+                Some((ty, text))
+            }
+        };
+        out.push(StatusVariant {
+            status,
+            name: format!("Status{status}"),
+            body,
+        });
+    }
+    let mut texts: Vec<&str> = out
+        .iter()
+        .filter_map(|v| v.body.as_ref().map(|(_, t)| t.as_str()))
+        .collect();
+    texts.sort_unstable();
+    texts.dedup();
+    (texts.len() > 1).then_some(out)
 }
 
 /// Whether a parameter is an argument. Idempotency keys come from
@@ -358,14 +429,24 @@ pub(crate) fn op_shape<'a>(plan: &'a Plan<'a>, info: &OpInfo<'a>) -> OpShape<'a>
             distinct.push(o.clone());
         }
     }
-    let mixed_success = distinct.len() > 1;
+    let mixed = distinct.len() > 1;
+    let by_status = if mixed && !info.response.is_empty() {
+        status_bodies(plan, op).map(|variants| StatusEnum {
+            name: info.response.clone(),
+            variants,
+        })
+    } else {
+        None
+    };
+    let mixed_success = mixed && by_status.is_none();
     let base = match distinct.as_slice() {
+        _ if by_status.is_some() => info.response.clone(),
         [] if bodiless => "()".to_string(),
         [] => "Value".to_string(),
         [one] => one.clone(),
         _ => "Value".to_string(),
     };
-    let success = if bodiless && !distinct.is_empty() && !mixed_success {
+    let success = if bodiless && !distinct.is_empty() && !mixed {
         format!("Option<{base}>")
     } else {
         base
@@ -397,8 +478,14 @@ pub(crate) fn op_shape<'a>(plan: &'a Plan<'a>, info: &OpInfo<'a>) -> OpShape<'a>
         };
         Validated { ty: text, check }
     };
-    let response = (all_json && tys.len() == 1)
+    let mut response = (all_json && tys.len() == 1)
         .then(|| validated(&tys[0].1, bodiless, &format!("{}_response", info.builder)));
+    if let Some(e) = &by_status {
+        response = Some(Validated {
+            ty: e.name.clone(),
+            check: status_check_stmts(&cx, e).map(|_| response_check_name(info)),
+        });
+    }
     let items = op.pagination.as_ref().map(|p| {
         tys.first()
             .and_then(|(_, r)| items_ref(plan, r, &p.items_field))
@@ -428,6 +515,7 @@ pub(crate) fn op_shape<'a>(plan: &'a Plan<'a>, info: &OpInfo<'a>) -> OpShape<'a>
         item_ref: items.flatten().cloned(),
         bodiless,
         mixed_success,
+        by_status,
         response,
         page_item,
         page_validator,
@@ -475,6 +563,23 @@ fn items_ref<'p>(plan: &'p Plan<'_>, body: &'p TypeRef, items_field: &str) -> Op
 pub(crate) fn request_check_name(info: &OpInfo<'_>) -> String {
     let words = tungsten_ir::naming::split_words(&info.request);
     super::plan::fn_name("check", &words)
+}
+
+/// The name of the check function of a response enum.
+pub(crate) fn response_check_name(info: &OpInfo<'_>) -> String {
+    let words = tungsten_ir::naming::split_words(&info.response);
+    super::plan::fn_name("check", &words)
+}
+
+/// The body of the check function of a response enum, or `None` when no
+/// variant has a constraint to check.
+pub(crate) fn status_check_stmts(cx: &Cx<'_, '_>, e: &StatusEnum) -> Option<Vec<String>> {
+    let arms: Vec<(String, Option<&TypeRef>)> = e
+        .variants
+        .iter()
+        .map(|v| (v.name.clone(), v.body.as_ref().map(|(t, _)| t)))
+        .collect();
+    super::types::variant_check_stmts(cx, &e.name, &arms)
 }
 
 /// Write the request struct of an operation, its constructor and its check
@@ -1476,12 +1581,30 @@ fn auth_rs(ir: &Ir) -> Rx {
                     .iter()
                     .flat_map(|f| f.scopes.keys().map(String::as_str))
                     .collect();
+                let authorization_code = s.authorization_code().map_or_else(Rx::none, |flow| {
+                    Rx::some(Rx::record(
+                        "AuthorizationCodeFlow",
+                        vec![
+                            (
+                                "authorization_url",
+                                Rx::string(flow.authorization_url.as_deref().unwrap_or_default()),
+                            ),
+                            (
+                                "token_url",
+                                Rx::string(flow.token_url.as_deref().unwrap_or_default()),
+                            ),
+                            ("refresh_url", Rx::opt_string(flow.refresh_url.as_deref())),
+                            ("scopes", Rx::strings(flow.scopes.keys())),
+                        ],
+                    ))
+                });
                 Rx::record(
                     "AuthSchemeDescriptor::Oauth2",
                     vec![
                         ("name", Rx::string(name)),
                         ("token_url", Rx::opt_string(token_url)),
                         ("scopes", Rx::strings(scopes)),
+                        ("authorization_code", authorization_code),
                     ],
                 )
             }
@@ -1816,7 +1939,13 @@ pub(crate) fn descriptors_file(
         let module = format!("crate::resources::{}", plan.resources[info.res].module);
         extra.push((module.clone(), info.request.clone()));
         if shape_has_checks(plan, shape) {
-            extra.push((module, request_check_name(info)));
+            extra.push((module.clone(), request_check_name(info)));
+        }
+        if let Some(e) = &shape.by_status {
+            extra.push((module.clone(), e.name.clone()));
+            if status_check_stmts(&cx, e).is_some() {
+                extra.push((module, response_check_name(info)));
+            }
         }
     }
     let uses = imports_for(&code, &[], None, &extra);

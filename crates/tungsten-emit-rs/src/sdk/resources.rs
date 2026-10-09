@@ -12,10 +12,13 @@
 use tungsten_emit::Writer;
 use tungsten_ir::{IdempotencyKind, OperationStatus, Safety};
 
-use super::ops::{OpShape, fn_sig, idempotency_str, method_str, safety_str, write_request};
+use super::ops::{
+    OpShape, StatusEnum, fn_sig, idempotency_str, method_str, response_check_name, safety_str,
+    status_check_stmts, write_request,
+};
 use super::plan::{MemberKind, OpInfo, Plan, ResInfo};
 use super::rs::{Rx, doc, doc_text, imports_for, paragraphs, put};
-use super::types::{Cx, write_patterns};
+use super::types::{Cx, arm, write_check_fn, write_patterns};
 
 /// The documentation of an operation method.
 pub(crate) fn op_doc(
@@ -95,8 +98,14 @@ pub(crate) fn op_doc(
     if let Some(p) = stream {
         parts.push(format!("`{p}()` iterates the events of its stream."));
     }
-    if shape.bodiless {
+    if shape.bodiless && shape.by_status.is_none() {
         parts.push("A success response without a body yields `None` (or `()`).".into());
+    }
+    if let Some(e) = &shape.by_status {
+        parts.push(format!(
+            "The operation answers with different bodies by status; the value is `{}`, which holds the body of the status the server answered with (`status()` returns it). A success status the operation does not declare is an `UNEXPECTED_RESPONSE` error.",
+            e.name
+        ));
     }
     if shape.mixed_success {
         parts.push(
@@ -316,11 +325,105 @@ fn write_method(
             op_lines(w, &konst);
             w.line("let args = s::args(&request);");
             w.line("let outcome = client.core.call(op, args, opts).await;");
-            w.line("decode(&op.id, outcome)");
+            if shape.by_status.is_some() {
+                w.line("decode_by_status(&op.id, outcome)");
+            } else {
+                w.line("decode(&op.id, outcome)");
+            }
         }
     }
     w.dedent();
     w.line("}");
+}
+
+/// The response enum of an operation whose success bodies differ by
+/// status: one variant per declared status, the status accessor, the
+/// per-status decoding and the check function.
+fn write_response(w: &mut Writer, cx: &Cx<'_, '_>, info: &OpInfo<'_>, e: &StatusEnum) {
+    let name = &e.name;
+    doc(
+        w,
+        &paragraphs([
+            format!(
+                "Success response of `{}`: the body of the status the server answered with.",
+                info.op.id.0
+            ),
+            "The runtime decodes the body as the type declared for the response status. Validation judges the body against the union of the declared bodies, like the other SDKs.".into(),
+        ]),
+    );
+    w.line("#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]");
+    w.line("#[serde(untagged)]");
+    w.line(format!("pub enum {name} {{"));
+    w.indent();
+    for v in &e.variants {
+        match &v.body {
+            Some((_, ty)) => {
+                doc(w, &format!("Status {}.", v.status));
+                w.line(format!("{}({ty}),", v.name));
+            }
+            None => {
+                doc(w, &format!("Status {}, without a body.", v.status));
+                w.line(format!("{},", v.name));
+            }
+        }
+    }
+    w.dedent();
+    w.line("}");
+    w.blank();
+    w.line(format!("impl {name} {{"));
+    w.indent();
+    doc(w, "The success status the server answered with.");
+    w.line("pub fn status(&self) -> u16 {");
+    w.indent();
+    w.line("match self {");
+    w.indent();
+    for v in &e.variants {
+        let pattern = if v.body.is_some() {
+            format!("Self::{}(_)", v.name)
+        } else {
+            format!("Self::{}", v.name)
+        };
+        w.line(format!("{pattern} => {},", v.status));
+    }
+    w.dedent();
+    w.line("}");
+    w.dedent();
+    w.line("}");
+    w.dedent();
+    w.line("}");
+    w.blank();
+    w.line(format!("impl ByStatus for {name} {{"));
+    w.indent();
+    w.line("fn from_status(status: u16, body: &Value) -> StatusDecode<Self> {");
+    w.indent();
+    w.line("match status {");
+    w.indent();
+    for v in &e.variants {
+        let decoded = if v.body.is_some() {
+            Rx::call(
+                "decode_variant",
+                vec![Rx::atom("body"), Rx::atom(format!("Self::{}", v.name))],
+            )
+        } else {
+            Rx::call("Ok", vec![Rx::atom(format!("Self::{}", v.name))])
+        };
+        arm(
+            w,
+            12,
+            &v.status.to_string(),
+            &Rx::call("Some", vec![decoded]),
+        );
+    }
+    w.line("_ => None,");
+    w.dedent();
+    w.line("}");
+    w.dedent();
+    w.line("}");
+    w.dedent();
+    w.line("}");
+    if let Some(stmts) = status_check_stmts(cx, e) {
+        write_check_fn(w, &response_check_name(info), name, &stmts);
+    }
 }
 
 /// The source of one resource module.
@@ -390,6 +493,10 @@ pub(crate) fn resource_file(
         if let MemberKind::Op(o) = m.kind {
             code.blank();
             write_request(&mut code, &cx, &plan.ops[o], &shapes[o]);
+            if let Some(e) = &shapes[o].by_status {
+                code.blank();
+                write_response(&mut code, &cx, &plan.ops[o], e);
+            }
         }
     }
     let patterns = cx.patterns.borrow().clone();
@@ -517,6 +624,31 @@ pub(crate) fn client_file(plan: &Plan<'_>, has_macros: bool, header: &str) -> St
         code.line(".map(|(_, spec)| spec.clone())");
         code.line(".expect(\"a descriptor for every streaming operation\")");
         code.dedent();
+        code.dedent();
+        code.line("}");
+    }
+    let flows: Vec<&str> = ir
+        .auth
+        .iter()
+        .filter(|s| s.authorization_code().is_some())
+        .map(tungsten_ir::AuthScheme::name)
+        .collect();
+    if !flows.is_empty() {
+        code.blank();
+        doc(
+            &mut code,
+            &format!(
+                "OAuth2 authorization-code helpers of the security scheme `scheme` ({}): PKCE, the authorization URL, the code exchange and refresh. Tokens are kept in `ClientOptions::token_store`.",
+                flows
+                    .iter()
+                    .map(|f| format!("`{f}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        );
+        code.line("pub fn oauth(&self, scheme: &str) -> OAuthFlow {");
+        code.indent();
+        code.line("self.core.oauth(scheme)");
         code.dedent();
         code.line("}");
     }

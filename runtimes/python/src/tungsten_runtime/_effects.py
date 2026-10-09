@@ -112,6 +112,16 @@ class Observe:
 
 
 @dataclass(frozen=True, slots=True)
+class Invoke:
+    """Call ``fn(*args)`` and hand its result back (an awaitable result is
+    awaited by the async driver, refused by the sync one). Unlike ``Observe``
+    its failures reach the flow."""
+
+    fn: Callable[..., object]
+    args: tuple[object, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class Shared:
     """Run ``flow()`` once for every concurrent request of the same ``key``
     (single-flight); the result or exception is shared."""
@@ -154,7 +164,7 @@ class StreamFailed:
 
 type ReadOutcome = Chunk | StreamEnded | StreamFailed
 
-type Effect = Send | Sleep | StoreGet | StorePut | Observe | Shared | Emit | ReadChunk
+type Effect = Send | Sleep | StoreGet | StorePut | Observe | Invoke | Shared | Emit | ReadChunk
 
 type Flow[T] = Generator[Effect, object, T]
 
@@ -185,6 +195,11 @@ def store_put(store: object, scope: str, logical_id: str, key: str) -> Flow[None
 def observe(fn: object, *args: object) -> Flow[None]:
     if callable(fn):
         yield Observe(fn, args)
+
+
+def invoke(fn: Callable[..., object], *args: object) -> Flow[object]:
+    result = yield Invoke(fn, args)
+    return result
 
 
 def shared(key: str, flow: Callable[[], Flow[str]]) -> Flow[str]:

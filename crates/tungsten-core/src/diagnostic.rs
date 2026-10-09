@@ -4,7 +4,7 @@
 //! Code ranges: `TG01xx` parsing, `TG02xx` refs and cycles,
 //! `TG03xx` type normalization, `TG04xx` naming, `TG05xx` pagination/auth
 //! inference, `TG06xx` manifests, `TG07xx` emitter limits, `TG09xx`
-//! staleness/CI. The registry of codes lives in [`codes`].
+//! staleness/CI and overlay suggestions. The registry of codes lives in [`codes`].
 
 use crate::source::{SourceMap, Span};
 use serde::{Deserialize, Serialize};
@@ -355,7 +355,7 @@ pub mod codes {
         ),
         (
             "TG0744",
-            "operation with different success bodies returns serde_json::Value in the Rust SDK",
+            "operation with different non-JSON or ranged success bodies returns serde_json::Value in the Rust SDK",
         ),
         (
             "TG0745",
@@ -389,6 +389,14 @@ pub mod codes {
         (
             "TG0902",
             "API surface snapshot of the last generation is missing or unreadable; the change is not classified",
+        ),
+        (
+            "TG0920",
+            "overlay suggest: a diagnostic has an overlay fix but its value cannot be derived; skipped",
+        ),
+        (
+            "TG0921",
+            "overlay suggest: no overlay action can fix this diagnostic code",
         ),
     ];
 

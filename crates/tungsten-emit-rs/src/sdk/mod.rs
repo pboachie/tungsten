@@ -30,7 +30,7 @@
 //!
 //! [`supports`] reports what is emitted with a fallback (TG0741 types typed
 //! `serde_json::Value`, TG0743 OpenID Connect, TG0744 distinct success
-//! bodies, TG0746 macro outputs) and what cannot be emitted (TG0742
+//! bodies that are not JSON under exact statuses, TG0746 macro outputs) and what cannot be emitted (TG0742
 //! macros); [`emit`] reports
 //! invalid target options (TG0740) and file errors.
 
@@ -62,7 +62,7 @@ pub(crate) fn supports(ir: &Ir) -> Diagnostics {
 }
 
 /// TG0741 for each named type typed `serde_json::Value`, TG0744 for each
-/// operation whose success bodies differ.
+/// operation whose success bodies differ and cannot be a response enum.
 fn fallback_notes(plan: &plan::Plan<'_>, shapes: &[ops::OpShape<'_>]) -> Diagnostics {
     let mut diags = Diagnostics::new();
     for t in &plan.ir.types.types {
@@ -104,7 +104,7 @@ fn fallback_notes(plan: &plan::Plan<'_>, shapes: &[ops::OpShape<'_>]) -> Diagnos
             diags.push(Diagnostic::info(
                 "TG0744",
                 format!(
-                    "operation `{}` answers with different bodies; the Rust SDK returns `serde_json::Value` and does not validate its response",
+                    "operation `{}` answers with different bodies that are not all JSON under exact statuses; the Rust SDK returns `serde_json::Value` and does not validate its response",
                     info.op.id.0
                 ),
             ));

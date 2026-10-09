@@ -606,11 +606,13 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
     ),
     e(
         "TG0744",
-        "An operation's success responses have different bodies (for example 200 returns a \
-         record and 201 an array). The Rust SDK cannot give the typed method one return \
-         type, so it returns `serde_json::Value` and does not validate the response.",
-        "Describe one success body, or call the operation through `Dispatch::invoke`, which \
-         returns JSON.",
+        "An operation's success responses have different bodies, and they are not all JSON \
+         bodies under exact statuses (a body is text, binary or a form, or a status is a \
+         range such as `2XX`). The Rust SDK types an operation whose exact statuses answer \
+         with different JSON bodies as a response enum; for the shapes it cannot represent \
+         it returns `serde_json::Value` and does not validate the response.",
+        "Declare each success status exactly and describe its body as JSON, or call the \
+         operation through `Dispatch::invoke`, which returns JSON.",
     ),
     e(
         "TG0745",
@@ -690,6 +692,26 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
          so the change since that generation is not classified as major, minor or patch.",
         "Run `tungsten generate` to record a snapshot; later runs of `tungsten diff \
          --semver` classify the changes made after it. Do not edit files under `.tungsten/`.",
+    ),
+    e(
+        "TG0920",
+        "`tungsten overlay suggest` found a diagnostic that an overlay action could fix, but \
+         the value the action needs cannot be derived without guessing: the operation has no \
+         single id in the IR (its document is shared by several namespaces, or the operation \
+         is expanded from an rpc envelope), or its position cannot be written as an Overlay \
+         target. The overlay suggestion leaves it out; it never writes placeholder text.",
+        "Fix the diagnostic by hand in the spec (add or change the operationId), or in the \
+         overlay you maintain yourself.",
+    ),
+    e(
+        "TG0921",
+        "`tungsten overlay suggest` only writes actions whose fix the compiler has already \
+         decided: the id of an operation without operationId, and the unique id of an \
+         operation whose operationId is used more than once. Warnings of any other code, \
+         such as an inferred pagination (TG0501) or a renamed field or type (TG0401), need a \
+         decision or live in tungsten.yml; the count is reported once per code.",
+        "Use `tungsten explain` on the code for its usual fix, for example declare the \
+         pagination under `pagination` in tungsten.yml.",
     ),
 ];
 

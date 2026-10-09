@@ -14,7 +14,7 @@ use crate::ctx::{Ctx, Fail};
 use crate::exit;
 use crate::render::{error_human, human_value, json_doc, preview_human, preview_json};
 use crate::tree::{self, Leaf, Tree};
-use crate::{builtin, check, values};
+use crate::{builtin, check, explain, values};
 
 fn flag(m: &ArgMatches, name: &str) -> bool {
     m.try_get_one::<bool>(name)
@@ -501,6 +501,7 @@ where
     let result = match names.first().map(String::as_str) {
         Some("schema") => builtin::schema(ctx, &tree.leaves, leaf_m),
         Some("operations") => Ok(builtin::operations(ctx)),
+        Some("explain-error") => explain::run(ctx, leaf_m),
         Some("auth") => auth_status(ctx, leaf_m, make).await,
         _ => run_leaf(ctx, &tree, &names, leaf_m, make).await,
     };

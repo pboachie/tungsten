@@ -12,7 +12,7 @@ use crate::ops::{OpShape, safety_str};
 use crate::options::{Options, TYPESCRIPT_VERSION, ZOD_RANGE};
 use crate::plan::{MemberKind, Plan};
 use crate::resources::has_preview;
-use crate::ts::string_lit;
+use crate::ts::{prop_key, string_lit};
 
 pub(crate) fn package_json(plan: &Plan<'_>, opts: &Options) -> String {
     let doc = json!({
@@ -296,6 +296,30 @@ pub(crate) fn readme(
             "`auth` takes one entry per scheme name. A composite profile takes an object \
                       keyed by cookie name or configuration key.\n\n",
         );
+    }
+    if let Some(scheme) = ir.auth.iter().find(|s| s.authorization_code().is_some()) {
+        let name = scheme.name();
+        out.push_str(&format!(
+            "## Sign in with OAuth2 (authorization code)\n\n\
+             `{name}` has an authorization-code flow. Configure the client with \
+             `auth: {{ {key}: {{ flow: \"authorizationCode\", clientId, clientSecret, redirectUri }} }}` \
+             (`clientSecret` is optional for a public client), send the user to the authorization URL \
+             and exchange the code they come back with. Tokens are kept in `ClientOptions.tokenStore` \
+             (in memory by default), sent on every call, refreshed before they expire and once after a 401.\n\n\
+             ```ts\n\
+             const flow = client.oauth.{access};\n\
+             const pkce = await flow.pkce();\n\
+             const url = flow.authorizationUrl({{ state, codeChallenge: pkce.challenge }});\n\
+             // Redirect the user to url.value; the server sends them back with ?code=...\n\
+             await flow.exchangeCode({{ code, codeVerifier: pkce.verifier }});\n\
+             ```\n\n",
+            key = prop_key(name),
+            access = if prop_key(name) == name {
+                name.to_string()
+            } else {
+                format!("[{}]", string_lit(name))
+            },
+        ));
     }
 
     let find = |pred: &dyn Fn(usize) -> bool| paths.iter().find(|(o, _)| pred(*o));

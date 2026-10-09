@@ -28,7 +28,7 @@ pub const RESERVED_FLAGS: &[&str] = &[
 
 /// First path segments of the kit's own commands; a resource cannot take
 /// them.
-pub const RESERVED_COMMANDS: &[&str] = &["auth", "help", "operations", "schema"];
+pub const RESERVED_COMMANDS: &[&str] = &["auth", "explain-error", "help", "operations", "schema"];
 
 fn name_ok(s: &str, extra: &[char]) -> bool {
     !s.is_empty()

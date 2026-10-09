@@ -31,6 +31,7 @@ use std::path::PathBuf;
 use tungsten_core::{Diagnostics, Digest, SourceId, SourceMap, Span};
 
 pub use graph::{RefGraph, is_named_schema};
+pub use jsonpath::overlay_target;
 pub use load::{load, load_str};
 
 /// Index into [`Workspace::documents`].

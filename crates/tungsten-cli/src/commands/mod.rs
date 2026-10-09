@@ -10,10 +10,11 @@ pub(crate) mod generate;
 pub(crate) mod init;
 mod ir;
 pub(crate) mod mock;
+pub(crate) mod overlay;
 pub(crate) mod report;
 mod schema;
 
-use crate::args::{Cli, Command, IrCommand};
+use crate::args::{Cli, Command, IrCommand, OverlayCommand};
 use crate::{CliEnv, Report};
 
 pub(crate) fn dispatch(cli: &Cli, env: &CliEnv) -> Report {
@@ -30,5 +31,8 @@ pub(crate) fn dispatch(cli: &Cli, env: &CliEnv) -> Report {
         Command::Mock(args) => mock::start(args),
         Command::Report(args) => report::run(args),
         Command::Diff(args) => diff::run(args),
+        Command::Overlay {
+            command: OverlayCommand::Suggest(args),
+        } => overlay::suggest(args),
     }
 }

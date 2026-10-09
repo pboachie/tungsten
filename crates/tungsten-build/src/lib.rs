@@ -19,6 +19,7 @@
 //! the normalized documents, never type shapes.
 
 pub mod driver;
+pub mod suggest;
 pub mod types;
 
 mod auth;

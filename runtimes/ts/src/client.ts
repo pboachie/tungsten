@@ -27,6 +27,7 @@ import {
 } from "./classify.js";
 import { checkToken, CONFIRMATION_TTL_MS, issueToken } from "./confirm.js";
 import { diagnostic, scrubDiagnostic, scrubText } from "./envelope.js";
+import { OAuthFlow, OAuthSession } from "./oauth.js";
 import {
   containsPlaceholder,
   describePredicate,
@@ -153,6 +154,8 @@ interface Prepared {
   /** Wire names of query parameters whose values are shown redacted. */
   hiddenQuery: string[];
   secrets: Set<string>;
+  /** The authorization-code scheme whose stored token this request carries. */
+  oauth: string | null;
 }
 
 function fail(error: Diagnostic): Failure {
@@ -447,6 +450,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
   readonly #confirmationKey: Uint8Array;
   readonly #tokenCache = new Map<string, { token: string; expiresAt: number }>();
   readonly #tokenInflight = new Map<string, Promise<string>>();
+  readonly #oauth: OAuthSession;
   /** Confirmation tokens already used to send, with the replay protection
    * of their first use, until they expire. */
   readonly #usedTokens = new Map<string, { bind: string | null; expiry: number }>();
@@ -465,6 +469,13 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     } catch {
       // Unreadable options: keep the defaults; calls report the problem.
     }
+    this.#oauth = new OAuthSession({
+      api: this.api,
+      options: this.options,
+      fetch: () => this.#fetch(),
+      now: () => this.#now(),
+      timeoutMs: () => bounded(this.options.timeoutMs, DEFAULT_TIMEOUT_MS, 1),
+    });
     this.#store = store ?? new MemoryIdempotencyStore();
     this.#confirmationKey = key ?? crypto.getRandomValues(new Uint8Array(32));
   }
@@ -635,11 +646,36 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
   async #call<T>(op: OperationDescriptor, args: Record<string, unknown>, opts: CallOptions, urlOverride: string | null): Promise<Result<T>> {
     const prepared = await this.#prepare(op, args, opts, "call", urlOverride);
     if (!prepared.ok) return prepared;
-    const result = await this.#send<T>(prepared.value, opts);
+    let result = await this.#send<T>(prepared.value, opts);
+    if (!result.ok && result.error.http_status === 401 && prepared.value.oauth !== null) {
+      // An authorization-code token the server no longer accepts: refresh
+      // it and send once more. Never a second time.
+      result = await this.#retryRejected(prepared.value, result, opts);
+    }
     if (result.ok && opts.verify === true && op.agent.verify) {
       return { ...result, verification: await this.#verify(op, prepared.value.args, result.value, opts) };
     }
     return result;
+  }
+
+  /** The answer to a request whose stored OAuth2 token was rejected (401):
+   * the refreshed token is put on the same request, which is sent once more;
+   * `rejected` stands when nothing could be refreshed. */
+  async #retryRejected<T>(prepared: Prepared, rejected: Failure, opts: CallOptions): Promise<Result<T>> {
+    const scheme = prepared.oauth;
+    const current = prepared.headers.get("Authorization");
+    if (scheme === null || current === undefined || !current.startsWith("Bearer ")) return rejected;
+    const token = await this.#oauth.refreshAfterRejection(scheme, current.slice("Bearer ".length));
+    if (token === null) return rejected;
+    prepared.headers.set("Authorization", `Bearer ${token}`, true);
+    prepared.secrets.add(token);
+    return this.#send<T>({ ...prepared, oauth: null }, opts);
+  }
+
+  /** The OAuth2 authorization-code helpers of the scheme `scheme`: PKCE, the
+   * authorization URL, the code exchange and refresh. */
+  oauth(scheme: string): OAuthFlow {
+    return new OAuthFlow(this.#oauth, scheme);
   }
 
   // ------------------------------------------------------------ preflight
@@ -936,6 +972,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
         authQuery: auth.plan.query.map((q) => ({ name: q.name, value: q.value })),
         hiddenQuery: [...auth.plan.query.map((q) => q.name), ...op.params.filter((x) => x.in === "query" && x.sensitive === true).map((x) => x.wire)],
         secrets: new Set([...secrets, ...headers.secrets()]),
+        oauth: auth.oauth,
       },
     };
   }
@@ -1127,6 +1164,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
   }
 
   readonly #tokenSource: TokenSource = async (scheme, config) => {
+    if (config.flow === "authorizationCode") return this.#oauth.token(scheme.name);
     const cached = this.#tokenCache.get(scheme.name);
     if (cached && cached.expiresAt > Date.now() + 30_000) return cached.token;
     const inflight = this.#tokenInflight.get(scheme.name);

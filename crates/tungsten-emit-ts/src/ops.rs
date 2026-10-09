@@ -974,12 +974,27 @@ fn auth_js(ir: &Ir) -> Js {
                     .iter()
                     .flat_map(|f| f.scopes.keys().map(String::as_str))
                     .collect();
-                Js::obj(vec![
+                let mut fields = vec![
                     ("kind", Js::str("oauth2")),
                     ("name", Js::str(name)),
                     ("tokenUrl", Js::opt_str(token_url)),
                     ("scopes", Js::strs(scopes)),
-                ])
+                ];
+                if let Some(flow) = s.authorization_code() {
+                    fields.push((
+                        "authorizationCode",
+                        Js::obj(vec![
+                            (
+                                "authorizationUrl",
+                                Js::opt_str(flow.authorization_url.as_deref()),
+                            ),
+                            ("tokenUrl", Js::opt_str(flow.token_url.as_deref())),
+                            ("refreshUrl", Js::opt_str(flow.refresh_url.as_deref())),
+                            ("scopes", Js::strs(flow.scopes.keys())),
+                        ]),
+                    ));
+                }
+                Js::obj(fields)
             }
             AuthScheme::Composite {
                 name,

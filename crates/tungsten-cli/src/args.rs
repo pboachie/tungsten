@@ -18,6 +18,8 @@ Examples:
   tungsten mock --port 4010            Serve a mock of the API from the IR
   tungsten report --html report.html   Write a static coverage and safety report
   tungsten diff --semver               Show how the API surface changed
+  tungsten overlay suggest --write fixes.overlay.yaml
+                                       Suggest an overlay that fixes diagnostics
 
 Repository: https://github.com/pboachie/tungsten
 
@@ -90,6 +92,9 @@ impl Cli {
             Command::Mock(_) => CommandName::Mock,
             Command::Report(_) => CommandName::Report,
             Command::Diff(_) => CommandName::Diff,
+            Command::Overlay {
+                command: OverlayCommand::Suggest(_),
+            } => CommandName::OverlaySuggest,
         }
     }
 }
@@ -121,6 +126,18 @@ pub(crate) enum Command {
     /// Show what regeneration would add, change or remove in each target,
     /// and with --semver how the API surface changed.
     Diff(DiffArgs),
+    /// OpenAPI Overlay authoring helpers.
+    Overlay {
+        #[command(subcommand)]
+        command: OverlayCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum OverlayCommand {
+    /// Suggest an Overlay 1.0 document whose actions fix diagnostics
+    /// (a missing or repeated operationId) without changing the IR.
+    Suggest(SuggestArgs),
 }
 
 #[derive(Debug, Subcommand)]
@@ -226,6 +243,25 @@ pub(crate) struct MockArgs {
     /// nothing.
     #[arg(long, value_name = "N", default_value_t = tungsten_mock::DEFAULT_MAX_IDEMPOTENT_RESPONSES)]
     pub max_idempotent_responses: usize,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct SuggestArgs {
+    #[command(flatten)]
+    pub input: InputArgs,
+    /// Write the overlay to this file instead of stdout.
+    #[arg(long, value_name = "FILE")]
+    pub write: Option<PathBuf>,
+    /// Overwrite the --write file if it exists.
+    #[arg(long, requires = "write")]
+    pub force: bool,
+    /// Only suggest fixes for these diagnostic codes, comma-separated.
+    #[arg(long, value_name = "CODES", value_delimiter = ',')]
+    pub only: Vec<String>,
+    /// The input (namespace) to suggest for. Needed when more than one
+    /// input has suggestions: an overlay's targets only fit its own spec.
+    #[arg(long, value_name = "NAME")]
+    pub namespace: Option<String>,
 }
 
 #[derive(Debug, Args)]

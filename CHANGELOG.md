@@ -55,6 +55,11 @@ runtime (`@tungsten/mcp`) and the installers ship together at 0.1.0.
   (x86_64, aarch64) and Windows (x86_64) with a checksum file, a CycloneDX
   SBOM and build provenance attestations, plus `install.sh` and `install.ps1`
   installers that verify checksums.
+- OAuth2 authorization-code helpers in the TypeScript, Python and Rust
+  runtimes: PKCE (S256), the authorization URL, the code exchange, refresh with
+  a single flight and a pluggable token store. A call sends the stored token,
+  refreshes it before it expires and once after a 401. Generated clients expose
+  the helpers only when the specification declares an `authorizationCode` flow.
 - Repository guard and community files (contributing guide, security policy,
   code of conduct, issue forms and pull request template).
 

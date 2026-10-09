@@ -1022,12 +1022,27 @@ fn auth_py(ir: &Ir) -> Py {
                     .iter()
                     .flat_map(|f| f.scopes.keys().map(String::as_str))
                     .collect();
-                Py::dict(vec![
+                let mut fields = vec![
                     ("kind", Py::str("oauth2")),
                     ("name", Py::str(name)),
                     ("token_url", Py::opt_str(token_url)),
                     ("scopes", Py::strs(scopes)),
-                ])
+                ];
+                if let Some(flow) = s.authorization_code() {
+                    fields.push((
+                        "authorization_code",
+                        Py::dict(vec![
+                            (
+                                "authorization_url",
+                                Py::opt_str(flow.authorization_url.as_deref()),
+                            ),
+                            ("token_url", Py::opt_str(flow.token_url.as_deref())),
+                            ("refresh_url", Py::opt_str(flow.refresh_url.as_deref())),
+                            ("scopes", Py::strs(flow.scopes.keys())),
+                        ]),
+                    ));
+                }
+                Py::dict(fields)
             }
             AuthScheme::Composite {
                 name,

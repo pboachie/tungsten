@@ -12,6 +12,7 @@ use serde_json::Value;
 use url::Url;
 
 use crate::idempotency::{MemoryIdempotencyStore, lock};
+use crate::oauth::{Gate, MemoryTokenStore, TokenStore};
 use crate::types::{
     ApiDescriptor, AuthConfig, CallOptions, ClientOptions, DiagnosticSink, IdempotencyStore,
     Jitter, MacroDescriptor, Middleware, OperationDescriptor, Outcome, PartialRetryOptions,
@@ -93,6 +94,10 @@ pub(crate) struct Inner {
     /// their first use, until they expire.
     pub used_tokens: Mutex<HashMap<String, (Option<String>, u64)>>,
     pub oauth_tokens: tokio::sync::Mutex<HashMap<String, CachedToken>>,
+    /// The tokens of the `authorizationCode` schemes.
+    pub token_store: Arc<dyn TokenStore>,
+    /// The refresh gate of each `authorizationCode` scheme.
+    pub oauth_gates: Mutex<HashMap<String, Arc<Gate>>>,
 }
 
 /// The engine behind every generated client. Cheap to clone (shares one
@@ -160,6 +165,10 @@ impl ClientCore {
             .idempotency_store
             .clone()
             .unwrap_or_else(|| Arc::new(MemoryIdempotencyStore::new()));
+        let token_store: Arc<dyn TokenStore> = options
+            .token_store
+            .clone()
+            .unwrap_or_else(|| Arc::new(MemoryTokenStore::new()));
         let core = ClientCore {
             inner: Arc::new(Inner {
                 api: Arc::new(api),
@@ -183,6 +192,8 @@ impl ClientCore {
                 key_lock: Mutex::new(()),
                 used_tokens: Mutex::new(HashMap::new()),
                 oauth_tokens: tokio::sync::Mutex::new(HashMap::new()),
+                token_store,
+                oauth_gates: Mutex::new(HashMap::new()),
             }),
         };
         core.register(options.operations);
@@ -293,7 +304,7 @@ impl ClientCore {
         url_override: Option<&str>,
         step: Option<&crate::prepare::MacroClaim>,
     ) -> Outcome {
-        let prepared = self
+        let mut prepared = self
             .prepare(
                 op,
                 args,
@@ -303,7 +314,16 @@ impl ClientCore {
                 step,
             )
             .await?;
-        let mut response = self.send(&prepared, opts).await?;
+        let mut response = match self.send(&prepared, opts).await {
+            Err(rejected)
+                if rejected.diagnostic.http_status == Some(401) && prepared.oauth.is_some() =>
+            {
+                // An authorization-code token the server no longer accepts:
+                // refresh it and send once more. Never a second time.
+                self.resend_rejected(&mut prepared, rejected, opts).await?
+            }
+            sent => sent?,
+        };
         if opts.verify && op.agent.verify.is_some() {
             // Verification calls other operations, which may verify in turn.
             let verification =
@@ -314,6 +334,36 @@ impl ClientCore {
             };
         }
         Ok(response)
+    }
+
+    /// The answer to a request whose stored OAuth2 token was rejected (401):
+    /// the refreshed token goes on the same request, which is sent once more;
+    /// `rejected` stands when nothing could be refreshed.
+    async fn resend_rejected(
+        &self,
+        prepared: &mut crate::prepare::Prepared<'_>,
+        rejected: crate::types::Error,
+        opts: &CallOptions,
+    ) -> std::result::Result<Response<Option<Value>>, crate::types::Error> {
+        let Some(scheme) = prepared.oauth.take() else {
+            return Err(rejected);
+        };
+        let Some(current) = prepared
+            .headers
+            .get("Authorization")
+            .and_then(|v| v.strip_prefix("Bearer "))
+            .map(str::to_owned)
+        else {
+            return Err(rejected);
+        };
+        let Some(token) = self.refresh_after_rejection(&scheme, &current).await else {
+            return Err(rejected);
+        };
+        prepared
+            .headers
+            .set("Authorization", format!("Bearer {token}"), true);
+        prepared.secrets.insert(token);
+        self.send(prepared, opts).await
     }
 
     /// Epoch milliseconds from the configured clock.

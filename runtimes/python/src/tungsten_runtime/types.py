@@ -439,11 +439,22 @@ class BasicScheme(TypedDict):
     name: str
 
 
+class AuthorizationCodeFlow(TypedDict):
+    """The ``authorizationCode`` flow of an OAuth2 scheme (present only when
+    the spec declares one). ``refresh_url`` falls back to ``token_url``."""
+
+    authorization_url: str
+    token_url: str
+    refresh_url: str | None
+    scopes: list[str]
+
+
 class OAuth2Scheme(TypedDict):
     kind: Literal["oauth2"]
     name: str
     token_url: str | None
     scopes: list[str]
+    authorization_code: NotRequired[AuthorizationCodeFlow]
 
 
 class CookiePart(TypedDict):
@@ -549,7 +560,10 @@ AuthConfig = Mapping[str, str | Mapping[str, str]]
 basic (``user:password``), or a mapping keyed by cookie name or config key
 for composite profiles (``bearer`` for a composite bearer part). An oauth2
 scheme takes an access token, or ``{"client_id": ..., "client_secret": ...}``
-to fetch client-credentials tokens from its token URL."""
+to fetch client-credentials tokens from its token URL, or
+``{"flow": "authorizationCode", "client_id": ..., "client_secret": ...,
+"redirect_uri": ...}`` (the last two optional) for a scheme with an
+authorization-code flow, whose tokens are kept in ``ClientOptions.token_store``."""
 
 
 class IdempotencyStore(Protocol):
@@ -597,6 +611,9 @@ class RetryOptions:
 class ClientOptions:
     base_url: str | None = None
     auth: AuthConfig | None = None
+    #: Holds the tokens of ``authorizationCode`` schemes (``TokenStore``, or
+    #: ``AsyncTokenStore`` with ``AsyncClientCore``). Default: in memory.
+    token_store: object = None
     timeout_ms: int = 30_000
     #: Overrides the API's per-tier retry defaults (``ApiDescriptor.retries``)
     #: for every tier: a ``RetryPolicy`` mapping field by field, a
@@ -708,6 +725,7 @@ __all__ = [
     "AsyncIdempotencyStore",
     "AuthConfig",
     "AuthSchemeDescriptor",
+    "AuthorizationCodeFlow",
     "BasicScheme",
     "BearerPart",
     "BearerScheme",

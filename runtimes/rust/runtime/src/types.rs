@@ -29,6 +29,8 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::oauth::TokenStore;
+
 // ---------------------------------------------------------------- errors
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -585,6 +587,16 @@ pub enum CompositePart {
     },
 }
 
+/// The `authorizationCode` flow of an OAuth2 scheme. `refresh_url` falls
+/// back to `token_url`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AuthorizationCodeFlow {
+    pub authorization_url: String,
+    pub token_url: String,
+    pub refresh_url: Option<String>,
+    pub scopes: Vec<String>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum AuthSchemeDescriptor {
     ApiKey {
@@ -607,6 +619,8 @@ pub enum AuthSchemeDescriptor {
         name: String,
         token_url: Option<String>,
         scopes: Vec<String>,
+        /// The `authorizationCode` flow, when the spec declares one.
+        authorization_code: Option<AuthorizationCodeFlow>,
     },
     Composite {
         name: String,
@@ -772,6 +786,11 @@ pub struct ClientOptions {
     /// Defaults to the first server.
     pub base_url: Option<String>,
     pub auth: AuthConfig,
+    /// Holds the tokens of `authorizationCode` schemes (configure such a
+    /// scheme as a `Credential::Parts` with `flow = "authorizationCode"`,
+    /// `client_id`, and optionally `client_secret` and `redirect_uri`).
+    /// Default: in memory, per client.
+    pub token_store: Option<Arc<dyn TokenStore>>,
     /// Per-attempt timeout. Default 30 s.
     pub timeout: Duration,
     /// Overrides the API's per-tier retry defaults field by field, for every tier.
@@ -817,6 +836,7 @@ impl Default for ClientOptions {
         ClientOptions {
             base_url: None,
             auth: AuthConfig::new(),
+            token_store: None,
             timeout: Duration::from_secs(30),
             retries: PartialRetryOptions::default(),
             idempotency_store: None,

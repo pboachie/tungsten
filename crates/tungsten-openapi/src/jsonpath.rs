@@ -54,6 +54,36 @@ enum Comparison {
     Ne,
 }
 
+/// The Overlay target (a JSONPath) that selects exactly the node at
+/// `pointer` in `root`, or `None` when no such expression selects exactly
+/// that node (a missing node, a member name with control characters).
+/// Plain names use the dot form (`$.paths['/pets'].get`).
+pub fn overlay_target(root: &Value, pointer: &str) -> Option<String> {
+    let mut expr = String::from("$");
+    for token in crate::split_pointer(pointer) {
+        if token.chars().any(char::is_control) {
+            return None;
+        }
+        let plain = token.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
+            && token.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+        if plain {
+            expr.push('.');
+            expr.push_str(&token);
+        } else {
+            expr.push_str("['");
+            for c in token.chars() {
+                if matches!(c, '\\' | '\'') {
+                    expr.push('\\');
+                }
+                expr.push(c);
+            }
+            expr.push_str("']");
+        }
+    }
+    let selected = JsonPath::parse(&expr).ok()?.select(root).ok()?;
+    (selected.len() == 1 && selected[0] == pointer).then_some(expr)
+}
+
 impl JsonPath {
     pub(crate) fn parse(expr: &str) -> Result<Self, String> {
         let mut p = Cursor {
