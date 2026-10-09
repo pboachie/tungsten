@@ -153,7 +153,7 @@ fn client_paths(plan: &Plan<'_>) -> Vec<(usize, String)> {
             match m.kind {
                 MemberKind::Op(o) => out.push((o, format!("{prefix}.{}", m.name))),
                 MemberKind::Child(c) => walk(plan, c, &format!("{prefix}.{}()", m.name), out),
-                MemberKind::Preview(_) | MemberKind::Pages(_) => {}
+                MemberKind::Preview(_) | MemberKind::Pages(_) | MemberKind::Stream(_) => {}
             }
         }
     }
@@ -471,11 +471,69 @@ pub(crate) fn readme(
     out
 }
 
-/// The shared helpers module.
-pub(crate) fn support_file(header: &str) -> String {
+/// The helpers an API with event streams adds to the shared module.
+const STREAM_SUPPORT: &str = r#"
+use tungsten_runtime::{EventStream, StreamEvent, StreamResult, TypedEvents, no_stream};
+
+/// A typed event as a dynamic one.
+pub fn encode_event<T: Serialize>(result: StreamResult<T>) -> StreamResult<Value> {
+    let event = result?;
+    let StreamEvent {
+        value,
+        event: name,
+        id,
+        retry,
+        meta,
+    } = event;
+    match serde_json::to_value(&value) {
+        Ok(value) => Ok(StreamEvent {
+            value,
+            event: name,
+            id,
+            retry,
+            meta,
+        }),
+        Err(e) => Err(malformed(
+            "event",
+            "event",
+            Value::Null,
+            "a value that serializes to JSON",
+            e.to_string(),
+        )),
+    }
+}
+
+/// Every event of a typed stream, as dynamic results.
+pub async fn collect_events<T: Serialize + DeserializeOwned>(
+    mut events: TypedEvents<T>,
+) -> Vec<StreamResult<Value>> {
+    let mut out = vec![];
+    while let Some(event) = events.next().await {
+        out.push(encode_event(event));
+    }
+    out
+}
+
+/// Every event of an untyped stream.
+pub async fn collect_raw_events(mut events: EventStream) -> Vec<StreamResult<Value>> {
+    let mut out = vec![];
+    while let Some(event) = events.next().await {
+        out.push(event);
+    }
+    out
+}
+
+pub fn not_streamed(operation: &str) -> Error {
+    no_stream(operation)
+}
+"#;
+
+/// The shared helpers module; `streams` adds the helpers of event streams.
+pub(crate) fn support_file(header: &str, streams: bool) -> String {
     // The template starts with the licence line of this repository, which
     // generated files do not carry.
     let template = include_str!("support_template.rs");
     let body = template.split_once('\n').map_or(template, |(_, rest)| rest);
-    format!("{header}\n\n{body}")
+    let extra = if streams { STREAM_SUPPORT } else { "" };
+    format!("{header}\n\n{body}{extra}")
 }

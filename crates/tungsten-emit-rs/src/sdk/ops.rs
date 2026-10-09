@@ -97,6 +97,15 @@ pub(crate) struct Validated {
     pub check: Option<String>,
 }
 
+/// The event stream of an operation.
+#[derive(Debug, Clone)]
+pub(crate) struct StreamShape {
+    /// Type of one event (`Value` when events are untyped).
+    pub event: String,
+    /// The event validator, when events are typed.
+    pub validator: Option<Validated>,
+}
+
 /// Everything about one operation's call signature.
 #[derive(Debug, Clone)]
 pub(crate) struct OpShape<'a> {
@@ -116,6 +125,8 @@ pub(crate) struct OpShape<'a> {
     pub page_item: Option<String>,
     /// The page item validator, when the items are typed.
     pub page_validator: Option<Validated>,
+    /// The event stream, when the operation has one.
+    pub stream: Option<StreamShape>,
     /// Helper check functions for inline types: (name, type, statements).
     pub helpers: Vec<(String, String, Vec<String>)>,
 }
@@ -380,6 +391,17 @@ pub(crate) fn op_shape<'a>(plan: &Plan<'a>, info: &OpInfo<'a>) -> OpShape<'a> {
     let page_validator = items
         .flatten()
         .map(|items| validated(items, false, &format!("{}_item", info.builder)));
+    let stream = op.stream.as_ref().map(|spec| {
+        let untyped = matches!(
+            &spec.event,
+            TypeRef::Inline(shape) if matches!(**shape, Shape::Any)
+        );
+        StreamShape {
+            event: cx.ty(&spec.event),
+            validator: (!untyped)
+                .then(|| validated(&spec.event, false, &format!("{}_event", info.builder))),
+        }
+    });
     OpShape {
         params,
         body,
@@ -390,6 +412,7 @@ pub(crate) fn op_shape<'a>(plan: &Plan<'a>, info: &OpInfo<'a>) -> OpShape<'a> {
         response,
         page_item,
         page_validator,
+        stream,
         helpers,
     }
 }
@@ -1292,6 +1315,39 @@ pub(crate) fn descriptor_rx(
     (lets.stmts, Rx::record("OperationDescriptor", fields))
 }
 
+/// The stream descriptor of one operation: the `let` of its event validator
+/// and the struct literal.
+pub(crate) fn stream_descriptor_rx(
+    info: &OpInfo<'_>,
+    shape: &StreamShape,
+) -> Option<(Vec<String>, Rx)> {
+    let spec = info.op.stream.as_ref()?;
+    let mut stmts = vec![];
+    let event = match &shape.validator {
+        Some(v) => {
+            let (line, value) = validator_let("event", "body", v);
+            stmts.push(line);
+            value
+        }
+        None => Rx::none(),
+    };
+    let done = match &spec.done {
+        Some(done) => Rx::some(Rx::string(done)),
+        None => Rx::none(),
+    };
+    let flag = match &spec.request_flag {
+        Some(flag) => Rx::some(Rx::string(flag)),
+        None => Rx::none(),
+    };
+    Some((
+        stmts,
+        Rx::record(
+            "StreamDescriptor",
+            vec![("event", event), ("done", done), ("flag", flag)],
+        ),
+    ))
+}
+
 /// Whether the request struct has a check function.
 pub(crate) fn shape_has_checks(plan: &Plan<'_>, shape: &OpShape<'_>) -> bool {
     let cx = Cx::new(plan, None);
@@ -1570,6 +1626,7 @@ pub(crate) fn descriptors_file(
     header: &str,
 ) -> String {
     let cx = Cx::new(plan, None);
+    let streams = shapes.iter().any(|s| s.stream.is_some());
     let mut code = Writer::new("    ");
     for (i, info) in plan.ops.iter().enumerate() {
         code.line(format!("pub const {}: usize = {i};", info.konst));
@@ -1587,6 +1644,10 @@ pub(crate) fn descriptors_file(
     code.line("pub list: Vec<OperationDescriptor>,");
     code.line("/// Every macro, in IR order.");
     code.line("pub macros: Vec<MacroDescriptor>,");
+    if streams {
+        code.line("/// The event stream descriptors, by the index of their operation.");
+        code.line("pub streams: Vec<(usize, Arc<StreamDescriptor>)>,");
+    }
     code.dedent();
     code.line("}");
     code.blank();
@@ -1618,15 +1679,28 @@ pub(crate) fn descriptors_file(
         Rx::atom("Vec::new()")
     };
     put(&mut code, 4, "let macros = ", &macros, ";");
-    let build = Rx::record(
-        "Descriptors",
-        vec![
-            ("api", Rx::call("api", vec![])),
-            ("operations", Rx::atom("operations")),
-            ("list", Rx::atom("list")),
-            ("macros", Rx::atom("macros")),
-        ],
-    );
+    let mut build_fields = vec![
+        ("api", Rx::call("api", vec![])),
+        ("operations", Rx::atom("operations")),
+        ("list", Rx::atom("list")),
+        ("macros", Rx::atom("macros")),
+    ];
+    if streams {
+        let entries = Rx::list(
+            plan.ops
+                .iter()
+                .zip(shapes)
+                .enumerate()
+                .filter(|(_, (_, shape))| shape.stream.is_some())
+                .map(|(i, (info, _))| {
+                    Rx::atom(format!("({i}, Arc::new({}_stream()))", info.builder))
+                })
+                .collect(),
+        );
+        put(&mut code, 4, "let streams = ", &entries, ";");
+        build_fields.push(("streams", Rx::atom("streams")));
+    }
+    let build = Rx::record("Descriptors", build_fields);
     put(&mut code, 4, "", &build, "");
     code.dedent();
     code.line("}");
@@ -1652,6 +1726,24 @@ pub(crate) fn descriptors_file(
         put(&mut code, 4, "", &value, "");
         code.dedent();
         code.line("}");
+        if let Some((lets, value)) = shape
+            .stream
+            .as_ref()
+            .and_then(|stream| stream_descriptor_rx(info, stream))
+        {
+            code.blank();
+            code.line(format!(
+                "fn {}_stream() -> StreamDescriptor {{",
+                info.builder
+            ));
+            code.indent();
+            for l in &lets {
+                code.line(l);
+            }
+            put(&mut code, 4, "", &value, "");
+            code.dedent();
+            code.line("}");
+        }
         for (name, ty, stmts) in &shape.helpers {
             code.blank();
             code.line(format!("fn {name}(v: &{ty}, c: &mut Checker) {{"));

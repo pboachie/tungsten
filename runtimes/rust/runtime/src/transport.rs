@@ -21,6 +21,48 @@ pub struct AttemptRequest<'a> {
     pub headers: &'a [(String, String)],
     pub body: &'a Payload,
     pub timeout: Duration,
+    /// Hand a `text/event-stream` answer with a 2xx status back unread, as
+    /// [`AttemptOutcome::Streaming`]; any other answer is read as usual.
+    pub stream: bool,
+}
+
+/// What one read of an event stream gives.
+#[derive(Debug)]
+pub enum BodyRead {
+    Chunk(Vec<u8>),
+    End,
+    /// No bytes arrived within the attempt timeout.
+    Timeout,
+    /// The connection failed before the stream ended.
+    Lost,
+}
+
+/// The unread body of an event stream; each read waits at most the attempt
+/// timeout, so an idle stream ends with [`BodyRead::Timeout`].
+#[derive(Debug)]
+pub struct EventBody {
+    response: reqwest::Response,
+    idle: Duration,
+}
+
+impl EventBody {
+    pub async fn read(&mut self) -> BodyRead {
+        match tokio::time::timeout(self.idle, self.response.chunk()).await {
+            Err(_) => BodyRead::Timeout,
+            Ok(Err(_)) => BodyRead::Lost,
+            Ok(Ok(None)) => BodyRead::End,
+            Ok(Ok(Some(bytes))) => BodyRead::Chunk(bytes.to_vec()),
+        }
+    }
+}
+
+fn is_event_stream(headers: &BTreeMap<String, String>) -> bool {
+    headers.get("content-type").is_some_and(|value| {
+        value
+            .split(';')
+            .next()
+            .is_some_and(|essence| essence.trim().eq_ignore_ascii_case("text/event-stream"))
+    })
 }
 
 /// Why a response body could not be read.
@@ -39,6 +81,12 @@ pub enum AttemptOutcome {
         /// The body, or `None` when reading it failed.
         body: Option<Vec<u8>>,
         body_failure: Option<BodyFailure>,
+    },
+    /// A 2xx `text/event-stream` answer whose body is not read yet.
+    Streaming {
+        status: u16,
+        headers: BTreeMap<String, String>,
+        body: EventBody,
     },
     /// The request cannot have reached the server (DNS, refused, TLS).
     NotSent(String),
@@ -192,6 +240,16 @@ pub async fn attempt(client: &reqwest::Client, req: &AttemptRequest<'_>) -> Atte
             name.as_str().to_lowercase(),
             String::from_utf8_lossy(value.as_bytes()).into_owned(),
         );
+    }
+    if req.stream && (200..=299).contains(&status) && is_event_stream(&headers) {
+        return AttemptOutcome::Streaming {
+            status,
+            headers,
+            body: EventBody {
+                response,
+                idle: req.timeout,
+            },
+        };
     }
     let (body, body_failure) = match timeout_at(deadline, response.bytes()).await {
         Err(_) => (None, Some(BodyFailure::Timeout)),
