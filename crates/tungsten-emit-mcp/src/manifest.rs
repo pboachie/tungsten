@@ -722,7 +722,13 @@ fn status_rank(s: &StatusMatch) -> (u8, u16) {
 }
 
 /// The schema of the first JSON success body when it describes an object.
+/// None for an operation with an event stream: a call that streams returns
+/// the collected events (`{events: [...]}`), which the plain body's schema
+/// does not describe.
 fn output_schema(ir: &Ir, op: &Operation) -> Option<Value> {
+    if op.stream.is_some() {
+        return None;
+    }
     let mut successes: Vec<&tungsten_ir::Response> = op
         .responses
         .iter()
