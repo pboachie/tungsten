@@ -273,6 +273,7 @@ pub mod codes {
             "TG0613",
             "agent.yml option not applied by this version; ignored",
         ),
+        ("TG0614", "gates entry no operation is gated by"),
         ("TG0701", "generated output could not be written"),
         ("TG0702", "target has no emitter in this version; skipped"),
         (

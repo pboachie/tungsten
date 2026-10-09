@@ -209,6 +209,7 @@ pub(crate) fn run(ir: &mut Ir, cfg: &AgentConfig, r: &mut Reporter<'_>) {
     for (id, field) in marks {
         mark_sensitive(&mut ir.types, &id, &field);
     }
+    errors::unused_gates(cfg, ir, r);
     ir.agent = agent;
 }
 

@@ -384,6 +384,17 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
          smaller now, shorten descriptions or raise `defaults.disclosure.schema_budget_tokens`.",
     ),
     e(
+        "TG0614",
+        "A `gates` entry of agent.yml is used by no operation: the spec carries no \
+         `x-runtime-gate` for that environment variable and no `tools` entry names it in \
+         `gate`. The entry's text is never shown and a 404 from the routes it was written for \
+         is reported as NOT_FOUND (\"check the identifiers\") instead of GATE_DISABLED. \
+         Live runs against ZROtext showed it: SEALED_ADMISSION_ENABLED was declared but none \
+         of the sealed operations named it.",
+        "Add `gate: <ENV_VAR>` to the `tools` entry of every operation the deployment setting \
+         switches off (one entry per operation), or delete the `gates` entry.",
+    ),
+    e(
         "TG0701",
         "A generated file could not be written to the target's output directory, for example \
          because the directory is read-only or a path component is a file.",
