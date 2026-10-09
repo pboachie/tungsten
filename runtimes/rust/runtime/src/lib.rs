@@ -57,6 +57,7 @@
 
 mod auth;
 pub mod b64;
+pub mod blocking;
 mod classify;
 mod client;
 mod confirm;

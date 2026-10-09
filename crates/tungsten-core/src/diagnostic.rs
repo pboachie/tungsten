@@ -345,6 +345,10 @@ pub mod codes {
             "tagged union emitted by the Rust SDK as an untagged one",
         ),
         (
+            "TG0746",
+            "macro output typed as serde_json::Value by the Rust SDK",
+        ),
+        (
             "TG0750",
             "argument given as JSON text on the command line of the generated CLI",
         ),

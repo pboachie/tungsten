@@ -575,6 +575,16 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
         "Give every variant a named object schema that carries the discriminator property.",
     ),
     e(
+        "TG0746",
+        "The output of a macro is not an object or a reference whose members the Rust SDK can \
+         type: a member is a `null`, a list, a nested object or a reference into a step the \
+         API description gives no single JSON response type for. The macro's method returns \
+         `serde_json::Value`, the output expression evaluated by the runtime.",
+        "Read the members you need from the value, or flatten the output expression to \
+         references into steps with a documented response (`$step.field`) and boolean \
+         expressions.",
+    ),
+    e(
         "TG0750",
         "An argument of an operation has no plain flag form in the generated CLI: a parameter \
          whose type is an object, a map, a union or a list of those, or a multipart body whose \

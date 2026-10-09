@@ -110,6 +110,7 @@ pub(crate) fn lib_file(plan: &Plan<'_>, has_macros: bool, header: &str) -> Strin
     w.line("//! and macros.");
     w.blank();
     let mut mods = vec![
+        "blocking",
         "client",
         "custom",
         "descriptors",
@@ -133,6 +134,10 @@ pub(crate) fn lib_file(plan: &Plan<'_>, has_macros: bool, header: &str) -> Strin
         };
     }
     w.blank();
+    w.line(format!(
+        "pub use blocking::{};",
+        super::blocking::blocking_client_name(plan)
+    ));
     w.line(format!("pub use client::{};", plan.client_class));
     w.line("pub use tungsten_runtime::{");
     w.indent();
@@ -311,7 +316,8 @@ pub(crate) fn readme(
         "Every call returns `tungsten_runtime::Result<T>`: the value with its response \
          metadata, or the diagnostic envelope. API and transport errors are values, never \
          panics, and arguments are validated before any request is sent. The SDK is async \
-         (tokio) and builds with Rust 1.88 or newer; models are `serde` types.\n\n",
+         (tokio), with a blocking client for programs without an async runtime (see \
+         \"Blocking client\"), and builds with Rust 1.88 or newer; models are `serde` types.\n\n",
     );
     out.push_str("## Install\n\n```sh\n");
     out.push_str(&format!(
@@ -422,7 +428,8 @@ pub(crate) fn readme(
         out.push_str(
             "## Macros\n\nMulti-step workflows from the agent manifest are methods of `client.macros()`, \
              run by the runtime from the descriptors in `macros.rs`. Each takes an input struct and \
-             returns the macro's output as `serde_json::Value`. A macro that is `destructive` or \
+             returns the macro's output as a struct (`<Macro>Output`) when the output expression can be typed \
+             from the steps it reads, and as `serde_json::Value` otherwise (diagnostic TG0746). A macro that is `destructive` or \
              `irreversible`, or has such a step, is confirmed once for the whole run: call its \
              `preview_<macro>(...)` (nothing is sent) and pass the `confirmation_token` as \
              `Confirm::Token`. The first failing step's envelope is returned and names the steps \
@@ -453,6 +460,10 @@ pub(crate) fn readme(
          `error.partial` holds what a failed call or macro already produced (a one-time \
          secret, completed step results): store it before acting on the error.\n\n",
     );
+    out.push_str(&format!(
+        "## Blocking client\n\n`{blocking}` has the same resources, methods, arguments and results as `{client}`, but each call returns when the request is done: it owns a thread that runs a current-thread tokio runtime, so it needs no async runtime of its own and never panics inside one (it blocks the calling thread while it waits, so from async code use `{client}`). Page iterators are blocking `Iterator`s of pages.\n\n```rust\nuse {lib}::{{ClientOptions, {blocking}}};\n\nlet client = {blocking}::new(ClientOptions::default())?;\n// client.<resource>().<method>(request, &CallOptions::default())\n```\n\n",
+        blocking = super::blocking::blocking_client_name(plan),
+    ));
     out.push_str(
         "## Dynamic calls\n\nThe client implements `tungsten_runtime::Dispatch`: `invoke`, `preview`, `pages`, \
          `run_macro` and `preview_macro` take an operation id (or macro name) and a JSON arguments \

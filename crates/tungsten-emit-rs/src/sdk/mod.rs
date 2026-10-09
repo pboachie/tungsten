@@ -15,7 +15,9 @@
 //!   async method per operation `(request, &CallOptions)`, `preview_<method>`
 //!   and `<method>_pages` where they apply, and the request structs (one
 //!   field per argument of `tungsten_emit::args`);
-//! - `src/client.rs` (`<Api>Client`), `src/dispatch.rs` (`Dispatch`),
+//! - `src/client.rs` (`<Api>Client`), `src/blocking.rs` (`<Api>BlockingClient`,
+//!   the same calls run to completion by the runtime's blocking facade),
+//!   `src/dispatch.rs` (`Dispatch`),
 //!   `src/macros.rs` (`client.macros()`), `src/support.rs` (helpers),
 //!   `src/lib.rs`, the hand-editable `src/custom/mod.rs`;
 //! - `Cargo.toml` and `README.md` of the workspace.
@@ -28,9 +30,11 @@
 //!
 //! [`supports`] reports what is emitted with a fallback (TG0741 types typed
 //! `serde_json::Value`, TG0743 OpenID Connect, TG0744 distinct success
-//! bodies) and what cannot be emitted (TG0742 macros); [`emit`] reports
+//! bodies, TG0746 macro outputs) and what cannot be emitted (TG0742
+//! macros); [`emit`] reports
 //! invalid target options (TG0740) and file errors.
 
+mod blocking;
 mod dispatch;
 mod graph;
 mod macros;
@@ -199,6 +203,10 @@ fn generate(ir: &Ir, opts: &Options) -> Vec<(String, String)> {
             resources::resources_mod(&plan, &hdr_slash),
         ),
     ];
+    files.push((
+        format!("{p}/src/blocking.rs"),
+        blocking::blocking_file(&plan, &shapes, &macro_plans, &hdr_slash),
+    ));
     if has_macros {
         files.push((
             format!("{p}/src/macros.rs"),
@@ -314,6 +322,28 @@ pub mod testing {
         pub name: String,
         /// The type's check function in the same module, if it has one.
         pub check: Option<String>,
+    }
+
+    /// The name of the blocking client.
+    pub fn blocking_client_name(ir: &Ir) -> String {
+        let plan = crate::sdk::plan::Plan::new(ir);
+        crate::sdk::blocking::blocking_client_name(&plan)
+    }
+
+    /// The Rust type of each macro's output (`Value` when it is not
+    /// typed), by macro name.
+    pub fn macro_outputs(ir: &Ir) -> Vec<(String, String)> {
+        let plan = crate::sdk::plan::Plan::new(ir);
+        let shapes: Vec<crate::sdk::ops::OpShape<'_>> = plan
+            .ops
+            .iter()
+            .map(|o| crate::sdk::ops::op_shape(&plan, o))
+            .collect();
+        crate::sdk::macros::plan_macros(&plan, &shapes)
+            .0
+            .iter()
+            .map(|m| (m.name(), m.output_type()))
+            .collect()
     }
 
     /// The Rust names of every named type.

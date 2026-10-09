@@ -105,6 +105,11 @@ pub(crate) struct OpShape<'a> {
     pub fields: Vec<ArgField<'a>>,
     /// The value type of the typed result.
     pub success: String,
+    /// The IR type of the success body, when every success response is JSON
+    /// of that one type.
+    pub success_ref: Option<&'a TypeRef>,
+    /// The IR type of a page's items, when they are typed.
+    pub item_ref: Option<&'a TypeRef>,
     /// A success may have no body.
     pub bodiless: bool,
     /// More than one distinct JSON success type: the result is `Value`.
@@ -145,7 +150,7 @@ fn free_name(taken: &[String], base: &str) -> String {
 }
 
 /// The shape of an operation's call.
-pub(crate) fn op_shape<'a>(plan: &Plan<'a>, info: &OpInfo<'a>) -> OpShape<'a> {
+pub(crate) fn op_shape<'a>(plan: &'a Plan<'a>, info: &OpInfo<'a>) -> OpShape<'a> {
     let op = info.op;
     let cx = Cx::new(plan, None);
     let layout = args_layout(plan.ir, op);
@@ -380,11 +385,14 @@ pub(crate) fn op_shape<'a>(plan: &Plan<'a>, info: &OpInfo<'a>) -> OpShape<'a> {
     let page_validator = items
         .flatten()
         .map(|items| validated(items, false, &format!("{}_item", info.builder)));
+    let success_ref = (all_json && tys.len() == 1).then(|| tys[0].1);
     OpShape {
         params,
         body,
         fields,
         success,
+        success_ref,
+        item_ref: items.flatten(),
         bodiless,
         mixed_success,
         response,
@@ -454,6 +462,29 @@ pub(crate) fn write_request(
     write_args_struct(w, cx, &info.request, &intro, &shape.fields, Some(&check));
 }
 
+/// `impl Debug for <name>` that shows `<redacted>` for each sensitive field:
+/// (field, sensitive) in declaration order.
+pub(crate) fn write_redacted_debug(w: &mut Writer, name: &str, fields: &[(&str, bool)]) {
+    w.line(format!("impl std::fmt::Debug for {name} {{"));
+    w.indent();
+    w.line("fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {");
+    w.indent();
+    let mut calls = vec![format!("debug_struct({})", string_lit(name))];
+    for (key, sensitive) in fields {
+        if *sensitive {
+            calls.push(format!("field({}, &\"<redacted>\")", string_lit(key)));
+        } else {
+            calls.push(format!("field({}, &self.{key})", string_lit(key)));
+        }
+    }
+    calls.push("finish()".into());
+    chain_lines(w, "f", &calls);
+    w.dedent();
+    w.line("}");
+    w.dedent();
+    w.line("}");
+}
+
 /// Write a struct of arguments (`name`), its constructor and, when
 /// `check` names a function, the function that checks it.
 pub(crate) fn write_args_struct(
@@ -501,24 +532,11 @@ pub(crate) fn write_args_struct(
     }
     if sensitive {
         w.blank();
-        w.line(format!("impl std::fmt::Debug for {name} {{"));
-        w.indent();
-        w.line("fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {");
-        w.indent();
-        let mut calls = vec![format!("debug_struct({})", string_lit(name))];
-        for f in fields {
-            if f.sensitive {
-                calls.push(format!("field({}, &\"<redacted>\")", string_lit(&f.key)));
-            } else {
-                calls.push(format!("field({}, &self.{})", string_lit(&f.key), f.key));
-            }
-        }
-        calls.push("finish()".into());
-        chain_lines(w, "f", &calls);
-        w.dedent();
-        w.line("}");
-        w.dedent();
-        w.line("}");
+        let shown: Vec<(&str, bool)> = fields
+            .iter()
+            .map(|f| (f.key.as_str(), f.sensitive))
+            .collect();
+        write_redacted_debug(w, name, &shown);
     }
 
     // Constructor.

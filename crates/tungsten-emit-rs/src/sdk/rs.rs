@@ -11,7 +11,7 @@ use tungsten_ir::Doc;
 /// rustfmt's `max_width`.
 pub(crate) const MAX_WIDTH: usize = 100;
 /// rustfmt's `fn_call_width` and `array_width`.
-const CALL_WIDTH: usize = 60;
+pub(crate) const CALL_WIDTH: usize = 60;
 /// rustfmt's `struct_lit_width`.
 const STRUCT_WIDTH: usize = 18;
 /// rustfmt's `short_array_element_width_threshold`.

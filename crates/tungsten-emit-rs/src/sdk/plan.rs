@@ -220,8 +220,10 @@ pub(crate) struct Plan<'a> {
 /// Method names of the client besides its resources or namespaces: its own
 /// and those of `Dispatch`.
 const CLIENT_RESERVED: &[&str] = &[
+    "async_client",
     "core",
     "descriptors",
+    "from_client",
     "invoke",
     "macros",
     "new",
