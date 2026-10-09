@@ -124,7 +124,7 @@ from ._serialize import (
     valid_header_name,
     valid_header_value,
 )
-from ._sse import SseEvent, SseParser
+from ._sse import DEFAULT_MAX_EVENT_BYTES, SseEvent, SseParser
 from ._util import (
     NOTHING,
     REDACTED,
@@ -141,6 +141,7 @@ from ._util import (
     is_record,
     items_of,
     looks_sensitive,
+    merge_accept,
     normalize_files,
     random_bytes,
     redact_paths,
@@ -1864,6 +1865,25 @@ class Engine:
             out.append(cast(Valid[object], checked).data if isinstance(checked, Valid) else item)
         return out
 
+    def _stream_headers(self, call_headers: object) -> dict[str, str]:
+        """The headers of a stream call: the call's headers, with any casing
+        of ``Accept`` (the call's, else the client's) merged into one
+        ``Accept`` that lists ``text/event-stream`` (see ``merge_accept``)."""
+        out: dict[str, str] = {}
+        accept = ""
+        for headers, own in ((cast(object, self.options.headers), False), (call_headers, True)):
+            if not is_record(headers):
+                continue
+            for name, value in headers.items():
+                if not isinstance(value, str):
+                    continue
+                if name.lower() == "accept":
+                    accept = value
+                elif own:
+                    out[name] = value
+        out["Accept"] = merge_accept(accept)
+        return out
+
     def _stream(self, op: OperationDescriptor, raw_args: object, opts: Mapping[str, object]) -> Flow[None]:
         """Emit the events of an event stream, then nothing or one final
         failure; an error before the stream starts is the only item."""
@@ -1884,11 +1904,7 @@ class Engine:
                 )
             )
             return
-        extra = _opt(opts, "headers")
-        stream_opts = {
-            **opts,
-            "headers": {"Accept": "text/event-stream", **(extra if is_record(extra) else {})},
-        }
+        stream_opts = {**opts, "headers": self._stream_headers(_opt(opts, "headers"))}
         prepared = yield from self._prepare(
             op, with_stream_flag(op, spec, raw_args), stream_opts, "call", None, None
         )
@@ -1933,7 +1949,8 @@ class Engine:
         sensitive = [f for f in listed if isinstance(f, str)] if is_array(listed) else []
         validate = _hook(field(spec, "event"), "validate")
         done = str_field(spec, "done")
-        parser = SseParser()
+        max_event_bytes = int(bounded(cast(object, self.options.max_event_bytes), DEFAULT_MAX_EVENT_BYTES, 1))
+        parser = SseParser(max_event_bytes)
         decoder = codecs.getincrementaldecoder("utf-8")("replace")
         count = 0
         secrets = prepared.secrets
@@ -2052,6 +2069,29 @@ class Engine:
             count += 1
             return StreamEvent(value=value, event=event.event, id=event.id, retry=event.retry, meta=meta)
 
+        def oversize() -> Err:
+            return _fail(
+                scrub_diagnostic(
+                    diagnostic(
+                        op["id"],
+                        "UNEXPECTED_RESPONSE",
+                        http_status=meta.status,
+                        request_id=meta.request_id,
+                        retryable="never",
+                        attempts=meta.attempts,
+                        failed_parameter=f"events[{count}]",
+                        expected=f"an event of at most {max_event_bytes} bytes",
+                        remediation=(
+                            f"Event {count} of the stream is larger than the limit of {max_event_bytes} bytes "
+                            f"(ClientOptions.max_event_bytes); the stream was abandoned.{after_effect} "
+                            "Events before it were delivered. Raise max_event_bytes if the server sends "
+                            "events this large on purpose."
+                        ),
+                    ),
+                    secrets,
+                )
+            )
+
         while True:
             read = yield from read_chunk(opened.stream)
             if isinstance(read, Chunk):
@@ -2062,6 +2102,9 @@ class Engine:
                     yield from emit(item)
                     if isinstance(item, Err):
                         return
+                if parser.exceeded:
+                    yield from emit(oversize())
+                    return
                 continue
             if isinstance(read, StreamEnded):
                 for event in [*parser.push(decoder.decode(b"", final=True)), *parser.end()]:
@@ -2071,6 +2114,8 @@ class Engine:
                     yield from emit(item)
                     if isinstance(item, Err):
                         return
+                if parser.exceeded:
+                    yield from emit(oversize())
                 return
             yield from emit(interrupted(read.kind))
             return
