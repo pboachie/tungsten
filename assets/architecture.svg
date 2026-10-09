@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 410" width="960" height="410" role="img" aria-labelledby="t d">
+  <title id="t">tungsten architecture</title>
+  <desc id="d">OpenAPI 3.0 and 3.1 documents, overlays and the tungsten.yml and agent.yml manifests go through the frontend into a typed IR, the agent compiler adds safety, idempotency and disclosure rules, and the emitters write SDKs, a CLI, an MCP server and docs that depend on the runtimes.</desc>
+  <style>
+    .box { fill: #f3f4f6; stroke: #9ca3af; stroke-width: 1.5; }
+    .core { fill: #e0e7ff; stroke: #4f46e5; stroke-width: 2; }
+    .out { fill: #ecfdf5; stroke: #059669; stroke-width: 1.5; }
+    .rt { fill: #fffbeb; stroke: #d97706; stroke-width: 1.5; }
+    .arrow { stroke: #6b7280; stroke-width: 2; fill: none; }
+    .head { fill: #6b7280; }
+    text { fill: #111827; font: 14px ui-sans-serif, system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
+    .h { font-weight: 700; font-size: 15px; }
+    .s { font-size: 12px; fill: #4b5563; }
+    .cap { font-size: 12px; font-weight: 700; fill: #6b7280; letter-spacing: 1px; }
+    @media (prefers-color-scheme: dark) {
+      .box { fill: #1f2937; stroke: #6b7280; }
+      .core { fill: #312e81; stroke: #818cf8; }
+      .out { fill: #064e3b; stroke: #34d399; }
+      .rt { fill: #451a03; stroke: #fbbf24; }
+      .arrow { stroke: #9ca3af; }
+      .head { fill: #9ca3af; }
+      text { fill: #f3f4f6; }
+      .s { fill: #d1d5db; }
+      .cap { fill: #9ca3af; }
+    }
+  </style>
+
+  <text class="cap" x="20" y="28">INPUTS</text>
+  <text class="cap" x="270" y="28">COMPILER</text>
+  <text class="cap" x="470" y="28">EMITTERS</text>
+
+  <rect class="box" x="20" y="44" width="190" height="64" rx="8"/>
+  <text class="h" x="36" y="70">OpenAPI 3.0 / 3.1</text>
+  <text class="s" x="36" y="90">JSON or YAML documents</text>
+  <rect class="box" x="20" y="124" width="190" height="64" rx="8"/>
+  <text class="h" x="36" y="150">Overlays</text>
+  <text class="s" x="36" y="170">patch the spec, keep it intact</text>
+  <rect class="box" x="20" y="204" width="190" height="64" rx="8"/>
+  <text class="h" x="36" y="230">tungsten.yml</text>
+  <text class="s" x="36" y="250">shape: names and targets</text>
+  <rect class="box" x="20" y="284" width="190" height="64" rx="8"/>
+  <text class="h" x="36" y="310">agent.yml</text>
+  <text class="s" x="36" y="330">safety, idempotency, macros</text>
+
+  <path class="arrow" d="M210 76 H236 M210 156 H236 M210 236 H236 M210 316 H236 M236 76 V316 M236 196 H256"/>
+  <path class="head" d="M256 190 L268 196 L256 202 Z"/>
+
+  <rect class="core" x="270" y="44" width="150" height="304" rx="10"/>
+  <text class="h" x="288" y="76">Frontend</text>
+  <text class="s" x="288" y="96">parse, resolve $ref,</text>
+  <text class="s" x="288" y="112">apply overlays</text>
+  <path class="arrow" d="M345 124 V150"/>
+  <path class="head" d="M339 150 L345 162 L351 150 Z"/>
+  <text class="h" x="288" y="190">Typed IR</text>
+  <text class="s" x="288" y="210">versioned JSON,</text>
+  <text class="s" x="288" y="226">tungsten ir dump</text>
+  <path class="arrow" d="M345 238 V262"/>
+  <path class="head" d="M339 262 L345 274 L351 262 Z"/>
+  <text class="h" x="288" y="296">Agent compiler</text>
+  <text class="s" x="288" y="316">tiers, tokens,</text>
+  <text class="s" x="288" y="332">disclosure</text>
+
+  <path class="arrow" d="M420 196 H456"/>
+  <path class="head" d="M456 190 L468 196 L456 202 Z"/>
+
+  <rect class="out" x="470" y="44" width="470" height="64" rx="8"/>
+  <text class="h" x="486" y="70">SDKs</text>
+  <text class="s" x="486" y="90">TypeScript, Python (sync and async), Rust</text>
+  <rect class="out" x="470" y="124" width="470" height="64" rx="8"/>
+  <text class="h" x="486" y="150">CLI</text>
+  <text class="s" x="486" y="170">Rust command line over the Rust SDK, with --json and exit codes</text>
+  <rect class="out" x="470" y="204" width="470" height="64" rx="8"/>
+  <text class="h" x="486" y="230">MCP server</text>
+  <text class="s" x="486" y="250">discrete or progressive tool listing</text>
+  <rect class="out" x="470" y="284" width="470" height="64" rx="8"/>
+  <text class="h" x="486" y="310">Docs</text>
+  <text class="s" x="486" y="330">llms.txt, llms-full.txt, tools.json</text>
+
+  <path class="arrow" d="M705 348 V362"/>
+  <path class="head" d="M699 362 L705 372 L711 362 Z"/>
+  <rect class="rt" x="20" y="374" width="920" height="30" rx="8"/>
+  <text class="s" x="36" y="394">Generated code depends on the Apache-2.0 runtimes: @tungsten/runtime, @tungsten/mcp, tungsten-runtime (Python, Rust), tungsten-cli-kit</text>
+</svg>
