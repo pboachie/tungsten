@@ -568,6 +568,19 @@ impl AuthScheme {
             | AuthScheme::Composite { name, .. } => name,
         }
     }
+
+    /// The usable `authorizationCode` flow of an OAuth2 scheme: the one that
+    /// declares both its authorization and its token URL.
+    pub fn authorization_code(&self) -> Option<&OAuthFlow> {
+        match self {
+            AuthScheme::OAuth2 { flows, .. } => flows.iter().find(|f| {
+                f.kind == "authorizationCode"
+                    && f.authorization_url.is_some()
+                    && f.token_url.is_some()
+            }),
+            _ => None,
+        }
+    }
 }
 
 ir_struct! {

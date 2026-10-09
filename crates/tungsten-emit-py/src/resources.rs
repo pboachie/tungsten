@@ -16,7 +16,7 @@ use crate::ops::{ArgField, OpShape, arg_doc_line, idempotency_str, method_str, s
 use crate::plan::{MemberKind, OpInfo, Plan, ResInfo};
 use crate::py::{
     LINE_LENGTH, Py, PyImports, doc_text, docstring, dunder_all, dunder_all_cmp, paragraphs,
-    two_blank,
+    string_lit, two_blank,
 };
 use crate::types::Uses;
 
@@ -535,6 +535,16 @@ pub(crate) fn client_file(plan: &Plan<'_>, has_macros: bool, header: &str) -> St
     ] {
         imports.add("tungsten_runtime", n);
     }
+    let flows: Vec<&str> = ir
+        .auth
+        .iter()
+        .filter(|s| s.authorization_code().is_some())
+        .map(tungsten_ir::AuthScheme::name)
+        .collect();
+    if !flows.is_empty() {
+        imports.add("tungsten_runtime", "AsyncOAuthFlow");
+        imports.add("tungsten_runtime", "OAuthFlow");
+    }
     imports.add(".", "_internal");
     imports.add("._descriptors", "API");
     imports.add("._descriptors", "OPERATIONS");
@@ -637,6 +647,25 @@ pub(crate) fn client_file(plan: &Plan<'_>, has_macros: bool, header: &str) -> St
             w.line(format!("{name}: {c}"));
             docstring(&mut w, doc);
         }
+        // Resource names never collide with the helpers' attribute.
+        let oauth = if members.iter().any(|(n, ..)| n == "oauth") {
+            "oauth_flows"
+        } else {
+            "oauth"
+        };
+        if !flows.is_empty() {
+            let flow = if mode == Mode::Sync {
+                "OAuthFlow"
+            } else {
+                "AsyncOAuthFlow"
+            };
+            w.blank();
+            w.line(format!("{oauth}: Mapping[str, {flow}]"));
+            docstring(
+                &mut w,
+                "OAuth2 authorization-code helpers by security scheme: PKCE, the authorization URL, the code exchange and refresh. Tokens are kept in `ClientOptions.token_store`.",
+            );
+        }
         w.blank();
         let mut params = vec![
             "self".to_string(),
@@ -670,6 +699,13 @@ pub(crate) fn client_file(plan: &Plan<'_>, has_macros: bool, header: &str) -> St
         w.line(")");
         if has_macros {
             w.line(format!("self.macros = {macros}(self.core)"));
+        }
+        if !flows.is_empty() {
+            let entries: Vec<String> = flows
+                .iter()
+                .map(|f| format!("{0}: self.core.oauth({0})", string_lit(f)))
+                .collect();
+            w.line(format!("self.{oauth} = {{{}}}", entries.join(", ")));
         }
         for (name, sync, async_, _) in &members {
             let c = if mode == Mode::Sync { sync } else { async_ };

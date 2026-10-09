@@ -17,7 +17,7 @@ use tungsten_ir::{IdempotencyKind, OperationStatus, PreviewMode, Safety};
 use crate::models::write_imports;
 use crate::ops::{OpShape, idempotency_str, method_str, safety_str};
 use crate::plan::{MemberKind, OpInfo, Plan, ResInfo, unique, with_word};
-use crate::ts::{doc_text, paragraphs, string_lit};
+use crate::ts::{doc_text, paragraphs, prop_key, string_lit};
 
 /// Relative import path from package file `from` to package file `to`
 /// (both like `src/a/b.ts`), with the `.js` extension NodeNext requires.
@@ -411,6 +411,15 @@ pub(crate) fn client_file(plan: &Plan<'_>, has_macros: bool, header: &str) -> St
     if has_macros {
         imports.add("./macros.js", "Macros");
     }
+    let flows: Vec<&str> = ir
+        .auth
+        .iter()
+        .filter(|s| s.authorization_code().is_some())
+        .map(tungsten_ir::AuthScheme::name)
+        .collect();
+    if !flows.is_empty() {
+        imports.add_type("@tungsten/runtime", "OAuthFlow");
+    }
     let tops: Vec<usize> = if plan.multi() {
         imports.add_type("@tungsten/runtime", "ClientCoreApi");
         plan.client_namespaces
@@ -473,6 +482,23 @@ pub(crate) fn client_file(plan: &Plan<'_>, has_macros: bool, header: &str) -> St
         w.doc(CommentStyle::JsDoc, doc);
         w.line(format!("readonly {name}: {class};"));
     }
+    // Resource names never collide with the helpers' member.
+    let oauth = if members.iter().any(|(n, _, _)| n == "oauth") {
+        "oauthFlows"
+    } else {
+        "oauth"
+    };
+    if !flows.is_empty() {
+        w.doc(
+            CommentStyle::JsDoc,
+            "OAuth2 authorization-code helpers by security scheme: PKCE, the authorization URL, the code exchange and refresh. Tokens are kept in `ClientOptions.tokenStore`.",
+        );
+        let shape: Vec<String> = flows
+            .iter()
+            .map(|f| format!("readonly {}: OAuthFlow", prop_key(f)))
+            .collect();
+        w.line(format!("readonly {oauth}: {{ {} }};", shape.join("; ")));
+    }
     w.blank();
     w.line("constructor(options: ClientOptions = {}) {");
     w.indent();
@@ -481,6 +507,13 @@ pub(crate) fn client_file(plan: &Plan<'_>, has_macros: bool, header: &str) -> St
     w.line("this.core = new ClientCore(api, { ...options, operations: [...operations, ...(options.operations ?? [])] });");
     if has_macros {
         w.line("this.macros = new Macros(this.core);");
+    }
+    if !flows.is_empty() {
+        let entries: Vec<String> = flows
+            .iter()
+            .map(|f| format!("{}: this.core.oauth({})", prop_key(f), string_lit(f)))
+            .collect();
+        w.line(format!("this.{oauth} = {{ {} }};", entries.join(", ")));
     }
     for (name, class, _) in &members {
         w.line(format!("this.{name} = new {class}(this.core);"));
