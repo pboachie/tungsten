@@ -173,6 +173,18 @@ pub mod codes {
         ),
         ("TG0104", "document is missing a required OpenAPI field"),
         ("TG0105", "input exceeds a size or nesting limit"),
+        (
+            "TG0110",
+            "document has no info.version; version 0.0.0 is used",
+        ),
+        (
+            "TG0111",
+            "path key carries a query string; its pairs are sent on every call",
+        ),
+        (
+            "TG0112",
+            "apiKey header scheme inferred from a credential header parameter",
+        ),
         ("TG0201", "unresolvable $ref"),
         (
             "TG0202",

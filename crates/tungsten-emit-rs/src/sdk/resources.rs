@@ -390,7 +390,7 @@ pub(crate) fn client_file(plan: &Plan<'_>, has_macros: bool, header: &str) -> St
     doc(
         &mut code,
         &paragraphs([
-            format!("Client for the {} API.", ir.api.title),
+            format!("Client for the {} API.", tungsten_ir::title_stem(&ir.api.title)),
             ir.api.description.clone().unwrap_or_default(),
             "Every call returns `tungsten_runtime::Result<T>`: the value with its response metadata, or the diagnostic envelope. API and transport errors are values, never panics. Arguments are validated before any request is sent.".to_string(),
         ]),
@@ -521,7 +521,7 @@ pub(crate) fn client_file(plan: &Plan<'_>, has_macros: bool, header: &str) -> St
     w.blank();
     w.line(format!(
         "//! Client of the {} API.",
-        ir.api.title.replace('\n', " ")
+        tungsten_ir::title_stem(&ir.api.title).replace('\n', " ")
     ));
     let uses = imports_for(&code, &["Descriptors"], None, &extra);
     if !uses.is_empty() {

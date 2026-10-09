@@ -158,6 +158,19 @@ fn enumerate(cx: &mut Ctx<'_>, input: &NamespaceInput) -> Vec<Skeleton> {
             );
             continue;
         }
+        let (path_only, query) = params::split_query(path);
+        if !query.is_empty() {
+            cx.report(
+                Diagnostic::info(
+                    "TG0111",
+                    format!(
+                        "path key {path} carries a query string; `{query}` is sent on every call to {path_only} and is not an argument"
+                    ),
+                )
+                .with_help("OpenAPI path keys must not contain a query string; declare query parameters instead"),
+                &path_item,
+            );
+        }
         for (word, method) in METHODS {
             let Some(op) = item.get(word) else {
                 continue;
@@ -183,7 +196,7 @@ fn enumerate(cx: &mut Ctx<'_>, input: &NamespaceInput) -> Vec<Skeleton> {
             let local_id = match &operation_id {
                 Some(id) => id.clone(),
                 None => {
-                    let id = synthesize_operation_id(method, path);
+                    let id = synthesize_operation_id(method, params::split_query(path).0);
                     if !matches!(disposition, Disposition::Drop(_)) {
                         cx.report(
                             Diagnostic::warning(
@@ -288,7 +301,7 @@ fn build_op(
     // The shared parts of rpc methods are built under the envelope's id.
     let local = match (&sk.rpc, &sk.operation_id) {
         (Some(_), Some(id)) => id.clone(),
-        (Some(_), None) => synthesize_operation_id(sk.method, &sk.path),
+        (Some(_), None) => synthesize_operation_id(sk.method, params::split_query(&sk.path).0),
         (None, _) => sk.local_id.clone(),
     };
     let id = format!("{ns}.{local}");

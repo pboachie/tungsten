@@ -471,7 +471,13 @@ pub(crate) fn api_summary(ir: &Ir) -> String {
         .as_deref()
         .map(collapse_whitespace)
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| format!("{} API, version {}.", api_title(ir), ir.api.version))
+        .unwrap_or_else(|| {
+            format!(
+                "{} API, version {}.",
+                tungsten_ir::title_stem(&api_title(ir)),
+                ir.api.version
+            )
+        })
 }
 
 /// `API version 1.0.0 · base URL ... · 3 namespaces · 37 callable operations (1 gated) · 6 planned`.

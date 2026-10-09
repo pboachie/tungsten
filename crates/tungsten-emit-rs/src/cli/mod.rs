@@ -74,7 +74,7 @@ fn cargo_toml(ir: &Ir, opts: &Options, bin: &str, package: &str, kit: &Dep, stam
         "description = {}\n",
         toml_str(&format!(
             "Command-line client for the {} API.",
-            ir.api.title
+            tungsten_ir::title_stem(&ir.api.title)
         ))
     ));
     s.push_str(&format!(
@@ -113,7 +113,7 @@ fn main_rs(ir: &Ir, opts: &Options, stamp: &str) -> String {
          \x20       .collect();\n\
          \x20   tungsten_cli_kit::run(&table::spec(), argv, {client}::new).await\n\
          }}\n",
-        title = ir.api.title.replace('\n', " "),
+        title = tungsten_ir::title_stem(&ir.api.title).replace('\n', " "),
         lib = opts.lib_name(),
         client = client_type(ir),
     )
@@ -132,10 +132,13 @@ pub(crate) fn emit(ir: &Ir, cfg: &TargetConfig, out: &mut FileSet) -> Diagnostic
     let about = match ir.api.description.as_deref().map(str::trim) {
         Some(d) if !d.is_empty() => format!(
             "Command-line client for the {} API.\n{}",
-            ir.api.title,
+            tungsten_ir::title_stem(&ir.api.title),
             model::sentence(d)
         ),
-        _ => format!("Command-line client for the {} API.", ir.api.title),
+        _ => format!(
+            "Command-line client for the {} API.",
+            tungsten_ir::title_stem(&ir.api.title)
+        ),
     };
     let meta = table::Meta {
         header: &rs_stamp,

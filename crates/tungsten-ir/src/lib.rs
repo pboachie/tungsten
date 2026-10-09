@@ -223,6 +223,19 @@ ir_struct! {
         /// As written in the spec (`/v1/webhooks/{endpoint_id}/rotate`).
         pub raw: String,
         pub segments: Vec<PathSegment>,
+        /// Constant query parameters written in the spec's path key
+        /// (`/v1/messages?beta=true`). They are part of `raw`, so the
+        /// runtime sends them on every call; they are not arguments.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        pub query: Vec<ConstQuery>,
+    }
+}
+
+ir_struct! {
+    /// One `name=value` pair of the query string of a path key.
+    pub struct ConstQuery {
+        pub name: String,
+        pub value: String,
     }
 }
 
@@ -624,5 +637,25 @@ impl Ir {
     /// JSON Schema of the IR, published as `specs/ir.schema.json`.
     pub fn json_schema() -> serde_json::Value {
         serde_json::to_value(schemars::schema_for!(Ir)).expect("schema serializes")
+    }
+}
+
+/// A title without a trailing `API` word, for text that appends ` API`
+/// itself ("the Things API"): `Things API` gives `Things`, so the text
+/// never reads "Things API API". A title that is only `API` is kept.
+pub fn title_stem(title: &str) -> &str {
+    let trimmed = title.trim_end();
+    match trimmed
+        .len()
+        .checked_sub(3)
+        .and_then(|at| trimmed.split_at_checked(at))
+    {
+        Some((head, tail))
+            if tail.eq_ignore_ascii_case("api") && head.ends_with(char::is_whitespace) =>
+        {
+            let stem = head.trim_end();
+            if stem.is_empty() { title } else { stem }
+        }
+        _ => title,
     }
 }

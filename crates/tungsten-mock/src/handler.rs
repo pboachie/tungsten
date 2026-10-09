@@ -180,7 +180,7 @@ pub(crate) async fn handle(state: Arc<State>, req: Request<Incoming>) -> Outcome
     let model = &state.model;
 
     if let Some((_, Ok(Injection::Reset))) = &injection {
-        call.operation = operation_id(model, &route(model, &method, &path, None));
+        call.operation = operation_id(model, &route(model, &method, &path, &query, None));
         state.record(sequence, call);
         return Outcome::Drop;
     }
@@ -188,7 +188,7 @@ pub(crate) async fn handle(state: Arc<State>, req: Request<Incoming>) -> Outcome
     let body = match read_body(req.into_body(), declared_length, model.max_body_bytes).await {
         Ok(body) => body,
         Err(BodyError::TooLarge) => {
-            let routed = route(model, &method, &path, None);
+            let routed = route(model, &method, &path, &query, None);
             call.operation = operation_id(model, &routed);
             let reason = format!("request body exceeds {} bytes", model.max_body_bytes);
             let reply = reply::error(model, routed_ns(model, &routed), 413, None, &[], &reason)
@@ -202,7 +202,7 @@ pub(crate) async fn handle(state: Arc<State>, req: Request<Incoming>) -> Outcome
             return Outcome::Drop;
         }
     };
-    let routed = route(model, &method, &path, Some(&body));
+    let routed = route(model, &method, &path, &query, Some(&body));
     call.operation = operation_id(model, &routed);
     let view = RequestView::new(&method, &headers, &query, routed_params(&routed));
     let request = Exchange {

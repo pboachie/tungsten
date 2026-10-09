@@ -56,6 +56,34 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
          inline schemas into named components.",
     ),
     e(
+        "TG0110",
+        "The document has no `info.version`. OpenAPI requires it, but published specs \
+         sometimes omit it. tungsten records version 0.0.0 and continues; the diagnostic is a \
+         warning, and the document is still refused when something else required is missing.",
+        "Add `info.version` to the document, or supply it with an overlay.",
+    ),
+    e(
+        "TG0111",
+        "A key of `paths` carries a query string, such as `/v1/messages?beta=true`. OpenAPI \
+         forbids it, but some APIs use it to select a variant of an operation. tungsten \
+         names the operation and places it in resources from the path alone, keeps the \
+         query pairs as constant query parameters of the path template (`path.query` in the \
+         IR), sends them on every call (they are not arguments), and the mock routes a \
+         request only to the operation whose constants it carries.",
+        "No change is needed. To make the document valid OpenAPI, declare the pair as a \
+         query parameter with a `const` or `enum` schema.",
+    ),
+    e(
+        "TG0112",
+        "The document defines no security scheme and no `security`, but declares a header \
+         that carries an API key (`x-api-key`, `api-key` or `apikey`) as a parameter. \
+         tungsten inferred an `apiKey` header scheme named `apiKey` and required it by every \
+         operation, so the credential is configured once on the client and the header is no \
+         longer an argument of each call.",
+        "Define the scheme under `components/securitySchemes` and list it in `security` (an \
+         overlay can add both) to make the intent explicit and silence the diagnostic.",
+    ),
+    e(
         "TG0201",
         "A `$ref` points at a location that does not exist: the JSON Pointer names a missing \
          member, or the referenced file has no such path.",

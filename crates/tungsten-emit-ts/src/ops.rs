@@ -1097,7 +1097,10 @@ pub(crate) fn descriptors_file(
     let api_text = api_js(plan, opts).render("  ", "export const api: ApiDescriptor = ".len());
     body.doc(
         CommentStyle::JsDoc,
-        &format!("The `{}` API as the runtime sees it.", plan.ir.api.title),
+        &format!(
+            "The `{}` API as the runtime sees it.",
+            tungsten_ir::title_stem(&plan.ir.api.title)
+        ),
     );
     body.line(format!("export const api: ApiDescriptor = {api_text};"));
     for (info, shape) in plan.ops.iter().zip(shapes) {

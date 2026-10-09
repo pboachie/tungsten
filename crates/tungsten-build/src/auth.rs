@@ -16,6 +16,12 @@
 //! client cannot satisfy it; when every alternative of a list is dropped
 //! the operation keeps no requirement and the warning says so. TG0502 is
 //! only for names that no `securitySchemes` entry defines.
+//!
+//! A document that defines no scheme at all, declares no `security`, and
+//! documents a credential header (`x-api-key`, `api-key`, `apikey`) as a
+//! parameter gets an inferred `apiKey` header scheme required by every
+//! operation (TG0112, info), so the credential is configured once on the
+//! client and is not an argument of each call.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -27,6 +33,14 @@ use tungsten_openapi::RefTarget;
 
 use crate::NamespaceInput;
 use crate::ctx::{Ctx, child, doc_of, pointer, str_of};
+use crate::operations::METHODS;
+
+/// Header names that carry an API key when the document declares no
+/// security scheme (lowercase).
+const CREDENTIAL_HEADERS: [&str; 3] = ["x-api-key", "api-key", "apikey"];
+
+/// Name of an inferred scheme.
+const INFERRED_SCHEME: &str = "apiKey";
 
 /// The compiled schemes plus what operations need to resolve requirements
 /// and recognize credential parameters.
@@ -61,9 +75,17 @@ impl AuthTable {
     pub fn build(cx: &mut Ctx<'_>, namespaces: &[NamespaceInput]) -> Self {
         let mut table = AuthTable::default();
         let mut by_name: BTreeMap<String, Vec<Definition>> = BTreeMap::new();
+        let mut inferred: BTreeSet<usize> = BTreeSet::new();
         for (ns_index, ns) in namespaces.iter().enumerate() {
             let mut keys = vec![];
-            let (defs, unsupported) = definitions(cx, ns_index, ns.doc);
+            let (mut defs, unsupported) = definitions(cx, ns_index, ns.doc);
+            if defs.is_empty()
+                && unsupported.is_empty()
+                && let Some(def) = infer_api_key(cx, ns_index, ns.doc)
+            {
+                inferred.insert(ns_index);
+                defs.push(def);
+            }
             table
                 .unsupported
                 .extend(unsupported.into_iter().map(|name| (ns_index, name)));
@@ -98,6 +120,19 @@ impl AuthTable {
             };
             let root = match cx.get(&at) {
                 Some(_) => table.resolve(cx, ns_index, &at),
+                None if inferred.contains(&ns_index) => {
+                    let scheme = table
+                        .names
+                        .get(&(ns_index, INFERRED_SCHEME.to_string()))
+                        .cloned()
+                        .unwrap_or_else(|| INFERRED_SCHEME.to_string());
+                    vec![SecurityRequirement {
+                        all_of: vec![SchemeUse {
+                            scheme,
+                            scopes: vec![],
+                        }],
+                    }]
+                }
                 None => vec![],
             };
             table.root.push(root);
@@ -404,6 +439,74 @@ fn definitions(cx: &mut Ctx<'_>, namespace: usize, doc: usize) -> (Vec<Definitio
         }
     }
     (out, unsupported)
+}
+
+/// The `apiKey` header scheme of a document that defines no scheme and no
+/// root `security` but documents a credential header as a parameter.
+/// Reports TG0112 at that parameter.
+fn infer_api_key(cx: &mut Ctx<'_>, namespace: usize, doc: usize) -> Option<Definition> {
+    let root = RefTarget {
+        doc,
+        pointer: String::new(),
+    };
+    if cx.get(&child(&root, "security")).is_some() {
+        return None;
+    }
+    let paths = child(&root, "paths");
+    let Some(Value::Object(map)) = cx.get(&paths) else {
+        return None;
+    };
+    let mut found: Option<(String, RefTarget)> = None;
+    'scan: for path in map.keys() {
+        let Some((item_at, item)) = cx.deref_value(&child(&paths, path)) else {
+            continue;
+        };
+        let owners = std::iter::once(item_at.clone()).chain(
+            METHODS
+                .iter()
+                .filter(|(word, _)| item.get(*word).is_some_and(Value::is_object))
+                .map(|(word, _)| child(&item_at, word)),
+        );
+        for owner in owners {
+            let list = child(&owner, "parameters");
+            let Some(Value::Array(items)) = cx.get(&list) else {
+                continue;
+            };
+            for i in 0..items.len() {
+                let Some((at, param)) = cx.deref_value(&child(&list, &i.to_string())) else {
+                    continue;
+                };
+                let name = str_of(param, "name").unwrap_or("");
+                if str_of(param, "in") == Some("header")
+                    && CREDENTIAL_HEADERS.contains(&name.to_ascii_lowercase().as_str())
+                {
+                    found = Some((name.to_string(), at));
+                    break 'scan;
+                }
+            }
+        }
+    }
+    let (wire_name, at) = found?;
+    cx.report(
+        Diagnostic::info(
+            "TG0112",
+            format!(
+                "no security scheme is defined, but header `{wire_name}` is documented as a parameter; inferred an apiKey header scheme `{INFERRED_SCHEME}` required by every operation"
+            ),
+        )
+        .with_help("define the scheme under components/securitySchemes and list it in `security`"),
+        &at,
+    );
+    Some(Definition {
+        namespace,
+        scheme: AuthScheme::ApiKey {
+            name: INFERRED_SCHEME.to_string(),
+            location: ApiKeyIn::Header,
+            wire_name,
+            doc: None,
+        },
+        at,
+    })
 }
 
 /// Convert one Security Scheme Object.
