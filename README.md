@@ -22,7 +22,7 @@ Most SDK generators optimize for a person reading autocomplete. An agent has a f
 - **Previews and confirmation tokens.** A destructive or irreversible call must be previewed first. The preview returns the request that would be sent and its effects, plus a confirmation token that is valid only for identical arguments. The generated CLI replaces tokens with `--yes` (and `--i-understand` for irreversible operations).
 - **Idempotency and unknown outcomes.** Mutations are retried only with an idempotency key (or an identity body), always with the same key. A timeout or reset after a write is reported as `OUTCOME_UNKNOWN` with the call to verify it, not as a failure to retry blindly.
 - **Verification.** An operation can name a read to run after success and the state to expect, attached to the result as evidence.
-- **MCP progressive disclosure.** Past a tool-count threshold the server lists a few meta-tools (`search_tools`, `describe_tool`, `invoke`, `preview`, `list_clusters`) instead of every operation. On the ZROtext pilot (41 tools) the progressive listing costs 765 tokens, against 9,473 for the 14 tools of that project's hand-written MCP server.
+- **MCP progressive disclosure.** Past a tool-count threshold the server lists a few meta-tools (`search_tools`, `describe_tool`, `invoke`, `preview`, `list_clusters`) instead of every operation. In the maintainers' measurement on the ZROtext pilot (October 2026, BPE token counts), the progressive listing of its 41 tools costs 765 tokens, against 9,473 for the 14 tools of that project's hand-written MCP server.
 - **Deterministic output.** The same inputs produce byte-identical files. Generated files record the generator version and the digest of their inputs, and `tungsten generate --check` fails when output is stale.
 
 ## Targets
@@ -35,11 +35,11 @@ Most SDK generators optimize for a person reading autocomplete. An agent has a f
 | `mcp` | MCP server over stdio or Streamable HTTP, discrete or progressive | `@tungsten/mcp` |
 | `docs` | `llms.txt`, `llms-full.txt`, `tools.json`, README | none |
 
-Targets and the mock server (`tungsten mock`) share one IR, so they agree on operations, types and rules. The three SDK runtimes implement identical semantics: a shared contract suite of 58 scenarios passes unchanged through the TypeScript, Python and Rust drivers.
+Targets and the mock server (`tungsten mock`) share one IR, so they agree on operations, types and rules. The three SDK runtimes implement identical semantics: as of this writing a shared contract suite of 58 scenarios (kept in the maintainers' repository) passes unchanged through the TypeScript, Python and Rust drivers.
 
 ## Install
 
-From source, with the Rust toolchain pinned in [`rust-toolchain.toml`](rust-toolchain.toml):
+From source, with Rust 1.95 or newer (the repository pins 1.97.0 in [`rust-toolchain.toml`](rust-toolchain.toml) for development):
 
 ```sh
 git clone https://github.com/pboachie/tungsten
@@ -56,7 +56,7 @@ Prebuilt releases are coming with 0.1. Node, Python and the formatters are optio
 tungsten init --from openapi.json   # writes tungsten.yml and agent.yml
 ```
 
-Edit `tungsten.yml` to add targets, and `agent.yml` to review every operation with side effects (init lists them as TODO):
+`init` writes no targets, so `generate` has nothing to do until you add some. Edit `tungsten.yml` to add targets, and `agent.yml` to review every operation with side effects (init lists them as TODO):
 
 ```yaml
 # tungsten.yml

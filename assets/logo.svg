@@ -1,14 +1,9 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 96" width="360" height="96" role="img" aria-labelledby="t">
   <title id="t">tungsten</title>
   <style>
-    .mark { fill: #1f2937; }
-    .glyph { fill: none; stroke: #f9fafb; stroke-width: 7; stroke-linecap: round; stroke-linejoin: round; }
-    .word { fill: #111827; font: 700 44px ui-sans-serif, system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; letter-spacing: -1px; }
-    @media (prefers-color-scheme: dark) {
-      .mark { fill: #e5e7eb; }
-      .glyph { stroke: #111827; }
-      .word { fill: #f3f4f6; }
-    }
+    .mark { fill: #4f46e5; }
+    .glyph { fill: none; stroke: #ffffff; stroke-width: 7; stroke-linecap: round; stroke-linejoin: round; }
+    .word { fill: #6366f1; font: 700 44px ui-sans-serif, system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; letter-spacing: -1px; }
   </style>
   <rect class="mark" x="4" y="8" width="80" height="80" rx="18"/>
   <path class="glyph" d="M20 28 L30 68 L44 40 L58 68 L68 28"/>
