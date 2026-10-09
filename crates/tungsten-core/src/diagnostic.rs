@@ -364,6 +364,10 @@ pub mod codes {
             "TG0753",
             "two commands of the generated CLI share a path; the later one is numbered",
         ),
+        (
+            "TG0760",
+            "types no operation reaches were not generated (types.prune_unreferenced)",
+        ),
         ("TG0901", "generated output is stale relative to its inputs"),
         (
             "TG0902",

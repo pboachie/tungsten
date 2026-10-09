@@ -37,6 +37,13 @@ export function isJsonMedia(media: string): boolean {
   return media === "application/json" || media.endsWith("+json") || media === "text/json";
 }
 
+const JSONL_MEDIA = new Set(["application/jsonl", "application/x-jsonl", "application/ndjson", "application/x-ndjson"]);
+
+/** JSON Lines media types: one JSON value per line. */
+export function isJsonlMedia(media: string): boolean {
+  return JSONL_MEDIA.has(media);
+}
+
 /** The response descriptor matching a status: exact, then `NXX`, then `default`. */
 export function matchResponse(responses: readonly ResponseDescriptor[], status: number): ResponseDescriptor | undefined {
   const list = Array.isArray(responses) ? (responses.filter(isRecord) as unknown as ResponseDescriptor[]) : [];
@@ -55,12 +62,33 @@ export interface DecodedBody {
   /** JSON was announced but did not parse. */
   invalidJson: boolean;
   empty: boolean;
+  /** The body is JSON Lines: `value` is the array of the lines' values, or
+   * (when `invalidJson`) the text. */
+  jsonl?: boolean;
+  /** The first line (1-based) that did not parse. */
+  badLine?: number;
 }
 
 export function decodeBody(bytes: Uint8Array, headers: Record<string, string>, declared: string | null): DecodedBody {
-  if (bytes.byteLength === 0) return { value: undefined, json: false, invalidJson: false, empty: true };
-  const media = mediaTypeOf(headers) || (declared ?? "").toLowerCase();
+  const announced = mediaTypeOf(headers);
+  const media = announced || (declared ?? "").toLowerCase();
   const text = (): string => new TextDecoder().decode(bytes);
+  // An empty body is no body, unless the server says it is JSON Lines: then it is no lines.
+  if (bytes.byteLength === 0 && !isJsonlMedia(announced)) return { value: undefined, json: false, invalidJson: false, empty: true };
+  if (isJsonlMedia(announced || media.split(";")[0]!.trim())) {
+    const raw = text();
+    const values: unknown[] = [];
+    const lines = raw.split("\n");
+    for (const [index, line] of lines.entries()) {
+      if (line.trim() === "") continue;
+      try {
+        values.push(JSON.parse(line) as unknown);
+      } catch {
+        return { value: raw, json: false, invalidJson: true, empty: false, jsonl: true, badLine: index + 1 };
+      }
+    }
+    return { value: values, json: false, invalidJson: false, empty: false, jsonl: true };
+  }
   if (isJsonMedia(media)) {
     const raw = text();
     try {

@@ -38,6 +38,16 @@ def is_json_media(media: str) -> bool:
     return media == "application/json" or media.endswith("+json") or media == "text/json"
 
 
+_JSONL_MEDIA = frozenset(
+    ("application/jsonl", "application/x-jsonl", "application/ndjson", "application/x-ndjson")
+)
+
+
+def is_jsonl_media(media: str) -> bool:
+    """JSON Lines media types: one JSON value per line."""
+    return media in _JSONL_MEDIA
+
+
 def match_response(responses: object, status: int) -> Mapping[str, object] | None:
     """The response descriptor matching a status: exact, then ``NXX``, then ``default``."""
     listed = [r for r in responses if is_record(r)] if is_array(responses) else []
@@ -64,6 +74,11 @@ class DecodedBody:
     #: JSON was announced but did not parse.
     invalid_json: bool
     empty: bool
+    #: The body is JSON Lines: ``value`` is the list of the lines' values, or
+    #: (when ``invalid_json``) the text.
+    jsonl: bool = False
+    #: The first line (1-based) that did not parse.
+    bad_line: int = 0
 
 
 _JSON_START = re.compile(r"\s*[\[{]")
@@ -76,9 +91,22 @@ def _text(data: bytes) -> str:
 
 
 def decode_body(data: bytes, headers: Mapping[str, str], declared: str | None) -> DecodedBody:
-    if len(data) == 0:
+    announced = media_type_of(headers)
+    media = announced or (declared or "").lower()
+    # An empty body is no body, unless the server says it is JSON Lines: then it is no lines.
+    if len(data) == 0 and not is_jsonl_media(announced):
         return DecodedBody(UNSET, False, False, True)
-    media = media_type_of(headers) or (declared or "").lower()
+    if is_jsonl_media(announced or media.split(";")[0].strip()):
+        raw = _text(data)
+        values: list[object] = []
+        for index, line in enumerate(raw.split("\n")):
+            if line.strip() == "":
+                continue
+            try:
+                values.append(parse_json(line))
+            except ValueError:
+                return DecodedBody(raw, False, True, False, True, index + 1)
+        return DecodedBody(values, False, False, False, True)
     if is_json_media(media):
         raw = _text(data)
         try:

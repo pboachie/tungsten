@@ -84,14 +84,20 @@ pub(crate) fn internal_file(header: &str) -> String {
     w.blank();
     w.line("// Helpers shared by the generated modules; not part of the package's API.");
     w.blank();
-    w.line("import type { SchemaLike } from \"@tungsten/runtime\";");
+    w.line(
+        "import { isBinaryInput, type BinaryInput, type SchemaLike } from \"@tungsten/runtime\";",
+    );
     w.line("import { z } from \"zod\";");
+    w.blank();
+    w.line("export type { BinaryInput };");
     w.blank();
     w.line(TO_SCHEMA_LIKE);
     w.blank();
     w.line(INTEGER);
     w.blank();
     w.line(WITH_PATTERN);
+    w.blank();
+    w.line(BINARY);
     w.finish()
 }
 
@@ -129,6 +135,13 @@ export function withPattern<S extends { regex(pattern: RegExp): S }>(schema: S, 
     }
   }
   return schema;
+}"#;
+
+const BINARY: &str = r#"/** Binary data in a request: bytes, a `Blob` or `File`, or `{ data, filename?, contentType? }`. */
+export function binary(): z.ZodType<BinaryInput> {
+  return z.custom<BinaryInput>(isBinaryInput, {
+    message: "expected binary data (Uint8Array, Blob, File or { data, filename?, contentType? })",
+  });
 }"#;
 
 /// Where an operation lives on the client (`client.public.webhooks.list`).
@@ -212,7 +225,7 @@ fn example_args(shape: &OpShape<'_>) -> String {
             let value = match f.ts.as_str() {
                 "number" => "1".to_string(),
                 "boolean" => "true".to_string(),
-                "Uint8Array" => "new Uint8Array()".to_string(),
+                "BinaryInput" | "Uint8Array" => "new Uint8Array()".to_string(),
                 t if t.starts_with('"') => t.split(" | ").next().unwrap_or(t).to_string(),
                 "string" => string_lit(&format!("<{}>", f.key)),
                 _ => "/* ... */".to_string(),

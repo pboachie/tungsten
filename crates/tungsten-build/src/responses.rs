@@ -113,7 +113,7 @@ pub(crate) fn build(
         } else {
             vec![&scope.hint, &label, "Response"]
         };
-        let content = bodies::content(cx, scope.ns, &target, &hint);
+        let content = bodies::content(cx, scope.ns, &target, &hint, false);
         let headers = headers(cx, scope, &target);
         let description = str_of(value, "description").unwrap_or("").to_string();
         raws.push(RawResponse {
