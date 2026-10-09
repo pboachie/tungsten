@@ -638,18 +638,27 @@ fn pagination_js(info: &OpInfo<'_>, shape: &OpShape<'_>) -> Js {
         PaginationStyle::Cursor {
             request_param,
             response_field,
-        } => Js::obj(vec![
-            ("style", Js::str("cursor")),
-            ("requestParam", Js::str(&arg(request_param))),
-            ("responseField", Js::str(response_field)),
-            items,
-            (
-                "pageSizeParam",
-                p.page_size_param
-                    .as_deref()
-                    .map_or_else(|| Js::Raw("null".into()), |s| Js::str(&arg(s))),
-            ),
-        ]),
+        } => {
+            let mut entries = vec![
+                ("style", Js::str("cursor")),
+                ("requestParam", Js::str(&arg(request_param))),
+                ("responseField", Js::str(response_field)),
+                items,
+                (
+                    "pageSizeParam",
+                    p.page_size_param
+                        .as_deref()
+                        .map_or_else(|| Js::Raw("null".into()), |s| Js::str(&arg(s))),
+                ),
+            ];
+            if let Some(f) = &p.has_more_field {
+                entries.push(("hasMoreField", Js::str(f)));
+            }
+            if let Some(f) = &p.cursor_item_field {
+                entries.push(("cursorItemField", Js::str(f)));
+            }
+            Js::obj(entries)
+        }
         PaginationStyle::Offset {
             offset_param,
             limit_param,

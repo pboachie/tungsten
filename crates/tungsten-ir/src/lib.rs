@@ -550,6 +550,9 @@ pub enum Exhausted {
     CursorNull,
     EmptyItems,
     NoLink,
+    /// The response's boolean `has_more_field` is false (the next cursor
+    /// can still be set on the last page).
+    HasMoreFalse,
 }
 
 ir_struct! {
@@ -560,6 +563,14 @@ ir_struct! {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub page_size_param: Option<String>,
         pub exhausted_when: Exhausted,
+        /// Cursor style only: the response boolean that says more pages
+        /// follow (`has_more`); the runtime stops when it is `false`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub has_more_field: Option<String>,
+        /// Cursor style only: when the response has no cursor field (or it
+        /// is null), the next cursor is this field of the last item (`id`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub cursor_item_field: Option<String>,
         /// True when inferred by heuristic rather than declared.
         pub inferred: bool,
     }

@@ -361,6 +361,11 @@ pub enum PaginationDescriptor {
         response_field: String,
         items_field: String,
         page_size_param: Option<String>,
+        /// Response boolean (`has_more`): iteration stops when it is `false`.
+        has_more_field: Option<String>,
+        /// Without a cursor in the response, the next cursor is this field of
+        /// the last item.
+        cursor_item_field: Option<String>,
     },
     Offset {
         offset_param: String,

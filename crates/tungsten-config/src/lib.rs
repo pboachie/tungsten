@@ -297,6 +297,10 @@ pub struct CursorPagination {
     pub items: String,
     #[serde(default)]
     pub page_size_param: Option<String>,
+    /// Response boolean that says more pages follow; iteration stops when
+    /// it is `false` (`has_more`).
+    #[serde(default)]
+    pub has_more: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
