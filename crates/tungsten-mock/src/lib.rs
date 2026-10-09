@@ -92,6 +92,17 @@
 //!     content has no body. Declared response headers are sent with
 //!     generated values. Responses carry no `Date` header.
 //!
+//!     An operation with an event stream (`Operation.stream`) answers it as
+//!     `text/event-stream` (with `Cache-Control: no-store`) when it has no
+//!     other success body, or when the request has `Accept:
+//!     text/event-stream` or sets the stream's request flag to `true`.
+//!     There is one event per variant of the event type (two values of it
+//!     when it is not a union), each as an optional `event:` line (the
+//!     variant's discriminator value), an `id:` line counting from 1 and a
+//!     `data:` line of JSON, then a `data:` line with the done sentinel, if
+//!     the operation declares one. Errors before the stream (auth,
+//!     validation, injections) are ordinary answers.
+//!
 //! Failures produced by the mock carry a short explanation in the
 //! `X-Tungsten-Reason` response header. A failure of a routed operation
 //! whose status the operation declares without content (a bare `408`, say)
@@ -119,6 +130,11 @@
 //! - `drop-after-write`: process the request normally (an idempotency key
 //!   stores its response), record it with `response_status` 0, then close
 //!   the connection without a response.
+//! - `drop-mid-stream`: process the request normally; if the answer is an
+//!   event stream, send its first event and the first half of the first line
+//!   of the next one, then break the connection (the chunked body never
+//!   ends). Any other answer is sent unchanged. Recorded with the status
+//!   sent.
 //! - `reset`: close the connection before reading the body; recorded with an
 //!   empty body and `response_status` 0.
 //! - `status=<code>[;retry-after=<s>][;code=<error code>][;apply]`: answer
@@ -147,7 +163,7 @@
 //!   programs and the stored idempotent responses.
 //! - `POST /__tungsten/program`: queues scripted responses. The body is one
 //!   object or an array of objects `{operation, status, body?, headers?,
-//!   times?, code?}` or `{operation, inject, times?}`: `operation` is a
+//!   times?, code?, cut_after?}` or `{operation, inject, times?}`: `operation` is a
 //!   callable operation id, `status` 200-599, `body` any JSON value (a
 //!   string is sent as `text/plain`, anything else as `application/json`),
 //!   `headers` an object of string values, `times` how many matching calls
@@ -156,8 +172,11 @@
 //!   operation's generated body). `inject` is an `X-Tungsten-Inject` value
 //!   other than `reset` (`drop-after-write`, `timeout=<ms>`,
 //!   `status=<code>[;...][;apply]`), applied to the matching calls exactly
-//!   as the header would be; it takes no `status`, `body`, `headers` or
-//!   `code`. Programs for one operation apply in the order they were
+//!   as the header would be; it takes no `status`, `body`, `headers`,
+//!   `code` or `cut_after`. `cut_after` (a byte count) sends only that much
+//!   of the body, then breaks the connection like `drop-mid-stream`; with a
+//!   string `body` and a `text/event-stream` content type it scripts a
+//!   stream that breaks anywhere. Programs for one operation apply in the order they were
 //!   queued. Answers `200` with `{"queued": <number of programs>}`, or `400`
 //!   (text/plain) naming the problem, in which case nothing is queued.
 //!

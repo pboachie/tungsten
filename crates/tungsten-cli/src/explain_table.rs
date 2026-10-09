@@ -280,6 +280,21 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
          through a custom transport.",
     ),
     e(
+        "TG0530",
+        "A success response declares the `text/event-stream` media type without a schema, so \
+         the SDK cannot type or check the events of the stream. Each event's `data` is still \
+         decoded as JSON and handed to the caller as an untyped value.",
+        "Declare the schema of one event under the media type (usually a `oneOf` tagged by a \
+         `type` property). Name a `data` value that ends the stream, if there is one, with \
+         `x-tungsten-stream-done`.",
+    ),
+    e(
+        "TG0531",
+        "More than one success status of an operation declares `text/event-stream`. The SDK \
+         streams the lowest status; the others are read as plain responses.",
+        "Declare the stream under one status, normally 200.",
+    ),
+    e(
         "TG0601",
         "A manifest (tungsten.yml or agent.yml) is not valid YAML.",
         "Fix the YAML syntax at the reported position. Indentation must use spaces.",

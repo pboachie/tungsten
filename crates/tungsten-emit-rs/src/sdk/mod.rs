@@ -179,7 +179,7 @@ fn generate(ir: &Ir, opts: &Options) -> Vec<(String, String)> {
         ),
         (
             format!("{p}/src/support.rs"),
-            package::support_file(&hdr_slash),
+            package::support_file(&hdr_slash, plan.ops.iter().any(|o| o.op.stream.is_some())),
         ),
         (format!("{p}/src/custom/mod.rs"), package::custom_template()),
         (

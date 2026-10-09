@@ -34,6 +34,7 @@ from .types import (
     Predicate,
     PreviewResult,
     Result,
+    StreamEvent,
 )
 
 
@@ -98,6 +99,25 @@ class ClientCore:
                 yield cast(Ok[Page[Any]] | Err, page)
         except Exception as error:
             yield self._engine.internal(safe_id(op), error, "paginating")
+
+    def stream(
+        self, op: OperationDescriptor, args: Mapping[str, Any], opts: CallOptions | None = None
+    ) -> Iterator[StreamEvent[Any] | Err]:
+        """Iterate the events of the operation's event stream: one
+        ``StreamEvent`` per server-sent event (``data`` decoded from JSON and
+        validated), then the end of the stream or one final ``Err``. An error
+        before the stream starts (validation, auth, an error status; retried
+        by the rules of ``call``) is the only item. A started stream is never
+        retried: a connection lost or an idle timeout ends it with a final
+        ``Err`` (``TRANSPORT_FAILED`` or ``UPSTREAM_UNAVAILABLE`` for a read,
+        ``OUTCOME_UNKNOWN`` for a mutation), as does an event that is not JSON
+        or (with ``validate_responses="strict"``) does not match the event
+        type. Leaving the loop closes the connection."""
+        try:
+            for item in self._driver.iterate(self._engine.stream(op, args, opts)):
+                yield cast(StreamEvent[Any] | Err, item)
+        except Exception as error:
+            yield self._engine.internal(safe_id(op), error, "streaming")
 
     def poll(
         self,
@@ -215,6 +235,16 @@ class AsyncClientCore:
                 yield cast(Ok[Page[Any]] | Err, page)
         except Exception as error:
             yield self._engine.internal(safe_id(op), error, "paginating")
+
+    async def stream(
+        self, op: OperationDescriptor, args: Mapping[str, Any], opts: CallOptions | None = None
+    ) -> AsyncIterator[StreamEvent[Any] | Err]:
+        """See ``ClientCore.stream``."""
+        try:
+            async for item in self._driver.iterate(self._engine.stream(op, args, opts)):
+                yield cast(StreamEvent[Any] | Err, item)
+        except Exception as error:
+            yield self._engine.internal(safe_id(op), error, "streaming")
 
     async def poll(
         self,

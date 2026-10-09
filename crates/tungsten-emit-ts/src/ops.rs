@@ -98,8 +98,19 @@ pub(crate) struct OpShape<'a> {
     pub page_item: Option<Ty>,
     /// Model namespaces and helpers the args and response need.
     pub uses: Uses,
-    /// Model namespaces the success and page item types name.
+    /// Model namespaces the success, page item and event types name.
     pub result_namespaces: BTreeSet<String>,
+    /// The event stream, when the operation has one.
+    pub stream: Option<StreamShape>,
+}
+
+/// The event stream of an operation.
+#[derive(Debug, Clone)]
+pub(crate) struct StreamShape {
+    /// Type of one event.
+    pub event: Ty,
+    /// Schema of one event.
+    pub event_zod: String,
 }
 
 /// Whether a parameter is a key of the args object. Idempotency keys come
@@ -323,6 +334,14 @@ pub(crate) fn op_shape<'a>(plan: &Plan<'a>, info: &OpInfo<'a>) -> OpShape<'a> {
                 cx.ts_ref(items)
             })
     });
+    let stream = op.stream.as_ref().map(|s| {
+        uses.add_ref(plan, None, &s.event);
+        result_uses.add_ref(plan, None, &s.event);
+        StreamShape {
+            event: cx.ts_ref(&s.event),
+            event_zod: cx.zod_ref(&s.event),
+        }
+    });
     let all_optional = fields.iter().all(|f| f.optional);
     OpShape {
         params,
@@ -335,6 +354,7 @@ pub(crate) fn op_shape<'a>(plan: &Plan<'a>, info: &OpInfo<'a>) -> OpShape<'a> {
         page_item,
         uses,
         result_namespaces: result_uses.namespaces,
+        stream,
     }
 }
 
@@ -866,6 +886,19 @@ fn descriptor_js(plan: &Plan<'_>, info: &OpInfo<'_>, shape: &OpShape<'_>) -> Js 
     let summary = op_summary(op);
     if let Some(z) = &shape.response_zod {
         entries.push(("response", Js::Raw(format!("toSchemaLike({z})"))));
+    }
+    if let (Some(spec), Some(stream)) = (&op.stream, &shape.stream) {
+        let mut stream_entries = vec![(
+            "event",
+            Js::Raw(format!("toSchemaLike({})", stream.event_zod)),
+        )];
+        if let Some(done) = &spec.done {
+            stream_entries.push(("done", Js::str(done)));
+        }
+        if let Some(flag) = &spec.request_flag {
+            stream_entries.push(("flag", Js::str(flag)));
+        }
+        entries.push(("stream", Js::obj(stream_entries)));
     }
     entries.push((
         "summary",

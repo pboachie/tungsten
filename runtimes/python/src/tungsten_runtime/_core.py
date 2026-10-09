@@ -14,6 +14,7 @@ errors, which become diagnostic envelopes.
 
 from __future__ import annotations
 
+import codecs
 import math
 import random
 import re
@@ -47,12 +48,16 @@ from ._confirm import CONFIRMATION_TTL_MS, check_token, issue_token, token_expir
 from ._effects import (
     Answered,
     AttemptRequest,
+    Chunk,
     Flow,
     Lost,
     NotSent,
+    StreamEnded,
+    Streaming,
     TimedOut,
     emit,
     observe,
+    read_chunk,
     send,
     shared,
     sleep,
@@ -99,10 +104,11 @@ from ._helpers import (
     values_at,
     with_arguments,
     with_search_params,
+    with_stream_flag,
     with_wire_names,
 )
 from ._idempotency import check_key_format, has_key_param, key_format_description, key_header
-from ._json import canonical_json, display_json, js_number
+from ._json import canonical_json, display_json, js_number, parse_json
 from ._serialize import (
     HeaderBag,
     SerializationError,
@@ -118,6 +124,7 @@ from ._serialize import (
     valid_header_name,
     valid_header_value,
 )
+from ._sse import SseEvent, SseParser
 from ._util import (
     NOTHING,
     REDACTED,
@@ -165,6 +172,7 @@ from .types import (
     ResponseMeta,
     RetryOptions,
     Safety,
+    StreamEvent,
     Valid,
     Verification,
 )
@@ -342,6 +350,9 @@ class Engine:
             return True
 
         yield from self._pages(op, args, self._call_options(opts), None, deliver)
+
+    def stream(self, op: OperationDescriptor, args: object, opts: object) -> Flow[None]:
+        yield from self._stream(op, args, self._call_options(opts))
 
     def poll(
         self,
@@ -1184,7 +1195,7 @@ class Engine:
 
     # ----------------------------------------------------------- sending
 
-    def _send(self, prepared: Prepared, opts: Mapping[str, object]) -> Flow[Answer]:
+    def _send(self, prepared: Prepared, opts: Mapping[str, object], stream: bool = False) -> Flow[Answer]:
         op = prepared.op
         retries = self._retry_options(op)
         mutation = is_mutation(op)
@@ -1207,7 +1218,7 @@ class Engine:
             # credential headers to another origin. A read follows same-origin
             # redirects here; a mutation follows none.
             outcome = yield from send(
-                AttemptRequest(prepared.url, prepared.method, headers, prepared.body, timeout_ms)
+                AttemptRequest(prepared.url, prepared.method, headers, prepared.body, timeout_ms, stream)
             )
             current_url, current_method, current_body = prepared.url, prepared.method, prepared.body
             hops = 0
@@ -1230,7 +1241,7 @@ class Engine:
                     k: v for k, v in headers.items() if not (rewrite and k.lower() == "content-type")
                 }
                 outcome = yield from send(
-                    AttemptRequest(current_url, current_method, hop_headers, current_body, timeout_ms)
+                    AttemptRequest(current_url, current_method, hop_headers, current_body, timeout_ms, stream)
                 )
                 hops += 1
             call_ctx = CallContext(self.api, op, prepared.key, prepared.key_header, attempts, check)
@@ -1429,7 +1440,7 @@ class Engine:
         self,
         call_ctx: CallContext,
         prepared: Prepared,
-        outcome: Answered | NotSent | Lost | TimedOut,
+        outcome: Answered | Streaming | NotSent | Lost | TimedOut,
         ctx: RequestContext,
         timeout_ms: float,
     ) -> Flow[Answer]:
@@ -1494,6 +1505,11 @@ class Engine:
         verify_target = str_field(field(op["agent"], "verify"), "operation")
         hint = f"Call {verify_target} to read the current state." if verify_target is not None else None
 
+        if isinstance(outcome, Streaming):
+            meta = ResponseMeta(
+                status=status, headers=dict(headers), request_id=request_id, attempts=attempts
+            )
+            return Answer(Ok(value=outcome, meta=meta))
         if success and outcome.body is None:
             failure = outcome.body_failure or "broken"
             if not mutation:
@@ -1847,6 +1863,217 @@ class Engine:
                 checked = None
             out.append(cast(Valid[object], checked).data if isinstance(checked, Valid) else item)
         return out
+
+    def _stream(self, op: OperationDescriptor, raw_args: object, opts: Mapping[str, object]) -> Flow[None]:
+        """Emit the events of an event stream, then nothing or one final
+        failure; an error before the stream starts is the only item."""
+        spec = field(op, "stream")
+        if not is_record(spec):
+            yield from emit(
+                _fail(
+                    diagnostic(
+                        safe_id(op),
+                        "VALIDATION_FAILED",
+                        failed_parameter="operation",
+                        expected="an operation with an event stream",
+                        remediation=(
+                            f"{safe_id(op)} has no event stream (its success response is not text/event-stream); "
+                            "use call() instead. Nothing was sent."
+                        ),
+                    )
+                )
+            )
+            return
+        extra = _opt(opts, "headers")
+        stream_opts = {
+            **opts,
+            "headers": {"Accept": "text/event-stream", **(extra if is_record(extra) else {})},
+        }
+        prepared = yield from self._prepare(
+            op, with_stream_flag(op, spec, raw_args), stream_opts, "call", None, None
+        )
+        if isinstance(prepared, Err):
+            yield from emit(_fail(prepared.error))
+            return
+        answer = yield from self._send(prepared, stream_opts, True)
+        result = answer.result
+        if isinstance(result, Err):
+            yield from emit(_fail(result.error))
+            return
+        meta = result.meta
+        mutation = is_mutation(op)
+        after_effect = " The call took effect; do not repeat it." if mutation else ""
+        opened = result.value
+        if not isinstance(opened, Streaming):
+            content_type = meta.headers.get("content-type")
+            yield from emit(
+                _fail(
+                    diagnostic(
+                        op["id"],
+                        "UNEXPECTED_RESPONSE",
+                        http_status=meta.status,
+                        request_id=meta.request_id,
+                        failed_parameter="response",
+                        received_value=envelope_value(content_type, False),
+                        expected="a text/event-stream body",
+                        remediation=(
+                            "The success response is not an event stream (Content-Type "
+                            f"{content_type if content_type is not None else 'missing'}).{after_effect}"
+                        ),
+                        retryable="never",
+                        attempts=meta.attempts,
+                    )
+                )
+            )
+            return
+        timeout_ms = self._timeout(stream_opts)
+        configured_mode: object = self.options.validate_responses
+        mode = configured_mode if configured_mode in ("off", "strict") else "warn"
+        listed = field(op["agent"], "sensitive_response_fields")
+        sensitive = [f for f in listed if isinstance(f, str)] if is_array(listed) else []
+        validate = _hook(field(spec, "event"), "validate")
+        done = str_field(spec, "done")
+        parser = SseParser()
+        decoder = codecs.getincrementaldecoder("utf-8")("replace")
+        count = 0
+        secrets = prepared.secrets
+        call_ctx = CallContext(
+            self.api,
+            op,
+            prepared.key,
+            prepared.key_header,
+            meta.attempts,
+            self._outcome_check(op, prepared.args)
+            if mutation and not has_replay_protection(op, prepared.key)
+            else None,
+        )
+
+        def interrupted(kind: str) -> Err:
+            after = f"after {count} {'event' if count == 1 else 'events'}"
+            if kind == "timeout":
+                cause = (
+                    f"No event arrived within {js_number(timeout_ms)} ms {after}; the stream was abandoned."
+                )
+                error = (
+                    outcome_unknown(call_ctx, cause, http_status=meta.status, request_id=meta.request_id)
+                    if mutation
+                    else diagnostic(
+                        op["id"],
+                        "UPSTREAM_UNAVAILABLE",
+                        http_status=meta.status,
+                        request_id=meta.request_id,
+                        remediation=(
+                            f"{cause} This read has no side effects; call again later or with a larger timeout_ms."
+                        ),
+                        attempts=meta.attempts,
+                    )
+                )
+            else:
+                cause = f"The event stream was cut off {after}: the connection failed before it ended."
+                error = (
+                    outcome_unknown(call_ctx, cause, http_status=meta.status, request_id=meta.request_id)
+                    if mutation
+                    else diagnostic(
+                        op["id"],
+                        "TRANSPORT_FAILED",
+                        http_status=meta.status,
+                        request_id=meta.request_id,
+                        remediation=f"{cause} This read has no side effects; call again.",
+                        attempts=meta.attempts,
+                    )
+                )
+            return _fail(scrub_diagnostic(error, secrets))
+
+        def accept(event: SseEvent) -> Flow[StreamEvent[Any] | Err | None]:
+            """The item for an event, or None when it is the done sentinel."""
+            nonlocal count
+            if done is not None and event.data == done:
+                return None
+            index = count
+
+            def failure(**fields: Any) -> Err:
+                return _fail(
+                    scrub_diagnostic(
+                        diagnostic(
+                            op["id"],
+                            "UNEXPECTED_RESPONSE",
+                            http_status=meta.status,
+                            request_id=meta.request_id,
+                            retryable="never",
+                            attempts=meta.attempts,
+                            **fields,
+                        ),
+                        secrets,
+                    )
+                )
+
+            try:
+                value: object = parse_json(event.data)
+            except ValueError:
+                return failure(
+                    failed_parameter=f"events[{index}]",
+                    received_value=envelope_value(event.data, False),
+                    expected="JSON in the data of every event",
+                    remediation=(
+                        f'Event {index} of the stream (event "{event.event}") does not carry JSON in its '
+                        f"data.{after_effect} Events before it were delivered."
+                    ),
+                )
+            if mode != "off" and callable(validate):
+                try:
+                    checked = validate(value)
+                except Exception as error:
+                    checked = Invalid(
+                        issues=[{"path": [], "message": f"the event schema failed ({describe_error(error)})"}]
+                    )
+                if isinstance(checked, Valid):
+                    value = cast(Valid[object], checked).data
+                else:
+                    issues = items_of(cast(object, checked.issues)) if isinstance(checked, Invalid) else ()
+                    issue = issues[0] if len(issues) > 0 else None
+                    path = [str(s) for s in items_of(field(issue, "path"))]
+                    message = str_field(issue, "message") or "a valid event"
+                    path_text = "".join(f"[{s}]" if _DIGITS.fullmatch(s) else f".{s}" for s in path)
+                    problem = failure(
+                        failed_parameter=f"events[{index}]{path_text}",
+                        received_value=envelope_value(
+                            get_path(redact_paths(value, sensitive), path),
+                            any(looks_sensitive(s) for s in path),
+                        ),
+                        expected=message,
+                        remediation=(
+                            f'Event {index} of the stream (event "{event.event}") does not match the API '
+                            f"description at events[{index}]{path_text} ({message}).{after_effect}"
+                        ),
+                    )
+                    if mode == "strict":
+                        return problem
+                    yield from self._emit(problem.error)
+            count += 1
+            return StreamEvent(value=value, event=event.event, id=event.id, retry=event.retry, meta=meta)
+
+        while True:
+            read = yield from read_chunk(opened.stream)
+            if isinstance(read, Chunk):
+                for event in parser.push(decoder.decode(read.data)):
+                    item = yield from accept(event)
+                    if item is None:
+                        return
+                    yield from emit(item)
+                    if isinstance(item, Err):
+                        return
+                continue
+            if isinstance(read, StreamEnded):
+                for event in [*parser.push(decoder.decode(b"", final=True)), *parser.end()]:
+                    item = yield from accept(event)
+                    if item is None:
+                        return
+                    yield from emit(item)
+                    if isinstance(item, Err):
+                        return
+                return
+            yield from emit(interrupted(read.kind))
+            return
 
     def _poll(
         self,

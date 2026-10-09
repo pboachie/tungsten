@@ -103,6 +103,9 @@ pub(crate) fn op_doc(
     if let Some(p) = &names.pages {
         parts.push(format!("`{p}()` iterates every page."));
     }
+    if let Some(p) = &names.stream {
+        parts.push(format!("`{p}()` iterates the events of its stream."));
+    }
     if shape.bodiless {
         parts.push("A success response without a body yields `value=None`.".into());
     }
@@ -133,6 +136,7 @@ pub(crate) struct OpNames {
     pub call: String,
     pub preview: Option<String>,
     pub pages: Option<String>,
+    pub stream: Option<String>,
 }
 
 fn op_names(r: &ResInfo<'_>, o: usize) -> OpNames {
@@ -142,6 +146,7 @@ fn op_names(r: &ResInfo<'_>, o: usize) -> OpNames {
             MemberKind::Op(i) if i == o => names.call = m.name.clone(),
             MemberKind::Preview(i) if i == o => names.preview = Some(m.name.clone()),
             MemberKind::Pages(i) if i == o => names.pages = Some(m.name.clone()),
+            MemberKind::Stream(i) if i == o => names.stream = Some(m.name.clone()),
             _ => {}
         }
     }
@@ -260,7 +265,30 @@ pub(crate) fn resource_doc(r: &ResInfo<'_>) -> String {
     }
 }
 
-/// One method (an operation, its preview or its pages) of a resource class.
+/// The docstring of the `<method>_stream` method.
+fn stream_doc(info: &OpInfo<'_>, names: &OpNames, fields: &[ArgField]) -> String {
+    let op = info.op;
+    let mut parts = vec![format!(
+        "The events of `{}` (`{}`): one `StreamEvent` per server-sent event, then either the end of the stream or one final `Err`. An error before the stream starts is the only item. Leaving the loop closes the connection.",
+        op.id.0,
+        method_str(op.method)
+    )];
+    if let Some(spec) = &op.stream {
+        if let Some(done) = &spec.done {
+            parts.push(format!(
+                "The stream ends at the event whose data is `{done}`, which is not delivered."
+            ));
+        }
+        if let Some(flag) = &spec.request_flag {
+            parts.push(format!("Sets `{flag}` in the request body."));
+        }
+    }
+    parts.push(format!("The same arguments as `{}()`.", names.call));
+    parts.push(args_section(fields));
+    paragraphs(parts)
+}
+
+/// One method (an operation, its preview, its pages or its stream) of a resource class.
 fn write_method(
     w: &mut Writer,
     mode: Mode,
@@ -308,6 +336,23 @@ fn write_method(
                 ]),
             )
         }
+        MemberKind::Stream(_) => {
+            let event = shape
+                .stream
+                .as_ref()
+                .map_or_else(|| "Any".to_string(), |s| s.event.text());
+            let iter = if mode == Mode::Async {
+                "AsyncIterator"
+            } else {
+                "Iterator"
+            };
+            (
+                names.stream.clone().unwrap_or_default(),
+                format!("{iter}[StreamItem[{event}]]"),
+                "stream",
+                stream_doc(info, names, &shape.fields),
+            )
+        }
         MemberKind::Op(_) | MemberKind::Child(_) => (
             names.call.clone(),
             format!("Result[{}]", shape.success.text()),
@@ -315,8 +360,12 @@ fn write_method(
             op_doc(plan, info, shape, names),
         ),
     };
-    // Pages are iterated, never awaited, in both modes.
-    let method_mode = if method == "pages" { Mode::Sync } else { mode };
+    // Pages and streams are iterated, never awaited, in both modes.
+    let method_mode = if method == "pages" || method == "stream" {
+        Mode::Sync
+    } else {
+        mode
+    };
     for l in signature(method_mode, &name, &params, &ret, 4) {
         w.line(l);
     }
@@ -365,6 +414,19 @@ pub(crate) fn resource_file(
                 if shapes[o].page_item.is_none() {
                     imports.add("typing", "Any");
                 }
+            }
+            MemberKind::Stream(o) => {
+                imports.add("collections.abc", "AsyncIterator");
+                imports.add("collections.abc", "Iterator");
+                imports.add("tungsten_runtime", "StreamItem");
+                uses.merge(&shapes[o].hint_uses);
+                uses.merge(&shapes[o].result_uses);
+                if !shapes[o].fields.is_empty() && shapes[o].fields.iter().any(|f| f.optional) {
+                    imports.add("tungsten_runtime", "UNSET");
+                    imports.add("tungsten_runtime", "Unset");
+                    imports.add("..", "_internal");
+                }
+                imports.add("tungsten_runtime", "CallOptions");
             }
             MemberKind::Child(c) => {
                 let child = &plan.resources[c];
@@ -430,7 +492,10 @@ pub(crate) fn resource_file(
         w.dedent();
         for m in &r.members {
             let o = match m.kind {
-                MemberKind::Op(o) | MemberKind::Preview(o) | MemberKind::Pages(o) => o,
+                MemberKind::Op(o)
+                | MemberKind::Preview(o)
+                | MemberKind::Pages(o)
+                | MemberKind::Stream(o) => o,
                 MemberKind::Child(_) => continue,
             };
             w.blank();

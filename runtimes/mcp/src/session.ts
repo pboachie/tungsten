@@ -108,6 +108,26 @@ export function stepLines(preview: PreviewResult): string[] {
   return lines;
 }
 
+/** Events a streamed call collects before it stops reading (the result then
+ * has `truncated: true`). */
+const MAX_STREAM_EVENTS = 1000;
+
+/** Whether a call of `op` reads its event stream: when the operation only
+ * answers a stream, or when it also answers a plain body and the arguments
+ * set the stream's request flag to `true`. */
+function streamRequested(op: OperationDescriptor, args: Record<string, unknown>): boolean {
+  const spec = op.stream;
+  if (!spec) return false;
+  const first = op.responses.find((r) => r.kind === "success")?.mediaType ?? "";
+  if (first.split(";")[0]?.trim().toLowerCase() === "text/event-stream") return true;
+  const flag = spec.flag;
+  const body = op.body;
+  if (flag === undefined || !body) return false;
+  if (body.shape.kind === "merged") return args[flag] === true;
+  const inner = args[body.shape.arg];
+  return isRecord(inner) && inner[flag] === true;
+}
+
 export class Session {
   readonly #catalog: Catalog;
   readonly #options: ServerOptions;
@@ -529,6 +549,16 @@ export class Session {
     let result: Result<unknown>;
     if ("macro" in target) {
       result = await core.runMacro<unknown>(target.macro, args, opts);
+    } else if (streamRequested(target.op, args)) {
+      // A stream is collected: the events in order, or the failure that ended
+      // the stream with the events before it as `partial`.
+      const events: unknown[] = [];
+      for await (const item of core.stream<unknown>(target.op, args, opts)) {
+        if (!item.ok) return { ok: false, error: item.error, partial: { events } };
+        events.push(item.value);
+        if (events.length >= MAX_STREAM_EVENTS) return { ok: true, value: { events, truncated: true } };
+      }
+      return { ok: true, value: { events } };
     } else {
       if (verifies(prepared.tool)) opts.verify = true;
       result = await core.call<unknown>(target.op, args, opts);

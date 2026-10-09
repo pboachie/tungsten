@@ -24,6 +24,7 @@ pub(crate) fn op_doc(
     shape: &OpShape<'_>,
     preview: Option<&str>,
     pages: Option<&str>,
+    stream: Option<&str>,
 ) -> String {
     let op = info.op;
     let a = &op.agent;
@@ -91,6 +92,9 @@ pub(crate) fn op_doc(
     if let Some(p) = pages {
         parts.push(format!("`{p}()` iterates every page."));
     }
+    if let Some(p) = stream {
+        parts.push(format!("`{p}()` iterates the events of its stream."));
+    }
     if shape.bodiless {
         parts.push("A success response without a body yields `None` (or `()`).".into());
     }
@@ -114,6 +118,7 @@ pub(crate) struct OpNames {
     pub call: String,
     pub preview: Option<String>,
     pub pages: Option<String>,
+    pub stream: Option<String>,
 }
 
 pub(crate) fn op_names(r: &ResInfo<'_>, o: usize) -> OpNames {
@@ -123,6 +128,7 @@ pub(crate) fn op_names(r: &ResInfo<'_>, o: usize) -> OpNames {
             MemberKind::Op(i) if i == o => names.call = m.name.clone(),
             MemberKind::Preview(i) if i == o => names.preview = Some(m.name.clone()),
             MemberKind::Pages(i) if i == o => names.pages = Some(m.name.clone()),
+            MemberKind::Stream(i) if i == o => names.stream = Some(m.name.clone()),
             _ => {}
         }
     }
@@ -175,7 +181,7 @@ fn op_lines(w: &mut Writer, konst: &str) {
     put(w, 8, "let op = ", &call, ";");
 }
 
-/// One method (an operation, its preview or its pages) of a resource.
+/// One method (an operation, its preview, its pages or its stream) of a resource.
 fn write_method(
     w: &mut Writer,
     plan: &Plan<'_>,
@@ -241,6 +247,47 @@ fn write_method(
             w.line("let pages = client.core.pages(op.clone(), args, opts.clone());");
             w.line("pages.typed()");
         }
+        MemberKind::Stream(_) => {
+            let event = shape
+                .stream
+                .as_ref()
+                .map_or_else(|| "Value".to_string(), |s| s.event.clone());
+            let mut parts = vec![format!(
+                "The events of `{}` (`{}`): one item per server-sent event, then either the end of the stream or one final error. An error before the stream starts is the only item. The request is sent by the first `next()`; dropping the stream closes the connection. An event that does not decode as `{event}` is an `UNEXPECTED_RESPONSE` error.",
+                info.op.id.0,
+                method_str(info.op.method)
+            )];
+            if let Some(spec) = &info.op.stream {
+                if let Some(done) = &spec.done {
+                    parts.push(format!(
+                        "The stream ends at the event whose data is `{done}`, which is not delivered."
+                    ));
+                }
+                if let Some(flag) = &spec.request_flag {
+                    parts.push(format!("Sets `{flag}` in the request body."));
+                }
+            }
+            doc(w, &paragraphs(parts));
+            let params = vec![
+                "&self".to_string(),
+                format!("request: {req}"),
+                "opts: &CallOptions".to_string(),
+            ];
+            fn_sig(
+                w,
+                4,
+                &format!("pub fn {name}"),
+                &params,
+                &format!("TypedEvents<{event}>"),
+            );
+            w.indent();
+            op_lines(w, &konst);
+            w.line("let args = s::args(&request);");
+            let spec = Rx::call("client.stream_descriptor", vec![Rx::atom(konst.clone())]);
+            put(w, 8, "let spec = ", &spec, ";");
+            w.line("let events = client.core.stream(op.clone(), spec, args, opts.clone());");
+            w.line("events.typed()");
+        }
         MemberKind::Op(_) | MemberKind::Child(_) => {
             doc(
                 w,
@@ -250,6 +297,7 @@ fn write_method(
                     shape,
                     names.preview.as_deref(),
                     names.pages.as_deref(),
+                    names.stream.as_deref(),
                 ),
             );
             let params = vec![
@@ -318,7 +366,10 @@ pub(crate) fn resource_file(
     }
     for m in &r.members {
         let o = match m.kind {
-            MemberKind::Op(o) | MemberKind::Preview(o) | MemberKind::Pages(o) => o,
+            MemberKind::Op(o)
+            | MemberKind::Preview(o)
+            | MemberKind::Pages(o)
+            | MemberKind::Stream(o) => o,
             MemberKind::Child(_) => continue,
         };
         let names = op_names(r, o);
@@ -451,6 +502,24 @@ pub(crate) fn client_file(plan: &Plan<'_>, has_macros: bool, header: &str) -> St
     code.line("&self.descriptors.operations[index]");
     code.dedent();
     code.line("}");
+    if plan.ops.iter().any(|o| o.op.stream.is_some()) {
+        code.blank();
+        code.line("#[allow(dead_code)]");
+        code.line(
+            "pub(crate) fn stream_descriptor(&self, index: usize) -> Arc<StreamDescriptor> {",
+        );
+        code.indent();
+        code.line("self.descriptors");
+        code.indent();
+        code.line(".streams");
+        code.line(".iter()");
+        code.line(".find(|(i, _)| *i == index)");
+        code.line(".map(|(_, spec)| spec.clone())");
+        code.line(".expect(\"a descriptor for every streaming operation\")");
+        code.dedent();
+        code.dedent();
+        code.line("}");
+    }
     if has_macros {
         extra.push(("crate::macros".into(), "Macros".into()));
         code.blank();

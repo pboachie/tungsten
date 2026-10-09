@@ -515,6 +515,21 @@ pub struct RpcDescriptor {
     pub constants: BTreeMap<String, Value>,
 }
 
+/// The server-sent events of an operation (IR `StreamSpec`); passed to
+/// [`crate::ClientCore::stream`] next to the operation's descriptor.
+#[derive(Debug, Clone, Default)]
+pub struct StreamDescriptor {
+    /// Validates the decoded `data` of every event (per
+    /// [`ClientOptions::validate_responses`]); events are delivered as decoded.
+    /// `None`: events are any JSON value.
+    pub event: Option<Arc<dyn Validator>>,
+    /// A `data` value that ends the stream without being an event (`[DONE]`).
+    pub done: Option<String>,
+    /// Wire name of the boolean request body field that selects the stream;
+    /// the stream call sets it to `true`.
+    pub flag: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct OperationDescriptor {
     /// IR operation id (`public.replayWebhookDelivery`).
