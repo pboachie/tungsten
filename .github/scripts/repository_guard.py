@@ -26,7 +26,7 @@ Tree rules:
     like); .github/ISSUE_TEMPLATE/*.md and *.yml; and examples/<name>/README.md.
     Everything else with a documentation extension or name stays forbidden,
     wherever it is (docs/CONTRIBUTING.md, CHANGELOG.txt, assets/notes.md);
-  - assets/ holds images only (.svg and .png); examples/ holds code (and the
+  - the root assets/ directory holds images only (.svg and .png); examples/ holds code (and the
     per-example README.md above), and test directories are refused there as
     anywhere else;
   - every .rs file outside runtimes/ starts with

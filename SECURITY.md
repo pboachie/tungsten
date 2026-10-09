@@ -17,8 +17,8 @@ Please do not open a public issue for a security problem.
 Use GitHub's private vulnerability reporting: open the **Security** tab of this
 repository and choose **Report a vulnerability** (a GitHub Security Advisory
 draft that only the maintainers can see). If that option is not available to
-you, open a public issue that asks for a private contact channel and contains
-no details of the problem.
+you, contact the maintainer [@pboachie](https://github.com/pboachie) through
+GitHub and ask for a private channel, without describing the problem in public.
 
 Please include:
 
