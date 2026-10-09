@@ -372,6 +372,7 @@ fn scheme(s: &AuthScheme) -> String {
             name,
             location,
             wire_name,
+            env,
             ..
         } => {
             let at = match location {
@@ -379,7 +380,10 @@ fn scheme(s: &AuthScheme) -> String {
                 tungsten_ir::ApiKeyIn::Query => "query parameter",
                 tungsten_ir::ApiKeyIn::Cookie => "cookie",
             };
-            format!("{name} (API key in {at} {wire_name})")
+            match env {
+                Some(e) => format!("{name} (API key in {at} {wire_name}, from ${e})"),
+                None => format!("{name} (API key in {at} {wire_name})"),
+            }
         }
         AuthScheme::HttpBearer {
             name,

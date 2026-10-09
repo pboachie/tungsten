@@ -142,12 +142,15 @@ impl AuthTable {
 
     /// A non-composite profile with `bearer` configures the HTTP bearer
     /// scheme of the same name (spec or IR name): its required token
-    /// `prefix` and the `env` variable the token is read from.
+    /// `prefix` and the `env` variable the token is read from; `api_key`
+    /// likewise gives an apiKey scheme its `env`.
     fn apply_bearer_profiles(&mut self, cx: &Ctx<'_>) {
         for (profile_name, profile) in &cx.cfg.auth_profiles {
-            let (None, Some(bearer)) = (&profile.composite, &profile.bearer) else {
+            if profile.composite.is_some()
+                || (profile.bearer.is_none() && profile.api_key.is_none())
+            {
                 continue;
-            };
+            }
             let targets: BTreeSet<&String> = self
                 .names
                 .iter()
@@ -155,13 +158,21 @@ impl AuthTable {
                 .map(|(_, ir)| ir)
                 .collect();
             for scheme in &mut self.schemes {
-                if let AuthScheme::HttpBearer {
-                    name, prefix, env, ..
-                } = scheme
-                    && targets.contains(name)
-                {
-                    *prefix = bearer.prefix.clone();
-                    *env = bearer.env.clone();
+                match scheme {
+                    AuthScheme::HttpBearer {
+                        name, prefix, env, ..
+                    } if targets.contains(name) => {
+                        if let Some(bearer) = &profile.bearer {
+                            *prefix = bearer.prefix.clone();
+                            *env = bearer.env.clone();
+                        }
+                    }
+                    AuthScheme::ApiKey { name, env, .. } if targets.contains(name) => {
+                        if let Some(api_key) = &profile.api_key {
+                            *env = api_key.env.clone();
+                        }
+                    }
+                    _ => {}
                 }
             }
         }
@@ -424,6 +435,7 @@ fn scheme_of(name: &str, v: &Value) -> Result<AuthScheme, String> {
                 location,
                 wire_name,
                 doc,
+                env: None,
             })
         }
         Some("http") => {

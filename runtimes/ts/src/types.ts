@@ -107,11 +107,11 @@ export type ParamLocation = "path" | "query" | "header" | "cookie";
 
 export type ParamStyle = "simple" | "form" | "label" | "matrix" | "space_delimited" | "pipe_delimited" | "deep_object";
 
-export type ParamRole = "plain" | "idempotency_key" | "dry_run" | "origin" | "auth";
+export type ParamRole = "plain" | "idempotency_key" | "dry_run" | "origin" | "auth" | "constant";
 
 export interface ParamDescriptor {
   /** Key in the generated method's args object. Roles `idempotency_key`,
-   * `origin` and `auth` are not args: they come from
+   * `origin`, `auth` and `constant` are not args: they come from
    * `CallOptions.idempotencyKey` and the auth profile (`ClientOptions.auth`),
    * and their `name` is informational. */
   name: string;
@@ -122,6 +122,9 @@ export interface ParamDescriptor {
   style: ParamStyle;
   explode: boolean;
   role: ParamRole;
+  /** Header value of a `constant` parameter: the runtime sends it on every
+   * call (`ClientOptions.headers` and `CallOptions.headers` replace it). */
+  constant?: string;
   sensitive?: boolean;
 }
 

@@ -168,6 +168,23 @@ pub(crate) fn build(
         ordered.extend(group);
     }
 
+    let vendor = vendor_required_headers(cx, op);
+    for (location, p, _) in &mut ordered {
+        if *location != Location::Header
+            || !matches!(p.role, ParamRole::Plain | ParamRole::Constant)
+        {
+            continue;
+        }
+        let found = vendor
+            .iter()
+            .find(|(h, _)| h.eq_ignore_ascii_case(&p.wire_name));
+        if let Some((_, value)) = found {
+            p.required = true;
+            p.role = ParamRole::Constant;
+            p.constant = Some(Value::String(value.clone()));
+        }
+    }
+
     let mut idents: Vec<Ident> = ordered.iter().map(|(_, p, _)| p.name.clone()).collect();
     for i in disambiguate_all(&mut idents, Role::Param) {
         let (location, p, at) = &ordered[i];
@@ -248,18 +265,72 @@ fn param(cx: &mut Ctx<'_>, auth: &AuthTable, scope: &OpScope<'_>, decl: &Declare
         .get("explode")
         .and_then(Value::as_bool)
         .unwrap_or(style == ParamStyle::Form);
+    let required = decl.location == Location::Path || flag(decl.value, "required");
+    let mut role = role(cx, auth, scope.ns_index, decl, schema.as_ref());
+    let mut constant = None;
+    if required && role == ParamRole::Plain && decl.location == Location::Header {
+        constant = schema.as_ref().and_then(|t| single_value(cx, t));
+        if constant.is_some() {
+            role = ParamRole::Constant;
+        }
+    }
     Param {
         wire_name: decl.wire.clone(),
         name: Ident::new(&decl.wire),
         ty,
-        required: decl.location == Location::Path || flag(decl.value, "required"),
+        required,
         doc: doc(None, str_of(decl.value, "description")),
         style,
         explode,
-        role: role(cx, auth, scope.ns_index, decl, schema.as_ref()),
+        role,
         deprecated: flag(decl.value, "deprecated"),
         media_type,
+        constant,
     }
+}
+
+/// The only value a scalar schema admits: its `const`, or an `enum` of one
+/// string, integer or boolean (a float has no single header text).
+fn single_value(cx: &Ctx<'_>, schema: &RefTarget) -> Option<Value> {
+    let (_, s) = cx.deref_value(schema)?;
+    let value = match (s.get("const"), s.get("enum").and_then(Value::as_array)) {
+        (Some(v), _) => v,
+        (None, Some(items)) if items.len() == 1 => &items[0],
+        _ => return None,
+    };
+    let sendable = match value {
+        Value::String(_) | Value::Bool(_) => true,
+        Value::Number(n) => n.is_i64() || n.is_u64(),
+        _ => false,
+    };
+    sendable.then(|| value.clone())
+}
+
+/// Vendor `x-<header>-required: <value>` members of an operation (the
+/// Claude API's `x-anthropic-beta-required`): the header named between
+/// `x-` and `-required` must carry that value (a string, or an array of
+/// strings joined with commas).
+fn vendor_required_headers(cx: &Ctx<'_>, op: &RefTarget) -> Vec<(String, String)> {
+    let Some(map) = cx.get(op).and_then(Value::as_object) else {
+        return vec![];
+    };
+    map.iter()
+        .filter_map(|(key, value)| {
+            let header = key.strip_prefix("x-")?.strip_suffix("-required")?;
+            let value = match value {
+                Value::String(s) if !s.is_empty() => s.clone(),
+                Value::Array(items) => {
+                    let parts: Vec<&str> = items.iter().filter_map(Value::as_str).collect();
+                    if parts.is_empty() || parts.len() != items.len() {
+                        return None;
+                    }
+                    parts.join(",")
+                }
+                _ => return None,
+            };
+            (!header.is_empty()).then(|| (header.to_string(), value))
+        })
+        .collect()
 }
 
 /// The parameter's schema: `schema`, or the schema of its single `content`
@@ -452,5 +523,6 @@ fn undeclared_path_param(name: &str) -> Param {
         role: ParamRole::Plain,
         deprecated: false,
         media_type: None,
+        constant: None,
     }
 }

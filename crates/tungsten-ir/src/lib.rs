@@ -303,6 +303,10 @@ pub enum ParamRole {
     DryRun,
     Origin,
     Auth,
+    /// A required header with one admitted value: the runtime sends
+    /// `Param::constant` itself and it is not an argument. Call option
+    /// `headers` replace it.
+    Constant,
 }
 
 ir_struct! {
@@ -324,6 +328,9 @@ ir_struct! {
         /// and `explode` do not apply.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub media_type: Option<String>,
+        /// The value of a `ParamRole::Constant` parameter.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub constant: Option<serde_json::Value>,
     }
 }
 
@@ -431,6 +438,10 @@ pub enum AuthScheme {
         wire_name: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         doc: Option<Doc>,
+        /// Environment variable the profile reads the key from
+        /// (`auth_profiles.<name>.api_key.env`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        env: Option<String>,
     },
     HttpBearer {
         name: String,

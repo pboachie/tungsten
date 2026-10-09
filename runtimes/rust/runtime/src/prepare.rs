@@ -1039,6 +1039,13 @@ impl ClientCore {
             format!("{api_name}-sdk/{api_version} tungsten/{tungsten} (rust)"),
             false,
         );
+        for p in &op.params {
+            if let (ParamRole::Constant, ParamLocation::Header, Some(value)) =
+                (p.role, p.location, &p.constant)
+            {
+                headers.set(&p.wire, value.clone(), p.sensitive);
+            }
+        }
         for extra in [&self.inner.headers, &opts.headers] {
             for (name, value) in extra {
                 headers.set(name, value.clone(), looks_sensitive(name));

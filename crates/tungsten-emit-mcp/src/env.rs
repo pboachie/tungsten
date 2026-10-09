@@ -8,7 +8,7 @@
 //! | Scheme | Variable |
 //! |---|---|
 //! | HTTP bearer | the profile's `bearer.env` from tungsten.yml, else `<API>_<SCHEME>_TOKEN` |
-//! | API key | `<API>_<SCHEME>_KEY` |
+//! | API key | the profile's `api_key.env` from tungsten.yml, else `<API>_<SCHEME>_KEY` |
 //! | HTTP basic | `<API>_<SCHEME>_CREDENTIALS` (`user:password`) |
 //! | OAuth 2, OpenID Connect | `<API>_<SCHEME>_TOKEN` (an access token) |
 //! | composite profile | `<API>_<SCHEME>_<PART>` per part, `<PART>` being the part's key in the profile's credentials object (cookie name, config key, `bearer`); a bearer part with `env` uses it |
@@ -82,9 +82,10 @@ pub(crate) fn schemes(ir: &Ir) -> Vec<SchemeEnv> {
             AuthScheme::ApiKey {
                 location,
                 wire_name,
+                env,
                 ..
             } => Credentials::Secret {
-                env: var(&name, "KEY"),
+                env: env.clone().unwrap_or_else(|| var(&name, "KEY")),
                 what: format!(
                     "API key (sent in {} `{wire_name}`)",
                     match location {

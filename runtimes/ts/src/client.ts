@@ -218,7 +218,7 @@ function descriptorProblem(op: unknown): string | null {
 
 /** Arg keys that are parameters supplied by the caller (not auth, key or origin). */
 function argParams(op: OperationDescriptor): ParamDescriptor[] {
-  return op.params.filter((p) => p.role !== "idempotency_key" && p.role !== "origin" && p.role !== "auth");
+  return op.params.filter((p) => p.role !== "idempotency_key" && p.role !== "origin" && p.role !== "auth" && p.role !== "constant");
 }
 
 /** JSON path of an argument issue: `body.x` for body fields, else `args.x`. */
@@ -1027,6 +1027,11 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     if ((globalThis as { document?: unknown }).document === undefined) {
       const tungsten = typeof this.api.tungstenVersion === "string" ? this.api.tungstenVersion : RUNTIME_VERSION;
       headers.set("User-Agent", `${apiName}-sdk/${apiVersion} tungsten/${tungsten} (typescript)`);
+    }
+    for (const p of op.params) {
+      if (p.role === "constant" && p.in === "header" && typeof p.constant === "string") {
+        headers.set(p.wire, p.constant, p.sensitive === true);
+      }
     }
     for (const extra of [this.options.headers, opts.headers]) {
       if (!isRecord(extra)) continue;

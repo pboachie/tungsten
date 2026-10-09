@@ -411,6 +411,7 @@ fn role_str(r: ParamRole) -> &'static str {
         ParamRole::DryRun => "dry_run",
         ParamRole::Origin => "origin",
         ParamRole::Auth => "auth",
+        ParamRole::Constant => "constant",
     }
 }
 
@@ -721,7 +722,7 @@ fn descriptor_js(plan: &Plan<'_>, info: &OpInfo<'_>, shape: &OpShape<'_>) -> Js 
             .params
             .iter()
             .map(|p| {
-                Js::obj(vec![
+                let mut members = vec![
                     ("name", Js::str(&p.name)),
                     ("wire", Js::str(&p.param.wire_name)),
                     ("in", Js::str(p.location)),
@@ -729,7 +730,11 @@ fn descriptor_js(plan: &Plan<'_>, info: &OpInfo<'_>, shape: &OpShape<'_>) -> Js 
                     ("style", Js::str(style_str(p.param.style))),
                     ("explode", Js::bool(p.param.explode)),
                     ("role", Js::str(role_str(p.param.role))),
-                ])
+                ];
+                if let Some(value) = tungsten_emit::args::constant_text(p.param) {
+                    members.push(("constant", Js::str(&value)));
+                }
+                Js::obj(members)
             })
             .collect(),
     );
