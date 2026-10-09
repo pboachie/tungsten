@@ -101,6 +101,8 @@ pub(crate) struct Prepared<'a> {
     /// Wire names of query parameters whose values are shown redacted.
     pub hidden_query: Vec<String>,
     pub secrets: SecretSet,
+    /// The authorization-code scheme whose stored token this request carries.
+    pub oauth: Option<String>,
 }
 
 pub(crate) fn fail(diagnostic: crate::types::Diagnostic) -> Error {
@@ -612,7 +614,11 @@ impl ClientCore {
 
         let method = op.method;
         let plan = match resolve_auth(&self.inner.api, op, &self.inner.auth, method, self).await {
-            AuthResolution::Ok { plan, secrets } => (plan, secrets),
+            AuthResolution::Ok {
+                plan,
+                secrets,
+                oauth,
+            } => (plan, secrets, oauth),
             AuthResolution::Failed { remediation } => {
                 return Err(fail(
                     Diag::new(op.id.clone(), Category::AuthFailed)
@@ -621,7 +627,7 @@ impl ClientCore {
                 ));
             }
         };
-        let (plan, auth_secrets) = plan;
+        let (plan, auth_secrets, oauth) = plan;
         let mut secrets = SecretSet::default();
         for secret in auth_secrets {
             secrets.insert(secret);
@@ -789,6 +795,7 @@ impl ClientCore {
             auth_query: plan.query.clone(),
             hidden_query,
             secrets,
+            oauth,
         })
     }
 

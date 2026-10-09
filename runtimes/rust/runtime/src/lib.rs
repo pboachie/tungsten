@@ -67,6 +67,7 @@ mod expr;
 mod helpers;
 mod idempotency;
 mod macros;
+mod oauth;
 mod pages;
 mod prepare;
 mod preview;
@@ -85,6 +86,10 @@ pub mod types;
 pub use client::{ClientCore, ConfigError, Pages, Polled, TypedPages};
 pub use dispatch::{Dispatch, decode, decode_event, decode_page, no_stream};
 pub use idempotency::{FileIdempotencyStore, MemoryIdempotencyStore};
+pub use oauth::{
+    AuthorizationUrlParams, ExchangeCodeParams, MemoryTokenStore, OAuthFlow, Pkce, StoredToken,
+    TokenInfo, TokenStore, generate_pkce, pkce_challenge,
+};
 pub use stream::{EventStream, StreamEvent, StreamResult, TypedEvents};
 pub use types::*;
 pub use value::{BINARY_KEY, Binary, Patch};

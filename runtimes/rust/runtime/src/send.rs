@@ -773,6 +773,13 @@ impl ClientCore {
 }
 
 impl TokenSource for ClientCore {
+    fn stored_token<'a>(
+        &'a self,
+        scheme: &'a str,
+    ) -> BoxFuture<'a, std::result::Result<String, String>> {
+        Box::pin(self.stored_token(scheme, false))
+    }
+
     fn token<'a>(
         &'a self,
         client: OAuthClient<'a>,
