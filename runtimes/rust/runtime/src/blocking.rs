@@ -19,6 +19,7 @@ use serde::de::DeserializeOwned;
 use crate::client::{ConfigError, TypedPages};
 use crate::envelope::Diag;
 use crate::idempotency::lock;
+use crate::stream::{StreamResult, TypedEvents};
 use crate::types::{Category, Error, Page, Result, Retryable};
 
 struct Shared {
@@ -117,6 +118,15 @@ impl Runtime {
             inner: Some(pages),
         }
     }
+
+    /// Iterate the events of a stream with blocking `next` calls.
+    pub fn events<T>(&self, operation: &str, events: TypedEvents<T>) -> Events<T> {
+        Events {
+            runtime: self.clone(),
+            operation: operation.to_owned(),
+            inner: Some(events),
+        }
+    }
 }
 
 fn stopped(operation: &str) -> Error {
@@ -159,6 +169,44 @@ impl<T: DeserializeOwned + Send + 'static> Iterator for Pages<T> {
             Some((pages, item)) => {
                 if item.as_ref().is_some_and(|i| i.is_ok()) {
                     self.inner = Some(pages);
+                }
+                item
+            }
+            None => Some(Err(stopped(&self.operation))),
+        }
+    }
+}
+
+/// A blocking event iterator: one item per server-sent event, then either
+/// the end of the stream or one final error. Dropping it closes the
+/// connection.
+pub struct Events<T> {
+    runtime: Runtime,
+    operation: String,
+    inner: Option<TypedEvents<T>>,
+}
+
+impl<T> std::fmt::Debug for Events<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Events")
+            .field("operation", &self.operation)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<T: DeserializeOwned + Send + 'static> Iterator for Events<T> {
+    type Item = StreamResult<T>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let mut events = self.inner.take()?;
+        let step = self.runtime.exec(async move {
+            let item = events.next().await;
+            (events, item)
+        });
+        match step {
+            Some((events, item)) => {
+                if item.as_ref().is_some_and(|i| i.is_ok()) {
+                    self.inner = Some(events);
                 }
                 item
             }

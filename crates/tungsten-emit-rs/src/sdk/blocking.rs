@@ -232,7 +232,10 @@ pub(crate) fn blocking_file(
         }
         for m in &r.members {
             let o = match m.kind {
-                MemberKind::Op(o) | MemberKind::Preview(o) | MemberKind::Pages(o) => o,
+                MemberKind::Op(o)
+                | MemberKind::Preview(o)
+                | MemberKind::Pages(o)
+                | MemberKind::Stream(o) => o,
                 MemberKind::Child(_) => continue,
             };
             let info = &plan.ops[o];
@@ -315,6 +318,44 @@ pub(crate) fn blocking_file(
                     code.dedent();
                     code.line("}");
                     extra.push(("tungsten_runtime::blocking".into(), "Pages".into()));
+                }
+                MemberKind::Stream(_) => {
+                    let event = shapes[o]
+                        .stream
+                        .as_ref()
+                        .map_or_else(|| "Value".to_string(), |s| s.event.clone());
+                    code.blank();
+                    doc(
+                        &mut code,
+                        &format!(
+                            "Blocking form of `{}()`: an iterator over the events of `{id}`, then either the end of the stream or one final error. Dropping it closes the connection.",
+                            m.name
+                        ),
+                    );
+                    let params = vec![
+                        "&self".to_string(),
+                        param.clone(),
+                        "opts: &CallOptions".to_string(),
+                    ];
+                    fn_sig(
+                        &mut code,
+                        4,
+                        &format!("pub fn {}", m.name),
+                        &params,
+                        &format!("Events<{event}>"),
+                    );
+                    code.indent();
+                    resource_lines(&mut code, &paths[o], "self.client.inner");
+                    let call = Rx::call(
+                        format!("resource.{}", m.name),
+                        vec![Rx::atom("request"), Rx::atom("opts")],
+                    );
+                    put(&mut code, 8, "let events = ", &call, ";");
+                    code.line(format!("let operation = {};", string_lit(id)));
+                    code.line("self.client.runtime.events(operation, events)");
+                    code.dedent();
+                    code.line("}");
+                    extra.push(("tungsten_runtime::blocking".into(), "Events".into()));
                 }
                 MemberKind::Child(_) => {}
             }

@@ -697,6 +697,7 @@ fn success(model: &Model, entry: &OpEntry, status: Option<u16>, stream: bool) ->
                     status: code,
                     headers: vec![("content-type".into(), content.media_type.clone())],
                     body: format!("{}\n", lines.join("\n")).into_bytes(),
+                    cut_after: None,
                 }
             }
             BodyEncoding::Bytes | BodyEncoding::Form | BodyEncoding::Multipart => {
