@@ -1581,12 +1581,30 @@ fn auth_rs(ir: &Ir) -> Rx {
                     .iter()
                     .flat_map(|f| f.scopes.keys().map(String::as_str))
                     .collect();
+                let authorization_code = s.authorization_code().map_or_else(Rx::none, |flow| {
+                    Rx::some(Rx::record(
+                        "AuthorizationCodeFlow",
+                        vec![
+                            (
+                                "authorization_url",
+                                Rx::string(flow.authorization_url.as_deref().unwrap_or_default()),
+                            ),
+                            (
+                                "token_url",
+                                Rx::string(flow.token_url.as_deref().unwrap_or_default()),
+                            ),
+                            ("refresh_url", Rx::opt_string(flow.refresh_url.as_deref())),
+                            ("scopes", Rx::strings(flow.scopes.keys())),
+                        ],
+                    ))
+                });
                 Rx::record(
                     "AuthSchemeDescriptor::Oauth2",
                     vec![
                         ("name", Rx::string(name)),
                         ("token_url", Rx::opt_string(token_url)),
                         ("scopes", Rx::strings(scopes)),
+                        ("authorization_code", authorization_code),
                     ],
                 )
             }

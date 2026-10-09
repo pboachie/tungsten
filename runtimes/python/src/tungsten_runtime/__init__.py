@@ -7,6 +7,20 @@ from ._core import RUNTIME_VERSION
 from ._envelope import DEFAULT_RETRYABLE
 from ._expr import evaluate_predicate
 from ._json import canonical_json
+from ._oauth import (
+    AsyncOAuthFlow,
+    AsyncTokenStore,
+    MemoryTokenStore,
+    OAuthFlow,
+    OAuthOk,
+    OAuthResult,
+    Pkce,
+    StoredToken,
+    TokenInfo,
+    TokenStore,
+    generate_pkce,
+    pkce_challenge,
+)
 from .client import AsyncClientCore, ClientCore
 from .errors import TungstenError, unwrap
 from .idempotency import FileIdempotencyStore, MemoryIdempotencyStore
@@ -19,13 +33,25 @@ __all__ = [
     "RUNTIME_VERSION",
     "UNSET",
     "AsyncClientCore",
+    "AsyncOAuthFlow",
+    "AsyncTokenStore",
     "ClientCore",
     "FileIdempotencyStore",
     "MemoryIdempotencyStore",
+    "MemoryTokenStore",
+    "OAuthFlow",
+    "OAuthOk",
+    "OAuthResult",
+    "Pkce",
+    "StoredToken",
+    "TokenInfo",
+    "TokenStore",
     "TungstenError",
     "Unset",
     "canonical_json",
     "evaluate_predicate",
+    "generate_pkce",
+    "pkce_challenge",
     "unwrap",
 ]
 __all__ += types.__all__

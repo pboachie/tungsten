@@ -19,13 +19,25 @@ export interface AuthPlan {
   query: Array<{ name: string; value: string }>;
 }
 
-export type AuthResolution = { ok: true; plan: AuthPlan; secrets: string[] } | { ok: false; remediation: string };
+export type AuthResolution =
+  | {
+      ok: true;
+      plan: AuthPlan;
+      secrets: string[];
+      /** The authorization-code scheme whose stored token the plan carries, if any. */
+      oauth: string | null;
+    }
+  | { ok: false; remediation: string };
 
-/** Fetches (and caches) OAuth2 client-credentials tokens. */
+/** Fetches (and caches) OAuth2 tokens: client credentials, or the stored
+ * token of an authorization-code scheme (`config.flow`). */
 export type TokenSource = (scheme: OAuth2, config: Record<string, string>) => Promise<string>;
 
 /** Thrown by a token source; the message is shown in the AUTH_FAILED envelope. */
-export class TokenError extends Error {}
+export class TokenError extends Error {
+  /** The token endpoint refused the credential it was given (HTTP 4xx). */
+  rejected = false;
+}
 
 const SAFE_METHODS: ReadonlySet<HttpMethod> = new Set<HttpMethod>(["GET", "HEAD", "OPTIONS", "TRACE"]);
 
@@ -34,7 +46,7 @@ export function isSafeMethod(method: HttpMethod): boolean {
 }
 
 interface Satisfier {
-  apply: (plan: AuthPlan, secrets: string[], tokens: TokenSource) => Promise<string | null>;
+  apply: (plan: AuthPlan, secrets: string[], tokens: TokenSource, oauth: string[]) => Promise<string | null>;
   key: string;
 }
 
@@ -107,6 +119,35 @@ function tryDirect(scheme: Exclude<AuthSchemeDescriptor, Composite>, config: unk
   const name = scheme.name;
   if (scheme.kind === "oauth2" && isRecord(config)) {
     const cfg = config as Record<string, unknown>;
+    if (cfg.flow === "authorizationCode") {
+      if (!scheme.authorizationCode) {
+        return { ok: false, missing: [`auth.${name} (sets flow "authorizationCode", but the API descriptor has no authorizationCode flow for ${name})`] };
+      }
+      if (typeof cfg.clientId !== "string" || cfg.clientId === "") {
+        return { ok: false, missing: [`auth.${name} (a clientId for the authorizationCode flow)`] };
+      }
+      const strings: Record<string, string> = { flow: "authorizationCode", clientId: cfg.clientId };
+      const secret = typeof cfg.clientSecret === "string" ? cfg.clientSecret : "";
+      return {
+        ok: true,
+        satisfier: {
+          key: `scheme:${name}`,
+          apply: async (plan, secrets, tokens, oauth) => {
+            if (secret !== "") secrets.push(secret);
+            let token: string;
+            try {
+              token = await tokens(scheme, strings);
+            } catch (error) {
+              return error instanceof TokenError ? error.message : `Could not obtain an OAuth2 token for ${name}.`;
+            }
+            secrets.push(token);
+            oauth.push(name);
+            plan.headers.push({ name: "Authorization", value: `Bearer ${token}`, secret: true });
+            return null;
+          },
+        },
+      };
+    }
     if (typeof cfg.clientId === "string" && typeof cfg.clientSecret === "string" && scheme.tokenUrl) {
       const strings = { clientId: cfg.clientId, clientSecret: cfg.clientSecret };
       return {
@@ -128,7 +169,8 @@ function tryDirect(scheme: Exclude<AuthSchemeDescriptor, Composite>, config: unk
         },
       };
     }
-    return { ok: false, missing: [`auth.${name} (an access token, or {clientId, clientSecret} for the token URL)`] };
+    const code = scheme.authorizationCode ? `, or {flow: "authorizationCode", clientId, clientSecret?, redirectUri?}` : "";
+    return { ok: false, missing: [`auth.${name} (an access token, or {clientId, clientSecret} for the token URL${code})`] };
   }
   if (typeof config !== "string" || config === "") {
     const what =
@@ -217,7 +259,7 @@ export async function resolveAuth(
   tokens: TokenSource,
 ): Promise<AuthResolution> {
   const security = Array.isArray(op.security) ? op.security.filter(Array.isArray) : [];
-  if (security.length === 0) return { ok: true, plan: { headers: [], cookies: [], query: [] }, secrets: [] };
+  if (security.length === 0) return { ok: true, plan: { headers: [], cookies: [], query: [] }, secrets: [], oauth: null };
   let best: { missing: string[]; touched: boolean } | null = null;
   // An empty alternative (anonymous access) is the fallback, never preferred
   // over configured credentials.
@@ -234,11 +276,12 @@ export async function resolveAuth(
     if (missing.length === 0) {
       const plan: AuthPlan = { headers: [], cookies: [], query: [] };
       const secrets: string[] = [];
+      const oauth: string[] = [];
       for (const satisfier of satisfiers.values()) {
-        const problem = await satisfier.apply(plan, secrets, tokens);
+        const problem = await satisfier.apply(plan, secrets, tokens, oauth);
         if (problem) return { ok: false, remediation: `${problem} Operation ${op.id} was not sent.` };
       }
-      return { ok: true, plan, secrets };
+      return { ok: true, plan, secrets, oauth: oauth[0] ?? null };
     }
     // Report the alternative the caller started to configure, then the one
     // with the fewest missing pieces.

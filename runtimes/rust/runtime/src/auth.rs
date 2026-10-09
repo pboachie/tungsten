@@ -39,6 +39,8 @@ pub enum AuthResolution {
     Ok {
         plan: AuthPlan,
         secrets: Vec<String>,
+        /// The authorization-code scheme whose stored token the plan carries, if any.
+        oauth: Option<String>,
     },
     Failed {
         remediation: String,
@@ -59,6 +61,10 @@ pub struct OAuthClient<'a> {
 /// text shown in the `AUTH_FAILED` envelope.
 pub trait TokenSource: Sync {
     fn token<'a>(&'a self, client: OAuthClient<'a>) -> BoxFuture<'a, Result<String, String>>;
+
+    /// The stored token of an authorization-code scheme, refreshed first
+    /// when it expires.
+    fn stored_token<'a>(&'a self, scheme: &'a str) -> BoxFuture<'a, Result<String, String>>;
 }
 
 pub fn is_safe_method(method: HttpMethod) -> bool {
@@ -78,6 +84,11 @@ enum Satisfier<'a> {
     Secret {
         scheme: &'a AuthSchemeDescriptor,
         secret: &'a str,
+    },
+    /// The stored token of an authorization-code scheme.
+    OAuthCode {
+        name: &'a str,
+        client_secret: Option<&'a str>,
     },
     OAuth {
         name: &'a str,
@@ -182,7 +193,11 @@ fn try_composite<'a>(
     )
 }
 
-fn part<'a>(parts: &'a BTreeMap<String, String>, snake: &str, camel: &str) -> Option<&'a str> {
+pub(crate) fn part<'a>(
+    parts: &'a BTreeMap<String, String>,
+    snake: &str,
+    camel: &str,
+) -> Option<&'a str> {
     parts
         .get(snake)
         .or_else(|| parts.get(camel))
@@ -192,10 +207,33 @@ fn part<'a>(parts: &'a BTreeMap<String, String>, snake: &str, camel: &str) -> Op
 fn try_direct<'a>(scheme: &'a AuthSchemeDescriptor, config: Option<&'a Credential>) -> Attempt<'a> {
     let name = scheme.name();
     if let AuthSchemeDescriptor::Oauth2 {
-        token_url, scopes, ..
+        token_url,
+        scopes,
+        authorization_code,
+        ..
     } = scheme
         && let Some(Credential::Parts(parts)) = config
     {
+        if part(parts, "flow", "flow") == Some("authorizationCode") {
+            if authorization_code.is_none() {
+                return Attempt::Missing(vec![format!(
+                    "auth.{name} (sets flow \"authorizationCode\", but the API descriptor has no authorizationCode flow for {name})"
+                )]);
+            }
+            if part(parts, "client_id", "clientId").is_none_or(str::is_empty) {
+                return Attempt::Missing(vec![format!(
+                    "auth.{name} (a client_id for the authorizationCode flow)"
+                )]);
+            }
+            return Attempt::Found(
+                format!("scheme:{name}"),
+                Satisfier::OAuthCode {
+                    name,
+                    client_secret: part(parts, "client_secret", "clientSecret")
+                        .filter(|s| !s.is_empty()),
+                },
+            );
+        }
         if let (Some(client_id), Some(client_secret), Some(token_url)) = (
             part(parts, "client_id", "clientId"),
             part(parts, "client_secret", "clientSecret"),
@@ -212,8 +250,13 @@ fn try_direct<'a>(scheme: &'a AuthSchemeDescriptor, config: Option<&'a Credentia
                 },
             );
         }
+        let code = if authorization_code.is_some() {
+            ", or {flow: \"authorizationCode\", client_id, client_secret?, redirect_uri?}"
+        } else {
+            ""
+        };
         return Attempt::Missing(vec![format!(
-            "auth.{name} (an access token, or {{client_id, client_secret}} for the token URL)"
+            "auth.{name} (an access token, or {{client_id, client_secret}} for the token URL{code})"
         )]);
     }
     match config {
@@ -311,6 +354,7 @@ async fn apply(
     satisfier: &Satisfier<'_>,
     plan: &mut AuthPlan,
     secrets: &mut Vec<String>,
+    oauth: &mut Option<String>,
     tokens: &dyn TokenSource,
 ) -> Option<String> {
     match satisfier {
@@ -401,6 +445,23 @@ async fn apply(
                 }
             }
         }
+        Satisfier::OAuthCode {
+            name,
+            client_secret,
+        } => {
+            if let Some(secret) = client_secret {
+                secrets.push((*secret).to_owned());
+            }
+            match tokens.stored_token(name).await {
+                Ok(token) => {
+                    secrets.push(token.clone());
+                    bearer(plan, &token);
+                    oauth.get_or_insert_with(|| (*name).to_owned());
+                    None
+                }
+                Err(problem) => Some(problem),
+            }
+        }
         Satisfier::OAuth {
             name,
             token_url,
@@ -442,6 +503,7 @@ pub async fn resolve_auth(
         return AuthResolution::Ok {
             plan: AuthPlan::default(),
             secrets: Vec::new(),
+            oauth: None,
         };
     }
     let mut best: Option<(Vec<String>, bool)> = None;
@@ -468,14 +530,21 @@ pub async fn resolve_auth(
         if missing.is_empty() {
             let mut plan = AuthPlan::default();
             let mut secrets = Vec::new();
+            let mut oauth = None;
             for (_, satisfier) in &satisfiers {
-                if let Some(problem) = apply(satisfier, &mut plan, &mut secrets, tokens).await {
+                if let Some(problem) =
+                    apply(satisfier, &mut plan, &mut secrets, &mut oauth, tokens).await
+                {
                     return AuthResolution::Failed {
                         remediation: format!("{problem} Operation {} was not sent.", op.id),
                     };
                 }
             }
-            return AuthResolution::Ok { plan, secrets };
+            return AuthResolution::Ok {
+                plan,
+                secrets,
+                oauth,
+            };
         }
         // Report the alternative the caller started to configure, then the one
         // with the fewest missing pieces.

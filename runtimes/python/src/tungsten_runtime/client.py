@@ -21,6 +21,7 @@ from typing import Any, Self, cast
 from ._core import Engine
 from ._drivers import AsyncDriver, SyncDriver, async_http, sync_http
 from ._helpers import safe_id, safe_name
+from ._oauth import AsyncOAuthFlow, OAuthFlow
 from .types import (
     ApiDescriptor,
     CallOptions,
@@ -67,6 +68,11 @@ class ClientCore:
     def macro(self, name: str) -> MacroDescriptor | None:
         """A macro of ``ClientOptions.macros`` by name."""
         return self._engine.macro(name)
+
+    def oauth(self, scheme: str) -> OAuthFlow:
+        """The OAuth2 authorization-code helpers of the scheme ``scheme``:
+        PKCE, the authorization URL, the code exchange and refresh."""
+        return OAuthFlow(self._engine.oauth, self._driver.run, scheme)
 
     def call(
         self, op: OperationDescriptor, args: Mapping[str, Any], opts: CallOptions | None = None
@@ -207,6 +213,10 @@ class AsyncClientCore:
     def macro(self, name: str) -> MacroDescriptor | None:
         """A macro of ``ClientOptions.macros`` by name."""
         return self._engine.macro(name)
+
+    def oauth(self, scheme: str) -> AsyncOAuthFlow:
+        """See ``ClientCore.oauth``."""
+        return AsyncOAuthFlow(self._engine.oauth, self._driver.run, scheme)
 
     async def call(
         self, op: OperationDescriptor, args: Mapping[str, Any], opts: CallOptions | None = None

@@ -27,6 +27,11 @@ changes.
 - Documentation emitter for generated SDKs.
 - `tungsten mock`: a mock server generated from the OpenAPI description, for
   trying a generated SDK or CLI without a live API.
+- OAuth2 authorization-code helpers in the TypeScript, Python and Rust
+  runtimes: PKCE (S256), the authorization URL, the code exchange, refresh with
+  a single flight and a pluggable token store. A call sends the stored token,
+  refreshes it before it expires and once after a 401. Generated clients expose
+  the helpers only when the specification declares an `authorizationCode` flow.
 - Repository guard and community files (contributing guide, security policy,
   code of conduct, issue forms and pull request template).
 

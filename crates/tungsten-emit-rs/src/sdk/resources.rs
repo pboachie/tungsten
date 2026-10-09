@@ -627,6 +627,31 @@ pub(crate) fn client_file(plan: &Plan<'_>, has_macros: bool, header: &str) -> St
         code.dedent();
         code.line("}");
     }
+    let flows: Vec<&str> = ir
+        .auth
+        .iter()
+        .filter(|s| s.authorization_code().is_some())
+        .map(tungsten_ir::AuthScheme::name)
+        .collect();
+    if !flows.is_empty() {
+        code.blank();
+        doc(
+            &mut code,
+            &format!(
+                "OAuth2 authorization-code helpers of the security scheme `scheme` ({}): PKCE, the authorization URL, the code exchange and refresh. Tokens are kept in `ClientOptions::token_store`.",
+                flows
+                    .iter()
+                    .map(|f| format!("`{f}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        );
+        code.line("pub fn oauth(&self, scheme: &str) -> OAuthFlow {");
+        code.indent();
+        code.line("self.core.oauth(scheme)");
+        code.dedent();
+        code.line("}");
+    }
     if has_macros {
         extra.push(("crate::macros".into(), "Macros".into()));
         code.blank();

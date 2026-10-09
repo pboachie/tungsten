@@ -67,6 +67,7 @@ mod expr;
 mod helpers;
 mod idempotency;
 mod macros;
+mod oauth;
 mod pages;
 mod prepare;
 mod preview;
@@ -88,6 +89,10 @@ pub use dispatch::{
     decode_page, decode_variant, no_stream,
 };
 pub use idempotency::{FileIdempotencyStore, MemoryIdempotencyStore};
+pub use oauth::{
+    AuthorizationUrlParams, ExchangeCodeParams, MemoryTokenStore, OAuthFlow, Pkce, StoredToken,
+    TokenInfo, TokenStore, generate_pkce, pkce_challenge,
+};
 pub use stream::{
     DEFAULT_MAX_COLLECT_BYTES, DEFAULT_MAX_COLLECT_TIME, EventStream, StreamEvent, StreamResult,
     TypedEvents,

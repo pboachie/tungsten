@@ -875,6 +875,27 @@ pub(crate) fn readme(
              fields of the same name.\n\n",
         );
     }
+    if let Some(scheme) = ir.auth.iter().find(|s| s.authorization_code().is_some()) {
+        let name = scheme.name();
+        out.push_str(&format!(
+            "## Sign in with OAuth2 (authorization code)\n\n\
+             `{name}` has an authorization-code flow. Configure the client with \
+             `auth={{{key}: {{\"flow\": \"authorizationCode\", \"client_id\": \"<client id>\", \
+             \"client_secret\": \"<client secret>\", \"redirect_uri\": \"<redirect URI>\"}}}}` \
+             (`client_secret` is optional for a public client), send the user to the authorization URL \
+             and exchange the code they come back with. Tokens are kept in `ClientOptions.token_store` \
+             (in memory by default), sent on every call, refreshed before they expire and once after a 401. \
+             The asynchronous client's helpers are awaited.\n\n\
+             ```python\n\
+             flow = client.oauth[{key}]\n\
+             pkce = flow.pkce()\n\
+             url = flow.authorization_url(state=state, code_challenge=pkce.challenge)\n\
+             # Redirect the user to url.value; the server sends them back with ?code=...\n\
+             flow.exchange_code(code, code_verifier=pkce.verifier)\n\
+             ```\n\n",
+            key = string_lit(name),
+        ));
+    }
 
     let find = |pred: &dyn Fn(usize) -> bool| paths.iter().find(|(o, _)| pred(*o));
     if let Some((o, path)) = find(&|o| plan.ops[o].op.agent.safety == Safety::ReadOnly) {
