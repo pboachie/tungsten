@@ -326,6 +326,23 @@ pub(crate) fn gates(agent: &mut AgentModel, cfg: &AgentConfig, ir: &Ir, r: &mut 
     }
 }
 
+/// `gates` entries no operation is gated by, after every tool's `gate` was
+/// applied: a text nobody can be shown, and 404s reported as NOT_FOUND.
+pub(crate) fn unused_gates(cfg: &AgentConfig, ir: &Ir, r: &mut Reporter<'_>) {
+    let used = spec_gates(ir.operations().into_iter());
+    for name in cfg.gates.keys() {
+        if !used.contains_key(name.as_str()) {
+            r.warning(
+                "TG0614",
+                &child("/gates", name),
+                format!(
+                    "gate `{name}` is used by no operation (no x-runtime-gate in the spec and no tools entry with `gate: {name}`); its text is never shown"
+                ),
+            );
+        }
+    }
+}
+
 /// The spec's gates by environment variable (first operation wins).
 fn spec_gates<'o>(ops: impl Iterator<Item = &'o Operation>) -> BTreeMap<&'o str, &'o RuntimeGate> {
     let mut out = BTreeMap::new();
