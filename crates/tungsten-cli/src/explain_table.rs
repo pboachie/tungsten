@@ -505,8 +505,8 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
         "TG0731",
         "An option of the `python` target is not valid (for example a `package` that is not a \
          PEP 508 distribution name, a `module` that is not a lowercase identifier, a `version` \
-         that is not a PEP 440 version, or `models: dataclasses`, which this version does not \
-         emit), so its default is used.",
+         that is not a PEP 440 version, or a `models` that is neither `pydantic` nor \
+         `dataclasses`), so its default is used.",
         "Fix the option under `targets.python` in tungsten.yml.",
     ),
     e(
