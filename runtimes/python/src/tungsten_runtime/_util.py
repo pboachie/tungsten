@@ -402,3 +402,16 @@ def unsupported_path(value: object, path: list[str | int] | None = None) -> list
                 return found
         return None
     return here
+
+
+def merge_accept(value: str) -> str:
+    """The ``Accept`` value of a stream call: the caller's media ranges in
+    order without repeats, ``text/event-stream`` first when they do not name
+    it."""
+    ranges: list[str] = []
+    for part in value.split(","):
+        media_range = part.strip()
+        if media_range != "" and media_range not in ranges:
+            ranges.append(media_range)
+    names = any(r.split(";", 1)[0].strip().lower() == "text/event-stream" for r in ranges)
+    return ", ".join(ranges if names else ["text/event-stream", *ranges])

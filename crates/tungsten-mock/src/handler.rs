@@ -588,13 +588,40 @@ fn streams(entry: &OpEntry, request: &Exchange<'_>) -> bool {
     let accepts = request
         .view
         .header("accept")
-        .is_some_and(|accept| accept.to_ascii_lowercase().contains("text/event-stream"));
+        .is_some_and(|accept| accepts_event_stream(&accept));
     let flagged = stream.request_flag.as_ref().is_some_and(|flag| {
         serde_json::from_slice::<Value>(request.body)
             .ok()
             .is_some_and(|body| body.get(flag) == Some(&Value::Bool(true)))
     });
     accepts || flagged
+}
+
+/// Whether an `Accept` value lists `text/event-stream` with a quality above
+/// zero (`q=0` means "not acceptable"). Other ranges (`*/*`, `text/*`) do not
+/// count, as before.
+fn accepts_event_stream(accept: &str) -> bool {
+    accept.split(',').any(|range| {
+        let mut parts = range.split(';');
+        let essence = parts.next().unwrap_or("").trim();
+        if !essence.eq_ignore_ascii_case("text/event-stream") {
+            return false;
+        }
+        let quality = parts
+            .find_map(|param| {
+                let (name, value) = param.split_once('=')?;
+                name.trim().eq_ignore_ascii_case("q").then(|| {
+                    value
+                        .trim()
+                        .parse::<f64>()
+                        .ok()
+                        .filter(|q| q.is_finite() && *q >= 0.0)
+                        .unwrap_or(1.0)
+                })
+            })
+            .unwrap_or(1.0);
+        quality > 0.0
+    })
 }
 
 /// The generated event stream of an operation: one event per variant of
@@ -657,7 +684,8 @@ fn success(model: &Model, entry: &OpEntry, status: Option<u16>, stream: bool) ->
     };
     if stream
         && let Some(spec) = &op.stream
-        && spec.status == StatusMatch::Exact(code)
+        && (200..300).contains(&code)
+        && spec.status == response.status
     {
         return event_stream(model, entry, code, spec);
     }

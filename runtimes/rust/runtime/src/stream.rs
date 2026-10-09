@@ -5,6 +5,7 @@
 
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::Arc;
+use std::time::Duration;
 
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
@@ -20,7 +21,17 @@ use crate::types::{
     BodyShape, CallOptions, Category, Error, OperationDescriptor, PathSegment, Response,
     ResponseMeta, Retryable, StreamDescriptor, ValidateResponses, Validation,
 };
-use crate::util::{SecretSet, envelope_value, get_path, looks_sensitive, redact_paths};
+use crate::util::{
+    SecretSet, envelope_value, get_path, looks_sensitive, merge_accept, redact_paths,
+};
+
+/// Default [`ClientOptions::max_collect_bytes`](crate::ClientOptions): the
+/// JSON bytes of the events a collection keeps (4 MiB).
+pub const DEFAULT_MAX_COLLECT_BYTES: usize = 4 * 1024 * 1024;
+
+/// Default [`ClientOptions::max_collect_time`](crate::ClientOptions): the
+/// wall-clock time a collection may take (60 s).
+pub const DEFAULT_MAX_COLLECT_TIME: Duration = Duration::from_secs(60);
 
 /// What sending a request gave: a decoded response, or an event stream whose
 /// body has not been read.
@@ -59,6 +70,9 @@ struct Open {
     decoder: Utf8Decoder,
     queue: VecDeque<SseEvent>,
     ended: bool,
+    /// The parser stopped at an event over the size limit; the events queued
+    /// before it are delivered first.
+    oversize: bool,
     meta: ResponseMeta,
     count: usize,
     key: Option<String>,
@@ -146,6 +160,11 @@ impl EventStream {
                             }
                         }
                     }
+                    if open.oversize {
+                        let error = self.core.oversize(&self.op, open);
+                        self.state = State::Done;
+                        return Some(Err(error));
+                    }
                     if open.ended {
                         self.state = State::Done;
                         return None;
@@ -155,12 +174,14 @@ impl EventStream {
                             let text = open.decoder.decode(&bytes);
                             let events = open.parser.push(&text);
                             open.queue.extend(events);
+                            open.oversize = open.parser.exceeded();
                         }
                         BodyRead::End => {
                             let text = open.decoder.finish();
                             let mut events = open.parser.push(&text);
                             events.extend(open.parser.end());
                             open.queue.extend(events);
+                            open.oversize = open.parser.exceeded();
                             open.ended = true;
                         }
                         BodyRead::Timeout => {
@@ -174,6 +195,39 @@ impl EventStream {
                             return Some(Err(error));
                         }
                     }
+                }
+            }
+        }
+    }
+
+    /// Every event of the stream, in order, followed by the final error if the
+    /// stream failed. The collection is bounded: it ends with an
+    /// `UNEXPECTED_RESPONSE` error item once the events kept hold more than
+    /// `ClientOptions::max_collect_bytes` of JSON (4 MiB by default) or it has
+    /// run longer than `ClientOptions::max_collect_time` (60 s by default).
+    pub async fn collect_values(mut self) -> Vec<StreamResult<Value>> {
+        let mut limits = Limits::new(&self.core);
+        let mut out = Vec::new();
+        loop {
+            let item = match limits.pull(self.next()).await {
+                Ok(Some(item)) => item,
+                Ok(None) => return out,
+                Err(over) => {
+                    out.push(Err(self.core.over_budget(&self.op, over, out.len())));
+                    return out;
+                }
+            };
+            match item {
+                Ok(event) => {
+                    if let Err(over) = limits.admit(&event.value) {
+                        out.push(Err(self.core.over_budget(&self.op, over, out.len())));
+                        return out;
+                    }
+                    out.push(Ok(event));
+                }
+                Err(error) => {
+                    out.push(Err(error));
+                    return out;
                 }
             }
         }
@@ -198,6 +252,65 @@ pub struct TypedEvents<T> {
     marker: std::marker::PhantomData<fn() -> T>,
 }
 
+impl<T: DeserializeOwned + serde::Serialize> TypedEvents<T> {
+    /// [`EventStream::collect_values`] for typed events: each is encoded
+    /// back to JSON (the bytes counted are those of the encoded value).
+    pub async fn collect_values(mut self) -> Vec<StreamResult<Value>> {
+        let mut limits = Limits::new(&self.inner.core);
+        let mut out = Vec::new();
+        loop {
+            let item = match limits.pull(self.next()).await {
+                Ok(Some(item)) => item,
+                Ok(None) => return out,
+                Err(over) => {
+                    let error = self.inner.core.over_budget(&self.inner.op, over, out.len());
+                    out.push(Err(error));
+                    return out;
+                }
+            };
+            let event = match item {
+                Ok(event) => event,
+                Err(error) => {
+                    out.push(Err(error));
+                    return out;
+                }
+            };
+            let StreamEvent {
+                value,
+                event: name,
+                id,
+                retry,
+                meta,
+            } = event;
+            let value = match serde_json::to_value(&value) {
+                Ok(value) => value,
+                Err(error) => {
+                    out.push(Err(Error::new(
+                        Diag::new(self.inner.op.id.clone(), Category::MalformedRequest)
+                            .failed_parameter("event")
+                            .expected("a value that serializes to JSON")
+                            .remediation(error.to_string())
+                            .build(),
+                    )));
+                    return out;
+                }
+            };
+            if let Err(over) = limits.admit(&value) {
+                let error = self.inner.core.over_budget(&self.inner.op, over, out.len());
+                out.push(Err(error));
+                return out;
+            }
+            out.push(Ok(StreamEvent {
+                value,
+                event: name,
+                id,
+                retry,
+                meta,
+            }));
+        }
+    }
+}
+
 impl<T: DeserializeOwned> TypedEvents<T> {
     pub async fn next(&mut self) -> Option<StreamResult<T>> {
         let item = self.inner.next().await?;
@@ -208,6 +321,53 @@ impl<T: DeserializeOwned> TypedEvents<T> {
             index,
             item,
         ))
+    }
+}
+
+/// Which limit of a collection was passed.
+#[derive(Clone, Copy)]
+enum Over {
+    Bytes,
+    Time,
+}
+
+/// The limits of collecting a stream.
+struct Limits {
+    deadline: tokio::time::Instant,
+    bytes: usize,
+    max_bytes: usize,
+}
+
+impl Limits {
+    fn new(core: &ClientCore) -> Self {
+        Limits {
+            deadline: tokio::time::Instant::now() + core.inner.max_collect_time,
+            bytes: 0,
+            max_bytes: core.inner.max_collect_bytes,
+        }
+    }
+
+    /// Await `next` until the deadline.
+    async fn pull<F: std::future::Future>(&self, next: F) -> std::result::Result<F::Output, Over> {
+        tokio::time::timeout_at(self.deadline, next)
+            .await
+            .map_err(|_| Over::Time)
+    }
+
+    /// Count the JSON bytes of an event, and check the deadline (a stream
+    /// that never waits would not trip the timeout of `pull`).
+    fn admit(&mut self, value: &Value) -> std::result::Result<(), Over> {
+        if tokio::time::Instant::now() >= self.deadline {
+            return Err(Over::Time);
+        }
+        self.bytes = self
+            .bytes
+            .saturating_add(serde_json::to_string(value).map_or(0, |text| text.len()));
+        if self.bytes > self.max_bytes {
+            Err(Over::Bytes)
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -264,8 +424,18 @@ impl ClientCore {
     ) -> std::result::Result<Open, Error> {
         let mut opts = opts.clone();
         let mut headers = BTreeMap::new();
-        headers.insert("Accept".to_owned(), "text/event-stream".to_owned());
-        headers.extend(std::mem::take(&mut opts.headers));
+        let mut accept = String::new();
+        let own = std::mem::take(&mut opts.headers);
+        for (own, map) in [(false, &self.inner.headers), (true, &own)] {
+            for (name, value) in map {
+                if name.eq_ignore_ascii_case("accept") {
+                    accept.clone_from(value);
+                } else if own {
+                    headers.insert(name.clone(), value.clone());
+                }
+            }
+        }
+        headers.insert("Accept".to_owned(), merge_accept(&accept));
         opts.headers = headers;
         let args = with_stream_flag(op, spec, args);
         let prepared = self
@@ -308,10 +478,11 @@ impl ClientCore {
         };
         Ok(Open {
             body: start.body,
-            parser: SseParser::new(),
+            parser: SseParser::with_max_event_bytes(self.inner.max_event_bytes),
             decoder: Utf8Decoder::new(),
             queue: VecDeque::new(),
             ended: false,
+            oversize: false,
             meta: start.meta,
             count: 0,
             key: prepared.key.clone(),
@@ -378,6 +549,59 @@ impl ClientCore {
             }
         };
         fail(scrub_diagnostic(diagnostic, &open.secrets))
+    }
+
+    /// The error that ends a collection which passed a limit, after `kept`
+    /// events.
+    fn over_budget(&self, op: &OperationDescriptor, over: Over, kept: usize) -> Error {
+        let what = match over {
+            Over::Bytes => format!("at most {} bytes of events", self.inner.max_collect_bytes),
+            Over::Time => format!(
+                "at most {} ms to collect the events",
+                self.inner.max_collect_time.as_millis()
+            ),
+        };
+        let after = if is_mutation(op) {
+            " The call took effect; do not repeat it."
+        } else {
+            ""
+        };
+        fail(
+            Diag::new(op.id.clone(), Category::UnexpectedResponse)
+                .failed_parameter("events")
+                .expected(what.clone())
+                .remediation(format!(
+                    "The stream was abandoned after {kept} {} ({what}; ClientOptions::max_collect_bytes and max_collect_time).{after} The events collected so far precede this error.",
+                    if kept == 1 { "event" } else { "events" }
+                ))
+                .retryable(Retryable::Never)
+                .build(),
+        )
+    }
+
+    /// The final error of a stream whose next event is over the size limit.
+    fn oversize(&self, op: &OperationDescriptor, open: &Open) -> Error {
+        let limit = self.inner.max_event_bytes;
+        let after = if is_mutation(op) {
+            " The call took effect; do not repeat it."
+        } else {
+            ""
+        };
+        fail(scrub_diagnostic(
+            Diag::new(op.id.clone(), Category::UnexpectedResponse)
+                .http_status(Some(open.meta.status))
+                .request_id(open.meta.request_id.clone())
+                .failed_parameter(format!("events[{}]", open.count))
+                .expected(format!("an event of at most {limit} bytes"))
+                .remediation(format!(
+                    "Event {} of the stream is larger than the limit of {limit} bytes (ClientOptions::max_event_bytes); the stream was abandoned.{after} Events before it were delivered. Raise max_event_bytes if the server sends events this large on purpose.",
+                    open.count
+                ))
+                .retryable(Retryable::Never)
+                .attempts(open.meta.attempts)
+                .build(),
+            &open.secrets,
+        ))
     }
 
     /// Decode, check and number one server-sent event.
