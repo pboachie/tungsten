@@ -327,7 +327,8 @@ class Invalid:
 
 class Validator[T](Protocol):
     """What the runtime needs from a schema; the emitter implements it with
-    Pydantic v2 ``TypeAdapter``s. For requests, ``Valid.data`` is the
+    Pydantic v2 ``TypeAdapter``s or, for ``models: dataclasses``, with
+    ``tungsten_runtime.schema``. For requests, ``Valid.data`` is the
     normalized args mapping keyed by argument name, with every value already
     JSON-ready (models dumped by alias, ``UNSET`` removed); binary values
     (bytes, file objects, ``(filename, content[, content_type])`` tuples)
@@ -339,6 +340,24 @@ class Validator[T](Protocol):
     model instance) the caller receives."""
 
     def validate(self, value: object) -> Valid[T] | Invalid: ...
+
+
+class SupportsRead(Protocol):
+    """A binary file object: ``open(path, "rb")``, ``io.BytesIO(...)``."""
+
+    def read(self, size: int = -1, /) -> bytes: ...
+
+
+type BinaryContent = bytes | bytearray | memoryview[int] | SupportsRead
+"""The content of a binary request value: bytes, or a binary file object the
+runtime reads."""
+
+type BinaryInput = (
+    BinaryContent | tuple[str | None, BinaryContent] | tuple[str | None, BinaryContent, str | None]
+)
+"""A binary request value (a whole binary body, or a file of a multipart
+body): bytes, a binary file object, or a ``(filename, content[,
+content_type])`` tuple. The runtime reads files into memory before sending."""
 
 
 class RpcBinding(TypedDict):
@@ -647,6 +666,8 @@ __all__ = [
     "BasicScheme",
     "BearerPart",
     "BearerScheme",
+    "BinaryContent",
+    "BinaryInput",
     "BodyDescriptor",
     "BodyEncoding",
     "CallOptions",
@@ -705,6 +726,7 @@ __all__ = [
     "RpcBinding",
     "Safety",
     "StatusMatch",
+    "SupportsRead",
     "Trace",
     "Valid",
     "Validator",
