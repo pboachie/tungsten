@@ -151,7 +151,18 @@ export interface ResponseDescriptor {
 }
 
 export type PaginationDescriptor =
-  | { style: "cursor"; requestParam: string; responseField: string; itemsField: string; pageSizeParam: string | null }
+  | {
+      style: "cursor";
+      requestParam: string;
+      /** Response field holding the next cursor; empty when only `cursorItemField` applies. */
+      responseField: string;
+      itemsField: string;
+      pageSizeParam: string | null;
+      /** Response boolean (`has_more`): iteration stops as soon as it is `false`. */
+      hasMoreField?: string;
+      /** Without a cursor in the response, the next cursor is this field of the last item. */
+      cursorItemField?: string;
+    }
   | { style: "offset"; offsetParam: string; limitParam: string; itemsField: string }
   | { style: "page"; pageParam: string; sizeParam: string; itemsField: string }
   | { style: "link_header"; itemsField: string };

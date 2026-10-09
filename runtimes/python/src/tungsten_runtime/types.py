@@ -223,6 +223,8 @@ class CursorPagination(TypedDict):
     response_field: str
     items_field: str
     page_size_param: str | None
+    has_more_field: NotRequired[str]
+    cursor_item_field: NotRequired[str]
 
 
 class OffsetPagination(TypedDict):

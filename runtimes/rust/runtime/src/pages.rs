@@ -173,11 +173,29 @@ impl ClientCore {
             Some(PaginationDescriptor::Cursor {
                 request_param,
                 response_field,
+                has_more_field,
+                cursor_item_field,
                 ..
             }) => {
-                let cursor = get_path_str(Some(&body), response_field)
-                    .filter(|c| !c.is_null() && c.as_str() != Some(""));
+                let usable = |c: &Value| !c.is_null() && c.as_str() != Some("");
+                let mut cursor = if response_field.is_empty() {
+                    None
+                } else {
+                    get_path_str(Some(&body), response_field).filter(|c| usable(c))
+                };
+                if cursor.is_none()
+                    && let Some(field) = cursor_item_field
+                {
+                    cursor = items
+                        .last()
+                        .and_then(|item| get_path_str(Some(item), field))
+                        .filter(|c| usable(c));
+                }
+                let finished = has_more_field.as_deref().is_some_and(|field| {
+                    get_path_str(Some(&body), field) == Some(&Value::Bool(false))
+                });
                 next = cursor
+                    .filter(|_| !finished)
                     .filter(|c| {
                         !st.previous_cursor
                             .as_ref()

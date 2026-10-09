@@ -1583,8 +1583,12 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
       if (pagination) {
         switch (pagination.style) {
           case "cursor": {
-            const cursor = getPath(body, pagination.responseField);
-            next = cursor === undefined || cursor === null || cursor === "" || canonicalJson(cursor) === canonicalJson(previousCursor) ? null : cursor;
+            let cursor: unknown = pagination.responseField ? getPath(body, pagination.responseField) : undefined;
+            if ((cursor === undefined || cursor === null || cursor === "") && pagination.cursorItemField && items.length > 0) {
+              cursor = getPath(items[items.length - 1], pagination.cursorItemField);
+            }
+            const more = pagination.hasMoreField ? getPath(body, pagination.hasMoreField) : undefined;
+            next = more === false || cursor === undefined || cursor === null || cursor === "" || canonicalJson(cursor) === canonicalJson(previousCursor) ? null : cursor;
             if (next !== null) {
               previousCursor = next;
               current = { ...current, [this.#argName(op, pagination.requestParam)]: next };

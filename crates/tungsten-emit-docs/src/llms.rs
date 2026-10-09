@@ -304,7 +304,20 @@ fn pagination(p: &tungsten_ir::Pagination) -> String {
         S::Cursor {
             request_param,
             response_field,
-        } => format!("cursor: pass `{response_field}` from the response as `{request_param}`"),
+        } => {
+            let from = match (response_field.as_str(), &p.cursor_item_field) {
+                ("", Some(item)) => format!("the last item's `{item}`"),
+                (_, Some(item)) => {
+                    format!("`{response_field}` (or the last item's `{item}`)")
+                }
+                _ => format!("`{response_field}`"),
+            };
+            let mut text = format!("cursor: pass {from} from the response as `{request_param}`");
+            if let Some(more) = &p.has_more_field {
+                text.push_str(&format!(", until `{more}` is false"));
+            }
+            text
+        }
         S::Offset {
             offset_param,
             limit_param,

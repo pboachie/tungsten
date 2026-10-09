@@ -689,18 +689,27 @@ fn pagination_py(info: &OpInfo<'_>, shape: &OpShape<'_>) -> Py {
         PaginationStyle::Cursor {
             request_param,
             response_field,
-        } => Py::dict(vec![
-            ("style", Py::str("cursor")),
-            ("request_param", Py::str(&arg(request_param))),
-            ("response_field", Py::str(response_field)),
-            items,
-            (
-                "page_size_param",
-                p.page_size_param
-                    .as_deref()
-                    .map_or_else(Py::none, |s| Py::str(&arg(s))),
-            ),
-        ]),
+        } => {
+            let mut entries = vec![
+                ("style", Py::str("cursor")),
+                ("request_param", Py::str(&arg(request_param))),
+                ("response_field", Py::str(response_field)),
+                items,
+                (
+                    "page_size_param",
+                    p.page_size_param
+                        .as_deref()
+                        .map_or_else(Py::none, |s| Py::str(&arg(s))),
+                ),
+            ];
+            if let Some(f) = &p.has_more_field {
+                entries.push(("has_more_field", Py::str(f)));
+            }
+            if let Some(f) = &p.cursor_item_field {
+                entries.push(("cursor_item_field", Py::str(f)));
+            }
+            Py::dict(entries)
+        }
         PaginationStyle::Offset {
             offset_param,
             limit_param,

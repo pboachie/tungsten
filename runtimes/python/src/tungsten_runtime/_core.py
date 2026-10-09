@@ -1744,8 +1744,20 @@ class Engine:
             next_value: object = None
             style = field(pagination, "style")
             if style == "cursor" and current is not None:
-                cursor = get_path(body, str_field(pagination, "response_field") or "")
-                if cursor is UNSET or cursor is None or cursor == "" or _same(cursor, previous_cursor):
+                response_field = str_field(pagination, "response_field") or ""
+                cursor = get_path(body, response_field) if response_field else UNSET
+                item_field = str_field(pagination, "cursor_item_field")
+                if (cursor is UNSET or cursor is None or cursor == "") and item_field and items:
+                    cursor = get_path(items[-1], item_field)
+                more_field = str_field(pagination, "has_more_field")
+                more = get_path(body, more_field) if more_field else UNSET
+                if (
+                    more is False
+                    or cursor is UNSET
+                    or cursor is None
+                    or cursor == ""
+                    or _same(cursor, previous_cursor)
+                ):
                     next_value = None
                 else:
                     next_value = cursor

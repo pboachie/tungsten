@@ -1084,6 +1084,18 @@ fn pagination_rs(info: &OpInfo<'_>, shape: &OpShape<'_>) -> Rx {
                         .as_deref()
                         .map_or_else(Rx::none, |s| Rx::some(Rx::string(&arg(s)))),
                 ),
+                (
+                    "has_more_field",
+                    p.has_more_field
+                        .as_deref()
+                        .map_or_else(Rx::none, |f| Rx::some(Rx::string(f))),
+                ),
+                (
+                    "cursor_item_field",
+                    p.cursor_item_field
+                        .as_deref()
+                        .map_or_else(Rx::none, |f| Rx::some(Rx::string(f))),
+                ),
             ],
         ),
         PaginationStyle::Offset {
