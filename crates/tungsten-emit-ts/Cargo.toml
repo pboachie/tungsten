@@ -1,11 +1,16 @@
 [package]
 name = "tungsten-emit-ts"
-description = "TypeScript SDK emitter."
+description = "TypeScript SDK emitter: typed models, client and operations from the tungsten IR."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
 publish.workspace = true
 
 [lib]

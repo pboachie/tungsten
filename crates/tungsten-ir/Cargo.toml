@@ -1,11 +1,16 @@
 [package]
 name = "tungsten-ir"
-description = "The tungsten intermediate representation."
+description = "The tungsten intermediate representation: a typed, versioned, serializable model of an API and its agent metadata."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
 publish.workspace = true
 
 [lib]
