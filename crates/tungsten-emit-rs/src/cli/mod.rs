@@ -24,7 +24,7 @@ mod table;
 use tungsten_core::{Diagnostic, Diagnostics};
 use tungsten_emit::{CommentStyle, FileSet, TargetConfig, header};
 use tungsten_ir::naming::{self, Case, Role, Target};
-use tungsten_ir::{Ident, Ir};
+use tungsten_ir::{AuthScheme, Ident, Ir};
 
 use crate::options::{Dep, Options};
 
@@ -74,7 +74,7 @@ fn cargo_toml(ir: &Ir, opts: &Options, bin: &str, package: &str, kit: &Dep, stam
         "description = {}\n",
         toml_str(&format!(
             "Command-line client for the {} API.",
-            ir.api.title
+            tungsten_ir::title_stem(&ir.api.title)
         ))
     ));
     s.push_str(&format!(
@@ -113,7 +113,7 @@ fn main_rs(ir: &Ir, opts: &Options, stamp: &str) -> String {
          \x20       .collect();\n\
          \x20   tungsten_cli_kit::run(&table::spec(), argv, {client}::new).await\n\
          }}\n",
-        title = ir.api.title.replace('\n', " "),
+        title = tungsten_ir::title_stem(&ir.api.title).replace('\n', " "),
         lib = opts.lib_name(),
         client = client_type(ir),
     )
@@ -132,11 +132,37 @@ pub(crate) fn emit(ir: &Ir, cfg: &TargetConfig, out: &mut FileSet) -> Diagnostic
     let about = match ir.api.description.as_deref().map(str::trim) {
         Some(d) if !d.is_empty() => format!(
             "Command-line client for the {} API.\n{}",
-            ir.api.title,
+            tungsten_ir::title_stem(&ir.api.title),
             model::sentence(d)
         ),
-        _ => format!("Command-line client for the {} API.", ir.api.title),
+        _ => format!(
+            "Command-line client for the {} API.",
+            tungsten_ir::title_stem(&ir.api.title)
+        ),
     };
+    // A composite profile configures itself and the schemes it satisfies.
+    let composites: Vec<&str> = ir
+        .auth
+        .iter()
+        .filter_map(|s| match s {
+            AuthScheme::Composite {
+                name, satisfies, ..
+            } => Some(std::iter::once(name).chain(satisfies).map(String::as_str)),
+            _ => None,
+        })
+        .flatten()
+        .collect();
+    let credential_env: Vec<(String, String)> = ir
+        .auth
+        .iter()
+        .filter(|s| !composites.contains(&s.name()))
+        .filter_map(|s| match s {
+            AuthScheme::ApiKey { name, env, .. } | AuthScheme::HttpBearer { name, env, .. } => {
+                env.clone().map(|e| (name.clone(), e))
+            }
+            _ => None,
+        })
+        .collect();
     let meta = table::Meta {
         header: &rs_stamp,
         bin: &cli.bin,
@@ -144,6 +170,7 @@ pub(crate) fn emit(ir: &Ir, cfg: &TargetConfig, out: &mut FileSet) -> Diagnostic
         version: &opts.version,
         env_prefix: &naming::to_case(words, Case::ScreamingSnake),
         config_dir: &naming::to_case(words, Case::Kebab),
+        credential_env: &credential_env,
     };
     let files = [
         (

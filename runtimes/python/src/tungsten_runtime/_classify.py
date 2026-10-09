@@ -38,6 +38,16 @@ def is_json_media(media: str) -> bool:
     return media == "application/json" or media.endswith("+json") or media == "text/json"
 
 
+_JSONL_MEDIA = frozenset(
+    ("application/jsonl", "application/x-jsonl", "application/ndjson", "application/x-ndjson")
+)
+
+
+def is_jsonl_media(media: str) -> bool:
+    """JSON Lines media types: one JSON value per line."""
+    return media in _JSONL_MEDIA
+
+
 def match_response(responses: object, status: int) -> Mapping[str, object] | None:
     """The response descriptor matching a status: exact, then ``NXX``, then ``default``."""
     listed = [r for r in responses if is_record(r)] if is_array(responses) else []
@@ -64,6 +74,11 @@ class DecodedBody:
     #: JSON was announced but did not parse.
     invalid_json: bool
     empty: bool
+    #: The body is JSON Lines: ``value`` is the list of the lines' values, or
+    #: (when ``invalid_json``) the text.
+    jsonl: bool = False
+    #: The first line (1-based) that did not parse.
+    bad_line: int = 0
 
 
 _JSON_START = re.compile(r"\s*[\[{]")
@@ -76,9 +91,22 @@ def _text(data: bytes) -> str:
 
 
 def decode_body(data: bytes, headers: Mapping[str, str], declared: str | None) -> DecodedBody:
-    if len(data) == 0:
+    announced = media_type_of(headers)
+    media = announced or (declared or "").lower()
+    # An empty body is no body, unless the server says it is JSON Lines: then it is no lines.
+    if len(data) == 0 and not is_jsonl_media(announced):
         return DecodedBody(UNSET, False, False, True)
-    media = media_type_of(headers) or (declared or "").lower()
+    if is_jsonl_media(announced or media.split(";")[0].strip()):
+        raw = _text(data)
+        values: list[object] = []
+        for index, line in enumerate(raw.split("\n")):
+            if line.strip() == "":
+                continue
+            try:
+                values.append(parse_json(line))
+            except ValueError:
+                return DecodedBody(raw, False, True, False, True, index + 1)
+        return DecodedBody(values, False, False, False, True)
     if is_json_media(media):
         raw = _text(data)
         try:
@@ -259,11 +287,15 @@ def outcome_unknown(
     else:
         change = change_of(op)
         rule = (
-            "This operation has no idempotency key, so repeating it can apply the effect twice: do not call it "
-            "again until you have checked whether it took effect, by reading the resource it changes and looking "
-            f"for {change}."
+            f"This operation has no idempotency key and no registered way to verify it, so {op_id} may have taken "
+            "effect and a repeat can apply the effect twice: do not retry it blindly. Check the outcome by other "
+            f"means if you can (look for {change}); if you cannot, ask whoever owns the task before calling it "
+            "again."
         )
-        hint = f"Read the resource {op_id} changes and look for {change}; call {op_id} again only if it is not there."
+        hint = (
+            f"Do not retry {op_id} blindly: it may have taken effect. Check for {change} if you can; call {op_id} "
+            "again only if it is not there, or after the task owner accepts that it may apply twice."
+        )
     action = next_action if next_action is not None else hint if hint is not None else _next_action_hint(ctx)
     return diagnostic(
         op_id,

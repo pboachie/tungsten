@@ -8,6 +8,7 @@ use std::cell::Cell;
 use serde_json::{Map, Value};
 use tungsten_ir::{
     Constraints, Field, Presence, Primitive, Shape, StringFormat, TypeRef, Union, UnionStrategy,
+    Variant,
 };
 
 use crate::model::Model;
@@ -200,6 +201,31 @@ impl<'a> Generator<'a> {
             .map(|()| default.clone())
     }
 
+    /// The events of a stream of `ty` under `scope` at `path`: one for each
+    /// variant of a union, in order, else two values of the type. Each is
+    /// paired with the discriminator value that tags it, if any.
+    pub fn events(&self, ty: &TypeRef, scope: &str, path: &str) -> Vec<(Option<String>, Value)> {
+        self.steps.set(0);
+        if let Some(Shape::Union(union)) = self.model.shape(ty) {
+            return union
+                .variants
+                .iter()
+                .enumerate()
+                .map(|(i, variant)| {
+                    let mut at = format!("{path}/{i}");
+                    let value = self.variant(union, variant, scope, &mut at, "", 0);
+                    (tag_of(union, variant), value)
+                })
+                .collect();
+        }
+        (0..2)
+            .map(|i| {
+                let mut at = format!("{path}/{i}");
+                (None, self.ty(ty, scope, &mut at, "", 0, None))
+            })
+            .collect()
+    }
+
     fn union(
         &self,
         union: &Union,
@@ -208,29 +234,33 @@ impl<'a> Generator<'a> {
         name: &str,
         depth: usize,
     ) -> Value {
-        let Some(variant) = union.variants.first() else {
-            return Value::Null;
-        };
+        match union.variants.first() {
+            Some(variant) => self.variant(union, variant, scope, path, name, depth),
+            None => Value::Null,
+        }
+    }
+
+    /// A value of one variant of a union, with its discriminator set.
+    fn variant(
+        &self,
+        union: &Union,
+        variant: &Variant,
+        scope: &str,
+        path: &mut String,
+        name: &str,
+        depth: usize,
+    ) -> Value {
         let mut value = self.ty(&variant.ty, scope, path, name, depth + 1, None);
         if union.strategy == UnionStrategy::Tagged
             && let Some(discriminator) = &union.discriminator
+            && let (Some(tag), Some(object)) = (tag_of(union, variant), value.as_object_mut())
         {
-            let tag = variant.tag.clone().or_else(|| match &variant.ty {
-                TypeRef::Named(id) => discriminator
-                    .mapping
-                    .iter()
-                    .find(|(_, target)| target == id)
-                    .map(|(k, _)| k.clone()),
-                TypeRef::Inline(_) => None,
-            });
-            if let (Some(tag), Some(object)) = (tag, value.as_object_mut()) {
-                let consistent = match object.get(&discriminator.property) {
-                    Some(Value::Null) | None => false,
-                    Some(present) => tag_text(present) == tag,
-                };
-                if !consistent {
-                    object.insert(discriminator.property.clone(), Value::String(tag));
-                }
+            let consistent = match object.get(&discriminator.property) {
+                Some(Value::Null) | None => false,
+                Some(present) => tag_text(present) == tag,
+            };
+            if !consistent {
+                object.insert(discriminator.property.clone(), Value::String(tag));
             }
         }
         value
@@ -285,6 +315,22 @@ impl<'a> Generator<'a> {
         }
         fit(format!("{}_{:04x}", slug(name, "value"), h & 0xffff), c)
     }
+}
+
+/// The discriminator value that selects a variant of a tagged union.
+fn tag_of(union: &Union, variant: &Variant) -> Option<String> {
+    let discriminator = union.discriminator.as_ref()?;
+    if union.strategy != UnionStrategy::Tagged {
+        return None;
+    }
+    variant.tag.clone().or_else(|| match &variant.ty {
+        TypeRef::Named(id) => discriminator
+            .mapping
+            .iter()
+            .find(|(_, target)| target == id)
+            .map(|(k, _)| k.clone()),
+        TypeRef::Inline(_) => None,
+    })
 }
 
 /// A discriminator value as the tag text the IR records.

@@ -249,7 +249,11 @@ pub(crate) struct Slot {
 }
 
 /// The credential slots of an API's auth schemes.
-pub(crate) fn slots(prefix: &str, auth: &[AuthSchemeDescriptor]) -> Vec<Slot> {
+pub(crate) fn slots(
+    prefix: &str,
+    overrides: &[(String, String)],
+    auth: &[AuthSchemeDescriptor],
+) -> Vec<Slot> {
     let covered = |name: &str| {
         auth.iter().any(|s| match s {
             AuthSchemeDescriptor::Composite {
@@ -267,7 +271,10 @@ pub(crate) fn slots(prefix: &str, auth: &[AuthSchemeDescriptor]) -> Vec<Slot> {
         Slot {
             scheme: scheme.to_string(),
             part: part.map(str::to_string),
-            env: format!("{prefix}_{suffix}"),
+            env: match overrides.iter().find(|(name, _)| name == scheme) {
+                Some((_, variable)) if part.is_none() => variable.clone(),
+                _ => format!("{prefix}_{suffix}"),
+            },
             profile_key: suffix.to_ascii_lowercase(),
         }
     };
@@ -321,6 +328,7 @@ pub(crate) struct Found {
 /// `warnings` when other users can read the file.
 pub(crate) fn credentials(
     prefix: &str,
+    overrides: &[(String, String)],
     auth: &[AuthSchemeDescriptor],
     env: &BTreeMap<String, String>,
     settings: &Settings,
@@ -329,7 +337,7 @@ pub(crate) fn credentials(
     let mut parts: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
     let mut found = Vec::new();
     let mut used_profile = false;
-    for slot in slots(prefix, auth) {
+    for slot in slots(prefix, overrides, auth) {
         let value = nonempty(env, &slot.env)
             .map(|v| (v.to_string(), Source::Env))
             .or_else(|| {

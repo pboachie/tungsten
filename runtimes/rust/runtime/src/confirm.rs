@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Confirmation tokens (planning/06 "Preview and confirmation"):
+//! Confirmation tokens:
 //! `tgc1.<expiry ms>.<base64url(HMAC-SHA-256(key, op id, args digest, expiry))>`.
 //! A token is valid only for the operation and the exact arguments it was
 //! issued for, until its expiry.

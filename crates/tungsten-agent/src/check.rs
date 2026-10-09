@@ -115,6 +115,7 @@ fn defaults(d: &DefaultsConfig, r: &mut Reporter<'_>) {
     let dd = &d.disclosure;
     for (key, value, min) in [
         ("threshold", dd.threshold, 1),
+        ("list_budget_tokens", dd.list_budget_tokens, 100),
         (
             "description_budget_tokens",
             dd.description_budget_tokens,

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! `oneOf`/`anyOf` (planning/03 "Unions").
+//! `oneOf`/`anyOf`.
 //!
 //! `{type: "null"}` members only make the union nullable. With one member
 //! left the union is that member. Otherwise the strategy is, in order:

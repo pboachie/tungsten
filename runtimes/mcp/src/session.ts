@@ -15,7 +15,7 @@ import { createHash } from "node:crypto";
 import type { ClientCore, CallOptions, Diagnostic, MacroDescriptor, MacroStepPreview, OperationDescriptor, PreviewResult, Result } from "@tungsten/runtime";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 
-import { inCluster, PROGRESSIVE_TOOLS, verifies, type Catalog, type CatalogTool } from "./catalog.js";
+import { inCluster, PROGRESSIVE_TOOLS, TOOL_META_KEY, verifies, type Catalog, type CatalogTool } from "./catalog.js";
 import {
   REDACTED_REPEAT,
   SHOWN_ONCE_LINE,
@@ -38,7 +38,7 @@ export const DEFAULT_MAX_RESULT_CHARS = 50000;
 const MAX_SCRIPT_CHARS = 100000;
 const DEFAULT_SEARCH_LIMIT = 10;
 const SEARCH_HINT =
-  "Call describe_tool(name) for the schema, preview(name, arguments) before destructive or irreversible calls, invoke(name, arguments) to execute.";
+  "Call describe_tool(name) for the schema, preview(name, arguments) before destructive or irreversible calls, invoke(name, arguments) to execute (invoke_read for read_only tools).";
 
 /** What `run_script` needs once the server found deno. */
 export interface SandboxConfig {
@@ -66,6 +66,17 @@ interface Prepared {
 
 const BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
 const BASE64URL = /^[A-Za-z0-9_-]*$/;
+
+/** The hints a host gates by: the tool's own annotations without the title. */
+function toolHints(tool: CatalogTool): { readOnlyHint: boolean; destructiveHint: boolean; idempotentHint: boolean } {
+  const { readOnlyHint, destructiveHint, idempotentHint } = tool.annotations;
+  return { readOnlyHint, destructiveHint, idempotentHint };
+}
+
+/** The progressive meta tool that calls `tool`. */
+function callTool(tool: CatalogTool): "invoke_read" | "invoke" {
+  return tool.safety === "read_only" ? "invoke_read" : "invoke";
+}
 
 /** The bytes of base64 (standard, padded) or base64url (unpadded) text, or
  * null when `text` is neither. */
@@ -95,6 +106,26 @@ export function stepLines(preview: PreviewResult): string[] {
     for (const effect of Array.isArray(step.effects) ? step.effects : []) lines.push(`   - ${effect}`);
   }
   return lines;
+}
+
+/** Events a streamed call collects before it stops reading (the result then
+ * has `truncated: true`). */
+const MAX_STREAM_EVENTS = 1000;
+
+/** Whether a call of `op` reads its event stream: when the operation only
+ * answers a stream, or when it also answers a plain body and the arguments
+ * set the stream's request flag to `true`. */
+function streamRequested(op: OperationDescriptor, args: Record<string, unknown>): boolean {
+  const spec = op.stream;
+  if (!spec) return false;
+  const first = op.responses.find((r) => r.kind === "success")?.mediaType ?? "";
+  if (first.split(";")[0]?.trim().toLowerCase() === "text/event-stream") return true;
+  const flag = spec.flag;
+  const body = op.body;
+  if (flag === undefined || !body) return false;
+  if (body.shape.kind === "merged") return args[flag] === true;
+  const inner = args[body.shape.arg];
+  return isRecord(inner) && inner[flag] === true;
 }
 
 export class Session {
@@ -202,6 +233,7 @@ export class Session {
       const prepared = this.#prepare(tool, args);
       return this.#render(tool, await this.#execute(prepared), prepared);
     }
+    if (name === "invoke_read" && !catalog.tools.some((t) => t.safety === "read_only")) return this.#unknownTool(name);
     switch (name) {
       case "search_tools": {
         const bad = this.#checkArgs(name, args, { query: { type: "string", required: true }, cluster: { type: "string" }, limit: { type: "integer" } });
@@ -213,15 +245,30 @@ export class Session {
         const tool = this.#lookup(args.name as string, "name", name);
         return "content" in tool ? tool : this.#describe(tool);
       }
+      case "invoke_read":
       case "invoke":
       case "preview": {
         const bad = this.#checkArgs(name, args, { name: { type: "string", required: true }, arguments: { type: "object" } });
         if (bad) return bad;
         const tool = this.#lookup(args.name as string, "name", name);
         if ("content" in tool) return tool;
-        if (name === "preview") return await this.#preview(tool, args.arguments);
+        if (name === "invoke_read" && tool.safety !== "read_only") {
+          return this.#withToolMeta(
+            this.#failure(
+              null,
+              envelope(name, "VALIDATION_FAILED", {
+                failed_parameter: "name",
+                received_value: tool.name,
+                expected: "the name of a read_only tool",
+                remediation: `${tool.name} is ${tool.safety}, so invoke_read refuses it; nothing ran. Call preview(name, arguments) and then invoke(name, arguments) instead.`,
+              }),
+            ),
+            tool,
+          );
+        }
+        if (name === "preview") return this.#withToolMeta(await this.#preview(tool, args.arguments), tool);
         const prepared = this.#prepare(tool, args.arguments);
-        return this.#render(tool, await this.#execute(prepared), prepared);
+        return this.#withToolMeta(this.#render(tool, await this.#execute(prepared), prepared), tool);
       }
       case "list_clusters": {
         const bad = this.#checkArgs(name, args, {});
@@ -233,6 +280,12 @@ export class Session {
   }
 
   // ------------------------------------------------------------- results
+
+  /** `result` with the tool's tier and annotations in `_meta`, so a host that
+   * sees only `invoke` or `preview` still learns what it just ran. */
+  #withToolMeta(result: CallToolResult, tool: CatalogTool): CallToolResult {
+    return { ...result, _meta: { ...(isRecord(result._meta) ? result._meta : {}), [TOOL_META_KEY]: { name: tool.name, safety: tool.safety, annotations: toolHints(tool) } } };
+  }
 
   /** A success result. `rendered` names a member of `structured` that
    * `lines` already render, left out of the text's JSON (it stays in
@@ -398,7 +451,7 @@ export class Session {
     const listed: string[] =
       catalog.mode === "discrete"
         ? [...catalog.tools.map((t) => t.name), ...(catalog.tools.some((t) => t.safety !== "read_only") ? ["preview"] : [])]
-        : PROGRESSIVE_TOOLS.filter((t) => t !== "run_script");
+        : PROGRESSIVE_TOOLS.filter((t) => t !== "run_script" && (t !== "invoke_read" || catalog.tools.some((x) => x.safety === "read_only")));
     if (this.#sandbox) listed.push("run_script");
     const close = suggest(name, listed, catalog.mode === "discrete" ? this.#ranked(name) : []);
     return this.#failure(
@@ -496,6 +549,16 @@ export class Session {
     let result: Result<unknown>;
     if ("macro" in target) {
       result = await core.runMacro<unknown>(target.macro, args, opts);
+    } else if (streamRequested(target.op, args)) {
+      // A stream is collected: the events in order, or the failure that ended
+      // the stream with the events before it as `partial`.
+      const events: unknown[] = [];
+      for await (const item of core.stream<unknown>(target.op, args, opts)) {
+        if (!item.ok) return { ok: false, error: item.error, partial: { events } };
+        events.push(item.value);
+        if (events.length >= MAX_STREAM_EVENTS) return { ok: true, value: { events, truncated: true } };
+      }
+      return { ok: true, value: { events } };
     } else {
       if (verifies(prepared.tool)) opts.verify = true;
       result = await core.call<unknown>(target.op, args, opts);
@@ -635,8 +698,10 @@ export class Session {
       name: t.name,
       summary: t.summary,
       safety: t.safety,
+      annotations: toolHints(t),
       idempotency: t.idempotency,
       schema_tokens: t.schemaTokens,
+      call_with: callTool(t),
     }));
     return this.#success({ results, hint }, []);
   }
@@ -675,7 +740,8 @@ export class Session {
         shown_once: tool.shownOnce,
         remediation,
         schema_tokens: tool.schemaTokens,
-        example: { tool: "invoke", arguments: { name: tool.name, arguments: call } },
+        call_with: callTool(tool),
+        example: { tool: callTool(tool), arguments: { name: tool.name, arguments: call } },
         hint: steps,
       },
       [],

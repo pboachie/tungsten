@@ -105,11 +105,12 @@ fn lookup_from<'a>(types: &'a TypeTable, mut view: FieldView<'a>, path: &str) ->
     Lookup::Found(last)
 }
 
-/// The JSON content of a body, if any.
+/// The JSON content of a body, if any. JSON Lines count: a path into it is
+/// a path into one line, like the runtimes' redaction of an array.
 fn json(content: &[BodyContent]) -> Option<&TypeRef> {
     content
         .iter()
-        .find(|c| c.encoding == BodyEncoding::Json)
+        .find(|c| matches!(c.encoding, BodyEncoding::Json | BodyEncoding::Jsonl))
         .map(|c| &c.ty)
 }
 

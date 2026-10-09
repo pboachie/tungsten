@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Names of registered types and collision handling (planning/03
-//! "Identifiers").
+//! Names of registered types and collision handling.
 //!
 //! Components keep their key as written. Other `$ref` targets are named
 //! from their pointer (`Node/properties/children` → `NodeChildren`), inline

@@ -1,5 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The IR type system (planning/03 "Types").
+//! The IR type system.
+//!
+//! Types are either named (registered once in the [`TypeTable`] under a
+//! [`TypeId`]) or inline [`Shape`]s. A record field keeps required,
+//! nullable and optional apart through [`Presence`], so each target language
+//! can represent all four combinations faithfully.
 
 use serde::{Deserialize, Serialize};
 

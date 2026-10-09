@@ -56,6 +56,34 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
          inline schemas into named components.",
     ),
     e(
+        "TG0110",
+        "The document has no `info.version`. OpenAPI requires it, but published specs \
+         sometimes omit it. tungsten records version 0.0.0 and continues; the diagnostic is a \
+         warning, and the document is still refused when something else required is missing.",
+        "Add `info.version` to the document, or supply it with an overlay.",
+    ),
+    e(
+        "TG0111",
+        "A key of `paths` carries a query string, such as `/v1/messages?beta=true`. OpenAPI \
+         forbids it, but some APIs use it to select a variant of an operation. tungsten \
+         names the operation and places it in resources from the path alone, keeps the \
+         query pairs as constant query parameters of the path template (`path.query` in the \
+         IR), sends them on every call (they are not arguments), and the mock routes a \
+         request only to the operation whose constants it carries.",
+        "No change is needed. To make the document valid OpenAPI, declare the pair as a \
+         query parameter with a `const` or `enum` schema.",
+    ),
+    e(
+        "TG0112",
+        "The document defines no security scheme and no `security`, but declares a header \
+         that carries an API key (`x-api-key`, `api-key` or `apikey`) as a parameter. \
+         tungsten inferred an `apiKey` header scheme named `apiKey` and required it by every \
+         operation, so the credential is configured once on the client and the header is no \
+         longer an argument of each call.",
+        "Define the scheme under `components/securitySchemes` and list it in `security` (an \
+         overlay can add both) to make the intent explicit and silence the diagnostic.",
+    ),
+    e(
         "TG0201",
         "A `$ref` points at a location that does not exist: the JSON Pointer names a missing \
          member, or the referenced file has no such path.",
@@ -252,6 +280,21 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
          through a custom transport.",
     ),
     e(
+        "TG0530",
+        "A success response declares the `text/event-stream` media type without a schema, so \
+         the SDK cannot type or check the events of the stream. Each event's `data` is still \
+         decoded as JSON and handed to the caller as an untyped value.",
+        "Declare the schema of one event under the media type (usually a `oneOf` tagged by a \
+         `type` property). Name a `data` value that ends the stream, if there is one, with \
+         `x-tungsten-stream-done`.",
+    ),
+    e(
+        "TG0531",
+        "More than one success status of an operation declares `text/event-stream`. The SDK \
+         streams the lowest status; the others are read as plain responses.",
+        "Declare the stream under one status, normally 200.",
+    ),
+    e(
         "TG0601",
         "A manifest (tungsten.yml or agent.yml) is not valid YAML.",
         "Fix the YAML syntax at the reported position. Indentation must use spaces.",
@@ -356,6 +399,17 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
          smaller now, shorten descriptions or raise `defaults.disclosure.schema_budget_tokens`.",
     ),
     e(
+        "TG0614",
+        "A `gates` entry of agent.yml is used by no operation: the spec carries no \
+         `x-runtime-gate` for that environment variable and no `tools` entry names it in \
+         `gate`. The entry's text is never shown and a 404 from the routes it was written for \
+         is reported as NOT_FOUND (\"check the identifiers\") instead of GATE_DISABLED. \
+         Live runs against ZROtext showed it: SEALED_ADMISSION_ENABLED was declared but none \
+         of the sealed operations named it.",
+        "Add `gate: <ENV_VAR>` to the `tools` entry of every operation the deployment setting \
+         switches off (one entry per operation), or delete the `gates` entry.",
+    ),
+    e(
         "TG0701",
         "A generated file could not be written to the target's output directory, for example \
          because the directory is read-only or a path component is a file.",
@@ -440,7 +494,7 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
         "TG0722",
         "In progressive mode an MCP client first receives the meta tools (`search_tools`, \
          `describe_tool`, `invoke`, `preview`, `list_clusters`) and the instructions with the \
-         cluster index. Together they exceed the 2,000 tokens of NFR-3, usually because of \
+         cluster index. Together they exceed the 2,000-token budget of the progressive index, usually because of \
          many clusters or long cluster summaries.",
         "Shorten the cluster summaries in agent.yml (only their first sentence is used) or \
          merge clusters.",
@@ -463,6 +517,25 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
         "Give the operations distinct method names with `naming.operations` in tungsten.yml.",
     ),
     e(
+        "TG0725",
+        "`defaults.disclosure.mode: auto` in agent.yml chooses between the discrete MCP tool \
+         list (every tool with its schema) and progressive disclosure (search_tools, \
+         describe_tool, invoke) by measuring the discrete `tools/list` plus its instructions \
+         with the tungsten token estimate. Progressive is chosen when that is above \
+         `defaults.disclosure.list_budget_tokens` (default 10000), whatever the number of \
+         tools. This note states the measured tokens, the budget and the decision.",
+        "Set `defaults.disclosure.mode` to `discrete` or `progressive` to decide yourself, or \
+         change `defaults.disclosure.list_budget_tokens`.",
+    ),
+    e(
+        "TG0726",
+        "The `mcp` target has no `sdk` option, so the server depends on the package the \
+         `typescript` target of the same tungsten.yml generates (its `package` and `version`) \
+         instead of the default `<api>-sdk`.",
+        "Set `targets.mcp.sdk` (`<package>` or `<package>@<range>`) or `targets.mcp.sdk_path` to \
+         depend on something else.",
+    ),
+    e(
         "TG0730",
         "A macro in the IR does not fit the canonical form the Python SDK compiles: a step \
          names an operation that is not callable, a reference names a later or unknown step, \
@@ -477,8 +550,8 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
         "TG0731",
         "An option of the `python` target is not valid (for example a `package` that is not a \
          PEP 508 distribution name, a `module` that is not a lowercase identifier, a `version` \
-         that is not a PEP 440 version, or `models: dataclasses`, which this version does not \
-         emit), so its default is used.",
+         that is not a PEP 440 version, or a `models` that is neither `pydantic` nor \
+         `dataclasses`), so its default is used.",
         "Fix the option under `targets.python` in tungsten.yml.",
     ),
     e(
@@ -547,6 +620,16 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
         "Give every variant a named object schema that carries the discriminator property.",
     ),
     e(
+        "TG0746",
+        "The output of a macro is not an object or a reference whose members the Rust SDK can \
+         type: a member is a `null`, a list, a nested object or a reference into a step the \
+         API description gives no single JSON response type for. The macro's method returns \
+         `serde_json::Value`, the output expression evaluated by the runtime.",
+        "Read the members you need from the value, or flatten the output expression to \
+         references into steps with a documented response (`$step.field`) and boolean \
+         expressions.",
+    ),
+    e(
         "TG0750",
         "An argument of an operation has no plain flag form in the generated CLI: a parameter \
          whose type is an object, a map, a union or a list of those, or a multipart body whose \
@@ -579,6 +662,16 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
         "Give the operations distinct names with `naming.operations` in tungsten.yml.",
     ),
     e(
+        "TG0760",
+        "Some `components/schemas` entries are not reachable from any operation (typically the \
+         schemas only the operations excluded by an `include` predicate use), so they were not \
+         generated: no type, no validator, and none of the warnings their schemas would have \
+         raised. The note counts them and lists the first names. Operations that are only \
+         planned (`planned_from`) and the error envelope still keep the types they use.",
+        "Nothing to fix. To generate every schema anyway, set `types.prune_unreferenced: false` \
+         in tungsten.yml.",
+    ),
+    e(
         "TG0901",
         "A target's output directory differs from what `tungsten generate` would write now: \
          a generated file is missing or has other content, a file of the previous \
@@ -608,7 +701,7 @@ pub(crate) fn explanation(code: &str) -> Option<&'static Explanation> {
         .map(|i| &EXPLANATIONS[i])
 }
 
-/// The code range a diagnostic belongs to (planning/03).
+/// The code range a diagnostic belongs to.
 pub(crate) fn area(code: &str) -> &'static str {
     match code.get(..4) {
         Some("TG01") => "parsing and input limits (TG01xx)",

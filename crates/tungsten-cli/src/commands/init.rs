@@ -393,6 +393,14 @@ fn tungsten_yml(
             yaml_scalar(server)
         );
     }
+    out.push_str(
+        "\n# What `tungsten generate` writes. Other targets: rust (SDK and CLI), mcp\n\
+         # (an MCP server on top of the TypeScript SDK).\n\
+         targets:\n  \
+         typescript: { out: generated/typescript }\n  \
+         python: { out: generated/python }\n  \
+         docs: { out: generated/docs }\n",
+    );
     out
 }
 
@@ -419,6 +427,7 @@ defaults:
   disclosure:
     mode: auto
     threshold: 24
+    list_budget_tokens: 10000
     description_budget_tokens: 60
     schema_budget_tokens: 600
 ";

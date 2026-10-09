@@ -162,13 +162,15 @@ ergonomics. Branch with ``isinstance(result, Ok)`` or ``result.ok is True``
 HttpMethod = Literal["GET", "PUT", "POST", "DELETE", "OPTIONS", "HEAD", "PATCH", "TRACE"]
 ParamLocation = Literal["path", "query", "header", "cookie"]
 ParamStyle = Literal["simple", "form", "label", "matrix", "space_delimited", "pipe_delimited", "deep_object"]
-ParamRole = Literal["plain", "idempotency_key", "dry_run", "origin", "auth"]
+ParamRole = Literal["plain", "idempotency_key", "dry_run", "origin", "auth", "constant"]
 
 
 class ParamDescriptor(TypedDict):
     """``name`` is the Python keyword argument. Params with the roles
-    ``idempotency_key``, ``origin`` and ``auth`` are not arguments: they come
-    from ``CallOptions.idempotency_key`` and the auth profile."""
+    ``idempotency_key``, ``origin``, ``auth`` and ``constant`` are not
+    arguments: they come from ``CallOptions.idempotency_key``, the auth
+    profile and, for ``constant``, the descriptor's ``constant`` header value
+    (``headers`` options replace it)."""
 
     name: str
     wire: str
@@ -177,6 +179,7 @@ class ParamDescriptor(TypedDict):
     style: ParamStyle
     explode: bool
     role: ParamRole
+    constant: NotRequired[str]
     sensitive: NotRequired[bool]
 
 
@@ -220,6 +223,8 @@ class CursorPagination(TypedDict):
     response_field: str
     items_field: str
     page_size_param: str | None
+    has_more_field: NotRequired[str]
+    cursor_item_field: NotRequired[str]
 
 
 class OffsetPagination(TypedDict):
@@ -327,7 +332,8 @@ class Invalid:
 
 class Validator[T](Protocol):
     """What the runtime needs from a schema; the emitter implements it with
-    Pydantic v2 ``TypeAdapter``s. For requests, ``Valid.data`` is the
+    Pydantic v2 ``TypeAdapter``s or, for ``models: dataclasses``, with
+    ``tungsten_runtime.schema``. For requests, ``Valid.data`` is the
     normalized args mapping keyed by argument name, with every value already
     JSON-ready (models dumped by alias, ``UNSET`` removed); binary values
     (bytes, file objects, ``(filename, content[, content_type])`` tuples)
@@ -339,6 +345,24 @@ class Validator[T](Protocol):
     model instance) the caller receives."""
 
     def validate(self, value: object) -> Valid[T] | Invalid: ...
+
+
+class SupportsRead(Protocol):
+    """A binary file object: ``open(path, "rb")``, ``io.BytesIO(...)``."""
+
+    def read(self, size: int = -1, /) -> bytes: ...
+
+
+type BinaryContent = bytes | bytearray | memoryview[int] | SupportsRead
+"""The content of a binary request value: bytes, or a binary file object the
+runtime reads."""
+
+type BinaryInput = (
+    BinaryContent | tuple[str | None, BinaryContent] | tuple[str | None, BinaryContent, str | None]
+)
+"""A binary request value (a whole binary body, or a file of a multipart
+body): bytes, a binary file object, or a ``(filename, content[,
+content_type])`` tuple. The runtime reads files into memory before sending."""
 
 
 class RpcBinding(TypedDict):
@@ -356,6 +380,20 @@ class GatedStatus(TypedDict):
     kind: Literal["gated"]
     env_var: str
     disabled_status: int
+
+
+class StreamDescriptor(TypedDict):
+    """The server-sent events of an operation (IR ``StreamSpec``)."""
+
+    #: Validates the decoded ``data`` of every event (per
+    #: ``ClientOptions.validate_responses``); its ``Valid.data`` is the
+    #: event's value. Absent: events are any JSON value.
+    event: NotRequired[Validator[Any]]
+    #: A ``data`` value that ends the stream without being an event (``[DONE]``).
+    done: NotRequired[str]
+    #: Wire name of the boolean request body field that selects the stream;
+    #: ``ClientCore.stream`` sets it to ``True``.
+    flag: NotRequired[str]
 
 
 class OperationDescriptor(TypedDict):
@@ -379,6 +417,8 @@ class OperationDescriptor(TypedDict):
     #: holds ``T`` without help from generated code.
     page_item: NotRequired[Validator[Any]]
     summary: NotRequired[str | None]
+    #: The operation's event stream (``ClientCore.stream``); absent when it has none.
+    stream: NotRequired[StreamDescriptor]
 
 
 class ApiKeyScheme(TypedDict):
@@ -632,6 +672,26 @@ class Page[T]:
     next: Any
 
 
+@dataclass(frozen=True, slots=True)
+class StreamEvent[T]:
+    """One event of a stream."""
+
+    #: The event's ``data``, decoded from JSON (and validated).
+    value: T
+    #: The ``event`` field of the server-sent event, ``message`` when it has none.
+    event: str
+    #: The last event id the stream has set so far, or None.
+    id: str | None
+    #: The last ``retry`` value (milliseconds) the stream has set so far, or None.
+    retry: int | None
+    meta: ResponseMeta
+    ok: Literal[True] = True
+
+
+type StreamItem[T] = StreamEvent[T] | Err
+"""What iterating a stream yields: events, then the end of the stream or one
+final ``Err`` (an error before the stream starts is the only item)."""
+
 Predicate = dict[str, Any]
 
 
@@ -647,6 +707,8 @@ __all__ = [
     "BasicScheme",
     "BearerPart",
     "BearerScheme",
+    "BinaryContent",
+    "BinaryInput",
     "BodyDescriptor",
     "BodyEncoding",
     "CallOptions",
@@ -705,6 +767,10 @@ __all__ = [
     "RpcBinding",
     "Safety",
     "StatusMatch",
+    "StreamDescriptor",
+    "StreamEvent",
+    "StreamItem",
+    "SupportsRead",
     "Trace",
     "Valid",
     "Validator",

@@ -10,7 +10,7 @@ use serde::ser::{SerializeMap, Serializer};
 use serde::{Deserialize, Serialize};
 
 /// A field that may be absent, `null`, or a value (presence
-/// `OptionalNullable`, planning/03). Use it with
+/// `OptionalNullable`). Use it with
 /// `#[serde(default, skip_serializing_if = "Patch::is_undefined")]`.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub enum Patch<T> {
