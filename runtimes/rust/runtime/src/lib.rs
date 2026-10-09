@@ -104,6 +104,7 @@ pub mod internals {
     pub use crate::confirm::{
         CONFIRMATION_TTL_MS, TokenCheck, args_digest, check_token, issue_token, token_payload,
     };
+    pub use crate::envelope::{default_retryable, generic_remediation};
     pub use crate::expr::{
         describe_predicate, evaluate_dry, evaluate_expr, evaluate_predicate, resolve_ref,
     };

@@ -34,6 +34,20 @@ pub struct CliFlag {
     pub sensitive: bool,
 }
 
+/// One entry of a remediation table (`agent.yml` `errors.codes`, or the
+/// `remediation` of one operation), for `explain-error`.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct CliRemediation {
+    /// The API's error code (`replay_not_eligible`).
+    pub code: String,
+    /// Error category (`PRECONDITION_FAILED`), when the entry sets one.
+    pub category: Option<String>,
+    pub text: Option<String>,
+    /// `never`, `after_delay`, `same_key_only` or `after_remediation`.
+    pub retryable: Option<String>,
+    pub next_action: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct CliOp {
     /// Operation id (`public.webhooks.rotate`).
@@ -49,6 +63,11 @@ pub struct CliOp {
     pub paginated: bool,
     /// Compact JSON Schema of the operation (`<api> schema <resource> <op>`).
     pub schema: Value,
+    /// Operation-specific remediation by API error code, sorted by code
+    /// (`<api> explain-error`).
+    pub remediation: Vec<CliRemediation>,
+    /// The operation's remediation note, if any.
+    pub remediation_note: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -79,4 +98,7 @@ pub struct CliSpec {
     pub credential_env: Vec<(String, String)>,
     pub ops: Vec<CliOp>,
     pub macros: Vec<CliMacro>,
+    /// Remediation by API error code that applies to every operation, sorted
+    /// by code (`<api> explain-error`).
+    pub error_codes: Vec<CliRemediation>,
 }

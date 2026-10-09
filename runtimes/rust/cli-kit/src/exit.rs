@@ -17,12 +17,17 @@ pub(crate) const AUTH_MISSING: u8 = 7;
 /// malformed credential is 7; everything else is decided by what a retry
 /// could do.
 pub(crate) fn for_diagnostic(d: &Diagnostic) -> u8 {
-    match d.category {
+    for_parts(d.category, d.http_status.is_some(), d.retryable)
+}
+
+/// [`for_diagnostic`] from the three members that decide it.
+pub(crate) fn for_parts(category: Category, has_status: bool, retryable: Retryable) -> u8 {
+    match category {
         Category::OutcomeUnknown => OUTCOME_UNKNOWN,
         Category::ConfirmationRequired => CONFIRMATION_REQUIRED,
-        Category::ValidationFailed | Category::MalformedRequest if d.http_status.is_none() => USAGE,
-        Category::AuthFailed if d.http_status.is_none() => AUTH_MISSING,
-        _ if d.retryable != Retryable::Never => API_RETRYABLE,
+        Category::ValidationFailed | Category::MalformedRequest if !has_status => USAGE,
+        Category::AuthFailed if !has_status => AUTH_MISSING,
+        _ if retryable != Retryable::Never => API_RETRYABLE,
         _ => API_ERROR,
     }
 }
