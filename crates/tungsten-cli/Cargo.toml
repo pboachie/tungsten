@@ -1,0 +1,48 @@
+[package]
+name = "tungsten-cli"
+description = "The tungsten command-line interface."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lib]
+name = "tungsten_cli"
+path = "src/lib.rs"
+test = false
+doctest = false
+
+[[bin]]
+name = "tungsten"
+path = "src/main.rs"
+test = false
+doctest = false
+
+[features]
+# Exposes internals for the private test harness in tungsten-ops.
+testing = []
+
+[dependencies]
+tungsten-core.workspace = true
+tungsten-config.workspace = true
+tungsten-openapi.workspace = true
+tungsten-ir.workspace = true
+tungsten-build.workspace = true
+tungsten-agent.workspace = true
+tungsten-emit.workspace = true
+tungsten-emit-ts.workspace = true
+tungsten-emit-docs.workspace = true
+tungsten-emit-mcp.workspace = true
+tungsten-emit-py.workspace = true
+tungsten-emit-rs.workspace = true
+tungsten-mock.workspace = true
+tungsten-tokens.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+clap.workspace = true
+
+[lints]
+workspace = true

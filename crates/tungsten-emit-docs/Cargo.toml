@@ -1,0 +1,27 @@
+[package]
+name = "tungsten-emit-docs"
+description = "Machine-first documentation emitter: llms.txt, llms-full.txt, tools.json, READMEs."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lib]
+test = false
+doctest = false
+
+[features]
+# Exposes internals for the private test harness in tungsten-ops.
+testing = []
+
+[dependencies]
+tungsten-core.workspace = true
+tungsten-ir.workspace = true
+tungsten-emit.workspace = true
+tungsten-tokens.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

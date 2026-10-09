@@ -1,0 +1,21 @@
+# Code owners of pboachie/tungsten. GitHub requests their review on every pull
+# request. The main ruleset does not yet require a code owner approval (there
+# is a single maintainer, who cannot approve their own pull requests); it does
+# once a second maintainer is added here and in the ruleset.
+# The last matching pattern wins, so the specific entries come after the
+# catch-all.
+
+*                     @pboachie
+
+# Compiler crates (AGPL-3.0-only) and the workspace manifests.
+/crates/              @pboachie
+/Cargo.toml           @pboachie
+/Cargo.lock           @pboachie
+/deny.toml            @pboachie
+/rust-toolchain.toml  @pboachie
+
+# Runtimes linked into generated SDKs (Apache-2.0).
+/runtimes/            @pboachie
+
+# CI, repository guard, Dependabot and this file.
+/.github/             @pboachie
