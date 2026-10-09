@@ -683,7 +683,7 @@ dependencies = [
 
 [[package]]
 name = "tungsten-agent"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "indexmap",
  "schemars",
@@ -696,7 +696,7 @@ dependencies = [
 
 [[package]]
 name = "tungsten-build"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "indexmap",
  "petgraph",
@@ -711,7 +711,7 @@ dependencies = [
 
 [[package]]
 name = "tungsten-cli"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "clap",
  "schemars",
@@ -735,7 +735,7 @@ dependencies = [
 
 [[package]]
 name = "tungsten-config"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "indexmap",
  "schemars",
@@ -748,7 +748,7 @@ dependencies = [
 
 [[package]]
 name = "tungsten-core"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "blake3",
  "schemars",
@@ -758,7 +758,7 @@ dependencies = [
 
 [[package]]
 name = "tungsten-emit"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -768,7 +768,7 @@ dependencies = [
 
 [[package]]
 name = "tungsten-emit-docs"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "serde_json",
  "tungsten-core",
@@ -779,7 +779,7 @@ dependencies = [
 
 [[package]]
 name = "tungsten-emit-mcp"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -792,7 +792,7 @@ dependencies = [
 
 [[package]]
 name = "tungsten-emit-py"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "serde_json",
  "tungsten-core",
@@ -802,7 +802,7 @@ dependencies = [
 
 [[package]]
 name = "tungsten-emit-rs"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "serde_json",
  "tungsten-core",
@@ -812,7 +812,7 @@ dependencies = [
 
 [[package]]
 name = "tungsten-emit-ts"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "petgraph",
  "serde_json",
@@ -823,7 +823,7 @@ dependencies = [
 
 [[package]]
 name = "tungsten-ir"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "indexmap",
  "schemars",
@@ -835,7 +835,7 @@ dependencies = [
 
 [[package]]
 name = "tungsten-mock"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "bytes",
  "fancy-regex",
@@ -850,7 +850,7 @@ dependencies = [
 
 [[package]]
 name = "tungsten-openapi"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "petgraph",
  "serde_json",
@@ -860,7 +860,7 @@ dependencies = [
 
 [[package]]
 name = "tungsten-tokens"
-version = "0.0.1"
+version = "0.1.0"
 
 [[package]]
 name = "unicode-ident"
