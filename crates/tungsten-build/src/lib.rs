@@ -31,6 +31,7 @@ mod names;
 mod operations;
 mod pagination;
 mod params;
+mod prune;
 mod resources;
 mod responses;
 mod rpc;

@@ -579,6 +579,16 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
         "Give the operations distinct names with `naming.operations` in tungsten.yml.",
     ),
     e(
+        "TG0760",
+        "Some `components/schemas` entries are not reachable from any operation (typically the \
+         schemas only the operations excluded by an `include` predicate use), so they were not \
+         generated: no type, no validator, and none of the warnings their schemas would have \
+         raised. The note counts them and lists the first names. Operations that are only \
+         planned (`planned_from`) and the error envelope still keep the types they use.",
+        "Nothing to fix. To generate every schema anyway, set `types.prune_unreferenced: false` \
+         in tungsten.yml.",
+    ),
+    e(
         "TG0901",
         "A target's output directory differs from what `tungsten generate` would write now: \
          a generated file is missing or has other content, a file of the previous \

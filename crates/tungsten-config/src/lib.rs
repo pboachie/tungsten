@@ -321,12 +321,32 @@ pub struct LinkHeaderPagination {
     pub items: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TypesConfig {
     /// `Type.field` edges to box explicitly when a cycle has no named type.
     #[serde(default)]
     pub break_cycles: Vec<String>,
+    /// Drop the types no operation reaches (the schemas only operations
+    /// excluded by `include` use, or none): they are not generated and their
+    /// diagnostics are not reported; one note (TG0760) counts them. Set to
+    /// `false` to generate every schema of the documents. A document
+    /// without operations keeps all its types either way.
+    #[serde(default = "default_prune_unreferenced")]
+    pub prune_unreferenced: bool,
+}
+
+fn default_prune_unreferenced() -> bool {
+    true
+}
+
+impl Default for TypesConfig {
+    fn default() -> Self {
+        Self {
+            break_cycles: vec![],
+            prune_unreferenced: true,
+        }
+    }
 }
 
 impl TungstenConfig {
