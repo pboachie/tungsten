@@ -112,6 +112,10 @@ pub(crate) fn blocking_file(
     code.line(format!("pub struct {client} {{"));
     code.indent();
     code.line(format!("pub(crate) inner: {async_client},"));
+    if plan.ops.is_empty() && macros.is_empty() {
+        // An API without calls never runs anything on the runtime.
+        code.line("#[allow(dead_code)]");
+    }
     code.line("pub(crate) runtime: Runtime,");
     code.dedent();
     code.line("}");
