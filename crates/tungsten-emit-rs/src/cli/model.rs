@@ -282,13 +282,13 @@ fn op_flags(ir: &Ir, op: &Operation, diags: &mut Diagnostics) -> Built {
                 Diagnostic::info(
                     "TG0750",
                     format!(
-                        "the {} parameter `{}` of {id} is {}; its flag --{flag} takes JSON text",
+                        "the {} parameter `{}` of {id} is {}; its flag --{flag} takes JSON text or its members as --{flag}.NAME VALUE",
                         a.location.as_str(),
                         a.param.wire_name,
                         kinds::describe(ir, &a.param.ty)
                     ),
                 )
-                .with_help("Pass the value as inline JSON, @file.json or - for standard input."),
+                .with_help("Pass the value as inline JSON, @file.json or - for standard input, or member by member (--flag.NAME VALUE)."),
             );
             Kind::Json
         });

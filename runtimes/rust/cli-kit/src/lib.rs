@@ -14,7 +14,9 @@
 //! - one command per table entry, at the entry's `path` (`webhooks create`),
 //!   with the table's flags (kebab-case; strings, integers, numbers,
 //!   booleans, enums, repeatable arrays, JSON text or `@file`, `@file`
-//!   bytes) and `--body @file.json|-` when the operation takes its whole
+//!   bytes; an object, map or union argument also takes its members as
+//!   dotted flags, `--filter.status open`, which can be mixed with the JSON
+//!   text, and a list of JSON values repeats its flag) and `--body @file.json|-` when the operation takes its whole
 //!   body as one argument;
 //! - on operations that are not read-only: `--dry-run`, `--yes`,
 //!   `--i-understand`, `--idempotency-key` and `--verify`; on paginated
@@ -86,6 +88,7 @@ mod builtin;
 mod check;
 mod config;
 mod ctx;
+mod dotted;
 mod exec;
 mod exit;
 mod explain;

@@ -873,6 +873,71 @@ fn write_str_enum(
     w.line("}");
 }
 
+/// An enum whose values are of different JSON types: one untagged variant
+/// per type present (`Str`, `Int`, `Uint`, `Float`, `Bool`, `Null`) and a
+/// check that the value is one of the listed ones. (The builder turns an
+/// enum of several types into a union of constants; this is the type of the
+/// enums that stay enums but are not all strings or all integers: numbers
+/// with fractions, booleans, integers above `i64::MAX`.)
+fn write_mixed_enum(
+    w: &mut Writer,
+    cx: &Cx<'_, '_>,
+    nt: &NamedType,
+    name: &str,
+    values: &[EnumValue],
+) {
+    let has = |f: fn(&Value) -> bool| values.iter().any(|v| f(&v.value));
+    let mut kinds: Vec<(&str, Option<&str>, &str)> = vec![];
+    if has(Value::is_string) {
+        kinds.push(("Str", Some("String"), "A string value."));
+    }
+    if has(|v| v.is_i64()) {
+        kinds.push(("Int", Some("i64"), "An integer value."));
+    }
+    if has(|v| v.is_u64() && !v.is_i64()) {
+        kinds.push(("Uint", Some("u64"), "An integer above `i64::MAX`."));
+    }
+    if has(|v| v.is_f64()) {
+        kinds.push(("Float", Some("f64"), "A number that is not an integer."));
+    }
+    if has(Value::is_boolean) {
+        kinds.push(("Bool", Some("bool"), "A boolean value."));
+    }
+    if has(Value::is_null) {
+        kinds.push(("Null", None, "The value `null`."));
+    }
+    let list = Value::Array(values.iter().map(|v| v.value.clone()).collect());
+    let notes = paragraphs([
+        doc_text(nt.doc.as_ref()),
+        format!(
+            "An enum of values of different JSON types; the allowed values are {}.",
+            serde_json::to_string(&list).unwrap_or_default()
+        ),
+    ]);
+    doc(w, &notes);
+    w.line("#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]");
+    w.line("#[serde(untagged)]");
+    w.line(format!("pub enum {name} {{"));
+    w.indent();
+    for (variant, ty, note) in &kinds {
+        doc(w, note);
+        match ty {
+            Some(ty) => w.line(format!("{variant}({ty}),")),
+            None => w.line(format!("{variant},")),
+        };
+    }
+    w.dedent();
+    w.line("}");
+    let plan = cx.plan;
+    if plan.graph.needs_check.contains(&nt.id) {
+        let stmts = vec![
+            "let value = serde_json::to_value(v).unwrap_or_default();".to_string(),
+            format!("c.one_of(&value, {});", json_arg(&list)),
+        ];
+        write_check_fn(w, &plan.types[&nt.id].check_fn, name, &stmts);
+    }
+}
+
 fn write_int_enum(w: &mut Writer, nt: &NamedType, name: &str, values: &[EnumValue]) {
     let mut seen: BTreeSet<i64> = BTreeSet::new();
     let unique_values: Vec<(&EnumValue, i64)> = values
@@ -1181,9 +1246,14 @@ fn write_tagged_impls(w: &mut Writer, cx: &Cx<'_, '_>, name: &str, u: &Union, na
     w.line("}");
 }
 
-/// Whether the variant's record has a field for the discriminator.
+/// Whether the decoded variant keeps the discriminator member: a record
+/// without a field for it drops the member (a closed record would refuse
+/// it); any other type (a union, a map) is decoded from the whole value.
 fn tag_field(cx: &Cx<'_, '_>, ty: &TypeRef, property: &str) -> bool {
-    matches!(cx.plan.resolve(ty), Some(Shape::Record { fields, .. }) if fields.iter().any(|f| f.wire_name == property))
+    match cx.plan.resolve(ty) {
+        Some(Shape::Record { fields, .. }) => fields.iter().any(|f| f.wire_name == property),
+        _ => true,
+    }
 }
 
 fn write_literal_impls(w: &mut Writer, name: &str, u: &Union, names: &[String]) {
@@ -1263,6 +1333,7 @@ fn write_alias(w: &mut Writer, cx: &Cx<'_, '_>, nt: &NamedType, name: &str) {
     let plan = cx.plan;
     let mut notes = vec![doc_text(nt.doc.as_ref())];
     notes.extend(shape_notes(&nt.shape));
+    notes.extend(fallback_note(&nt.shape));
     let text = paragraphs(notes);
     let ty = alias_target(cx, nt);
     let newtype = plan.graph.newtypes.contains(&nt.id);
@@ -1296,6 +1367,24 @@ fn write_alias(w: &mut Writer, cx: &Cx<'_, '_>, nt: &NamedType, name: &str) {
     }
 }
 
+/// Why a named type is a `serde_json::Value` (see TG0741), for its docs.
+fn fallback_note(shape: &Shape) -> Option<String> {
+    Some(
+        match shape {
+            Shape::Intersection { .. } => {
+                "An `allOf` that could not be merged into one record: held as `serde_json::Value`, and every member is checked when a request or response is validated."
+            }
+            Shape::Never => "No value satisfies this schema; held as `serde_json::Value`.",
+            Shape::Enum { .. } => "An enum without values; held as `serde_json::Value`.",
+            Shape::Union(u) if u.variants.is_empty() => {
+                "A union without variants; held as `serde_json::Value`."
+            }
+            _ => return None,
+        }
+        .to_string(),
+    )
+}
+
 /// The Rust type an alias stands for, with `Box` where a newtype's
 /// by-value edge closes a cycle.
 fn alias_target(cx: &Cx<'_, '_>, nt: &NamedType) -> String {
@@ -1320,6 +1409,7 @@ fn write_named(w: &mut Writer, cx: &Cx<'_, '_>, nt: &NamedType) {
         }
         (Emit::StrEnum, Shape::Enum { values, .. }) => write_str_enum(w, cx, nt, name, values),
         (Emit::IntEnum, Shape::Enum { values, .. }) => write_int_enum(w, nt, name, values),
+        (Emit::MixedEnum, Shape::Enum { values, .. }) => write_mixed_enum(w, cx, nt, name, values),
         (Emit::Union(kind), Shape::Union(u)) => write_union(w, cx, nt, name, u, kind),
         _ => write_alias(w, cx, nt, name),
     }

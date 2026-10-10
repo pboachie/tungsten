@@ -352,6 +352,38 @@ pub struct ToolConfig {
     /// Exclude from agent surfaces (MCP, tool lists); SDKs keep it.
     #[serde(default)]
     pub hidden: Option<bool>,
+    /// Rules the real server enforces that its API description leaves out;
+    /// `tungsten mock` refuses a request that breaks one.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub server_rules: Vec<ServerRuleConfig>,
+}
+
+/// A rule of the server that is not in the API description. Exactly one of
+/// `reject_host_suffixes` and `max_ahead_minutes` names what is checked.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ServerRuleConfig {
+    /// The request member read: a dotted path into the JSON body
+    /// (`callback_url`, `options.expires_at_ms`), else a query parameter.
+    pub field: String,
+    /// The value is a URL whose host must not end with any of these
+    /// suffixes (`.test`, `.example`, `.invalid`, `.local`, `.localhost`).
+    #[serde(default)]
+    pub reject_host_suffixes: Option<Vec<String>>,
+    /// The value is an epoch time in milliseconds that must not be later
+    /// than this many minutes from now.
+    #[serde(default)]
+    #[schemars(range(min = 1))]
+    pub max_ahead_minutes: Option<u64>,
+    /// Status of the refusal. Default 400.
+    #[serde(default)]
+    pub status: Option<StatusCode>,
+    /// API error code of the refusal (the error envelope's code field).
+    #[serde(default)]
+    pub code: Option<String>,
+    /// Why the value is refused, for the mock's reason header.
+    #[serde(default)]
+    pub message: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]

@@ -579,13 +579,16 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
     ),
     e(
         "TG0741",
-        "A schema has no Rust type of its own: an enum whose values are not all strings or all \
-         integers, a union without variants, an `allOf` that could not be merged into one \
-         record, a schema no value satisfies, or an inline enum, union or record without a \
-         name. The Rust SDK types it `serde_json::Value` and checks its constraints (enum \
-         membership, `allOf` members) when the request or response is validated.",
+        "A schema has no Rust type of its own: a union without variants, an `allOf` that could \
+         not be merged into one record, a schema no value satisfies, or an inline enum, union \
+         or record without a name. The Rust SDK types it `serde_json::Value` (the generated \
+         type says so in its documentation) and checks its constraints (enum membership, \
+         `allOf` members) when the request or response is validated. Enums of booleans, of \
+         numbers with fractions and of integers above `i64` are not in this group: they are \
+         untagged enums with one variant per JSON type, and enums of several types are \
+         unions of constants.",
         "Move the schema to `components/schemas` (or name it with an overlay) so it gets a \
-         Rust type; make an enum's values all strings or all integers.",
+         Rust type; for an `allOf`, make the members compatible so that they merge.",
     ),
     e(
         "TG0742",
@@ -616,10 +619,13 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
     ),
     e(
         "TG0745",
-        "A union has a discriminator, but not every variant is a named record the tag can be \
-         read from. The Rust SDK cannot select a variant by its tag, so it tries the variants \
-         in order like an untagged union.",
-        "Give every variant a named object schema that carries the discriminator property.",
+        "A union has a discriminator, but a variant has no tag value: the mapping does not name \
+         it and it is not a component with a name or a constant to take the tag from. A union \
+         whose variants all have tags is decoded by the tag, whatever the variants are (records, \
+         other unions, maps), like the TypeScript and Python SDKs; this one cannot be, so the \
+         Rust SDK tries its variants in order like an untagged union.",
+        "Name every variant under the discriminator's `mapping`, or give every variant a \
+         component of its own.",
     ),
     e(
         "TG0746",
@@ -635,11 +641,14 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
         "TG0750",
         "An argument of an operation has no plain flag form in the generated CLI: a parameter \
          whose type is an object, a map, a union or a list of those, or a multipart body whose \
-         parts are files. The CLI takes it as JSON text (`--filter '{\"a\":1}'`, \
-         `--filter @filter.json` or `-` for standard input); a multipart file cannot be given \
+         parts are files. An object, map or union takes JSON text (`--filter '{\"a\":1}'`, \
+         `--filter @filter.json` or `-` for standard input) or its members one at a time \
+         (`--filter.a 1`, `--filter.created.after 5`; a value is typed by the operation's \
+         schema, and both forms can be mixed, the members applied on top of the JSON text). A \
+         list of those repeats the flag, one JSON value each. A multipart file cannot be given \
          from the command line at all.",
-        "Use the JSON form, or the SDK for multipart uploads. Nested fields of a request body are \
-         JSON-text flags by design and are not reported.",
+        "Use the JSON or dotted form, or the SDK for multipart uploads. Nested fields of a \
+         request body are JSON-text flags by design and are not reported.",
     ),
     e(
         "TG0751",

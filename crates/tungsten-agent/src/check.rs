@@ -157,6 +157,7 @@ fn tools(tools: &[ToolConfig], r: &mut Reporter<'_>) {
             seen.insert(&tool.operation, i);
         }
         report(r, &at, entry_problems(tool));
+        report(r, &at, server_rule_problems(&tool.server_rules));
         if let Some(cluster) = &tool.cluster
             && !is_machine_name(cluster)
         {
@@ -180,6 +181,48 @@ fn tools(tools: &[ToolConfig], r: &mut Reporter<'_>) {
             );
         }
     }
+}
+
+/// Problems of the `server_rules` of a tools entry.
+fn server_rule_problems(rules: &[ServerRuleConfig]) -> Vec<Problem> {
+    let mut out = vec![];
+    for (i, rule) in rules.iter().enumerate() {
+        let at = format!("/server_rules/{i}");
+        if rule.field.trim().is_empty() || rule.field.split('.').any(str::is_empty) {
+            out.push((
+                format!("{at}/field"),
+                "field must be a dotted path without empty parts".into(),
+            ));
+        }
+        match (&rule.reject_host_suffixes, rule.max_ahead_minutes) {
+            (Some(_), Some(_)) | (None, None) => out.push((
+                at.clone(),
+                "a rule names exactly one check: reject_host_suffixes or max_ahead_minutes".into(),
+            )),
+            (Some(suffixes), None) => {
+                if suffixes.is_empty() || suffixes.iter().any(|s| s.trim().is_empty()) {
+                    out.push((
+                        format!("{at}/reject_host_suffixes"),
+                        "reject_host_suffixes needs at least one non-empty suffix".into(),
+                    ));
+                }
+            }
+            (None, Some(0)) => out.push((
+                format!("{at}/max_ahead_minutes"),
+                "max_ahead_minutes must be at least 1".into(),
+            )),
+            (None, Some(_)) => {}
+        }
+        if let Some(status) = rule.status
+            && !(400..=599).contains(&status.0)
+        {
+            out.push((
+                format!("{at}/status"),
+                format!("{} is not an error status (400 to 599)", status.0),
+            ));
+        }
+    }
+    out
 }
 
 /// Problems of the parts of a tools entry that `x-agent-*` extensions share.

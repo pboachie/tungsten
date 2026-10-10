@@ -9,8 +9,8 @@ use tungsten_core::Severity;
 use tungsten_ir::{
     Confirmation, HttpMethod, IdempotencyKind, IdempotencyPolicy, Ir, Operation,
     OperationAgentMeta, OperationId, OperationStatus, ParamRole, PreviewMode as IrPreview,
-    Remediation, ResponseKind, Safety, StatusMatch, StringFormat, TypeId, TypeRef, TypeTable,
-    VerificationHook,
+    Remediation, ResponseKind, Safety, ServerCheck, ServerRule, StatusMatch, StringFormat, TypeId,
+    TypeRef, TypeTable, VerificationHook,
 };
 
 use crate::fields::{self, Lookup, Sensitive};
@@ -361,6 +361,11 @@ fn operation(
         }
     }
     meta.remediation_note = first(layers, |e| e.remediation_note.as_ref()).map(|(n, _)| n.clone());
+    meta.server_rules = layers
+        .iter()
+        .find(|l| !l.entry.server_rules.is_empty())
+        .map(|l| l.entry.server_rules.iter().map(server_rule).collect())
+        .unwrap_or_default();
     let mut response_fields = sensitive.response_fields(op);
     if let Some((resp, origin)) = first(layers, |e| e.response.as_ref()) {
         for (i, path) in resp.sensitive_fields.iter().enumerate() {
@@ -693,6 +698,27 @@ fn check_call_refs(
                 ),
             );
         }
+    }
+}
+
+fn server_rule(rule: &ServerRuleConfig) -> ServerRule {
+    let check = match (&rule.reject_host_suffixes, rule.max_ahead_minutes) {
+        (Some(suffixes), _) => ServerCheck::HostSuffixes {
+            suffixes: suffixes
+                .iter()
+                .map(|s| s.trim().to_ascii_lowercase())
+                .collect(),
+        },
+        (None, minutes) => ServerCheck::MaxAheadMinutes {
+            minutes: minutes.unwrap_or(1),
+        },
+    };
+    ServerRule {
+        field: rule.field.clone(),
+        check,
+        status: rule.status.map_or(400, |s| s.0),
+        code: rule.code.clone(),
+        message: rule.message.clone(),
     }
 }
 
