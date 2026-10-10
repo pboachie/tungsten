@@ -176,7 +176,7 @@ fn stream_property_type(info: &OpInfo<'_>, shape: &OpShape<'_>, event: &str) -> 
         info.args_type
     );
     vec![
-        format!("(({args}, opts?: CallOptions) => AsyncIterable<StreamItem<{event}>>) & {{"),
+        format!("(({args}, opts?: CallOptions) => EventStream<{event}>) & {{"),
         "  readonly streamOf: OperationDescriptor;".into(),
         "}".into(),
     ]
@@ -208,7 +208,7 @@ fn stream_doc(info: &OpInfo<'_>) -> String {
     let op = info.op;
     let spec = op.stream.as_ref();
     let mut parts = vec![format!(
-        "The events of `{}` (`{}`), as an async iterable of `StreamItem`s: one per server-sent event, then either the end of the stream or one final `{{ ok: false, error }}`. An error before the stream starts is the only item.",
+        "The events of `{}` (`{}`), as an async iterable of `StreamItem`s: one per server-sent event, then either the end of the stream or one final `{{ ok: false, error }}`. An error before the stream starts is the only item. A dropped stream of a call that is safe to repeat is reconnected with `Last-Event-ID`. The result also has `on`, `collect`, `reduce`, `first` and `cancel`.",
         op.id.0,
         method_str(op.method)
     )];
@@ -305,7 +305,7 @@ pub(crate) fn resource_file(
             }
             MemberKind::Stream(o) => {
                 has_ops = true;
-                for t in ["CallOptions", "OperationDescriptor", "StreamItem"] {
+                for t in ["CallOptions", "EventStream", "OperationDescriptor"] {
                     imports.add_type("@tungsten/runtime", t);
                 }
                 namespaces.extend(shapes[o].result_namespaces.iter().cloned());
@@ -564,7 +564,7 @@ pub(crate) fn index_file(plan: &Plan<'_>, has_macros: bool, header: &str) -> Str
     let streams = plan.ops.iter().any(|o| o.op.stream.is_some());
     w.line(format!(
         "export type {{ CallOptions, ClientOptions, Diagnostic, Page, PreviewResult, Result{} }} from \"@tungsten/runtime\";",
-        if streams { ", StreamItem" } else { "" }
+        if streams { ", EventStream, StreamItem" } else { "" }
     ));
     // With one namespace its models are exported directly; otherwise each
     // namespace's models are a namespace export (`publicModels.Error`).

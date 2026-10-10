@@ -14,6 +14,7 @@
  * union members), and only with both sides updated.
  */
 import type { TokenStore } from "./oauth.js";
+import type { EventStream } from "./streams.js";
 
 // ---------------------------------------------------------------- errors
 
@@ -68,6 +69,13 @@ export interface ResponseMeta {
   headers: Record<string, string>;
   requestId: string | null;
   attempts: number;
+}
+
+/** The meta of a stream item: the answer of the connection the event
+ * arrived on (the last one, after a reconnect) and how often the stream
+ * reconnected up to this event. */
+export interface StreamMeta extends ResponseMeta {
+  reconnects: number;
 }
 
 export interface Verification {
@@ -396,6 +404,23 @@ export interface ClientOptions {
    * lines of one event plus the line being read). A larger one ends the
    * stream with an `UNEXPECTED_RESPONSE` failure. Default 1048576 (1 MiB). */
   maxEventBytes?: number;
+  /** How often `stream()` reconnects a dropped stream (a lost connection, or
+   * a clean end before the `done` event the operation declares) with
+   * `Last-Event-ID` set to the last event id it delivered; events whose id
+   * was delivered are never delivered twice. Only for operations that are
+   * safe to repeat (read-only, or with replay protection) and only once
+   * an event id is known (or before the first event). 0 disables it.
+   * Default 3. */
+  maxReconnects?: number;
+  /** Longest wait before a reconnect, in milliseconds: the server's `retry`
+   * value (250 ms when it sent none) is capped at this and then reduced by
+   * up to 25 % at random. Default 30000. */
+  reconnectMaxMs?: number;
+  /** A stream that delivers no bytes (comments count) for this many
+   * milliseconds is idle: it is reconnected like a dropped one, else ends
+   * with a failure whose `code` is `STREAM_IDLE`. Default: the per-attempt
+   * `timeoutMs`, which ends the stream without a reconnect. */
+  idleTimeoutMs?: number;
   /** Overrides the key used to sign confirmation tokens. Default: random
    * per client instance. */
   confirmationKey?: Uint8Array;
@@ -582,7 +607,7 @@ export type StreamItem<T> =
       id: string | null;
       /** The last `retry` value (milliseconds) the stream has set so far, or null. */
       retry: number | null;
-      meta: ResponseMeta;
+      meta: StreamMeta;
     }
   | { ok: false; error: Diagnostic };
 
@@ -597,13 +622,17 @@ export interface ClientCoreApi {
   preview(op: OperationDescriptor, args: Record<string, unknown>, opts?: CallOptions): Promise<Result<PreviewResult>>;
   /** Iterate the events of an operation's event stream (`text/event-stream`).
    * Errors before the stream starts (validation, auth, an error status) are
-   * the only item, as for `call`, and are retried by the same rules. The
-   * stream is never retried once it has started: a connection lost or an
-   * idle timeout afterwards ends it with a final failure item
-   * (`TRANSPORT_FAILED`, `UPSTREAM_UNAVAILABLE` for a read; `OUTCOME_UNKNOWN`
-   * for a mutation), as does an event that is not JSON or (with
-   * `validateResponses: "strict"`) does not match the event type. */
-  stream<T>(op: OperationDescriptor, args: Record<string, unknown>, opts?: CallOptions): AsyncIterable<StreamItem<T>>;
+   * the only item, as for `call`, and are retried by the same rules. A
+   * started stream that drops is reconnected with `Last-Event-ID`
+   * (`ClientOptions.maxReconnects`) when the operation is safe to repeat;
+   * otherwise, or when the reconnects are used up, a connection lost or an
+   * idle timeout ends it with a final failure item (`TRANSPORT_FAILED`,
+   * `UPSTREAM_UNAVAILABLE` for a read; `OUTCOME_UNKNOWN` for a mutation;
+   * `code` `STREAM_IDLE` for `ClientOptions.idleTimeoutMs`), as does an event
+   * that is not JSON or (with `validateResponses: "strict"`) does not match
+   * the event type. The result is an async iterable with helpers
+   * (`on`, `collect`, `reduce`, `first`, `cancel`). */
+  stream<T>(op: OperationDescriptor, args: Record<string, unknown>, opts?: CallOptions): EventStream<T>;
   /** Iterate pages; stops after the last page or the first error result. */
   pages<T>(op: OperationDescriptor, args: Record<string, unknown>, opts?: CallOptions): AsyncIterable<Result<Page<T>>>;
   /** Call a read operation until `until` holds or the budget runs out. */

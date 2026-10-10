@@ -126,6 +126,7 @@ impl ClientCore {
                     body,
                     timeout,
                     stream,
+                    idle: self.inner.idle_timeout.filter(|_| stream),
                 },
             )
             .await;
@@ -169,6 +170,7 @@ impl ClientCore {
                         body,
                         timeout,
                         stream,
+                        idle: self.inner.idle_timeout.filter(|_| stream),
                     },
                 )
                 .await;
@@ -729,6 +731,7 @@ impl ClientCore {
                 body: &body,
                 timeout: self.inner.timeout.max(Duration::from_millis(1)),
                 stream: false,
+                idle: None,
             },
         )
         .await;

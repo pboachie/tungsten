@@ -81,6 +81,15 @@ class ResponseMeta:
 
 
 @dataclass(frozen=True, slots=True)
+class StreamMeta(ResponseMeta):
+    """The meta of a stream event: the answer of the connection the event
+    arrived on (the last one, after a reconnect) and how often the stream
+    reconnected up to this event."""
+
+    reconnects: int = 0
+
+
+@dataclass(frozen=True, slots=True)
 class Verification:
     checked: bool
     passed: bool
@@ -637,6 +646,23 @@ class ClientOptions:
     #: field lines of one event plus the line being read). A larger one ends
     #: the stream with an ``UNEXPECTED_RESPONSE`` failure. Default 1 MiB.
     max_event_bytes: int = 1_048_576
+    #: How often ``stream()`` reconnects a dropped stream (a lost connection,
+    #: or a clean end before the ``done`` event the operation declares) with
+    #: ``Last-Event-ID`` set to the last event id it delivered; events whose id
+    #: was delivered are never delivered twice. Only for operations that are
+    #: safe to repeat (read-only, or with replay protection) and only once an
+    #: event id is known (or before the first event). 0 disables it.
+    max_reconnects: int = 3
+    #: Longest wait before a reconnect, in milliseconds: the server's ``retry``
+    #: value (250 ms when it sent none) is capped at this and then reduced by
+    #: up to 25 % at random.
+    reconnect_max_ms: int = 30_000
+    #: A stream that delivers no bytes (comments count) for this many
+    #: milliseconds is idle: it is reconnected like a dropped one, else ends
+    #: with a failure whose ``code`` is ``STREAM_IDLE``. None: the per-attempt
+    #: ``timeout_ms``, which ends the stream without a reconnect. While the
+    #: response headers are awaited the idle timeout applies too.
+    idle_timeout_ms: int | None = None
 
 
 class CallOptions(TypedDict, total=False):
@@ -705,7 +731,7 @@ class StreamEvent[T]:
     id: str | None
     #: The last ``retry`` value (milliseconds) the stream has set so far, or None.
     retry: int | None
-    meta: ResponseMeta
+    meta: StreamMeta
     ok: Literal[True] = True
 
 
@@ -792,6 +818,7 @@ __all__ = [
     "StreamDescriptor",
     "StreamEvent",
     "StreamItem",
+    "StreamMeta",
     "SupportsRead",
     "Trace",
     "Valid",

@@ -103,7 +103,10 @@
 //!     when it is not a union), each as an optional `event:` line (the
 //!     variant's discriminator value), an `id:` line counting from 1 and a
 //!     `data:` line of JSON, then a `data:` line with the done sentinel, if
-//!     the operation declares one. Errors before the stream (auth,
+//!     the operation declares one. A request with `Last-Event-ID: <k>`
+//!     (a number) gets the events after the one with id `<k>` (the done
+//!     sentinel has no id and stays), so a client that resumes a dropped stream
+//!     receives the rest of it. Errors before the stream (auth,
 //!     validation, injections) are ordinary answers.
 //!
 //! Failures produced by the mock carry a short explanation in the
@@ -138,6 +141,14 @@
 //!   of the next one, then break the connection (the chunked body never
 //!   ends). Any other answer is sent unchanged. Recorded with the status
 //!   sent.
+//! - `drop-after=<n>[;retry=<ms>]`: process the request normally; if the
+//!   answer is an event stream, send its first `<n>` events and break the
+//!   connection (a stream of no more events is sent whole). With `retry`, the
+//!   stream starts with a `retry: <ms>` line. Any other answer is sent
+//!   unchanged.
+//! - `stall-after=<n>[;ms=<ms>][;retry=<ms>]`: the same, but after the `<n>`
+//!   events the connection stays open and silent for `<ms>` milliseconds
+//!   (default 30000) before it is dropped: a stream gone idle.
 //! - `reset`: close the connection before reading the body; recorded with an
 //!   empty body and `response_status` 0.
 //! - `status=<code>[;retry-after=<s>][;code=<error code>][;apply]`: answer

@@ -53,8 +53,10 @@ from ._effects import (
     Lost,
     NotSent,
     StreamEnded,
+    StreamFailed,
     Streaming,
     TimedOut,
+    close_stream,
     emit,
     observe,
     read_chunk,
@@ -175,6 +177,7 @@ from .types import (
     RetryOptions,
     Safety,
     StreamEvent,
+    StreamMeta,
     Valid,
     Verification,
 )
@@ -200,6 +203,12 @@ _DEFAULT_MACRO_BUDGET_MS: Final = 30_000
 _MACRO_PAGE_LIMIT: Final = 100
 #: Same-origin redirects followed for one read attempt.
 _MAX_REDIRECTS: Final = 5
+#: Reconnects of a dropped stream when ``ClientOptions.max_reconnects`` is unset.
+_DEFAULT_MAX_RECONNECTS: Final = 3
+#: The wait before a reconnect when the server sent no ``retry``, in milliseconds.
+_DEFAULT_RECONNECT_MS: Final = 250
+#: Longest wait before a reconnect when ``ClientOptions.reconnect_max_ms`` is unset.
+_DEFAULT_RECONNECT_MAX_MS: Final = 30_000
 _REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 _EMPTY_META = ResponseMeta(status=0, headers={}, request_id=None, attempts=0)
 _DOT_SEGMENT = re.compile(r"(?:\.|%2e){1,2}", re.IGNORECASE)
@@ -209,6 +218,28 @@ _ROOT_SEGMENT = re.compile(r"v[0-9]+(?:\.[0-9]+)*", re.IGNORECASE)
 
 #: Stands in for a verification reference that did not resolve; equal to nothing.
 _UNRESOLVED: Final = object()
+
+
+def _not_a_stream(op: OperationDescriptor, meta: ResponseMeta, after_effect: str) -> Err:
+    """The failure of a 2xx answer to a stream request that is not an event stream."""
+    content_type = meta.headers.get("content-type")
+    return _fail(
+        diagnostic(
+            op["id"],
+            "UNEXPECTED_RESPONSE",
+            http_status=meta.status,
+            request_id=meta.request_id,
+            failed_parameter="response",
+            received_value=envelope_value(content_type, False),
+            expected="a text/event-stream body",
+            remediation=(
+                "The success response is not an event stream (Content-Type "
+                f"{content_type if content_type is not None else 'missing'}).{after_effect}"
+            ),
+            retryable="never",
+            attempts=meta.attempts,
+        )
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -362,8 +393,10 @@ class Engine:
 
         yield from self._pages(op, args, self._call_options(opts), None, deliver)
 
-    def stream(self, op: OperationDescriptor, args: object, opts: object) -> Flow[None]:
-        yield from self._stream(op, args, self._call_options(opts))
+    def stream(
+        self, op: OperationDescriptor, args: object, opts: object, cancelled: Callable[[], bool] | None = None
+    ) -> Flow[None]:
+        yield from self._stream(op, args, self._call_options(opts), cancelled)
 
     def poll(
         self,
@@ -1236,7 +1269,13 @@ class Engine:
 
     # ----------------------------------------------------------- sending
 
-    def _send(self, prepared: Prepared, opts: Mapping[str, object], stream: bool = False) -> Flow[Answer]:
+    def _send(
+        self,
+        prepared: Prepared,
+        opts: Mapping[str, object],
+        stream: bool = False,
+        idle_ms: float | None = None,
+    ) -> Flow[Answer]:
         op = prepared.op
         retries = self._retry_options(op)
         mutation = is_mutation(op)
@@ -1259,7 +1298,9 @@ class Engine:
             # credential headers to another origin. A read follows same-origin
             # redirects here; a mutation follows none.
             outcome = yield from send(
-                AttemptRequest(prepared.url, prepared.method, headers, prepared.body, timeout_ms, stream)
+                AttemptRequest(
+                    prepared.url, prepared.method, headers, prepared.body, timeout_ms, stream, idle_ms
+                )
             )
             current_url, current_method, current_body = prepared.url, prepared.method, prepared.body
             hops = 0
@@ -1282,7 +1323,9 @@ class Engine:
                     k: v for k, v in headers.items() if not (rewrite and k.lower() == "content-type")
                 }
                 outcome = yield from send(
-                    AttemptRequest(current_url, current_method, hop_headers, current_body, timeout_ms, stream)
+                    AttemptRequest(
+                        current_url, current_method, hop_headers, current_body, timeout_ms, stream, idle_ms
+                    )
                 )
                 hops += 1
             call_ctx = CallContext(self.api, op, prepared.key, prepared.key_header, attempts, check)
@@ -1924,9 +1967,18 @@ class Engine:
         out["Accept"] = merge_accept(accept)
         return out
 
-    def _stream(self, op: OperationDescriptor, raw_args: object, opts: Mapping[str, object]) -> Flow[None]:
+    def _stream(
+        self,
+        op: OperationDescriptor,
+        raw_args: object,
+        opts: Mapping[str, object],
+        cancelled: Callable[[], bool] | None = None,
+    ) -> Flow[None]:
         """Emit the events of an event stream, then nothing or one final
-        failure; an error before the stream starts is the only item."""
+        failure; an error before the stream starts is the only item. A
+        stream that drops is reconnected with ``Last-Event-ID`` when the call
+        is safe to repeat (``ClientOptions.max_reconnects``); once
+        ``cancelled()`` says so, the stream just ends."""
         spec = field(op, "stream")
         if not is_record(spec):
             yield from emit(
@@ -1951,7 +2003,9 @@ class Engine:
         if isinstance(prepared, Err):
             yield from emit(_fail(prepared.error))
             return
-        answer = yield from self._send(prepared, stream_opts, True)
+        idle_setting = bounded(cast(object, self.options.idle_timeout_ms), 0, 0)
+        idle_ms = idle_setting if idle_setting > 0 else None
+        answer = yield from self._send(prepared, stream_opts, True, idle_ms)
         result = answer.result
         if isinstance(result, Err):
             yield from emit(_fail(result.error))
@@ -1961,26 +2015,7 @@ class Engine:
         after_effect = " The call took effect; do not repeat it." if mutation else ""
         opened = result.value
         if not isinstance(opened, Streaming):
-            content_type = meta.headers.get("content-type")
-            yield from emit(
-                _fail(
-                    diagnostic(
-                        op["id"],
-                        "UNEXPECTED_RESPONSE",
-                        http_status=meta.status,
-                        request_id=meta.request_id,
-                        failed_parameter="response",
-                        received_value=envelope_value(content_type, False),
-                        expected="a text/event-stream body",
-                        remediation=(
-                            "The success response is not an event stream (Content-Type "
-                            f"{content_type if content_type is not None else 'missing'}).{after_effect}"
-                        ),
-                        retryable="never",
-                        attempts=meta.attempts,
-                    )
-                )
-            )
+            yield from emit(_not_a_stream(op, meta, after_effect))
             return
         timeout_ms = self._timeout(stream_opts)
         configured_mode: object = self.options.validate_responses
@@ -1990,9 +2025,23 @@ class Engine:
         validate = _hook(field(spec, "event"), "validate")
         done = str_field(spec, "done")
         max_event_bytes = int(bounded(cast(object, self.options.max_event_bytes), DEFAULT_MAX_EVENT_BYTES, 1))
+        max_reconnects = int(
+            bounded(cast(object, self.options.max_reconnects), _DEFAULT_MAX_RECONNECTS, 0, 1000)
+        )
+        reconnect_cap_ms = bounded(cast(object, self.options.reconnect_max_ms), _DEFAULT_RECONNECT_MAX_MS, 0)
+        # Only a call that is safe to repeat is reconnected: a read, or a
+        # mutation whose repeat is a replay (the reconnect reuses the request,
+        # idempotency key included).
+        repeatable = max_reconnects > 0 and (not mutation or has_replay_protection(op, prepared.key))
         parser = SseParser(max_event_bytes)
         decoder = codecs.getincrementaldecoder("utf-8")("replace")
         count = 0
+        reconnects = 0
+        last_id: str | None = None
+        last_retry: int | None = None
+        # Ids delivered so far, to skip the replay of a server that ignores Last-Event-ID.
+        delivered: set[str] = set()
+        replaying = False
         secrets = prepared.secrets
         call_ctx = CallContext(
             self.api,
@@ -2007,26 +2056,41 @@ class Engine:
 
         def interrupted(kind: str) -> Err:
             after = f"after {count} {'event' if count == 1 else 'events'}"
-            if kind == "timeout":
-                cause = (
-                    f"No event arrived within {js_number(timeout_ms)} ms {after}; the stream was abandoned."
+            retried = (
+                f" ({reconnects} {'reconnect' if reconnects == 1 else 'reconnects'} made)"
+                if reconnects > 0
+                else ""
+            )
+            if kind in ("timeout", "idle"):
+                code = "STREAM_IDLE" if kind == "idle" else None
+                silence = (
+                    f"No bytes arrived within {js_number(idle_ms if idle_ms is not None else 0)} ms {after}{retried}"
+                    if kind == "idle"
+                    else f"No event arrived within {js_number(timeout_ms)} ms {after}"
                 )
+                cause = f"{silence}; the stream was abandoned."
                 error = (
-                    outcome_unknown(call_ctx, cause, http_status=meta.status, request_id=meta.request_id)
+                    outcome_unknown(
+                        call_ctx, cause, http_status=meta.status, code=code, request_id=meta.request_id
+                    )
                     if mutation
                     else diagnostic(
                         op["id"],
                         "UPSTREAM_UNAVAILABLE",
                         http_status=meta.status,
+                        code=code,
                         request_id=meta.request_id,
                         remediation=(
-                            f"{cause} This read has no side effects; call again later or with a larger timeout_ms."
+                            f"{cause} This read has no side effects; call again later or with a larger "
+                            f"{'idle_timeout_ms' if kind == 'idle' else 'timeout_ms'}."
                         ),
                         attempts=meta.attempts,
                     )
                 )
             else:
-                cause = f"The event stream was cut off {after}: the connection failed before it ended."
+                cause = (
+                    f"The event stream was cut off {after}{retried}: the connection failed before it ended."
+                )
                 error = (
                     outcome_unknown(call_ctx, cause, http_status=meta.status, request_id=meta.request_id)
                     if mutation
@@ -2041,11 +2105,17 @@ class Engine:
                 )
             return _fail(scrub_diagnostic(error, secrets))
 
-        def accept(event: SseEvent) -> Flow[StreamEvent[Any] | Err | None]:
-            """The item for an event, or None when it is the done sentinel."""
-            nonlocal count
+        def accept(event: SseEvent) -> Flow[StreamEvent[Any] | Err | str | None]:
+            """The item for an event; None when it is the done sentinel,
+            ``"skip"`` when it replays an event already delivered."""
+            nonlocal count, last_id, last_retry, replaying
             if done is not None and event.data == done:
                 return None
+            event_id = event.id if event.id is not None else last_id
+            if replaying:
+                if event.id is not None and event.id in delivered:
+                    return "skip"
+                replaying = False
             index = count
 
             def failure(**fields: Any) -> Err:
@@ -2107,7 +2177,18 @@ class Engine:
                         return problem
                     yield from self._emit(problem.error)
             count += 1
-            return StreamEvent(value=value, event=event.event, id=event.id, retry=event.retry, meta=meta)
+            if event.id is not None:
+                delivered.add(event.id)
+            last_id = event_id
+            if event.retry is not None:
+                last_retry = event.retry
+            return StreamEvent(
+                value=value,
+                event=event.event,
+                id=event_id,
+                retry=last_retry,
+                meta=StreamMeta(meta.status, meta.headers, meta.request_id, meta.attempts, reconnects),
+            )
 
         def oversize() -> Err:
             return _fail(
@@ -2133,32 +2214,75 @@ class Engine:
             )
 
         while True:
-            read = yield from read_chunk(opened.stream)
-            if isinstance(read, Chunk):
-                for event in parser.push(decoder.decode(read.data)):
+            # Read one connection; ``drop`` says why it ended without finishing the stream.
+            drop: str | None = None
+            while drop is None:
+                read = yield from read_chunk(opened.stream)
+                if isinstance(read, StreamFailed) and read.kind == "timeout" and idle_ms is None:
+                    yield from emit(interrupted("timeout"))
+                    return
+                events: list[SseEvent] = []
+                if isinstance(read, Chunk):
+                    events.extend(parser.push(decoder.decode(read.data)))
+                elif isinstance(read, StreamEnded):
+                    events.extend([*parser.push(decoder.decode(b"", final=True)), *parser.end()])
+                for event in events:
                     item = yield from accept(event)
                     if item is None:
                         return
+                    if item == "skip":
+                        continue
                     yield from emit(item)
                     if isinstance(item, Err):
                         return
                 if parser.exceeded:
                     yield from emit(oversize())
                     return
-                continue
-            if isinstance(read, StreamEnded):
-                for event in [*parser.push(decoder.decode(b"", final=True)), *parser.end()]:
-                    item = yield from accept(event)
-                    if item is None:
+                if isinstance(read, StreamEnded):
+                    # A stream that names its terminal event has not finished without it.
+                    if done is None:
                         return
-                    yield from emit(item)
-                    if isinstance(item, Err):
-                        return
-                if parser.exceeded:
-                    yield from emit(oversize())
+                    drop = "early_end"
+                elif isinstance(read, StreamFailed):
+                    drop = "idle" if read.kind == "timeout" else "lost"
+            if cancelled is not None and cancelled():
                 return
-            yield from emit(interrupted(read.kind))
-            return
+            resume_id = last_id
+            resumable = (
+                repeatable
+                and reconnects < max_reconnects
+                and (count == 0 or (resume_id is not None and valid_header_value(resume_id)))
+            )
+            if not resumable:
+                # Without reconnects a clean end stays a clean end; the failures are reported.
+                if drop == "early_end" and reconnects == 0:
+                    return
+                yield from emit(interrupted("idle" if drop == "idle" else "lost"))
+                return
+            yield from close_stream(opened.stream)
+            reconnects += 1
+            server_ms = last_retry if last_retry is not None else _DEFAULT_RECONNECT_MS
+            ceiling = min(reconnect_cap_ms, float(server_ms))
+            source = self.options.random
+            rnd = bounded(source(), 0.5, 0, 1) if callable(source) else random.random()
+            yield from sleep(ceiling - rnd * 0.25 * ceiling)
+            if cancelled is not None and cancelled():
+                return
+            if resume_id is not None:
+                prepared.headers.set("Last-Event-ID", resume_id)
+            again = yield from self._send(prepared, stream_opts, True, idle_ms)
+            again_result = again.result
+            if isinstance(again_result, Err):
+                yield from emit(_fail(again_result.error))
+                return
+            meta = again_result.meta
+            opened = again_result.value
+            if not isinstance(opened, Streaming):
+                yield from emit(_not_a_stream(op, meta, after_effect))
+                return
+            parser = SseParser(max_event_bytes)
+            decoder = codecs.getincrementaldecoder("utf-8")("replace")
+            replaying = True
 
     def _poll(
         self,

@@ -493,6 +493,7 @@ impl ClientCore {
                 body: &body,
                 timeout: self.inner.timeout.max(Duration::from_millis(1)),
                 stream: false,
+                idle: None,
             },
         )
         .await;

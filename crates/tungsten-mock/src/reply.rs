@@ -35,6 +35,9 @@ pub(crate) struct Reply {
     /// (the body then has no length, so the client sees a stream that
     /// breaks).
     pub cut_after: Option<usize>,
+    /// With `cut_after`: hold the connection open without sending anything
+    /// for this many milliseconds before dropping it (default: a moment).
+    pub hold_ms: Option<u64>,
 }
 
 /// The error that drops a connection in the middle of a body.
@@ -99,6 +102,7 @@ impl Reply {
             headers: vec![],
             body: vec![],
             cut_after: None,
+            hold_ms: None,
         }
     }
 
@@ -108,6 +112,7 @@ impl Reply {
             headers: vec![("content-type".into(), "text/plain; charset=utf-8".into())],
             body: text.as_bytes().to_vec(),
             cut_after: None,
+            hold_ms: None,
         }
     }
 
@@ -121,6 +126,7 @@ impl Reply {
             headers: vec![("content-type".into(), media_type.into())],
             body: serde_json::to_vec(value).unwrap_or_default(),
             cut_after: None,
+            hold_ms: None,
         }
     }
 
@@ -138,11 +144,20 @@ impl Reply {
         self
     }
 
+    /// With a cut: stay silent for `ms` milliseconds before the connection
+    /// is dropped (a stalled stream).
+    pub fn hold_for(mut self, ms: u64) -> Reply {
+        self.hold_ms = Some(ms);
+        self
+    }
+
     pub fn into_response(self) -> Response<ReplyBody> {
         let body = match self.cut_after {
             Some(n) => ReplyBody {
                 data: Some(Bytes::from(self.body[..n.min(self.body.len())].to_vec())),
-                cut: Some(Box::pin(tokio::time::sleep(CUT_DELAY))),
+                cut: Some(Box::pin(tokio::time::sleep(
+                    self.hold_ms.map_or(CUT_DELAY, Duration::from_millis),
+                ))),
             },
             None => ReplyBody {
                 data: Some(Bytes::from(self.body)),

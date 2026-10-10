@@ -269,7 +269,7 @@ pub(crate) fn resource_doc(r: &ResInfo<'_>) -> String {
 fn stream_doc(info: &OpInfo<'_>, names: &OpNames, fields: &[ArgField]) -> String {
     let op = info.op;
     let mut parts = vec![format!(
-        "The events of `{}` (`{}`): one `StreamEvent` per server-sent event, then either the end of the stream or one final `Err`. An error before the stream starts is the only item. Leaving the loop closes the connection.",
+        "The events of `{}` (`{}`): one `StreamEvent` per server-sent event, then either the end of the stream or one final `Err`. An error before the stream starts is the only item. Leaving the loop closes the connection. A dropped stream of a call that is safe to repeat is reconnected with `Last-Event-ID`. The result also has `on`, `collect`, `reduce`, `first` and `cancel`.",
         op.id.0,
         method_str(op.method)
     )];
@@ -341,14 +341,14 @@ fn write_method(
                 .stream
                 .as_ref()
                 .map_or_else(|| "Any".to_string(), |s| s.event.text());
-            let iter = if mode == Mode::Async {
-                "AsyncIterator"
+            let class = if mode == Mode::Async {
+                "AsyncEventStream"
             } else {
-                "Iterator"
+                "EventStream"
             };
             (
                 names.stream.clone().unwrap_or_default(),
-                format!("{iter}[StreamItem[{event}]]"),
+                format!("{class}[{event}]"),
                 "stream",
                 stream_doc(info, names, &shape.fields),
             )
@@ -416,9 +416,8 @@ pub(crate) fn resource_file(
                 }
             }
             MemberKind::Stream(o) => {
-                imports.add("collections.abc", "AsyncIterator");
-                imports.add("collections.abc", "Iterator");
-                imports.add("tungsten_runtime", "StreamItem");
+                imports.add("tungsten_runtime", "AsyncEventStream");
+                imports.add("tungsten_runtime", "EventStream");
                 uses.merge(&shapes[o].hint_uses);
                 uses.merge(&shapes[o].result_uses);
                 if !shapes[o].fields.is_empty() && shapes[o].fields.iter().any(|f| f.optional) {
