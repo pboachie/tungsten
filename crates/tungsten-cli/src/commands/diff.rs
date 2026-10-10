@@ -13,6 +13,7 @@
 //! would change anything; 1 when the project has errors, an emitter failed
 //! or a requested target is not configured.
 
+use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::path::Path;
 
@@ -29,7 +30,7 @@ use crate::output::{
 };
 use crate::stats::{headline, ir_stats, plural};
 use crate::textdiff::{Side, unified};
-use crate::{Report, exit, input, targets};
+use crate::{CliEnv, Report, exit, input, targets};
 
 /// Diff lines kept per file; the rest is counted in `truncated_lines`.
 pub(crate) const MAX_PATCH_LINES: usize = 200;
@@ -43,7 +44,7 @@ pub(crate) struct DiffOptions {
     pub semver: bool,
 }
 
-pub(crate) fn run(args: &DiffArgs) -> Report {
+pub(crate) fn run(args: &DiffArgs, env: &CliEnv) -> Report {
     let mut compiled = input::compile(&args.input.path);
     let mut report = Report::new(CommandName::Diff);
     report.diagnostics = compiled.diagnostics.0.clone();
@@ -56,7 +57,7 @@ pub(crate) fn run(args: &DiffArgs) -> Report {
         Ok(names) => names,
         Err(error) => return report.failed(exit::FAILED, error),
     };
-    let project = Project::of(&args.input.path);
+    let project = Project::of(&args.input.path, env);
     let opts = DiffOptions {
         patches: true,
         semver: args.semver,
@@ -171,7 +172,7 @@ pub(crate) fn target_diff(
         DiffStatus::Changed
     };
     if opts.semver {
-        diff.semver = Some(semver(name, ir, out_dir, out));
+        diff.semver = Some(semver(ir, &emitted.tools, out_dir, out));
     }
     diff
 }
@@ -210,11 +211,17 @@ fn file_diff(path: &str, change: FileChange, old: &[u8], new: &[u8], patches: bo
 }
 
 /// The surface change since the snapshot in `out_dir`.
-fn semver(target: &str, ir: &Ir, out_dir: &Path, out: &mut Vec<Diagnostic>) -> SemverReport {
+fn semver(
+    ir: &Ir,
+    tools: &BTreeMap<String, String>,
+    out_dir: &Path,
+    out: &mut Vec<Diagnostic>,
+) -> SemverReport {
     let shown = out_dir.join(surface::SURFACE_PATH).display().to_string();
     match ApiSurface::read(out_dir) {
         Ok(Some(previous)) => {
-            let changes = surface::compare(&previous, &crate::targets::surface(target, ir));
+            let changes =
+                surface::compare(&previous, &ApiSurface::of(ir).with_tools(tools.clone()));
             SemverReport {
                 snapshot: SnapshotState::Present,
                 level: Some(level(surface::classify(&changes))),

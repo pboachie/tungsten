@@ -1,0 +1,25 @@
+[package]
+name = "tungsten-emit-markdown"
+description = "Example external emitter for tungsten: one Markdown summary per resource."
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+license = "AGPL-3.0-only"
+publish = false
+
+# The tungsten workspace excludes examples/, so this package is built on its
+# own: `cargo build --manifest-path examples/external-emitter-markdown/Cargo.toml`.
+[workspace]
+
+[[bin]]
+name = "tungsten-emit-markdown"
+path = "src/main.rs"
+
+[dependencies]
+serde_json = "1"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }

@@ -674,6 +674,61 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
          in tungsten.yml.",
     ),
     e(
+        "TG0801",
+        "A target in tungsten.yml declares `external`, but its emitter could not be run: \
+         with `external: true` there is no executable `tungsten-emit-<name>` on PATH; with a \
+         command, its program does not exist, is not executable, or the operating system \
+         refused to start it. Nothing is generated for the target.",
+        "Install the emitter and put it on PATH, or point `external` at it (a path with a \
+         slash is relative to tungsten.yml, a bare name is looked up on PATH). `tungsten \
+         emitters` lists what tungsten finds.",
+    ),
+    e(
+        "TG0802",
+        "The external emitter answered with a protocol version other than 1, the only \
+         version this tungsten speaks. The response is not read.",
+        "Use an emitter release built for protocol 1, or a tungsten release that speaks the \
+         emitter's protocol. `tungsten emitters` shows the protocol each emitter reports.",
+    ),
+    e(
+        "TG0803",
+        "The external emitter ran but did not finish normally: it exited with a non-zero \
+         status or was killed by a signal (the end of its standard error is quoted), it did \
+         not finish within `timeout_ms` (default 60 s), or it wrote more than \
+         `max_output_bytes` (default 64 MiB) to standard output. Nothing is generated for \
+         the target.",
+        "Run the emitter by hand with a request on its standard input to see why it fails. \
+         Raise `timeout_ms` or `max_output_bytes` on the target if the limit is too tight \
+         for a large API.",
+    ),
+    e(
+        "TG0804",
+        "The external emitter's standard output is not a valid response of protocol 1: it is \
+         not JSON, a field has the wrong type, a file has both or neither of `content` and \
+         `content_base64`, a base64 value is malformed, a path is listed twice, or there are \
+         more than 10000 files. The same code reports \
+         a `--describe` document that is not valid. Nothing is generated for the target.",
+        "Check the emitter against the schema printed by `tungsten schema external-emitter` \
+         (validate the response against `#/$defs/EmitResponse`).",
+    ),
+    e(
+        "TG0805",
+        "The external emitter named a file path that is absolute, has a `..`, `.` or empty \
+         segment, a backslash, a NUL byte or a drive prefix, or starts with `.tungsten/`. \
+         Generated files are written only inside the target's `out` directory, so the \
+         whole response is refused and nothing is written.",
+        "Make the emitter return paths relative to the output directory with `/` separators. \
+         It never needs the absolute output path.",
+    ),
+    e(
+        "TG0806",
+        "A diagnostic reported by an external emitter, kept with its severity. The message \
+         reads `external emitter <name>: <code>: <text>`, where `<code>` is the emitter's \
+         own code. An error fails the target; under `--strict` a warning does too.",
+        "Fix the cause the emitter describes; `tungsten explain` knows only tungsten's own \
+         codes, so look the emitter's code up in the emitter's documentation.",
+    ),
+    e(
         "TG0901",
         "A target's output directory differs from what `tungsten generate` would write now: \
          a generated file is missing or has other content, a file of the previous \

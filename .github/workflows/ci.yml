@@ -47,6 +47,14 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - run: cargo build --locked
+      # The example external emitter is its own package (examples/ is excluded
+      # from the workspace); its end-to-end test runs in tungsten-ops.
+      - name: Example external emitter fmt, clippy, build
+        working-directory: examples/external-emitter-markdown
+        run: |
+          cargo fmt --check
+          cargo clippy --locked -- -D warnings
+          cargo build --locked
       # The Rust runtimes are their own workspace (runtimes/rust). No Cargo.lock
       # is committed for it yet, so these steps do not pass --locked.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
