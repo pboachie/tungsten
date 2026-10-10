@@ -31,7 +31,10 @@ Tree rules:
     anywhere else;
   - every .rs file outside runtimes/ starts with
     `// SPDX-License-Identifier: AGPL-3.0-only`, and every source file under
-    runtimes/ with `// SPDX-License-Identifier: Apache-2.0` (`#` for Python).
+    runtimes/ with `// SPDX-License-Identifier: Apache-2.0` (`#` for Python);
+  - Go sources (.go, no _test.go) and go.mod/go.sum only in the Go runtime
+    (runtimes/go/) and the external Go emitter (emitters/go/), every .go file
+    there with `// SPDX-License-Identifier: Apache-2.0`.
 Commit rules: no Co-Authored-By trailer naming an AI assistant or its vendor,
 no session-link trailers, no "generated with" footers naming an AI tool, and
 no author or committer identity of an AI assistant.
@@ -64,7 +67,7 @@ TEST_DIRS = {
     "fixtures", "golden", "goldens", "snapshots", "benches", "e2e",
 }
 TEST_FILE = re.compile(
-    r"(?:^test_.*\.(?:rs|py)$|_tests?\.(?:rs|py)$"
+    r"(?:^test_.*\.(?:rs|py)$|_tests?\.(?:rs|py)$|_test\.go$"
     r"|\.(?:test|spec)\.(?:[cm]?[jt]sx?)$|\.snap$)",
     re.IGNORECASE,
 )
@@ -98,6 +101,10 @@ AGPL_HEADER = "// SPDX-License-Identifier: AGPL-3.0-only"
 APACHE_HEADER = "// SPDX-License-Identifier: Apache-2.0"
 APACHE_HEADER_PY = "# SPDX-License-Identifier: Apache-2.0"
 RUNTIME_SOURCE = {".rs", ".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs", ".py"}
+# The Go modules: the runtime and the external emitter (tungsten-emit-go),
+# both Apache-2.0. Go sources, go.mod and go.sum live only there.
+GO_ROOTS = ("runtimes/go/", "emitters/go/")
+GO_MODULE_FILES = {"go.mod", "go.sum"}
 HEADER_LINES = 5  # the header may follow a shebang or a blank line
 
 
@@ -120,6 +127,8 @@ def path_violations(path: str) -> list[str]:
             " SECURITY.md, CODE_OF_CONDUCT.md and CHANGELOG.md at the root, Markdown in .github/ and"
             " .github/ISSUE_TEMPLATE/, examples/<name>/README.md; docs live in the private repository)"
         )
+    if (suffix == ".go" or name in GO_MODULE_FILES) and not path.startswith(GO_ROOTS):
+        found.append("Go source or module file outside runtimes/go/ and emitters/go/")
     if parts[0] == "assets" and len(parts) > 1 and suffix not in ASSET_EXTENSIONS:
         found.append("assets/ holds .svg and .png images only")
     return found
@@ -171,7 +180,10 @@ def content_violations(path: str, text: str, paths: set[str]) -> list[str]:
     if suffix == ".rs":
         for number in rust_test_lines(text):
             found.append(f"line {number}: Rust test attribute (tests live in the private repository)")
-    if in_runtimes and suffix in RUNTIME_SOURCE:
+    if suffix == ".go" and path.startswith(GO_ROOTS):
+        if not has_header(text, APACHE_HEADER):
+            found.append(f"Go source without the licence header '{APACHE_HEADER}'")
+    elif in_runtimes and suffix in RUNTIME_SOURCE:
         headers = (APACHE_HEADER_PY,) if suffix == ".py" else (APACHE_HEADER,)
         if not has_header(text, *headers):
             found.append(f"runtime source without the licence header '{headers[0]}'")
