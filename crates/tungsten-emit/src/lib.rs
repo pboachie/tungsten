@@ -11,7 +11,8 @@
 //! agents. [`surface`] snapshots the API surface (`.tungsten/surface.json`)
 //! and classifies changes between snapshots. [`external`] runs emitters
 //! that are separate executables and speak the JSON protocol documented
-//! there.
+//! there. [`sdk`] is the language-neutral SDK plan, naming and descriptor
+//! document the further SDK languages are built on.
 //!
 //! Stability: the public signatures in this crate are shared by every
 //! emitter. Changes are additive.
@@ -23,6 +24,7 @@ mod fileset;
 mod imports;
 mod output;
 pub mod schema;
+pub mod sdk;
 pub mod surface;
 mod writer;
 
