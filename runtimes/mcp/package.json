@@ -26,7 +26,9 @@
     "@tungsten/runtime": "^0.1.0"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "1.32.1"
+    "@jitl/quickjs-wasmfile-release-sync": "0.32.0",
+    "@modelcontextprotocol/sdk": "1.32.1",
+    "quickjs-emscripten-core": "0.32.0"
   },
   "devDependencies": {
     "@tungsten/runtime": "file:../ts",

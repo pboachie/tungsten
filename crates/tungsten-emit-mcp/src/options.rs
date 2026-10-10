@@ -9,7 +9,7 @@
 //! | `sdk_path` | depend on the SDK by path (`file:<path>`) instead of a range | |
 //! | `runtime` | `@tungsten/mcp` version range | `^0.1.0` |
 //! | `runtime_path` | depend on `@tungsten/mcp` by path | |
-//! | `sandbox` | enable the opt-in `run_script` sandbox | `false` |
+//! | `sandbox` | enable the opt-in `run_script` sandbox (engine `auto`: deno when installed, else the WASM isolate; set `sandbox.engine` in `customize`) | `false` |
 //!
 //! The command line passes the sibling `typescript` target's options as the
 //! reserved option `typescript_target` (`{package, version}`); it is not a
