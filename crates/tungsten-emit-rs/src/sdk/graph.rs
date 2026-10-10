@@ -403,6 +403,8 @@ fn type_needs_check(plan: &Plan<'_>, kind: Emit, shape: &Shape, set: &BTreeSet<T
     match kind {
         // A closed enum of strings or integers is checked by its type.
         Emit::StrEnum | Emit::IntEnum => false,
+        // Membership of the values is a check; the variants only name types.
+        Emit::MixedEnum => true,
         Emit::Union(UnionKind::Literal | UnionKind::Untagged | UnionKind::Tagged) => {
             shape_needs_check(plan, shape, set)
         }
