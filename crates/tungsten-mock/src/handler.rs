@@ -69,6 +69,20 @@ pub(crate) enum Injection {
     /// Process the request normally, then break an event stream answer
     /// in the middle of its second event.
     DropMidStream,
+    /// Process the request normally, then send the first `events` events of
+    /// an event stream answer and break the connection (`drop-after=<n>`).
+    /// `retry` adds a `retry:` line to the stream.
+    DropAfterEvents {
+        events: usize,
+        retry: Option<u64>,
+    },
+    /// The same, but the connection stays open and silent for `hold_ms`
+    /// milliseconds instead of breaking (`stall-after=<n>`).
+    StallAfterEvents {
+        events: usize,
+        hold_ms: u64,
+        retry: Option<u64>,
+    },
     Reset,
     Status {
         status: u16,
@@ -93,6 +107,21 @@ impl Injection {
         }
         if let Some(ms) = value.strip_prefix("timeout=") {
             return ms.trim().parse().map(Injection::Timeout).map_err(|_| bad());
+        }
+        if let Some(rest) = value.strip_prefix("drop-after=") {
+            let (events, hold, retry) = stream_cut(rest).ok_or_else(bad)?;
+            return match hold {
+                None => Ok(Injection::DropAfterEvents { events, retry }),
+                Some(_) => Err(bad()),
+            };
+        }
+        if let Some(rest) = value.strip_prefix("stall-after=") {
+            let (events, hold, retry) = stream_cut(rest).ok_or_else(bad)?;
+            return Ok(Injection::StallAfterEvents {
+                events,
+                hold_ms: hold.unwrap_or(DEFAULT_TIMEOUT_MS),
+                retry,
+            });
         }
         let Some(rest) = value.strip_prefix("status=") else {
             return Err(bad());
@@ -124,6 +153,22 @@ impl Injection {
             apply,
         })
     }
+}
+
+/// The parameters of `drop-after` and `stall-after`: the number of events,
+/// then `;ms=<hold>` (stall only) and `;retry=<ms>` in any order.
+fn stream_cut(rest: &str) -> Option<(usize, Option<u64>, Option<u64>)> {
+    let mut parts = rest.split(';').map(str::trim);
+    let events = parts.next()?.parse().ok()?;
+    let (mut hold, mut retry) = (None, None);
+    for part in parts {
+        match part.split_once('=')? {
+            ("ms", v) => hold = Some(v.parse().ok()?),
+            ("retry", v) => retry = Some(v.parse().ok()?),
+            _ => return None,
+        }
+    }
+    Some((events, hold, retry))
 }
 
 /// What happens after the reply is computed and the call recorded.
@@ -255,20 +300,37 @@ pub(crate) async fn handle(state: Arc<State>, req: Request<Incoming>) -> Outcome
             }
             (reply, After::Send)
         }
-        Some(Ok(Injection::Timeout(ms))) => (process(&state, &routed, &request), After::Hold(ms)),
+        Some(Ok(Injection::Timeout(ms))) => (resumed(&state, &routed, &request), After::Hold(ms)),
         Some(Ok(Injection::DropMidStream)) => {
-            (cut_stream(process(&state, &routed, &request)), After::Send)
+            (cut_stream(resumed(&state, &routed, &request)), After::Send)
         }
+        Some(Ok(Injection::DropAfterEvents { events, retry })) => (
+            cut_events(resumed(&state, &routed, &request), events, retry, None),
+            After::Send,
+        ),
+        Some(Ok(Injection::StallAfterEvents {
+            events,
+            hold_ms,
+            retry,
+        })) => (
+            cut_events(
+                resumed(&state, &routed, &request),
+                events,
+                retry,
+                Some(hold_ms),
+            ),
+            After::Send,
+        ),
         // A reset never gets here: it closed the connection before the body.
         Some(Ok(Injection::DropAfterWrite | Injection::Reset)) => {
-            (process(&state, &routed, &request), After::Drop)
+            (resumed(&state, &routed, &request), After::Drop)
         }
         None => match (answer, &routed) {
             (Some(answer), Routed::Op { index, .. }) => {
                 call.injected = Some("program".into());
                 (programmed(model, &model.ops[*index], &answer), After::Send)
             }
-            _ => (process(&state, &routed, &request), After::Send),
+            _ => (resumed(&state, &routed, &request), After::Send),
         },
     };
     call.body = body;
@@ -661,7 +723,91 @@ fn event_stream(model: &Model, entry: &OpEntry, code: u16, stream: &StreamSpec) 
         ],
         body: text.into_bytes(),
         cut_after: None,
+        hold_ms: None,
     }
+}
+
+/// Whether a reply is an event stream.
+fn is_event_stream(reply: &Reply) -> bool {
+    reply.headers.iter().any(|(n, v)| {
+        n == "content-type" && v.to_ascii_lowercase().starts_with("text/event-stream")
+    })
+}
+
+/// Whether an event block (the text up to and including its blank line)
+/// carries data, so a client would dispatch it.
+fn has_data(block: &str) -> bool {
+    block.lines().any(|line| line.starts_with("data:"))
+}
+
+/// The answer of `process`, a generated event stream continued after the
+/// event that `Last-Event-ID` names (events are numbered from 1; the done
+/// sentinel has no id and stays).
+fn resumed(state: &State, routed: &Routed, request: &Exchange<'_>) -> Reply {
+    let mut reply = process(state, routed, request);
+    let Some(last) = request
+        .view
+        .header("last-event-id")
+        .and_then(|v| v.trim().parse::<u64>().ok())
+    else {
+        return reply;
+    };
+    if !is_event_stream(&reply) {
+        return reply;
+    }
+    let text = String::from_utf8_lossy(&reply.body).into_owned();
+    let kept: String = text
+        .split_inclusive("\n\n")
+        .filter(|block| {
+            block
+                .lines()
+                .find_map(|line| line.strip_prefix("id:"))
+                .and_then(|id| id.trim().parse::<u64>().ok())
+                .is_none_or(|id| id > last)
+        })
+        .collect();
+    reply.body = kept.into_bytes();
+    reply
+}
+
+/// An event stream answer that sends its first `events` events (a `retry:`
+/// line first when given) and then breaks the connection, or with `hold_ms`
+/// goes silent for that long before it does. A stream of no more events is
+/// sent whole; any other answer unchanged.
+fn cut_events(reply: Reply, events: usize, retry: Option<u64>, hold_ms: Option<u64>) -> Reply {
+    if !is_event_stream(&reply) {
+        return reply;
+    }
+    let mut text = retry.map_or_else(String::new, |ms| format!("retry: {ms}\n\n"));
+    let prefix = text.len();
+    text.push_str(&String::from_utf8_lossy(&reply.body));
+    let mut cut = prefix;
+    let (mut seen, mut offset) = (0, prefix);
+    let mut whole = true;
+    for block in text[prefix..].split_inclusive("\n\n") {
+        if has_data(block) {
+            if seen == events {
+                whole = false;
+                break;
+            }
+            seen += 1;
+        }
+        offset += block.len();
+        if seen <= events {
+            cut = offset;
+        }
+    }
+    let mut reply = Reply {
+        body: text.into_bytes(),
+        ..reply
+    };
+    if !whole {
+        reply = reply.cut_after(cut);
+        if let Some(ms) = hold_ms {
+            reply = reply.hold_for(ms);
+        }
+    }
+    reply
 }
 
 /// An event stream answer broken in the middle of its second event (of its
@@ -722,6 +868,7 @@ fn success(model: &Model, entry: &OpEntry, status: Option<u16>, stream: bool) ->
                     headers: vec![("content-type".into(), content.media_type.clone())],
                     body: text.into_bytes(),
                     cut_after: None,
+                    hold_ms: None,
                 }
             }
             BodyEncoding::Jsonl => {
@@ -737,6 +884,7 @@ fn success(model: &Model, entry: &OpEntry, status: Option<u16>, stream: bool) ->
                     headers: vec![("content-type".into(), content.media_type.clone())],
                     body: format!("{}\n", lines.join("\n")).into_bytes(),
                     cut_after: None,
+                    hold_ms: None,
                 }
             }
             BodyEncoding::Bytes | BodyEncoding::Form | BodyEncoding::Multipart => {
