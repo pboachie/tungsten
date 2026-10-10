@@ -3,12 +3,15 @@
 //! write (or, with `--check`, compare) its output directory. Also runs the
 //! emitters in memory for `check --ci`.
 
+use std::collections::BTreeMap;
+use std::ffi::OsString;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use tungsten_build::Compiled;
 use tungsten_core::{Diagnostic, Diagnostics, Severity};
+use tungsten_emit::external;
 use tungsten_emit::{FileSet, TargetConfig, WriteOptions, stale_files, write_output};
 use tungsten_ir::Ir;
 
@@ -19,7 +22,7 @@ use crate::output::{
     CliError, CommandName, CommandResult, ErrorKind, GenerateResult, TargetReport, TargetStatus,
 };
 use crate::stats::{headline, ir_stats, plural};
-use crate::{Report, exit, targets};
+use crate::{CliEnv, Report, exit, targets};
 
 /// What to do with each target's file set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,10 +36,23 @@ pub(crate) enum Mode {
 pub(crate) struct Project {
     pub base_dir: PathBuf,
     pub manifest: String,
+    /// Where external emitters are looked up: the environment's search
+    /// path, by default the process `PATH`.
+    pub search_path: OsString,
 }
 
 impl Project {
-    pub fn of(path: &Path) -> Project {
+    /// The manifest's directory as a working directory for a child process
+    /// (`.` when the manifest is named without a directory).
+    pub fn working_dir(&self) -> PathBuf {
+        if self.base_dir.as_os_str().is_empty() {
+            PathBuf::from(".")
+        } else {
+            self.base_dir.clone()
+        }
+    }
+
+    pub fn of(path: &Path, env: &CliEnv) -> Project {
         let (file, default) = match input::resolve(path) {
             Ok(Input::Project(manifest)) => (manifest, None),
             Ok(Input::Spec(spec)) => (spec, Some(tungsten_build::DEFAULT_MANIFEST_NAME)),
@@ -55,6 +71,11 @@ impl Project {
         Project {
             base_dir: file.parent().map(Path::to_path_buf).unwrap_or_default(),
             manifest,
+            search_path: env
+                .search_path
+                .clone()
+                .or_else(|| std::env::var_os("PATH"))
+                .unwrap_or_default(),
         }
     }
 }
@@ -79,6 +100,9 @@ pub(crate) struct Emitted {
     pub files: Option<FileSet>,
     /// `supports` and `emit` diagnostics.
     pub diagnostics: Diagnostics,
+    /// The agent tools the target serves (tool name to operation id or
+    /// macro name), recorded in its API surface snapshot.
+    pub tools: BTreeMap<String, String>,
 }
 
 impl Emitted {
@@ -88,23 +112,90 @@ impl Emitted {
     }
 }
 
-/// Run the emitter of target `name` over `ir` without touching the disk.
+/// Run the emitter of target `name` over `ir` without touching the disk:
+/// the built-in one, or the external emitter its `tungsten.yml` entry
+/// declares.
 pub(crate) fn emit_target(compiled: &Compiled, ir: &Ir, project: &Project, name: &str) -> Emitted {
     let cfg = targets::target_config(compiled.config.as_ref(), name, &project.base_dir);
     let Some(emitter) = targets::emitter(name) else {
-        return Emitted {
-            cfg,
-            files: None,
-            diagnostics: Diagnostics::new(),
+        return match tungsten_config::external_target(&cfg.options) {
+            Ok(Some(external)) => emit_external(ir, project, cfg, &external),
+            _ => Emitted {
+                cfg,
+                files: None,
+                diagnostics: Diagnostics::new(),
+                tools: BTreeMap::new(),
+            },
         };
     };
     let mut files = FileSet::new();
     let mut diagnostics = emitter.supports(ir);
     diagnostics.extend(emitter.emit(ir, &cfg, &mut files));
     Emitted {
+        tools: targets::tool_names(name, ir),
         cfg,
         files: Some(files),
         diagnostics,
+    }
+}
+
+/// Run an external emitter (protocol: `tungsten_emit::external`). Its
+/// diagnostics that name no location point at the target in the manifest.
+fn emit_external(
+    ir: &Ir,
+    project: &Project,
+    cfg: TargetConfig,
+    external: &tungsten_config::ExternalTarget,
+) -> Emitted {
+    let name = cfg.name.clone();
+    let mut limits = external::Limits::default();
+    if let Some(ms) = external.timeout_ms {
+        limits.timeout = std::time::Duration::from_millis(ms);
+    }
+    if let Some(bytes) = external.max_output_bytes {
+        limits.max_output_bytes = usize::try_from(bytes).unwrap_or(usize::MAX);
+    }
+    let options: serde_json::Map<String, serde_json::Value> = cfg
+        .options
+        .as_object()
+        .map(|o| {
+            o.iter()
+                .filter(|(k, _)| !tungsten_config::EXTERNAL_RESERVED_KEYS.contains(&k.as_str()))
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut out = external::Emitted::default();
+    match external::locate(
+        &name,
+        external.command.as_deref(),
+        &project.base_dir,
+        &project.search_path,
+    ) {
+        Ok(command) => {
+            out = external::run(
+                &name,
+                &command,
+                serde_json::Value::Object(options),
+                ir,
+                &project.working_dir(),
+                limits,
+            );
+        }
+        Err(d) => out.diagnostics.push(d),
+    }
+    for d in &mut out.diagnostics.0 {
+        if d.labels.is_empty() {
+            *d = d
+                .clone()
+                .at(project.manifest.clone(), format!("/targets/{name}"), None);
+        }
+    }
+    Emitted {
+        cfg,
+        files: Some(out.files),
+        diagnostics: out.diagnostics,
+        tools: out.tools,
     }
 }
 
@@ -148,6 +239,7 @@ pub(crate) fn run_targets(
             cfg,
             files,
             diagnostics,
+            tools,
         } = e;
         let mut report = TargetReport {
             target: name.clone(),
@@ -199,7 +291,7 @@ pub(crate) fn run_targets(
                     force,
                     generator: Some(ir.generator.clone()),
                     ir: shared.clone(),
-                    tools: targets::tool_names(name, ir),
+                    tools,
                 };
                 match write_output(&files, &cfg.out_dir, &opts) {
                     Ok(w) => {
@@ -253,7 +345,7 @@ pub(crate) fn exit_code(diagnostics: &[Diagnostic], outcome: &Outcome) -> i32 {
     }
 }
 
-pub(crate) fn run(args: &GenerateArgs) -> Report {
+pub(crate) fn run(args: &GenerateArgs, env: &CliEnv) -> Report {
     let mut compiled = input::compile(&args.input.path);
     let mut report = Report::new(CommandName::Generate);
     report.diagnostics = compiled.diagnostics.0.clone();
@@ -282,7 +374,7 @@ pub(crate) fn run(args: &GenerateArgs) -> Report {
             force: args.force,
         }
     };
-    let project = Project::of(&args.input.path);
+    let project = Project::of(&args.input.path, env);
     let outcome = run_targets(&compiled, ir, &project, &names, mode, args.strict);
     report
         .diagnostics

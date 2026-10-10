@@ -247,7 +247,7 @@ function runScriptTool(): McpTool {
   return {
     name: "run_script",
     description:
-      "Run TypeScript in an isolated Deno sandbox (network only to the API host, no files or environment). The code is the body of an async function receiving `client`: `await client.invoke(name, args)`, `await client.preview(name, args)` or `await client.<tool_name>(args)`, each returning {ok, value} or {ok: false, error}. Return a JSON value.",
+      "Run TypeScript in an isolated sandbox (no files or environment; the API is reached only through `client`). The code is the body of an async function receiving `client`: `await client.invoke(name, args)`, `await client.preview(name, args)` or `await client.<tool_name>(args)`, each returning {ok, value} or {ok: false, error}. Return a JSON value.",
     inputSchema: { type: "object", properties: { code: { type: "string", minLength: 1, maxLength: 100000 } }, required: ["code"], ...CLOSED },
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
   };

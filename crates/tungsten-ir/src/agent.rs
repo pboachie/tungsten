@@ -142,7 +142,45 @@ ir_struct! {
         pub cluster: Option<String>,
         #[serde(default)]
         pub hidden: bool,
+        /// Rules the real server enforces but the API description does not
+        /// state; `tungsten mock` enforces them too.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        pub server_rules: Vec<ServerRule>,
     }
+}
+
+ir_struct! {
+    /// A rule of the server that the OpenAPI document leaves out, declared
+    /// in `agent.yml` (`tools[].server_rules`) so that the mock answers a
+    /// request that breaks it the way the server does.
+    pub struct ServerRule {
+        /// The request member the rule reads: a dotted path into the JSON
+        /// body, else the name of a query parameter.
+        pub field: String,
+        pub check: ServerCheck,
+        /// The status of the refusal.
+        pub status: u16,
+        /// The API error code of the refusal (an entry of the error
+        /// envelope's code field), when the API has one.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub code: Option<String>,
+        /// Why the value is refused (the mock's reason header and log).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub message: Option<String>,
+    }
+}
+
+/// What a [`ServerRule`] checks.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ServerCheck {
+    /// The value is a URL whose host must not end with any of the suffixes
+    /// (`.test`, `.example`: names reserved for documentation and local
+    /// use). A suffix also matches the bare name (`test` for `.test`).
+    HostSuffixes { suffixes: Vec<String> },
+    /// The value is an epoch time in milliseconds that must not be later
+    /// than this many minutes from now.
+    MaxAheadMinutes { minutes: u64 },
 }
 
 impl Default for OperationAgentMeta {
@@ -160,6 +198,7 @@ impl Default for OperationAgentMeta {
             compact_doc: String::new(),
             cluster: None,
             hidden: false,
+            server_rules: vec![],
         }
     }
 }

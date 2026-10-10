@@ -18,6 +18,67 @@ pub const MANIFEST_VERSION: u32 = 1;
 /// Target names accepted under `targets`.
 pub const KNOWN_TARGETS: &[&str] = &["docs", "mcp", "mock", "python", "rust", "typescript"];
 
+/// Option keys of an external target that belong to tungsten; every other
+/// key of the target is passed to the emitter as its options.
+pub const EXTERNAL_RESERVED_KEYS: &[&str] = &["out", "external", "timeout_ms", "max_output_bytes"];
+
+/// Longest `timeout_ms` accepted for an external emitter (one hour).
+pub const MAX_EXTERNAL_TIMEOUT_MS: u64 = 3_600_000;
+
+/// How an external emitter is run, from the `external` key of a target and
+/// its two limits.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExternalTarget {
+    /// The command line (`./emit.sh`, `node emit.js --flag`); `None` is
+    /// `external: true`: find `tungsten-emit-<name>` on `PATH`.
+    pub command: Option<String>,
+    /// `timeout_ms`, when set.
+    pub timeout_ms: Option<u64>,
+    /// `max_output_bytes`, when set.
+    pub max_output_bytes: Option<u64>,
+}
+
+/// The external emitter settings of a target's options. `Ok(None)` when the
+/// target has no `external` key; `Err` names the first malformed value.
+pub fn external_target(options: &serde_json::Value) -> Result<Option<ExternalTarget>, String> {
+    use serde_json::Value;
+    let Some(external) = options.get("external") else {
+        return Ok(None);
+    };
+    let command = match external {
+        Value::Bool(true) => None,
+        Value::String(s) if !s.trim().is_empty() => Some(s.trim().to_string()),
+        _ => {
+            return Err(
+                "`external` must be true (find `tungsten-emit-<name>` on PATH) or a non-empty command"
+                    .into(),
+            );
+        }
+    };
+    let number = |key: &str, max: u64| -> Result<Option<u64>, String> {
+        match options.get(key) {
+            None | Some(Value::Null) => Ok(None),
+            Some(v) => match v.as_u64() {
+                Some(n) if (1..=max).contains(&n) => Ok(Some(n)),
+                _ => Err(format!("`{key}` must be an integer from 1 to {max}")),
+            },
+        }
+    };
+    Ok(Some(ExternalTarget {
+        command,
+        timeout_ms: number("timeout_ms", MAX_EXTERNAL_TIMEOUT_MS)?,
+        max_output_bytes: number("max_output_bytes", 1 << 40)?,
+    }))
+}
+
+/// Whether `name` is a valid name for an external target:
+/// `^[a-z][a-z0-9_-]*$` (it becomes part of `tungsten-emit-<name>`).
+pub fn is_external_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars.next().is_some_and(|c| c.is_ascii_lowercase())
+        && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-')
+}
+
 /// Whether `name` is a valid namespace or API machine name:
 /// `^[a-z][a-z0-9_]*$`.
 pub fn is_machine_name(name: &str) -> bool {
@@ -335,17 +396,39 @@ impl Validator<'_> {
     }
 
     fn targets(&mut self, config: &TungstenConfig) {
-        for target in config.targets.keys() {
-            if !KNOWN_TARGETS.contains(&target.as_str()) {
-                let at = pointer::from_tokens(["targets", target]);
+        for (target, options) in &config.targets {
+            let at = pointer::from_tokens(["targets", target]);
+            let external = options.get("external").is_some();
+            if KNOWN_TARGETS.contains(&target.as_str()) {
+                if external {
+                    self.report(
+                        "TG0602",
+                        &format!("{at}/external"),
+                        format!(
+                            "target `{target}` is built in; `external` is only for targets with another name"
+                        ),
+                    );
+                }
+            } else if !external {
                 self.report(
                     "TG0602",
                     &at,
                     format!(
-                        "unknown target `{target}`; known targets: {}",
+                        "unknown target `{target}`; known targets: {} (an external emitter is declared with `external: true` or `external: <command>`)",
                         KNOWN_TARGETS.join(", ")
                     ),
                 );
+            } else if !is_external_name(target) {
+                self.report(
+                    "TG0602",
+                    &at,
+                    format!(
+                        "external target name `{target}` must match ^[a-z][a-z0-9_-]*$ (it names the executable `tungsten-emit-{target}`)"
+                    ),
+                );
+            }
+            if external && let Err(message) = external_target(options) {
+                self.report("TG0602", &format!("{at}/external"), message);
             }
         }
         // Each target owns its output directory (its `.tungsten/manifest.json`

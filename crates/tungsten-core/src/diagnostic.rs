@@ -3,8 +3,8 @@
 //!
 //! Code ranges: `TG01xx` parsing, `TG02xx` refs and cycles,
 //! `TG03xx` type normalization, `TG04xx` naming, `TG05xx` pagination/auth
-//! inference, `TG06xx` manifests, `TG07xx` emitter limits, `TG09xx`
-//! staleness/CI and overlay suggestions. The registry of codes lives in [`codes`].
+//! inference, `TG06xx` manifests, `TG07xx` emitter limits, `TG08xx`
+//! external emitters, `TG09xx` staleness/CI and overlay suggestions. The registry of codes lives in [`codes`].
 
 use crate::source::{SourceMap, Span};
 use serde::{Deserialize, Serialize};
@@ -385,6 +385,21 @@ pub mod codes {
             "TG0760",
             "types no operation reaches were not generated (types.prune_unreferenced)",
         ),
+        ("TG0801", "external emitter not found or cannot be started"),
+        (
+            "TG0802",
+            "external emitter speaks a different protocol version",
+        ),
+        (
+            "TG0803",
+            "external emitter failed: non-zero exit, timeout or output over the cap",
+        ),
+        ("TG0804", "external emitter returned an invalid response"),
+        (
+            "TG0805",
+            "external emitter returned a path outside the output directory",
+        ),
+        ("TG0806", "diagnostic reported by an external emitter"),
         ("TG0901", "generated output is stale relative to its inputs"),
         (
             "TG0902",

@@ -42,6 +42,7 @@ pub(crate) fn parse(op: &Operation, r: &mut Reporter<'_>) -> ToolConfig {
         gate: None,
         cluster: None,
         hidden: None,
+        server_rules: Vec::new(),
     };
     for (key, value) in &op.extensions {
         if !key.starts_with("x-agent-") {

@@ -4,14 +4,15 @@
 //! Every tool is optional, so doctor always succeeds. Tool paths are not
 //! reported (they are machine-specific); versions are.
 
-use std::ffi::OsString;
 use std::fmt::Write as _;
 use std::io::Read;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
+
+use tungsten_emit::external::find_executable;
 
 use crate::output::{CommandName, CommandResult, DoctorResult, ToolReport};
 use crate::{CliEnv, Report};
@@ -67,40 +68,6 @@ fn human(tools: &[ToolReport]) -> String {
     }
     out.push_str("all tools are optional; a missing tool only disables what it is listed for\n");
     out
-}
-
-/// The first executable file named `name` on `search_path`.
-fn find_executable(name: &str, search_path: &OsString) -> Option<PathBuf> {
-    std::env::split_paths(search_path)
-        .filter(|dir| !dir.as_os_str().is_empty())
-        .flat_map(|dir| candidates(&dir, name))
-        .find(|p| is_executable(p))
-}
-
-#[cfg(windows)]
-fn candidates(dir: &Path, name: &str) -> Vec<PathBuf> {
-    let exts = std::env::var("PATHEXT").unwrap_or_else(|_| ".EXE;.CMD;.BAT".into());
-    exts.split(';')
-        .filter(|e| !e.is_empty())
-        .map(|e| dir.join(format!("{name}{e}")))
-        .collect()
-}
-
-#[cfg(not(windows))]
-fn candidates(dir: &Path, name: &str) -> Vec<PathBuf> {
-    vec![dir.join(name)]
-}
-
-#[cfg(unix)]
-fn is_executable(path: &Path) -> bool {
-    use std::os::unix::fs::PermissionsExt;
-    path.metadata()
-        .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
-}
-
-#[cfg(not(unix))]
-fn is_executable(path: &Path) -> bool {
-    path.is_file()
 }
 
 /// Run `<exe> --version` with a timeout and parse its output.

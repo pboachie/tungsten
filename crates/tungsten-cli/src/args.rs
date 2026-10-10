@@ -92,6 +92,7 @@ impl Cli {
             Command::Schema(_) => CommandName::Schema,
             Command::Init(_) => CommandName::Init,
             Command::Doctor => CommandName::Doctor,
+            Command::Emitters(_) => CommandName::Emitters,
             Command::Generate(_) => CommandName::Generate,
             Command::Mock(_) => CommandName::Mock,
             Command::Report(_) => CommandName::Report,
@@ -121,6 +122,9 @@ pub(crate) enum Command {
     Init(InitArgs),
     /// Report which optional external tools are installed.
     Doctor,
+    /// List the external emitters (`tungsten-emit-<name>`) that can be
+    /// run, with the protocol and version each reports.
+    Emitters(EmittersArgs),
     /// Generate every configured target (SDKs, docs) from the project.
     Generate(GenerateArgs),
     /// Serve a mock of the API from the compiled IR.
@@ -308,6 +312,12 @@ pub(crate) struct ExplainArgs {
 }
 
 #[derive(Debug, Args)]
+pub(crate) struct EmittersArgs {
+    /// A project (as for `check`) whose `external` targets are listed too.
+    pub path: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
 pub(crate) struct SchemaArgs {
     /// Which schema to print.
     pub name: SchemaName,
@@ -324,6 +334,8 @@ pub enum SchemaName {
     Ir,
     /// The `--json` output of this CLI.
     CliOutput,
+    /// The documents of the external emitter protocol.
+    ExternalEmitter,
 }
 
 #[derive(Debug, Args)]

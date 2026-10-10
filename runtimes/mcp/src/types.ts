@@ -113,13 +113,20 @@ export const STOP_WORDS: readonly string[] = [
 ];
 
 export interface SandboxOptions {
-  /** Enable `run_script`. Default false. Requires `deno` on PATH. */
+  /** Enable `run_script`. Default false. */
   enabled: boolean;
-  /** Path to the deno executable. Default "deno". */
+  /** The isolate that runs scripts: `"wasm"` (QuickJS compiled to
+   * WebAssembly, in this process, nothing to install), `"deno"` (a Deno
+   * subprocess; needs the deno executable), `"off"` (no `run_script`) or
+   * `"auto"`: deno when the executable is found, else wasm. Default
+   * `"auto"`. */
+  engine?: "auto" | "wasm" | "deno" | "off";
+  /** Path to the deno executable. Default "deno". Used by the deno engine. */
   denoPath?: string;
   /** Wall-clock limit of one script. Default 30000. */
   timeoutMs?: number;
-  /** V8 heap limit of one script. Default 128. */
+  /** Memory limit of one script (the V8 heap for deno, the isolate's heap
+   * for wasm). Default 128. */
   memoryMb?: number;
   /** Tool calls one script may make. Default 50. */
   maxCalls?: number;

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The clap command tree, built with the builder API from the table.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use clap::builder::{PossibleValuesParser, ValueParser};
 use clap::{Arg, ArgAction, Command};
@@ -75,7 +75,10 @@ fn exit_codes() -> &'static str {
 fn flag_help(f: &CliFlag, prefix: &str) -> String {
     let mut help = f.help.trim().to_string();
     let hint = match &f.kind {
-        FlagKind::Json => Some("JSON text, @file.json, or - for standard input".to_string()),
+        FlagKind::Json => Some(format!(
+            "JSON text, @file.json, or - for standard input; or one member at a time, --{}.NAME VALUE",
+            f.flag
+        )),
         FlagKind::File => Some("@path of a file".to_string()),
         FlagKind::Array(inner) if **inner == FlagKind::Json => {
             Some("JSON text or @file.json; repeatable".to_string())
@@ -99,7 +102,17 @@ fn flag_help(f: &CliFlag, prefix: &str) -> String {
     help
 }
 
-fn flag_arg(f: &CliFlag, prefix: &str) -> Arg {
+/// What the commands are built with.
+struct Build<'a> {
+    /// The environment variable prefix (named in the help of secrets).
+    prefix: &'a str,
+    /// Flags the command line gave dotted members to: they are not required
+    /// here, the members can satisfy them (checked after).
+    relaxed: &'a BTreeSet<String>,
+}
+
+fn flag_arg(f: &CliFlag, env: &Build<'_>) -> Arg {
+    let (prefix, relaxed) = (env.prefix, env.relaxed);
     let (base, many) = match &f.kind {
         FlagKind::Array(inner) => (inner.as_ref(), true),
         k => (k, false),
@@ -113,7 +126,7 @@ fn flag_arg(f: &CliFlag, prefix: &str) -> Arg {
             ArgAction::Set
         })
         .value_name(f.flag.to_ascii_uppercase().replace('-', "_"))
-        .required(f.required && !f.sensitive);
+        .required(f.required && !f.sensitive && !relaxed.contains(&f.flag));
     if f.sensitive {
         // Not validated here: clap would repeat a rejected value in its
         // message, and the value of a sensitive flag must never be echoed.
@@ -154,20 +167,20 @@ fn flag_arg(f: &CliFlag, prefix: &str) -> Arg {
 }
 
 fn leaf_command(
+    env: &Build<'_>,
     name: &str,
     about: &str,
     flags: &[CliFlag],
     safety: Safety,
     body: bool,
     paginated: bool,
-    prefix: &str,
 ) -> Command {
     let mut cmd = Command::new(name.to_string()).about(first_line(about).to_string());
     if about.trim().lines().count() > 1 {
         cmd = cmd.long_about(about.trim().to_string());
     }
     for f in flags {
-        cmd = cmd.arg(flag_arg(f, prefix));
+        cmd = cmd.arg(flag_arg(f, env));
     }
     if body {
         cmd = cmd.arg(
@@ -250,32 +263,24 @@ fn group_about(name: &str) -> String {
     }
 }
 
-fn to_command(node: &Node, spec: &CliSpec, path: &mut Vec<String>) -> Command {
+fn to_command(node: &Node, spec: &CliSpec, env: &Build<'_>, path: &mut Vec<String>) -> Command {
     path.push(node.name.clone());
     let cmd = match node.leaf {
         Some(Leaf::Op(i)) => {
             let op = &spec.ops[i];
             leaf_command(
+                env,
                 &node.name,
                 &op.about,
                 &op.flags,
                 op.safety,
                 op.body_arg.is_some(),
                 op.paginated,
-                &spec.env_prefix,
             )
         }
         Some(Leaf::Macro(i)) => {
             let m = &spec.macros[i];
-            leaf_command(
-                &node.name,
-                &m.about,
-                &m.flags,
-                m.safety,
-                false,
-                false,
-                &spec.env_prefix,
-            )
+            leaf_command(env, &node.name, &m.about, &m.flags, m.safety, false, false)
         }
         None => {
             let mut cmd = Command::new(node.name.clone())
@@ -283,7 +288,7 @@ fn to_command(node: &Node, spec: &CliSpec, path: &mut Vec<String>) -> Command {
                 .subcommand_required(true)
                 .arg_required_else_help(true);
             for kid in &node.kids {
-                cmd = cmd.subcommand(to_command(kid, spec, path));
+                cmd = cmd.subcommand(to_command(kid, spec, env, path));
             }
             cmd
         }
@@ -294,7 +299,7 @@ fn to_command(node: &Node, spec: &CliSpec, path: &mut Vec<String>) -> Command {
 
 /// The whole command tree of `spec`, which must have passed
 /// [`crate::check::validate`].
-pub(crate) fn build(spec: &CliSpec) -> Tree {
+pub(crate) fn build(spec: &CliSpec, relaxed: &BTreeSet<String>) -> Tree {
     let mut nodes: Vec<Node> = Vec::new();
     let mut leaves = BTreeMap::new();
     for (i, op) in spec.ops.iter().enumerate() {
@@ -339,8 +344,12 @@ pub(crate) fn build(spec: &CliSpec) -> Tree {
         )
         .arg(global("no-color", None, "Never color the output"));
     let mut path = Vec::new();
+    let env = Build {
+        prefix: &spec.env_prefix,
+        relaxed,
+    };
     for node in &nodes {
-        command = command.subcommand(to_command(node, spec, &mut path));
+        command = command.subcommand(to_command(node, spec, &env, &mut path));
     }
     command = command
         .subcommand(

@@ -11,7 +11,7 @@
 //! ```
 //!
 //! Diagnostics (reported by `supports`): TG0750 a parameter or body that is
-//! given as JSON text, TG0751 a resource named like a command of the CLI
+//! given as JSON text (or member by member as `--flag.name value`), TG0751 a resource named like a command of the CLI
 //! itself, TG0752 a flag renamed because its name is taken, TG0753 a command
 //! path that two commands share. `emit` reports only file errors; the target
 //! options (TG0740) are reported by the SDK half.

@@ -67,9 +67,7 @@ fn fallback_notes(plan: &plan::Plan<'_>, shapes: &[ops::OpShape<'_>]) -> Diagnos
     let mut diags = Diagnostics::new();
     for t in &plan.ir.types.types {
         let reason = match (&t.shape, plan::emit_kind(plan.ir, t)) {
-            (Shape::Enum { .. }, plan::Emit::Alias) => {
-                Some("an enum whose values are not all strings or all integers")
-            }
+            (Shape::Enum { .. }, plan::Emit::Alias) => Some("an enum without values"),
             (Shape::Union(u), plan::Emit::Alias) if u.variants.is_empty() => {
                 Some("a union without variants")
             }
@@ -93,7 +91,7 @@ fn fallback_notes(plan: &plan::Plan<'_>, shapes: &[ops::OpShape<'_>]) -> Diagnos
             diags.push(Diagnostic::info(
                 "TG0745",
                 format!(
-                    "union `{}` has a discriminator but not every variant is a named record; the Rust SDK tries its variants in order",
+                    "union `{}` has a discriminator but a variant has no tag value; the Rust SDK tries its variants in order",
                     t.id.0
                 ),
             ));

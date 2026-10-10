@@ -579,13 +579,16 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
     ),
     e(
         "TG0741",
-        "A schema has no Rust type of its own: an enum whose values are not all strings or all \
-         integers, a union without variants, an `allOf` that could not be merged into one \
-         record, a schema no value satisfies, or an inline enum, union or record without a \
-         name. The Rust SDK types it `serde_json::Value` and checks its constraints (enum \
-         membership, `allOf` members) when the request or response is validated.",
+        "A schema has no Rust type of its own: a union without variants, an `allOf` that could \
+         not be merged into one record, a schema no value satisfies, or an inline enum, union \
+         or record without a name. The Rust SDK types it `serde_json::Value` (the generated \
+         type says so in its documentation) and checks its constraints (enum membership, \
+         `allOf` members) when the request or response is validated. Enums of booleans, of \
+         numbers with fractions and of integers above `i64` are not in this group: they are \
+         untagged enums with one variant per JSON type, and enums of several types are \
+         unions of constants.",
         "Move the schema to `components/schemas` (or name it with an overlay) so it gets a \
-         Rust type; make an enum's values all strings or all integers.",
+         Rust type; for an `allOf`, make the members compatible so that they merge.",
     ),
     e(
         "TG0742",
@@ -616,10 +619,13 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
     ),
     e(
         "TG0745",
-        "A union has a discriminator, but not every variant is a named record the tag can be \
-         read from. The Rust SDK cannot select a variant by its tag, so it tries the variants \
-         in order like an untagged union.",
-        "Give every variant a named object schema that carries the discriminator property.",
+        "A union has a discriminator, but a variant has no tag value: the mapping does not name \
+         it and it is not a component with a name or a constant to take the tag from. A union \
+         whose variants all have tags is decoded by the tag, whatever the variants are (records, \
+         other unions, maps), like the TypeScript and Python SDKs; this one cannot be, so the \
+         Rust SDK tries its variants in order like an untagged union.",
+        "Name every variant under the discriminator's `mapping`, or give every variant a \
+         component of its own.",
     ),
     e(
         "TG0746",
@@ -635,11 +641,14 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
         "TG0750",
         "An argument of an operation has no plain flag form in the generated CLI: a parameter \
          whose type is an object, a map, a union or a list of those, or a multipart body whose \
-         parts are files. The CLI takes it as JSON text (`--filter '{\"a\":1}'`, \
-         `--filter @filter.json` or `-` for standard input); a multipart file cannot be given \
+         parts are files. An object, map or union takes JSON text (`--filter '{\"a\":1}'`, \
+         `--filter @filter.json` or `-` for standard input) or its members one at a time \
+         (`--filter.a 1`, `--filter.created.after 5`; a value is typed by the operation's \
+         schema, and both forms can be mixed, the members applied on top of the JSON text). A \
+         list of those repeats the flag, one JSON value each. A multipart file cannot be given \
          from the command line at all.",
-        "Use the JSON form, or the SDK for multipart uploads. Nested fields of a request body are \
-         JSON-text flags by design and are not reported.",
+        "Use the JSON or dotted form, or the SDK for multipart uploads. Nested fields of a \
+         request body are JSON-text flags by design and are not reported.",
     ),
     e(
         "TG0751",
@@ -672,6 +681,61 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
          planned (`planned_from`) and the error envelope still keep the types they use.",
         "Nothing to fix. To generate every schema anyway, set `types.prune_unreferenced: false` \
          in tungsten.yml.",
+    ),
+    e(
+        "TG0801",
+        "A target in tungsten.yml declares `external`, but its emitter could not be run: \
+         with `external: true` there is no executable `tungsten-emit-<name>` on PATH; with a \
+         command, its program does not exist, is not executable, or the operating system \
+         refused to start it. Nothing is generated for the target.",
+        "Install the emitter and put it on PATH, or point `external` at it (a path with a \
+         slash is relative to tungsten.yml, a bare name is looked up on PATH). `tungsten \
+         emitters` lists what tungsten finds.",
+    ),
+    e(
+        "TG0802",
+        "The external emitter answered with a protocol version other than 1, the only \
+         version this tungsten speaks. The response is not read.",
+        "Use an emitter release built for protocol 1, or a tungsten release that speaks the \
+         emitter's protocol. `tungsten emitters` shows the protocol each emitter reports.",
+    ),
+    e(
+        "TG0803",
+        "The external emitter ran but did not finish normally: it exited with a non-zero \
+         status or was killed by a signal (the end of its standard error is quoted), it did \
+         not finish within `timeout_ms` (default 60 s), or it wrote more than \
+         `max_output_bytes` (default 64 MiB) to standard output. Nothing is generated for \
+         the target.",
+        "Run the emitter by hand with a request on its standard input to see why it fails. \
+         Raise `timeout_ms` or `max_output_bytes` on the target if the limit is too tight \
+         for a large API.",
+    ),
+    e(
+        "TG0804",
+        "The external emitter's standard output is not a valid response of protocol 1: it is \
+         not JSON, a field has the wrong type, a file has both or neither of `content` and \
+         `content_base64`, a base64 value is malformed, a path is listed twice, or there are \
+         more than 10000 files. The same code reports \
+         a `--describe` document that is not valid. Nothing is generated for the target.",
+        "Check the emitter against the schema printed by `tungsten schema external-emitter` \
+         (validate the response against `#/$defs/EmitResponse`).",
+    ),
+    e(
+        "TG0805",
+        "The external emitter named a file path that is absolute, has a `..`, `.` or empty \
+         segment, a backslash, a NUL byte or a drive prefix, or starts with `.tungsten/`. \
+         Generated files are written only inside the target's `out` directory, so the \
+         whole response is refused and nothing is written.",
+        "Make the emitter return paths relative to the output directory with `/` separators. \
+         It never needs the absolute output path.",
+    ),
+    e(
+        "TG0806",
+        "A diagnostic reported by an external emitter, kept with its severity. The message \
+         reads `external emitter <name>: <code>: <text>`, where `<code>` is the emitter's \
+         own code. An error fails the target; under `--strict` a warning does too.",
+        "Fix the cause the emitter describes; `tungsten explain` knows only tungsten's own \
+         codes, so look the emitter's code up in the emitter's documentation.",
     ),
     e(
         "TG0901",

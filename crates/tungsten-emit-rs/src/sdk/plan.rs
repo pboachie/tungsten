@@ -189,6 +189,10 @@ pub(crate) enum Emit {
     StrEnum,
     /// A closed enum of integer values.
     IntEnum,
+    /// An enum of values of different JSON types (or of numbers that are
+    /// not integers): one `#[serde(untagged)]` variant per JSON type, and
+    /// a membership check.
+    MixedEnum,
     Union(UnionKind),
     /// `pub type Name = ...;`, or a transparent newtype when the type is on
     /// a reference cycle.
@@ -197,7 +201,8 @@ pub(crate) enum Emit {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum UnionKind {
-    /// Discriminated by a property of the variants' records.
+    /// Discriminated by a property of the variants' values: the tag
+    /// selects the variant (a record, or any other named type).
     Tagged,
     /// `#[serde(untagged)]` derive.
     Untagged,
@@ -649,8 +654,10 @@ pub(crate) fn emit_kind(ir: &Ir, nt: &NamedType) -> Emit {
                 Emit::StrEnum
             } else if !values.is_empty() && values.iter().all(|v| v.value.is_i64()) {
                 Emit::IntEnum
-            } else {
+            } else if values.is_empty() {
                 Emit::Alias
+            } else {
+                Emit::MixedEnum
             }
         }
         Shape::Union(u) => match union_kind(ir, u) {
@@ -669,9 +676,7 @@ pub(crate) fn union_kind(ir: &Ir, u: &Union) -> Option<UnionKind> {
     let tagged = u.strategy == UnionStrategy::Tagged
         && u.discriminator.is_some()
         && u.variants.iter().all(|v| {
-            v.tag.is_some()
-                && matches!(&v.ty, TypeRef::Named(id)
-                    if matches!(ir.types.get(id).map(|t| &t.shape), Some(Shape::Record { .. })))
+            v.tag.is_some() && matches!(&v.ty, TypeRef::Named(id) if ir.types.get(id).is_some())
         });
     if tagged {
         return Some(UnionKind::Tagged);
