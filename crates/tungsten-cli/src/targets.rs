@@ -61,6 +61,19 @@ pub fn canonical(name: &str) -> &str {
 /// (an empty object when absent) and its output directory, the `out`
 /// option resolved against `base_dir` (default `generated/<name>`).
 pub fn target_config(config: Option<&TungstenConfig>, name: &str, base_dir: &Path) -> TargetConfig {
+    target_config_for(config, name, base_dir, false)
+}
+
+/// [`target_config`] for a run that may call the MCP target's embedding
+/// provider (`live`, a write that is not a dry run). The MCP target gets
+/// the reserved options `project_dir` (where `tungsten.yml` is, the working
+/// directory of a command provider) and `embeddings_live`.
+pub fn target_config_for(
+    config: Option<&TungstenConfig>,
+    name: &str,
+    base_dir: &Path,
+    live: bool,
+) -> TargetConfig {
     let mut options = config
         .and_then(|c| c.targets.get(name))
         .cloned()
@@ -78,6 +91,15 @@ pub fn target_config(config: Option<&TungstenConfig>, name: &str, base_dir: &Pat
             .filter_map(|k| Some(((*k).to_string(), ts.get(*k)?.clone())))
             .collect();
         map.insert("typescript_target".into(), serde_json::Value::Object(pick));
+    }
+    if name == "mcp"
+        && let Some(map) = options.as_object_mut()
+    {
+        map.insert(
+            "project_dir".into(),
+            serde_json::Value::String(base_dir.display().to_string()),
+        );
+        map.insert("embeddings_live".into(), serde_json::Value::Bool(live));
     }
     let out = options
         .get("out")

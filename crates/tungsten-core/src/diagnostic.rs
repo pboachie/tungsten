@@ -256,6 +256,23 @@ pub mod codes {
             "TG0531",
             "event stream declared for more than one success status; the first is streamed",
         ),
+        (
+            "TG0570",
+            "invalid MCP embedding index configuration (search.embeddings); the index is off",
+        ),
+        (
+            "TG0571",
+            "embedding provider could not be run or did not answer in time; BM25 only",
+        ),
+        (
+            "TG0572",
+            "embedding provider returned an invalid response; BM25 only",
+        ),
+        (
+            "TG0573",
+            "embedding endpoint refused the request, needs a missing API key or uses https; BM25 only",
+        ),
+        ("TG0574", "embedding index written next to the MCP manifest"),
         ("TG0601", "manifest is not valid YAML"),
         ("TG0602", "manifest does not match its schema"),
         ("TG0603", "manifest references an unknown operation"),
