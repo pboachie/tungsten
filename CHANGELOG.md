@@ -31,6 +31,15 @@ changes.
   `generate --check`, the output manifest and the API surface diff work
   unchanged. New: `tungsten emitters`, `tungsten schema external-emitter`,
   diagnostics TG0801 to TG0806 and the example `examples/external-emitter-markdown`.
+- Optional embedding index for the MCP server's `search_tools`, off by
+  default and with no model shipped. `targets.mcp.search.embeddings` names a
+  provider (a command speaking a small JSON protocol, or a plain `http://`
+  `/embeddings` endpoint); `tungsten generate` writes `index.embeddings.bin`
+  and `index.embeddings.json` next to `manifest.json`, caching vectors by
+  content hash. `@tungsten/mcp` ranks hybrid (BM25 and cosine, reciprocal
+  rank fusion) when `search.embeddings` is set, and falls back to BM25 with
+  the reason in the result when the query embedder fails. Diagnostics
+  TG0570 to TG0574.
 
 ### Changed
 

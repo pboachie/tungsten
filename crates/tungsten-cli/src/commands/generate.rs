@@ -116,7 +116,20 @@ impl Emitted {
 /// the built-in one, or the external emitter its `tungsten.yml` entry
 /// declares.
 pub(crate) fn emit_target(compiled: &Compiled, ir: &Ir, project: &Project, name: &str) -> Emitted {
-    let cfg = targets::target_config(compiled.config.as_ref(), name, &project.base_dir);
+    emit_target_live(compiled, ir, project, name, false)
+}
+
+/// [`emit_target`] for a run that writes: with `live`, the MCP target may
+/// call its embedding provider (everything else never touches a network or
+/// starts a process, so `--check`, `--dry-run`, `diff` and `report` do not).
+pub(crate) fn emit_target_live(
+    compiled: &Compiled,
+    ir: &Ir,
+    project: &Project,
+    name: &str,
+    live: bool,
+) -> Emitted {
+    let cfg = targets::target_config_for(compiled.config.as_ref(), name, &project.base_dir, live);
     let Some(emitter) = targets::emitter(name) else {
         return match tungsten_config::external_target(&cfg.options) {
             Ok(Some(external)) => emit_external(ir, project, cfg, &external),
@@ -218,12 +231,13 @@ pub(crate) fn run_targets(
         refused: false,
         promoted: 0,
     };
+    let live = matches!(mode, Mode::Write { dry_run: false, .. });
     // The surface snapshot is written next to every target's manifest.
     let shared = matches!(mode, Mode::Write { .. }).then(|| Arc::new(ir.clone()));
     let mut emitted: Vec<(&String, Emitted)> = names
         .iter()
         .map(|name| {
-            let mut e = emit_target(compiled, ir, project, name);
+            let mut e = emit_target_live(compiled, ir, project, name, live);
             if strict && e.files.is_some() {
                 outcome.promoted += check::promote_warnings(&mut e.diagnostics.0);
             }
