@@ -345,6 +345,10 @@ pub mod codes {
             "the MCP server's SDK dependency defaults to the typescript target's package",
         ),
         (
+            "TG0727",
+            "MCP tool output schema over the output token budget even without the types it references",
+        ),
+        (
             "TG0730",
             "macro not emitted by the Python SDK (not in the canonical form)",
         ),
