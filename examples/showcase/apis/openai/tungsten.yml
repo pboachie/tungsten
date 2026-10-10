@@ -1,0 +1,19 @@
+tungsten: 1
+
+api:
+  name: openai
+  title: "OpenAI API"
+
+inputs:
+  - namespace: openai
+    spec: "../../.cache/specs/openai.yaml"
+
+servers:
+  default: "https://api.openai.com/v1"
+  allow_override: true
+
+targets:
+  typescript: { out: ../../.cache/out/openai/typescript }
+  python: { out: ../../.cache/out/openai/python }
+  rust: { out: ../../.cache/out/openai/rust }
+  docs: { out: ../../.cache/out/openai/docs }
