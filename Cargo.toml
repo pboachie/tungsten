@@ -31,6 +31,7 @@ tungsten-emit-mcp = { path = "crates/tungsten-emit-mcp" }
 tungsten-emit-py = { path = "crates/tungsten-emit-py" }
 tungsten-emit-rs = { path = "crates/tungsten-emit-rs" }
 tungsten-tokens = { path = "crates/tungsten-tokens" }
+tungsten-lsp = { path = "crates/tungsten-lsp" }
 
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
