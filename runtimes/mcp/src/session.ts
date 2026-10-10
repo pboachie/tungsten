@@ -29,7 +29,7 @@ import {
   skeleton,
   truncate,
 } from "./render.js";
-import { apiHost, runSandboxed, type SandboxOutcome } from "./sandbox.js";
+import { apiHost, runSandboxed, type SandboxEngine, type SandboxOutcome } from "./sandbox.js";
 import { bm25, suggest } from "./search.js";
 import type { ClusterEntry, ServerOptions } from "./types.js";
 
@@ -40,8 +40,10 @@ const DEFAULT_SEARCH_LIMIT = 10;
 const SEARCH_HINT =
   "Call describe_tool(name) for the schema, preview(name, arguments) before destructive or irreversible calls, invoke(name, arguments) to execute (invoke_read for read_only tools).";
 
-/** What `run_script` needs once the server found deno. */
+/** What `run_script` needs once the server chose an engine. */
 export interface SandboxConfig {
+  engine: SandboxEngine;
+  /** The deno executable; empty for the wasm engine. */
   deno: string;
   timeoutMs: number;
   memoryMb: number;
@@ -831,8 +833,10 @@ export class Session {
     const sandbox = this.#sandbox as SandboxConfig;
     const core = this.#core;
     const base = core && isRecord(core.options) && typeof core.options.baseUrl === "string" ? core.options.baseUrl : core?.api?.servers?.[0];
-    const host = apiHost(base);
-    if (!host) {
+    // The deno engine scopes its network permission to the API host; the
+    // wasm isolate has no network at all and needs none.
+    const host = sandbox.engine === "wasm" ? "" : apiHost(base);
+    if (host === null) {
       return this.#failure(
         null,
         envelope("run_script", "VALIDATION_FAILED", {
@@ -843,6 +847,7 @@ export class Session {
       );
     }
     const outcome: SandboxOutcome = await runSandboxed({
+      engine: sandbox.engine,
       deno: sandbox.deno,
       host,
       code,

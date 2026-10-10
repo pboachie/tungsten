@@ -14,7 +14,7 @@ import { ErrorCode, ListToolsRequestSchema, McpError, type Tool as McpTool } fro
 import { buildCatalog, listTools, type Mode } from "./catalog.js";
 import { serveHttp } from "./http.js";
 import { isRecord } from "./render.js";
-import { resolveDeno, SANDBOX_DEFAULTS } from "./sandbox.js";
+import { resolveDeno, SANDBOX_DEFAULTS, selectEngine } from "./sandbox.js";
 import { Session, type SandboxConfig } from "./session.js";
 import type { HttpEndpoint, HttpOptions, ServerOptions } from "./types.js";
 
@@ -27,8 +27,10 @@ export interface TungstenMcpServer {
   readonly mode: Mode;
   /** Manifest entries that were skipped or adjusted, and sandbox notes. */
   readonly warnings: readonly string[];
-  /** Whether `run_script` is offered (enabled and deno found). */
+  /** Whether `run_script` is offered (enabled, and an isolate is available). */
   readonly sandboxEnabled: boolean;
+  /** The isolate `run_script` uses, or null when it is not offered. */
+  readonly sandboxEngine: "deno" | "wasm" | null;
   /** The `tools/list` answer, identical for every session. */
   tools(): McpTool[];
   /** Serve one session over `transport` (in-memory, custom). */
@@ -49,12 +51,15 @@ function sandboxConfig(options: ServerOptions, warnings: string[]): SandboxConfi
   if (!sandbox || sandbox.enabled !== true) return null;
   const path = typeof sandbox.denoPath === "string" ? sandbox.denoPath : "deno";
   const deno = resolveDeno(path);
-  if (!deno) {
+  const engine = selectEngine(sandbox.engine, deno !== null);
+  if (engine === "off") return null;
+  if (engine === "missing") {
     warnings.push(`sandbox.enabled is true but ${path} was not found: run_script is not offered`);
     return null;
   }
   return {
-    deno,
+    engine,
+    deno: deno ?? "",
     timeoutMs: positive(sandbox.timeoutMs, SANDBOX_DEFAULTS.timeoutMs),
     memoryMb: positive(sandbox.memoryMb, SANDBOX_DEFAULTS.memoryMb),
     maxCalls: Math.floor(positive(sandbox.maxCalls, SANDBOX_DEFAULTS.maxCalls)),
@@ -108,6 +113,7 @@ export function createTungstenMcpServer(options: ServerOptions): TungstenMcpServ
     mode: catalog.mode,
     warnings,
     sandboxEnabled: sandbox !== null,
+    sandboxEngine: sandbox?.engine ?? null,
     tools: () => structuredClone(listed),
     async connect(transport) {
       await start(transport);

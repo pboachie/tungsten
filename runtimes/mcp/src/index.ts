@@ -4,13 +4,13 @@
  * (planning/05 "MCP server"): discrete and progressive tool disclosure,
  * BM25 search, previews and per-session confirmation, envelope results,
  * sensitive-field redaction, Streamable HTTP and stdio, and the optional
- * Deno sandbox for `run_script`.
+ * `run_script` sandbox (a WASM isolate in this process, or Deno).
  */
 
 export * from "./types.js";
 export { createTungstenMcpServer, tokenize } from "./server.js";
 export type { TungstenMcpServer } from "./server.js";
 export { bm25, suggest, type Hit } from "./search.js";
-export { apiHost, DENO_RESERVED_MB, denoArguments, processMemoryMb, resolveDeno, SANDBOX_DEFAULTS, sandboxCommand } from "./sandbox.js";
+export { apiHost, selectEngine, DENO_RESERVED_MB, denoArguments, processMemoryMb, resolveDeno, SANDBOX_DEFAULTS, sandboxCommand } from "./sandbox.js";
 export { REDACTED_REPEAT, SHOWN_ONCE_LINE } from "./render.js";
 export { loadManifest, parseServeArgs, serve, serveUsage, type ServeArgs } from "./serve.js";
