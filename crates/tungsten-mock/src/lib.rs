@@ -199,6 +199,7 @@ mod params;
 mod pattern;
 mod reply;
 mod route;
+mod rules;
 mod server;
 mod state;
 mod validate;

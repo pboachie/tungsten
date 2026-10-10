@@ -20,6 +20,7 @@ use crate::model::{Model, OpEntry};
 use crate::params::{self, RequestView, media_essence};
 use crate::reply::{self, Reply, header_text, value_text};
 use crate::route::{Routed, route};
+use crate::rules;
 use crate::state::{Action, Answer, Idempotent, Program, State};
 use crate::validate::{Context, Validator, empty_object, json_eq};
 
@@ -437,6 +438,16 @@ fn operation(state: &State, entry: &OpEntry, request: &Exchange<'_>) -> Reply {
     }
     if let Err(reason) = check_body(model, entry, request) {
         return op_error(model, entry, 400, None, &[], &reason);
+    }
+    if let Some((rule, reason)) = rules::violated(entry, request.view, request.body) {
+        return op_error(
+            model,
+            entry,
+            rule.status,
+            rule.code.as_deref(),
+            &[],
+            &reason,
+        );
     }
     let Some((header, key)) = entry
         .idempotency_header()
