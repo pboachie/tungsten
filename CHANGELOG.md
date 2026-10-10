@@ -9,6 +9,15 @@ changes.
 
 ## [Unreleased]
 
+### Added
+
+- `tungsten lsp`: a Language Server Protocol server over stdio for
+  `tungsten.yml`, `agent.yml` and overlay files. It reports the same
+  diagnostics as `tungsten check` on the YAML lines they belong to, completes
+  keys, values and operation ids, documents fields and operations on hover,
+  jumps from an operation id to its place in the OpenAPI document and
+  outlines the manifests. See the README for editor setup.
+
 ## [0.1.0] - Unreleased
 
 First release. The compiler, the three SDK runtimes (`@tungsten/runtime`,
