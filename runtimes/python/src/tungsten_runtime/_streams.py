@@ -199,11 +199,14 @@ class AsyncEventStream[T]:
         wake = self._cancel_event = asyncio.Event()
         if self._cancelled:
             wake.set()
-        waiter = asyncio.ensure_future(wake.wait())
         try:
             while not self._cancelled:
                 step = asyncio.ensure_future(anext(self._items))
-                await asyncio.wait({step, waiter}, return_when=asyncio.FIRST_COMPLETED)
+                waiter = asyncio.ensure_future(wake.wait())
+                try:
+                    await asyncio.wait({step, waiter}, return_when=asyncio.FIRST_COMPLETED)
+                finally:
+                    waiter.cancel()
                 if not step.done():
                     step.cancel()
                     with contextlib.suppress(asyncio.CancelledError, StopAsyncIteration):
@@ -217,7 +220,6 @@ class AsyncEventStream[T]:
                     return
                 yield item
         finally:
-            waiter.cancel()
             await cast(Any, self._items).aclose()
 
     async def on(
