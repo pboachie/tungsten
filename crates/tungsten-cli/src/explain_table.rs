@@ -846,7 +846,9 @@ pub(crate) fn area(code: &str) -> &'static str {
         Some("TG05") => "operations, pagination and auth inference (TG05xx)",
         Some("TG06") => "manifests (TG06xx)",
         Some("TG07") => "emitter limits (TG07xx)",
+        Some("TG08") => "external emitters (TG08xx)",
         Some("TG09") => "staleness and CI (TG09xx)",
+        Some("TG10") => "SDK emitters: Java, C#, Kotlin, Swift, PHP, Ruby, Dart (TG10xx)",
         _ => "unassigned range",
     }
 }
