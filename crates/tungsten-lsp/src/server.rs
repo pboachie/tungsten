@@ -10,6 +10,7 @@
 //! answered from the buffer text and the last index.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -17,11 +18,12 @@ use crossbeam_channel::{Receiver, Sender, never, select};
 use lsp_server::{Connection, ErrorCode, Message, Notification, Request, RequestId, Response};
 use lsp_types::{
     CompletionOptions, CompletionParams, CompletionResponse, DidChangeTextDocumentParams,
-    DidCloseTextDocumentParams, DidOpenTextDocumentParams, DocumentSymbolParams,
-    DocumentSymbolResponse, GotoDefinitionParams, GotoDefinitionResponse, HoverParams,
-    HoverProviderCapability, InitializeParams, OneOf, PublishDiagnosticsParams, SaveOptions,
-    ServerCapabilities, TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions,
-    TextDocumentSyncSaveOptions, Uri,
+    DidChangeWatchedFilesRegistrationOptions, DidCloseTextDocumentParams,
+    DidOpenTextDocumentParams, DocumentSymbolParams, DocumentSymbolResponse, FileSystemWatcher,
+    GlobPattern, GotoDefinitionParams, GotoDefinitionResponse, HoverParams,
+    HoverProviderCapability, InitializeParams, OneOf, PublishDiagnosticsParams, Registration,
+    RegistrationParams, SaveOptions, ServerCapabilities, TextDocumentSyncCapability,
+    TextDocumentSyncKind, TextDocumentSyncOptions, TextDocumentSyncSaveOptions, Uri,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -136,6 +138,7 @@ pub fn serve(connection: &Connection, options: Options) -> Result<i32, String> {
         shutdown: false,
     };
     server.manifest = server.discover(&params);
+    server.watch_files(&params)?;
     if server.manifest.is_some() {
         server.touch(Duration::ZERO);
     }
@@ -218,7 +221,7 @@ impl Server<'_> {
                     let Ok(msg) = msg else {
                         return Ok(if self.shutdown { 0 } else { 1 });
                     };
-                    if let Some(code) = self.message(msg)? {
+                    if let Some(code) = self.guarded(msg)? {
                         return Ok(code);
                     }
                 }
@@ -228,6 +231,63 @@ impl Server<'_> {
                     }
                 }
                 recv(timer) -> _ => self.start(),
+            }
+        }
+    }
+
+    /// Ask the client to tell us when files change on disk (specs and
+    /// overlays edited elsewhere), when it can.
+    fn watch_files(&self, params: &InitializeParams) -> Result<(), String> {
+        let dynamic = params
+            .capabilities
+            .workspace
+            .as_ref()
+            .and_then(|w| w.did_change_watched_files.as_ref())
+            .and_then(|c| c.dynamic_registration)
+            .unwrap_or(false);
+        if !dynamic {
+            return Ok(());
+        }
+        let options = DidChangeWatchedFilesRegistrationOptions {
+            watchers: vec![FileSystemWatcher {
+                glob_pattern: GlobPattern::String("**/*.{yml,yaml,json}".to_string()),
+                kind: None,
+            }],
+        };
+        let registration = Registration {
+            id: "tungsten-watched-files".to_string(),
+            method: "workspace/didChangeWatchedFiles".to_string(),
+            register_options: serde_json::to_value(options).ok(),
+        };
+        let request = Request::new(
+            RequestId::from("tungsten-register-watchers".to_string()),
+            "client/registerCapability".to_string(),
+            RegistrationParams {
+                registrations: vec![registration],
+            },
+        );
+        self.conn
+            .sender
+            .send(Message::Request(request))
+            .map_err(|e| e.to_string())
+    }
+
+    /// [`Server::message`], with a panic in a handler turned into a log line
+    /// and, for a request, an error response: one bad document must not end
+    /// the editor's session.
+    fn guarded(&mut self, msg: Message) -> Result<Option<i32>, String> {
+        let id = match &msg {
+            Message::Request(req) => Some(req.id.clone()),
+            _ => None,
+        };
+        match catch_unwind(AssertUnwindSafe(|| self.message(msg))) {
+            Ok(result) => result,
+            Err(_) => {
+                self.log("internal error while handling a message");
+                if let Some(id) = id {
+                    self.fail(id, ErrorCode::InternalError, "internal error")?;
+                }
+                Ok(None)
             }
         }
     }
