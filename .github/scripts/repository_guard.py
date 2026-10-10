@@ -36,6 +36,11 @@ Commit rules: no Co-Authored-By trailer naming an AI assistant or its vendor,
 no session-link trailers, no "generated with" footers naming an AI tool, and
 no author or committer identity of an AI assistant.
 
+The gh-pages branch is the one exception: it holds the generated documentation
+site (HTML written by the docs workflow of the private repository, never edited
+by hand) and is not checked. The CI workflow does not run for pushes to it, and
+`--ref gh-pages` is skipped explicitly (exit 0).
+
 Exit status: 0 clean, 1 violations, 2 the check could not run (fails closed).
 Standard library only; reads Git objects, never the working tree. Its tests
 live in the private operations repository.
@@ -48,6 +53,9 @@ import subprocess
 import sys
 import tomllib
 from pathlib import Path, PurePosixPath
+
+# The branch that carries the generated documentation site; never checked.
+PAGES_BRANCH = "gh-pages"
 
 # ── tree rules ───────────────────────────────────────────────────────────────
 
@@ -279,6 +287,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--ref", default="HEAD", help="commit whose tree is checked (default: HEAD)")
     parser.add_argument("--range", nargs=2, metavar=("BASE", "HEAD"), help="also check the commits in BASE..HEAD")
     args = parser.parse_args(argv)
+    if args.ref.removeprefix("refs/heads/").removeprefix("origin/") == PAGES_BRANCH:
+        print(f"repository guard skipped: {PAGES_BRANCH} holds the generated documentation site, not code")
+        return 0
     try:
         findings = check_tree(args.repo, args.ref)
         summary = f"tree of {args.ref}"

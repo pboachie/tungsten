@@ -5,6 +5,7 @@
 **Compile an OpenAPI description into SDKs, a CLI and an MCP server that AI agents can use safely.**
 
 [![CI](https://github.com/pboachie/tungsten/actions/workflows/ci.yml/badge.svg)](https://github.com/pboachie/tungsten/actions/workflows/ci.yml)
+[![Docs](https://img.shields.io/badge/docs-pboachie.github.io-informational.svg)](https://pboachie.github.io/tungsten/)
 [![License: AGPL-3.0](https://img.shields.io/badge/compiler-AGPL--3.0-blue.svg)](LICENSE)
 [![Runtimes: Apache-2.0](https://img.shields.io/badge/runtimes-Apache--2.0-blue.svg)](runtimes/LICENSE)
 [![MSRV](https://img.shields.io/badge/rustc-1.95%2B-orange.svg)](Cargo.toml)
@@ -12,6 +13,8 @@
 </div>
 
 tungsten is a deterministic compiler written in Rust. It reads OpenAPI 3.0 and 3.1 documents plus two small manifests, builds one typed intermediate representation (IR), and emits TypeScript, Python and Rust SDKs, a Rust command-line client, an MCP server and LLM-oriented docs. Every emitted client is built for an autonomous caller: failures are instructions, side effects are never duplicated, and irreversible calls need an explicit confirmation.
+
+Read the documentation at [pboachie.github.io/tungsten](https://pboachie.github.io/tungsten/).
 
 ## Why tungsten
 
@@ -39,7 +42,19 @@ Targets and the mock server (`tungsten mock`) share one IR, so they agree on ope
 
 ## Install
 
-From source, with Rust 1.95 or newer (the repository pins 1.97.0 in [`rust-toolchain.toml`](rust-toolchain.toml) for development):
+Prebuilt binaries for Linux, macOS and Windows are attached to each [GitHub release](https://github.com/pboachie/tungsten/releases). The installer checks the archive against the release's `SHA256SUMS` before it installs anything:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/pboachie/tungsten/main/install.sh | sh   # Linux and macOS, into ~/.local/bin
+```
+
+```powershell
+irm https://raw.githubusercontent.com/pboachie/tungsten/main/install.ps1 | iex        # Windows
+```
+
+Pass `--version v0.1.0` to `install.sh` (or `-Version v0.1.0` to `install.ps1`) to pin a release, and `--dir` (`-InstallDir`) to choose the target directory.
+
+Or build from source, with Rust 1.95 or newer (the repository pins 1.97.0 in [`rust-toolchain.toml`](rust-toolchain.toml) for development):
 
 ```sh
 git clone https://github.com/pboachie/tungsten
@@ -48,7 +63,7 @@ cargo install --path crates/tungsten-cli   # installs the `tungsten` binary
 tungsten doctor                            # reports optional tools (node, python3, uv, formatters)
 ```
 
-Prebuilt releases are coming with 0.1. Node, Python and the formatters are optional: a missing tool only disables the target or `--format` option that needs it.
+Node, Python and the formatters are optional: a missing tool only disables the target or `--format` option that needs it.
 
 ## Quickstart
 
@@ -197,7 +212,7 @@ The CLI that tungsten generates for a Rust target has its own exit codes (0 succ
 
 ## Project status
 
-tungsten is **pre-0.1**. The compiler, the three SDK targets, the generated CLI, the MCP server, the docs emitter and the mock server exist and are exercised end to end against a real pilot API (ZROtext), including a live run of its scenarios. Nothing is published to a package registry yet: the runtimes are used by path or from source, and prebuilt binaries arrive with 0.1. Expect breaking changes to manifests, the IR and generated code before then. Known limits are tracked in the maintainers' status notes; open an issue if one blocks you.
+tungsten is **pre-0.1**. The compiler, the three SDK targets, the generated CLI, the MCP server, the docs emitter and the mock server exist and are exercised end to end against a real pilot API (ZROtext), including a live run of its scenarios. Prebuilt binaries are attached to the v0.1.0 release, but nothing is published to a package registry yet: the runtimes are used by path or from source. Expect breaking changes to manifests, the IR and generated code between releases. Known limits are tracked in the maintainers' status notes; open an issue if one blocks you.
 
 The test suite, conformance corpus and design documents live in a separate maintainers' repository, which runs against every pull request. This repository is source only.
 
