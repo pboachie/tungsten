@@ -21,6 +21,7 @@ from ._oauth import (
     generate_pkce,
     pkce_challenge,
 )
+from ._streams import ANY_EVENT, AsyncEventStream, EventStream, StreamResult
 from .client import AsyncClientCore, ClientCore
 from .errors import TungstenError, unwrap
 from .idempotency import FileIdempotencyStore, MemoryIdempotencyStore
@@ -28,14 +29,17 @@ from .sentinels import UNSET, Unset
 from .types import *  # noqa: F403 (the contract types are the public API)
 
 __all__ = [
+    "ANY_EVENT",
     "CONFIRMATION_TTL_MS",
     "DEFAULT_RETRYABLE",
     "RUNTIME_VERSION",
     "UNSET",
     "AsyncClientCore",
+    "AsyncEventStream",
     "AsyncOAuthFlow",
     "AsyncTokenStore",
     "ClientCore",
+    "EventStream",
     "FileIdempotencyStore",
     "MemoryIdempotencyStore",
     "MemoryTokenStore",
@@ -44,6 +48,7 @@ __all__ = [
     "OAuthResult",
     "Pkce",
     "StoredToken",
+    "StreamResult",
     "TokenInfo",
     "TokenStore",
     "TungstenError",

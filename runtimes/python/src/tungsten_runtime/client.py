@@ -14,14 +14,16 @@ PHASE-4 CONTRACT: the signatures are shared with the Python emitter.
 
 from __future__ import annotations
 
+import threading
 from collections.abc import AsyncIterator, Iterator, Mapping
 from types import TracebackType
 from typing import Any, Self, cast
 
 from ._core import Engine
-from ._drivers import AsyncDriver, SyncDriver, async_http, sync_http
+from ._drivers import AsyncDriver, SyncDriver, SyncStream, async_http, sync_http
 from ._helpers import safe_id, safe_name
 from ._oauth import AsyncOAuthFlow, OAuthFlow
+from ._streams import AsyncEventStream, EventStream
 from .types import (
     ApiDescriptor,
     CallOptions,
@@ -108,22 +110,40 @@ class ClientCore:
 
     def stream(
         self, op: OperationDescriptor, args: Mapping[str, Any], opts: CallOptions | None = None
-    ) -> Iterator[StreamEvent[Any] | Err]:
+    ) -> EventStream[Any]:
         """Iterate the events of the operation's event stream: one
         ``StreamEvent`` per server-sent event (``data`` decoded from JSON and
         validated), then the end of the stream or one final ``Err``. An error
         before the stream starts (validation, auth, an error status; retried
-        by the rules of ``call``) is the only item. A started stream is never
-        retried: a connection lost or an idle timeout ends it with a final
-        ``Err`` (``TRANSPORT_FAILED`` or ``UPSTREAM_UNAVAILABLE`` for a read,
-        ``OUTCOME_UNKNOWN`` for a mutation), as does an event that is not JSON
+        by the rules of ``call``) is the only item. A started stream that
+        drops is reconnected with ``Last-Event-ID``
+        (``ClientOptions.max_reconnects``) when the operation is safe to
+        repeat; otherwise, or when the reconnects are used up, a connection
+        lost or an idle timeout ends it with a final ``Err``
+        (``TRANSPORT_FAILED`` or ``UPSTREAM_UNAVAILABLE`` for a read,
+        ``OUTCOME_UNKNOWN`` for a mutation; ``code`` ``STREAM_IDLE`` for
+        ``ClientOptions.idle_timeout_ms``), as does an event that is not JSON
         or (with ``validate_responses="strict"``) does not match the event
-        type. Leaving the loop closes the connection."""
-        try:
-            for item in self._driver.iterate(self._engine.stream(op, args, opts)):
-                yield cast(StreamEvent[Any] | Err, item)
-        except Exception as error:
-            yield self._engine.internal(safe_id(op), error, "streaming")
+        type. Leaving the loop closes the connection. The result has the
+        helpers ``on``, ``collect``, ``reduce``, ``first`` and ``cancel``."""
+        open_streams: list[SyncStream] = []
+        stop = threading.Event()
+
+        def close() -> None:
+            # Shut the sockets down: the thread reading one wakes and closes it.
+            for stream in list(open_streams):
+                stream.interrupt()
+
+        def items() -> Iterator[StreamEvent[Any] | Err]:
+            try:
+                for item in self._driver.iterate(
+                    self._engine.stream(op, args, opts, stop.is_set), open_streams
+                ):
+                    yield cast(StreamEvent[Any] | Err, item)
+            except Exception as error:
+                yield self._engine.internal(safe_id(op), error, "streaming")
+
+        return EventStream(items(), close, stop)
 
     def poll(
         self,
@@ -246,15 +266,21 @@ class AsyncClientCore:
         except Exception as error:
             yield self._engine.internal(safe_id(op), error, "paginating")
 
-    async def stream(
+    def stream(
         self, op: OperationDescriptor, args: Mapping[str, Any], opts: CallOptions | None = None
-    ) -> AsyncIterator[StreamEvent[Any] | Err]:
-        """See ``ClientCore.stream``."""
-        try:
-            async for item in self._driver.iterate(self._engine.stream(op, args, opts)):
-                yield cast(StreamEvent[Any] | Err, item)
-        except Exception as error:
-            yield self._engine.internal(safe_id(op), error, "streaming")
+    ) -> AsyncEventStream[Any]:
+        """See ``ClientCore.stream``. The result is also an async iterator;
+        ``cancel()`` abandons a read in progress in another task."""
+        stop = threading.Event()
+
+        async def items() -> AsyncIterator[StreamEvent[Any] | Err]:
+            try:
+                async for item in self._driver.iterate(self._engine.stream(op, args, opts, stop.is_set)):
+                    yield cast(StreamEvent[Any] | Err, item)
+            except Exception as error:
+                yield self._engine.internal(safe_id(op), error, "streaming")
+
+        return AsyncEventStream(items(), stop)
 
     async def poll(
         self,

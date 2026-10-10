@@ -30,6 +30,9 @@ class AttemptRequest:
     #: Hand a ``text/event-stream`` answer with a 2xx status back unread, as
     #: a ``Streaming`` outcome; any other answer is read as usual.
     stream: bool = False
+    #: With ``stream``: the silence, in milliseconds, after which a read of
+    #: the body times out. Default ``timeout_ms``.
+    idle_ms: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -145,6 +148,14 @@ class ReadChunk:
 
 
 @dataclass(frozen=True, slots=True)
+class CloseStream:
+    """Release the connection of a ``Streaming`` outcome before the iteration
+    ends (a reconnect replaces it)."""
+
+    stream: object
+
+
+@dataclass(frozen=True, slots=True)
 class Chunk:
     data: bytes
 
@@ -164,7 +175,7 @@ class StreamFailed:
 
 type ReadOutcome = Chunk | StreamEnded | StreamFailed
 
-type Effect = Send | Sleep | StoreGet | StorePut | Observe | Invoke | Shared | Emit | ReadChunk
+type Effect = Send | Sleep | StoreGet | StorePut | Observe | Invoke | Shared | Emit | ReadChunk | CloseStream
 
 type Flow[T] = Generator[Effect, object, T]
 
@@ -177,6 +188,10 @@ def send(request: AttemptRequest) -> Flow[AttemptOutcome]:
 def read_chunk(stream: object) -> Flow[ReadOutcome]:
     outcome = yield ReadChunk(stream)
     return cast(ReadOutcome, outcome)
+
+
+def close_stream(stream: object) -> Flow[None]:
+    yield CloseStream(stream)
 
 
 def sleep(ms: float) -> Flow[None]:

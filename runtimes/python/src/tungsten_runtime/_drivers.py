@@ -28,6 +28,7 @@ from ._effects import (
     AttemptOutcome,
     AttemptRequest,
     Chunk,
+    CloseStream,
     Effect,
     Emit,
     Flow,
@@ -150,8 +151,14 @@ def _send_failure(error: Exception) -> AttemptOutcome:
 
 def _request(client: httpx.Client | httpx.AsyncClient, req: AttemptRequest, seconds: float) -> httpx.Request:
     headers = [(name.encode("latin-1"), value.encode("latin-1")) for name, value in req.headers.items()]
+    # A stream waits at most the idle timeout for each read (httpx's read timeout).
+    idle = max(1.0, req.idle_ms) / 1000 if req.stream and req.idle_ms is not None else seconds
     return client.build_request(
-        req.method, req.url, headers=headers, content=req.body, timeout=httpx.Timeout(seconds)
+        req.method,
+        req.url,
+        headers=headers,
+        content=req.body,
+        timeout=httpx.Timeout(seconds, read=idle),
     )
 
 
@@ -235,7 +242,7 @@ def _drain(flow: Flow[Any], outcome: AttemptOutcome) -> object:
                 _discard(result)
                 result = None
             sent = None if isinstance(effect, Observe) else result
-        elif isinstance(effect, Invoke):
+        elif isinstance(effect, Invoke | CloseStream):
             sent = None
         elif isinstance(effect, Shared):
             thrown = RuntimeError("the call was cancelled")
@@ -252,7 +259,7 @@ async def _quietly(awaitable: Awaitable[object]) -> None:
 _REPORTS: set[asyncio.Future[None]] = set()
 
 
-class _SyncStream:
+class SyncStream:
     """The unread body of an event stream on ``httpx.Client``. Each read waits
     at most the attempt timeout (httpx's read timeout), so an idle stream
     ends with a timeout."""
@@ -270,6 +277,15 @@ class _SyncStream:
             return StreamEnded()
         except Exception as error:
             return _read_failure(error)
+
+    def interrupt(self) -> None:
+        """End a read another thread is blocked in: shut the socket down (a
+        response closed from another thread does not wake it)."""
+        network = self.response.extensions.get("network_stream")
+        sock = network.get_extra_info("socket") if network is not None else None
+        if sock is not None:
+            with contextlib.suppress(OSError):
+                sock.shutdown(socket.SHUT_RDWR)
 
     def close(self) -> None:
         self.response.close()
@@ -356,12 +372,14 @@ class SyncDriver:
                 raise RuntimeError("a flow emitted an item outside an iteration")
             sent, thrown = self._perform_safely(effect)
 
-    def iterate(self, flow: Flow[None]) -> Iterator[object]:
+    def iterate(self, flow: Flow[None], track: list[SyncStream] | None = None) -> Iterator[object]:
         """The items a flow emits, in order. Event streams the flow opened
-        are closed when the iteration ends, however it ends."""
+        are closed when the iteration ends, however it ends; with ``track``
+        they are also appended to it as they open, so another thread can
+        close them to end a blocked read."""
         sent: object = None
         thrown: Exception | None = None
-        opened: list[_SyncStream] = []
+        opened: list[SyncStream] = track if track is not None else []
         try:
             while True:
                 effect = _advance(flow, sent, thrown)
@@ -373,7 +391,7 @@ class SyncDriver:
                     continue
                 sent, thrown = self._perform_safely(effect)
                 if isinstance(sent, Streaming):
-                    opened.append(cast(_SyncStream, sent.stream))
+                    opened.append(cast(SyncStream, sent.stream))
         finally:
             flow.close()
             for stream in opened:
@@ -389,7 +407,10 @@ class SyncDriver:
         if isinstance(effect, Send):
             return self._attempt(effect.request)
         if isinstance(effect, ReadChunk):
-            return cast(_SyncStream, effect.stream).read()
+            return cast(SyncStream, effect.stream).read()
+        if isinstance(effect, CloseStream):
+            cast(SyncStream, effect.stream).close()
+            return None
         if isinstance(effect, Sleep):
             time.sleep(max(0.0, effect.ms) / 1000)
             return None
@@ -428,7 +449,7 @@ class SyncDriver:
         except Exception as error:
             return _send_failure(error)
         if req.stream and 200 <= response.status_code <= 299 and _is_event_stream(response):
-            return Streaming(response.status_code, _headers(response), _SyncStream(response))
+            return Streaming(response.status_code, _headers(response), SyncStream(response))
         try:
             chunks: list[bytes] = []
             failure: Literal["timeout", "broken"] | None = None
@@ -540,6 +561,9 @@ class AsyncDriver:
             return await self._attempt(effect.request)
         if isinstance(effect, ReadChunk):
             return await cast(_AsyncStream, effect.stream).read()
+        if isinstance(effect, CloseStream):
+            await cast(_AsyncStream, effect.stream).aclose()
+            return None
         if isinstance(effect, Sleep):
             await asyncio.sleep(max(0.0, effect.ms) / 1000)
             return None
