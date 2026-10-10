@@ -4,6 +4,9 @@
 //! - Per tool: `schemaTokens` (description and input schema) must stay
 //!   within agent.yml `defaults.disclosure.schema_budget_tokens`; a tool
 //!   over it is TG0721.
+//! - Per tool output schema: at most [`OUTPUT_BUDGET_FACTOR`] times that
+//!   budget, after the closure of its types was bounded
+//!   ([`crate::manifest::bound_closure`]); over it is TG0727.
 //! - Progressive mode: what a client receives before its first search, the
 //!   `tools/list` answer of `@tungsten/mcp` in progressive mode
 //!   (`search_tools`, `describe_tool`, `invoke`, `preview`, `list_clusters`;
@@ -24,7 +27,7 @@
 use serde_json::{Map, Value, json};
 use tungsten_core::{Diagnostic, Diagnostics};
 
-use crate::manifest::{McpManifest, Mode, tokens};
+use crate::manifest::{McpManifest, Mode, OUTPUT_BUDGET_FACTOR, tokens};
 
 /// Tokens of the progressive tool list and index summary.
 pub const INDEX_BUDGET: usize = 2000;
@@ -48,6 +51,12 @@ pub struct Budget {
     pub median: usize,
     /// Tools over the schema budget, in tool order.
     pub over: Vec<(String, usize)>,
+    /// The per-tool budget of an output schema (a multiple of
+    /// `schema_budget`).
+    pub output_budget: usize,
+    /// Tools whose output schema is over `output_budget` even with every
+    /// reference replaced by `{}`, in tool order, with its tokens.
+    pub output_over: Vec<(String, usize)>,
 }
 
 const SAFETIES: [&str; 4] = ["read_only", "mutating", "destructive", "irreversible"];
@@ -442,6 +451,7 @@ pub fn listing_tokens(manifest: &Value, mode: Mode) -> usize {
 
 /// Measure `manifest` against `schema_budget`.
 pub fn measure(manifest: &McpManifest, schema_budget: usize) -> Budget {
+    let output_budget = OUTPUT_BUDGET_FACTOR * schema_budget;
     let value = serde_json::to_value(manifest).unwrap_or_default();
     let progressive = listing_tokens(&value, Mode::Progressive);
     let discrete = listing_tokens(&value, Mode::Discrete);
@@ -465,8 +475,18 @@ pub fn measure(manifest: &McpManifest, schema_budget: usize) -> Budget {
         .filter(|t| t.schema_tokens > schema_budget)
         .map(|t| (t.name.clone(), t.schema_tokens))
         .collect();
+    let output_over = manifest
+        .tools
+        .iter()
+        .filter_map(|t| {
+            let n = tokens(&serde_json::to_string(t.output_schema.as_ref()?).unwrap_or_default());
+            (n > output_budget).then(|| (t.name.clone(), n))
+        })
+        .collect();
     Budget {
         schema_budget,
+        output_budget,
+        output_over,
         progressive,
         discrete,
         largest,
@@ -475,7 +495,8 @@ pub fn measure(manifest: &McpManifest, schema_budget: usize) -> Budget {
     }
 }
 
-/// TG0721 for each tool over the schema budget; TG0722 when the selected
+/// TG0721 for each tool over the schema budget; TG0727 for each tool whose
+/// output schema is over the output budget; TG0722 when the selected
 /// mode is progressive and its listing is over [`INDEX_BUDGET`].
 pub fn warnings(manifest: &McpManifest, budget: &Budget) -> Diagnostics {
     let mut d = Diagnostics::new();
@@ -489,6 +510,18 @@ pub fn warnings(manifest: &McpManifest, budget: &Budget) -> Diagnostics {
                 ),
             )
             .with_help("shorten descriptions (disclosure.prune for operations, the spec for fields), split the operation, or raise defaults.disclosure.schema_budget_tokens in agent.yml"),
+        );
+    }
+    for (name, n) in &budget.output_over {
+        d.push(
+            Diagnostic::warning(
+                "TG0727",
+                format!(
+                    "MCP tool `{name}` has an output schema of about {n} tokens, over the output budget of {}",
+                    budget.output_budget
+                ),
+            )
+            .with_help("the response type is large even without the types it references (those are already left open as `{}`); shorten the field descriptions in the spec, or raise defaults.disclosure.schema_budget_tokens in agent.yml"),
         );
     }
     if manifest.mode == Mode::Progressive && budget.progressive > INDEX_BUDGET {
