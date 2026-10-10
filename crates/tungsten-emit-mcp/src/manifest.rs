@@ -125,6 +125,10 @@ pub struct McpManifest {
     pub tools: Vec<ToolEntry>,
     pub clusters: Vec<ClusterEntry>,
     pub index: SearchIndex,
+    /// The terms of each tool's BM25 document, in tool order (not part of
+    /// the manifest file; the embedding index embeds them).
+    #[serde(skip)]
+    pub index_docs: Vec<Vec<String>>,
     /// The `initialize` instructions of the selected mode.
     pub instructions: String,
     /// The instructions of each mode, for servers whose mode is overridden.
@@ -238,6 +242,7 @@ pub fn build(ir: &Ir) -> (McpManifest, Diagnostics) {
         list_budget_tokens: d.list_budget_tokens,
         token_counter: COUNTER_NAME,
         index: index::build(&docs),
+        index_docs: docs,
         tools,
         clusters,
         instructions: instructions_by_mode.discrete.clone(),

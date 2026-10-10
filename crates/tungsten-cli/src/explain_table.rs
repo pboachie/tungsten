@@ -295,6 +295,55 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
         "Declare the stream under one status, normally 200.",
     ),
     e(
+        "TG0570",
+        "`targets.mcp.search.embeddings` in tungsten.yml is not valid: an unknown key, a \
+         `provider` that is not `command` or `http`, a missing `command`, `url` or `model`, a \
+         `dimensions`, `batch_size` or `timeout_ms` out of range, or an `api_key_env` that is \
+         not an environment variable name. The embedding index is off and the MCP server \
+         searches with BM25 only; with `required: true` this is an error instead.",
+        "Fix the option: `search: { embeddings: { provider: command, command: \"node embed.mjs\", \
+         model: my-model } }` or `provider: http` with `url`. See planning/02 D6.",
+    ),
+    e(
+        "TG0571",
+        "The embedding provider of the MCP target could not be used: the command was not \
+         found, could not be started, exited with a failure, or neither it nor the HTTP \
+         endpoint answered within `timeout_ms`. Generation went on without \
+         `index.embeddings.bin` and `index.embeddings.json`, so the server searches with \
+         BM25 only. With `required: true` this is an error and nothing is written.",
+        "Run the command by hand with a request on standard input (`{\"protocol\":1,\"kind\":\
+         \"document\",\"model\":\"m\",\"dimensions\":null,\"inputs\":[\"x\"]}`), raise \
+         `timeout_ms`, or lower `batch_size`.",
+    ),
+    e(
+        "TG0572",
+        "The embedding provider answered, but not with what the protocol says: not JSON, no \
+         `embeddings` array (command) or `data` array (HTTP), a different number of vectors \
+         than inputs, vectors of different or unexpected lengths, or values that are not \
+         finite numbers. Generation went on with BM25 only (an error with `required: true`).",
+        "Return one vector per input, in order, all of the length the model produces; set \
+         `dimensions` to that length so a mismatch is caught.",
+    ),
+    e(
+        "TG0573",
+        "The HTTP embedding provider could not be called: the endpoint answered with an error \
+         status, the environment variable named by `api_key_env` is not set, or the URL is \
+         `https://`, which the compiler cannot call (it links no TLS stack). Generation went \
+         on with BM25 only (an error with `required: true`). The key is only ever read from \
+         the environment and never written to the output.",
+        "Export the API key, check the URL and model, or use `provider: command` with a \
+         program that calls the endpoint (for example `curl`) or a local http:// gateway.",
+    ),
+    e(
+        "TG0574",
+        "The MCP target wrote the embedding index: `index.embeddings.json` (model, \
+         dimensions, tool names and content hashes, checksum) and `index.embeddings.bin` \
+         (normalized little-endian f32 vectors). Vectors of tools whose text did not change \
+         since the previous run are reused, so only new or edited tools reach the provider.",
+        "Nothing to fix. Serve the index with `search.embeddings` in the server options \
+         (the generated server.ts sets it from tungsten.yml).",
+    ),
+    e(
         "TG0601",
         "A manifest (tungsten.yml or agent.yml) is not valid YAML.",
         "Fix the YAML syntax at the reported position. Indentation must use spaces.",

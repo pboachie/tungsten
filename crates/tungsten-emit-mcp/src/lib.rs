@@ -23,6 +23,7 @@
 //! sorted index terms, fixed float rounding, no timestamps or paths.
 
 mod budget;
+mod embeddings;
 mod env;
 mod index;
 mod json;
@@ -38,6 +39,7 @@ use tungsten_emit::{Emitter, FileSet, TargetConfig};
 use tungsten_ir::Ir;
 
 pub use budget::{INDEX_BUDGET, instructions, listing_tokens, tools_list};
+pub use embeddings::{BIN_FILE as EMBEDDINGS_BIN_FILE, HEADER_FILE as EMBEDDINGS_HEADER_FILE};
 pub use manifest::Mode;
 pub use options::Options;
 
@@ -64,8 +66,58 @@ impl Emitter for McpEmitter {
                 diags.push(Diagnostic::error("TG0701", format!("mcp target: {e}")));
             }
         }
+        if let Some(config) = &opts.embeddings {
+            diags.extend(embedding_files(ir, config, cfg, out));
+        }
         diags
     }
+}
+
+/// Add the files of the embedding index (`index.embeddings.json` and
+/// `.bin`) to `out`. The CLI sets the reserved option `embeddings_live` when
+/// the provider may be called (a write) and `project_dir` to the directory of
+/// `tungsten.yml`; neither is a `tungsten.yml` key.
+fn embedding_files(
+    ir: &Ir,
+    config: &embeddings::Config,
+    cfg: &TargetConfig,
+    out: &mut FileSet,
+) -> Diagnostics {
+    let (manifest, _) = manifest::build(ir);
+    let texts: Vec<String> = manifest.index_docs.iter().map(|t| t.join(" ")).collect();
+    let docs: Vec<embeddings::Doc<'_>> = manifest
+        .tools
+        .iter()
+        .zip(&texts)
+        .map(|(tool, text)| embeddings::Doc {
+            id: &tool.name,
+            text,
+        })
+        .collect();
+    let project_dir = cfg
+        .options
+        .get("project_dir")
+        .and_then(serde_json::Value::as_str)
+        .map(std::path::Path::new)
+        .unwrap_or(std::path::Path::new(""));
+    let run = embeddings::Run {
+        config,
+        project_dir,
+        out_dir: &cfg.out_dir,
+        live: cfg
+            .options
+            .get("embeddings_live")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false),
+    };
+    let outcome = embeddings::build(&run, &docs);
+    let mut diags = outcome.diagnostics;
+    for (path, bytes) in outcome.files {
+        if let Err(e) = out.add(path, bytes) {
+            diags.push(Diagnostic::error("TG0701", format!("mcp target: {e}")));
+        }
+    }
+    diags
 }
 
 fn schema_budget(ir: &Ir) -> usize {

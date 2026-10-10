@@ -9,6 +9,7 @@
 //! | `sdk_path` | depend on the SDK by path (`file:<path>`) instead of a range | |
 //! | `runtime` | `@tungsten/mcp` version range | `^0.1.0` |
 //! | `runtime_path` | depend on `@tungsten/mcp` by path | |
+//! | `search.embeddings` | the optional embedding index: `provider` (`command` or `http`), `command` or `url`, `model`, `dimensions`, `api_key_env`, `required`, `batch_size`, `timeout_ms` (TG0570 to TG0574; see `embeddings`) | off |
 //! | `sandbox` | enable the opt-in `run_script` sandbox (engine `auto`: deno when installed, else the WASM isolate; set `sandbox.engine` in `customize`) | `false` |
 //!
 //! The command line passes the sibling `typescript` target's options as the
@@ -44,6 +45,8 @@ pub struct Options {
     /// Dependency specifier of `@tungsten/mcp`.
     pub runtime: String,
     pub sandbox: bool,
+    /// `search.embeddings`: the optional embedding index.
+    pub embeddings: Option<crate::embeddings::Config>,
 }
 
 impl Options {
@@ -96,6 +99,13 @@ impl Options {
                 false
             }
         };
+        let embeddings = match crate::embeddings::parse(&cfg.options) {
+            Ok(config) => config,
+            Err(d) => {
+                diags.push(d);
+                None
+            }
+        };
         let sibling = cfg.options.get("typescript_target");
         let sibling_str = |key: &str, valid: &dyn Fn(&str) -> bool| {
             sibling
@@ -143,6 +153,7 @@ impl Options {
                 sdk,
                 runtime,
                 sandbox,
+                embeddings,
             },
             diags,
         )
