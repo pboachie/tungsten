@@ -13,9 +13,9 @@ use crate::output::{
     CheckResult, CommandName, CommandResult, DiagnosticCounts, TargetReport, TargetStatus,
 };
 use crate::stats::{describe, describe_refs, headline, ir_stats, plural, ref_stats};
-use crate::{Report, exit, input};
+use crate::{CliEnv, Report, exit, input};
 
-pub(crate) fn run(args: &CheckArgs) -> Report {
+pub(crate) fn run(args: &CheckArgs, env: &CliEnv) -> Report {
     let compiled = input::compile(&args.input.path);
     let mut diagnostics = compiled.diagnostics.0.clone();
     // Whether the project compiles, before `--strict` turns warnings into
@@ -36,7 +36,7 @@ pub(crate) fn run(args: &CheckArgs) -> Report {
             .as_ref()
             .map(|c| c.targets.keys().cloned().collect())
             .unwrap_or_default();
-        let project = Project::of(&args.input.path);
+        let project = Project::of(&args.input.path, env);
         let mut outcome = run_targets(&compiled, ir, &project, &names, Mode::Check, false);
         io_failed = outcome.io_failed;
         // The emitters' warnings (TG07xx, such as TG0713 over the schema

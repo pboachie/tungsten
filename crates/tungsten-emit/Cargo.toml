@@ -26,6 +26,7 @@ tungsten-core.workspace = true
 tungsten-ir.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+schemars.workspace = true
 
 [lints]
 workspace = true

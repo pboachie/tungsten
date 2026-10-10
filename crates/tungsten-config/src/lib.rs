@@ -35,7 +35,10 @@ use serde::{Deserialize, Deserializer, Serialize};
 use tungsten_core::{Diagnostic, Diagnostics};
 
 pub use source::ManifestSource;
-pub use validate::{KNOWN_TARGETS, MANIFEST_VERSION, is_machine_name, validate};
+pub use validate::{
+    EXTERNAL_RESERVED_KEYS, ExternalTarget, KNOWN_TARGETS, MANIFEST_VERSION, external_target,
+    is_external_name, is_machine_name, validate,
+};
 
 /// The `tungsten.yml` manifest: shape and naming of the generated SDKs.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]

@@ -9,13 +9,16 @@
 //! operation's arguments object is laid out and [`compact`] builds the
 //! compact tool schemas, for every emitter that describes operations to
 //! agents. [`surface`] snapshots the API surface (`.tungsten/surface.json`)
-//! and classifies changes between snapshots.
+//! and classifies changes between snapshots. [`external`] runs emitters
+//! that are separate executables and speak the JSON protocol documented
+//! there.
 //!
 //! Stability: the public signatures in this crate are shared by every
 //! emitter. Changes are additive.
 
 pub mod args;
 pub mod compact;
+pub mod external;
 mod fileset;
 mod imports;
 mod output;

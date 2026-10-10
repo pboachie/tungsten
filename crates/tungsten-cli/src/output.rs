@@ -82,6 +82,8 @@ pub enum CommandName {
     Init,
     #[serde(rename = "doctor")]
     Doctor,
+    #[serde(rename = "emitters")]
+    Emitters,
     #[serde(rename = "generate")]
     Generate,
     #[serde(rename = "mock")]
@@ -180,6 +182,7 @@ pub enum CommandResult {
     Schema(SchemaResult),
     Init(InitResult),
     Doctor(DoctorResult),
+    Emitters(EmittersResult),
     Generate(GenerateResult),
     Mock(MockResult),
     Report(Box<ReportResult>),
@@ -477,6 +480,60 @@ pub struct ToolReport {
     pub version: Option<String>,
     /// What tungsten uses the tool for.
     pub purpose: String,
+}
+
+/// `tungsten emitters`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct EmittersResult {
+    /// The configured external targets in manifest order, then the
+    /// emitters found only on `PATH`, sorted by name.
+    pub emitters: Vec<EmitterReport>,
+}
+
+/// One external emitter.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct EmitterReport {
+    /// The target name (`go` for `tungsten-emit-go`).
+    pub name: String,
+    pub source: EmitterSource,
+    /// The command as configured, or `tungsten-emit-<name>` (paths are
+    /// machine-specific and not reported).
+    pub command: String,
+    pub status: EmitterStatus,
+    /// The protocol version the emitter reports.
+    pub protocol: Option<u32>,
+    /// The emitter's own version.
+    pub version: Option<String>,
+    /// The emitter describes its options with a JSON Schema.
+    pub has_options_schema: bool,
+    /// Why the emitter could not be described (not `ok`).
+    pub message: Option<String>,
+}
+
+/// Where an emitter was found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum EmitterSource {
+    /// A `tungsten-emit-<name>` executable on `PATH`.
+    Path,
+    /// An `external` target of `tungsten.yml`.
+    Config,
+}
+
+/// What `--describe` showed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum EmitterStatus {
+    /// It described itself and speaks protocol 1.
+    Ok,
+    /// The executable does not exist or cannot be started (TG0801).
+    NotFound,
+    /// It speaks another protocol version (TG0802).
+    ProtocolMismatch,
+    /// It failed, timed out or printed an invalid description.
+    Failed,
 }
 
 /// `tungsten diff`.
@@ -867,13 +924,14 @@ pub struct DiagnosticGroup {
 }
 
 /// Which `$defs` entry describes `result` for each command.
-const RESULT_DEFS: [(CommandName, &str); 11] = [
+const RESULT_DEFS: [(CommandName, &str); 12] = [
     (CommandName::Check, "CheckResult"),
     (CommandName::IrDump, "IrDumpResult"),
     (CommandName::Explain, "ExplainResult"),
     (CommandName::Schema, "SchemaResult"),
     (CommandName::Init, "InitResult"),
     (CommandName::Doctor, "DoctorResult"),
+    (CommandName::Emitters, "EmittersResult"),
     (CommandName::Generate, "GenerateResult"),
     (CommandName::Mock, "MockResult"),
     (CommandName::Report, "ReportResult"),

@@ -10,7 +10,6 @@ use std::path::Path;
 
 use tungsten_config::TungstenConfig;
 use tungsten_core::Diagnostic;
-use tungsten_emit::surface::ApiSurface;
 use tungsten_emit::{Emitter, TargetConfig};
 use tungsten_emit_docs::DocsEmitter;
 use tungsten_emit_mcp::McpEmitter;
@@ -45,11 +44,6 @@ pub fn tool_names(id: &str, ir: &Ir) -> BTreeMap<String, String> {
         "mcp" => tungsten_emit_mcp::tool_names(ir),
         _ => BTreeMap::new(),
     }
-}
-
-/// The target's API surface: the IR's and the tools it serves.
-pub fn surface(id: &str, ir: &Ir) -> ApiSurface {
-    ApiSurface::of(ir).with_tools(tool_names(id, ir))
 }
 
 /// The target id for a name given on the command line: the ids themselves

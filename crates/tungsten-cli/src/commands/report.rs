@@ -34,7 +34,7 @@ use crate::output::{
     ToolKind, json_diagnostic,
 };
 use crate::stats::{headline, ir_stats, plural};
-use crate::{Report, exit, html, targets};
+use crate::{CliEnv, Report, exit, html, targets};
 
 /// The counter of every budget in the report.
 const COUNTER: Counter = Counter::Estimate;
@@ -43,12 +43,12 @@ const COUNTER: Counter = Counter::Estimate;
 const BUCKET: usize = 100;
 const LAST_BUCKET: usize = 600;
 
-pub(crate) fn run(args: &ReportArgs) -> Report {
+pub(crate) fn run(args: &ReportArgs, env: &CliEnv) -> Report {
     let mut compiled = input::compile(&args.input.path);
     let mut report = Report::new(CommandName::Report);
     let sources = std::mem::take(&mut compiled.workspace.sources);
     let mut diagnostics = compiled.diagnostics.0.clone();
-    let project = Project::of(&args.input.path);
+    let project = Project::of(&args.input.path, env);
     let mut data = collect(&compiled, &project, &args.input.path, &mut diagnostics);
     data.diagnostic_groups = groups(&diagnostics, &sources);
     data.summary.counts = check::count(&diagnostics);
@@ -238,6 +238,8 @@ fn coverage(ir: &Ir, name: &str, e: &Emitted, configured: &[String]) -> TargetCo
     let Some(files) = &e.files else {
         return c;
     };
+    // Also true for an external emitter, which has no entry in the registry.
+    c.emitter = true;
     c.files = files.len();
     c.warnings = e
         .diagnostics
