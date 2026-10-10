@@ -132,6 +132,41 @@ export interface SandboxOptions {
   maxCalls?: number;
 }
 
+/** Hybrid search over the compiler's embedding index (planning/02 D6 "As
+ * built: embedding index"). Off unless `search.embeddings` is set. */
+export interface EmbeddingsOptions {
+  /** `index.embeddings.json` written by `tungsten generate` (a path or a
+   * `file:` URL; the vectors are the `.bin` file next to it). */
+  index?: string | URL;
+  /** How a query is embedded: a command speaking the JSON protocol (one
+   * request `{protocol, kind: "query", model, dimensions, inputs}` on
+   * standard input, `{embeddings: [[...]]}` on standard output) or an
+   * endpoint taking the common `/embeddings` request shape. */
+  provider?: "command" | "http";
+  command?: string;
+  url?: string;
+  /** The model name sent to the provider. Default: the index's. */
+  model?: string;
+  /** Expected vector length; sent to an http endpoint. */
+  dimensions?: number;
+  /** Name of the environment variable holding the endpoint's API key. */
+  apiKeyEnv?: string;
+  /** Programmatic query embedder, instead of `provider`. */
+  embed?: (query: string, signal: AbortSignal) => Promise<ArrayLike<number>>;
+  /** Wall-clock limit of one query embedding. Default 5000. */
+  timeoutMs?: number;
+  /** `"rrf"` (reciprocal rank fusion, default) or `"weighted"` (BM25 score
+   * divided by the best BM25 score, plus cosine, each times its weight). */
+  fusion?: "rrf" | "weighted";
+  weights?: { bm25?: number; embedding?: number };
+  /** The constant of reciprocal rank fusion. Default 60. */
+  rrfK?: number;
+}
+
+export interface SearchOptions {
+  embeddings?: EmbeddingsOptions;
+}
+
 export interface ServerOptions {
   manifest: McpManifest;
   /** Factory for one `ClientCore` per MCP session (confirmation tokens and
@@ -145,6 +180,8 @@ export interface ServerOptions {
   /** Override the manifest's mode. */
   mode?: "discrete" | "progressive";
   sandbox?: SandboxOptions;
+  /** Search settings; without `embeddings` `search_tools` is BM25 only. */
+  search?: SearchOptions;
   /** Cap, in characters, on the JSON of one tool result; larger results
    * are cut (arrays to their first items, then long strings) with a note.
    * Default 50000. */

@@ -30,7 +30,8 @@ import {
   truncate,
 } from "./render.js";
 import { apiHost, runSandboxed, type SandboxEngine, type SandboxOutcome } from "./sandbox.js";
-import { bm25, suggest } from "./search.js";
+import { bm25, suggest, type Hit } from "./search.js";
+import type { Ranking, Semantic } from "./semantic.js";
 import type { ClusterEntry, ServerOptions } from "./types.js";
 
 export const DEFAULT_MAX_RESULT_CHARS = 50000;
@@ -155,9 +156,11 @@ export class Session {
    * results this session has already returned. Digests only: no argument
    * or secret is kept. */
   readonly #shown = new Set<string>();
+  readonly #semantic: Semantic | null;
 
-  constructor(catalog: Catalog, options: ServerOptions, sandbox: SandboxConfig | null) {
+  constructor(catalog: Catalog, options: ServerOptions, sandbox: SandboxConfig | null, semantic: Semantic | null = null) {
     this.#catalog = catalog;
+    this.#semantic = semantic;
     this.#options = options;
     this.#sandbox = sandbox;
     const cap = options.maxResultChars;
@@ -255,7 +258,7 @@ export class Session {
     switch (name) {
       case "search_tools": {
         const bad = this.#checkArgs(name, args, { query: { type: "string", required: true }, cluster: { type: "string" }, limit: { type: "integer" } });
-        return bad ?? this.#search(args);
+        return bad ?? (await this.#search(args));
       }
       case "describe_tool": {
         const bad = this.#checkArgs(name, args, { name: { type: "string", required: true } });
@@ -712,7 +715,7 @@ export class Session {
 
   // ------------------------------------------------------ progressive mode
 
-  #search(args: Record<string, unknown>): CallToolResult {
+  async #search(args: Record<string, unknown>): Promise<CallToolResult> {
     const catalog = this.#catalog;
     const query = args.query as string;
     const limit = args.limit === undefined || args.limit === null ? DEFAULT_SEARCH_LIMIT : (args.limit as number);
@@ -741,9 +744,27 @@ export class Session {
     }
     const docs = catalog.documents;
     const c = cluster;
-    let tools = bm25(catalog.index, docs.length, query)
-      .map((h) => docs[h.index])
-      .filter((t): t is CatalogTool => t !== null && t !== undefined && (c === null || inCluster(t, c)));
+    const matches = (h: Hit): boolean => {
+      const t = docs[h.index];
+      return t !== null && t !== undefined && (c === null || inCluster(t, c));
+    };
+    let hits = bm25(catalog.index, docs.length, query).filter(matches);
+    let ranking: Ranking | null = null;
+    const semantic = this.#semantic;
+    if (semantic !== null) {
+      if (semantic.unavailable !== null) {
+        ranking = { mode: "bm25", fallback: semantic.unavailable };
+      } else {
+        const allowed = c === null ? null : new Set(docs.flatMap((t, i) => (t && inCluster(t, c) ? [i] : [])));
+        try {
+          hits = await semantic.rank(query, hits, allowed);
+          ranking = { mode: "hybrid", fusion: semantic.fusion, ...(semantic.model === null ? {} : { model: semantic.model }) };
+        } catch (error) {
+          ranking = { mode: "bm25", fallback: clip(error instanceof Error ? error.message : String(error)) };
+        }
+      }
+    }
+    let tools = hits.map((h) => docs[h.index]).filter((t): t is CatalogTool => t !== null && t !== undefined);
     let hint = SEARCH_HINT;
     if (tools.length === 0 && c) {
       tools = catalog.tools.filter((t) => inCluster(t, c));
@@ -760,7 +781,8 @@ export class Session {
       schema_tokens: t.schemaTokens,
       call_with: callTool(t),
     }));
-    return this.#success({ results, hint }, []);
+    if (ranking === null) return this.#success({ results, hint }, []);
+    return this.#success({ results, hint, ranking }, ranking.fallback === undefined ? [] : [`Ranking fell back to BM25: ${ranking.fallback}.`]);
   }
 
   #describe(tool: CatalogTool): CallToolResult {

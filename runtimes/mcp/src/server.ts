@@ -15,6 +15,7 @@ import { buildCatalog, listTools, type Mode } from "./catalog.js";
 import { serveHttp } from "./http.js";
 import { isRecord } from "./render.js";
 import { resolveDeno, SANDBOX_DEFAULTS, selectEngine } from "./sandbox.js";
+import { buildSemantic } from "./semantic.js";
 import { Session, type SandboxConfig } from "./session.js";
 import type { HttpEndpoint, HttpOptions, ServerOptions } from "./types.js";
 
@@ -73,6 +74,7 @@ export function createTungstenMcpServer(options: ServerOptions): TungstenMcpServ
   const catalog = buildCatalog(opts);
   const warnings = [...catalog.warnings];
   const sandbox = sandboxConfig(opts, warnings);
+  const semantic = buildSemantic(typeof opts.search === "object" && opts.search !== null ? opts.search.embeddings : undefined, catalog, warnings);
   const listed = listTools(catalog, sandbox !== null);
   const name = typeof opts.name === "string" && opts.name !== "" ? opts.name : "tungsten-mcp";
   const version = typeof opts.version === "string" && opts.version !== "" ? opts.version : "0.0.0";
@@ -80,7 +82,7 @@ export function createTungstenMcpServer(options: ServerOptions): TungstenMcpServ
   const endpoints = new Set<HttpEndpoint>();
 
   const start = async (transport: Transport): Promise<{ close(): Promise<void> }> => {
-    const session = new Session(catalog, opts, sandbox);
+    const session = new Session(catalog, opts, sandbox, semantic);
     const server = new Server(
       { name, version },
       catalog.instructions === "" ? { capabilities: { tools: { listChanged: false } } } : { capabilities: { tools: { listChanged: false } }, instructions: catalog.instructions },
