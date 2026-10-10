@@ -47,6 +47,15 @@ changes.
   builds or destructures `StreamEvent` with a struct literal must add it (or
   use `..`).
 
+- Go SDKs through the external emitter interface: `emitters/go` builds
+  `tungsten-emit-go` (enable it with `go: { out: ..., external: true,
+  module: ..., package: ... }`), which generates a Go package with models,
+  resources, a typed client, operation descriptors, pagination and stream
+  helpers, macros and a README. The SDKs use the new Go runtime
+  `github.com/pboachie/tungsten/runtimes/go` (standard library only, Go
+  1.22 or later), with the same error envelope, retries, idempotency,
+  previews, confirmation tokens and auth handling as the other runtimes.
+
 ## [0.1.0] - Unreleased
 
 First release. The compiler, the three SDK runtimes (`@tungsten/runtime`,
