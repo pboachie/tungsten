@@ -265,6 +265,7 @@ pub fn decode_event<T: DeserializeOwned>(
         id,
         retry,
         meta,
+        reconnects,
     } = item?;
     match decode_value::<T>(&value) {
         Ok(decoded) => Ok(StreamEvent {
@@ -273,6 +274,7 @@ pub fn decode_event<T: DeserializeOwned>(
             id,
             retry,
             meta,
+            reconnects,
         }),
         Err(mismatch) => {
             let location = format!("events[{index}]{}", mismatch.path);

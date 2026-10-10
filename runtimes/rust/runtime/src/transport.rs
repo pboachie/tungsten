@@ -24,6 +24,9 @@ pub struct AttemptRequest<'a> {
     /// Hand a `text/event-stream` answer with a 2xx status back unread, as
     /// [`AttemptOutcome::Streaming`]; any other answer is read as usual.
     pub stream: bool,
+    /// With `stream`: the silence after which a read of the body times out.
+    /// Default `timeout`.
+    pub idle: Option<Duration>,
 }
 
 /// What one read of an event stream gives.
@@ -255,7 +258,7 @@ pub async fn attempt(client: &reqwest::Client, req: &AttemptRequest<'_>) -> Atte
             headers,
             body: EventBody {
                 response,
-                idle: req.timeout,
+                idle: req.idle.unwrap_or(req.timeout),
             },
         };
     }

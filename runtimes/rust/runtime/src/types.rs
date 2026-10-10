@@ -814,6 +814,23 @@ pub struct ClientOptions {
     /// Longest wall-clock time collecting a stream may take (same error).
     /// Default 60 s.
     pub max_collect_time: Duration,
+    /// How often a stream reconnects after it dropped (a lost connection, or
+    /// a clean end before the `done` event the operation declares) with
+    /// `Last-Event-ID` set to the last event id it delivered; events whose id
+    /// was delivered are never delivered twice. Only for operations that are
+    /// safe to repeat (read-only, or with replay protection) and only once an
+    /// event id is known (or before the first event). 0 disables it.
+    /// Default 3.
+    pub max_reconnects: u32,
+    /// Longest wait before a reconnect: the server's `retry` value (250 ms
+    /// when it sent none) is capped at this and then reduced by up to 25 % at
+    /// random. Default 30 s.
+    pub reconnect_max: Duration,
+    /// A stream that delivers no bytes (comments count) for this long is
+    /// idle: it is reconnected like a dropped one, else ends with an error
+    /// whose `code` is `STREAM_IDLE`. `None`: the per-attempt `timeout`,
+    /// which ends the stream without a reconnect.
+    pub idle_timeout: Option<Duration>,
     /// Overrides the key used to sign confirmation tokens. Default: random
     /// per client instance.
     pub confirmation_key: Option<Vec<u8>>,
@@ -847,6 +864,9 @@ impl Default for ClientOptions {
             max_event_bytes: crate::sse::DEFAULT_MAX_EVENT_BYTES,
             max_collect_bytes: crate::stream::DEFAULT_MAX_COLLECT_BYTES,
             max_collect_time: crate::stream::DEFAULT_MAX_COLLECT_TIME,
+            max_reconnects: crate::stream::DEFAULT_MAX_RECONNECTS,
+            reconnect_max: crate::stream::DEFAULT_RECONNECT_MAX,
+            idle_timeout: None,
             confirmation_key: None,
             operations: Vec::new(),
             http_client: None,

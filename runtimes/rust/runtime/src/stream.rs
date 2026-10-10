@@ -3,7 +3,7 @@
 //! asynchronous iterator, with the semantics of `ClientCore.stream` in
 //! `runtimes/ts/src/client.ts`.
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -33,6 +33,17 @@ pub const DEFAULT_MAX_COLLECT_BYTES: usize = 4 * 1024 * 1024;
 /// wall-clock time a collection may take (60 s).
 pub const DEFAULT_MAX_COLLECT_TIME: Duration = Duration::from_secs(60);
 
+/// Default [`ClientOptions::max_reconnects`](crate::ClientOptions): the
+/// reconnects of a dropped stream.
+pub const DEFAULT_MAX_RECONNECTS: u32 = 3;
+
+/// Default [`ClientOptions::reconnect_max`](crate::ClientOptions): the longest
+/// wait before a reconnect (30 s).
+pub const DEFAULT_RECONNECT_MAX: Duration = Duration::from_secs(30);
+
+/// The wait before a reconnect when the server sent no `retry`, in milliseconds.
+const DEFAULT_RECONNECT_MS: u64 = 250;
+
 /// What sending a request gave: a decoded response, or an event stream whose
 /// body has not been read.
 pub(crate) enum Sent {
@@ -57,6 +68,9 @@ pub struct StreamEvent<T> {
     /// The last `retry` value (milliseconds) the stream has set so far.
     pub retry: Option<u64>,
     pub meta: ResponseMeta,
+    /// How often the stream reconnected up to this event; `meta` is the
+    /// answer of the connection the event arrived on (the last one).
+    pub reconnects: u32,
 }
 
 /// What iterating a stream yields: events, then the end of the stream or one
@@ -80,21 +94,48 @@ struct Open {
     check: Option<OutcomeCheck>,
     secrets: SecretSet,
     timeout: std::time::Duration,
+    /// The call is safe to repeat: a read, or a mutation with replay protection.
+    repeatable: bool,
+    reconnects: u32,
+    last_id: Option<String>,
+    last_retry: Option<u64>,
+    /// Ids delivered so far, to skip the replay of a server that ignores
+    /// `Last-Event-ID`.
+    delivered: HashSet<String>,
+    /// The connection is new: events whose id was delivered are skipped until
+    /// the first one that is not.
+    replaying: bool,
+}
+
+/// Why a connection ended without finishing the stream.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Dropped {
+    /// The connection failed.
+    Lost,
+    /// No bytes within `ClientOptions::idle_timeout`.
+    Idle,
+    /// A clean end before the `done` event the operation declares.
+    EarlyEnd,
 }
 
 enum State {
-    Idle { args: Value, opts: Box<CallOptions> },
+    Idle,
     Open(Box<Open>),
     Done,
 }
 
 /// An asynchronous event iterator: call [`EventStream::next`] until it
 /// returns `None`. The request is sent by the first call. After an error item
-/// it returns `None`; dropping the stream closes the connection.
+/// it returns `None`; dropping the stream closes the connection (that is how a
+/// stream is cancelled). A stream that drops is reconnected with
+/// `Last-Event-ID` when the call is safe to repeat
+/// ([`ClientOptions::max_reconnects`](crate::ClientOptions)).
 pub struct EventStream {
     core: ClientCore,
     op: Arc<OperationDescriptor>,
     spec: Arc<StreamDescriptor>,
+    args: Value,
+    opts: CallOptions,
     state: State,
 }
 
@@ -119,10 +160,9 @@ impl EventStream {
             core,
             op,
             spec,
-            state: State::Idle {
-                args,
-                opts: Box::new(opts),
-            },
+            args,
+            opts,
+            state: State::Idle,
         }
     }
 
@@ -133,10 +173,10 @@ impl EventStream {
         loop {
             match &mut self.state {
                 State::Done => return None,
-                State::Idle { args, opts } => {
+                State::Idle => {
                     match self
                         .core
-                        .open_stream(&self.op, &self.spec, args, opts)
+                        .open_stream(&self.op, &self.spec, &self.args, &self.opts, None)
                         .await
                     {
                         Ok(open) => self.state = State::Open(Box::new(open)),
@@ -149,7 +189,8 @@ impl EventStream {
                 State::Open(open) => {
                     if let Some(event) = open.queue.pop_front() {
                         match self.core.accept(&self.op, &self.spec, open, event) {
-                            Accepted::Event(item) => return Some(Ok(item)),
+                            Accepted::Event(item) => return Some(Ok(*item)),
+                            Accepted::Skip => continue,
                             Accepted::Done => {
                                 self.state = State::Done;
                                 return None;
@@ -165,32 +206,54 @@ impl EventStream {
                         self.state = State::Done;
                         return Some(Err(error));
                     }
-                    if open.ended {
-                        self.state = State::Done;
-                        return None;
-                    }
-                    match open.body.read().await {
-                        BodyRead::Chunk(bytes) => {
-                            let text = open.decoder.decode(&bytes);
-                            let events = open.parser.push(&text);
-                            open.queue.extend(events);
-                            open.oversize = open.parser.exceeded();
-                        }
-                        BodyRead::End => {
-                            let text = open.decoder.finish();
-                            let mut events = open.parser.push(&text);
-                            events.extend(open.parser.end());
-                            open.queue.extend(events);
-                            open.oversize = open.parser.exceeded();
-                            open.ended = true;
-                        }
-                        BodyRead::Timeout => {
-                            let error = self.core.interrupted(&self.op, open, true);
+                    let dropped = if open.ended {
+                        // A stream that names its terminal event has not finished without it.
+                        if self.spec.done.is_none() {
                             self.state = State::Done;
-                            return Some(Err(error));
+                            return None;
                         }
-                        BodyRead::Lost => {
-                            let error = self.core.interrupted(&self.op, open, false);
+                        Dropped::EarlyEnd
+                    } else {
+                        match open.body.read().await {
+                            BodyRead::Chunk(bytes) => {
+                                let text = open.decoder.decode(&bytes);
+                                let events = open.parser.push(&text);
+                                open.queue.extend(events);
+                                open.oversize = open.parser.exceeded();
+                                continue;
+                            }
+                            BodyRead::End => {
+                                let text = open.decoder.finish();
+                                let mut events = open.parser.push(&text);
+                                events.extend(open.parser.end());
+                                open.queue.extend(events);
+                                open.oversize = open.parser.exceeded();
+                                open.ended = true;
+                                continue;
+                            }
+                            BodyRead::Timeout if self.core.inner.idle_timeout.is_none() => {
+                                let error = self.core.interrupted(&self.op, open, None);
+                                self.state = State::Done;
+                                return Some(Err(error));
+                            }
+                            BodyRead::Timeout => Dropped::Idle,
+                            BodyRead::Lost => Dropped::Lost,
+                        }
+                    };
+                    if !self.core.may_reconnect(open) {
+                        // Without reconnects a clean end stays a clean end.
+                        let clean = dropped == Dropped::EarlyEnd && open.reconnects == 0;
+                        let error = self.core.interrupted(&self.op, open, Some(dropped));
+                        self.state = State::Done;
+                        return if clean { None } else { Some(Err(error)) };
+                    }
+                    match self
+                        .core
+                        .reconnect(&self.op, &self.spec, &self.args, &self.opts, open)
+                        .await
+                    {
+                        Ok(fresh) => **open = fresh,
+                        Err(error) => {
                             self.state = State::Done;
                             return Some(Err(error));
                         }
@@ -244,6 +307,181 @@ impl EventStream {
     }
 }
 
+/// What the consuming helpers of a stream ([`EventStream::reduce`],
+/// [`EventStream::first`], [`EventStream::on`] and the same of
+/// [`TypedEvents`]) return: the result, or, when the stream failed, what was
+/// gathered before the failure with the failure as `error`.
+#[derive(Debug)]
+pub struct Folded<R> {
+    pub value: R,
+    pub error: Option<Error>,
+    /// The reconnects of the last event delivered.
+    pub reconnects: u32,
+}
+
+type Handler<'a, T> = Box<dyn FnMut(&StreamEvent<T>) + Send + 'a>;
+
+/// Handlers by event name for [`EventStream::on`]: the one named like the
+/// event (`message` for an event without a name) is called, else the
+/// catch-all one.
+pub struct EventHandlers<'a, T> {
+    named: BTreeMap<String, Handler<'a, T>>,
+    any: Option<Handler<'a, T>>,
+}
+
+impl<T> std::fmt::Debug for EventHandlers<'_, T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EventHandlers")
+            .field("named", &self.named.keys().collect::<Vec<_>>())
+            .field("any", &self.any.is_some())
+            .finish()
+    }
+}
+
+impl<T> Default for EventHandlers<'_, T> {
+    fn default() -> Self {
+        EventHandlers {
+            named: BTreeMap::new(),
+            any: None,
+        }
+    }
+}
+
+impl<'a, T> EventHandlers<'a, T> {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Call `handler` for the events named `event`.
+    #[must_use]
+    pub fn on(mut self, event: &str, handler: impl FnMut(&StreamEvent<T>) + Send + 'a) -> Self {
+        self.named.insert(event.to_owned(), Box::new(handler));
+        self
+    }
+
+    /// Call `handler` for every event no named handler takes.
+    #[must_use]
+    pub fn on_any(mut self, handler: impl FnMut(&StreamEvent<T>) + Send + 'a) -> Self {
+        self.any = Some(Box::new(handler));
+        self
+    }
+
+    fn dispatch(&mut self, event: &StreamEvent<T>) {
+        if let Some(handler) = self.named.get_mut(&event.event) {
+            handler(event);
+        } else if let Some(handler) = self.any.as_mut() {
+            handler(event);
+        }
+    }
+}
+
+/// The consuming helpers of a stream whose events are `$item`.
+macro_rules! consuming_helpers {
+    ($item:ty) => {
+        /// Read the stream to its end and fold its events into one value
+        /// (concatenating text deltas, say). Dropping the future closes the
+        /// connection.
+        pub async fn reduce<A>(
+            mut self,
+            initial: A,
+            mut fold: impl FnMut(A, &StreamEvent<$item>) -> A,
+        ) -> Folded<A> {
+            let mut value = initial;
+            let mut reconnects = 0;
+            loop {
+                match self.next().await {
+                    None => break,
+                    Some(Err(error)) => {
+                        return Folded {
+                            value,
+                            error: Some(error),
+                            reconnects,
+                        };
+                    }
+                    Some(Ok(event)) => {
+                        reconnects = event.reconnects;
+                        value = fold(value, &event);
+                    }
+                }
+            }
+            Folded {
+                value,
+                error: None,
+                reconnects,
+            }
+        }
+
+        /// The first event for which `predicate` holds, then close the
+        /// stream; `value` is `None` when the stream ends without one.
+        pub async fn first(
+            mut self,
+            mut predicate: impl FnMut(&StreamEvent<$item>) -> bool,
+        ) -> Folded<Option<StreamEvent<$item>>> {
+            let mut reconnects = 0;
+            loop {
+                match self.next().await {
+                    None => break,
+                    Some(Err(error)) => {
+                        return Folded {
+                            value: None,
+                            error: Some(error),
+                            reconnects,
+                        };
+                    }
+                    Some(Ok(event)) => {
+                        reconnects = event.reconnects;
+                        if predicate(&event) {
+                            return Folded {
+                                value: Some(event),
+                                error: None,
+                                reconnects,
+                            };
+                        }
+                    }
+                }
+            }
+            Folded {
+                value: None,
+                error: None,
+                reconnects,
+            }
+        }
+
+        /// Read the stream to its end and call the handler named like each
+        /// event. `value` is the number of events delivered.
+        pub async fn on(mut self, mut handlers: EventHandlers<'_, $item>) -> Folded<usize> {
+            let mut count = 0;
+            let mut reconnects = 0;
+            loop {
+                match self.next().await {
+                    None => break,
+                    Some(Err(error)) => {
+                        return Folded {
+                            value: count,
+                            error: Some(error),
+                            reconnects,
+                        };
+                    }
+                    Some(Ok(event)) => {
+                        reconnects = event.reconnects;
+                        count += 1;
+                        handlers.dispatch(&event);
+                    }
+                }
+            }
+            Folded {
+                value: count,
+                error: None,
+                reconnects,
+            }
+        }
+    };
+}
+
+impl EventStream {
+    consuming_helpers!(Value);
+}
+
 /// [`EventStream`] with typed events.
 #[derive(Debug)]
 pub struct TypedEvents<T> {
@@ -281,6 +519,7 @@ impl<T: DeserializeOwned + serde::Serialize> TypedEvents<T> {
                 id,
                 retry,
                 meta,
+                reconnects,
             } = event;
             let value = match serde_json::to_value(&value) {
                 Ok(value) => value,
@@ -306,12 +545,15 @@ impl<T: DeserializeOwned + serde::Serialize> TypedEvents<T> {
                 id,
                 retry,
                 meta,
+                reconnects,
             }));
         }
     }
 }
 
 impl<T: DeserializeOwned> TypedEvents<T> {
+    consuming_helpers!(T);
+
     pub async fn next(&mut self) -> Option<StreamResult<T>> {
         let item = self.inner.next().await?;
         let index = self.seen;
@@ -372,7 +614,9 @@ impl Limits {
 }
 
 enum Accepted {
-    Event(StreamEvent<Value>),
+    Event(Box<StreamEvent<Value>>),
+    /// An event the stream already delivered, replayed after a reconnect.
+    Skip,
     /// The done sentinel: the stream ends without delivering it.
     Done,
     Failed(Error),
@@ -421,6 +665,7 @@ impl ClientCore {
         spec: &StreamDescriptor,
         args: &Value,
         opts: &CallOptions,
+        resume_from: Option<&str>,
     ) -> std::result::Result<Open, Error> {
         let mut opts = opts.clone();
         let mut headers = BTreeMap::new();
@@ -436,6 +681,10 @@ impl ClientCore {
             }
         }
         headers.insert("Accept".to_owned(), merge_accept(&accept));
+        if let Some(id) = resume_from {
+            headers.retain(|name, _| !name.eq_ignore_ascii_case("last-event-id"));
+            headers.insert("Last-Event-ID".to_owned(), id.to_owned());
+        }
         opts.headers = headers;
         let args = with_stream_flag(op, spec, args);
         let prepared = self
@@ -476,6 +725,7 @@ impl ClientCore {
         } else {
             None
         };
+        let repeatable = !mutation || has_replay_protection(op, prepared.key.as_deref());
         Ok(Open {
             body: start.body,
             parser: SseParser::with_max_event_bytes(self.inner.max_event_bytes),
@@ -490,19 +740,79 @@ impl ClientCore {
             check,
             secrets: prepared.secrets.clone(),
             timeout: self.timeout(&opts),
+            repeatable,
+            reconnects: 0,
+            last_id: None,
+            last_retry: None,
+            delivered: HashSet::new(),
+            replaying: false,
         })
     }
 
-    /// The final error of a stream that broke after `open.count` events.
-    fn interrupted(&self, op: &OperationDescriptor, open: &Open, timed_out: bool) -> Error {
+    /// Whether a dropped stream may be reconnected: the call is safe to
+    /// repeat, reconnects are left, and an event id to resume from is known
+    /// (or no event was delivered yet).
+    fn may_reconnect(&self, open: &Open) -> bool {
+        open.repeatable
+            && open.reconnects < self.inner.max_reconnects
+            && (open.count == 0
+                || open
+                    .last_id
+                    .as_deref()
+                    .is_some_and(crate::serialize::valid_header_value))
+    }
+
+    /// Wait as the server asked (capped, shortened by up to 25 % at random),
+    /// then send the request again with `Last-Event-ID`: the stream that
+    /// continues `old`.
+    async fn reconnect(
+        &self,
+        op: &OperationDescriptor,
+        spec: &StreamDescriptor,
+        args: &Value,
+        opts: &CallOptions,
+        old: &mut Open,
+    ) -> std::result::Result<Open, Error> {
+        let cap = self.inner.reconnect_max.as_secs_f64() * 1000.0;
+        let ceiling = (old.last_retry.unwrap_or(DEFAULT_RECONNECT_MS) as f64).min(cap);
+        let wait = ceiling - self.random() * 0.25 * ceiling;
+        tokio::time::sleep(crate::util::duration_from_ms(wait)).await;
+        let mut fresh = self
+            .open_stream(op, spec, args, opts, old.last_id.as_deref())
+            .await?;
+        fresh.count = old.count;
+        fresh.reconnects = old.reconnects + 1;
+        fresh.last_id.clone_from(&old.last_id);
+        fresh.last_retry = old.last_retry;
+        fresh.delivered = std::mem::take(&mut old.delivered);
+        fresh.replaying = true;
+        Ok(fresh)
+    }
+
+    /// The final error of a stream that broke after `open.count` events:
+    /// `None` is a silence past the attempt timeout.
+    fn interrupted(
+        &self,
+        op: &OperationDescriptor,
+        open: &Open,
+        dropped: Option<Dropped>,
+    ) -> Error {
         let mutation = is_mutation(op);
         let after = format!(
             "after {} {}",
             open.count,
             if open.count == 1 { "event" } else { "events" }
         );
+        let retried = match open.reconnects {
+            0 => String::new(),
+            1 => " (1 reconnect made)".to_owned(),
+            n => format!(" ({n} reconnects made)"),
+        };
+        let idle = dropped == Some(Dropped::Idle);
+        let code = idle.then(|| "STREAM_IDLE".to_owned());
         let fields = || UnknownFields {
             http_status: Some(open.meta.status),
+            code: code.clone(),
             request_id: open.meta.request_id.clone(),
             ..UnknownFields::default()
         };
@@ -514,26 +824,35 @@ impl ClientCore {
             attempts: open.meta.attempts,
             check: open.check.as_ref(),
         };
-        let diagnostic = if timed_out {
-            let cause = format!(
-                "No event arrived within {} ms {after}; the stream was abandoned.",
-                open.timeout.as_millis()
-            );
+        let diagnostic = if dropped.is_none() || idle {
+            let silence = match self.inner.idle_timeout.filter(|_| idle) {
+                Some(idle_timeout) => format!(
+                    "No bytes arrived within {} ms {after}{retried}",
+                    idle_timeout.as_millis()
+                ),
+                None => format!(
+                    "No event arrived within {} ms {after}",
+                    open.timeout.as_millis()
+                ),
+            };
+            let cause = format!("{silence}; the stream was abandoned.");
             if mutation {
                 outcome_unknown(&ctx, &cause, fields())
             } else {
                 Diag::new(op.id.clone(), Category::UpstreamUnavailable)
                     .http_status(Some(open.meta.status))
+                    .code(code.clone())
                     .request_id(open.meta.request_id.clone())
                     .remediation(format!(
-                        "{cause} This read has no side effects; call again later or with a larger `timeout`."
+                        "{cause} This read has no side effects; call again later or with a larger `{}`.",
+                        if idle { "idle_timeout" } else { "timeout" }
                     ))
                     .attempts(open.meta.attempts)
                     .build()
             }
         } else {
             let cause = format!(
-                "The event stream was cut off {after}: the connection failed before it ended."
+                "The event stream was cut off {after}{retried}: the connection failed before it ended."
             );
             if mutation {
                 outcome_unknown(&ctx, &cause, fields())
@@ -614,6 +933,16 @@ impl ClientCore {
     ) -> Accepted {
         if spec.done.as_deref() == Some(event.data.as_str()) {
             return Accepted::Done;
+        }
+        if open.replaying {
+            if event
+                .id
+                .as_ref()
+                .is_some_and(|id| open.delivered.contains(id))
+            {
+                return Accepted::Skip;
+            }
+            open.replaying = false;
         }
         let index = open.count;
         let mutation = is_mutation(op);
@@ -703,12 +1032,21 @@ impl ClientCore {
             self.emit(&error.diagnostic);
         }
         open.count += 1;
-        Accepted::Event(StreamEvent {
+        if let Some(id) = &event.id {
+            open.delivered.insert(id.clone());
+        }
+        let id = event.id.or_else(|| open.last_id.clone());
+        open.last_id.clone_from(&id);
+        if event.retry.is_some() {
+            open.last_retry = event.retry;
+        }
+        Accepted::Event(Box::new(StreamEvent {
             value,
             event: event.event,
-            id: event.id,
-            retry: event.retry,
+            id,
+            retry: open.last_retry,
             meta: open.meta.clone(),
-        })
+            reconnects: open.reconnects,
+        }))
     }
 }

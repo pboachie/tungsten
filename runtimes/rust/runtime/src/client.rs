@@ -77,6 +77,9 @@ pub(crate) struct Inner {
     pub max_event_bytes: usize,
     pub max_collect_bytes: usize,
     pub max_collect_time: Duration,
+    pub max_reconnects: u32,
+    pub reconnect_max: Duration,
+    pub idle_timeout: Option<Duration>,
     pub retries: PartialRetryOptions,
     pub store: Arc<dyn IdempotencyStore>,
     pub middleware: Vec<Arc<dyn Middleware>>,
@@ -179,6 +182,11 @@ impl ClientCore {
                 max_event_bytes: options.max_event_bytes.max(1),
                 max_collect_bytes: options.max_collect_bytes.max(1),
                 max_collect_time: options.max_collect_time.max(Duration::from_millis(1)),
+                max_reconnects: options.max_reconnects.min(1000),
+                reconnect_max: options.reconnect_max,
+                idle_timeout: options
+                    .idle_timeout
+                    .map(|idle| idle.max(Duration::from_millis(1))),
                 retries: options.retries,
                 store,
                 middleware: options.middleware,

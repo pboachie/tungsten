@@ -94,7 +94,8 @@ pub use oauth::{
     TokenInfo, TokenStore, generate_pkce, pkce_challenge,
 };
 pub use stream::{
-    DEFAULT_MAX_COLLECT_BYTES, DEFAULT_MAX_COLLECT_TIME, EventStream, StreamEvent, StreamResult,
+    DEFAULT_MAX_COLLECT_BYTES, DEFAULT_MAX_COLLECT_TIME, DEFAULT_MAX_RECONNECTS,
+    DEFAULT_RECONNECT_MAX, EventHandlers, EventStream, Folded, StreamEvent, StreamResult,
     TypedEvents,
 };
 pub use types::*;
