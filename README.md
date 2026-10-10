@@ -131,6 +131,8 @@ if (preview.ok && preview.value.confirmation_token) {
 }
 ```
 
+More examples: [tungsten on six public APIs](examples/showcase/README.md) (the public OpenAPI descriptions of Stripe, GitHub, Twilio, OpenAI, Kubernetes and Discord): what `tungsten check` finds, MCP listing sizes, and generated SDK code in TypeScript, Python and Rust, reproducible with one script. [`examples/external-emitter-markdown`](examples/external-emitter-markdown) shows how to write an external emitter.
+
 ## Architecture
 
 <p align="center"><img src="assets/architecture.svg" alt="OpenAPI 3.0/3.1 documents and overlays, with tungsten.yml and agent.yml, go through the frontend into a typed IR, the agent compiler, and the emitters, which depend on the runtimes" width="900"></p>

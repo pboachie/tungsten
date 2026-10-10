@@ -1,0 +1,19 @@
+tungsten: 1
+
+api:
+  name: discord
+  title: "Discord HTTP API"
+
+inputs:
+  - namespace: discord
+    spec: "../../.cache/specs/discord.json"
+
+servers:
+  default: "https://discord.com/api/v10"
+  allow_override: true
+
+targets:
+  typescript: { out: ../../.cache/out/discord/typescript }
+  python: { out: ../../.cache/out/discord/python }
+  rust: { out: ../../.cache/out/discord/rust }
+  docs: { out: ../../.cache/out/discord/docs }

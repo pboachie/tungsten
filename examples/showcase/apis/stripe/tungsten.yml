@@ -1,0 +1,19 @@
+tungsten: 1
+
+api:
+  name: stripe
+  title: "Stripe API"
+
+inputs:
+  - namespace: stripe
+    spec: "../../.cache/specs/stripe.json"
+
+servers:
+  default: "https://api.stripe.com"
+  allow_override: true
+
+targets:
+  typescript: { out: ../../.cache/out/stripe/typescript }
+  python: { out: ../../.cache/out/stripe/python }
+  rust: { out: ../../.cache/out/stripe/rust }
+  docs: { out: ../../.cache/out/stripe/docs }

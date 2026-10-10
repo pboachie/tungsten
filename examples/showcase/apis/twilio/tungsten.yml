@@ -1,0 +1,19 @@
+tungsten: 1
+
+api:
+  name: twilio
+  title: "Twilio API (2010-04-01)"
+
+inputs:
+  - namespace: twilio
+    spec: "../../.cache/specs/twilio.json"
+
+servers:
+  default: "https://api.twilio.com"
+  allow_override: true
+
+targets:
+  typescript: { out: ../../.cache/out/twilio/typescript }
+  python: { out: ../../.cache/out/twilio/python }
+  rust: { out: ../../.cache/out/twilio/rust }
+  docs: { out: ../../.cache/out/twilio/docs }

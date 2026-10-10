@@ -1,0 +1,9 @@
+# Pinned public OpenAPI descriptions: <sha256>  <cache file name>  <url at a pinned commit>
+# Not committed here; run.sh downloads them into .cache/specs and refuses a file whose hash differs.
+# Refresh: update the pin in the URL, run `./run.sh --update-lock`, review the diff, commit.
+7cff4cc46d0654101a36a3302f7544640f5f73e4f3cad6f264f0e23c19fa1776  stripe.json  https://raw.githubusercontent.com/stripe/openapi/7a1f5c21117298a85995746eeeedb6207969dc4e/openapi/spec3.json
+da3d22e417611cca9a4131dceea89d4d61c3be021b0917f32d9e4422e4fe60f1  github.json  https://raw.githubusercontent.com/github/rest-api-description/58b1e0c00b39b9e46c24dc4a0ba6a2669c90e9c1/descriptions/api.github.com/api.github.com.json
+bfdf249a129819af274d6bdc7672156ea3416ad48670a6f0544def6ef386ba87  twilio.json  https://raw.githubusercontent.com/twilio/twilio-oai/141f1201b55abcc16b3aa8089e71c4a927326975/spec/json/twilio_api_v2010.json
+8f037f570565278e84c57ef1f1777c1c8ede954da7b428d70ec93dc294781ba7  openai.yaml  https://raw.githubusercontent.com/openai/openai-openapi/e95c0fe615f45a19e8878af923a729948445a6bd/openapi.yaml
+d09ab224a98fb9c0e7fd128b6f395f66b23d43b6635272109dcaaafc4a3dd9c9  kubernetes.json  https://raw.githubusercontent.com/kubernetes/kubernetes/f78e722310e50bcaca9276be22276d9e91d91308/api/openapi-spec/v3/api__v1_openapi.json
+7fd37d558c01b7a1a16287bd31cb2b65abfaa372c18e912dc67fbeead5e23653  discord.json  https://raw.githubusercontent.com/discord/discord-api-spec/1ff2dee3677fabef7b49f942bbae93d06c0c9f2c/specs/openapi.json

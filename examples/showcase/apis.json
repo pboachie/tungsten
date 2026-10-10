@@ -1,0 +1,71 @@
+{
+  "apis": [
+    {
+      "id": "stripe",
+      "name": "Stripe",
+      "description": "Payments. The public OpenAPI description.",
+      "licence": "MIT",
+      "copyright": "Copyright (c) 2011- Stripe, Inc.",
+      "licence_file": "LICENSE",
+      "call": "stripe.PostCustomers",
+      "danger": "stripe.DeleteCustomersCustomer",
+      "note": "The largest description of the six by schema count (about 9,000 types)."
+    },
+    {
+      "id": "github",
+      "name": "GitHub REST",
+      "description": "Repositories, issues, pull requests, organizations. The api.github.com description.",
+      "licence": "MIT",
+      "copyright": "Copyright (c) 2020 GitHub",
+      "licence_file": "LICENSE.md",
+      "call": "github.issues/create",
+      "danger": "github.repos/delete",
+      "note": "The largest by operation count. Operation ids are GitHub's own (`repos/delete`)."
+    },
+    {
+      "id": "twilio",
+      "name": "Twilio",
+      "description": "Messaging and voice. The core Api v2010 description (Twilio publishes one file per product).",
+      "licence": "MIT",
+      "copyright": "Copyright (C) 2023, Twilio, Inc.",
+      "licence_file": "LICENSE",
+      "call": "twilio.CreateMessage",
+      "danger": "twilio.DeleteIncomingPhoneNumber",
+      "note": "Form-encoded request bodies."
+    },
+    {
+      "id": "openai",
+      "name": "OpenAI",
+      "description": "Models, assistants, files, batches. The published OpenAPI 3.1 description (YAML).",
+      "licence": "MIT",
+      "copyright": "Copyright (c) OpenAI",
+      "licence_file": "LICENSE",
+      "call": "openai.createChatCompletion",
+      "danger": "openai.deleteAssistant",
+      "note": "OpenAPI 3.1 with streaming responses."
+    },
+    {
+      "id": "kubernetes",
+      "name": "Kubernetes (core/v1)",
+      "description": "Pods, services, namespaces. The OpenAPI v3 description of the core/v1 group at release v1.37.1.",
+      "licence": "Apache-2.0",
+      "copyright": "The Kubernetes Authors",
+      "licence_file": "LICENSE",
+      "ref_label": "v1.37.1",
+      "call": "kubernetes.createCoreV1NamespacedPod",
+      "danger": "kubernetes.deleteCoreV1NamespacedPod",
+      "note": "One API group of many; the cluster-wide aggregated description is far larger."
+    },
+    {
+      "id": "discord",
+      "name": "Discord",
+      "description": "Channels, messages, guilds. Discord labels this description a preview of its v10 HTTP API.",
+      "licence": "MIT",
+      "copyright": "Copyright 2023 Discord",
+      "licence_file": "LICENSE",
+      "call": "discord.create_message",
+      "danger": "discord.delete_channel",
+      "note": "OpenAPI 3.1."
+    }
+  ]
+}
