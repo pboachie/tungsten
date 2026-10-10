@@ -87,10 +87,8 @@ const PRELUDE = `(() => {
   globalThis.clearTimeout = (id) => {
     if (timers.delete(id)) timer(id, -1);
   };
-  const denied = (what) => () => {
-    throw new Error(what + " is not available in the sandbox; use the client.");
-  };
-  globalThis.fetch = denied("fetch");
+  // Like the real one, fetch never throws: it rejects.
+  globalThis.fetch = () => Promise.reject(new Error("fetch is not available in the sandbox; use the client."));
   const base = {
     invoke: (name, args) => request("invoke", name, args),
     preview: (name, args) => request("preview", name, args),
