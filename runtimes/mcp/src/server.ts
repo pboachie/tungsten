@@ -13,6 +13,7 @@ import { ErrorCode, ListToolsRequestSchema, McpError, type Tool as McpTool } fro
 
 import { buildCatalog, listTools, type Mode } from "./catalog.js";
 import { serveHttp } from "./http.js";
+import { progressSink } from "./progress.js";
 import { isRecord } from "./render.js";
 import { resolveDeno, SANDBOX_DEFAULTS, selectEngine } from "./sandbox.js";
 import { Session, type SandboxConfig } from "./session.js";
@@ -90,10 +91,17 @@ export function createTungstenMcpServer(options: ServerOptions): TungstenMcpServ
     // the SDK validates a registered tools/call handler's params itself and
     // answers a protocol error for arguments sent as JSON text or a
     // non-string name, where this server answers an envelope (planning/05).
-    server.fallbackRequestHandler = async (request) => {
+    server.fallbackRequestHandler = async (request, extra) => {
       if (request.method !== "tools/call") throw new McpError(ErrorCode.MethodNotFound, "Method not found");
       const params = isRecord(request.params) ? request.params : {};
-      return session.call(params.name, params.arguments);
+      const token = extra._meta?.progressToken;
+      if (token === undefined) return session.call(params.name, params.arguments);
+      // A streamed tool call reports each event it collects (MCP progress
+      // notifications); a failed notification never changes the call.
+      const notify = (progress: number, message: string): void => {
+        extra.sendNotification({ method: "notifications/progress", params: { progressToken: token, progress, message } }).catch(() => undefined);
+      };
+      return progressSink.run(notify, () => session.call(params.name, params.arguments));
     };
     server.onclose = () => {
       open.delete(server);

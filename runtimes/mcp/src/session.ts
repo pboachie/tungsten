@@ -29,6 +29,7 @@ import {
   skeleton,
   truncate,
 } from "./render.js";
+import { progressSink } from "./progress.js";
 import { apiHost, runSandboxed, type SandboxEngine, type SandboxOutcome } from "./sandbox.js";
 import { bm25, suggest } from "./search.js";
 import type { ClusterEntry, ServerOptions } from "./types.js";
@@ -585,6 +586,7 @@ export class Session {
   async #collectStream(op: OperationDescriptor, args: Record<string, unknown>, opts: CallOptions, tool: CatalogTool): Promise<Outcome> {
     const core = this.#core as ClientCore;
     const events: unknown[] = [];
+    const progress = progressSink.getStore();
     let bytes = 0;
     let expired = false;
     const controller = new AbortController();
@@ -615,6 +617,7 @@ export class Session {
         bytes += Buffer.byteLength(JSON.stringify(item.value) ?? "null", "utf8");
         if (bytes > this.#maxStreamBytes) return exceeded(`at most ${this.#maxStreamBytes} bytes of events`);
         events.push(item.value);
+        progress?.(events.length, `${events.length} ${events.length === 1 ? "event" : "events"} collected${item.meta.reconnects > 0 ? ` (${item.meta.reconnects} ${item.meta.reconnects === 1 ? "reconnect" : "reconnects"})` : ""}`);
         if (events.length >= MAX_STREAM_EVENTS) return { ok: true, value: { events, truncated: true } };
       }
       return expired ? exceeded(`at most ${this.#maxStreamMs} ms to collect the events`) : { ok: true, value: { events } };
