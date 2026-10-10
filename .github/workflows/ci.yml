@@ -11,9 +11,12 @@
 # the secret-bearing dispatch job never runs for pull requests or forks.
 name: ci
 
+# The gh-pages branch holds the generated documentation site (written only by
+# the docs workflow in tungsten-ops, never edited by hand) and is not code, so
+# pushes to it run no checks; the repository guard describes the exception.
 on:
   push:
-    branches: ["**"]
+    branches: ["**", "!gh-pages"]
   pull_request:
 
 permissions:
