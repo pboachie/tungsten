@@ -46,6 +46,9 @@ type attemptRequest struct {
 	timeout time.Duration
 	// stream hands a 2xx text/event-stream answer back unread.
 	stream bool
+	// idle (with stream) is the silence after which a read of the body
+	// times out; zero means timeout.
+	idle time.Duration
 }
 
 type outcomeKind int
@@ -124,6 +127,13 @@ func (e *eventBody) read() ([]byte, bodyRead) {
 		return nil, readLost
 	}
 	return nil, readChunk
+}
+
+func streamIdle(req attemptRequest) time.Duration {
+	if req.idle > 0 {
+		return req.idle
+	}
+	return req.timeout
 }
 
 func (e *eventBody) close() {
@@ -375,7 +385,7 @@ func attempt(ctx context.Context, client *http.Client, req attemptRequest) attem
 			return attemptOutcome{kind: outcomeTimeout}
 		}
 		return attemptOutcome{kind: outcomeStreaming, status: status, headers: headers,
-			stream: &eventBody{response: resp, cancel: cancel, idle: req.timeout}}
+			stream: &eventBody{response: resp, cancel: cancel, idle: streamIdle(req)}}
 	}
 	data, readErr := io.ReadAll(resp.Body)
 	timer.Stop()

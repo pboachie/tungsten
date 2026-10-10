@@ -54,7 +54,8 @@ changes.
   helpers, macros and a README. The SDKs use the new Go runtime
   `github.com/pboachie/tungsten/runtimes/go` (standard library only, Go
   1.22 or later), with the same error envelope, retries, idempotency,
-  previews, confirmation tokens and auth handling as the other runtimes.
+  previews, confirmation tokens, auth handling and resumable event streams
+  as the other runtimes.
 
 ## [0.1.0] - Unreleased
 

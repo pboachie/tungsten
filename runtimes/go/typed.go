@@ -213,6 +213,63 @@ func (e *TypedEvents[T]) Close() {
 	}
 }
 
+// Cancel ends the stream for good, without an error; it may be called
+// from another goroutine.
+func (e *TypedEvents[T]) Cancel() {
+	if e.stream != nil {
+		e.stream.Cancel()
+	}
+}
+
+// First is the first event for which predicate holds (its typed value),
+// then closes the stream; Value is nil when the stream ends without one.
+func (e *TypedEvents[T]) First(ctx context.Context, predicate func(T, *StreamEvent) bool) Folded[*T] {
+	defer e.Close()
+	var out Folded[*T]
+	for e.Next(ctx) {
+		out.Reconnects = e.event.Reconnects
+		if predicate(e.value, e.event) {
+			v := e.value
+			out.Value = &v
+			return out
+		}
+	}
+	out.Err = e.Err()
+	return out
+}
+
+// On reads the stream to its end and calls the handler named like each
+// event ("*" for the others) with its typed value; Value is the number of
+// events delivered.
+func (e *TypedEvents[T]) On(ctx context.Context, handlers map[string]func(T, *StreamEvent)) Folded[int] {
+	defer e.Close()
+	var out Folded[int]
+	for e.Next(ctx) {
+		out.Reconnects = e.event.Reconnects
+		out.Value++
+		if h, ok := handlers[e.event.Event]; ok && h != nil {
+			h(e.value, e.event)
+		} else if h, ok := handlers["*"]; ok && h != nil {
+			h(e.value, e.event)
+		}
+	}
+	out.Err = e.Err()
+	return out
+}
+
+// ReduceTyped reads a typed stream to its end and folds its values into one
+// value, then closes it.
+func ReduceTyped[T, A any](ctx context.Context, e *TypedEvents[T], initial A, fold func(A, T, *StreamEvent) A) Folded[A] {
+	defer e.Close()
+	out := Folded[A]{Value: initial}
+	for e.Next(ctx) {
+		out.Reconnects = e.event.Reconnects
+		out.Value = fold(out.Value, e.value, e.event)
+	}
+	out.Err = e.Err()
+	return out
+}
+
 // CollectValues returns every event (each checked to decode as T, its value
 // as decoded JSON) and the final error, within ClientOptions.MaxCollectBytes
 // and MaxCollectTime.

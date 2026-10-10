@@ -663,6 +663,8 @@ const (
 	DefaultMaxEventBytes   = 1024 * 1024
 	DefaultMaxCollectBytes = 4 * 1024 * 1024
 	DefaultMaxCollectTime  = 60 * time.Second
+	DefaultMaxReconnects   = 3
+	DefaultReconnectMax    = 30 * time.Second
 )
 
 // ClientOptions configures a client.
@@ -692,6 +694,23 @@ type ClientOptions struct {
 	// 4 MiB and 60 s).
 	MaxCollectBytes int
 	MaxCollectTime  time.Duration
+	// MaxReconnects is how often a stream reconnects after it dropped (a
+	// lost connection, or a clean end before the done event the operation
+	// declares) with Last-Event-ID set to the last event id it delivered;
+	// an event whose id was delivered is never delivered twice. Only for
+	// calls that are safe to repeat (reads, or mutations with replay
+	// protection) and only once an event id is known (or before the first
+	// event). nil means 3; 0 disables it.
+	MaxReconnects *int
+	// ReconnectMax caps the wait before a reconnect: the server's retry
+	// value (250 ms when it sent none), shortened by up to 25 % at random.
+	// Default 30 s.
+	ReconnectMax time.Duration
+	// IdleTimeout: a stream that delivers no bytes (comments count) for this
+	// long is idle; it is reconnected like a dropped one, else ends with an
+	// error whose code is STREAM_IDLE. Zero: the per-attempt Timeout ends a
+	// silent stream, without a reconnect.
+	IdleTimeout time.Duration
 	// ConfirmationKey signs confirmation tokens; default random per client.
 	ConfirmationKey []byte
 	// Operations the client resolves by id: verification hooks, endpoint

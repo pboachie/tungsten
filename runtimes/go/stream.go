@@ -6,8 +6,14 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 )
+
+// defaultReconnectMs is the wait before a reconnect when the server sent no
+// retry value.
+const defaultReconnectMs = 250
 
 // StreamEvent is one event of a stream.
 type StreamEvent struct {
@@ -19,7 +25,10 @@ type StreamEvent struct {
 	ID *string
 	// Retry is the last retry value (milliseconds) set so far.
 	Retry *int64
-	Meta  ResponseMeta
+	// Meta is the answer of the connection the event arrived on.
+	Meta ResponseMeta
+	// Reconnects is how often the stream reconnected up to this event.
+	Reconnects int
 }
 
 type openStream struct {
@@ -37,7 +46,28 @@ type openStream struct {
 	check     *outcomeCheck
 	secrets   secretSet
 	timeout   time.Duration
+	// repeatable: the call is safe to repeat (a read, or a mutation with
+	// replay protection).
+	repeatable bool
+	reconnects int
+	lastID     *string
+	lastRetry  *int64
+	// delivered are the ids delivered so far; after a reconnect (replaying)
+	// events with one of them are skipped until the first new one, so a
+	// server that ignores Last-Event-ID never delivers an event twice.
+	delivered map[string]bool
+	replaying bool
 }
+
+// dropped is why a connection ended without finishing the stream.
+type dropped int
+
+const (
+	droppedNone dropped = iota
+	droppedLost
+	droppedIdle
+	droppedEarlyEnd
+)
 
 // EventStream iterates the events of an operation's event stream, like
 // bufio.Scanner: the request is sent by the first Next; an error ends the
@@ -53,6 +83,26 @@ type EventStream struct {
 	state int // 0 idle, 1 open, 2 done
 	event *StreamEvent
 	err   *Error
+	// cancelled is set by Cancel, from any goroutine; mu guards body, the
+	// connection Cancel closes.
+	cancelled atomic.Bool
+	mu        sync.Mutex
+	body      *eventBody
+}
+
+// setOpen makes o the current connection (nil: none).
+func (s *EventStream) setOpen(o *openStream) {
+	s.mu.Lock()
+	s.open = o
+	s.body = nil
+	if o != nil {
+		s.body = o.body
+	}
+	cancelled := s.cancelled.Load()
+	s.mu.Unlock()
+	if cancelled && o != nil {
+		o.body.close()
+	}
 }
 
 // Stream returns an iterator over the server-sent events of op; spec is
@@ -75,11 +125,24 @@ func (s *EventStream) Err() error {
 	return s.err
 }
 
+// Cancel ends the stream for good, without an error and without a
+// reconnect; it may be called from another goroutine to end a blocked Next.
+func (s *EventStream) Cancel() {
+	if s.cancelled.CompareAndSwap(false, true) {
+		s.mu.Lock()
+		body := s.body
+		s.mu.Unlock()
+		if body != nil {
+			body.close()
+		}
+	}
+}
+
 // Close closes the connection.
 func (s *EventStream) Close() {
 	if s.open != nil {
 		s.open.body.close()
-		s.open = nil
+		s.setOpen(nil)
 	}
 	s.state = 2
 }
@@ -99,11 +162,20 @@ func (s *EventStream) Next(ctx context.Context) bool {
 		case 2:
 			return false
 		case 0:
-			open, err := s.core.openStream(ctx, s.op, s.spec, s.args, s.opts)
+			if s.cancelled.Load() {
+				s.state = 2
+				return false
+			}
+			open, err := s.core.openStream(ctx, s.op, s.spec, s.args, s.opts, nil)
 			if err != nil {
 				return s.fail(err)
 			}
-			s.open, s.state = open, 1
+			s.setOpen(open)
+			s.state = 1
+			if s.cancelled.Load() {
+				s.Close()
+				return false
+			}
 			continue
 		}
 		o := s.open
@@ -117,6 +189,8 @@ func (s *EventStream) Next(ctx context.Context) bool {
 			case done:
 				s.Close()
 				return false
+			case item == nil:
+				continue
 			}
 			s.event = item
 			return true
@@ -124,27 +198,125 @@ func (s *EventStream) Next(ctx context.Context) bool {
 		if o.oversize {
 			return s.fail(s.core.oversize(s.op, o))
 		}
+		why := droppedNone
 		if o.ended {
+			// A stream that names its terminal event has not finished without it.
+			if s.spec.Done == nil {
+				s.Close()
+				return false
+			}
+			why = droppedEarlyEnd
+		} else {
+			chunk, kind := o.body.read()
+			if s.cancelled.Load() {
+				s.Close()
+				return false
+			}
+			switch kind {
+			case readChunk:
+				o.queue = append(o.queue, o.parser.push(o.decoder.decode(chunk))...)
+				o.oversize = o.parser.exceeded
+				continue
+			case readEnd:
+				events := o.parser.push(o.decoder.finish())
+				events = append(events, o.parser.end()...)
+				o.queue = append(o.queue, events...)
+				o.oversize = o.parser.exceeded
+				o.ended = true
+				continue
+			case readTimeout:
+				if s.core.idleTimeout <= 0 {
+					return s.fail(s.core.interrupted(s.op, o, droppedNone))
+				}
+				why = droppedIdle
+			default:
+				why = droppedLost
+			}
+		}
+		// The caller's context ends the stream for good.
+		if ctx.Err() != nil || !s.core.mayReconnect(o) {
+			// Without reconnects a clean end stays a clean end.
+			if why == droppedEarlyEnd && o.reconnects == 0 {
+				s.Close()
+				return false
+			}
+			return s.fail(s.core.interrupted(s.op, o, why))
+		}
+		fresh, err := s.core.reconnect(ctx, s.op, s.spec, s.args, s.opts, o)
+		if s.cancelled.Load() {
+			if fresh != nil {
+				fresh.body.close()
+			}
 			s.Close()
 			return false
 		}
-		chunk, kind := o.body.read()
-		switch kind {
-		case readChunk:
-			o.queue = append(o.queue, o.parser.push(o.decoder.decode(chunk))...)
-			o.oversize = o.parser.exceeded
-		case readEnd:
-			events := o.parser.push(o.decoder.finish())
-			events = append(events, o.parser.end()...)
-			o.queue = append(o.queue, events...)
-			o.oversize = o.parser.exceeded
-			o.ended = true
-		case readTimeout:
-			return s.fail(s.core.interrupted(s.op, o, true))
-		default:
-			return s.fail(s.core.interrupted(s.op, o, false))
+		if err != nil {
+			return s.fail(err)
+		}
+		s.setOpen(fresh)
+	}
+}
+
+// Folded is what the consuming helpers of a stream return: the result, or,
+// when the stream failed, what was gathered before the failure with the
+// failure as Err.
+type Folded[R any] struct {
+	Value R
+	Err   error
+	// Reconnects of the last event delivered.
+	Reconnects int
+}
+
+// EventHandlers are handlers by event name for On: the one named like the
+// event ("message" for an event without a name) is called, else the one
+// named "*".
+type EventHandlers map[string]func(*StreamEvent)
+
+// Reduce reads the stream to its end and folds its events into one value
+// (concatenating text deltas, say), then closes it.
+func Reduce[A any](ctx context.Context, s *EventStream, initial A, fold func(A, *StreamEvent) A) Folded[A] {
+	defer s.Close()
+	out := Folded[A]{Value: initial}
+	for s.Next(ctx) {
+		out.Reconnects = s.event.Reconnects
+		out.Value = fold(out.Value, s.event)
+	}
+	out.Err = s.Err()
+	return out
+}
+
+// First is the first event for which predicate holds, then closes the
+// stream; Value is nil when the stream ends without one.
+func (s *EventStream) First(ctx context.Context, predicate func(*StreamEvent) bool) Folded[*StreamEvent] {
+	defer s.Close()
+	var out Folded[*StreamEvent]
+	for s.Next(ctx) {
+		out.Reconnects = s.event.Reconnects
+		if predicate(s.event) {
+			out.Value = s.event
+			return out
 		}
 	}
+	out.Err = s.Err()
+	return out
+}
+
+// On reads the stream to its end and calls the handler named like each
+// event; Value is the number of events delivered.
+func (s *EventStream) On(ctx context.Context, handlers EventHandlers) Folded[int] {
+	defer s.Close()
+	var out Folded[int]
+	for s.Next(ctx) {
+		out.Reconnects = s.event.Reconnects
+		out.Value++
+		if h, ok := handlers[s.event.Event]; ok && h != nil {
+			h(s.event)
+		} else if h, ok := handlers["*"]; ok && h != nil {
+			h(s.event)
+		}
+	}
+	out.Err = s.Err()
+	return out
 }
 
 // CollectValues returns every event in order and the final error, if the
@@ -200,7 +372,7 @@ func withStreamFlag(op *OperationDescriptor, spec *StreamDescriptor, args any) a
 	return out
 }
 
-func (c *ClientCore) openStream(ctx context.Context, op *OperationDescriptor, spec *StreamDescriptor, args any, opts CallOptions) (*openStream, *Error) {
+func (c *ClientCore) openStream(ctx context.Context, op *OperationDescriptor, spec *StreamDescriptor, args any, opts CallOptions, resumeFrom *string) (*openStream, *Error) {
 	headers := map[string]string{}
 	accept := ""
 	for _, layer := range []struct {
@@ -216,6 +388,14 @@ func (c *ClientCore) openStream(ctx context.Context, op *OperationDescriptor, sp
 		}
 	}
 	headers["Accept"] = mergeAccept(accept)
+	if resumeFrom != nil {
+		for name := range headers {
+			if strings.EqualFold(name, "last-event-id") {
+				delete(headers, name)
+			}
+		}
+		headers["Last-Event-ID"] = *resumeFrom
+	}
 	streamOpts := opts
 	streamOpts.Headers = headers
 	if converted, err := FromGo(args); err == nil {
@@ -254,8 +434,47 @@ func (c *ClientCore) openStream(ctx context.Context, op *OperationDescriptor, sp
 	return &openStream{
 		body: result.stream.body, parser: newSSEParser(c.maxEventBytes), meta: result.stream.meta,
 		key: p.key, hasKey: p.hasKey, keyHeader: p.keyHeader, check: check, secrets: p.secrets.clone(),
-		timeout: c.attemptTimeout(streamOpts),
+		timeout:    c.attemptTimeout(streamOpts),
+		repeatable: !isMutation(op) || hasReplayProtection(op, p.hasKey),
+		delivered:  map[string]bool{},
 	}, nil
+}
+
+// mayReconnect: a dropped stream may be reconnected when the call is safe
+// to repeat, reconnects are left, and an event id to resume from is known
+// (or no event was delivered yet).
+func (c *ClientCore) mayReconnect(o *openStream) bool {
+	return o.repeatable && o.reconnects < c.maxReconnects &&
+		(o.count == 0 || (o.lastID != nil && validHeaderValue(*o.lastID)))
+}
+
+// reconnect waits as the server asked (capped, shortened by up to 25 % at
+// random), then sends the request again with Last-Event-ID: the stream that
+// continues old.
+func (c *ClientCore) reconnect(ctx context.Context, op *OperationDescriptor, spec *StreamDescriptor, args any, opts CallOptions, old *openStream) (*openStream, *Error) {
+	old.body.close()
+	ceiling := float64(defaultReconnectMs)
+	if old.lastRetry != nil {
+		ceiling = float64(*old.lastRetry)
+	}
+	ceiling = min(ceiling, float64(c.reconnectMax.Milliseconds()))
+	wait := ceiling - c.random()*0.25*ceiling
+	timer := time.NewTimer(time.Duration(wait * float64(time.Millisecond)))
+	select {
+	case <-timer.C:
+	case <-ctx.Done():
+		timer.Stop()
+	}
+	fresh, err := c.openStream(ctx, op, spec, args, opts, old.lastID)
+	if err != nil {
+		return nil, err
+	}
+	fresh.count = old.count
+	fresh.reconnects = old.reconnects + 1
+	fresh.lastID, fresh.lastRetry = old.lastID, old.lastRetry
+	fresh.delivered = old.delivered
+	fresh.replaying = true
+	return fresh, nil
 }
 
 func plural(n int, one, many string) string {
@@ -265,23 +484,45 @@ func plural(n int, one, many string) string {
 	return many
 }
 
-func (c *ClientCore) interrupted(op *OperationDescriptor, o *openStream, timedOut bool) *Error {
+// interrupted is the final error of a stream that broke after o.count
+// events; droppedNone is a silence past the attempt timeout.
+func (c *ClientCore) interrupted(op *OperationDescriptor, o *openStream, why dropped) *Error {
 	after := fmt.Sprintf("after %d %s", o.count, plural(o.count, "event", "events"))
+	retried := ""
+	switch o.reconnects {
+	case 0:
+	case 1:
+		retried = " (1 reconnect made)"
+	default:
+		retried = fmt.Sprintf(" (%d reconnects made)", o.reconnects)
+	}
+	idle := why == droppedIdle
+	var code *string
+	if idle {
+		text := "STREAM_IDLE"
+		code = &text
+	}
 	status := o.meta.Status
-	fields := unknownFields{httpStatus: &status, requestID: o.meta.RequestID}
+	fields := unknownFields{httpStatus: &status, code: code, requestID: o.meta.RequestID}
 	cctx := &callContext{api: c.api, op: op, key: o.key, hasKey: o.hasKey, keyHeader: o.keyHeader, attempts: o.meta.Attempts, check: o.check}
 	var d *Diagnostic
-	if timedOut {
-		cause := fmt.Sprintf("No event arrived within %d ms %s; the stream was abandoned.", o.timeout.Milliseconds(), after)
+	if why == droppedNone || idle {
+		silence := fmt.Sprintf("No event arrived within %d ms %s", o.timeout.Milliseconds(), after)
+		option := "`Timeout`"
+		if idle {
+			silence = fmt.Sprintf("No bytes arrived within %d ms %s%s", c.idleTimeout.Milliseconds(), after, retried)
+			option = "`IdleTimeout`"
+		}
+		cause := silence + "; the stream was abandoned."
 		if isMutation(op) {
 			d = outcomeUnknown(cctx, cause, fields)
 		} else {
-			d = newDiag(op.ID, UpstreamUnavailable).status(status).requestID(o.meta.RequestID).
-				remedy(cause + " This read has no side effects; call again later or with a larger `Timeout`.").
+			d = newDiag(op.ID, UpstreamUnavailable).status(status).code(code).requestID(o.meta.RequestID).
+				remedy(cause + " This read has no side effects; call again later or with a larger " + option + ".").
 				attempts(o.meta.Attempts).build()
 		}
 	} else {
-		cause := fmt.Sprintf("The event stream was cut off %s: the connection failed before it ended.", after)
+		cause := fmt.Sprintf("The event stream was cut off %s%s: the connection failed before it ended.", after, retried)
 		if isMutation(op) {
 			d = outcomeUnknown(cctx, cause, fields)
 		} else {
@@ -326,6 +567,12 @@ func (c *ClientCore) accept(op *OperationDescriptor, spec *StreamDescriptor, o *
 	if spec.Done != nil && *spec.Done == ev.data {
 		return nil, true, nil
 	}
+	if o.replaying {
+		if ev.hasID && o.delivered[ev.id] {
+			return nil, false, nil
+		}
+		o.replaying = false
+	}
 	index := o.count
 	afterEffect := ""
 	if isMutation(op) {
@@ -363,13 +610,22 @@ func (c *ClientCore) accept(op *OperationDescriptor, spec *StreamDescriptor, o *
 		}
 	}
 	o.count++
-	out := &StreamEvent{Value: value, Event: ev.event, Meta: o.meta}
 	if ev.hasID {
 		id := ev.id
-		out.ID = &id
+		o.delivered[id] = true
+		o.lastID = &id
 	}
 	if ev.hasRetry {
 		r := ev.retry
+		o.lastRetry = &r
+	}
+	out := &StreamEvent{Value: value, Event: ev.event, Meta: o.meta, Reconnects: o.reconnects}
+	if o.lastID != nil {
+		id := *o.lastID
+		out.ID = &id
+	}
+	if o.lastRetry != nil {
+		r := *o.lastRetry
 		out.Retry = &r
 	}
 	return out, false, nil

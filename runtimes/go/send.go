@@ -55,6 +55,14 @@ func (c *ClientCore) send(ctx context.Context, p *prepared, opts CallOptions) (*
 	return out.response, nil
 }
 
+// streamIdle is the idle timeout of an event stream body.
+func (c *ClientCore) streamIdle(stream bool) time.Duration {
+	if stream {
+		return c.idleTimeout
+	}
+	return 0
+}
+
 // sendWith sends with retries. With stream, a 2xx text/event-stream answer
 // is returned unread.
 func (c *ClientCore) sendWith(ctx context.Context, p *prepared, opts CallOptions, stream bool) (*sent, *Error) {
@@ -90,7 +98,7 @@ func (c *ClientCore) sendWith(ctx context.Context, p *prepared, opts CallOptions
 		method := p.method
 		body := &p.payload
 		headers := append([]headerEntry(nil), p.headers.entries...)
-		outcome := attempt(ctx, c.http, attemptRequest{url: target, method: method, headers: headers, body: body, timeout: timeout, stream: stream})
+		outcome := attempt(ctx, c.http, attemptRequest{url: target, method: method, headers: headers, body: body, timeout: timeout, stream: stream, idle: c.streamIdle(stream)})
 		for hops := 0; !mutation && hops < maxRedirects; hops++ {
 			if outcome.kind != outcomeResponse || !isRedirect(outcome.status) {
 				break
@@ -114,7 +122,7 @@ func (c *ClientCore) sendWith(ctx context.Context, p *prepared, opts CallOptions
 			}
 			rctx.URL = shown
 			rctx.Method = method
-			outcome = attempt(ctx, c.http, attemptRequest{url: target, method: method, headers: headers, body: body, timeout: timeout, stream: stream})
+			outcome = attempt(ctx, c.http, attemptRequest{url: target, method: method, headers: headers, body: body, timeout: timeout, stream: stream, idle: c.streamIdle(stream)})
 		}
 		cctx := &callContext{api: c.api, op: op, key: p.key, hasKey: p.hasKey, keyHeader: p.keyHeader, attempts: attempts, check: check}
 		result, err := c.classifyResponse(cctx, p, outcome, rctx, timeout)

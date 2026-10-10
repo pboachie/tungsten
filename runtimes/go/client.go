@@ -30,6 +30,9 @@ type ClientCore struct {
 	maxEventBytes     int
 	maxCollectBytes   int
 	maxCollectTime    time.Duration
+	maxReconnects     int
+	reconnectMax      time.Duration
+	idleTimeout       time.Duration
 	retries           PartialRetry
 	store             IdempotencyStore
 	middleware        []Middleware
@@ -127,6 +130,17 @@ func NewClientCore(api *APIDescriptor, options ClientOptions) (*ClientCore, erro
 	}
 	if c.maxCollectTime <= 0 {
 		c.maxCollectTime = DefaultMaxCollectTime
+	}
+	c.maxReconnects = DefaultMaxReconnects
+	if options.MaxReconnects != nil {
+		c.maxReconnects = min(max(*options.MaxReconnects, 0), 1000)
+	}
+	c.reconnectMax = options.ReconnectMax
+	if c.reconnectMax <= 0 {
+		c.reconnectMax = DefaultReconnectMax
+	}
+	if options.IdleTimeout > 0 {
+		c.idleTimeout = max(options.IdleTimeout, time.Millisecond)
 	}
 	if c.store == nil {
 		c.store = NewMemoryIdempotencyStore()
