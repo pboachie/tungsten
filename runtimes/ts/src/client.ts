@@ -51,7 +51,8 @@ import {
   validHeaderName,
   validHeaderValue,
 } from "./serialize.js";
-import { DEFAULT_MAX_EVENT_BYTES, SseParser } from "./sse.js";
+import { DEFAULT_MAX_EVENT_BYTES, SseParser, type SseEvent } from "./sse.js";
+import { EventStream } from "./streams.js";
 import { attempt, type AttemptOutcome, nextLink, parseRetryAfter, StreamBody } from "./transport.js";
 import type {
   ApiDescriptor,
@@ -156,6 +157,27 @@ interface Prepared {
   secrets: Set<string>;
   /** The authorization-code scheme whose stored token this request carries. */
   oauth: string | null;
+}
+
+/** Reconnects of a dropped stream when `ClientOptions.maxReconnects` is unset. */
+const DEFAULT_MAX_RECONNECTS = 3;
+/** The wait before a reconnect when the server sent no `retry`, in milliseconds. */
+const DEFAULT_RECONNECT_MS = 250;
+/** Longest wait before a reconnect when `ClientOptions.reconnectMaxMs` is unset. */
+const DEFAULT_RECONNECT_MAX_MS = 30000;
+
+/** The failure of a 2xx answer to a stream request that is not an event stream. */
+function notAStream(op: OperationDescriptor, meta: ResponseMeta, afterEffect: string): Diagnostic {
+  return diagnostic(op.id, "UNEXPECTED_RESPONSE", {
+    http_status: meta.status,
+    request_id: meta.requestId,
+    failed_parameter: "response",
+    received_value: envelopeValue(meta.headers["content-type"] ?? null, false),
+    expected: "a text/event-stream body",
+    remediation: `The success response is not an event stream (Content-Type ${meta.headers["content-type"] ?? "missing"}).${afterEffect}`,
+    retryable: "never",
+    trace: { attempts: meta.attempts },
+  });
 }
 
 function fail(error: Diagnostic): Failure {
@@ -527,12 +549,23 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
   /** Iterate the events of the operation's event stream: one item per
    * server-sent event, decoded from JSON, then the end of the stream or a
    * final failure item. Never throws. */
-  async *stream<T>(op: OperationDescriptor, args: Record<string, unknown>, opts?: CallOptions): AsyncIterable<StreamItem<T>> {
-    try {
-      yield* this.#stream<T>(op, args, this.#callOptions(opts));
-    } catch (error) {
-      yield fail(this.#internal(op, error, "streaming"));
-    }
+  stream<T>(op: OperationDescriptor, args: Record<string, unknown>, opts?: CallOptions): EventStream<T> {
+    const callOptions = this.#callOptions(opts);
+    const controller = new AbortController();
+    const caller = callOptions.signal;
+    const forward = (): void => controller.abort();
+    if (caller?.aborted === true) controller.abort();
+    else caller?.addEventListener("abort", forward, { once: true });
+    const items = async function* (core: ClientCore): AsyncGenerator<StreamItem<T>> {
+      try {
+        yield* core.#stream<T>(op, args, { ...callOptions, signal: controller.signal });
+      } catch (error) {
+        yield fail(core.#internal(op, error, "streaming"));
+      } finally {
+        caller?.removeEventListener("abort", forward);
+      }
+    };
+    return new EventStream<T>(items(this), () => controller.abort());
   }
 
   /** Call a read operation until `until` holds on its body or the budget
@@ -1208,7 +1241,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
 
   // -------------------------------------------------------------- sending
 
-  async #send<T>(prepared: Prepared, opts: CallOptions, stream = false): Promise<Result<T>> {
+  async #send<T>(prepared: Prepared, opts: CallOptions, stream = false, idleMs?: number): Promise<Result<T>> {
     const { op } = prepared;
     const retries = this.#retryOptions(op);
     const mutation = isMutation(op);
@@ -1239,6 +1272,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
         timeoutMs,
         signal: opts.signal,
         stream,
+        idleMs,
       });
       let current = { url: prepared.url, method: prepared.method, body: prepared.body };
       for (let hops = 0; !mutation && hops < MAX_REDIRECTS && outcome.kind === "response" && REDIRECT_STATUSES.has(outcome.status); hops += 1) {
@@ -1259,6 +1293,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
           timeoutMs,
           signal: opts.signal,
           stream,
+          idleMs,
         });
       }
       const callCtx: CallContext = { api: this.api, op, key: prepared.key, keyHeader: prepared.keyHeader, attempts, check };
@@ -1766,39 +1801,42 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
       yield fail(prepared.error);
       return;
     }
-    const sent = await this.#send<unknown>(prepared.value, streamOpts, true);
+    const prep = prepared.value;
+    const idleSetting = bounded(this.options.idleTimeoutMs, 0, 0);
+    const idleMs = idleSetting > 0 ? idleSetting : undefined;
+    const sent = await this.#send<unknown>(prep, streamOpts, true, idleMs);
     if (!sent.ok) {
       yield fail(sent.error);
       return;
     }
-    const { meta } = sent;
+    let { meta } = sent;
     const mutation = isMutation(op);
     const afterEffect = mutation ? " The call took effect; do not repeat it." : "";
     if (!(sent.value instanceof StreamBody)) {
-      yield fail(
-        diagnostic(op.id, "UNEXPECTED_RESPONSE", {
-          http_status: meta.status,
-          request_id: meta.requestId,
-          failed_parameter: "response",
-          received_value: envelopeValue(meta.headers["content-type"] ?? null, false),
-          expected: "a text/event-stream body",
-          remediation: `The success response is not an event stream (Content-Type ${meta.headers["content-type"] ?? "missing"}).${afterEffect}`,
-          retryable: "never",
-          trace: { attempts: meta.attempts },
-        }),
-      );
+      yield fail(notAStream(op, meta, afterEffect));
       return;
     }
-    const body = sent.value;
-    const prep = prepared.value;
+    let body = sent.value;
     const timeoutMs = this.#timeout(streamOpts);
     const mode = this.options.validateResponses === "off" || this.options.validateResponses === "strict" ? this.options.validateResponses : "warn";
     const sensitive = Array.isArray(op.agent.sensitiveResponseFields) ? op.agent.sensitiveResponseFields : [];
     const maxEventBytes = Math.floor(bounded(this.options.maxEventBytes, DEFAULT_MAX_EVENT_BYTES, 1));
-    const parser = new SseParser(maxEventBytes);
-    const decoder = new TextDecoder("utf-8");
+    const maxReconnects = Math.floor(bounded(this.options.maxReconnects, DEFAULT_MAX_RECONNECTS, 0, 1000));
+    const reconnectCapMs = bounded(this.options.reconnectMaxMs, DEFAULT_RECONNECT_MAX_MS, 0);
+    // Only a call that is safe to repeat is reconnected: a read, or a
+    // mutation whose repeat is a replay (the reconnect reuses the request,
+    // idempotency key included).
+    const repeatable = maxReconnects > 0 && (!mutation || hasReplayProtection(op, prep.key));
+    let parser = new SseParser(maxEventBytes);
+    let decoder = new TextDecoder("utf-8");
     let count = 0;
-    const interrupted = (kind: "timeout" | "aborted" | "lost"): StreamItem<T> => {
+    let reconnects = 0;
+    let lastId: string | null = null;
+    let lastRetry: number | null = null;
+    // Ids delivered so far, to skip the replay of a server that ignores Last-Event-ID.
+    const delivered = new Set<string>();
+    let replaying = false;
+    const interrupted = (kind: "timeout" | "aborted" | "lost" | "idle"): StreamItem<T> => {
       const callCtx: CallContext = {
         api: this.api,
         op,
@@ -1810,13 +1848,17 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
       const after = `after ${count} ${count === 1 ? "event" : "events"}`;
       const trace = { attempts: meta.attempts };
       const common = { http_status: meta.status, request_id: meta.requestId, trace };
+      const retried = reconnects > 0 ? ` (${reconnects} ${reconnects === 1 ? "reconnect" : "reconnects"} made)` : "";
       let error: Diagnostic;
-      if (kind === "timeout") {
+      if (kind === "timeout" || kind === "idle") {
+        const code = kind === "idle" ? "STREAM_IDLE" : null;
+        const silence = kind === "idle" ? `No bytes arrived within ${idleMs} ms ${after}${retried}` : `No event arrived within ${timeoutMs} ms ${after}`;
         error = mutation
-          ? outcomeUnknown(callCtx, `No event arrived within ${timeoutMs} ms ${after}; the stream was abandoned.`, common)
+          ? outcomeUnknown(callCtx, `${silence}; the stream was abandoned.`, { ...common, code })
           : diagnostic(op.id, "UPSTREAM_UNAVAILABLE", {
               ...common,
-              remediation: `No event arrived within ${timeoutMs} ms ${after}; the stream was abandoned. This read has no side effects; call again later or with a larger timeoutMs.`,
+              code,
+              remediation: `${silence}; the stream was abandoned. This read has no side effects; call again later or with a larger ${kind === "idle" ? "idleTimeoutMs" : "timeoutMs"}.`,
             });
       } else if (kind === "aborted") {
         error =
@@ -1825,16 +1867,21 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
             : diagnostic(op.id, "TRANSPORT_FAILED", { ...common, retryable: "never", remediation: `The caller's AbortSignal cancelled the stream ${after}.` });
       } else {
         error = mutation
-          ? outcomeUnknown(callCtx, `The event stream was cut off ${after}: the connection failed before it ended.`, common)
+          ? outcomeUnknown(callCtx, `The event stream was cut off ${after}${retried}: the connection failed before it ended.`, common)
           : diagnostic(op.id, "TRANSPORT_FAILED", {
               ...common,
-              remediation: `The event stream was cut off ${after}: the connection failed before it ended. This read has no side effects; call again.`,
+              remediation: `The event stream was cut off ${after}${retried}: the connection failed before it ended. This read has no side effects; call again.`,
             });
       }
       return fail(scrubDiagnostic(error, prep.secrets));
     };
-    const accept = (event: { event: string; data: string; id: string | null; retry: number | null }): StreamItem<T> | "done" => {
+    const accept = (event: { event: string; data: string; id: string | null; retry: number | null }): StreamItem<T> | "done" | "skip" => {
       if (spec.done !== undefined && event.data === spec.done) return "done";
+      const eventId = event.id ?? lastId;
+      if (replaying) {
+        if (event.id !== null && delivered.has(event.id)) return "skip";
+        replaying = false;
+      }
       const index = count;
       const failure = (fields: Partial<Diagnostic>): StreamItem<T> =>
         fail(
@@ -1878,7 +1925,10 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
         }
       }
       count += 1;
-      return { ok: true, value: value as T, event: event.event, id: event.id, retry: event.retry, meta };
+      if (event.id !== null) delivered.add(event.id);
+      lastId = eventId;
+      lastRetry = event.retry ?? lastRetry;
+      return { ok: true, value: value as T, event: event.event, id: eventId, retry: lastRetry, meta: { ...meta, reconnects } };
     };
     const oversize = (): StreamItem<T> =>
       fail(
@@ -1897,11 +1947,25 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
       );
     try {
       for (;;) {
-        const read = await body.read();
-        if (read.kind === "chunk") {
-          for (const event of parser.push(decoder.decode(read.bytes, { stream: true }))) {
+        // Read one connection; `drop` says why it ended without finishing the stream.
+        let drop: "lost" | "idle" | "early_end" | null = null;
+        for (; drop === null; ) {
+          const read = await body.read();
+          if (read.kind === "aborted") {
+            yield interrupted("aborted");
+            return;
+          }
+          if (read.kind === "timeout" && idleMs === undefined) {
+            yield interrupted("timeout");
+            return;
+          }
+          const events: SseEvent[] = [];
+          if (read.kind === "chunk") events.push(...parser.push(decoder.decode(read.bytes, { stream: true })));
+          else if (read.kind === "end") events.push(...parser.push(decoder.decode()), ...parser.end());
+          for (const event of events) {
             const item = accept(event);
             if (item === "done") return;
+            if (item === "skip") continue;
             yield item;
             if (!item.ok) return;
           }
@@ -1909,20 +1973,46 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
             yield oversize();
             return;
           }
-          continue;
+          if (read.kind === "end") {
+            // A stream that names its terminal event has not finished without it.
+            if (spec.done === undefined) return;
+            drop = "early_end";
+          } else if (read.kind === "lost") drop = "lost";
+          else if (read.kind === "timeout") drop = "idle";
         }
-        if (read.kind === "end") {
-          for (const event of [...parser.push(decoder.decode()), ...parser.end()]) {
-            const item = accept(event);
-            if (item === "done") return;
-            yield item;
-            if (!item.ok) return;
-          }
-          if (parser.exceeded) yield oversize();
+        const resumeId = lastId;
+        const resumable = repeatable && reconnects < maxReconnects && (count === 0 || (resumeId !== null && validHeaderValue(resumeId)));
+        if (!resumable) {
+          // Without reconnects a clean end stays a clean end; the failures
+          // are reported.
+          if (drop === "early_end" && reconnects === 0) return;
+          yield interrupted(drop === "idle" ? "idle" : "lost");
           return;
         }
-        yield interrupted(read.kind);
-        return;
+        body.close();
+        reconnects += 1;
+        const server = lastRetry ?? DEFAULT_RECONNECT_MS;
+        const ceiling = Math.min(reconnectCapMs, server);
+        const random = typeof this.options.random === "function" ? bounded(this.options.random(), 0.5, 0, 1) : Math.random();
+        if (!(await sleep(ceiling - random * 0.25 * ceiling, opts.signal))) {
+          yield interrupted("aborted");
+          return;
+        }
+        if (resumeId !== null) prep.headers.set("Last-Event-ID", resumeId);
+        const again = await this.#send<unknown>(prep, streamOpts, true, idleMs);
+        if (!again.ok) {
+          yield fail(again.error);
+          return;
+        }
+        meta = again.meta;
+        if (!(again.value instanceof StreamBody)) {
+          yield fail(notAStream(op, meta, afterEffect));
+          return;
+        }
+        body = again.value;
+        parser = new SseParser(maxEventBytes);
+        decoder = new TextDecoder("utf-8");
+        replaying = true;
       }
     } finally {
       body.close();

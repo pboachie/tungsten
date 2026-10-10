@@ -18,6 +18,9 @@ export interface AttemptRequest {
   /** Hand a `text/event-stream` answer with a 2xx status back unread, as a
    * {@link StreamBody}; any other answer is read as usual. */
   stream?: boolean;
+  /** With `stream`: the silence, in milliseconds, after which a read of the
+   * body reports a timeout. Default `timeoutMs`. */
+  idleMs?: number | undefined;
 }
 
 /** What one read of an event stream gives. */
@@ -188,7 +191,7 @@ export async function attempt(fetchImpl: typeof fetch, req: AttemptRequest): Pro
     if (req.stream === true && response.status >= 200 && response.status <= 299 && response.body !== null && isEventStream(headers["content-type"])) {
       handedOver = true;
       clearTimeout(timer);
-      const stream = new StreamBody(response.body.getReader(), controller, req.signal, onAbort, req.timeoutMs);
+      const stream = new StreamBody(response.body.getReader(), controller, req.signal, onAbort, req.idleMs ?? req.timeoutMs);
       return { kind: "response", response, status: response.status, headers, body: null, bodyFailure: null, stream };
     }
     let body: Uint8Array | null = null;

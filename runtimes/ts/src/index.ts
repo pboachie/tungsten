@@ -7,6 +7,7 @@
 
 export * from "./types.js";
 export { ClientCore } from "./client.js";
+export { ANY_EVENT, EventStream, type EventHandler, type StreamEvent, type StreamResult } from "./streams.js";
 export { DEFAULT_MAX_EVENT_BYTES, SseParser, type SseEvent } from "./sse.js";
 export { MemoryIdempotencyStore } from "./idempotency.js";
 export {
