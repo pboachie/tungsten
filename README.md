@@ -145,9 +145,45 @@ tungsten [--json] <command>
 | `mock` | Serve a mock of the API from the IR (`--port`, `--seed`, `--gate`) |
 | `report` | Coverage, safety matrix, token budgets and diagnostics, as text, JSON or one static HTML file (`--html`) |
 | `diff` | Show what regeneration would change; `--semver` classifies the API surface change |
+| `lsp` | Serve diagnostics, completion, hover, go-to-definition and symbols for `tungsten.yml`, `agent.yml` and overlays to an editor over stdio (`--config`) |
 | `doctor` | Report which optional external tools are installed |
 
-With `--json`, stdout carries exactly one JSON document described by `tungsten schema cli-output`. Color is used only on a terminal and never when `NO_COLOR` is set.
+With `--json`, stdout carries exactly one JSON document described by `tungsten schema cli-output` (`lsp` speaks the language server protocol on stdio instead). Color is used only on a terminal and never when `NO_COLOR` is set.
+
+### Editor support
+
+`tungsten lsp` is a language server for `tungsten.yml`, `agent.yml` and the overlay files a project lists. It checks the project with the same compiler as `tungsten check` and shows the same `TG` diagnostics on the YAML lines they belong to, including unsaved changes to the two manifests (specs and overlays are re-read when saved). It completes keys, enumerated values and the operation ids, gates and clusters of the compiled project; shows field documentation, operation signatures and diagnostic explanations on hover; jumps from an operation id to its place in the OpenAPI document; and outlines the manifests. The workspace is the directory of `tungsten.yml` (found from the editor's workspace folder, or given with `--config <path>`); one project is served per process.
+
+Visual Studio Code needs a generic language client extension, for example [Generic LSP Client](https://marketplace.visualstudio.com/items?itemName=llllvvuu.llllvvuu-glspc). In `settings.json`:
+
+```json
+{
+  "glspc.languageId": "yaml",
+  "glspc.serverCommand": "tungsten",
+  "glspc.serverCommandArguments": ["lsp"]
+}
+```
+
+Neovim with [nvim-lspconfig](https://github.com/neovim/nvim-lspconfig):
+
+```lua
+local configs = require('lspconfig.configs')
+local util = require('lspconfig.util')
+
+if not configs.tungsten then
+  configs.tungsten = {
+    default_config = {
+      cmd = { 'tungsten', 'lsp' },
+      filetypes = { 'yaml' },
+      root_dir = util.root_pattern('tungsten.yml', 'tungsten.yaml'),
+    },
+  }
+end
+
+require('lspconfig').tungsten.setup({})
+```
+
+Any other client works the same way: start `tungsten lsp` as a stdio server for YAML files.
 
 | Exit code | Meaning |
 |---|---|

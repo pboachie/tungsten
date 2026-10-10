@@ -20,6 +20,8 @@ Examples:
   tungsten diff --semver               Show how the API surface changed
   tungsten overlay suggest --write fixes.overlay.yaml
                                        Suggest an overlay that fixes diagnostics
+  tungsten lsp                         Serve diagnostics, completion and hover for
+                                       manifests to an editor over stdio
 
 Repository: https://github.com/pboachie/tungsten
 
@@ -78,8 +80,10 @@ impl Cli {
         matches!(&self.command, Command::Check(args) if args.ci)
     }
 
-    pub fn command_name(&self) -> CommandName {
-        match self.command {
+    /// The command's name in `--json` output; `None` for `lsp`, which
+    /// speaks the language server protocol instead.
+    pub fn command_name(&self) -> Option<CommandName> {
+        Some(match self.command {
             Command::Check(_) => CommandName::Check,
             Command::Ir {
                 command: IrCommand::Dump(_),
@@ -96,7 +100,8 @@ impl Cli {
             Command::Overlay {
                 command: OverlayCommand::Suggest(_),
             } => CommandName::OverlaySuggest,
-        }
+            Command::Lsp(_) => return None,
+        })
     }
 }
 
@@ -135,6 +140,18 @@ pub(crate) enum Command {
         #[command(subcommand)]
         command: OverlayCommand,
     },
+    /// Serve a Language Server Protocol server on stdin and stdout for
+    /// tungsten.yml, agent.yml and overlays: diagnostics, completion, hover,
+    /// go-to-definition and symbols. `--json` has no effect.
+    Lsp(LspArgs),
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct LspArgs {
+    /// The manifest to serve: a tungsten.yml, or a directory holding one.
+    /// Default: the tungsten.yml of the editor's workspace folder.
+    #[arg(long, value_name = "PATH")]
+    pub config: Option<PathBuf>,
 }
 
 #[derive(Debug, Subcommand)]

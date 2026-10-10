@@ -2,7 +2,7 @@
 //! File-level compilation driver shared by the CLI and the test harness.
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use tungsten_agent::{DEFAULT_AGENT_MANIFEST, ParsedAgentManifest};
 use tungsten_config::{ManifestSource, ParsedManifest, TungstenConfig};
@@ -43,9 +43,42 @@ fn on_compile_stack<T: Send>(f: impl FnOnce() -> T + Send) -> T {
     }
 }
 
+/// The override for `path`: an exact key, else a key naming the same file
+/// once `.` and `..` segments are resolved.
+fn override_text<'a>(opts: &'a CompileOptions, path: &Path) -> Option<&'a String> {
+    fn lexical(path: &Path) -> PathBuf {
+        let mut out = PathBuf::new();
+        for c in path.components() {
+            match c {
+                Component::CurDir => {}
+                Component::ParentDir => {
+                    if !out.pop() {
+                        out.push("..");
+                    }
+                }
+                other => out.push(other.as_os_str()),
+            }
+        }
+        out
+    }
+    opts.overrides.get(path).or_else(|| {
+        let want = lexical(path);
+        opts.overrides
+            .iter()
+            .find(|(k, _)| lexical(k) == want)
+            .map(|(_, v)| v)
+    })
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct CompileOptions {
     pub load: LoadOptions,
+    /// Text that replaces the contents of a file on disk, keyed by the path
+    /// the compiler would read: the manifest as given to
+    /// [`compile_project`], and the agent manifest as that path's directory
+    /// joined with its name. Lets an editor check unsaved buffers. Only the
+    /// two manifests are consulted; specs and overlays are read from disk.
+    pub overrides: BTreeMap<PathBuf, String>,
 }
 
 /// Result of a compilation. `ir` is `None` when loading or the manifest
@@ -85,7 +118,10 @@ fn compile_project_here(manifest: &Path, opts: &CompileOptions) -> Compiled {
         config,
         mut diagnostics,
         source,
-    } = tungsten_config::load_with_source(manifest);
+    } = match override_text(opts, manifest) {
+        Some(text) => tungsten_config::parse_with_source(&manifest.display().to_string(), text),
+        None => tungsten_config::load_with_source(manifest),
+    };
     let name = manifest
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -103,13 +139,19 @@ fn compile_project_here(manifest: &Path, opts: &CompileOptions) -> Compiled {
         return failed(None, diagnostics, Some(&manifest_info));
     };
     let base = manifest.parent().map(Path::to_path_buf).unwrap_or_default();
-    let agent = agent_manifest(&config, &base, true);
+    let agent = agent_manifest(&config, &base, true, opts);
     compile_validated(config, &base, Some(manifest_info), agent, diagnostics, opts)
 }
 
 /// Where the agent manifest of a project is: the `agent` key, else
-/// `agent.yml` in `base` when `implicit` and the file exists.
-fn agent_manifest(config: &TungstenConfig, base: &Path, implicit: bool) -> Option<AgentInput> {
+/// `agent.yml` in `base` when `implicit` and the file exists (or has an
+/// override).
+fn agent_manifest(
+    config: &TungstenConfig,
+    base: &Path,
+    implicit: bool,
+    opts: &CompileOptions,
+) -> Option<AgentInput> {
     match &config.agent {
         Some(path) => Some(AgentInput {
             name: path.clone(),
@@ -117,7 +159,7 @@ fn agent_manifest(config: &TungstenConfig, base: &Path, implicit: bool) -> Optio
         }),
         None if implicit => {
             let path = base.join(DEFAULT_AGENT_MANIFEST);
-            path.is_file().then(|| AgentInput {
+            (path.is_file() || override_text(opts, &path).is_some()).then(|| AgentInput {
                 name: DEFAULT_AGENT_MANIFEST.to_string(),
                 path,
             })
@@ -203,7 +245,7 @@ fn compile_config_here(
     if diagnostics.has_errors() {
         return failed(Some(config), diagnostics, manifest.as_ref());
     }
-    let agent = agent_manifest(&config, base_dir, manifest.is_some());
+    let agent = agent_manifest(&config, base_dir, manifest.is_some(), opts);
     compile_validated(config, base_dir, manifest, agent, diagnostics, opts)
 }
 
@@ -292,7 +334,10 @@ fn compile_validated(
     opts: &CompileOptions,
 ) -> Compiled {
     let resolve = |p: &str| -> PathBuf { base_dir.join(p) };
-    let agent = agent.map(|a| tungsten_agent::load_as(&a.path, &a.name));
+    let agent = agent.map(|a| match override_text(opts, &a.path) {
+        Some(text) => tungsten_agent::parse_str(&a.name, text),
+        None => tungsten_agent::load_as(&a.path, &a.name),
+    });
     if let Some(a) = &agent {
         diagnostics.extend(a.diagnostics.clone());
     }

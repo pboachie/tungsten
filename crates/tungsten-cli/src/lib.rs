@@ -133,6 +133,19 @@ impl Report {
     }
 }
 
+/// `tungsten lsp`: serve the language server protocol on the process's stdin
+/// and stdout and return the exit code. `None` when `args` is any other
+/// command (or does not parse): [`run`] handles those.
+///
+/// The server owns the process streams, so the binary calls this before it
+/// locks them for [`run`].
+pub fn lsp(args: &[OsString]) -> Option<i32> {
+    match args::Cli::try_parse_from(args).ok()?.command {
+        args::Command::Lsp(lsp) => Some(commands::lsp::serve(&lsp)),
+        _ => None,
+    }
+}
+
 /// Run the CLI. `args` includes the program name as its first item, as
 /// `std::env::args_os()` does. Returns the process exit code (see [`exit`]).
 pub fn run(
@@ -154,7 +167,7 @@ pub fn run(
                 .map(|s| (*s).to_string())
                 .or_else(|| payload.downcast_ref::<String>().cloned())
                 .unwrap_or_else(|| "unknown panic".to_string());
-            Report::new(cli.command_name()).failed(
+            Report::new(cli.command_name().unwrap_or(CommandName::Check)).failed(
                 exit::INTERNAL,
                 CliError::new(ErrorKind::Internal, format!("internal error: {message}"))
                     .with_help("this is a bug in tungsten; please report it with the input"),

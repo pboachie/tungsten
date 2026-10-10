@@ -10,6 +10,7 @@ pub(crate) mod explain;
 pub(crate) mod generate;
 pub(crate) mod init;
 mod ir;
+pub(crate) mod lsp;
 pub(crate) mod mock;
 pub(crate) mod overlay;
 pub(crate) mod report;
@@ -36,5 +37,6 @@ pub(crate) fn dispatch(cli: &Cli, env: &CliEnv) -> Report {
         Command::Overlay {
             command: OverlayCommand::Suggest(args),
         } => overlay::suggest(args),
+        Command::Lsp(_) => lsp::refuse(),
     }
 }
