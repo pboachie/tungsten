@@ -18,7 +18,7 @@ pub(crate) fn id_of(arg: &str) -> String {
     format!("arg:{arg}")
 }
 
-fn number(text: &str) -> Result<Number, String> {
+pub(crate) fn number(text: &str) -> Result<Number, String> {
     text.trim()
         .parse::<Number>()
         .map_err(|_| format!("`{text}` is not a number"))
@@ -87,7 +87,7 @@ fn binary(ctx: &mut Ctx<'_>, reference: &str) -> Result<Value, Fail> {
     serde_json::to_value(&b).map_err(|e| Fail::Internal(e.to_string()))
 }
 
-fn json_from(ctx: &mut Ctx<'_>, text: &str) -> Result<Value, Fail> {
+pub(crate) fn json_from(ctx: &mut Ctx<'_>, text: &str) -> Result<Value, Fail> {
     let bytes = if text == "-" {
         ctx.stdin_all()?
     } else if let Some(path) = text.strip_prefix('@') {

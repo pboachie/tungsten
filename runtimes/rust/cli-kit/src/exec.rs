@@ -13,8 +13,9 @@ use crate::config::{self, Flags, Found, Settings};
 use crate::ctx::{Ctx, Fail};
 use crate::exit;
 use crate::render::{error_human, human_value, json_doc, preview_human, preview_json};
+use crate::spec::CliFlag;
 use crate::tree::{self, Leaf, Tree};
-use crate::{builtin, check, explain, values};
+use crate::{builtin, check, dotted, explain, values};
 
 fn flag(m: &ArgMatches, name: &str) -> bool {
     m.try_get_one::<bool>(name)
@@ -366,6 +367,20 @@ fn call_options(m: &ArgMatches) -> Result<CallOptions, Fail> {
     })
 }
 
+/// The `--flag.member value` tokens, applied to the arguments.
+fn apply_dotted(
+    ctx: &mut Ctx<'_>,
+    flags: &[CliFlag],
+    schema: &Value,
+    args: &mut serde_json::Map<String, Value>,
+) -> Result<(), Fail> {
+    let found = std::mem::take(&mut ctx.dotted);
+    if found.is_empty() {
+        return Ok(());
+    }
+    dotted::apply(ctx, flags, schema, found, args)
+}
+
 async fn run_leaf<D, F>(
     ctx: &mut Ctx<'_>,
     tree: &Tree,
@@ -396,6 +411,7 @@ where
                 )));
             };
             let mut args = values::collect(ctx, &op.flags, m)?;
+            apply_dotted(ctx, &op.flags, &op.schema, &mut args)?;
             if let (Some(arg), Some(raw)) = (&op.body_arg, text(m, "body")) {
                 let encoding = desc.body.as_ref().map(|b| b.encoding);
                 let v = values::body_value(ctx, raw, encoding)?;
@@ -422,7 +438,8 @@ where
                     mac.name
                 )));
             };
-            let args = values::collect(ctx, &mac.flags, m)?;
+            let mut args = values::collect(ctx, &mac.flags, m)?;
+            apply_dotted(ctx, &mac.flags, &mac.schema, &mut args)?;
             Plan {
                 target: Target::Macro(&mac.name),
                 tier: desc.safety,
@@ -472,7 +489,12 @@ where
     if let Err(e) = check::validate(spec) {
         return internal_error(ctx, &format!("the command table is inconsistent: {e}"));
     }
-    let tree = tree::build(spec);
+    let (argv, dotted) = match dotted::split(spec, argv) {
+        Ok(split) => split,
+        Err(message) => return usage_error(ctx, &[], &message),
+    };
+    let tree = tree::build(spec, &dotted::flag_names(&dotted));
+    ctx.dotted = dotted;
     let matches = match tree.command.clone().try_get_matches_from(argv) {
         Ok(m) => m,
         Err(e) => {
@@ -498,6 +520,18 @@ where
         ctx.disable_color();
     }
     let (names, leaf_m) = descend(&matches);
+    let builtin_command = matches!(
+        names.first().map(String::as_str),
+        Some("schema" | "operations" | "explain-error" | "auth")
+    );
+    if builtin_command && let Some(d) = ctx.dotted.first() {
+        let message = format!(
+            "unexpected argument '--{}.{}' found",
+            d.flag,
+            d.path.join(".")
+        );
+        return usage_error(ctx, &names, &message);
+    }
     let result = match names.first().map(String::as_str) {
         Some("schema") => builtin::schema(ctx, &tree.leaves, leaf_m),
         Some("operations") => Ok(builtin::operations(ctx)),
