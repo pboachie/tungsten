@@ -1,0 +1,187 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+//! `pom.xml`, `README.md` and the custom folder of a generated SDK.
+
+use crate::Ctx;
+
+/// The version of build-helper-maven-plugin a pom with `runtime_path` uses.
+const BUILD_HELPER: &str = "3.6.0";
+
+fn xml(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
+impl Ctx<'_> {
+    /// The Maven project of the SDK.
+    pub fn pom(&self) -> String {
+        let o = &self.opts;
+        let mut out = String::new();
+        out.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+        out.push_str(&format!("<!-- {} -->\n", crate::header_line(self.ir)));
+        out.push_str("<project xmlns=\"http://maven.apache.org/POM/4.0.0\"\n");
+        out.push_str("         xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"\n");
+        out.push_str("         xsi:schemaLocation=\"http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd\">\n");
+        out.push_str("  <modelVersion>4.0.0</modelVersion>\n\n");
+        out.push_str(&format!("  <groupId>{}</groupId>\n", xml(&o.group_id)));
+        out.push_str(&format!(
+            "  <artifactId>{}</artifactId>\n",
+            xml(&o.artifact_id)
+        ));
+        out.push_str(&format!("  <version>{}</version>\n", xml(&o.version)));
+        out.push_str("  <packaging>jar</packaging>\n\n");
+        let title = if self.ir.api.title.is_empty() {
+            &self.ir.api.name.wire
+        } else {
+            &self.ir.api.title
+        };
+        out.push_str(&format!("  <name>{} SDK for Java</name>\n\n", xml(title)));
+        out.push_str("  <properties>\n");
+        out.push_str("    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>\n");
+        out.push_str("    <maven.compiler.release>17</maven.compiler.release>\n");
+        out.push_str("  </properties>\n");
+        if o.runtime_path.is_none() {
+            out.push_str("\n  <dependencies>\n");
+            out.push_str("    <dependency>\n");
+            out.push_str("      <groupId>io.github.pboachie.tungsten</groupId>\n");
+            out.push_str("      <artifactId>tungsten-runtime</artifactId>\n");
+            out.push_str(&format!("      <version>{}</version>\n", xml(&o.runtime)));
+            out.push_str("    </dependency>\n");
+            out.push_str("  </dependencies>\n");
+        }
+        out.push_str("\n  <build>\n");
+        out.push_str("    <plugins>\n");
+        out.push_str("      <plugin>\n");
+        out.push_str("        <groupId>org.apache.maven.plugins</groupId>\n");
+        out.push_str("        <artifactId>maven-compiler-plugin</artifactId>\n");
+        out.push_str("        <version>3.14.0</version>\n");
+        out.push_str("        <configuration>\n");
+        out.push_str("          <release>17</release>\n");
+        out.push_str("        </configuration>\n");
+        out.push_str("      </plugin>\n");
+        if let Some(path) = &o.runtime_path {
+            // A local build compiles the runtime's sources into the SDK, so it
+            // needs neither an installed runtime nor a network.
+            out.push_str("      <plugin>\n");
+            out.push_str("        <groupId>org.codehaus.mojo</groupId>\n");
+            out.push_str("        <artifactId>build-helper-maven-plugin</artifactId>\n");
+            out.push_str(&format!("        <version>{BUILD_HELPER}</version>\n"));
+            out.push_str("        <executions>\n");
+            out.push_str("          <execution>\n");
+            out.push_str("            <id>tungsten-runtime-sources</id>\n");
+            out.push_str("            <phase>generate-sources</phase>\n");
+            out.push_str("            <goals>\n");
+            out.push_str("              <goal>add-source</goal>\n");
+            out.push_str("            </goals>\n");
+            out.push_str("            <configuration>\n");
+            out.push_str("              <sources>\n");
+            out.push_str(&format!(
+                "                <source>${{project.basedir}}/{}/src/main/java</source>\n",
+                xml(path.trim_end_matches('/'))
+            ));
+            out.push_str("              </sources>\n");
+            out.push_str("            </configuration>\n");
+            out.push_str("          </execution>\n");
+            out.push_str("        </executions>\n");
+            out.push_str("      </plugin>\n");
+        }
+        out.push_str("    </plugins>\n");
+        out.push_str("  </build>\n");
+        out.push_str("</project>\n");
+        out
+    }
+
+    /// The SDK's README.
+    pub fn readme(&self) -> String {
+        let o = &self.opts;
+        let title = if self.ir.api.title.is_empty() {
+            &self.ir.api.name.wire
+        } else {
+            &self.ir.api.title
+        };
+        let client = &self.names.client_class;
+        let mut s = format!("# {title} SDK for Java\n\n");
+        s.push_str(&format!(
+            "Generated by tungsten {}. Java 17 or later; the runtime is `io.github.pboachie.tungsten:tungsten-runtime:{}` (no further dependencies).\n\n",
+            self.ir.generator.tungsten_version, o.runtime
+        ));
+        s.push_str("```xml\n<dependency>\n");
+        s.push_str(&format!(
+            "  <groupId>{}</groupId>\n  <artifactId>{}</artifactId>\n  <version>{}</version>\n",
+            o.group_id, o.artifact_id, o.version
+        ));
+        s.push_str("</dependency>\n```\n\n");
+        s.push_str("## Usage\n\n```java\n");
+        s.push_str(&format!("import {}.{client};\n", o.package));
+        s.push_str("import io.github.pboachie.tungsten.runtime.*;\n\n");
+        s.push_str(&format!(
+            "var client = new {client}(ClientOptions.builder()\n"
+        ));
+        if let Some(scheme) = self.ir.auth.first() {
+            s.push_str(&format!(
+                "        .auth(\"{}\", Credential.secret(System.getenv(\"API_TOKEN\")))\n",
+                scheme.name()
+            ));
+        }
+        s.push_str("        .build());\n");
+        if let Some(info) = self.first_call() {
+            s.push_str(&format!(
+                "Result<{}> result = client.{}.{}({}.builder().build(), CallOptions.defaults());\n",
+                info.0, info.1, info.2, info.3
+            ));
+            s.push_str("if (result instanceof Result.Err<?> err) {\n");
+            s.push_str("    System.err.println(err.error().toJson()); // the error envelope\n");
+            s.push_str("}\n");
+        }
+        s.push_str("```\n\n");
+        s.push_str("Every call returns a `Result`: `Result.Ok` with the typed value and the response metadata, or `Result.Err` with the error envelope (`Diagnostic`: category, remediation, retryable, ...). Nothing throws for API or transport failures.\n\n");
+        s.push_str("- Destructive and irreversible operations need `CallOptions.builder().confirm(...)`: a token from the operation's `preview...` method, or `Confirm.YES` for destructive ones.\n");
+        s.push_str("- Mutations with a caller-owned idempotency key take `idempotencyKey(...)`; reuse it on every retry.\n");
+        s.push_str("- Paginated operations have a `...Pages` method (an `Iterable` of pages), streaming ones a `...Stream` method (an `EventStream`: iterate it, or use `on`, `collect`, `reduce`, `first`; `cancel` and `close`).\n");
+        s.push_str(&format!(
+            "- `client.dispatch()` runs operations by id with JSON arguments; `{}.Ops` holds the operation descriptors.\n\n",
+            o.package
+        ));
+        s.push_str("Files under `src/main/java/");
+        s.push_str(&o.package.replace('.', "/"));
+        s.push_str(
+            "/custom/` are yours: tungsten creates the folder once and never overwrites it.\n",
+        );
+        s
+    }
+
+    /// (result type, accessor chain, method, request record) of the first
+    /// operation without required arguments, for the README.
+    fn first_call(&self) -> Option<(String, String, String, String)> {
+        let infos = self.op_infos();
+        let info = infos.iter().find(|i| {
+            i.comps
+                .iter()
+                .all(|c| !matches!(c.presence, tungsten_ir::Presence::Required))
+                && self.plan.operations[i.index].safety == tungsten_ir::Safety::ReadOnly
+        })?;
+        let accessor = self.accessor_from_client(info.resource);
+        Some((
+            info.success.java.clone(),
+            accessor,
+            info.member.clone(),
+            format!(
+                "{}.{}",
+                self.names.resources[info.resource].class, info.request
+            ),
+        ))
+    }
+
+    fn accessor_from_client(&self, r: usize) -> String {
+        self.accessor(r).trim_start_matches("client.").to_string()
+    }
+
+    /// The custom folder's placeholder.
+    pub fn custom_readme(&self) -> String {
+        format!(
+            "# Custom code\n\nPut your own classes for package `{}.custom` here. tungsten created this folder once and never changes or removes what is in it.\n",
+            self.opts.package
+        )
+    }
+}

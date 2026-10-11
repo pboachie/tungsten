@@ -826,6 +826,53 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
         "Use `tungsten explain` on the code for its usual fix, for example declare the \
          pagination under `pagination` in tungsten.yml.",
     ),
+    e(
+        "TG1010",
+        "An option of the `java` target in tungsten.yml is not valid: `group_id` and `package` \
+         must be dotted Java package names (no keywords), `artifact_id` a Maven artifactId, \
+         `version` and `runtime` versions such as 1.2.3, `runtime_path` a non-empty path. The \
+         generator uses the option's default instead.",
+        "Fix the option under `targets.java` in tungsten.yml, or remove it to keep the default.",
+    ),
+    e(
+        "TG1011",
+        "The Java SDK has no native type for this schema (an allOf whose members cannot be \
+         merged into one record, or an enum whose values mix JSON types), so the typed value \
+         is the runtime's JSON value (`Object`: JsonObject, List, String, Long, Double, \
+         Boolean or null). The runtime still validates it against the schema.",
+        "Merge the allOf members into one object, or give the enum values a single type, if a \
+         typed Java model is wanted.",
+    ),
+    e(
+        "TG1012",
+        "A macro of the agent manifest is not in the canonical form the SDK runtimes run \
+         (steps over callable operations, references to $input or earlier steps, a known \
+         step kind), so the Java SDK does not include it; the TypeScript SDK reports the same \
+         macro as TG0710.",
+        "Fix the macro in agent.yml at the pointer the diagnostic names.",
+    ),
+    e(
+        "TG1013",
+        "The Java runtime sends an OpenID Connect scheme as a bearer token: it does not run \
+         discovery or obtain tokens itself.",
+        "Configure the scheme with `Credential.secret(token)` holding an access token you \
+         obtained from the provider.",
+    ),
+    e(
+        "TG1014",
+        "The operation answers different JSON bodies depending on the exact status, so the \
+         typed method's result is the runtime's JSON value; the result's metadata carries \
+         the status that tells them apart.",
+        "Read `meta().status()` of the result and decode the body with the matching model's \
+         `fromJson`.",
+    ),
+    e(
+        "TG1015",
+        "The union declares a discriminator, but at least one variant has no tag value or is \
+         not a named type, so the Java SDK cannot pick the variant by its tag: it decodes the \
+         variants in the plan's order and takes the first that fits.",
+        "Give every variant a named schema and a discriminator mapping value.",
+    ),
 ];
 
 /// The extended explanation of a code, if one exists.

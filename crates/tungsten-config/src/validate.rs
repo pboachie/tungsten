@@ -16,7 +16,15 @@ use crate::{
 pub const MANIFEST_VERSION: u32 = 1;
 
 /// Target names accepted under `targets`.
-pub const KNOWN_TARGETS: &[&str] = &["docs", "mcp", "mock", "python", "rust", "typescript"];
+pub const KNOWN_TARGETS: &[&str] = &[
+    "docs",
+    "java",
+    "mcp",
+    "mock",
+    "python",
+    "rust",
+    "typescript",
+];
 
 /// Option keys of an external target that belong to tungsten; every other
 /// key of the target is passed to the emitter as its options.
