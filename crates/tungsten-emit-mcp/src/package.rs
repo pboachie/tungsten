@@ -37,7 +37,10 @@ pub(crate) fn package_json(ir: &Ir, opts: &Options) -> String {
     let mut deps = Map::new();
     let mut entries = vec![
         ("@elysra/tungsten-mcp".to_string(), opts.runtime.clone()),
-        ("@elysra/tungsten-runtime".to_string(), DEFAULT_RANGE.to_string()),
+        (
+            "@elysra/tungsten-runtime".to_string(),
+            DEFAULT_RANGE.to_string(),
+        ),
         (opts.sdk_package.clone(), opts.sdk.clone()),
     ];
     entries.sort();

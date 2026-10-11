@@ -16,8 +16,14 @@ pub(crate) fn json_text(value: &Value) -> String {
 pub(crate) fn package_json(options: &Options) -> String {
     let mut dependencies = serde_json::Map::new();
     let mut entries = vec![
-        ("@elysra/tungsten-runtime".to_string(), options.sdk_runtime.clone()),
-        ("@elysra/tungsten-webmcp".to_string(), options.runtime.clone()),
+        (
+            "@elysra/tungsten-runtime".to_string(),
+            options.sdk_runtime.clone(),
+        ),
+        (
+            "@elysra/tungsten-webmcp".to_string(),
+            options.runtime.clone(),
+        ),
         (
             "zod".to_string(),
             tungsten_emit_ts::options::ZOD_RANGE.into(),
