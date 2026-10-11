@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! The precomputed BM25 index of `search_tools` and the
-//! tokenizer it shares with `@tungsten/mcp` (`tokenize` and `STOP_WORDS`
+//! tokenizer it shares with `@elysra/tungsten-mcp` (`tokenize` and `STOP_WORDS`
 //! in `runtimes/mcp/src/types.ts`): the runtime tokenizes queries with the
 //! same rule, so both sides must produce identical terms.
 //!

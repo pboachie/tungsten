@@ -918,7 +918,7 @@ pub struct McpBudgets {
     /// Tools in manifest order: `tokens` is the manifest's `schemaTokens`.
     pub tools: Vec<ToolCost>,
     /// What a client receives in discrete mode before its first call: the
-    /// `tools/list` tools `@tungsten/mcp` serves (every tool with its
+    /// `tools/list` tools `@elysra/tungsten-mcp` serves (every tool with its
     /// input and advertised output schema and annotations, and `preview`)
     /// as compact JSON, plus that mode's `initialize` instructions.
     pub discrete_tokens: usize,

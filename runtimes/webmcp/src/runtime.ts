@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import type { CallOptions, Diagnostic, MacroDescriptor, OperationDescriptor, Safety } from "@tungsten/runtime";
+import type { CallOptions, Diagnostic, MacroDescriptor, OperationDescriptor, Safety } from "@elysra/tungsten-runtime";
 import type { DocumentModelContext, LegacyModelContext, RegisterTungstenWebMcpOptions, WebMcpBackend, WebMcpRegistration, WebMcpTool, WebMcpToolEntry } from "./types.js";
 import { matchesSchema } from "./schema.js";
 import { binaryMediaType, collectStream, renderBinary } from "./results.js";

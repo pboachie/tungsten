@@ -5,7 +5,7 @@
 //! `runtimes/mcp/src/types.ts`): one tool entry per callable operation and
 //! macro with compact schemas, annotations from safety tiers, clusters, and a
 //! precomputed BM25 index for `search_tools`; plus a small TypeScript server
-//! package that serves it through `@tungsten/mcp` on top of the generated
+//! package that serves it through `@elysra/tungsten-mcp` on top of the generated
 //! TypeScript SDK:
 //!
 //! - `manifest.json`: the manifest;

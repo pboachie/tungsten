@@ -16,8 +16,8 @@ pub(crate) fn json_text(value: &Value) -> String {
 pub(crate) fn package_json(options: &Options) -> String {
     let mut dependencies = serde_json::Map::new();
     let mut entries = vec![
-        ("@tungsten/runtime".to_string(), options.sdk_runtime.clone()),
-        ("@tungsten/webmcp".to_string(), options.runtime.clone()),
+        ("@elysra/tungsten-runtime".to_string(), options.sdk_runtime.clone()),
+        ("@elysra/tungsten-webmcp".to_string(), options.runtime.clone()),
         (
             "zod".to_string(),
             tungsten_emit_ts::options::ZOD_RANGE.into(),
@@ -67,7 +67,7 @@ pub(crate) fn tsconfig_json() -> String {
 
 pub(crate) fn custom_template() -> String {
     "// Hand-written extensions. tungsten creates this file once and preserves edits.\n\
-     import type { RegisterTungstenWebMcpOptions } from \"@tungsten/webmcp\";\n\n\
+     import type { RegisterTungstenWebMcpOptions } from \"@elysra/tungsten-webmcp\";\n\n\
      /** Adjust registration options, client middleware or the page's tool scope. */\n\
      export function customize(options: RegisterTungstenWebMcpOptions): RegisterTungstenWebMcpOptions {\n\
      \x20 return options;\n\
@@ -84,12 +84,12 @@ pub(crate) fn index_ts(ir: &Ir, options: &Options, manifest: &Value) -> String {
                 .any(|tool| tool.get("kind").and_then(Value::as_str) == Some("macro"))
         });
     let mut out = header(CommentStyle::DoubleSlash, ir);
-    out.push_str("\n\nimport { registerTungstenWebMcp, type WebMcpManifest, type RegisterTungstenWebMcpOptions, type WebMcpRegistration } from \"@tungsten/webmcp\";\n");
+    out.push_str("\n\nimport { registerTungstenWebMcp, type WebMcpManifest, type RegisterTungstenWebMcpOptions, type WebMcpRegistration } from \"@elysra/tungsten-webmcp\";\n");
     out.push_str("import { ClientCore, type ClientOptions");
     if has_macros {
         out.push_str(", type MacroDescriptor");
     }
-    out.push_str(" } from \"@tungsten/runtime\";\n");
+    out.push_str(" } from \"@elysra/tungsten-runtime\";\n");
     out.push_str(&format!(
         "import {{ descriptors{} }} from {};\n",
         if has_macros { ", macros" } else { "" },
@@ -144,7 +144,7 @@ generated SDK, `runtime_path` to `runtimes/webmcp`, and `sdk_runtime_path` to
 
 ```ts
 import {{ register }} from "{package}";
-import {{ detectWebMcpBackend }} from "@tungsten/webmcp";
+import {{ detectWebMcpBackend }} from "@elysra/tungsten-webmcp";
 
 const backend = detectWebMcpBackend();
 if (backend) {{

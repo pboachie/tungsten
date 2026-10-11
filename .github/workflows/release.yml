@@ -301,7 +301,7 @@ jobs:
         with:
           node-version: "24"
           registry-url: https://registry.npmjs.org
-      - name: Build @tungsten/runtime (adapter packages link to it)
+      - name: Build @elysra/tungsten-runtime (adapter packages link to it)
         if: matrix.package != 'ts'
         working-directory: runtimes/ts
         run: npm ci && npm run build
@@ -368,13 +368,13 @@ jobs:
           dist_tag=latest
           case "$RELEASE_TAG" in *-*) dist_tag=next ;; esac
           # Validate every archive's version before the first registry write.
-          for package in tungsten-runtime tungsten-mcp tungsten-webmcp; do
+          for package in elysra-tungsten-runtime elysra-tungsten-mcp elysra-tungsten-webmcp; do
             set -- "$package"-*.tgz
             [ "$#" -eq 1 ] && [ -f "$1" ] || { echo "expected one archive for $package" >&2; exit 1; }
             package_version=$(tar -xOf "$1" package/package.json | node -e 'let input=""; process.stdin.on("data", chunk => input += chunk); process.stdin.on("end", () => console.log(JSON.parse(input).version));')
             [ "$package_version" = "${RELEASE_TAG#v}" ] || { echo "$package version $package_version does not match release tag $RELEASE_TAG; refusing to consume a different version" >&2; exit 1; }
           done
-          for package in tungsten-runtime tungsten-mcp tungsten-webmcp; do
+          for package in elysra-tungsten-runtime elysra-tungsten-mcp elysra-tungsten-webmcp; do
             set -- "$package"-*.tgz
             npm publish "$1" --provenance --access public --tag "$dist_tag" || {
               echo "npm publication failed for $package. Verify the npm trusted publisher for pboachie/tungsten, release.yml, environment npm; no token fallback is configured. Inspect registry state before retrying a partially completed release." >&2
