@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const output = resolve(process.argv[2] ?? mkdtempSync(join(tmpdir(), "tungsten-runtime-dist-")));
 const packages = ["ts", "mcp", "webmcp"];
-const names = ["@tungsten/runtime", "@tungsten/mcp", "@tungsten/webmcp"];
+const names = ["@elysra/tungsten-runtime", "@elysra/tungsten-mcp", "@elysra/tungsten-webmcp"];
 const workspaceVersion = readFileSync(join(root, "Cargo.toml"), "utf8").match(/^version = "([^"]+)"/m)?.[1];
 assert(workspaceVersion, "workspace version is required");
 mkdirSync(output, { recursive: true });
@@ -60,7 +60,7 @@ try {
   mkdirSync(consumer);
   writeFileSync(join(consumer, "package.json"), JSON.stringify({ private: true, type: "module" }));
   // All runtime peers are supplied as archives in the same install; npm must
-  // not resolve unpublished @tungsten packages from the registry or source links.
+  // not resolve unpublished @elysra runtime packages from the registry or source links.
   run(npm, ["install", "--ignore-scripts", "--omit=dev", "--no-audit", "--no-fund", ...tarballs], consumer);
   run(npm, ["ls", "--omit=dev", ...names], consumer);
   for (const name of names) {
@@ -70,10 +70,10 @@ try {
   }
   writeFileSync(join(consumer, "smoke.mjs"), `
     import assert from "node:assert/strict";
-    import { ClientCore, RUNTIME_VERSION } from "@tungsten/runtime";
-    import * as nodeAdapter from "@tungsten/runtime/node";
-    import { createTungstenMcpServer } from "@tungsten/mcp";
-    import { registerTungstenWebMcp, detectWebMcpBackend } from "@tungsten/webmcp";
+    import { ClientCore, RUNTIME_VERSION } from "@elysra/tungsten-runtime";
+    import * as nodeAdapter from "@elysra/tungsten-runtime/node";
+    import { createTungstenMcpServer } from "@elysra/tungsten-mcp";
+    import { registerTungstenWebMcp, detectWebMcpBackend } from "@elysra/tungsten-webmcp";
     assert.equal(RUNTIME_VERSION, ${JSON.stringify(workspaceVersion)});
     for (const value of [ClientCore, createTungstenMcpServer, registerTungstenWebMcp, detectWebMcpBackend]) assert.equal(typeof value, "function");
     assert(Object.keys(nodeAdapter).length > 0);
@@ -93,14 +93,14 @@ try {
     const source = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
     const follow = spec => {
       assert(!spec.startsWith("node:") && !builtins.has(spec), `Node builtin in browser graph: ${spec} from ${file}`);
-      assert(!spec.includes("@tungsten/runtime/node") && !spec.startsWith("@tungsten/mcp"), `Node adapter in browser graph: ${spec}`);
+      assert(!spec.includes("@elysra/tungsten-runtime/node") && !spec.startsWith("@elysra/tungsten-mcp"), `Node adapter in browser graph: ${spec}`);
       if (spec.startsWith(".")) {
         const target = resolve(dirname(file), spec);
         assert(!relative(consumer, target).startsWith("..") && !isAbsolute(relative(consumer, target)), "browser graph escapes consumer");
         walk(target);
       } else {
-        assert.equal(spec, "@tungsten/runtime", `unexpected browser dependency: ${spec}`);
-        walk(join(consumer, "node_modules/@tungsten/runtime/dist/index.js"));
+        assert.equal(spec, "@elysra/tungsten-runtime", `unexpected browser dependency: ${spec}`);
+        walk(join(consumer, "node_modules/@elysra/tungsten-runtime/dist/index.js"));
       }
     };
     const visit = node => {
@@ -113,8 +113,8 @@ try {
     };
     visit(source);
   };
-  walk(join(consumer, "node_modules/@tungsten/runtime/dist/index.js"));
-  walk(join(consumer, "node_modules/@tungsten/webmcp/dist/index.js"));
+  walk(join(consumer, "node_modules/@elysra/tungsten-runtime/dist/index.js"));
+  walk(join(consumer, "node_modules/@elysra/tungsten-webmcp/dist/index.js"));
   const checksums = tarballs.map(file => `${createHash("sha256").update(readFileSync(file)).digest("hex")}  ${relative(output, file)}`).join("\n") + "\n";
   writeFileSync(join(output, "SHA256SUMS"), checksums);
   console.log(`Validated ${tarballs.length} npm archives, isolated imports and ${visited.size} browser modules; artifacts: ${output}`);

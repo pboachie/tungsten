@@ -464,7 +464,7 @@ fn schema_tokens(description: &str, input: &Value) -> usize {
 }
 
 /// What a binary body argument is through MCP, prepended to its
-/// description: JSON carries it as base64 text, which `@tungsten/mcp`
+/// description: JSON carries it as base64 text, which `@elysra/tungsten-mcp`
 /// decodes into the bytes the SDK sends (a spec's "never base64-wrapped"
 /// is about the HTTP body).
 pub const BINARY_BODY_NOTE: &str =

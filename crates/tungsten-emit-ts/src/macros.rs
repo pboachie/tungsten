@@ -853,10 +853,10 @@ pub(crate) fn macros_file(
         "MacroDescriptor",
         "Result",
     ] {
-        imports.add_type("@tungsten/runtime", t);
+        imports.add_type("@elysra/tungsten-runtime", t);
     }
     if any_preview {
-        imports.add_type("@tungsten/runtime", "PreviewResult");
+        imports.add_type("@elysra/tungsten-runtime", "PreviewResult");
     }
     let mut w = Writer::new("  ");
     w.line(header);

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import type { Diagnostic, EventStream, Safety } from "@tungsten/runtime";
+import type { Diagnostic, EventStream, Safety } from "@elysra/tungsten-runtime";
 import type { WebMcpBinaryResultOptions, WebMcpStreamCollection } from "./types.js";
 
 type Normalize = (value: unknown, maxBytes: number) => unknown;

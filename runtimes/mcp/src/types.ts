@@ -12,7 +12,7 @@
  * PHASE-3 CONTRACT: additive changes only, with both sides updated.
  */
 
-import type { Safety } from "@tungsten/runtime";
+import type { Safety } from "@elysra/tungsten-runtime";
 
 /** JSON Schema (draft 2020-12) as plain data. */
 export type JsonSchema = Record<string, unknown>;
@@ -171,9 +171,9 @@ export interface ServerOptions {
   manifest: McpManifest;
   /** Factory for one `ClientCore` per MCP session (confirmation tokens and
    * shown-once state are per session). */
-  createCore: () => import("@tungsten/runtime").ClientCore;
+  createCore: () => import("@elysra/tungsten-runtime").ClientCore;
   /** Generated macro descriptors, by name. */
-  macros?: Record<string, import("@tungsten/runtime").MacroDescriptor>;
+  macros?: Record<string, import("@elysra/tungsten-runtime").MacroDescriptor>;
   /** Server name and version reported in `initialize`. */
   name: string;
   version: string;

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import type { ClientCore, MacroDescriptor, Safety } from "@tungsten/runtime";
+import type { ClientCore, MacroDescriptor, Safety } from "@elysra/tungsten-runtime";
 
 export type JsonSchema = Record<string, unknown>;
 

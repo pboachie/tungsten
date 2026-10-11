@@ -707,7 +707,7 @@ fn mcp_tools(manifest: &Value) -> Vec<ToolCost> {
 pub(crate) fn mcp_budgets(files: &FileSet, budget: u32) -> Option<McpBudgets> {
     let manifest = mcp_manifest(files)?;
     let costs = mcp_tools(&manifest);
-    // What `@tungsten/mcp` serves for this manifest in each mode, counted
+    // What `@elysra/tungsten-mcp` serves for this manifest in each mode, counted
     // the way the emitter's budgets and the generated README count it.
     Some(McpBudgets {
         mode: str_of(&manifest, "mode"),

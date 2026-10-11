@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /// <reference types="node" />
 /**
- * `@tungsten/runtime/node`: adapters that need Node APIs (also available in
+ * `@elysra/tungsten-runtime/node`: adapters that need Node APIs (also available in
  * Bun and Deno's Node compatibility). The core entry point never imports
  * this module.
  */

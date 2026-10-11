@@ -7,8 +7,8 @@
 //! | `version` | package version | `0.1.0` |
 //! | `sdk` | the generated TypeScript SDK: `<package>` or `<package>@<range>` | the `typescript` target's `package` and `^<version>` when `tungsten.yml` configures them (TG0726), else its default package, `^0.1.0` |
 //! | `sdk_path` | depend on the SDK by path (`file:<path>`) instead of a range | |
-//! | `runtime` | `@tungsten/mcp` version range | `^0.1.0` |
-//! | `runtime_path` | depend on `@tungsten/mcp` by path | |
+//! | `runtime` | `@elysra/tungsten-mcp` version range | `^0.1.0` |
+//! | `runtime_path` | depend on `@elysra/tungsten-mcp` by path | |
 //! | `search.embeddings` | the optional embedding index: `provider` (`command` or `http`), `command` or `url`, `model`, `dimensions`, `api_key_env`, `required`, `batch_size`, `timeout_ms` (TG0570 to TG0574; see `embeddings`) | off |
 //! | `sandbox` | enable the opt-in `run_script` sandbox (engine `auto`: deno when installed, else the WASM isolate; set `sandbox.engine` in `customize`) | `false` |
 //!
@@ -22,7 +22,7 @@ use tungsten_core::{Diagnostic, Diagnostics};
 use tungsten_emit::TargetConfig;
 use tungsten_ir::Ir;
 
-/// Default version range of `@tungsten/mcp`, `@tungsten/runtime` and the SDK.
+/// Default version range of `@elysra/tungsten-mcp`, `@elysra/tungsten-runtime` and the SDK.
 pub const DEFAULT_RANGE: &str = "^0.1.0";
 /// TypeScript version pinned in the generated package.
 pub const TYPESCRIPT_VERSION: &str = "5.9.3";
@@ -41,7 +41,7 @@ pub struct Options {
     pub sdk_package: String,
     /// Dependency specifier of the SDK.
     pub sdk: String,
-    /// Dependency specifier of `@tungsten/mcp`.
+    /// Dependency specifier of `@elysra/tungsten-mcp`.
     pub runtime: String,
     pub sandbox: bool,
     /// `search.embeddings`: the optional embedding index.

@@ -316,7 +316,7 @@ pub fn js_number(value: f64) -> String {
 
 /// JSON has one number type: `5.0` and `5` are the same number, as in
 /// JavaScript. An integral number below 2^53 in magnitude becomes an integer,
-/// so integer fields accept it (wire-faithful integers, like `@tungsten/runtime`
+/// so integer fields accept it (wire-faithful integers, like `@elysra/tungsten-runtime`
 /// and the Python runtime).
 pub fn integral_numbers(value: &mut Value) {
     match value {

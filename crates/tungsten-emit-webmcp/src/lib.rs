@@ -241,7 +241,7 @@ fn group_files(
         }
         let mut manifest = serde_json::to_value(&selected).unwrap_or_default();
         manifest["manifestVersion"] = serde_json::json!(1);
-        let mut module = "import { ClientCore, type ClientOptions } from \"@tungsten/runtime\";\nimport type { WebMcpManifest, WebMcpScope } from \"@tungsten/webmcp\";\nimport { api, operations } from \"./descriptors.js\";\n".to_string();
+        let mut module = "import { ClientCore, type ClientOptions } from \"@elysra/tungsten-runtime\";\nimport type { WebMcpManifest, WebMcpScope } from \"@elysra/tungsten-webmcp\";\nimport { api, operations } from \"./descriptors.js\";\n".to_string();
         if !macros.is_empty() {
             module.push_str("import { macroDescriptors } from \"./macros.js\";\n");
         }
