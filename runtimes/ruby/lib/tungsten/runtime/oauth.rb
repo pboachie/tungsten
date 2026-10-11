@@ -175,7 +175,7 @@ module Tungsten
         return [nil, TokenFailure.new("Cannot refresh the OAuth2 token for #{scheme}: #{reason}.", false)] unless client
 
         if stored.refresh_token.to_s.empty?
-          why = force ? "has no refresh token" : "expired and has no refresh token"
+          why = "#{force ? '' : 'expired and '}has no refresh token"
           return [nil, TokenFailure.new("The OAuth2 token for #{scheme} #{why}; authorize again with authorization_url() and exchange_code().", false)]
         end
         url = flow["refresh_url"] || flow["token_url"]

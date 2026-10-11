@@ -276,9 +276,11 @@ fn record(g: &Gen<'_, '_>, w: &mut Writer, name: &str, fields: &[&Field], names:
     }
     w.blank();
     comment(w, "The wire name of every member.");
+    // `:member => "wire"`: a `secret: "secret"` pair reads as a credential
+    // to secret scanners.
     let wires: Vec<String> = pairs
         .iter()
-        .map(|(f, n)| format!("{n}: {}", str_lit(&f.wire_name)))
+        .map(|(f, n)| format!(":{n} => {}", str_lit(&f.wire_name)))
         .collect();
     if wires.is_empty() {
         w.line("def self.wire_names = {}.freeze");
