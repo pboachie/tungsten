@@ -13,7 +13,10 @@
 //!   when the key must be persisted, and `confirmation_token` (same rule)
 //!   for destructive and irreversible tools.
 //! - Output schemas describe the first JSON success body when it is an
-//!   object (MCP structured content is an object); otherwise `null`.
+//!   object (MCP structured content is an object); otherwise `null`. The
+//!   types they reference are bounded ([`bound_closure`]): a `$ref` more than
+//!   [`OUTPUT_HOPS`] hops from the body is `{}`, and every one when the
+//!   result is over the output budget.
 //! - Descriptions are the first sentence of `compact_doc` and the tier and
 //!   key rule in brackets, cut to the agent manifest's
 //!   `description_budget_tokens`.
@@ -22,7 +25,7 @@
 //!   `idempotentHint` for read-only tools and keyed policies, and
 //!   `openWorldHint: false`.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -146,6 +149,7 @@ pub struct InstructionsByMode {
 pub fn build(ir: &Ir) -> (McpManifest, Diagnostics) {
     let mut diags = Diagnostics::new();
     let budget = ir.agent.disclosure.description_budget_tokens as usize;
+    let output_budget = output_budget(ir);
     let mut tools = vec![];
     let mut docs: Vec<Vec<String>> = vec![];
     let ops = callable(ir);
@@ -191,7 +195,7 @@ pub fn build(ir: &Ir) -> (McpManifest, Diagnostics) {
     let mut names = names.into_iter();
     for (base, (_, resources, op)) in op_bases.iter().zip(&ops) {
         let name = names.next().unwrap_or_default();
-        let (tool, terms) = operation_tool(ir, op, base, name, resources, budget);
+        let (tool, terms) = operation_tool(ir, op, base, name, resources, budget, output_budget);
         tools.push(tool);
         docs.push(terms);
     }
@@ -610,6 +614,7 @@ fn operation_tool(
     name: String,
     resources: &[String],
     budget: usize,
+    output_budget: usize,
 ) -> (ToolEntry, Vec<String>) {
     let a = &op.agent;
     let mut input = operation_parameters(ir, op);
@@ -652,7 +657,7 @@ fn operation_tool(
         kind: ToolKind::Operation,
         target: op.id.0.clone(),
         description,
-        output_schema: output_schema(ir, op),
+        output_schema: output_schema(ir, op, output_budget),
         input_schema: input,
         annotations: annotations(a.safety, a.idempotency.policy),
         safety: safety_name(a.safety),
@@ -750,11 +755,122 @@ fn status_rank(s: &StatusMatch) -> (u8, u16) {
     }
 }
 
+/// How many reference hops from a tool's output body keep their definition.
+/// Measured on Stripe (every `expandable` field is `anyOf [string, Resource]`,
+/// so the transitive closure of one response is about 860 definitions and
+/// 1 MB): one hop keeps the body's own nested types, and a typical tool
+/// stays in the low thousands of tokens; two hops already pulls in most of
+/// the cyclic graph.
+pub const OUTPUT_HOPS: usize = 1;
+
+/// A tool's output schema may be this many times the per-tool schema budget
+/// before it falls back to the zero-hop form.
+pub const OUTPUT_BUDGET_FACTOR: usize = 4;
+
+/// Token budget of one tool's output schema.
+fn output_budget(ir: &Ir) -> usize {
+    OUTPUT_BUDGET_FACTOR * ir.agent.disclosure.schema_budget_tokens as usize
+}
+
+/// The `$defs` entry a `$ref` points to, when it is a local definition.
+fn def_name(map: &serde_json::Map<String, Value>) -> Option<&str> {
+    map.get("$ref")?.as_str()?.strip_prefix("#/$defs/")
+}
+
+/// Hoisted scalar definitions (`hoist_repeats`): leaves that never count as
+/// a hop.
+fn is_shared(name: &str) -> bool {
+    name.starts_with("shared_")
+}
+
+/// Replace every reference in `value` (a schema at reference depth `depth`)
+/// that is more than `hops` hops from the body by `{}`, and queue the
+/// definitions it keeps.
+fn bound_refs(
+    value: &mut Value,
+    depth: usize,
+    hops: usize,
+    seen: &mut BTreeMap<String, usize>,
+    queue: &mut VecDeque<(String, usize)>,
+) {
+    match value {
+        Value::Object(map) => {
+            if let Some(name) = def_name(map).map(str::to_string) {
+                let at = if is_shared(&name) { depth } else { depth + 1 };
+                if at > hops {
+                    map.clear();
+                } else if !seen.contains_key(&name) {
+                    seen.insert(name.clone(), at);
+                    queue.push_back((name, at));
+                }
+                return;
+            }
+            for child in map.values_mut() {
+                bound_refs(child, depth, hops, seen, queue);
+            }
+        }
+        Value::Array(list) => {
+            for child in list {
+                bound_refs(child, depth, hops, seen, queue);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// `schema` with every `$ref` more than `hops` reference hops from its body
+/// replaced by `{}` (any value, so the real structured content still
+/// validates) and the `$defs` that are no longer reachable dropped. Hops
+/// are counted from the body (its direct references are hop 1); hoisted
+/// shared scalars do not count. Definitions keep their order, so the result
+/// is deterministic.
+pub fn bound_closure(schema: Value, hops: usize) -> Value {
+    let Value::Object(mut root) = schema else {
+        return schema;
+    };
+    let Some(Value::Object(mut defs)) = root.shift_remove("$defs") else {
+        return Value::Object(root);
+    };
+    let mut seen = BTreeMap::new();
+    let mut queue = VecDeque::new();
+    let mut body = Value::Object(root);
+    bound_refs(&mut body, 0, hops, &mut seen, &mut queue);
+    while let Some((name, depth)) = queue.pop_front() {
+        if let Some(def) = defs.get_mut(&name) {
+            bound_refs(def, depth, hops, &mut seen, &mut queue);
+        }
+    }
+    defs.retain(|name, _| seen.contains_key(name));
+    if let Value::Object(root) = &mut body
+        && !defs.is_empty()
+    {
+        root.insert("$defs".into(), Value::Object(defs));
+    }
+    body
+}
+
+/// The output schema of a response type bounded to [`OUTPUT_HOPS`]
+/// reference hops, or to none when that is still over `budget` tokens.
+fn bounded_output(schema: Value, budget: usize) -> Value {
+    let bounded = bound_closure(schema.clone(), OUTPUT_HOPS);
+    if tokens(&serde_json::to_string(&bounded).unwrap_or_default()) <= budget {
+        bounded
+    } else {
+        bound_closure(schema, 0)
+    }
+}
+
 /// The schema of the first JSON success body when it describes an object.
 /// None for an operation that only streams: a call returns the collected
 /// events (`{events: [...]}`), which a plain body's schema does not describe.
 /// An operation that also has a plain body keeps its schema.
-fn output_schema(ir: &Ir, op: &Operation) -> Option<Value> {
+///
+/// The closure of the body's types is bounded ([`bound_closure`]): a
+/// reference more than [`OUTPUT_HOPS`] hops from the body is `{}`, and when
+/// the result is still over `budget` tokens every reference is. Response
+/// graphs of large APIs are cyclic and densely connected, so the full
+/// closure of one tool can be the whole API.
+fn output_schema(ir: &Ir, op: &Operation, budget: usize) -> Option<Value> {
     if op.stream.as_ref().is_some_and(|s| !s.also_plain) {
         return None;
     }
@@ -770,7 +886,8 @@ fn output_schema(ir: &Ir, op: &Operation) -> Option<Value> {
     let mut b = SchemaBuilder::new(ir, tool_schema_options(Usage::Response));
     let root = b.type_ref(&content.ty);
     let schema = hoist_repeats(without_dialect(b.finish(root)));
-    (schema.get("type").and_then(Value::as_str) == Some("object")).then_some(schema)
+    (schema.get("type").and_then(Value::as_str) == Some("object"))
+        .then(|| bounded_output(schema, budget))
 }
 
 /// Clusters in manifest order with the names of their tools.

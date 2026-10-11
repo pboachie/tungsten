@@ -585,6 +585,16 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
          depend on something else.",
     ),
     e(
+        "TG0727",
+        "The output schema of an MCP tool is larger than four times the per-tool schema budget \
+         even though every reference to another type was already replaced by `{}` (the \
+         emitter keeps only the types one reference away from the response body, and none \
+         when that is still over the limit). The response type itself is large: many fields \
+         or long descriptions.",
+        "Shorten the descriptions in the spec, or raise \
+         `defaults.disclosure.schema_budget_tokens` in agent.yml.",
+    ),
+    e(
         "TG0730",
         "A macro in the IR does not fit the canonical form the Python SDK compiles: a step \
          names an operation that is not callable, a reference names a later or unknown step, \
@@ -846,7 +856,9 @@ pub(crate) fn area(code: &str) -> &'static str {
         Some("TG05") => "operations, pagination and auth inference (TG05xx)",
         Some("TG06") => "manifests (TG06xx)",
         Some("TG07") => "emitter limits (TG07xx)",
+        Some("TG08") => "external emitters (TG08xx)",
         Some("TG09") => "staleness and CI (TG09xx)",
+        Some("TG10") => "SDK emitters: Java, C#, Kotlin, Swift, PHP, Ruby, Dart (TG10xx)",
         _ => "unassigned range",
     }
 }

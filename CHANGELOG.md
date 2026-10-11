@@ -11,6 +11,13 @@ changes.
 
 ### Added
 
+- The language-neutral foundation of the coming Java, C#, Kotlin, Swift, PHP,
+  Ruby and Dart SDKs in `tungsten-emit` (`sdk`): one SDK plan per API (types,
+  operations, resource tree, macros), naming profiles for the seven languages
+  in `tungsten-ir`, and the SDK descriptor document their runtimes read
+  (`tungsten schema sdk-descriptors`). The repository guard knows the seven
+  runtime directories. No target is added yet and existing output is
+  unchanged.
 - Resumable event streams in the TypeScript, Python and Rust runtimes and the
   MCP server: a dropped stream reconnects with `Last-Event-ID`, honouring the
   server's `retry` under a cap (`maxReconnects`, default 3), without repeating
@@ -46,6 +53,16 @@ changes.
 - Rust runtime: `StreamEvent` has a new public field `reconnects`; code that
   builds or destructures `StreamEvent` with a struct literal must add it (or
   use `..`).
+
+- Go SDKs through the external emitter interface: `emitters/go` builds
+  `tungsten-emit-go` (enable it with `go: { out: ..., external: true,
+  module: ..., package: ... }`), which generates a Go package with models,
+  resources, a typed client, operation descriptors, pagination and stream
+  helpers, macros and a README. The SDKs use the new Go runtime
+  `github.com/pboachie/tungsten/runtimes/go` (standard library only, Go
+  1.22 or later), with the same error envelope, retries, idempotency,
+  previews, confirmation tokens, auth handling and resumable event streams
+  as the other runtimes.
 
 ## [0.1.0] - Unreleased
 

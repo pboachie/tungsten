@@ -1,6 +1,6 @@
-# Public CI: repository rules, format, lint, build and dependency policy. The
-# test suite lives in the private tungsten-ops repository; the last job asks it
-# to test this commit and it reports back as the commit status "tungsten-ops/ci".
+# Public CI: repository rules, format, lint, build (Rust and Go) and dependency
+# policy. The test suite lives in the private tungsten-ops repository; the last
+# job asks it to test this commit and it reports back as the commit status "tungsten-ops/ci".
 #
 # The job names "fmt, clippy, build", "cargo-deny" and "repository-guard" are
 # required status checks of the main branch ruleset: renaming a job breaks
@@ -94,6 +94,38 @@ jobs:
           manifest-path: runtimes/rust/Cargo.toml
           command: check
           arguments: --all-features
+
+  # The Go runtime (runtimes/go) and the external Go emitter (emitters/go)
+  # are standard-library modules of their own; their tests, and the build of
+  # the SDKs the emitter generates, run in tungsten-ops.
+  go:
+    name: go fmt, vet, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.24"
+          cache: false
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l runtimes/go emitters/go)"
+          if [ -n "$unformatted" ]; then echo "$unformatted"; exit 1; fi
+      - name: Go runtime (runtimes/go) vet, build
+        working-directory: runtimes/go
+        run: |
+          go vet ./...
+          go build ./...
+      - name: Go emitter (emitters/go) vet, build
+        working-directory: emitters/go
+        run: |
+          go vet ./...
+          go build -o /dev/null .
 
   guard:
     name: repository-guard

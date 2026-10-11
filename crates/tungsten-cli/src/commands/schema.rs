@@ -41,5 +41,6 @@ fn schema_for(name: SchemaName) -> Value {
         SchemaName::Ir => Ir::json_schema(),
         SchemaName::CliOutput => cli_output_schema(),
         SchemaName::ExternalEmitter => tungsten_emit::external::json_schema(),
+        SchemaName::SdkDescriptors => tungsten_emit::sdk::descriptors::json_schema(),
     }
 }
