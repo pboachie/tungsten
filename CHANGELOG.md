@@ -11,6 +11,28 @@ changes.
 
 ### Added
 
+- Project setup with `init --targets` and a project-aware `doctor --strict`;
+  browser targets automatically include their sibling TypeScript SDK.
+- Browser registration lifecycle controller for route and framework cleanup,
+  cancellation of stale dynamic imports, and scoped loading.
+- Opt-in bounded streaming and binary WebMCP results; response byte limits
+  and stream reader cancellation in the TypeScript runtime.
+- `diff --migration` upgrade actions, deprecation reporting and recorded
+  runtime requirements. API surface snapshots use format 3 and read format 2.
+- A transport-neutral, versioned tool catalogue with JSON Schema, scoped
+  groups and external emitter conformance helpers (`schema tool-catalog`).
+- Runtime tarball installation checks and gated npm trusted publishing for
+  the TypeScript, MCP and WebMCP packages.
+
+- Built-in `webmcp` target: a browser ESM package with a shared tool manifest
+  and an explicit registration helper backed by the generated TypeScript SDK
+  and the new Apache-2.0 `@tungsten/webmcp` runtime. Registration defaults to
+  read-only operations, supports scoped opt-in writes and macros, confirmation
+  previews, cancellation and disposal. The runtime adapts the experimental
+  `document.modelContext` API and the legacy `navigator.modelContext` shape;
+  generated-package browser smoke passed in Chromium 154.0.8037.57 with
+  `WebMCPTesting` enabled. Full cross-browser conformance remains a follow-up.
+
 - The language-neutral foundation of the coming Java, C#, Kotlin, Swift, PHP,
   Ruby and Dart SDKs in `tungsten-emit` (`sdk`): one SDK plan per API (types,
   operations, resource tree, macros), naming profiles for the seven languages

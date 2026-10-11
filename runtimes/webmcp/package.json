@@ -1,0 +1,17 @@
+{
+  "name": "@tungsten/webmcp",
+  "version": "0.1.0",
+  "description": "Browser WebMCP adapter for tungsten-generated APIs.",
+  "license": "Apache-2.0",
+  "repository": { "type": "git", "url": "git+https://github.com/pboachie/tungsten.git", "directory": "runtimes/webmcp" },
+  "publishConfig": { "access": "public" },
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
+  "files": ["dist", "LICENSE"],
+  "scripts": { "build": "tsc -p tsconfig.json" },
+  "peerDependencies": { "@tungsten/runtime": "^0.1.0" },
+  "devDependencies": { "@tungsten/runtime": "file:../ts", "typescript": "5.9.3" }
+}

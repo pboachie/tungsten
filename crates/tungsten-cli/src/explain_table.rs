@@ -302,7 +302,8 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
          not an environment variable name. The embedding index is off and the MCP server \
          searches with BM25 only; with `required: true` this is an error instead.",
         "Fix the option: `search: { embeddings: { provider: command, command: \"node embed.mjs\", \
-         model: my-model } }` or `provider: http` with `url`. See planning/02 D6.",
+         model: my-model } }` or `provider: http` with `url`. See the MCP server guide \
+         for embedding provider examples.",
     ),
     e(
         "TG0571",
@@ -466,7 +467,7 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
     ),
     e(
         "TG0702",
-        "tungsten.yml configures a target (python, rust, mcp or mock) for which this version \
+        "tungsten.yml configures a target (such as mock) for which this version \
          of tungsten has no emitter yet. `tungsten generate` skips it and `check --ci` does \
          not compare its output.",
         "Nothing to fix. Remove the target from tungsten.yml to silence the notice, or \
@@ -740,6 +741,34 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
          planned (`planned_from`) and the error envelope still keep the types they use.",
         "Nothing to fix. To generate every schema anyway, set `types.prune_unreferenced: false` \
          in tungsten.yml.",
+    ),
+    e(
+        "TG0790",
+        "An option of the `webmcp` target is invalid, such as a malformed npm package, SDK \
+         dependency, runtime dependency or version. The emitter uses its documented default for that option.",
+        "Fix the option under `targets.webmcp` in tungsten.yml.",
+    ),
+    e(
+        "TG0791",
+        "The WebMCP emitter could not add a generated file to its output. The diagnostic \
+         identifies the file and the reason.",
+        "Check the target configuration. If the generated path is invalid or duplicated, \
+         report an emitter bug.",
+    ),
+    e(
+        "TG0792",
+        "The `webmcp` target has no explicit SDK dependency, so the browser adapter depends \
+         on the package and version the `typescript` target generates.",
+        "Generate and make that TypeScript package available, or set `targets.webmcp.sdk` \
+         (`<package>` or `<package>@<range>`) or `targets.webmcp.sdk_path`.",
+    ),
+    e(
+        "TG0793",
+        "A confirmation-bearing WebMCP tool's generated `__preview` name is already used \
+         by another invocation tool. The browser runtime rejects a registration whose \
+         selected tools contain that collision.",
+        "Rename the colliding operation or macro so invocation and preview tool names \
+         are distinct.",
     ),
     e(
         "TG0801",

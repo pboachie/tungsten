@@ -137,6 +137,17 @@ pub fn tool_names(ir: &Ir) -> BTreeMap<String, String> {
         .collect()
 }
 
+/// Compile the shared operation and macro tool catalog as a JSON manifest.
+/// Browser and server adapters use this contract to keep tool names, schemas,
+/// visibility and safety metadata identical across transports.
+pub fn tool_manifest(ir: &Ir) -> (serde_json::Value, Diagnostics) {
+    let (manifest, diagnostics) = manifest::build(ir);
+    (
+        serde_json::to_value(manifest).unwrap_or_default(),
+        diagnostics,
+    )
+}
+
 /// Every file of the server package: (path relative to the target
 /// directory, contents), in a fixed order.
 pub fn generate(ir: &Ir, opts: &Options) -> Vec<(String, String)> {

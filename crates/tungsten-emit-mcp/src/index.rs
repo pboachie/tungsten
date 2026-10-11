@@ -18,36 +18,8 @@ pub const K1: f64 = 1.2;
 /// BM25 document-length normalization.
 pub const B: f64 = 0.75;
 
-/// Words never indexed or searched (`STOP_WORDS` in the runtime contract).
-pub const STOP_WORDS: &[&str] = &[
-    "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "in", "is", "it", "of", "on",
-    "or", "the", "this", "to", "with",
-];
-
-/// The terms of `text` under the shared rule.
-pub fn tokenize(text: &str) -> Vec<String> {
-    let mut words: Vec<String> = vec![];
-    let mut current = String::new();
-    let mut prev: Option<char> = None;
-    for c in text.chars() {
-        if c.is_ascii_alphanumeric() {
-            let boundary = c.is_ascii_uppercase()
-                && prev.is_some_and(|p| p.is_ascii_lowercase() || p.is_ascii_digit());
-            if boundary {
-                words.push(std::mem::take(&mut current));
-            }
-            current.push(c.to_ascii_lowercase());
-        } else {
-            words.push(std::mem::take(&mut current));
-        }
-        prev = Some(c);
-    }
-    words.push(current);
-    words
-        .into_iter()
-        .filter(|w| w.len() >= 2 && !STOP_WORDS.contains(&w.as_str()))
-        .collect()
-}
+#[allow(unused_imports)]
+pub use tungsten_emit::tool_catalog::compiler::{STOP_WORDS, tokenize};
 
 /// `SearchIndex` of the runtime contract.
 #[derive(Debug, Clone, PartialEq, Serialize)]

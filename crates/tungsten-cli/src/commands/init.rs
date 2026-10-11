@@ -133,7 +133,14 @@ pub(crate) fn run(args: &InitArgs) -> Report {
         .map(|s| spec_reference(s, dir))
         .unwrap_or_else(|| SPEC_CANDIDATES[0].to_string());
 
-    let manifest = tungsten_yml(&api_name, &namespace, &spec_ref, spec.is_some(), &info);
+    let manifest = tungsten_yml(
+        &api_name,
+        &namespace,
+        &spec_ref,
+        spec.is_some(),
+        &info,
+        &args.targets,
+    );
     if tungsten_config::parse_str("tungsten.yml", &manifest)
         .0
         .is_none()
@@ -363,6 +370,7 @@ fn tungsten_yml(
     spec_ref: &str,
     spec_found: bool,
     info: &SpecInfo,
+    selected: &[String],
 ) -> String {
     let mut out = format!(
         "# yaml-language-server: $schema={TUNGSTEN_SCHEMA_URL}\n\
@@ -395,12 +403,32 @@ fn tungsten_yml(
     }
     out.push_str(
         "\n# What `tungsten generate` writes. Other targets: rust (SDK and CLI), mcp\n\
-         # (an MCP server on top of the TypeScript SDK).\n\
-         targets:\n  \
-         typescript: { out: generated/typescript }\n  \
-         python: { out: generated/python }\n  \
-         docs: { out: generated/docs }\n",
+         # (an MCP server) and webmcp (a browser adapter on the TypeScript SDK).\n\
+         targets:\n",
     );
+    let mut targets: Vec<&str> = if selected.is_empty() {
+        vec!["typescript", "python", "docs"]
+    } else {
+        selected.iter().map(String::as_str).collect()
+    };
+    if targets.contains(&"webmcp") && !targets.contains(&"typescript") {
+        targets.insert(0, "typescript");
+    }
+    let has_typescript = targets.contains(&"typescript");
+    let mut written = std::collections::BTreeSet::new();
+    for target in targets {
+        if !written.insert(target) {
+            continue;
+        }
+        if matches!(target, "mcp" | "webmcp") && has_typescript {
+            let _ = writeln!(
+                out,
+                "  {target}: {{ out: generated/{target}, sdk_path: ../typescript }}"
+            );
+        } else {
+            let _ = writeln!(out, "  {target}: {{ out: generated/{target} }}");
+        }
+    }
     out
 }
 

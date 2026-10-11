@@ -435,6 +435,11 @@ impl Gen<'_, '_> {
                 let step = &self.mp.steps[*i];
                 let shape = &self.shapes[step.op];
                 if step.kind == StepKind::Paginate {
+                    if path.is_empty() {
+                        self.uses
+                            .namespaces
+                            .extend(shape.result_namespaces.iter().cloned());
+                    }
                     let item = shape
                         .page_item
                         .as_ref()
@@ -447,6 +452,9 @@ impl Gen<'_, '_> {
                 }
                 let polled = step.kind == StepKind::Poll;
                 if path.is_empty() {
+                    self.uses
+                        .namespaces
+                        .extend(shape.result_namespaces.iter().cloned());
                     let t = &shape.success.text;
                     return match (polled, t.strip_suffix(" | undefined")) {
                         (false, _) => t.clone(),
