@@ -64,7 +64,8 @@ separate private repository, so pull requests here must not add tests, test
 data, `#[cfg(test)]` modules, `[dev-dependencies]`, doctests or documentation
 directories. A repository guard job in CI enforces this. Besides the community
 files at the root and in `.github/`, only images in `assets/` and code in
-`examples/` (with a `README.md` per example) are accepted.
+`examples/` (with a `README.md` per example), and package READMEs in
+`runtimes/ts`, `runtimes/mcp` and `runtimes/webmcp` are accepted.
 
 You do not need access to that suite. A maintainer runs it against your pull
 request, and its result appears on the pull request as the `tungsten-ops/ci`
