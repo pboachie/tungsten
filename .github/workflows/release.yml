@@ -100,6 +100,30 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           echo "release=$release tag=${tag:-none} version=$version"
 
+  woodpecker-release:
+    name: Woodpecker npm release validation
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    permissions:
+      contents: read
+      statuses: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: "24"
+      - name: Require the exact Woodpecker tag validation when enabled
+        env:
+          WOODPECKER_RELEASE: ${{ needs.prepare.outputs.release == 'true' && vars.WOODPECKER_RELEASE == 'true' && 'true' || 'false' }}
+          WOODPECKER_REPO_ID: ${{ vars.WOODPECKER_REPO_ID }}
+          WOODPECKER_URL: ${{ vars.WOODPECKER_URL }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node .github/scripts/wait-woodpecker-release.mjs
+
   build:
     name: build ${{ matrix.target }}
     needs: prepare
@@ -339,8 +363,8 @@ jobs:
   # npm trusted publishers must name release.yml and the npm environment for
   # all three packages before NPM_PUBLISH is enabled. No stored token is used.
   npm-publish:
-    name: npm publish (trusted publishing, gated off)
-    needs: [prepare, crates-dry-run, npm-dry-run, npm-artifacts, pypi-build, github-release]
+    name: npm publish (trusted publishing)
+    needs: [prepare, crates-dry-run, npm-dry-run, npm-artifacts, pypi-build, github-release, woodpecker-release]
     if: needs.prepare.outputs.release == 'true' && vars.NPM_PUBLISH == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -357,6 +381,8 @@ jobs:
         with:
           name: npm-dist
           path: runtime-dist
+      - name: Install the supported npm CLI
+        run: npm install --global npm@12.2.0
       - name: Publish validated archives, core runtime first
         env:
           RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
