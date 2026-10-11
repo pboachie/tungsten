@@ -208,6 +208,7 @@ fn target_keys(target: &str) -> &'static [&'static str] {
         "typescript" => &["package", "runtime", "out"],
         "python" => &["package", "runtime", "models", "out"],
         "rust" => &["crate", "runtime", "cli", "out"],
+        "ruby" => &["gem", "module", "version", "runtime", "runtime_path", "out"],
         "mcp" => &["package", "runtime", "out"],
         _ => &["out"],
     }

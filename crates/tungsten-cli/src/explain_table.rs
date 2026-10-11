@@ -836,6 +836,50 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
         "Use `tungsten explain` on the code for its usual fix, for example declare the \
          pagination under `pagination` in tungsten.yml.",
     ),
+    e(
+        "TG1060",
+        "An option of the `ruby` target is not valid (a `gem` that is not a lowercase gem name, \
+         a `module` that is not a Ruby constant path or names a core class or the runtime's \
+         `Tungsten`, a `version` that is not a gem version, a `runtime` that is not a gem \
+         requirement, or an empty `runtime_path`), so its default is used.",
+        "Fix the option under `targets.ruby` in tungsten.yml.",
+    ),
+    e(
+        "TG1061",
+        "An `allOf` could not be merged into one record (a member is not a record, has typed \
+         extra members, or two members share a wire name). The Ruby SDK has no model for it: \
+         its typed value is the JSON value, which the runtime still validates against every \
+         member.",
+        "Restructure the schema so its members are records with distinct properties, or \
+         accept the JSON value.",
+    ),
+    e(
+        "TG1062",
+        "A macro of agent.yml is not in the canonical form the SDKs run (an unknown step kind \
+         or operation, a reference to no earlier step, an invalid `as`, `until` or budget). The \
+         Ruby SDK leaves it out; the other operations are generated as usual.",
+        "Fix the macro in agent.yml; the message names the offending member.",
+    ),
+    e(
+        "TG1063",
+        "The API declares an OpenID Connect security scheme. The Ruby SDK sends the configured \
+         credential as a bearer token and does not run discovery or obtain tokens itself.",
+        "Obtain the token yourself and pass it in `auth:` under the scheme's name.",
+    ),
+    e(
+        "TG1064",
+        "An operation answers different JSON bodies depending on the status. The Ruby SDK's \
+         typed result for it is the decoded JSON value; the runtime validates it against the \
+         body of the status that arrived.",
+        "Nothing to fix; read `result.meta.status` to tell the bodies apart.",
+    ),
+    e(
+        "TG1065",
+        "A union has a discriminator, but one of its variants has no tag value or is not a \
+         named type, so the Ruby SDK cannot pick the variant by the tag. It tries the variants \
+         in order and decodes the first that accepts the value.",
+        "Give every variant a `discriminator.mapping` entry or a `const` tag property.",
+    ),
 ];
 
 /// The extended explanation of a code, if one exists.

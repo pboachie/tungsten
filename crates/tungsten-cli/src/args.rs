@@ -194,8 +194,8 @@ pub(crate) struct CheckArgs {
 pub(crate) struct GenerateArgs {
     #[command(flatten)]
     pub input: InputArgs,
-    /// Only these targets, comma-separated (`typescript,docs`; `ts`, `py`
-    /// and `rs` are accepted). Default: every target in tungsten.yml.
+    /// Only these targets, comma-separated (`typescript,docs`; `ts`, `py`,
+    /// `rs` and `rb` are accepted). Default: every target in tungsten.yml.
     #[arg(long, value_name = "TARGETS", value_delimiter = ',')]
     pub target: Vec<String>,
     /// Report what would be written or removed without touching the disk.
