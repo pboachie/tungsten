@@ -365,9 +365,17 @@ jobs:
       - name: Build
         working-directory: runtimes/${{ matrix.package }}
         run: npm ci && npm run build
+      - name: Use an unpublished version for rehearsal only
+        if: needs.prepare.outputs.release != 'true'
+        working-directory: runtimes/${{ matrix.package }}
+        env:
+          REHEARSAL_VERSION: ${{ needs.prepare.outputs.version }}
+        # npm checks registry version conflicts even with --dry-run. Only this
+        # throwaway dry-run checkout changes; release manifests stay exact.
+        run: npm version "$REHEARSAL_VERSION" --no-git-tag-version --ignore-scripts
       - name: npm publish --dry-run --provenance
         working-directory: runtimes/${{ matrix.package }}
-        run: npm publish --dry-run --provenance --access public
+        run: npm publish --dry-run --provenance --access public --tag next
 
   npm-artifacts:
     name: npm distributed artifact validation
