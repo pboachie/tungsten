@@ -190,6 +190,7 @@ jobs:
         run: |
           $asset = "tungsten-$env:VERSION-$env:TARGET.zip"
           # Exercise the real installer offline against this job's archive.
+          $global:tungstenSmokeTamper = $false
           function Invoke-WebRequest {
             param([uri]$Uri, [string]$OutFile, [switch]$UseBasicParsing)
             $requested = [IO.Path]::GetFileName($Uri.AbsolutePath)
@@ -197,7 +198,7 @@ jobs:
               Copy-Item "dist/$asset.sha256" $OutFile
             } elseif ($requested -eq $asset) {
               Copy-Item "dist/$asset" $OutFile
-              if ($script:tamper) { [IO.File]::AppendAllText($OutFile, 'tampered') }
+              if ($global:tungstenSmokeTamper) { [IO.File]::AppendAllText($OutFile, 'tampered') }
             } else { throw "Unexpected installer download: $requested" }
           }
           $dest = Join-Path $env:RUNNER_TEMP 'tungsten-installer-smoke'
@@ -205,7 +206,7 @@ jobs:
           $expected = & "target/$env:TARGET/release/tungsten.exe" --version
           $actual = & "$dest/tungsten.exe" --version
           if ($LASTEXITCODE -ne 0 -or $actual -ne $expected) { throw 'Installed binary smoke test failed' }
-          $script:tamper = $true
+          $global:tungstenSmokeTamper = $true
           $rejected = Join-Path $env:RUNNER_TEMP 'tungsten-installer-rejected'
           try {
             & ./install.ps1 -Version $env:VERSION -InstallDir $rejected -BaseUrl 'https://release.invalid'
