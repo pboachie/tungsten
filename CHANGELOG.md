@@ -11,6 +11,13 @@ changes.
 
 ### Added
 
+- The language-neutral foundation of the coming Java, C#, Kotlin, Swift, PHP,
+  Ruby and Dart SDKs in `tungsten-emit` (`sdk`): one SDK plan per API (types,
+  operations, resource tree, macros), naming profiles for the seven languages
+  in `tungsten-ir`, and the SDK descriptor document their runtimes read
+  (`tungsten schema sdk-descriptors`). The repository guard knows the seven
+  runtime directories. No target is added yet and existing output is
+  unchanged.
 - Resumable event streams in the TypeScript, Python and Rust runtimes and the
   MCP server: a dropped stream reconnects with `Last-Event-ID`, honouring the
   server's `retry` under a cap (`maxReconnects`, default 3), without repeating

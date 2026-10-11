@@ -34,7 +34,25 @@ Tree rules:
     runtimes/ with `// SPDX-License-Identifier: Apache-2.0` (`#` for Python);
   - Go sources (.go, no _test.go) and go.mod/go.sum only in the Go runtime
     (runtimes/go/) and the external Go emitter (emitters/go/), every .go file
-    there with `// SPDX-License-Identifier: Apache-2.0`.
+    there with `// SPDX-License-Identifier: Apache-2.0`;
+  - the SDK runtimes of LANGUAGE_ROOTS: Java (runtimes/java/: .java,
+    pom.xml), C# (runtimes/csharp/: .cs, .csproj, Directory.Build.props),
+    Kotlin (runtimes/kotlin/: .kt, .kts), Swift (runtimes/swift/: .swift,
+    Package.swift, Package.resolved), PHP (runtimes/php/: .php,
+    composer.json, phpstan.neon), Ruby (runtimes/ruby/: .rb, .gemspec,
+    Gemfile) and Dart (runtimes/dart/: .dart, pubspec.yaml,
+    analysis_options.yaml). Their sources and manifests are refused
+    anywhere else (generated SDKs never live here). Headers: `//
+    SPDX-License-Identifier: Apache-2.0` in .java, .cs, .kt, .kts, .swift
+    and .dart (Package.swift may put `// swift-tools-version:` first); `#
+    SPDX-...` in .rb, .gemspec, Gemfile, pubspec.yaml,
+    analysis_options.yaml and phpstan.neon; in .php the `//` header follows
+    the `<?php` line; pom.xml, .csproj and .props carry `<!--
+    SPDX-License-Identifier: Apache-2.0 -->` (after an optional XML
+    declaration); composer.json has `"license": "Apache-2.0"`. Their test
+    files (*Test.java, *Tests.java, *Test.kt, *Tests.cs, *Tests.swift,
+    *Test.php, *_test.rb, *_spec.rb, *_test.dart) and test directories (any
+    case, `Tests/` included, and spec/ under runtimes/ruby/) are refused.
 Commit rules: no Co-Authored-By trailer naming an AI assistant or its vendor,
 no session-link trailers, no "generated with" footers naming an AI tool, and
 no author or committer identity of an AI assistant.
@@ -51,6 +69,7 @@ live in the private operations repository.
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import subprocess
 import sys
@@ -68,9 +87,13 @@ TEST_DIRS = {
 }
 TEST_FILE = re.compile(
     r"(?:^test_.*\.(?:rs|py)$|_tests?\.(?:rs|py)$|_test\.go$"
-    r"|\.(?:test|spec)\.(?:[cm]?[jt]sx?)$|\.snap$)",
+    r"|\.(?:test|spec)\.(?:[cm]?[jt]sx?)$|\.snap$"
+    r"|_test\.(?:rb|dart)$|_spec\.rb$)",
     re.IGNORECASE,
 )
+# Test classes of the SDK languages, matched case-sensitively so that
+# `Latest.java` or `Contest.cs` stay ordinary sources.
+TEST_CLASS_FILE = re.compile(r"(?:Tests?\.(?:java|kt)|Tests?\.cs|Tests\.swift|Test\.php)$")
 # An attribute at the start of a line: #[...] or #![...].
 RUST_ATTRIBUTE = re.compile(r"^\s*#!?\[\s*([A-Za-z_][\w:]*)\s*(.*)$")
 STRING_LITERAL = re.compile(r'"(?:[^"\\]|\\.)*"')
@@ -107,6 +130,74 @@ GO_ROOTS = ("runtimes/go/", "emitters/go/")
 GO_MODULE_FILES = {"go.mod", "go.sum"}
 HEADER_LINES = 5  # the header may follow a shebang or a blank line
 
+# The SDK runtimes of the further languages: (root, language, source
+# extensions, manifest names, manifest extensions). Their sources and
+# manifests live only under their root.
+LANGUAGE_ROOTS = (
+    ("runtimes/java/", "Java", {".java"}, {"pom.xml"}, set()),
+    ("runtimes/csharp/", "C#", {".cs"}, {"Directory.Build.props"}, {".csproj"}),
+    ("runtimes/kotlin/", "Kotlin", {".kt", ".kts"}, set(), set()),
+    ("runtimes/swift/", "Swift", {".swift"}, {"Package.swift", "Package.resolved"}, set()),
+    ("runtimes/php/", "PHP", {".php"}, {"composer.json", "phpstan.neon"}, set()),
+    ("runtimes/ruby/", "Ruby", {".rb"}, {"Gemfile"}, {".gemspec"}),
+    ("runtimes/dart/", "Dart", {".dart"}, {"pubspec.yaml", "analysis_options.yaml"}, set()),
+)
+SLASH_HEADER_SOURCES = {".java", ".cs", ".kt", ".kts", ".swift", ".dart"}
+HASH_HEADER_FILES = {"Gemfile", "pubspec.yaml", "analysis_options.yaml", "phpstan.neon"}
+HASH_HEADER_SOURCES = {".rb", ".gemspec"}
+XML_MANIFESTS = {"pom.xml", "Directory.Build.props"}
+XML_HEADER = "<!-- SPDX-License-Identifier: Apache-2.0 -->"
+
+
+def language_of(path: str) -> tuple[str, str] | None:
+    """(root, language) of an SDK runtime source or manifest, by its name."""
+    name = PurePosixPath(path).name
+    suffix = PurePosixPath(name).suffix.lower()
+    for root, language, sources, names, manifest_suffixes in LANGUAGE_ROOTS:
+        if suffix in sources or name in names or suffix in manifest_suffixes:
+            return root, language
+    return None
+
+
+def language_violations(path: str) -> list[str]:
+    found = []
+    owner = language_of(path)
+    if owner and not path.startswith(owner[0]):
+        found.append(f"{owner[1]} source or manifest outside {owner[0]}")
+    parts = PurePosixPath(path).parts
+    if path.startswith("runtimes/ruby/") and any(p.lower() == "spec" for p in parts[:-1]):
+        found.append("test directory 'spec/' (tests live in the private repository)")
+    return found
+
+
+def language_header_violations(path: str, text: str) -> list[str] | None:
+    """Licence header problems of an SDK runtime file; None for other files."""
+    name = PurePosixPath(path).name
+    suffix = PurePosixPath(name).suffix.lower()
+    if language_of(path) is None or not path.startswith("runtimes/"):
+        return None
+    lines = text.splitlines()
+    if name == "Package.resolved":
+        return []
+    if name == "composer.json":
+        try:
+            licence = json.loads(text).get("license")
+        except (ValueError, AttributeError):
+            return ["composer.json does not parse"]
+        return [] if licence == "Apache-2.0" else ['composer.json without "license": "Apache-2.0"']
+    if name in XML_MANIFESTS or suffix in {".csproj", ".props"}:
+        return [] if has_header(text, XML_HEADER) else [f"manifest without the licence header '{XML_HEADER}'"]
+    if suffix == ".php":
+        ok = bool(lines) and lines[0].strip() == "<?php" and any(
+            line.strip() == APACHE_HEADER for line in lines[1:1 + HEADER_LINES]
+        )
+        return [] if ok else [f"PHP source without '<?php' followed by the licence header '{APACHE_HEADER}'"]
+    if suffix in SLASH_HEADER_SOURCES:
+        return [] if has_header(text, APACHE_HEADER) else [f"runtime source without the licence header '{APACHE_HEADER}'"]
+    if suffix in HASH_HEADER_SOURCES or name in HASH_HEADER_FILES:
+        return [] if has_header(text, APACHE_HEADER_PY) else [f"runtime file without the licence header '{APACHE_HEADER_PY}'"]
+    return []
+
 
 def path_violations(path: str) -> list[str]:
     parts = PurePosixPath(path).parts
@@ -115,7 +206,7 @@ def path_violations(path: str) -> list[str]:
     test_dir = next((p for p in parts[:-1] if p.lower() in TEST_DIRS), None)
     if test_dir:
         found.append(f"test directory '{test_dir}/' (tests live in the private repository)")
-    elif TEST_FILE.search(name):
+    elif TEST_FILE.search(name) or TEST_CLASS_FILE.search(name):
         found.append("test file (tests live in the private repository)")
     suffix = PurePosixPath(name).suffix.lower()
     doc_dir = next((p for p in parts[:-1] if p.lower() in DOC_DIRS), None)
@@ -131,6 +222,8 @@ def path_violations(path: str) -> list[str]:
         found.append("Go source or module file outside runtimes/go/ and emitters/go/")
     if parts[0] == "assets" and len(parts) > 1 and suffix not in ASSET_EXTENSIONS:
         found.append("assets/ holds .svg and .png images only")
+    if not test_dir:
+        found += language_violations(path)
     return found
 
 
@@ -180,7 +273,10 @@ def content_violations(path: str, text: str, paths: set[str]) -> list[str]:
     if suffix == ".rs":
         for number in rust_test_lines(text):
             found.append(f"line {number}: Rust test attribute (tests live in the private repository)")
-    if suffix == ".go" and path.startswith(GO_ROOTS):
+    language = language_header_violations(path, text)
+    if language is not None:
+        found += language
+    elif suffix == ".go" and path.startswith(GO_ROOTS):
         if not has_header(text, APACHE_HEADER):
             found.append(f"Go source without the licence header '{APACHE_HEADER}'")
     elif in_runtimes and suffix in RUNTIME_SOURCE:

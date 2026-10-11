@@ -4,7 +4,16 @@
 //! Code ranges: `TG01xx` parsing, `TG02xx` refs and cycles,
 //! `TG03xx` type normalization, `TG04xx` naming, `TG05xx` pagination/auth
 //! inference, `TG06xx` manifests, `TG07xx` emitter limits, `TG08xx`
-//! external emitters, `TG09xx` staleness/CI and overlay suggestions. The registry of codes lives in [`codes`].
+//! external emitters, `TG09xx` staleness/CI and overlay suggestions,
+//! `TG10xx` the SDK emitters built on `tungsten_emit::sdk` in blocks of ten:
+//! `TG1000`-`TG1009` the shared SDK plan and descriptor document (reserved),
+//! `TG1010` Java, `TG1020` C#, `TG1030` Kotlin, `TG1040` Swift, `TG1050`
+//! PHP, `TG1060` Ruby, `TG1070` Dart, `TG1080`-`TG1099` reserved for later
+//! languages. Within a language block (base B): B+0 invalid target option,
+//! B+1 schema without a native type, B+2 macro not in the canonical form,
+//! B+3 OpenID Connect sent as a bearer token, B+4 success bodies that differ
+//! by status, B+5 discriminated variant without a tag value, B+6 to B+9
+//! language-specific. The registry of codes lives in [`codes`].
 
 use crate::source::{SourceMap, Span};
 use serde::{Deserialize, Serialize};

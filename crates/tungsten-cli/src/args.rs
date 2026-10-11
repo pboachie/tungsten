@@ -336,6 +336,8 @@ pub enum SchemaName {
     CliOutput,
     /// The documents of the external emitter protocol.
     ExternalEmitter,
+    /// The SDK descriptor document (tungsten_emit::sdk::descriptors).
+    SdkDescriptors,
 }
 
 #[derive(Debug, Args)]
