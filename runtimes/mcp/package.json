@@ -1,6 +1,6 @@
 {
   "name": "@elysra/tungsten-mcp",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "MCP server runtime for tungsten-generated APIs: discrete and progressive tool disclosure, search, previews and confirmation, envelope results.",
   "keywords": ["openapi", "mcp", "model-context-protocol", "tungsten", "agents", "tools"],
   "homepage": "https://github.com/pboachie/tungsten",
@@ -16,7 +16,7 @@
   "exports": {
     ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" }
   },
-  "files": ["dist", "LICENSE"],
+  "files": ["dist", "LICENSE", "README.md"],
   "engines": { "node": ">=22" },
   "scripts": {
     "build": "tsc -p tsconfig.json"
