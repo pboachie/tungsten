@@ -15,6 +15,7 @@ Examples:
   tungsten init --from openapi.yaml    Write tungsten.yml and agent.yml
   tungsten check .                     Validate the project and print diagnostics
   tungsten generate --target ts,py     Generate the TypeScript and Python SDKs
+  tungsten generate --target webmcp    Generate a browser WebMCP adapter
   tungsten mock --port 4010            Serve a mock of the API from the IR
   tungsten report --html report.html   Write a static coverage and safety report
   tungsten diff --semver               Show how the API surface changed
@@ -60,7 +61,7 @@ const LONG_HELP: &str = concat!(examples_text!(), exit_codes_text!());
 #[command(
     name = "tungsten",
     version,
-    about = "Agent-native SDK generator and MCP compiler",
+    about = "Agent-native SDK generator and MCP/WebMCP compiler",
     after_help = SHORT_HELP,
     after_long_help = LONG_HELP,
     arg_required_else_help = true,
@@ -91,7 +92,7 @@ impl Cli {
             Command::Explain(_) => CommandName::Explain,
             Command::Schema(_) => CommandName::Schema,
             Command::Init(_) => CommandName::Init,
-            Command::Doctor => CommandName::Doctor,
+            Command::Doctor(_) => CommandName::Doctor,
             Command::Emitters(_) => CommandName::Emitters,
             Command::Generate(_) => CommandName::Generate,
             Command::Mock(_) => CommandName::Mock,
@@ -120,8 +121,8 @@ pub(crate) enum Command {
     Schema(SchemaArgs),
     /// Write tungsten.yml and agent.yml for a new project.
     Init(InitArgs),
-    /// Report which optional external tools are installed.
-    Doctor,
+    /// Report installed tools and optionally check project prerequisites.
+    Doctor(DoctorArgs),
     /// List the external emitters (`tungsten-emit-<name>`) that can be
     /// run, with the protocol and version each reports.
     Emitters(EmittersArgs),
@@ -237,6 +238,9 @@ pub(crate) struct DiffArgs {
     /// .tungsten/surface.json) as major, minor, patch or none.
     #[arg(long)]
     pub semver: bool,
+    /// Include actionable migration guidance (implies --semver).
+    #[arg(long)]
+    pub migration: bool,
 }
 
 #[derive(Debug, Args)]
@@ -338,6 +342,8 @@ pub enum SchemaName {
     ExternalEmitter,
     /// The SDK descriptor document (tungsten_emit::sdk::descriptors).
     SdkDescriptors,
+    /// Transport-neutral tools and scoped groups.
+    ToolCatalog,
 }
 
 #[derive(Debug, Args)]
@@ -353,6 +359,10 @@ pub(crate) struct InitArgs {
     /// with a letter. Default: derived from the spec title.
     #[arg(long, value_parser = parse_api_name)]
     pub name: Option<String>,
+    /// Targets to configure, comma-separated or repeated (ts, py, rs aliases).
+    /// Default: typescript,python,docs. WebMCP also configures TypeScript.
+    #[arg(long, value_name = "TARGETS", value_delimiter = ',', value_parser = parse_init_target)]
+    pub targets: Vec<String>,
     /// Overwrite existing tungsten.yml and agent.yml.
     #[arg(long)]
     pub force: bool,
@@ -372,6 +382,34 @@ fn parse_api_name(s: &str) -> Result<String, String> {
         Err(format!(
             "expected lowercase letters, digits and underscores starting with a letter \
              (at most {MAX_NAME_LEN} characters)"
+        ))
+    }
+}
+
+/// Optional project prerequisite checks; bare doctor remains informational.
+#[derive(Debug, Args)]
+pub(crate) struct DoctorArgs {
+    /// Project directory or tungsten manifest to inspect without network access.
+    pub path: Option<PathBuf>,
+    /// Fail when the project's required tools are missing or unsupported.
+    /// Uses the current directory when PATH is omitted.
+    #[arg(long)]
+    pub strict: bool,
+}
+
+fn parse_init_target(s: &str) -> Result<String, String> {
+    let target = match s.trim() {
+        "ts" => "typescript",
+        "py" => "python",
+        "rs" => "rust",
+        name => name,
+    };
+    if tungsten_config::KNOWN_TARGETS.contains(&target) {
+        Ok(target.to_string())
+    } else {
+        Err(format!(
+            "unknown target `{s}`; choose {}",
+            tungsten_config::KNOWN_TARGETS.join(", ")
         ))
     }
 }

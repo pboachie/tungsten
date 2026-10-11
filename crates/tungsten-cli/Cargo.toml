@@ -1,6 +1,6 @@
 [package]
 name = "tungsten-cli"
-description = "Command-line interface for tungsten: generate SDKs, MCP servers and docs from OpenAPI, plus check, mock, diff and report."
+description = "Command-line interface for tungsten: generate SDKs, MCP servers, browser WebMCP adapters and docs from OpenAPI, plus check, mock, diff and report."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -40,6 +40,7 @@ tungsten-emit.workspace = true
 tungsten-emit-ts.workspace = true
 tungsten-emit-docs.workspace = true
 tungsten-emit-mcp.workspace = true
+tungsten-emit-webmcp.workspace = true
 tungsten-emit-py.workspace = true
 tungsten-emit-rs.workspace = true
 tungsten-emit-ruby.workspace = true

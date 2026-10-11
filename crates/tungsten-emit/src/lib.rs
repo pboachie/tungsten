@@ -26,6 +26,7 @@ mod output;
 pub mod schema;
 pub mod sdk;
 pub mod surface;
+pub mod tool_catalog;
 mod writer;
 
 use std::path::PathBuf;

@@ -21,6 +21,7 @@ export interface AttemptRequest {
   /** With `stream`: the silence, in milliseconds, after which a read of the
    * body reports a timeout. Default `timeoutMs`. */
   idleMs?: number | undefined;
+  maxResponseBytes?: number | undefined;
 }
 
 /** What one read of an event stream gives. */
@@ -43,6 +44,7 @@ export class StreamBody {
   readonly #signal: AbortSignal | undefined;
   readonly #onAbort: () => void;
   readonly #idleMs: number;
+  readonly #cancelRead = (): void => { void this.#reader.cancel().catch(() => undefined); };
   #timedOut = false;
   #closed = false;
 
@@ -52,6 +54,8 @@ export class StreamBody {
     this.#signal = signal;
     this.#onAbort = onAbort;
     this.#idleMs = Math.max(1, idleMs);
+    signal?.addEventListener("abort", this.#cancelRead, { once: true });
+    if (signal?.aborted) this.#cancelRead();
   }
 
   async read(): Promise<StreamRead> {
@@ -59,9 +63,12 @@ export class StreamBody {
     const timer = setTimeout(() => {
       this.#timedOut = true;
       this.#controller.abort();
+      this.#cancelRead();
     }, this.#idleMs);
     try {
       const chunk = await this.#reader.read();
+      if (this.#timedOut) return { kind: "timeout" };
+      if (this.#signal?.aborted) return { kind: "aborted" };
       if (chunk.done) return { kind: "end" };
       return { kind: "chunk", bytes: chunk.value };
     } catch {
@@ -77,6 +84,7 @@ export class StreamBody {
     if (this.#closed) return;
     this.#closed = true;
     this.#signal?.removeEventListener("abort", this.#onAbort);
+    this.#signal?.removeEventListener("abort", this.#cancelRead);
     this.#reader.cancel().catch(() => undefined);
     this.#controller.abort();
   }
@@ -91,7 +99,7 @@ export type AttemptOutcome =
       /** The body, or null when reading it failed. */
       body: Uint8Array | null;
       /** Why the body could not be read: deadline, caller abort or a broken connection. */
-      bodyFailure: "timeout" | "aborted" | "broken" | null;
+      bodyFailure: "timeout" | "aborted" | "broken" | "oversized" | null;
       /** The unread body of an event stream (`AttemptRequest.stream`); `body` is then null. */
       stream?: StreamBody;
     }
@@ -195,9 +203,38 @@ export async function attempt(fetchImpl: typeof fetch, req: AttemptRequest): Pro
       return { kind: "response", response, status: response.status, headers, body: null, bodyFailure: null, stream };
     }
     let body: Uint8Array | null = null;
-    let bodyFailure: "timeout" | "aborted" | "broken" | null = null;
+    let bodyFailure: "timeout" | "aborted" | "broken" | "oversized" | null = null;
     try {
-      body = new Uint8Array(await response.arrayBuffer());
+      if (req.maxResponseBytes === undefined || response.body === null) {
+        body = new Uint8Array(await response.arrayBuffer());
+      } else {
+        const reader = response.body.getReader();
+        const cancel = (): void => { void reader.cancel().catch(() => undefined); };
+        controller.signal.addEventListener("abort", cancel, { once: true });
+        const chunks: Uint8Array[] = [];
+        let size = 0;
+        try {
+          const length = headers["content-length"];
+          if (length !== undefined && /^\d+$/.test(length) && Number(length) > req.maxResponseBytes) bodyFailure = "oversized";
+          while (bodyFailure === null) {
+            const chunk = await reader.read();
+            if (controller.signal.aborted) { bodyFailure = timedOut ? "timeout" : "aborted"; break; }
+            if (chunk.done) break;
+            size += chunk.value.byteLength;
+            if (size > req.maxResponseBytes) { bodyFailure = "oversized"; break; }
+            chunks.push(chunk.value);
+          }
+          if (bodyFailure === null) {
+            body = new Uint8Array(size);
+            let offset = 0;
+            for (const chunk of chunks) { body.set(chunk, offset); offset += chunk.byteLength; }
+          }
+        } finally {
+          controller.signal.removeEventListener("abort", cancel);
+          if (bodyFailure !== null) await reader.cancel().catch(() => undefined);
+          reader.releaseLock();
+        }
+      }
     } catch {
       bodyFailure = timedOut ? "timeout" : req.signal?.aborted ? "aborted" : "broken";
     }

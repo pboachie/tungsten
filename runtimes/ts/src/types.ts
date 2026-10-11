@@ -448,6 +448,9 @@ export interface CallOptions {
   allowConfirmTrue?: boolean;
   signal?: AbortSignal;
   timeoutMs?: number;
+  /** Optional hard response-body byte cap. Positive safe integer; checked
+   * against actual bytes while reading, including non-SSE responses. */
+  maxResponseBytes?: number;
   /** Run the operation's verification hook after success. */
   verify?: boolean;
   headers?: Record<string, string>;

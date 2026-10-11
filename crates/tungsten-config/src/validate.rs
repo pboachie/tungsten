@@ -24,6 +24,7 @@ pub const KNOWN_TARGETS: &[&str] = &[
     "ruby",
     "rust",
     "typescript",
+    "webmcp",
 ];
 
 /// Option keys of an external target that belong to tungsten; every other

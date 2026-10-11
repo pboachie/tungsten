@@ -627,6 +627,25 @@ pub struct SemverReport {
     pub level: Option<SemverLevel>,
     /// Every classified difference, most severe first.
     pub changes: Vec<SurfaceChange>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub migration: Option<MigrationReport>,
+}
+
+/// Review guidance for regenerating an existing SDK.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct MigrationReport {
+    pub actions: Vec<MigrationAction>,
+    pub runtime_requirements_known: bool,
+    pub preserves_custom_files: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct MigrationAction {
+    pub rule: String,
+    pub subject: String,
+    pub action: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
@@ -734,7 +753,7 @@ pub struct TargetCoverage {
     pub emitter: bool,
     pub status: CoverageStatus,
     /// Callable operations the output covers: the tools of `docs` and
-    /// `mcp` (agents' hidden operations excluded), every callable
+    /// `mcp` and `webmcp` (agents' hidden operations excluded), every callable
     /// operation for the SDKs.
     pub operations: usize,
     /// Macros the output covers.
@@ -899,7 +918,7 @@ pub struct McpBudgets {
     /// Tools in manifest order: `tokens` is the manifest's `schemaTokens`.
     pub tools: Vec<ToolCost>,
     /// What a client receives in discrete mode before its first call: the
-    /// `tools/list` tools `@tungsten/mcp` serves (every tool with its
+    /// `tools/list` tools `@elysra/tungsten-mcp` serves (every tool with its
     /// input and advertised output schema and annotations, and `preview`)
     /// as compact JSON, plus that mode's `initialize` instructions.
     pub discrete_tokens: usize,

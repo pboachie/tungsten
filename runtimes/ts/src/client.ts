@@ -874,6 +874,12 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     purpose: Purpose,
     urlOverride: string | null,
   ): Promise<Step<Prepared>> {
+    if (opts.maxResponseBytes !== undefined && (!Number.isSafeInteger(opts.maxResponseBytes) || opts.maxResponseBytes < 1)) {
+      return fail(diagnostic(safeId(op), "VALIDATION_FAILED", {
+        failed_parameter: "maxResponseBytes",
+        remediation: "maxResponseBytes must be a positive safe integer; nothing was sent.",
+      }));
+    }
     const problem = descriptorProblem(op);
     if (problem) {
       return fail(
@@ -1273,6 +1279,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
         signal: opts.signal,
         stream,
         idleMs,
+        maxResponseBytes: opts.maxResponseBytes,
       });
       let current = { url: prepared.url, method: prepared.method, body: prepared.body };
       for (let hops = 0; !mutation && hops < MAX_REDIRECTS && outcome.kind === "response" && REDIRECT_STATUSES.has(outcome.status); hops += 1) {
@@ -1294,6 +1301,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
           signal: opts.signal,
           stream,
           idleMs,
+          maxResponseBytes: opts.maxResponseBytes,
         });
       }
       const callCtx: CallContext = { api: this.api, op, key: prepared.key, keyHeader: prepared.keyHeader, attempts, check };
@@ -1517,6 +1525,13 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
 
     if (success && outcome.stream !== undefined) {
       return { ok: true, value: outcome.stream as T, meta: { status, headers, requestId, attempts } };
+    }
+    if (outcome.bodyFailure === "oversized") {
+      return fail(diagnostic(op.id, "UNEXPECTED_RESPONSE", {
+        code: "RESPONSE_TOO_LARGE", http_status: status, request_id: requestId,
+        retryable: "never", next_action: hint, trace: { attempts },
+        remediation: `Response exceeded maxResponseBytes and was abandoned. ${mutation ? "The call may have taken effect; inspect API state before retrying." : "The read is incomplete."}`,
+      }));
     }
     if (success && outcome.body === null) {
       if (!mutation) {

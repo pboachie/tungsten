@@ -33,7 +33,7 @@ pub(crate) fn package_json(plan: &Plan<'_>, opts: &Options) -> String {
             "typecheck": "tsc -p tsconfig.json --noEmit"
         },
         "dependencies": {
-            "@tungsten/runtime": opts.runtime,
+            "@elysra/tungsten-runtime": opts.runtime,
             "zod": ZOD_RANGE
         },
         "devDependencies": {
@@ -85,7 +85,7 @@ pub(crate) fn internal_file(header: &str) -> String {
     w.line("// Helpers shared by the generated modules; not part of the package's API.");
     w.blank();
     w.line(
-        "import { isBinaryInput, type BinaryInput, type SchemaLike } from \"@tungsten/runtime\";",
+        "import { isBinaryInput, type BinaryInput, type SchemaLike } from \"@elysra/tungsten-runtime\";",
     );
     w.line("import { z } from \"zod\";");
     w.blank();
