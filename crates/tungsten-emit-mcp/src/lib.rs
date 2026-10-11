@@ -16,7 +16,8 @@
 //!   environment, modes, safety rules, token budgets) and `.env.example`.
 //!
 //! [`McpEmitter::supports`] reports the budgets (TG0721 per tool over
-//! `schema_budget_tokens`, TG0722 for a progressive listing over 2,000
+//! `schema_budget_tokens`, TG0727 per tool whose bounded output schema is over
+//! four times it, TG0722 for a progressive listing over 2,000
 //! tokens), macros the SDK does not emit (TG0723) and tools whose names
 //! collide (TG0724); `emit` reports only invalid target options (TG0720)
 //! and file errors, so a caller running both sees each problem once. Output is deterministic: tools in IR order,
@@ -171,7 +172,8 @@ pub mod __testing {
     pub use crate::index::{B, K1, STOP_WORDS, SearchIndex, build as build_index, tokenize};
     pub use crate::manifest::{
         BINARY_BODY_NOTE, COUNTER_NAME, ClusterEntry, InstructionsByMode, McpManifest, Mode,
-        Reserved, ToolAnnotations, ToolEntry, ToolKind, tokens,
+        OUTPUT_BUDGET_FACTOR, OUTPUT_HOPS, Reserved, ToolAnnotations, ToolEntry, ToolKind,
+        bound_closure, tokens,
     };
     pub use crate::names::{MAX_TOOL_NAME, sanitize, shorten};
 
