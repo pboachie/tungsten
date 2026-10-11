@@ -13,7 +13,7 @@ export function releaseStatus(statuses, sha, tag, repoId, serverOrigin) {
   assert(server.protocol === "https:" && server.href === `${server.origin}/`, "invalid Woodpecker server origin");
   assert.equal(url.origin, server.origin, "unexpected Woodpecker server");
   assert.match(repoId, /^\d+$/, "missing Woodpecker repository ID");
-  const match = url.pathname.match(new RegExp(`^/repos/${repoId}/pipeline/(\\d+)$`));
+  const match = url.pathname.match(new RegExp(`^/repos/${repoId}/pipeline/(\\d+)(?:/\\d+)?$`));
   assert(match && !url.search && !url.hash && !url.username && !url.password, "unexpected pipeline URL");
   return { url: `${url.origin}/api/repos/${repoId}/pipelines/${match[1]}`, sha, tag };
 }
