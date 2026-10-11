@@ -1,0 +1,593 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Safety and runtime behaviour - tungsten</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="Documentation for tungsten, the agent-native SDK generator and MCP compiler">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon.svg">
+        <link rel="shortcut icon" href="favicon.png">
+        <link rel="stylesheet" href="css/variables.css">
+        <link rel="stylesheet" href="css/general.css">
+        <link rel="stylesheet" href="css/chrome.css">
+        <link rel="stylesheet" href="css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="highlight-css" href="highlight.css">
+        <link rel="stylesheet" id="tomorrow-night-css" href="tomorrow-night.css">
+        <link rel="stylesheet" id="ayu-highlight-css" href="ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "";
+            const default_light_theme = "light";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "searchindex.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="toc.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+            </noscript>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">tungsten</h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/pboachie/tungsten" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <i class="fa fa-spinner fa-spin"></i>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="safety-and-runtime-behaviour"><a class="header" href="#safety-and-runtime-behaviour">Safety and runtime behaviour</a></h1>
+<p>The three runtimes (<code>@elysra/tungsten-runtime</code> for TypeScript, <code>tungsten-runtime</code> for Python and <code>tungsten-runtime</code> for Rust) implement identical semantics, checked by a shared contract suite. This page describes that behaviour.</p>
+<h2 id="diagnostic-error-envelope"><a class="header" href="#diagnostic-error-envelope">Diagnostic error envelope</a></h2>
+<p>Every failure the SDK returns, from pre-flight validation to transport
+failure to an HTTP error, is one shape:</p>
+<pre><code class="language-json">{
+  "status": "error",
+  "category": "VALIDATION_FAILED",
+  "operation": "public.webhooks.deliveries.replay",
+  "http_status": null,
+  "code": null,
+  "failed_parameter": "idempotencyKey",
+  "received_value": "replay-1",
+  "expected": "UUIDv4 string",
+  "remediation": "Generate a random UUIDv4, persist it with the replay intent, and pass it as idempotencyKey. Reuse the exact same key on every retry of this replay.",
+  "retryable": "never",
+  "retry_after_ms": null,
+  "next_action": null,
+  "request_id": null,
+  "trace": { "attempts": 0 }
+}
+</code></pre>
+<p>Categories (closed set, shared by all runtimes):</p>
+<div class="table-wrapper"><table><thead><tr><th>Category</th><th>Source</th><th>Default <code>retryable</code></th></tr></thead><tbody>
+<tr><td><code>VALIDATION_FAILED</code></td><td>pre-flight or 400 with envelope</td><td>never</td></tr>
+<tr><td><code>MALFORMED_REQUEST</code></td><td>non-JSON 400</td><td>never</td></tr>
+<tr><td><code>REQUEST_TOO_LARGE</code></td><td>413</td><td>never</td></tr>
+<tr><td><code>AUTH_FAILED</code></td><td>401, 403</td><td>never</td></tr>
+<tr><td><code>NOT_FOUND</code></td><td>404 (or gated route)</td><td>never</td></tr>
+<tr><td><code>CONFLICT</code></td><td>409</td><td>never</td></tr>
+<tr><td><code>PRECONDITION_FAILED</code></td><td>402, 412, 422 by manifest</td><td>never</td></tr>
+<tr><td><code>RATE_LIMITED</code></td><td>429</td><td>after_delay</td></tr>
+<tr><td><code>UPSTREAM_UNAVAILABLE</code></td><td>502, 503, 504 on a read</td><td>after_delay</td></tr>
+<tr><td><code>OUTCOME_UNKNOWN</code></td><td>timeout, reset, ambiguous status or unexplained 5xx on a mutation</td><td>same_key_only (after_remediation without replay protection)</td></tr>
+<tr><td><code>TRANSPORT_FAILED</code></td><td>DNS, TLS, connection refused before send</td><td>after_delay</td></tr>
+<tr><td><code>CONFIRMATION_REQUIRED</code></td><td>destructive/irreversible without token</td><td>never (call preview)</td></tr>
+<tr><td><code>GATE_DISABLED</code></td><td>status matches an <code>x-runtime-gate</code> disabled status</td><td>never</td></tr>
+<tr><td><code>UNEXPECTED_RESPONSE</code></td><td>response failed strict validation</td><td>never</td></tr>
+</tbody></table>
+</div>
+<p><code>retryable</code> values: <code>never</code>, <code>after_delay</code>, <code>same_key_only</code>,
+<code>after_remediation</code>. The envelope is designed to be pasted verbatim into a
+model's context: short, imperative, no stack traces.</p>
+<p><code>received_value</code> is redacted when the parameter is marked sensitive and
+truncated to 200 characters.</p>
+<h2 id="pre-flight-validation"><a class="header" href="#pre-flight-validation">Pre-flight validation</a></h2>
+<p>Before any network call the runtime validates: required params present,
+types and formats (<code>uuid</code>, <code>date-time</code>, <code>e164</code> via pattern), enum
+membership, string bounds, closed records (unknown keys rejected when the
+schema is <code>additionalProperties: false</code>), idempotency key format when the
+policy is <code>caller_owned</code>, confirmation token when the tier requires it. The
+first failure is returned as <code>VALIDATION_FAILED</code> with <code>failed_parameter</code> as a
+JSON path (<code>body.recipient_e164</code>).</p>
+<h2 id="transport-pipeline"><a class="header" href="#transport-pipeline">Transport pipeline</a></h2>
+<pre><code>call → preflight → auth profile → idempotency → [preview?] → send → classify → verify? → result
+                                     ▲                           │
+                                     └──── retry policy ◀────────┘
+</code></pre>
+<p>Middleware hooks: <code>onRequest</code>, <code>onResponse</code>, <code>onDiagnostic</code>, <code>onRetry</code>. The
+OpenTelemetry adapter is a middleware. Default headers: <code>User-Agent: &lt;api&gt;-sdk/&lt;ver&gt; tungsten/&lt;ver&gt; (&lt;target&gt;)</code>, <code>X-Tungsten-Operation</code>.</p>
+<h2 id="retry-policy"><a class="header" href="#retry-policy">Retry policy</a></h2>
+<ul>
+<li>Read-only: up to <code>max</code> attempts on <code>RATE_LIMITED</code>, <code>UPSTREAM_UNAVAILABLE</code>,
+<code>TRANSPORT_FAILED</code>, with full-jitter exponential backoff, honoring
+<code>Retry-After</code> (seconds or HTTP-date) when present, capped by <code>max_ms</code>.</li>
+<li>Mutating with an idempotency key (<code>auto</code>, <code>caller_owned</code>, <code>content_hash</code>):
+same as read-only, always with the identical key and identical body.</li>
+<li>Mutating without a key: never retried; a transport failure before the
+request was sent is <code>TRANSPORT_FAILED</code>; anything after is
+<code>OUTCOME_UNKNOWN</code>.</li>
+<li>Redirects are never followed on mutations. Reads follow same-origin
+redirects only (as built: at most five, auth query parameters
+re-applied); fetch is never asked to follow, since it would forward
+custom credential headers to another origin.</li>
+</ul>
+<h2 id="unknown-outcome"><a class="header" href="#unknown-outcome">Unknown outcome</a></h2>
+<p>Returned when the runtime cannot know whether the server applied a mutation:
+client timeout after the request was written, connection reset without a
+response, or a status listed in <code>errors.ambiguous_statuses</code>. The envelope
+carries <code>next_action</code> from the verification hook when one exists
+(<code>"Call public.getAlphaMessageStatus with message_id if you have it, or list recent messages filtered by client_message_id"</code>), and <code>retryable: same_key_only</code>. SDK docs state that a new key for the same intent is the
+one way to duplicate a side effect.</p>
+<h2 id="idempotency-store"><a class="header" href="#idempotency-store">Idempotency store</a></h2>
+<p>Interface in each runtime: <code>get(scope, logical_id) → key?</code>,
+<code>put(scope, logical_id, key)</code>. Default memory store; file store adapters for
+Node and Python; <code>caller_owned</code> + <code>persist: required</code> bypasses the store and
+refuses calls without a key. Keys are never logged.</p>
+<h2 id="preview-and-confirmation"><a class="header" href="#preview-and-confirmation">Preview and confirmation</a></h2>
+<p><code>preview()</code> returns:</p>
+<pre><code class="language-json">{
+  "operation": "public.webhooks.rotate",
+  "safety": "destructive",
+  "request": { "method": "POST", "url": "https://.../v1/webhooks/0b2e.../rotate", "headers": { "Origin": "https://app.example.test", "x-acme-csrf": "&lt;redacted&gt;" } },
+  "effects": [
+    "Disables webhook endpoint 0b2e... immediately.",
+    "Permanently retires its pending deliveries.",
+    "Returns a new signing secret exactly once."
+  ],
+  "confirmation_token": "tgc1.…",
+  "expires_in_ms": 300000
+}
+</code></pre>
+<p>, macros follow the same rule at
+macro level: <code>ClientCore.previewMacro</code> returns a token bound to the macro
+name and its exact input, and <code>runMacro</code> requires it (or <code>confirm: true</code>
+for a <code>destructive</code> macro) when the strictest of the macro's declared tier
+and its steps' tiers is <code>destructive</code> or <code>irreversible</code>; the run's steps
+then need no tokens of their own.</p>
+<p><code>effects</code> comes from the manifest's <code>confirmation.message</code>,
+<code>remediation_note</code> and the operation's compacted description. The token is
+HMAC(session key, operation, args digest) and is only valid for identical
+arguments. In the SDK the session key is per client instance; in the MCP
+server per connection; in the CLI it is replaced by <code>--yes</code> because the CLI
+has no session.</p>
+<h2 id="verification-hooks"><a class="header" href="#verification-hooks">Verification hooks</a></h2>
+<p>Compiled from <code>verify</code> entries: after a successful call, optionally run the
+referenced read operation with mapped arguments and compare with <code>expect</code>;
+poll up to <code>budget_ms</code> when <code>terminal</code> is given. Results are attached to the
+success result as <code>verification: { checked: true, state: "queued" }</code>. The
+hook never changes the primary result and is off by default in the SDK
+(<code>{verify: true}</code> option), on by default in the MCP <code>invoke</code> for
+irreversible operations, and exposed as <code>--verify</code> in the CLI.</p>
+<h2 id="sensitive-data"><a class="header" href="#sensitive-data">Sensitive data</a></h2>
+<p>Fields marked <code>sensitive</code> (manifest or <code>x-agent-sensitive</code>) are: excluded
+from <code>received_value</code>, excluded from traces and logs, redacted in previews,
+and flagged <code>shown_once</code> in MCP text renderings. The runtime never persists
+them.</p>
+<h2 id="auth-profiles"><a class="header" href="#auth-profiles">Auth profiles</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Profile kind</th><th>Runtime behavior</th></tr></thead><tbody>
+<tr><td><code>bearer</code></td><td><code>Authorization: Bearer &lt;token&gt;</code> from env, config or callback; optional required prefix check (<code>ztw_</code>, <code>ApiDescriptor</code> http_bearer <code>prefix</code>) before every request: a mismatch is <code>AUTH_FAILED</code> and nothing is sent</td></tr>
+<tr><td><code>api_key</code></td><td>header, query or cookie</td></tr>
+<tr><td><code>basic</code></td><td>header</td></tr>
+<tr><td><code>oauth2_client_credentials</code></td><td>token fetch and refresh with single-flight</td></tr>
+<tr><td><code>oauth2_authorization_code</code></td><td>helpers on the client (<code>oauth</code>): PKCE S256 (RFC 7636), <code>authorizationUrl</code>, <code>exchangeCode</code>, <code>refresh</code>; the tokens live in <code>ClientOptions.tokenStore</code> (memory by default) and are sent as bearer, refreshed single-flight when they expire within 30 s, and refreshed once, then the call is sent once more, after a 401; see "OAuth2 authorization code"</td></tr>
+<tr><td><code>composite</code></td><td>the ordered parts: cookies added to the jar, derived headers computed (<code>equals_cookie</code>), conditional headers (<code>when: mutation</code>) added for non-GET; missing parts fail pre-flight with <code>AUTH_FAILED</code> and a remediation naming the missing piece</td></tr>
+</tbody></table>
+</div>
+<h2 id="oauth2-authorization-code"><a class="header" href="#oauth2-authorization-code">OAuth2 authorization code</a></h2>
+<p>An <code>authorizationCode</code> flow of an <code>oauth2</code> scheme reaches the API descriptor
+as <code>authorizationCode: {authorizationUrl, tokenUrl, refreshUrl, scopes}</code>
+(Python <code>authorization_code</code>, Rust <code>AuthSchemeDescriptor::Oauth2.authorization_code</code>)
+and only then; generated clients expose the helpers as <code>client.oauth[scheme]</code>
+(Rust: <code>client.oauth(scheme)</code>). The credential of the scheme is
+<code>{flow: "authorizationCode", clientId, clientSecret?, redirectUri?}</code>
+(<code>client_id</code>, ... in Python and Rust); a bare string is still an access token.
+There is no interactive flow in the runtime: the application sends the user to
+<code>authorizationUrl(...)</code>, receives the redirect, and calls <code>exchangeCode(...)</code>.</p>
+<ul>
+<li><code>pkce()</code>: a 43 character URL-safe verifier from 32 random bytes and its S256
+challenge, <code>base64url(SHA-256(verifier))</code> without padding.</li>
+<li><code>authorizationUrl</code>: <code>response_type=code</code>, <code>client_id</code>, <code>redirect_uri</code>,
+<code>scope</code> (space separated; the flow's scopes by default), <code>state</code>,
+<code>code_challenge</code> with <code>code_challenge_method=S256</code>, then extra parameters in
+key order that never override these. RFC 3986 percent-encoding.</li>
+<li><code>exchangeCode</code> and <code>refresh</code> POST a form to the flow's <code>tokenUrl</code> (<code>refreshUrl</code>
+for a refresh, <code>tokenUrl</code> when absent): <code>grant_type=authorization_code</code>,
+<code>code</code>, <code>redirect_uri</code>, <code>code_verifier</code>; <code>grant_type=refresh_token</code>,
+<code>refresh_token</code>. A client with a secret authenticates with HTTP Basic
+(<code>client_id:client_secret</code>, percent-encoded); a public client adds
+<code>client_id</code> to the form. Both return metadata without secrets
+(<code>expiresAt</code>, <code>scope</code>, <code>refreshable</code>); the tokens go to the store. A refresh
+keeps the old refresh token when the answer has none.</li>
+<li>A call reads the store: no token is <code>AUTH_FAILED</code> before anything is sent; a
+token that expires within 30 s is refreshed first, concurrent callers sharing
+one refresh request (a token without a refresh token is <code>AUTH_FAILED</code>
+asking to authorize again); a token endpoint answer of HTTP 4xx to a refresh
+deletes the stored tokens. A 401 from the API refreshes the token once (when
+it has a refresh token and was not replaced meanwhile) and sends the same
+request once more; a second 401 is the envelope. Streams and previews do not
+retry.</li>
+<li>Client secret, code, verifier and tokens are scrubbed from envelopes and
+never appear in middleware contexts; the token endpoint's error text is not
+repeated (only an <code>error</code> code such as <code>invalid_grant</code>).</li>
+</ul>
+<h2 id="results-without-a-body"><a class="header" href="#results-without-a-body">Results without a body</a></h2>
+<p>A success response without a body (204, or a success status declared
+without content) is <code>{ok: true, value: undefined}</code>; generated SDKs type
+such operations as <code>void</code>, or <code>T | undefined</code> when the body is optional.</p>
+<h2 id="rules-fixed-by-the-contract-suite"><a class="header" href="#rules-fixed-by-the-contract-suite">Rules fixed by the contract suite</a></h2>
+<ul>
+<li>Retry tiers: <code>defaults.retries</code> reaches the SDK as
+<code>ApiDescriptor.retries</code> (<code>readOnly</code>, <code>mutating</code>). A call's policy is the
+runtime default, then its operation's tier, then the client's own
+<code>retries</code> option, field by field. A mutation is still retried only with
+a key or an identity body.</li>
+<li>Unknown outcome: <code>next_action</code> comes from the verification hook (when
+it can be called without the lost response, see the review rules
+below); without one, a keyed mutation's names the repeat with the same
+key (and identical arguments), a <code>content_identity</code> mutation's the
+repeat with the identical body; otherwise it is null. An ambiguous status keeps the manifest's text
+for it (<code>errors.non_json</code>, <code>errors.codes</code>) in the remediation.</li>
+<li>A read never reports <code>OUTCOME_UNKNOWN</code>: a manifest entry mapping a
+status to it reads as <code>UPSTREAM_UNAVAILABLE</code>,
+<code>after_delay</code>, with the entry's text.</li>
+<li>Verification hooks and confirmation messages are written against the
+API: argument keys, <code>$args.&lt;name&gt;</code> references and <code>{name}</code> placeholders
+use wire names, resolved to the generated argument names. <code>$response</code> and
+<code>$args</code> references in <code>expect</code> and <code>terminal</code> are resolved before
+polling; one that does not resolve never matches.</li>
+</ul>
+<h2 id="rules-fixed-by-review"><a class="header" href="#rules-fixed-by-review">Rules fixed by review</a></h2>
+<ul>
+<li>Replay protection decides <code>retryable</code> for an unknown outcome: with a key
+or an identity body it is <code>same_key_only</code>; without either (an unkeyed
+create, <code>workflow.action.send</code>, cancel, enable, rotate) it is
+<code>after_remediation</code>, so an envelope-only policy checks instead of
+resending.</li>
+<li>On a mutation, any 5xx (a gateway's 502/504, an intermediary's bare or
+HTML 500, a JSON 500 with an unknown code) is <code>OUTCOME_UNKNOWN</code>, not
+"wait, then call again".
+A manifest entry for the answer's code or non-JSON shape that is a
+definite rejection (<code>retryable: never</code> / <code>after_remediation</code>, or a
+category such as <code>PRECONDITION_FAILED</code>, <code>NOT_FOUND</code>, <code>RATE_LIMITED</code>)
+wins over this and over <code>ambiguous_statuses</code>; one that maps to
+<code>UPSTREAM_UNAVAILABLE</code> (Acme's <code>unavailable</code>, which can report a
+failed commit) does not.</li>
+<li><code>next_action</code> uses the verification hook only when its arguments do not
+need <code>$response</code>: after a lost submit the caller has no <code>message_id</code>,
+so the same-key repeat is the next action.</li>
+<li>A gate's disabled status is recognized only without the API's error
+code (the route is not mounted; the mock answers it bare). The mounted
+route's own JSON 404 is classified by its code.</li>
+<li>Partial results: a failed result may carry <code>partial</code> (never inside the
+envelope): the decoded body of a mutation whose success response failed
+strict validation (the effect happened and the body can hold a
+one-time secret; <code>strict-validation-keeps-a-created-secret</code>), or a
+macro's completed step results by <code>as</code> name. A macro's envelope names
+the macro; when a completed mutating step has no replay protection the
+envelope says not to rerun the macro, downgrades <code>after_delay</code> /
+<code>same_key_only</code> to <code>after_remediation</code> and names the failed step as the
+next call.</li>
+<li>A confirmation token authorizes one intent. The first call that sends
+spends it and binds it to that call's replay protection (the key sent,
+or the identity body); it is accepted again only for a retry under the
+same protection, and a call without a key can use it once. Macro tokens likewise.</li>
+<li>A path parameter that would make an empty or dot segment (<code>""</code>, <code>.</code>,
+<code>..</code>) is <code>VALIDATION_FAILED</code> before anything is rendered, confirmed or
+sent: URL parsing removes such segments, so <code>DELETE /items/..</code> would
+reach the collection.</li>
+<li>Sensitive request fields (<code>AgentMeta.sensitiveRequestFields</code>) are
+redacted in <code>received_value</code> (also below a parent value), in previews,
+in the body middleware sees (<code>RequestContext.body</code> is the redacted
+rendering whenever redaction changed a JSON or form body) and are
+scrubbed from diagnostics.</li>
+<li>An optional argument set to <code>undefined</code> is absent (TypeScript callers
+without <code>exactOptionalPropertyTypes</code> pass <code>{cursor: maybe}</code>); the
+request schemas stay exact.</li>
+</ul>
+<h2 id="logging-and-telemetry"><a class="header" href="#logging-and-telemetry">Logging and telemetry</a></h2>
+<p>Structured events through <code>onDiagnostic</code> and <code>onRequest</code>/<code>onResponse</code>, no
+default stdout logging. The OTel middleware maps operations to spans with
+<code>http.*</code> attributes and <code>tungsten.safety</code>, <code>tungsten.idempotency.policy</code>,
+<code>tungsten.outcome</code>.</p>
+<h2 id="event-streams-sse"><a class="header" href="#event-streams-sse">Event streams (SSE)</a></h2>
+<p><code>ClientCore.stream</code> (TypeScript), <code>stream</code> on <code>ClientCore</code>/<code>AsyncClientCore</code>
+(Python) and <code>ClientCore::stream</code> (Rust, with the stream's own descriptor)
+iterate the server-sent events of an operation. Generated SDKs get
+<code>&lt;method&gt;Stream</code> / <code>&lt;method&gt;_stream</code>; MCP tools whose operation only streams
+(or whose flag is true) return <code>{events}</code>.</p>
+<ul>
+<li>The request is <code>Accept: text/event-stream</code> with the stream's request flag
+set to true. A caller's <code>Accept</code> (the call's, else the client's; any casing of
+the name) is merged with <code>text/event-stream</code> into one header, never
+duplicated: its media ranges in order without repeats, <code>text/event-stream</code>
+first when they do not name it; a q-value the caller wrote stays. Everything before the first byte of a 2xx event stream
+(validation, auth, status errors, retries by the usual tier rules) is the
+normal envelope and the only item. A 2xx answer of another type is
+<code>UNEXPECTED_RESPONSE</code>.</li>
+<li>The body is parsed per WHATWG HTML 9.2 (LF/CRLF/CR, split chunks, comments,
+multi-line <code>data</code>, <code>event</code>, <code>id</code> and <code>retry</code> persisting across events, a
+leading BOM dropped, an event still open at the end discarded). <code>data</code> is
+JSON; the declared <code>done</code> value ends the stream without an item.</li>
+<li>Each item carries <code>value</code>, <code>event</code> (default <code>message</code>), <code>id</code>, <code>retry</code> and
+the response meta. Events are checked against the event type per
+<code>validateResponses</code>: <code>strict</code> ends the stream with <code>UNEXPECTED_RESPONSE</code>
+(<code>events[N].path</code>), <code>warn</code> reports through <code>onDiagnostic</code> and delivers,
+<code>off</code> does not look. The Rust SDK decodes into generated types, so an
+event that does not decode ends the stream in every mode.</li>
+<li>A started stream is not retried by the tier rules, but it can be resumed
+(below). A lost connection or a stream idle for the attempt timeout ends it
+with one final failure item: <code>TRANSPORT_FAILED</code> or <code>UPSTREAM_UNAVAILABLE</code>
+for a read, <code>OUTCOME_UNKNOWN</code> (with the usual check-before-repeating rule)
+for a mutation. Leaving the loop closes the connection.</li>
+<li>Resuming: a connection that drops after the stream started (a transport
+error, or a clean end before the <code>done</code> event the operation declares; a
+stream that declares none ends cleanly) is reconnected with <code>Last-Event-ID</code>
+set to the last event id delivered, up to <code>maxReconnects</code> /
+<code>max_reconnects</code> times (default 3; 0 turns it off, and a clean end is then a
+clean end as before). Only a call that is safe to repeat is reconnected: a
+read, or a mutation with replay protection (the same request goes out again,
+idempotency key included). It needs an event id to resume from, or no event
+delivered yet (then the request is simply repeated). The wait before a
+reconnect is the server's last <code>retry</code> value (250 ms when it sent none)
+capped at <code>reconnectMaxMs</code> / <code>reconnect_max_ms</code> / <code>reconnect_max</code> (default
+30 s) and shortened by up to 25 % at random (so it never exceeds the cap).
+A server that ignores <code>Last-Event-ID</code> and replays events is harmless: after
+a reconnect, events whose id was already delivered are skipped until the
+first new one. The reconnect is a new request through the usual pipeline
+(its failure, an error status or a body that is not an event stream, is the
+final item as an ordinary envelope); when the reconnects are used up the
+final item is the failure of the last drop and its remediation says how many
+reconnects were made. Items report <code>reconnects</code> in their meta (the stream
+so far), <code>id</code> and <code>retry</code> carry over a reconnect. The caller's abort
+signal / cancel / drop ends the stream for good, never reconnects.</li>
+<li>Idle timeout: <code>idleTimeoutMs</code> / <code>idle_timeout_ms</code> / <code>idle_timeout</code> (default
+none) is the silence, bytes of comments included, after which a stream is
+idle. An idle stream is reconnected like a dropped one; when it cannot be,
+it ends with <code>UPSTREAM_UNAVAILABLE</code> (read) or <code>OUTCOME_UNKNOWN</code> (mutation)
+whose <code>code</code> is <code>STREAM_IDLE</code>. Without it the attempt timeout ends a silent
+stream as before, without a reconnect and without the code. The category
+set is unchanged: <code>STREAM_IDLE</code> is a <code>code</code> value, the one the runtime
+itself sets (envelope schema, <code>code</code>).</li>
+<li>Helpers, in every runtime: the stream can be consumed with <code>on</code> (TypeScript
+and Python: a handler per event name, <code>*</code> for the others; Rust:
+<code>EventHandlers</code>), <code>collect</code> (TypeScript and Python; Rust has
+<code>collect_values</code>), <code>reduce</code> (fold the events, e.g. concatenate text
+deltas), <code>first(predicate)</code> (then close the stream) and cancellation
+(TypeScript <code>cancel()</code> or the <code>AbortSignal</code>; Python <code>cancel()</code>, also from
+another thread or task, which ends a blocked read; Rust: drop the stream).
+They return the result and <code>reconnects</code>, or the failure with what was
+gathered before it (<code>partial</code>, TypeScript and Python; Rust <code>Folded</code>).
+<code>cancel()</code> ends the stream without a failure item.</li>
+<li>Size limit: one event holds at most <code>maxEventBytes</code> / <code>max_event_bytes</code>
+(client option, default 1 MiB): the UTF-8 bytes of its field lines, each
+counted with a one-byte terminator, plus the line being read; a finished
+comment line is not kept and does not count (an unfinished one counts like
+any line). Past it the parser stops, the events before
+it are delivered and the stream ends with <code>UNEXPECTED_RESPONSE</code>
+(<code>failed_parameter</code> <code>events[N]</code>, <code>expected</code> <code>an event of at most N bytes</code>),
+never buffering more than the limit plus one chunk. The same in
+TypeScript, Python (sync and async) and Rust.</li>
+<li>Collection budgets: collecting a stream into a list is bounded. The MCP
+tool of a streamed operation stops after 1000 events (<code>truncated: true</code>),
+and fails with <code>UNEXPECTED_RESPONSE</code> (<code>failed_parameter</code> <code>events</code>, the
+events so far as <code>partial</code>) after <code>maxStreamBytes</code> of event JSON (default
+4 MiB) or <code>maxStreamMs</code> (default 60 s, whatever the idle timeout; the
+connection is closed); both are <code>ServerOptions</code>. The Rust dynamic
+<code>Dispatch::stream</code> (generated <code>collect_events</code>, <code>EventStream::collect_values</code>)
+ends the same way, last item an error, after
+<code>ClientOptions::max_collect_bytes</code> (4 MiB) or <code>max_collect_time</code> (60 s).
+Python's <code>collect()</code> is not bounded; its callers bound it themselves.</li>
+<li>MCP: a streamed tool call reads the stream through <code>ClientCore.stream</code>, so
+it resumes like any other (the server's client options apply). When the
+<code>tools/call</code> request carries a <code>progressToken</code>, each event collected is a
+<code>notifications/progress</code> (<code>progress</code> is the number of events so far,
+<code>message</code> says how many were collected and how often the stream
+reconnected), so progress keeps flowing across a reconnect.</li>
+<li>Mock: <code>tungsten mock</code> serves a generated stream from the event after the
+numeric <code>Last-Event-ID</code> of the request (the done sentinel has no id and
+stays), and the injections <code>drop-after=&lt;n&gt;[;retry=&lt;ms&gt;]</code> (the first <code>n</code>
+events, then the connection breaks) and <code>stall-after=&lt;n&gt;[;ms=&lt;ms&gt;][;retry=&lt;ms&gt;]</code>
+(then silence for <code>ms</code>, default 30 s) make a resumable and an idle stream;
+<code>retry</code> starts the stream with a <code>retry:</code> line. Programs can apply them
+(<code>inject</code>); a scripted body still replays whatever it says, which is how
+the contract tests a server that ignores <code>Last-Event-ID</code>.</li>
+<li>Detection (build): the stream is carried by an exact success status, else a
+<code>2XX</code> range, else <code>default</code> (a <code>default</code> that declares <code>text/event-stream</code>
+and has no sibling success response becomes the success response; next to a
+success response it stays an error response and carries no stream).</li>
+</ul>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="manifests.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="mcp.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="manifests.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="mcp.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr.min.js"></script>
+        <script src="mark.min.js"></script>
+        <script src="searcher.js"></script>
+
+        <script src="clipboard.min.js"></script>
+        <script src="highlight.js"></script>
+        <script src="book.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+
+    </div>
+    </body>
+</html>

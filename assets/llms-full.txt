@@ -1,0 +1,771 @@
+# ZROtext — full reference
+
+> Open-source Android SMS gateway. Three API planes: the public owner and alpha routes, the default-off sealed plane, and the authorized workflow tools. Planned routes are documented but not callable.
+
+API version 1.0.0 · base URL http://127.0.0.1:8080 · 3 namespaces · 38 callable operations (25 gated) · 6 planned · 3 macros
+
+Auth: bearerAuth (bearer token, from $ZROTEXT_API_KEY) · ownerCsrf (API key in header x-zrotext-csrf) · ownerSession (API key in cookie __Host-zrotext_session) · workflowCredential (bearer token, must start with ztw_, from $ZROTEXT_WORKFLOW_TOKEN).
+Auth profiles: ownerSession = cookie __Host-zrotext_session, cookie __Host-zrotext_csrf, header x-zrotext-csrf (equals cookie __Host-zrotext_csrf), header Origin (from config origin, mutations only); satisfies ownerSession + ownerCsrf.
+
+## Conventions
+
+- Arguments: every operation takes one object. Parameters are keyed by camelCase name; the fields of a JSON object body are merged in under their wire names, any other body is the `body` argument. Idempotency keys, the Origin header and credentials are call options or auth configuration, never arguments.
+- Results: success bodies, or an error envelope with `category`, `retryable` and `remediation`. `retryable: never` means do not retry; `same_key_only` means retry only with the same idempotency key; `after_remediation` means act first (fix the input, or check whether an unknown outcome took effect).
+- Safety tiers: `read_only` has no side effects; `mutating` changes state; `destructive` needs a confirmation; `irreversible` needs a confirmation token from a preview of the same arguments.
+- Types: `T?` optional, `T | null` nullable, `T[]` array, `{[key: string]: T}` map, `...` more properties allowed, `string{1..64}` length, `integer[1..20]` range, `/re/` pattern. Named types are listed under Types.
+
+## public: ZROtext public HTTP API v1 (current server contract)
+
+### public.webhooks.list
+
+GET /v1/webhooks — List this account's webhook endpoints [read_only] [idempotency: none]
+
+- Operation: public.listWebhookEndpoints · tool `public_webhooks_list`
+- Auth: ownerSession + ownerCsrf
+- Args: {}
+- Returns: 200 public.WebhookEndpointList
+- Errors: 401 public.Error, 403 public.Error, 408 (no body), 503 public.Error
+
+List this account's webhook endpoints. Lists every endpoint of the account (at most eight, including disabled ones) ordered by creation time, then ID.
+
+### public.webhooks.create
+
+POST /v1/webhooks — Create one disabled webhook endpoint [mutating] [idempotency: none]
+
+- Operation: public.createWebhookEndpoint · tool `public_webhooks_create`
+- Auth: ownerSession + ownerCsrf
+- Args: { callback_url: string{..2048} }
+- Returns: 201 public.WebhookSecret
+- Errors: 400 public.Error, 401 public.Error, 403 public.Error, 408 (no body) (outcome unknown), 409 public.Error, 413 text/plain, 429 public.Error, 503 public.Error (outcome unknown)
+- Preview: local (validates and renders the request, no network)
+- Verify: call public.listWebhookEndpoints and expect {"endpoints":{"contains":{"endpoint_id":"$response.endpoint_id"}}}
+- Sensitive response fields: signing_secret_b64url (shown once: store it now)
+
+Create one disabled webhook endpoint. Creates a disabled endpoint and returns the signing secret exactly once; there is no secret retrieval route, so losing the response requires rotation.
+
+| code | category | retryable | remediation |
+|---|---|---|---|
+| endpoint_limit |  | never | The account already has eight endpoints including disabled ones. Disable or reuse one. |
+| invalid_webhook_endpoint |  | after_remediation | The callback URL must be an HTTPS DNS name on port 443 (at most 2048 bytes) with no IP literal, userinfo or fragment, and not under a reserved or internal suffix: .test, .example, .invalid, .local, .localhost, .internal and .onion are all refused, so a placeholder such as hooks.example.test cannot be created. |
+
+### public.webhooks.enable
+
+POST /v1/webhooks/{endpoint_id}/enable — Enable future inbound fan-out to one endpoint [mutating] [idempotency: none]
+
+- Operation: public.enableWebhookEndpoint · tool `public_webhooks_enable`
+- Auth: ownerSession + ownerCsrf
+- Args: { endpointId: string<uuid> }
+- Returns: 204 (no body)
+- Errors: 400 public.Error, 401 public.Error, 403 public.Error, 404 public.Error, 408 (no body) (outcome unknown), 503 public.Error (outcome unknown)
+- Preview: local (validates and renders the request, no network)
+- Verify: call public.listWebhookEndpoints and expect {"endpoints":{"contains":{"endpoint_id":"$args.endpoint_id","enabled":true}}}
+
+Enable future inbound fan-out to one endpoint. Revalidates the stored callback URL against the strict egress validator and the decryptability of the stored signing secret, then enables future fan-out and clears any transport-failure pause.
+
+### public.webhooks.disable
+
+POST /v1/webhooks/{endpoint_id}/disable — Disable an endpoint and permanently retire its pending deliveries [destructive] [idempotency: none]
+
+- Operation: public.disableWebhookEndpoint · tool `public_webhooks_disable`
+- Auth: ownerSession + ownerCsrf
+- Args: { endpointId: string<uuid> }
+- Returns: 204 (no body)
+- Errors: 400 text/plain, 401 public.Error, 403 public.Error, 404 public.Error, 408 (no body) (outcome unknown), 503 public.Error (outcome unknown)
+- Preview: local (validates and renders the request, no network)
+- Confirmation: shows endpoint_id; "Disables endpoint {endpoint_id} and permanently retires its pending deliveries. Enabling later does not replay them."
+
+Disable an endpoint and permanently retire its pending deliveries. Disables the endpoint and permanently retires its pending and leased deliveries in one transaction.
+
+### public.webhooks.rotate
+
+POST /v1/webhooks/{endpoint_id}/rotate — Rotate the signing secret, disabling the endpoint and retiring its deliveries [destructive] [idempotency: none]
+
+- Operation: public.rotateWebhookEndpoint · tool `public_webhooks_rotate`
+- Auth: ownerSession + ownerCsrf
+- Args: { endpointId: string<uuid> }
+- Returns: 200 public.WebhookSecret
+- Errors: 400 text/plain, 401 public.Error, 403 public.Error, 404 public.Error, 408 (no body) (outcome unknown), 503 public.Error (outcome unknown)
+- Preview: local (validates and renders the request, no network)
+- Confirmation: shows endpoint_id; "Rotates the signing secret of {endpoint_id}. The endpoint is disabled and its pending deliveries are permanently retired. The new secret is shown exactly once."
+- Sensitive response fields: signing_secret_b64url (shown once: store it now)
+- Note: After storing the new secret, call enable to resume fan-out.
+
+Rotate the signing secret, disabling the endpoint and retiring its deliveries. Generates a new 32-byte signing secret, disables the endpoint and permanently retires pending, leased and replayable failed deliveries in one transaction.
+
+### public.webhooks.select_sealed_events
+
+POST /v1/webhooks/{endpoint_id}/sealed-events — Select or disable future opaque sealed-event transfer for one endpoint [mutating] [idempotency: none] [gated: SEALED_WEBHOOK_DELIVERY_ENABLED, off by default, 404 when off]
+
+- Operation: public.selectWebhookSealedEvents · tool `public_webhooks_select_sealed_events`
+- Auth: ownerSession + ownerCsrf
+- Args: { endpointId: string<uuid>, enabled: boolean, encrypted_transfer_confirmed: boolean, disclosure_version: "sealed-events-v1" }
+- Returns: 204 (no body)
+- Errors: 400 public.Error, 401 public.Error, 403 public.Error, 404 public.Error, 408 (no body) (outcome unknown), 409 public.Error, 413 text/plain, 429 public.Error, 503 public.Error (outcome unknown)
+- Gate: gated: SEALED_WEBHOOK_DELIVERY_ENABLED, off by default, 404 when off. This deployment answers 404 because SEALED_WEBHOOK_DELIVERY_ENABLED is off. This is a deployment setting, not a missing resource; do not retry with other IDs.
+- Preview: local (validates and renders the request, no network)
+
+Select or disable future opaque sealed-event transfer for one endpoint. Requires the current owner session cookie, double-submit CSRF cookie/header and exact configured HTTPS Origin; bearer API keys are not owner authority.
+
+### public.webhooks.deliveries.list
+
+GET /v1/webhooks/{endpoint_id}/deliveries — Page delivery history for one webhook endpoint [read_only] [idempotency: none]
+
+- Operation: public.listWebhookDeliveries · tool `public_webhooks_deliveries_list`
+- Auth: ownerSession + ownerCsrf
+- Args: { endpointId: string<uuid>, limit?: integer[1..20], before?: string<uuid> }
+- Returns: 200 public.WebhookDeliveryPage
+- Errors: 400 public.Error, 401 public.Error, 403 public.Error, 404 public.Error, 408 (no body), 503 public.Error
+- Pagination: cursor: pass `next_before` from the response as `before`; items in `deliveries`; page size `limit`
+
+Page delivery history for one webhook endpoint. Pages this account's endpoint delivery and attempt metadata, newest first by creation time then ID, including attempts from every generation and retired deliveries as immutable audit history.
+
+### public.webhooks.deliveries.replay
+
+POST /v1/webhooks/{endpoint_id}/deliveries/{delivery_id}/replay — Queue one bounded replay generation of an exhausted failed delivery [mutating] [idempotency: caller_owned, header Idempotency-Key, uuid_v4, key required]
+
+- Operation: public.replayWebhookDelivery · tool `public_webhooks_deliveries_replay`
+- Auth: ownerSession + ownerCsrf
+- Args: { endpointId: string<uuid>, deliveryId: string<uuid> }
+- Returns: 202 public.WebhookReplayAccepted
+- Errors: 400 public.Error, 401 public.Error, 403 public.Error, 404 public.Error, 408 (no body) (outcome unknown), 409 public.Error, 503 public.Error (outcome unknown)
+- Preview: local (validates and renders the request, no network)
+
+Queue one bounded replay generation of an exhausted failed delivery. The caller generates a random UUIDv4 Idempotency-Key and must reuse the exact same key after an uncertain response; the server never generates one on the caller's behalf.
+
+| code | category | retryable | remediation |
+|---|---|---|---|
+| replay_limit |  | never | This delivery already used all three generations. Stop. |
+| replay_not_eligible |  | never | Only a dead delivery with terminal_reason failed on an ENABLED endpoint can be replayed, and a key may not be reused for a different delivery. Check the delivery page; do not retry. |
+
+### public.owner_messages.list
+
+GET /v1/owner/messages — Page the account's message timeline (writer metadata only) [read_only] [idempotency: none]
+
+- Operation: public.listOwnerMessages · tool `public_owner_messages_list`
+- Auth: ownerSession + ownerCsrf
+- Args: { before?: string<uuid> }
+- Returns: 200 public.OwnerMessagePage
+- Errors: 400 text/plain, 401 public.Error, 403 public.Error, 404 (no body), 408 (no body), 503 (no body)
+- Pagination: cursor: pass `next_cursor` from the response as `before`; items in `messages`
+
+Page the account's message timeline (writer metadata only). Pages at most 20 messages newest first by creation time then ID, each with the last at most 32 timeline events and a flag when older events were dropped.
+
+### public.alpha_messages.submit
+
+POST /v1/alpha/messages — Submit one synthetic-alpha test message [irreversible] [idempotency: caller_owned, header Idempotency-Key, uuid_v4, key required]
+
+- Operation: public.submitAlphaMessage · tool `public_alpha_messages_submit`
+- Auth: bearerAuth
+- Args: { client_message_id: string<uuid>, device_id: string<uuid>, recipient_e164: string /^\+[1-9][0-9]{1,14}$/, test_case_id: string{1..32} /^[A-Za-z0-9_-]{1,32}$/, expires_at_ms: integer }
+- Returns: 202 public.AlphaAccepted
+- Errors: 400 public.Error, 401 public.Error, 402 public.Error, 403 public.Error, 404 public.Error, 408 (no body) (outcome unknown), 409 public.Error, 413 text/plain, 429 public.Error, 503 public.Error (outcome unknown)
+- Preview: local (validates and renders the request, no network)
+- Confirmation: shows recipient_e164, device_id, test_case_id, expires_at_ms; "Queues a synthetic test SMS to {recipient_e164} from device {device_id}. Only allowlisted recipients are accepted. Carrier rules still apply."
+- Verify: call public.getAlphaMessageStatus and expect {"state":{"in":["accepted","queued","claimed","submitting","submitted","delivered"]}}; terminal when {"state":{"in":["delivered","delivery_unknown","unknown","failed","cancelled","expired"]}}
+
+Submit one synthetic-alpha test message. The caller never supplies message content: only a short test-case identifier, and the server constructs the fixed plaintext body.
+
+| code | category | retryable | remediation |
+|---|---|---|---|
+| billing_pending | PRECONDITION_FAILED | never | Account billing is not active. Stop; the owner must act. |
+| conflict |  | never | client_message_id or Idempotency-Key was reused with different content. Do not change the key; check your stored intent. |
+| invalid_request |  | after_remediation | The server refused a field. expires_at_ms must be in the future and at most 15 minutes ahead; recipient_e164 is a plus sign and 2-15 digits with no leading zero; test_case_id is 1-32 of A-Z a-z 0-9 - _; the body has no other members. Correct the call; this is a new attempt, so use a new client_message_id and Idempotency-Key only if the content changes. |
+| not_found |  | never | The device is unknown, revoked or not bound to this credential's scope. |
+| payment_hold |  | never | Payment hold on the account. Stop; the owner must act. |
+| queue_full |  | same_key_only | The device queue is full. Wait, then retry with the SAME Idempotency-Key and identical body. |
+| quota_exceeded |  | never | The account's quota is exhausted. Stop; do not retry. |
+| rate_limited |  | same_key_only | The account is over its submission budget (60 accepted submissions per minute) or already has four body-carrying requests in flight. Wait for Retry-After, then retry with the SAME Idempotency-Key and identical body. |
+| recipient_suppressed |  | never | The recipient opted out. Never retry, never choose another number. Stop and report. |
+
+### public.alpha_messages.get_status
+
+GET /v1/alpha/messages/{message_id} — Get one message's current writer state [read_only] [idempotency: none]
+
+- Operation: public.getAlphaMessageStatus · tool `public_alpha_messages_get_status`
+- Auth: bearerAuth
+- Args: { messageId: string<uuid> }
+- Returns: 200 public.AlphaStatus
+- Errors: 400 text/plain, 401 public.Error, 403 public.Error, 404 public.Error, 408 (no body), 503 public.Error
+- Note: States unknown and delivery_unknown require reconciliation by the owner; never resubmit.
+
+Get one message's current writer state. Tenant-bound status snapshot of one accepted message: identity, device, state, state version and timestamps.
+
+### public.alpha_messages.cancel
+
+POST /v1/alpha/messages/{message_id}/cancel — Cancel one message before dispatch [mutating] [idempotency: none]
+
+- Operation: public.cancelAlphaMessage · tool `public_alpha_messages_cancel`
+- Auth: bearerAuth
+- Args: { messageId: string<uuid> }
+- Returns: 204 (no body)
+- Errors: 400 text/plain, 401 public.Error, 403 public.Error, 404 public.Error, 408 (no body) (outcome unknown), 409 public.Error, 503 public.Error (outcome unknown)
+- Preview: local (validates and renders the request, no network)
+
+Cancel one message before dispatch. Requests cancellation of a message that has not left the writer's control; a message already claimed, submitting, submitted or terminal cannot be cancelled (409).
+
+| code | category | retryable | remediation |
+|---|---|---|---|
+| conflict |  | never | The message already left the queue; cancellation is no longer possible. Read its status instead. |
+
+### public.devices.list
+
+GET /v1/enrollment/devices — Page the account's enrolled devices [read_only] [idempotency: none]
+
+- Operation: public.listOwnerDevices · tool `public_devices_list`
+- Auth: ownerSession + ownerCsrf
+- Args: { before?: string<uuid> }
+- Returns: 200 public.OwnerDevicePage
+- Errors: 400 text/plain, 401 public.Error, 403 public.Error, 408 (no body), 503 (no body)
+- Pagination: cursor: pass `next_cursor` from the response as `before`, until `has_more` is false; items in `devices`
+
+Page the account's enrolled devices. Pages at most 50 devices with revocation state, the current authenticated-socket-lease observation, capped pending and in-flight writer-state counts and the optional reported Android preconditions…
+
+### public.devices.revoke
+
+DELETE /v1/enrollment/devices/{device_id} — Revoke one enrolled device [destructive] [idempotency: none]
+
+- Operation: public.revokeOwnerDevice · tool `public_devices_revoke`
+- Auth: ownerSession + ownerCsrf
+- Args: { deviceId: string<uuid> }
+- Returns: 204 (no body)
+- Errors: 400 text/plain, 401 public.Error, 403 public.Error, 404 (no body), 408 (no body) (outcome unknown), 503 (no body) (outcome unknown)
+- Preview: local (validates and renders the request, no network)
+- Confirmation: shows device_id; "Revokes device {device_id}. Queued messages on it will not be dispatched."
+
+Revoke one enrolled device. Revokes the device and its device key; an unknown or another account's device is 404.
+
+## sealed: ZROtext sealed API v1 (proposed contract)
+
+### sealed.messages.list
+
+GET /v1/sealed/messages — listSealedMessages [read_only] [idempotency: none] [gated: SEALED_ADMISSION_ENABLED, off by default, 404 when off]
+
+- Operation: sealed.listSealedMessages · tool `sealed_messages_list`
+- Auth: bearerAuth
+- Args: { cursor?: string<uuid> }
+- Returns: 200 sealed.SealedMessagePage
+- Errors: 400 sealed.Error, 401 sealed.Error, 403 sealed.Error, 404 sealed.Error, 429 sealed.Error, 503 sealed.Error
+- Pagination: cursor: pass `next_cursor` from the response as `cursor`; items in `messages`
+- Gate: gated: SEALED_ADMISSION_ENABLED, off by default, 404 when off. The sealed plane is mounted only when SEALED_ADMISSION_ENABLED is set on the server. Against a default deployment every sealed call fails by design.
+
+listSealedMessages. messages:read.
+
+### sealed.messages.submit
+
+POST /v1/sealed/messages — Submit one sealed outbound envelope for device dispatch [irreversible] [idempotency: content_identity] [gated: SEALED_ADMISSION_ENABLED, off by default, 404 when off]
+
+- Operation: sealed.submitSealedOutbound · tool `sealed_messages_submit`
+- Auth: bearerAuth
+- Args: { body: sealed.SealedEnvelopeBytes (application/vnd.zrotext.sealed.v1) }
+- Returns: 202 sealed.SealedOutboundAccepted
+- Errors: 400 sealed.Error, 401 sealed.Error, 403 sealed.Error, 409 sealed.Error, 415 sealed.Error, 429 sealed.Error, 503 sealed.Error (outcome unknown)
+- Gate: gated: SEALED_ADMISSION_ENABLED, off by default, 404 when off. The sealed plane is mounted only when SEALED_ADMISSION_ENABLED is set on the server. Against a default deployment every sealed call fails by design.
+- Preview: local (validates and renders the request, no network)
+- Confirmation: "Submits one sealed outbound envelope for device dispatch. Content is opaque to this client."
+
+Submit one sealed outbound envelope for device dispatch. Proposed contract; no route exists.
+
+### sealed.messages.get
+
+GET /v1/sealed/messages/{message_id} — getSealedMessage [read_only] [idempotency: none] [gated: SEALED_ADMISSION_ENABLED, off by default, 404 when off]
+
+- Operation: sealed.getSealedMessage · tool `sealed_messages_get`
+- Auth: bearerAuth
+- Args: { messageId: string<uuid> }
+- Returns: 200 sealed.SealedMessageMetadata
+- Errors: 400 sealed.Error, 401 sealed.Error, 403 sealed.Error, 404 sealed.Error, 429 sealed.Error, 503 sealed.Error
+- Gate: gated: SEALED_ADMISSION_ENABLED, off by default, 404 when off. The sealed plane is mounted only when SEALED_ADMISSION_ENABLED is set on the server. Against a default deployment every sealed call fails by design.
+
+getSealedMessage. messages:read.
+
+### sealed.messages.cancel
+
+POST /v1/sealed/messages/{message_id}/cancel — cancelSealedMessage [mutating] [idempotency: none] [gated: SEALED_ADMISSION_ENABLED, off by default, 404 when off]
+
+- Operation: sealed.cancelSealedMessage · tool `sealed_messages_cancel`
+- Auth: bearerAuth
+- Args: { messageId: string<uuid> }
+- Returns: 200 sealed.SealedMessageMetadata
+- Errors: 400 sealed.Error, 401 sealed.Error, 403 sealed.Error, 404 sealed.Error, 409 sealed.Error, 429 sealed.Error, 503 sealed.Error (outcome unknown)
+- Gate: gated: SEALED_ADMISSION_ENABLED, off by default, 404 when off. The sealed plane is mounted only when SEALED_ADMISSION_ENABLED is set on the server. Against a default deployment every sealed call fails by design.
+- Preview: local (validates and renders the request, no network)
+
+cancelSealedMessage. messages:send.
+
+### sealed.inbound_events.upload
+
+POST /v1/sealed/inbound-events — Upload one sealed inbound event captured by a device [mutating] [idempotency: content_identity] [gated: SEALED_ADMISSION_ENABLED, off by default, 404 when off]
+
+- Operation: sealed.uploadSealedInboundEvent · tool `sealed_inbound_events_upload`
+- Auth: bearerAuth
+- Args: { body: sealed.SealedEnvelopeBytes (application/vnd.zrotext.sealed.v1) }
+- Returns: 202 sealed.SealedInboundAccepted
+- Errors: 400 sealed.Error, 401 sealed.Error, 403 sealed.Error, 409 sealed.Error, 415 sealed.Error, 429 sealed.Error, 503 sealed.Error (outcome unknown)
+- Gate: gated: SEALED_ADMISSION_ENABLED, off by default, 404 when off. The sealed plane is mounted only when SEALED_ADMISSION_ENABLED is set on the server. Against a default deployment every sealed call fails by design.
+- Preview: local (validates and renders the request, no network)
+
+Upload one sealed inbound event captured by a device. Mounted behind the default-off SEALED_ADMISSION_ENABLED flag exactly like the message route: when the flag is off the path answers 404 before reading any body or credential.
+
+### sealed.devices.list
+
+GET /v1/sealed/devices — List the account's enrolled devices with their sealed line bindings [read_only] [idempotency: none] [gated: SEALED_ADMISSION_ENABLED, off by default, 404 when off]
+
+- Operation: sealed.listSealedDevices · tool `sealed_devices_list`
+- Auth: bearerAuth
+- Args: { before?: string<uuid> }
+- Returns: 200 sealed.SealedDevicePage
+- Errors: 400 sealed.Error, 401 sealed.Error, 403 sealed.Error, 503 sealed.Error
+- Pagination: cursor: pass `next_cursor` from the response as `before`; items in `devices`
+- Gate: gated: SEALED_ADMISSION_ENABLED, off by default, 404 when off. The sealed plane is mounted only when SEALED_ADMISSION_ENABLED is set on the server. Against a default deployment every sealed call fails by design.
+
+List the account's enrolled devices with their sealed line bindings. Proposed contract; no route exists.
+
+### sealed.devices.get
+
+GET /v1/sealed/devices/{device_id} — Get one enrolled device with its sealed line bindings [read_only] [idempotency: none] [gated: SEALED_ADMISSION_ENABLED, off by default, 404 when off]
+
+- Operation: sealed.getSealedDevice · tool `sealed_devices_get`
+- Auth: bearerAuth
+- Args: { deviceId: string<uuid> }
+- Returns: 200 sealed.SealedDevice
+- Errors: 400 sealed.Error, 401 sealed.Error, 403 sealed.Error, 404 sealed.Error, 503 sealed.Error
+- Gate: gated: SEALED_ADMISSION_ENABLED, off by default, 404 when off. The sealed plane is mounted only when SEALED_ADMISSION_ENABLED is set on the server. Against a default deployment every sealed call fails by design.
+
+Get one enrolled device with its sealed line bindings. Proposed contract; no route exists.
+
+### sealed.webhooks.list
+
+GET /v1/sealed/webhooks — List this account's webhook endpoints [read_only] [idempotency: none] [gated: SEALED_ADMISSION_ENABLED, off by default, 404 when off]
+
+- Operation: sealed.listSealedWebhookEndpoints · tool `sealed_webhooks_list`
+- Auth: bearerAuth
+- Args: {}
+- Returns: 200 sealed.SealedWebhookEndpointList
+- Errors: 401 sealed.Error, 403 sealed.Error, 503 sealed.Error
+- Gate: gated: SEALED_ADMISSION_ENABLED, off by default, 404 when off. The sealed plane is mounted only when SEALED_ADMISSION_ENABLED is set on the server. Against a default deployment every sealed call fails by design.
+
+List this account's webhook endpoints. Proposed contract; no route exists.
+
+### sealed.webhooks.create
+
+POST /v1/sealed/webhooks — Create one disabled webhook endpoint for sealed event fanout [mutating] [idempotency: none] [gated: SEALED_ADMISSION_ENABLED, off by default, 404 when off]
+
+- Operation: sealed.createSealedWebhookEndpoint · tool `sealed_webhooks_create`
+- Auth: bearerAuth
+- Args: { callback_url: string{..2048} }
+- Returns: 201 sealed.SealedWebhookSecret
+- Errors: 400 sealed.Error, 401 sealed.Error, 403 sealed.Error, 409 sealed.Error, 503 sealed.Error (outcome unknown)
+- Gate: gated: SEALED_ADMISSION_ENABLED, off by default, 404 when off. The sealed plane is mounted only when SEALED_ADMISSION_ENABLED is set on the server. Against a default deployment every sealed call fails by design.
+- Preview: local (validates and renders the request, no network)
+- Sensitive response fields: signing_secret_b64url (shown once: store it now)
+
+Create one disabled webhook endpoint for sealed event fanout. Proposed contract; no route exists.
+
+### sealed.webhooks.enable
+
+POST /v1/sealed/webhooks/{endpoint_id}/enable — Enable future sealed event fanout to one endpoint [mutating] [idempotency: none] [gated: SEALED_ADMISSION_ENABLED, off by default, 404 when off]
+
+- Operation: sealed.enableSealedWebhookEndpoint · tool `sealed_webhooks_enable`
+- Auth: bearerAuth
+- Args: { endpointId: string<uuid> }
+- Returns: 204 (no body)
+- Errors: 400 sealed.Error, 401 sealed.Error, 403 sealed.Error, 404 sealed.Error, 503 sealed.Error (outcome unknown)
+- Gate: gated: SEALED_ADMISSION_ENABLED, off by default, 404 when off. The sealed plane is mounted only when SEALED_ADMISSION_ENABLED is set on the server. Against a default deployment every sealed call fails by design.
+- Preview: local (validates and renders the request, no network)
+
+Enable future sealed event fanout to one endpoint. Proposed contract; no route exists.
+
+### sealed.webhooks.disable
+
+POST /v1/sealed/webhooks/{endpoint_id}/disable — Disable an endpoint and permanently retire its pending deliveries [destructive] [idempotency: none] [gated: SEALED_ADMISSION_ENABLED, off by default, 404 when off]
+
+- Operation: sealed.disableSealedWebhookEndpoint · tool `sealed_webhooks_disable`
+- Auth: bearerAuth
+- Args: { endpointId: string<uuid> }
+- Returns: 204 (no body)
+- Errors: 400 sealed.Error, 401 sealed.Error, 403 sealed.Error, 404 sealed.Error, 503 sealed.Error (outcome unknown)
+- Gate: gated: SEALED_ADMISSION_ENABLED, off by default, 404 when off. The sealed plane is mounted only when SEALED_ADMISSION_ENABLED is set on the server. Against a default deployment every sealed call fails by design.
+- Preview: local (validates and renders the request, no network)
+
+Disable an endpoint and permanently retire its pending deliveries. Proposed contract; no route exists.
+
+### sealed.webhooks.rotate
+
+POST /v1/sealed/webhooks/{endpoint_id}/rotate — Rotate the signing secret, disabling the endpoint and retiring its deliveries [destructive] [idempotency: none] [gated: SEALED_ADMISSION_ENABLED, off by default, 404 when off]
+
+- Operation: sealed.rotateSealedWebhookEndpoint · tool `sealed_webhooks_rotate`
+- Auth: bearerAuth
+- Args: { endpointId: string<uuid> }
+- Returns: 200 sealed.SealedWebhookSecret
+- Errors: 400 sealed.Error, 401 sealed.Error, 403 sealed.Error, 404 sealed.Error, 503 sealed.Error (outcome unknown)
+- Gate: gated: SEALED_ADMISSION_ENABLED, off by default, 404 when off. The sealed plane is mounted only when SEALED_ADMISSION_ENABLED is set on the server. Against a default deployment every sealed call fails by design.
+- Preview: local (validates and renders the request, no network)
+- Sensitive response fields: signing_secret_b64url (shown once: store it now)
+
+Rotate the signing secret, disabling the endpoint and retiring its deliveries. Proposed contract; no route exists.
+
+### sealed.webhooks.deliveries.list
+
+GET /v1/sealed/webhooks/{endpoint_id}/deliveries — Page delivery history for one webhook endpoint [read_only] [idempotency: none] [gated: SEALED_ADMISSION_ENABLED, off by default, 404 when off]
+
+- Operation: sealed.listSealedWebhookDeliveries · tool `sealed_webhooks_deliveries_list`
+- Auth: bearerAuth
+- Args: { endpointId: string<uuid>, limit?: integer[1..20], before?: string<uuid> }
+- Returns: 200 sealed.SealedWebhookDeliveryPage
+- Errors: 400 sealed.Error, 401 sealed.Error, 403 sealed.Error, 404 sealed.Error, 503 sealed.Error
+- Pagination: cursor: pass `next_before` from the response as `before`; items in `deliveries`; page size `limit`
+- Gate: gated: SEALED_ADMISSION_ENABLED, off by default, 404 when off. The sealed plane is mounted only when SEALED_ADMISSION_ENABLED is set on the server. Against a default deployment every sealed call fails by design.
+
+Page delivery history for one webhook endpoint. Proposed contract; no route exists.
+
+### sealed.webhooks.deliveries.replay
+
+POST /v1/sealed/webhooks/{endpoint_id}/deliveries/{delivery_id}/replay — Queue one bounded replay generation of an exhausted failed delivery [mutating] [idempotency: caller_owned, header Idempotency-Key, uuid_v4, key required] [gated: SEALED_ADMISSION_ENABLED, off by default, 404 when off]
+
+- Operation: sealed.replaySealedWebhookDelivery · tool `sealed_webhooks_deliveries_replay`
+- Auth: bearerAuth
+- Args: { endpointId: string<uuid>, deliveryId: string<uuid> }
+- Returns: 202 sealed.SealedWebhookReplayAccepted
+- Errors: 400 sealed.Error, 401 sealed.Error, 403 sealed.Error, 404 sealed.Error, 409 sealed.Error, 503 sealed.Error (outcome unknown)
+- Gate: gated: SEALED_ADMISSION_ENABLED, off by default, 404 when off. The sealed plane is mounted only when SEALED_ADMISSION_ENABLED is set on the server. Against a default deployment every sealed call fails by design.
+- Preview: local (validates and renders the request, no network)
+
+Queue one bounded replay generation of an exhausted failed delivery. Proposed contract; no route exists.
+
+### sealed.usage.list
+
+GET /v1/sealed/usage — List bounded usage history pages [read_only] [idempotency: none] [gated: SEALED_ADMISSION_ENABLED, off by default, 404 when off]
+
+- Operation: sealed.getSealedUsage · tool `sealed_usage_list`
+- Auth: bearerAuth
+- Args: { before?: string<date>, limit?: integer[1..24] }
+- Returns: 200 sealed.SealedUsagePage
+- Errors: 400 sealed.Error, 401 sealed.Error, 403 sealed.Error, 503 sealed.Error
+- Pagination: cursor: pass `next_before` from the response as `before`; items in `usage`; page size `limit`
+- Gate: gated: SEALED_ADMISSION_ENABLED, off by default, 404 when off. The sealed plane is mounted only when SEALED_ADMISSION_ENABLED is set on the server. Against a default deployment every sealed call fails by design.
+
+List bounded usage history pages. Read-only query of the single authoritative metering core (usage_periods and usage_ledger) for the authenticated account: bounded pages of UTC calendar-month periods, newest first, each with its unit…
+
+## workflow: ZROtext authorized workflow tools
+
+### workflow.tools.readiness
+
+GET /v1/workflow/tools — workflow.workflowReadiness [read_only] [idempotency: none] [gated: WORKFLOW_TOOLS_ENABLED, off by default, 404 when off]
+
+- Operation: workflow.workflowReadiness · tool `workflow_tools_readiness`
+- Auth: workflowCredential
+- Args: {}
+- Returns: 200 workflow.WorkflowReadiness
+- Errors: 400 workflow.WorkflowError, 401 workflow.WorkflowError, 403 workflow.WorkflowError, 404 workflow.WorkflowError, 409 workflow.WorkflowError, 429 workflow.WorkflowError, 503 workflow.WorkflowError
+- Gate: gated: WORKFLOW_TOOLS_ENABLED, off by default, 404 when off. The workflow transport is mounted only when WORKFLOW_TOOLS_ENABLED is set on the server, and every call also needs a current workflow grant. Against a default deployment every workflow call fails by design.
+
+### workflow.tools.contact.read
+
+POST /v1/workflow/tools (method workflow.contact.read) — workflow.contact.read [read_only] [idempotency: none] [gated: WORKFLOW_TOOLS_ENABLED, off by default, 404 when off]
+
+- Operation: workflow.contact.read · tool `workflow_tools_contact_read`
+- Auth: workflowCredential
+- Args: { request_id: string{36..36} /^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/, context_id: string{36..36} /^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/ }
+- Returns: 200 workflow.WorkflowResponse
+- Errors: 400 workflow.WorkflowError, 401 workflow.WorkflowError, 403 workflow.WorkflowError, 404 workflow.WorkflowError, 409 workflow.WorkflowError, 429 workflow.WorkflowError, 503 workflow.WorkflowError
+- Gate: gated: WORKFLOW_TOOLS_ENABLED, off by default, 404 when off. The workflow transport is mounted only when WORKFLOW_TOOLS_ENABLED is set on the server, and every call also needs a current workflow grant. Against a default deployment every workflow call fails by design.
+
+### workflow.tools.context.metadata
+
+POST /v1/workflow/tools (method workflow.context.metadata) — workflow.context.metadata [read_only] [idempotency: none] [gated: WORKFLOW_TOOLS_ENABLED, off by default, 404 when off]
+
+- Operation: workflow.context.metadata · tool `workflow_tools_context_metadata`
+- Auth: workflowCredential
+- Args: { request_id: string{36..36} /^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/, context_id: string{36..36} /^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/ }
+- Returns: 200 workflow.WorkflowResponse
+- Errors: 400 workflow.WorkflowError, 401 workflow.WorkflowError, 403 workflow.WorkflowError, 404 workflow.WorkflowError, 409 workflow.WorkflowError, 429 workflow.WorkflowError, 503 workflow.WorkflowError
+- Gate: gated: WORKFLOW_TOOLS_ENABLED, off by default, 404 when off. The workflow transport is mounted only when WORKFLOW_TOOLS_ENABLED is set on the server, and every call also needs a current workflow grant. Against a default deployment every workflow call fails by design.
+
+### workflow.tools.context.content
+
+POST /v1/workflow/tools (method workflow.context.content) — workflow.context.content [read_only] [idempotency: none] [gated: WORKFLOW_TOOLS_ENABLED, off by default, 404 when off]
+
+- Operation: workflow.context.content · tool `workflow_tools_context_content`
+- Auth: workflowCredential
+- Args: { request_id: string{36..36} /^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/, context_id: string{36..36} /^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/ }
+- Returns: 200 workflow.WorkflowResponse
+- Errors: 400 workflow.WorkflowError, 401 workflow.WorkflowError, 403 workflow.WorkflowError, 404 workflow.WorkflowError, 409 workflow.WorkflowError, 429 workflow.WorkflowError, 503 workflow.WorkflowError
+- Gate: gated: WORKFLOW_TOOLS_ENABLED, off by default, 404 when off. The workflow transport is mounted only when WORKFLOW_TOOLS_ENABLED is set on the server, and every call also needs a current workflow grant. Against a default deployment every workflow call fails by design.
+
+### workflow.tools.action.propose
+
+POST /v1/workflow/tools (method workflow.action.propose) — workflow.action.propose [mutating] [idempotency: none] [gated: WORKFLOW_TOOLS_ENABLED, off by default, 404 when off]
+
+- Operation: workflow.action.propose · tool `workflow_tools_action_propose`
+- Auth: workflowCredential
+- Args: { request_id: string{36..36} /^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/, descriptor: workflow.WorkflowRequestWorkflowActionProposeParamsDescriptor }
+- Returns: 200 workflow.WorkflowResponse
+- Errors: 400 workflow.WorkflowError, 401 workflow.WorkflowError, 403 workflow.WorkflowError, 404 workflow.WorkflowError, 409 workflow.WorkflowError, 429 workflow.WorkflowError, 503 workflow.WorkflowError (outcome unknown)
+- Gate: gated: WORKFLOW_TOOLS_ENABLED, off by default, 404 when off. The workflow transport is mounted only when WORKFLOW_TOOLS_ENABLED is set on the server, and every call also needs a current workflow grant. Against a default deployment every workflow call fails by design.
+- Preview: local (validates and renders the request, no network)
+
+### workflow.tools.action.status
+
+POST /v1/workflow/tools (method workflow.action.status) — workflow.action.status [read_only] [idempotency: none] [gated: WORKFLOW_TOOLS_ENABLED, off by default, 404 when off]
+
+- Operation: workflow.action.status · tool `workflow_tools_action_status`
+- Auth: workflowCredential
+- Args: { request_id: string{36..36} /^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/, context_id: string{36..36} /^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/, action_id: string{36..36} /^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/ }
+- Returns: 200 workflow.WorkflowResponse
+- Errors: 400 workflow.WorkflowError, 401 workflow.WorkflowError, 403 workflow.WorkflowError, 404 workflow.WorkflowError, 409 workflow.WorkflowError, 429 workflow.WorkflowError, 503 workflow.WorkflowError
+- Gate: gated: WORKFLOW_TOOLS_ENABLED, off by default, 404 when off. The workflow transport is mounted only when WORKFLOW_TOOLS_ENABLED is set on the server, and every call also needs a current workflow grant. Against a default deployment every workflow call fails by design.
+
+### workflow.tools.action.schedule
+
+POST /v1/workflow/tools (method workflow.action.schedule) — workflow.action.schedule [mutating] [idempotency: none] [gated: WORKFLOW_TOOLS_ENABLED, off by default, 404 when off]
+
+- Operation: workflow.action.schedule · tool `workflow_tools_action_schedule`
+- Auth: workflowCredential
+- Args: { request_id: string{36..36} /^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/, key: workflow.WorkflowRequestWorkflowActionScheduleParamsKey, policy: workflow.WorkflowRequestWorkflowActionScheduleParamsPolicy, series_id: string{36..36} /^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/, ordinal: integer[0..99] }
+- Returns: 200 workflow.WorkflowResponse
+- Errors: 400 workflow.WorkflowError, 401 workflow.WorkflowError, 403 workflow.WorkflowError, 404 workflow.WorkflowError, 409 workflow.WorkflowError, 429 workflow.WorkflowError, 503 workflow.WorkflowError (outcome unknown)
+- Gate: gated: WORKFLOW_TOOLS_ENABLED, off by default, 404 when off. The workflow transport is mounted only when WORKFLOW_TOOLS_ENABLED is set on the server, and every call also needs a current workflow grant. Against a default deployment every workflow call fails by design.
+- Preview: local (validates and renders the request, no network)
+
+### workflow.tools.action.send
+
+POST /v1/workflow/tools (method workflow.action.send) — workflow.action.send [irreversible] [idempotency: none] [gated: WORKFLOW_TOOLS_ENABLED, off by default, 404 when off]
+
+- Operation: workflow.action.send · tool `workflow_tools_action_send`
+- Auth: workflowCredential
+- Args: { request_id: string{36..36} /^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/, key: workflow.WorkflowRequestWorkflowActionSendParamsKey, occurrence_id?: string{36..36} /^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/ | null }
+- Returns: 200 workflow.WorkflowResponse
+- Errors: 400 workflow.WorkflowError, 401 workflow.WorkflowError, 403 workflow.WorkflowError, 404 workflow.WorkflowError, 409 workflow.WorkflowError, 429 workflow.WorkflowError, 503 workflow.WorkflowError (outcome unknown)
+- Gate: gated: WORKFLOW_TOOLS_ENABLED, off by default, 404 when off. The workflow transport is mounted only when WORKFLOW_TOOLS_ENABLED is set on the server, and every call also needs a current workflow grant. Against a default deployment every workflow call fails by design.
+- Preview: local (validates and renders the request, no network)
+- Confirmation: shows key.action_id; "Prepares dispatch metadata for an owner-confirmed sealed message. Schemas confer no authority; the grant does."
+
+### workflow.tools.action.cancel
+
+POST /v1/workflow/tools (method workflow.action.cancel) — workflow.action.cancel [mutating] [idempotency: none] [gated: WORKFLOW_TOOLS_ENABLED, off by default, 404 when off]
+
+- Operation: workflow.action.cancel · tool `workflow_tools_action_cancel`
+- Auth: workflowCredential
+- Args: { request_id: string{36..36} /^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/, key: workflow.WorkflowRequestWorkflowActionCancelParamsKey }
+- Returns: 200 workflow.WorkflowResponse
+- Errors: 400 workflow.WorkflowError, 401 workflow.WorkflowError, 403 workflow.WorkflowError, 404 workflow.WorkflowError, 409 workflow.WorkflowError, 429 workflow.WorkflowError, 503 workflow.WorkflowError (outcome unknown)
+- Gate: gated: WORKFLOW_TOOLS_ENABLED, off by default, 404 when off. The workflow transport is mounted only when WORKFLOW_TOOLS_ENABLED is set on the server, and every call also needs a current workflow grant. Against a default deployment every workflow call fails by design.
+- Preview: local (validates and renders the request, no network)
+
+## Macros
+
+Multi-step workflows the SDK runs as one call.
+
+- public.submitAlphaMessageAndAwait — Submit a synthetic-alpha message and wait for a terminal delivery state. [irreversible] (steps: call public.submitAlphaMessage, poll public.getAlphaMessageStatus)
+- public.bootstrapWebhookEndpoint — Create a webhook endpoint, enable it, and return the one-time secret. [mutating] (steps: call public.createWebhookEndpoint, call public.enableWebhookEndpoint)
+- public.listAllOwnerDevices — All enrolled devices across pages. [read_only] (steps: paginate public.listOwnerDevices)
+
+## Errors
+
+### public (envelope public.Error, code at `code`)
+
+| code | statuses | category | retryable | remediation |
+|---|---|---|---|---|
+| billing_pending | 503 |  |  |  |
+| conflict | 409 | CONFLICT | never |  |
+| endpoint_limit | 409 |  |  |  |
+| forbidden | 403 | AUTH_FAILED | never | CSRF pair or Origin missing or mismatched, or the key lacks the required scope bound to this device. |
+| invalid_request | 400 | VALIDATION_FAILED | never |  |
+| invalid_webhook_endpoint | 400 |  |  |  |
+| not_found | 404 | NOT_FOUND | never |  |
+| payment_hold | 402 |  |  |  |
+| queue_full | 429 |  |  |  |
+| quota_exceeded | 429 |  |  |  |
+| rate_limited | 429 | RATE_LIMITED | after_delay | Four body-carrying requests are already in flight for this account. Wait and retry. |
+| recipient_suppressed | 403 |  |  |  |
+| replay_limit | 409 |  |  |  |
+| replay_not_eligible | 409 |  |  |  |
+| unauthorized | 401 | AUTH_FAILED | never | Session cookie or bearer token missing, expired or revoked. Obtain a new credential; do not retry. |
+| unavailable | 503 | UPSTREAM_UNAVAILABLE | after_delay |  |
+
+### sealed (envelope sealed.Error, code at `code`)
+
+| code | statuses | category | retryable | remediation |
+|---|---|---|---|---|
+| billing_pending | 503 |  |  |  |
+| cancellation_conflict | 409 |  |  |  |
+| endpoint_limit | 409 |  |  |  |
+| event_id_conflict | 409 |  |  |  |
+| forbidden | 403 | AUTH_FAILED | never | CSRF pair or Origin missing or mismatched, or the key lacks the required scope bound to this device. |
+| future_manifest | 400 |  |  |  |
+| idempotency_conflict | 409 |  |  |  |
+| invalid_request | 400 | VALIDATION_FAILED | never |  |
+| invalid_webhook_endpoint | 400 |  |  |  |
+| not_found | 404 | NOT_FOUND | never |  |
+| queue_full | 429 |  |  |  |
+| quota_exceeded | 429 |  |  |  |
+| rate_limited | 429 | RATE_LIMITED | after_delay | Four body-carrying requests are already in flight for this account. Wait and retry. |
+| re_enrollment_required | 403 |  |  |  |
+| replay_limit | 409 |  |  |  |
+| replay_not_eligible | 409 |  |  |  |
+| sequence_conflict | 409 |  |  |  |
+| stale_event | 400 |  |  |  |
+| stale_manifest | 403 |  |  |  |
+| unauthorized | 401 | AUTH_FAILED | never | Session cookie or bearer token missing, expired or revoked. Obtain a new credential; do not retry. |
+| unavailable | 503 | UPSTREAM_UNAVAILABLE | after_delay |  |
+| unsupported_media_type | 415 |  |  |  |
+
+### workflow (envelope workflow.WorkflowError, code at `error.code`)
+
+| code | statuses | category | retryable | remediation |
+|---|---|---|---|---|
+| conflict |  | CONFLICT | never |  |
+| forbidden |  | AUTH_FAILED | never | CSRF pair or Origin missing or mismatched, or the key lacks the required scope bound to this device. |
+| invalid_request |  | VALIDATION_FAILED | never |  |
+| not_found |  | NOT_FOUND | never |  |
+| rate_limited |  | RATE_LIMITED | after_delay | Four body-carrying requests are already in flight for this account. Wait and retry. |
+| unauthorized |  | AUTH_FAILED | never | Session cookie or bearer token missing, expired or revoked. Obtain a new credential; do not retry. |
+| unavailable |  | UPSTREAM_UNAVAILABLE | after_delay |  |
+
+Ambiguous statuses: 408, 503. On a mutation they mean the outcome is unknown: do not retry with a new idempotency key; verify first.
+
+Runtime gates:
+
+- SEALED_ADMISSION_ENABLED: The sealed plane is mounted only when SEALED_ADMISSION_ENABLED is set on the server. Against a default deployment every sealed call fails by design.
+- SEALED_WEBHOOK_DELIVERY_ENABLED: This deployment answers 404 because SEALED_WEBHOOK_DELIVERY_ENABLED is off. This is a deployment setting, not a missing resource; do not retry with other IDs.
+- WORKFLOW_TOOLS_ENABLED: The workflow transport is mounted only when WORKFLOW_TOOLS_ENABLED is set on the server, and every call also needs a current workflow grant. Against a default deployment every workflow call fails by design.
+
+## Planned (not available)
+
+Documented by the API but not callable: no SDK method or tool exists for these operations, and calling their paths will fail.
+
+- GET /v1/messages — List messages with metadata filters (planned) (public.listMessages; not callable: excluded by include: x-implemented != true)
+- POST /v1/messages — Submit one outbound message (planned) (public.submitMessage; not callable: excluded by include: x-implemented != true)
+- GET /v1/messages/{message_id} — Get one message's metadata and event timeline (planned) (public.getMessage; not callable: excluded by include: x-implemented != true)
+- POST /v1/messages/{message_id}/cancel — Cancel one message before dispatch (planned) (public.cancelMessage; not callable: excluded by include: x-implemented != true)
+- GET /v1/devices — List the account's devices with health and capabilities (planned) (public.listDevices; not callable: excluded by include: x-implemented != true)
+- GET /v1/usage — Get the account's usage snapshot (planned) (public.getUsage; not callable: excluded by include: x-implemented != true)
+
+## Types
+
+- public.AlphaAccepted = { message_id: string<uuid>, created: boolean }
+  The alpha accept response as implemented by crates/server/src/http_messages.rs.
+- public.AlphaStatus = { message_id: string<uuid>, device_id: string<uuid>, state: public.MessageState, state_version: integer[0..], created_at_ms: integer[0..], updated_at_ms: integer[0..] }
+  The alpha status response as implemented by crates/server/src/http_messages.rs (StatusBody).
+- public.Error = { code: public.ErrorCode }
+  The error body emitted by the implemented routes that return JSON errors.
+- public.ErrorCode = "invalid_request" | "unauthorized" | "forbidden" | "not_found" | "conflict" | "rate_limited" | "queue_full" | "quota_exceeded" | "billing_pending" | "payment_hold" | "recipient_suppressed" | "invalid_webhook_endpoint" | "endpoint_limit" | "replay_not_eligible" | "replay_limit" | "unavailable"
+  Stable machine-readable reason code for the failure.
+- public.MessageState = "accepted" | "queued" | "claimed" | "submitting" | "submitted" | "delivered" | "delivery_unknown" | "unknown" | "failed" | "cancelled" | "expired"
+  The writer message state as serialized by zrotext_domain::MessageState (snake_case).
+- public.OwnerDevice = { device_id: string<uuid>, display_name: string, revoked: boolean, active_socket_lease: boolean, pending_messages: integer[0..1000], in_flight_messages: integer[0..1000], status_observed_at_ms: integer[0..], reported_preconditions: public.ReportedPreconditions | null }
+  One enrolled device row as implemented by crates/server/src/http_enrollment.
+- public.OwnerDevicePage = { devices: public.OwnerDevice[], next_cursor: string<uuid> | null }
+- public.OwnerMessageEvent = { evidence: string, resulting_state: string, received_at_ms: integer[0..], segment_index: integer | null, segment_count: integer | null }
+  One timeline event as implemented by crates/server/src/http_owner_messages.rs.
+- public.OwnerMessagePage = { messages: public.OwnerMessageView[], next_cursor: string<uuid> | null }
+- public.OwnerMessageView = { message_id: string<uuid>, device_id: string<uuid>, state: public.MessageState, created_at_ms: integer[0..], updated_at_ms: integer[0..], events: public.OwnerMessageEvent[], events_truncated: boolean }
+  One message row as implemented by crates/server/src/http_owner_messages.rs.
+- public.ReportedPreconditions = { selected_sim: string, sms_permission: string, airplane_mode: string, network_service: string | null, received_at_ms: integer[0..], fresh: boolean }
+  The device's latest reported Android preconditions snapshot as implemented by crates/server/src/enrollment.
+- public.WebhookAttemptView = { generation: integer[1..3], attempt_number: integer[1..7], started_at_ms: integer[0..], completed_at_ms: integer[0..] | null, outcome: string | null, http_status: integer | null }
+  One immutable delivery attempt as implemented by crates/server/src/http_webhooks.rs.
+- public.WebhookDeliveryPage = { deliveries: public.WebhookDeliveryView[], next_before: string<uuid> | null }
+- public.WebhookDeliveryView = { delivery_id: string<uuid>, event_id: string<uuid>, status: string, generation: integer[1..3], terminal_reason: string | null, attempt_count: integer[0..7], next_attempt_at_ms: integer[0..] | null, created_at_ms: integer[0..], updated_at_ms: integer[0..], attempts: public.WebhookAttemptView[] }
+  One delivery row with its attempts as implemented by crates/server/src/http_webhooks.rs.
+- public.WebhookEndpointList = { endpoints: public.WebhookEndpointView[] }
+- public.WebhookEndpointView = { endpoint_id: string<uuid>, callback_url: string, enabled: boolean, paused_at_ms: integer[0..] | null, failure_started_at_ms: integer[0..] | null, created_at_ms: integer[0..] }
+  One endpoint row as implemented by crates/server/src/http_webhooks.rs.
+- public.WebhookReplayAccepted = { delivery_id: string<uuid>, generation: integer[1..3], created: boolean }
+  The replay response as implemented by crates/server/src/http_webhooks.rs.
+- public.WebhookSecret = { endpoint_id: string<uuid>, callback_url: string, enabled: boolean, signing_secret_b64url: string{43..43} }
+  The create and rotate response as implemented by crates/server/src/http_webhooks.rs.
+- sealed.Error = { code: sealed.ErrorCode }
+  The existing error shape used by the message routes: a single machine-readable code and no content echo.
+- sealed.ErrorCode = "cancellation_conflict" | "invalid_request" | "invalid_webhook_endpoint" | "future_manifest" | "stale_event" | "unauthorized" | "forbidden" | "not_found" | "stale_manifest" | "re_enrollment_required" | "idempotency_conflict" | "event_id_conflict" | "sequence_conflict" | "endpoint_limit" | "replay_not_eligible" | "replay_limit" | "unsupported_media_type" | "rate_limited" | "queue_full" | "quota_exceeded" | "billing_pending" | "unavailable"
+  Lowercase snake_case machine code for the admission or resource failure; the response description defines the taxonomy.
+- sealed.SealedDevice = { device_id: string<uuid>, display_name: string, revoked: boolean, active_socket_lease: boolean, lines: sealed.SealedDeviceLine[] }
+  One enrolled device of the account and its sealed-purpose line bindings.
+- sealed.SealedDeviceLine = { line_id: string<uuid>, binding_generation: int64[1..], state: sealed.SealedDeviceLineState }
+  One sealed-purpose line binding of a device, from the device_line_bindings rows with purpose 'sealed'.
+- sealed.SealedDeviceLineState = "pending" | "active" | "revoked"
+  Binding state.
+- sealed.SealedDevicePage = { devices: sealed.SealedDevice[], next_cursor: string<uuid> | null }
+  One cursor page of the account's devices.
+- sealed.SealedEnvelopeBytes = bytes
+  One complete sealed envelope as raw binary bytes: the exact profile bytes including the fixed prefix, protected record, body ciphertext, recipient wraps and signature.
+- sealed.SealedInboundAccepted = { event_id: string<uuid>, created: boolean }
+  Acceptance metadata for a sealed inbound event.
+- sealed.SealedMessageMetadata = { message_id: string<uuid>, device_id: string<uuid>, state: sealed.SealedMessageMetadataState, state_version: integer[1..], created_at_ms: integer[0..], updated_at_ms: integer[0..], expires_at_ms: integer[0..] }
+  Stored delivery evidence, never inferred radio success.
+- sealed.SealedMessageMetadataState = "accepted" | "queued" | "claimed" | "submitting" | "submitted" | "delivered" | "delivery_unknown" | "unknown" | "failed" | "cancelled" | "expired"
+- sealed.SealedMessagePage = { messages: sealed.SealedMessageMetadata[], next_cursor: string<uuid> | null }
+- sealed.SealedOutboundAccepted = { message_id: string<uuid>, created: boolean }
+  Acceptance metadata for a sealed outbound envelope.
+- sealed.SealedUsage = { metric: "outbound_message", period_start: string<date>, period_end: string<date>, limit_units: int64[0..], reserved_units: int64[0..], refunded_units: int64[0..], used_units: int64[0..] }
+  One metering period from the durable usage core.
+- sealed.SealedUsagePage = { usage: sealed.SealedUsage[], next_before: string<date> | null }
+  One bounded page of the account's usage history, newest period first, read from the single authoritative metering core (#631).
+- sealed.SealedWebhookDelivery = { delivery_id: string<uuid>, event_id: string<uuid>, status: sealed.SealedWebhookDeliveryStatus, generation: int32[1..3], terminal_reason: sealed.SealedWebhookDeliveryTerminalReason | null, attempt_count: int32[0..7], next_attempt_at_ms?: int64[0..] | null, created_at_ms: int64[0..], updated_at_ms: int64[0..], attempts: sealed.SealedWebhookDeliveryAttempt[] }
+  Delivery metadata for one sealed event fan-out.
+- sealed.SealedWebhookDeliveryAttempt = { generation: int32[1..3], attempt_number: int32[1..7], started_at_ms: int64[0..], completed_at_ms?: int64[0..] | null, outcome?: sealed.SealedWebhookDeliveryAttemptOutcome | null, http_status?: int32 | null }
+  One completed or in-flight delivery attempt of the current or an earlier generation.
+- sealed.SealedWebhookDeliveryAttemptOutcome = "timeout" | "http_error" | "network_error" | "policy_rejected"
+  The transport outcome; null while in flight.
+- sealed.SealedWebhookDeliveryPage = { deliveries: sealed.SealedWebhookDelivery[], next_before: string<uuid> | null }
+  One page of delivery history, newest first by creation time then ID.
+- sealed.SealedWebhookDeliveryStatus = "pending" | "leased" | "succeeded" | "dead"
+  Delivery state.
+- sealed.SealedWebhookDeliveryTerminalReason = "failed" | "policy_rejected" | "retired" | "legacy"
+  Set exactly when status is dead; null otherwise.
+- sealed.SealedWebhookEndpoint = { endpoint_id: string<uuid>, callback_url: string, enabled: boolean, paused_at_ms: int64[0..] | null, failure_started_at_ms: int64[0..] | null, created_at_ms: int64[0..] }
+  One webhook endpoint of the account.
+- sealed.SealedWebhookEndpointList = { endpoints: sealed.SealedWebhookEndpoint[] }
+  All of the account's webhook endpoints, at most eight, ordered by creation.
+- sealed.SealedWebhookReplayAccepted = { delivery_id: string<uuid>, generation: int32[2..3], created: boolean }
+  Acceptance metadata for one bounded replay request.
+- sealed.SealedWebhookSecret = { endpoint_id: string<uuid>, callback_url: string, enabled: boolean, signing_secret_b64url: string }
+  Create/rotate response exposing the signing secret exactly once per generated secret.
+- workflow.WorkflowError = { error: workflow.WorkflowErrorError }
+- workflow.WorkflowErrorError = { code: workflow.WorkflowErrorErrorCode }
+- workflow.WorkflowErrorErrorCode = "invalid_request" | "unauthorized" | "forbidden" | "not_found" | "conflict" | "rate_limited" | "unavailable"
+- workflow.WorkflowReadiness = { available: true, methods: workflow.WorkflowReadinessMethodsItem[], scope: workflow.WorkflowReadinessScope, send_semantics: "owner_bound_prepared_only" }
+- workflow.WorkflowReadinessMethodsItem = { method: workflow.WorkflowReadinessMethodsItemMethod, operation: workflow.WorkflowReadinessMethodsItemOperation, read_only_hint: boolean, destructive_hint: boolean, idempotent_hint: true, implementation: "library_candidate", transport_mounted: true, permission_granted: boolean }
+- workflow.WorkflowReadinessMethodsItemMethod = "workflow.contact.read" | "workflow.context.metadata" | "workflow.context.content" | "workflow.action.propose" | "workflow.action.status" | "workflow.action.schedule" | "workflow.action.send" | "workflow.action.cancel"
+- workflow.WorkflowReadinessMethodsItemOperation = "contact_read" | "context_metadata" | "context_content" | "propose" | "status" | "schedule" | "send"
+- workflow.WorkflowReadinessScope = { context_id: string{36..36} /^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/, device_id: string{36..36} /^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/, line_id: string{36..36} /^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/ }
+- workflow.WorkflowRequestWorkflowActionCancelParamsKey = { account_id: string{36..36} /^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/, action_id: string{36..36} /^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/, revision: integer[1..128], binding_digest: string{64..64} /^[0-9a-f]{64}$/ }
+- workflow.WorkflowRequestWorkflowActionProposeParamsDescriptor = { account_id: string{36..36} /^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/, action_id: string{36..36} /^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/, revision: integer[1..128], line_id: string{36..36} /^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/, recipient_id: string{36..36} /^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/, purpose_id: string{36..36} /^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/, content_ref: string{36..36} /^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/, content_digest: string{64..64} /^[0-9a-f]{64}$/, content_version: integer[1..9007199254740991], not_before: integer[0..9007199254740991], expires_at: integer[1..9007199254740991], timezone: string{1..128}, window_id: string{1..128}, routine_id: string{36..36} /^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/, authority_generation: integer[1..9007199254740991], commitment: workflow.WorkflowRequestWorkflowActionProposeParamsDescriptorCommitment }
+- workflow.WorkflowRequestWorkflowActionProposeParamsDescriptorCommitment = "informational" | "sensitive"
+- workflow.WorkflowRequestWorkflowActionScheduleParamsKey = { account_id: string{36..36} /^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/, action_id: string{36..36} /^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/, revision: integer[1..128], binding_digest: string{64..64} /^[0-9a-f]{64}$/ }
+- workflow.WorkflowRequestWorkflowActionScheduleParamsPolicy = { timezone: string{1..128} /^[!-~]+$/ | null, first_local_date: string{10..10} /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/, opens_minute: integer[0..1439], closes_minute: integer[0..1439], repeat_every_days: integer[1..365] | null, max_occurrences: integer[1..100], pacing_seconds: integer[60..86400] }
+- workflow.WorkflowRequestWorkflowActionSendParamsKey = { account_id: string{36..36} /^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/, action_id: string{36..36} /^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/, revision: integer[1..128], binding_digest: string{64..64} /^[0-9a-f]{64}$/ }
+- workflow.WorkflowResponse = workflow.WorkflowResponseVariant1 | workflow.WorkflowResponseVariant2 | workflow.WorkflowResponseVariant3 | workflow.WorkflowResponseVariant4 | workflow.WorkflowResponseVariant5 | workflow.WorkflowResponseVariant6 | workflow.WorkflowResponseVariant7 | workflow.WorkflowResponseVariant8
+- workflow.WorkflowResponseVariant1 = { kind: "contact", result: workflow.WorkflowResponseVariant1Result }
+- workflow.WorkflowResponseVariant1Result = { contact_id: string{36..36} /^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/, purpose: workflow.WorkflowResponseVariant1ResultPurpose, peer_digest: string{64..64} /^[0-9a-f]{64}$/ }
+- workflow.WorkflowResponseVariant1ResultPurpose = "transactional" | "operational" | "marketing"
+- workflow.WorkflowResponseVariant2 = { kind: "context_metadata", result: workflow.WorkflowResponseVariant2Result }
+- workflow.WorkflowResponseVariant2Result = { context_id: string{36..36} /^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/, source_content_digest: string{64..64} /^[0-9a-f]{64}$/, revision: integer[1..9007199254740991], kind: integer[0..255], expires_at_ms: integer[1..9007199254740991], binding_generation: integer[1..9007199254740991], trust_generation: integer[1..9007199254740991], manifest_version: integer[1..9007199254740991] }
+- workflow.WorkflowResponseVariant3 = { kind: "context_content", result: workflow.WorkflowResponseVariant3Result }
+- workflow.WorkflowResponseVariant3Result = { context_id: string{36..36} /^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/, revision: integer[1..9007199254740991], envelope_base64url: string{1..131072} /^[A-Za-z0-9_-]+$/ }
+- workflow.WorkflowResponseVariant4 = { kind: "action", result: workflow.WorkflowResponseVariant4Result }
+- workflow.WorkflowResponseVariant4Result = { key: workflow.WorkflowResponseVariant4ResultKey, record_version: integer[1..9007199254740991], phase: workflow.WorkflowResponseVariant4ResultPhase }
+- workflow.WorkflowResponseVariant4ResultKey = { account_id: string{36..36} /^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/, action_id: string{36..36} /^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/, revision: integer[1..128], binding_digest: string{64..64} /^[0-9a-f]{64}$/ }
+- workflow.WorkflowResponseVariant4ResultPhase = "proposed" | "approved" | "invalidated" | "cancelled" | "expired" | "dispatching" | "unknown" | "succeeded" | "failed"
+- workflow.WorkflowResponseVariant5 = { kind: "action", result: workflow.WorkflowResponseVariant5Result }
+- workflow.WorkflowResponseVariant5Result = { key: workflow.WorkflowResponseVariant5ResultKey, record_version: integer[1..9007199254740991], phase: workflow.WorkflowResponseVariant5ResultPhase, delivery: workflow.WorkflowResponseVariant5ResultDelivery }
+- workflow.WorkflowResponseVariant5ResultDelivery = workflow.WorkflowResponseVariant5ResultDeliveryVariant2 | workflow.WorkflowResponseVariant5ResultDeliveryVariant1
+- workflow.WorkflowResponseVariant5ResultDeliveryVariant1 = { availability: workflow.WorkflowResponseVariant5ResultDeliveryVariant1Availability }
+- workflow.WorkflowResponseVariant5ResultDeliveryVariant1Availability = "not_bound" | "unavailable"
+- workflow.WorkflowResponseVariant5ResultDeliveryVariant2 = { availability: "available", message_id: string{36..36} /^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/, dispatch_id: string{36..36} /^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/, state: workflow.WorkflowResponseVariant5ResultDeliveryVariant2State, state_version: integer[1..9007199254740991], accepted_at_ms: integer[0..9007199254740991], updated_at_ms: integer[0..9007199254740991] }
+- workflow.WorkflowResponseVariant5ResultDeliveryVariant2State = "accepted" | "queued" | "claimed" | "submitting" | "submitted" | "delivered" | "delivery_unknown" | "unknown" | "failed" | "cancelled" | "expired"
+- workflow.WorkflowResponseVariant5ResultKey = { account_id: string{36..36} /^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/, action_id: string{36..36} /^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/, revision: integer[1..128], binding_digest: string{64..64} /^[0-9a-f]{64}$/ }
+- workflow.WorkflowResponseVariant5ResultPhase = "proposed" | "approved" | "invalidated" | "cancelled" | "expired" | "dispatching" | "unknown" | "succeeded" | "failed"
+- workflow.WorkflowResponseVariant6 = { kind: "occurrence", result: workflow.WorkflowResponseVariant6Result }
+- workflow.WorkflowResponseVariant6Result = { occurrence_id: string{36..36} /^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/, series_id: string{36..36} /^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/, ordinal: integer[0..99], phase: workflow.WorkflowResponseVariant6ResultPhase, opens_at_ms: integer[0..9007199254740991] | null, closes_at_ms: integer[0..9007199254740991] | null, expires_at_ms: integer[1..9007199254740991] }
+- workflow.WorkflowResponseVariant6ResultPhase = "owner_review" | "waiting_window" | "waiting_renderer" | "waiting_phone" | "claimed" | "dispatching" | "unknown" | "cancelled" | "expired" | "missed_window" | "completed" | "failed"
+- workflow.WorkflowResponseVariant7 = { kind: "send", result: workflow.WorkflowResponseVariant7Result }
+- workflow.WorkflowResponseVariant7Result = workflow.WorkflowResponseVariant7ResultVariant2 | workflow.WorkflowResponseVariant7ResultVariant1
+- workflow.WorkflowResponseVariant7ResultVariant1 = { state: workflow.WorkflowResponseVariant7ResultVariant1State }
+- workflow.WorkflowResponseVariant7ResultVariant1State = "waiting_owner_binding" | "waiting_window" | "waiting_phone"
+- workflow.WorkflowResponseVariant7ResultVariant2 = { state: "prepared", message_id: string{36..36} /^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/, dispatch_id: string{36..36} /^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/ }
+- workflow.WorkflowResponseVariant8 = { kind: "cancel", result: workflow.WorkflowResponseVariant8Result }
+- workflow.WorkflowResponseVariant8Result = { key: workflow.WorkflowResponseVariant8ResultKey, message_id: string{36..36} /^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/, state: "cancelled" }
+- workflow.WorkflowResponseVariant8ResultKey = { account_id: string{36..36} /^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/, action_id: string{36..36} /^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/, revision: integer[1..128], binding_digest: string{64..64} /^[0-9a-f]{64}$/ }
+
+<!-- Generated by tungsten 0.1.0. Do not edit. Inputs: ../../../zrotext-src/protocol/v1/openapi/public-v1.json db91e52ba666, ../../../zrotext-src/protocol/v1/openapi/sealed-v1.json bbd09556c0e3, ../../../zrotext-src/protocol/v1/openapi/workflow-tools-v1.json 89969164aa13, agent.yml 607fd22b5d0d, tungsten.yml eaee9d9268c2 -->

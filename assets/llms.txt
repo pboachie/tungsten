@@ -1,0 +1,123 @@
+# ZROtext
+
+> Open-source Android SMS gateway. Three API planes: the public owner and alpha routes, the default-off sealed plane, and the authorized workflow tools. Planned routes are documented but not callable.
+
+API version 1.0.0 · base URL http://127.0.0.1:8080 · 3 namespaces · 38 callable operations (25 gated) · 6 planned · 3 macros
+
+Auth: bearerAuth (bearer token, from $ZROTEXT_API_KEY) · ownerCsrf (API key in header x-zrotext-csrf) · ownerSession (API key in cookie __Host-zrotext_session) · workflowCredential (bearer token, must start with ztw_, from $ZROTEXT_WORKFLOW_TOKEN).
+Auth profiles: ownerSession = cookie __Host-zrotext_session, cookie __Host-zrotext_csrf, header x-zrotext-csrf (equals cookie __Host-zrotext_csrf), header Origin (from config origin, mutations only); satisfies ownerSession + ownerCsrf.
+
+## public: ZROtext public HTTP API v1 (current server contract)
+
+### webhooks
+
+- GET /v1/webhooks — List this account's webhook endpoints [read_only] [idempotency: none]
+- POST /v1/webhooks — Create one disabled webhook endpoint [mutating] [idempotency: none]
+- POST /v1/webhooks/{endpoint_id}/enable — Enable future inbound fan-out to one endpoint [mutating] [idempotency: none]
+- POST /v1/webhooks/{endpoint_id}/disable — Disable an endpoint and permanently retire its pending deliveries [destructive] [idempotency: none]
+- POST /v1/webhooks/{endpoint_id}/rotate — Rotate the signing secret, disabling the endpoint and retiring its deliveries [destructive] [idempotency: none]
+- POST /v1/webhooks/{endpoint_id}/sealed-events — Select or disable future opaque sealed-event transfer for one endpoint [mutating] [idempotency: none] [gated: SEALED_WEBHOOK_DELIVERY_ENABLED, off by default, 404 when off]
+
+### webhooks.deliveries
+
+- GET /v1/webhooks/{endpoint_id}/deliveries — Page delivery history for one webhook endpoint [read_only] [idempotency: none]
+- POST /v1/webhooks/{endpoint_id}/deliveries/{delivery_id}/replay — Queue one bounded replay generation of an exhausted failed delivery [mutating] [idempotency: caller_owned, header Idempotency-Key, uuid_v4, key required]
+
+### owner_messages
+
+- GET /v1/owner/messages — Page the account's message timeline (writer metadata only) [read_only] [idempotency: none]
+
+### alpha_messages
+
+- POST /v1/alpha/messages — Submit one synthetic-alpha test message [irreversible] [idempotency: caller_owned, header Idempotency-Key, uuid_v4, key required]
+- GET /v1/alpha/messages/{message_id} — Get one message's current writer state [read_only] [idempotency: none]
+- POST /v1/alpha/messages/{message_id}/cancel — Cancel one message before dispatch [mutating] [idempotency: none]
+
+### devices
+
+- GET /v1/enrollment/devices — Page the account's enrolled devices [read_only] [idempotency: none]
+- DELETE /v1/enrollment/devices/{device_id} — Revoke one enrolled device [destructive] [idempotency: none]
+
+## sealed: ZROtext sealed API v1 (proposed contract)
+
+### messages
+
+- GET /v1/sealed/messages — listSealedMessages [read_only] [idempotency: none] [gated: SEALED_ADMISSION_ENABLED, off by default, 404 when off]
+- POST /v1/sealed/messages — Submit one sealed outbound envelope for device dispatch [irreversible] [idempotency: content_identity] [gated: SEALED_ADMISSION_ENABLED, off by default, 404 when off]
+- GET /v1/sealed/messages/{message_id} — getSealedMessage [read_only] [idempotency: none] [gated: SEALED_ADMISSION_ENABLED, off by default, 404 when off]
+- POST /v1/sealed/messages/{message_id}/cancel — cancelSealedMessage [mutating] [idempotency: none] [gated: SEALED_ADMISSION_ENABLED, off by default, 404 when off]
+
+### inbound_events
+
+- POST /v1/sealed/inbound-events — Upload one sealed inbound event captured by a device [mutating] [idempotency: content_identity] [gated: SEALED_ADMISSION_ENABLED, off by default, 404 when off]
+
+### devices
+
+- GET /v1/sealed/devices — List the account's enrolled devices with their sealed line bindings [read_only] [idempotency: none] [gated: SEALED_ADMISSION_ENABLED, off by default, 404 when off]
+- GET /v1/sealed/devices/{device_id} — Get one enrolled device with its sealed line bindings [read_only] [idempotency: none] [gated: SEALED_ADMISSION_ENABLED, off by default, 404 when off]
+
+### webhooks
+
+- GET /v1/sealed/webhooks — List this account's webhook endpoints [read_only] [idempotency: none] [gated: SEALED_ADMISSION_ENABLED, off by default, 404 when off]
+- POST /v1/sealed/webhooks — Create one disabled webhook endpoint for sealed event fanout [mutating] [idempotency: none] [gated: SEALED_ADMISSION_ENABLED, off by default, 404 when off]
+- POST /v1/sealed/webhooks/{endpoint_id}/enable — Enable future sealed event fanout to one endpoint [mutating] [idempotency: none] [gated: SEALED_ADMISSION_ENABLED, off by default, 404 when off]
+- POST /v1/sealed/webhooks/{endpoint_id}/disable — Disable an endpoint and permanently retire its pending deliveries [destructive] [idempotency: none] [gated: SEALED_ADMISSION_ENABLED, off by default, 404 when off]
+- POST /v1/sealed/webhooks/{endpoint_id}/rotate — Rotate the signing secret, disabling the endpoint and retiring its deliveries [destructive] [idempotency: none] [gated: SEALED_ADMISSION_ENABLED, off by default, 404 when off]
+
+### webhooks.deliveries
+
+- GET /v1/sealed/webhooks/{endpoint_id}/deliveries — Page delivery history for one webhook endpoint [read_only] [idempotency: none] [gated: SEALED_ADMISSION_ENABLED, off by default, 404 when off]
+- POST /v1/sealed/webhooks/{endpoint_id}/deliveries/{delivery_id}/replay — Queue one bounded replay generation of an exhausted failed delivery [mutating] [idempotency: caller_owned, header Idempotency-Key, uuid_v4, key required] [gated: SEALED_ADMISSION_ENABLED, off by default, 404 when off]
+
+### usage
+
+- GET /v1/sealed/usage — List bounded usage history pages [read_only] [idempotency: none] [gated: SEALED_ADMISSION_ENABLED, off by default, 404 when off]
+
+## workflow: ZROtext authorized workflow tools
+
+### tools
+
+- GET /v1/workflow/tools — workflow.workflowReadiness [read_only] [idempotency: none] [gated: WORKFLOW_TOOLS_ENABLED, off by default, 404 when off]
+
+### tools.contact
+
+- POST /v1/workflow/tools (method workflow.contact.read) — workflow.contact.read [read_only] [idempotency: none] [gated: WORKFLOW_TOOLS_ENABLED, off by default, 404 when off]
+
+### tools.context
+
+- POST /v1/workflow/tools (method workflow.context.metadata) — workflow.context.metadata [read_only] [idempotency: none] [gated: WORKFLOW_TOOLS_ENABLED, off by default, 404 when off]
+- POST /v1/workflow/tools (method workflow.context.content) — workflow.context.content [read_only] [idempotency: none] [gated: WORKFLOW_TOOLS_ENABLED, off by default, 404 when off]
+
+### tools.action
+
+- POST /v1/workflow/tools (method workflow.action.propose) — workflow.action.propose [mutating] [idempotency: none] [gated: WORKFLOW_TOOLS_ENABLED, off by default, 404 when off]
+- POST /v1/workflow/tools (method workflow.action.status) — workflow.action.status [read_only] [idempotency: none] [gated: WORKFLOW_TOOLS_ENABLED, off by default, 404 when off]
+- POST /v1/workflow/tools (method workflow.action.schedule) — workflow.action.schedule [mutating] [idempotency: none] [gated: WORKFLOW_TOOLS_ENABLED, off by default, 404 when off]
+- POST /v1/workflow/tools (method workflow.action.send) — workflow.action.send [irreversible] [idempotency: none] [gated: WORKFLOW_TOOLS_ENABLED, off by default, 404 when off]
+- POST /v1/workflow/tools (method workflow.action.cancel) — workflow.action.cancel [mutating] [idempotency: none] [gated: WORKFLOW_TOOLS_ENABLED, off by default, 404 when off]
+
+## Macros
+
+Multi-step workflows the SDK runs as one call.
+
+- public.submitAlphaMessageAndAwait — Submit a synthetic-alpha message and wait for a terminal delivery state. [irreversible] (steps: call public.submitAlphaMessage, poll public.getAlphaMessageStatus)
+- public.bootstrapWebhookEndpoint — Create a webhook endpoint, enable it, and return the one-time secret. [mutating] (steps: call public.createWebhookEndpoint, call public.enableWebhookEndpoint)
+- public.listAllOwnerDevices — All enrolled devices across pages. [read_only] (steps: paginate public.listOwnerDevices)
+
+## Planned (not available)
+
+Documented by the API but not callable: no SDK method or tool exists for these operations, and calling their paths will fail.
+
+- GET /v1/messages — List messages with metadata filters (planned) (public.listMessages)
+- POST /v1/messages — Submit one outbound message (planned) (public.submitMessage)
+- GET /v1/messages/{message_id} — Get one message's metadata and event timeline (planned) (public.getMessage)
+- POST /v1/messages/{message_id}/cancel — Cancel one message before dispatch (planned) (public.cancelMessage)
+- GET /v1/devices — List the account's devices with health and capabilities (planned) (public.listDevices)
+- GET /v1/usage — Get the account's usage snapshot (planned) (public.getUsage)
+
+## Optional
+
+- [Full reference](llms-full.txt): arguments, responses, errors, remediation and types of every operation.
+- [Tool manifest](tools.json): one function-calling tool per callable operation.
+
+<!-- Generated by tungsten 0.1.0. Do not edit. Inputs: ../../../zrotext-src/protocol/v1/openapi/public-v1.json db91e52ba666, ../../../zrotext-src/protocol/v1/openapi/sealed-v1.json bbd09556c0e3, ../../../zrotext-src/protocol/v1/openapi/workflow-tools-v1.json 89969164aa13, agent.yml 607fd22b5d0d, tungsten.yml eaee9d9268c2 -->

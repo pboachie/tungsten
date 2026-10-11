@@ -1,0 +1,405 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>MCP server guide - tungsten</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="Documentation for tungsten, the agent-native SDK generator and MCP compiler">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon.svg">
+        <link rel="shortcut icon" href="favicon.png">
+        <link rel="stylesheet" href="css/variables.css">
+        <link rel="stylesheet" href="css/general.css">
+        <link rel="stylesheet" href="css/chrome.css">
+        <link rel="stylesheet" href="css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="highlight-css" href="highlight.css">
+        <link rel="stylesheet" id="tomorrow-night-css" href="tomorrow-night.css">
+        <link rel="stylesheet" id="ayu-highlight-css" href="ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "";
+            const default_light_theme = "light";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "searchindex.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="toc.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+            </noscript>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">tungsten</h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/pboachie/tungsten" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <i class="fa fa-spinner fa-spin"></i>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="mcp-server-guide"><a class="header" href="#mcp-server-guide">MCP server guide</a></h1>
+<p><code>tungsten generate</code> with an <code>mcp</code> target writes an MCP server that calls the API through the generated TypeScript SDK, so it inherits the same safety rules. This page covers how the tool surface is chosen, what the meta-tools do, and what a generated server's README says.</p>
+<h2 id="how-the-tool-surface-is-chosen"><a class="header" href="#how-the-tool-surface-is-chosen">How the tool surface is chosen</a></h2>
+<p>Below <code>disclosure.threshold</code> tools (default 24) the MCP server exposes
+discrete tools. Above it, it exposes <code>search_tools</code>, <code>describe_tool</code>,
+<code>invoke</code> and the per-cluster index. The index is a keyword index built at
+compile time (BM25 over names, summaries, parameter names, tags). Embedding
+indexes are an optional plugin because they would make the MCP server depend
+on a model download.</p>
+<p>As built: embedding index plugin. Off by default, no model shipped, nothing
+in the manifest changes. <code>targets.mcp.search.embeddings</code> in <code>tungsten.yml</code>
+names a provider; when <code>tungsten generate</code> writes the target it sends one
+document per tool (the terms of its BM25 document, in order, joined by
+spaces: name words, summary, parameter names, resources, tags, cluster) to
+that provider in batches and writes two files next to <code>manifest.json</code>:
+<code>index.embeddings.bin</code> (<code>count x dimensions</code> little-endian <code>f32</code>, row-major,
+tool order, each vector L2-normalized, so cosine is a dot product) and
+<code>index.embeddings.json</code> (a header: <code>format</code> 1, <code>model</code>, <code>dimensions</code>,
+<code>count</code>, <code>encoding</code>, <code>normalized</code>, the BLAKE3 <code>checksum</code> of the <code>.bin</code> file
+and <code>docs</code>, the tool name and content hash of each document). Providers:
+<code>command</code> (a command line run from the directory of <code>tungsten.yml</code>: one JSON
+request on standard input, <code>{"embeddings": [[...], ...]}</code> on standard
+output) and <code>http</code> (the common <code>/embeddings</code> shape: <code>POST</code> of <code>{model, input, dimensions?, encoding_format}</code>, answer <code>{data: [{index, embedding}]}</code>, <code>Authorization: Bearer</code> from the environment variable named
+by <code>api_key_env</code>; the key is never written anywhere). The compiler links no
+TLS stack, so its <code>http</code> provider is plain <code>http://</code> only (a local gateway,
+or a <code>command</code> that runs <code>curl</code>); the server's own query embedder has no such
+limit. Vectors are cached by content hash in the previous run's files, so
+unchanged tools are not embedded again and a model or dimension change
+invalidates the cache; the provider is called only by a write (<code>generate</code>),
+never by <code>--check</code>, <code>--dry-run</code>, <code>diff</code> or <code>report</code>, which build the files
+from the cache alone (and leave them out, so <code>--check</code> reports them stale,
+when it does not cover every tool). A provider failure never breaks
+generation: it is a warning (TG0571 cannot run or too slow, TG0572 invalid
+answer, TG0573 refused, no key or https), the stale index is removed and the
+server searches with BM25; <code>required: true</code> makes the same problems errors.
+A bad <code>search.embeddings</code> is TG0570; TG0574 reports what was written.</p>
+<h2 id="tools-and-behaviour"><a class="header" href="#tools-and-behaviour">Tools and behaviour</a></h2>
+<p>Stdio transport by default, Streamable HTTP optional. Protocol versions
+negotiated as the SDK of the day supports.</p>
+<p>Discrete mode (operation count ≤ threshold): one tool per operation and per
+macro, name <code>&lt;namespace&gt;_&lt;resource&gt;_&lt;op&gt;</code> (Acme: <code>public_webhooks_list</code>),
+compact description, input schema from the IR with pruning, <code>outputSchema</code>,
+annotations from the safety tier.</p>
+<p><code>outputSchema</code> is bounded (fix/mcp-output-closure). A response type's
+transitive <code>$defs</code> closure is the whole API on specs with cyclic, densely
+connected response graphs (Stripe: every <code>expandable</code> field is
+<code>anyOf [string, Resource]</code>; one tool's closure was ~860 definitions and 1 MB,
+the discrete listing ~29M tokens). The rule, in <code>tungsten-emit-mcp</code>
+<code>manifest::bound_closure</code>: a <code>$ref</code> more than <code>OUTPUT_HOPS</code> (1) reference hops
+from the response body is replaced by <code>{}</code> (any value, so the real
+<code>structuredContent</code> still validates), then the unreachable <code>$defs</code> are
+dropped; hoisted <code>shared_*</code> scalars never count as a hop. When the result is
+still over <code>OUTPUT_BUDGET_FACTOR</code> (4) times <code>defaults.disclosure. schema_budget_tokens</code>, every reference is <code>{}</code> (0 hops). A tool still over that
+budget is TG0727. TG0721 keeps counting description plus input only
+(<code>schemaTokens</code> is that figure in the manifest). The runtime needs no change:
+<code>advertisedOutputSchema</code> passes <code>$defs</code> and the body through.</p>
+<p>Progressive mode:</p>
+<div class="table-wrapper"><table><thead><tr><th>Tool</th><th>Purpose</th></tr></thead><tbody>
+<tr><td><code>describe_tool(name)</code></td><td>Full input/output schema, remediation table, example call</td></tr>
+<tr><td><code>invoke(name, args, options?)</code></td><td>Executes through the SDK; returns body or envelope; <code>options.confirmation_token</code> for destructive/irreversible</td></tr>
+<tr><td><code>preview(name, args)</code></td><td>Runs the preview mode; returns summary and <code>confirmation_token</code></td></tr>
+<tr><td><code>list_clusters()</code></td><td>The manifest's clusters with counts</td></tr>
+<tr><td><code>run_script(code)</code></td><td>Optional sandbox</td></tr>
+</tbody></table>
+</div>
+<p>Behaviors:</p>
+<ul>
+<li>Results carry <code>structuredContent</code> and a text rendering; errors are the
+envelope, never thrown as protocol errors, so the model sees remediation.</li>
+<li>Sensitive fields (<code>sensitive_response_fields</code>) are returned once and
+replaced with <code>"&lt;redacted after first read&gt;"</code> on repeated identical calls
+within the session.</li>
+<li>Confirmation tokens are HMAC over <code>(session, tool, args digest)</code> with a
+short TTL; the server never accepts a token for different arguments.</li>
+<li><code>shown_once</code> responses are flagged in the text rendering: "Store this
+secret now; it will not be shown again."</li>
+</ul>
+<h3 id="details"><a class="header" href="#details">Details</a></h3>
+<p>The emitter is <code>tungsten-emit-mcp</code> (target <code>mcp</code>); it writes an
+<code>McpManifest</code> (<code>manifest.json</code>, the contract in
+the compiler) and a small server package on top of the
+generated TypeScript SDK; all behaviour lives in <code>@elysra/tungsten-mcp</code>.</p>
+<ul>
+<li><code>src/server.ts</code> reads the manifest with <code>loadManifest(new URL("../manifest.json", import.meta.url))</code>, builds one <code>ClientCore</code> per
+MCP session from the environment (one variable per credential, the base
+URL, <code>&lt;API&gt;_MCP_MODE</code>) and starts with <code>serve(server, parseServeArgs(argv))</code>: stdio by default, Streamable HTTP with <code>--http &lt;port&gt; [--host &lt;host&gt;]</code> (the URL is written to stderr; SIGINT and
+SIGTERM close every session). The command line selects the transport
+only; credentials never come from arguments.</li>
+<li><code>invoke</code> and <code>preview</code> take <code>{name, arguments}</code> (discrete <code>preview</code>
+takes <code>{tool, arguments}</code>); the reserved input fields
+<code>idempotency_key</code> and <code>confirmation_token</code> (prefixed <code>_</code> when an
+argument has that name) are taken out before the SDK call.</li>
+<li>The manifest carries <code>instructionsByMode</code> (additive): the runtime sends
+the instructions of the mode in effect, so a server whose mode is
+overridden does not describe the other mode's tools.</li>
+<li>Descriptions name the fields a tool returns once (<code>returns signing_secret_b64url once</code>), so a client that has no output schema
+(a discrete macro, a search result) knows which value to store.</li>
+<li>Macro previews: the text rendering lists every step (<code>N. &lt;kind&gt; &lt;operation&gt; (&lt;tier&gt;, result as &lt;as&gt;): &lt;method&gt; &lt;url&gt; with body ...</code>,
+then its effects) with the <code>&lt;from step NAME: path&gt;</code> placeholders;
+<code>structuredContent</code> is the <code>PreviewResult</code> with its <code>steps</code>.</li>
+<li>Envelopes stay the runtime's; when their <code>remediation</code> or
+<code>next_action</code> names SDK operations, the text adds how this server calls
+them (<code>Here public.listWebhookEndpoints is called as invoke({"name": "public_webhooks_list", ...})</code>).</li>
+<li>Token budgets count what the runtime serves: <code>tungsten_emit_mcp:: tools_list</code> renders <code>tools/list</code> of either mode exactly as <code>@elysra/tungsten-mcp</code>
+does (the advertised output schemas with the envelope branch, the
+redaction markers and the verification result; the <code>preview</code> meta tool;
+the cluster enum), and <code>listing_tokens</code> adds that mode's instructions.
+TG0722, the README table and <code>tungsten report</code> use it; the MCP gate
+(<code>mcp-gate/listing.mjs</code>) checks that the built runtime serves the
+rendering byte for byte for the gate cases in both modes.</li>
+</ul>
+<h2 id="the-script-sandbox"><a class="header" href="#the-script-sandbox">The script sandbox</a></h2>
+<p><code>run_script</code> executes agent-written TypeScript against the generated SDK.
+<code>node:vm</code> is not a security boundary, so the default implementation spawns a
+Deno subprocess with <code>--allow-net=&lt;api host&gt;</code> only, a wall-clock limit and a
+memory limit, and is disabled unless <code>deno</code> is on <code>PATH</code> and
+<code>mcp.sandbox.enabled: true</code>. A WASM-based isolate is a later option.</p>
+<h2 id="a-generated-servers-readme"><a class="header" href="#a-generated-servers-readme">A generated server's README</a></h2>
+<p>This is the README that tungsten writes next to a generated server (here for a three-operation example API).</p>
+<h3 id="openapi-mcp"><a class="header" href="#openapi-mcp">openapi-mcp</a></h3>
+<p>MCP server for the openapi API, generated by tungsten. It serves 3 tools (3 operations, 0 macros) over stdio through <code>@elysra/tungsten-mcp</code>, calling the API with the generated SDK <code>openapi-sdk</code>.</p>
+<h4 id="run"><a class="header" href="#run">Run</a></h4>
+<pre><code class="language-sh">npm install
+npm run build
+node dist/server.js    # or `openapi-mcp` once installed
+</code></pre>
+<p>The server speaks MCP over stdio by default. <code>node dist/server.js --http 3000</code> serves Streamable HTTP at <code>http://127.0.0.1:3000/mcp</code> instead (one session, with its own confirmation tokens, per <code>Mcp-Session-Id</code>; <code>--host &lt;host&gt;</code> binds another interface, <code>--help</code> lists the flags).</p>
+<p>Client configuration (the <code>mcpServers</code> entry of Claude Desktop, Claude Code and other MCP clients):</p>
+<pre><code class="language-json">{
+  "mcpServers": {
+    "openapi": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "openapi-mcp"
+      ],
+      "env": {
+        "OPENAPI_BASE_URL": "..."
+      }
+    }
+  }
+}
+</code></pre>
+<p>For a local build use <code>"command": "node"</code> with the absolute path of <code>dist/server.js</code> as the argument.</p>
+<h4 id="environment"><a class="header" href="#environment">Environment</a></h4>
+<p>Credentials are read from the environment only, never from arguments; <code>.env.example</code> lists every variable. Set only those of the schemes your operations need.</p>
+<div class="table-wrapper"><table><thead><tr><th>Variable</th><th>Meaning</th></tr></thead><tbody>
+<tr><td><code>OPENAPI_BASE_URL</code></td><td>Base URL of the API (default <code>http://petstore.swagger.io/v1</code>).</td></tr>
+<tr><td><code>OPENAPI_MCP_MODE</code></td><td><code>discrete</code> or <code>progressive</code>: overrides the generated disclosure mode.</td></tr>
+</tbody></table>
+</div>
+<h4 id="modes"><a class="header" href="#modes">Modes</a></h4>
+<p>This server starts in <strong>discrete</strong> mode (3 tools, list budget 10000 tokens; agent.yml <code>defaults.disclosure</code>: <code>auto</code> is progressive when the discrete tool list is over the budget).</p>
+<ul>
+<li><code>discrete</code>: one MCP tool per operation and macro, with input and output schemas and annotations from the safety tier.</li>
+<li><code>progressive</code>: a few tools instead of the whole list. <code>search_tools(query, cluster?, limit?)</code> searches a BM25 index built at generation time, <code>describe_tool(name)</code> returns one tool's schemas and rules, <code>invoke(name, arguments)</code> calls it (<code>invoke_read(name, arguments)</code> calls read-only tools and is annotated <code>readOnlyHint</code>, so a host can allow it without confirmation; <code>search_tools</code> and <code>describe_tool</code> results carry each tool's safety tier and annotations, and <code>invoke</code>, <code>invoke_read</code> and <code>preview</code> results carry them in <code>_meta["tungsten/tool"]</code>), <code>preview(name, arguments)</code> shows a call without sending it, <code>list_clusters()</code> lists the groups of tools.</li>
+</ul>
+<p>Set <code>OPENAPI_MCP_MODE</code> to <code>discrete</code> or <code>progressive</code> to override the mode.</p>
+<h4 id="safety-rules"><a class="header" href="#safety-rules">Safety rules</a></h4>
+<ul>
+<li>Read-only tools are annotated <code>readOnlyHint</code>; destructive and irreversible ones <code>destructiveHint</code>.</li>
+<li>Failures are returned as the diagnostic envelope (<code>category</code>, <code>retryable</code>, <code>remediation</code>, <code>next_action</code>), never as protocol errors. After <code>OUTCOME_UNKNOWN</code>, check the outcome before any retry.</li>
+<li>Planned operations are not tools.</li>
+</ul>
+<h4 id="token-budget"><a class="header" href="#token-budget">Token budget</a></h4>
+<p>What a client receives before its first call (the <code>tools/list</code> answer of each mode and its <code>initialize</code> instructions) and each tool's description and input schema, measured at generation time with the <code>estimate</code> counter of tungsten-tokens.</p>
+<div class="table-wrapper"><table><thead><tr><th>Measure</th><th>Tokens</th><th>Budget</th></tr></thead><tbody>
+<tr><td>Progressive <code>tools/list</code> and instructions (with the cluster index)</td><td>833</td><td>2000</td></tr>
+<tr><td>Discrete <code>tools/list</code> and instructions (3 tools)</td><td>529</td><td></td></tr>
+<tr><td>Largest tool schema (<code>openapi_pets_list</code>)</td><td>51</td><td>600</td></tr>
+<tr><td>Median tool schema</td><td>48</td><td>600</td></tr>
+</tbody></table>
+</div>
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="safety.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="webmcp.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="safety.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="webmcp.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr.min.js"></script>
+        <script src="mark.min.js"></script>
+        <script src="searcher.js"></script>
+
+        <script src="clipboard.min.js"></script>
+        <script src="highlight.js"></script>
+        <script src="book.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+
+    </div>
+    </body>
+</html>

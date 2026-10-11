@@ -1,0 +1,365 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Browser lifecycle and frameworks - tungsten</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="Documentation for tungsten, the agent-native SDK generator and MCP compiler">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon.svg">
+        <link rel="shortcut icon" href="favicon.png">
+        <link rel="stylesheet" href="css/variables.css">
+        <link rel="stylesheet" href="css/general.css">
+        <link rel="stylesheet" href="css/chrome.css">
+        <link rel="stylesheet" href="css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="highlight-css" href="highlight.css">
+        <link rel="stylesheet" id="tomorrow-night-css" href="tomorrow-night.css">
+        <link rel="stylesheet" id="ayu-highlight-css" href="ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "";
+            const default_light_theme = "light";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "searchindex.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="toc.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+            </noscript>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">tungsten</h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/pboachie/tungsten" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <i class="fa fa-spinner fa-spin"></i>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="browser-lifecycle-and-scoped-loading"><a class="header" href="#browser-lifecycle-and-scoped-loading">Browser lifecycle and scoped loading</a></h1>
+<p>Use <code>createWebMcpRegistrationController</code> from <code>@elysra/tungsten-webmcp</code> to connect page
+or route lifetimes to browser tools. It has no React or Vue dependency. Imports
+and controller construction are safe during SSR; without a supported backend,
+<code>replace</code> returns <code>null</code> before invoking the loader.</p>
+<pre><code class="language-ts">import { createWebMcpRegistrationController } from "@elysra/tungsten-webmcp";
+
+const tools = createWebMcpRegistrationController();
+await tools.replace(async ({ signal }) =&gt; {
+  const page = await import("./tool-scopes/pets.js");
+  signal.throwIfAborted();
+  return page.createScope();
+});
+// Before changing pages, replace with the next page's loader.
+// For a page with no tools:
+await tools.clear();
+// When permanently retiring this controller:
+await tools.dispose();
+</code></pre>
+<p>A scope factory returns <code>{ core, manifest, macros?, allowlist? }</code>, with the same
+options as <code>registerTungstenWebMcp</code> except <code>backend</code> and <code>signal</code>. Optional result
+limits and streaming/binary policies can also be returned. Put imports of scoped
+manifests/descriptors and core construction inside the dynamically imported
+module and its factory. Importing a large catalog at application startup and
+filtering it inside the loader does not defer its download or construction.
+Avoid a module that re-exports every group; import the specific group's entry
+point. Check your bundler's chunk report to verify that scope modules are separate
+chunks. Dynamic import cancellation prevents registration; the browser may still
+finish downloading an import already in progress.</p>
+<p>Generated WebMCP packages already provide scoped modules. Use the <code>moduleKey</code>
+listed in their catalogue's groups:</p>
+<pre><code class="language-ts">await tools.replace(async ({ signal }) =&gt; {
+  const group = await import("my-api-webmcp/groups/public_pets");
+  signal.throwIfAborted();
+  return group.createScope({ baseUrl: new URL("/api", window.location.origin).href });
+});
+</code></pre>
+<p>Each module includes its operation dependencies and reachable models. Its
+default registration exposes reads; add an explicit <code>allowlist</code> to the returned
+scope when the page needs a mutation or macro.</p>
+<p>Keep one core for the entire active scope. Preview tokens and execution must use
+that same core/session. Return a newly constructed core on a fresh scope load;
+never construct a new core inside a tool's execution callback. Scope manifests
+should contain only the tools for that page, and their operations, macro steps,
+endpoint previews and verification targets must be registered with the core.
+Default registration exposes read-only operations. Add consequential operations
+or macros only through an explicit <code>allowlist</code> of manifest tool names; preview
+and confirmation requirements still apply.</p>
+<p><code>replace</code> immediately aborts the preceding scope's lifetime, cancels in-flight
+SDK calls, disposes owned tools, then loads the new scope. Concurrent loads do not
+block a newer route even if an old loader ignores its signal. Only the latest
+load may register. Superseded loads return <code>null</code>, including rejected obsolete
+imports; current import and registration failures reject. Browser registration
+and cleanup are serialized, so a delayed browser registration rolls back before
+the next scope registers. Cleanup never clears another owner's catalog. A failed
+legacy cleanup rejects and can be retried with <code>clear()</code> or <code>dispose()</code>.</p>
+<h2 id="react"><a class="header" href="#react">React</a></h2>
+<p>Pass a stable loader function, typically a route-to-loader map declared outside
+the component. This hook cancels the preceding route and supports React's
+additional development effect cleanup/setup cycle. <code>clear()</code> keeps the controller
+reusable; use <code>dispose()</code> when permanently retiring an application-owned
+controller.</p>
+<pre><code class="language-tsx">import { useEffect, useMemo } from "react";
+import { createWebMcpRegistrationController } from "@elysra/tungsten-webmcp";
+import type { WebMcpScopeLoader } from "@elysra/tungsten-webmcp";
+
+export function usePageTools(loadScope: WebMcpScopeLoader) {
+  const tools = useMemo(() =&gt; createWebMcpRegistrationController(), []);
+  useEffect(() =&gt; {
+    void tools.replace(loadScope).catch(reportToolError);
+    return () =&gt; { void tools.clear().catch(reportToolError); };
+  }, [tools, loadScope]);
+}
+
+function reportToolError(error: unknown) {
+  console.error("Page tools could not be updated", error);
+}
+</code></pre>
+<p>Call <code>usePageTools(routeLoaders[routeName])</code> from the component that owns the
+active page. Do not register during render. An unsupported browser leaves the
+page's normal UI available without constructing its SDK core.</p>
+<h2 id="vue"><a class="header" href="#vue">Vue</a></h2>
+<p>Watch the route after mount, and clear the same controller on unmount. Keep
+loaders in a stable map so a watch update represents a route change.</p>
+<pre><code class="language-ts">import { onBeforeUnmount, onMounted, watch } from "vue";
+import { createWebMcpRegistrationController } from "@elysra/tungsten-webmcp";
+import type { WebMcpScopeLoader } from "@elysra/tungsten-webmcp";
+
+export function usePageTools(
+  activeRoute: () =&gt; string,
+  loaders: Record&lt;string, WebMcpScopeLoader&gt;,
+) {
+  const tools = createWebMcpRegistrationController();
+  let stop: (() =&gt; void) | undefined;
+  const report = (error: unknown) =&gt; console.error("Page tools failed", error);
+  onMounted(() =&gt; {
+    stop = watch(activeRoute, route =&gt; {
+      const loader = loaders[route];
+      if (loader) void tools.replace(loader).catch(report);
+      else void tools.clear().catch(report);
+    }, { immediate: true });
+  });
+  onBeforeUnmount(() =&gt; {
+    stop?.();
+    void tools.dispose().catch(report);
+  });
+}
+</code></pre>
+<h2 id="authenticated-same-origin-transport"><a class="header" href="#authenticated-same-origin-transport">Authenticated same-origin transport</a></h2>
+<p>Use the application's authenticated same-origin API or backend-for-frontend.
+The browser session cookie remains managed by the browser. Do not embed service
+API keys or client secrets in a bundle, manifest, tool schema or loader.</p>
+<pre><code class="language-ts">// Pass these ClientOptions into the scope's ClientCore or generated client.
+const origin = window.location.origin;
+const clientOptions = {
+  baseUrl: new URL("/api", origin).href,
+  fetch: ((input, init) =&gt; {
+    const url = new URL(input instanceof Request ? input.url : String(input), origin);
+    if (url.origin !== origin) throw new Error("Expected a same-origin API URL");
+    return window.fetch(input, { ...init, credentials: "same-origin" });
+  }) satisfies typeof fetch,
+};
+</code></pre>
+<p>Create these options inside the client-only loader or scope factory. Preserve
+<code>init.signal</code> and the SDK's headers when wrapping fetch so route cancellation,
+request diagnostics and idempotency continue to work. Have the application add
+its normal CSRF header for cookie-authenticated mutations; do not expose the CSRF
+value as a tool parameter. Backend authorization remains authoritative for every
+request, and an allowlist is a page exposure decision. After sign-out or a change
+of authenticated principal, clear the scope and load a fresh core for the new
+session. Cancellation of an in-flight mutation does not prove it had no effect;
+inspect server state before retrying.</p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="webmcp.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="tool-results.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="webmcp.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="tool-results.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr.min.js"></script>
+        <script src="mark.min.js"></script>
+        <script src="searcher.js"></script>
+
+        <script src="clipboard.min.js"></script>
+        <script src="highlight.js"></script>
+        <script src="book.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+
+    </div>
+    </body>
+</html>

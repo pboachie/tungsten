@@ -1,0 +1,710 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Manifest reference - tungsten</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="Documentation for tungsten, the agent-native SDK generator and MCP compiler">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon.svg">
+        <link rel="shortcut icon" href="favicon.png">
+        <link rel="stylesheet" href="css/variables.css">
+        <link rel="stylesheet" href="css/general.css">
+        <link rel="stylesheet" href="css/chrome.css">
+        <link rel="stylesheet" href="css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="highlight-css" href="highlight.css">
+        <link rel="stylesheet" id="tomorrow-night-css" href="tomorrow-night.css">
+        <link rel="stylesheet" id="ayu-highlight-css" href="ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "";
+            const default_light_theme = "light";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "searchindex.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="toc.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+            </noscript>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">tungsten</h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/pboachie/tungsten" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <i class="fa fa-spinner fa-spin"></i>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="manifest-reference"><a class="header" href="#manifest-reference">Manifest reference</a></h1>
+<p>A tungsten project has two manifests next to each other: <code>tungsten.yml</code> (the shape and naming of the SDKs) and <code>agent.yml</code> (the agent semantics). Both are YAML with JSON Schemas shipped in the binary: <code>tungsten schema tungsten</code> and <code>tungsten schema agent</code> print them, and both are validated before compilation (schema errors are <code>TG06xx</code> <a href="reference/diagnostics.html">diagnostics</a>). For any agent-facing property the precedence is <code>agent.yml</code>, then a spec <code>x-agent-*</code> extension, then the inferred default.</p>
+<h2 id="tungstenyml"><a class="header" href="#tungstenyml"><code>tungsten.yml</code></a></h2>
+<p>Shape and naming of the SDK, independent of agent semantics.</p>
+<pre><code class="language-yaml">tungsten: 1
+api:
+  name: acme
+  title: Acme
+  docs_url: https://docs.example.test
+inputs:                                   # several documents, each a namespace
+  - namespace: public
+    spec: ../acme/protocol/v1/openapi/public-v1.json
+    include: { extension: x-implemented, equals: true }
+    planned_from: { extension: x-implemented, equals: false }
+  - namespace: sealed
+    spec: ../acme/protocol/v1/openapi/sealed-v1.json
+  - namespace: workflow
+    spec: ../acme/protocol/v1/openapi/workflow-tools-v1.json
+    rpc_unflatten:
+      path: /v1/workflow/tools
+      method: post
+      discriminator: method
+      params: params
+      name_strip_prefix: "workflow."
+overlays: []                                # OpenAPI Overlay 1.0 files, applied in order
+servers:
+  default: https://api.example.test     # placeholder
+  allow_override: true
+resources:                                  # optional overrides of the inferred tree
+  public:
+    webhooks:
+      path: /v1/webhooks
+      children:
+        deliveries: { path: "/v1/webhooks/{endpoint_id}/deliveries" }
+    devices: { path: /v1/enrollment/devices }
+    owner_messages: { path: /v1/owner/messages }
+    alpha_messages: { path: /v1/alpha/messages }
+naming:
+  operations:
+    public.listWebhookEndpoints: list
+    public.createWebhookEndpoint: create
+    public.replayWebhookDelivery: replay
+  fields: preserve_wire_names_in_ts: false
+auth_profiles:
+  ownerSession:                             # Composite scheme
+    composite:
+      - cookie: __Host-acme_session
+      - cookie: __Host-acme_csrf
+      - header: { name: x-acme-csrf, equals_cookie: __Host-acme_csrf }
+      - header: { name: Origin, from_config: origin, when: mutation }
+    satisfies: [ownerSession, ownerCsrf]    # the spec's requirement pair
+  bearerAuth: { bearer: { env: ACME_API_KEY } }
+  workflowCredential: { bearer: { env: ACME_WORKFLOW_TOKEN, prefix: "ztw_" } }
+pagination:                                 # explicit overrides; otherwise inferred
+  public.listOwnerMessages: { cursor: { param: before, field: next_cursor, items: messages } }
+targets:
+  typescript: { package: "@acme/sdk", out: generated/typescript, runtime: "^0.1" }
+  python:     { package: acme_sdk, out: generated/python, models: pydantic }
+  rust:       { crate: acme-sdk, out: generated/rust, cli: { bin: acme } }
+  mcp:        { package: "@acme/mcp", out: generated/mcp }
+  docs:       { out: generated/docs }
+  mock:       { out: generated/mock }
+</code></pre>
+<h3 id="resource-tree-inference"><a class="header" href="#resource-tree-inference">Resource tree inference</a></h3>
+<p>When <code>resources</code> is absent: strip the first path segment if it is a version
+(<code>/v1</code>), split remaining segments, drop <code>{param}</code> segments, and nest. Tags
+override segment names when a tag covers all operations under a prefix.
+Method names: <code>list</code> for GET collection, <code>get</code> for GET item, <code>create</code> for
+POST collection, <code>update</code> for PATCH/PUT item, <code>delete</code> for DELETE, and the
+last path verb segment for POST actions (<code>enable</code>, <code>rotate</code>, <code>replay</code>,
+<code>cancel</code>). The <code>operationId</code> camel-cased is the fallback.</p>
+<p>:</p>
+<ul>
+<li>Placement. A configured resource of the namespace whose <code>path</code> is the
+longest segment prefix of the operation's path wins (<code>{a}</code> matches any
+<code>{b}</code>; ties go to the first declared). Otherwise the tree is inferred: a
+leading version segment (<code>v1</code>, <code>v2</code>, <code>v1beta</code>, <code>v2alpha1</code>) is dropped, a
+trailing action is set aside, and the remaining literal segments nest
+(<code>/v1/webhooks/{id}/deliveries</code> → <code>webhooks</code> › <code>deliveries</code>). A literal
+segment that only leads to children becomes a resource with no
+operations (<code>/v1/owner/messages</code> → <code>owner</code> › <code>messages</code>). An operation
+with no literal segment goes to a resource named <code>root</code>. A segment that
+mixes text and placeholders (<code>{date}.csv</code>) is a <code>Template</code> segment in
+the IR and counts as an item, like <code>{param}</code>; it never names a resource.</li>
+<li>Custom methods. A <code>:verb</code> suffix on the last segment
+(<code>/v1/users/{id}:archive</code>, <code>/v1/users:search</code>, any HTTP method) is an
+action: the operation is placed by the path without the suffix and
+named after it (<code>users.archive</code>, <code>users.search</code>).</li>
+<li>Action. The last segment of a POST path is an action when it is a
+literal right after a <code>{param}</code>, every operation on that exact path is a
+POST, no path continues below it, and it reads as a verb: one of a fixed
+verb list (<code>enable</code>, <code>rotate</code>, <code>replay</code>, <code>cancel</code>, <code>revoke</code>, ...) or a
+last word not ending in <code>s</code>. So <code>/{id}/enable</code> is the action <code>enable</code>,
+while <code>/{id}/sealed-events</code> is a sub-resource whose POST is <code>create</code>.</li>
+<li>Method names. <code>naming.operations</code> wins; then, relative to the
+resource's path: <code>list</code> for a GET of a collection, <code>get</code> for any other
+GET of the resource's own path (a singleton: <code>GET /v1/health</code>,
+<code>/users/me</code>, <code>/users/{id}/settings</code>), <code>create</code> (POST of the resource's
+path), <code>update</code> (PATCH, PUT) and <code>delete</code> on a singleton path, <code>get</code> /
+<code>update</code> (PATCH, PUT) / <code>delete</code> on one item, the action for an action;
+anything else keeps its operation id. A GET is a collection when it is
+paginated, its success JSON body is an array or an object with exactly
+one array property, or (no JSON body says otherwise) an item path
+<code>&lt;path&gt;/{id}</code> exists or its last segment is a plural (<code>deliveries</code>).
+PUT, PATCH and DELETE on a collection path keep their ids. Collisions inside a
+resource, and between sibling resources, are renamed with a numeric
+suffix and TG0401 (<code>list</code>, <code>list2</code> for <code>/v1/pets</code> and <code>/v2/pets</code>, which
+merge into one <code>pets</code> resource).</li>
+<li>rpc methods (<code>rpc_unflatten</code>). A method goes under the configured
+resource of its HTTP path (or the top level), then one level per dotted
+part of its name except the last, and is named by the last part:
+<code>workflow.action.send</code> with <code>name_strip_prefix: "workflow."</code> →
+<code>tools</code> › <code>action</code> › <code>send</code>. A method without dots is placed like an
+HTTP operation. Child resources declared without a <code>path</code> are matched by name.</li>
+<li><code>path_prefix</code> is the longest common segment prefix of the resource's
+operations and the path that names it (configured <code>path</code>, inferred path
+up to its literal segment, or the HTTP path of rpc methods), without
+trailing parameters; a resource with neither uses its descendants.</li>
+<li>Order. Resources and children appear in the order of their first
+operation in the document; operations keep document order. Planned
+operations get method names but stay out of the tree.</li>
+<li>A configured <code>path</code> that matches no path of the input is TG0604; a
+<code>naming.operations</code> or <code>pagination</code> key that names no operation is
+TG0603.</li>
+</ul>
+<h3 id="inputs-filters-and-gates"><a class="header" href="#inputs-filters-and-gates">Inputs, filters and gates</a></h3>
+<ul>
+<li>
+<p><code>include</code> and <code>planned_from</code> compare one operation extension with a
+value. Without <code>include</code> everything is included, and an operation that
+matches <code>planned_from</code> is planned. With <code>include</code>, an operation that
+fails it is planned when it matches <code>planned_from</code> and dropped
+otherwise. Every excluded operation is a TG0504 info naming the reason;
+planned ones keep that reason in <code>OperationStatus::Planned</code> and live in
+<code>Namespace.planned</code>, never in the resource tree.</p>
+</li>
+<li>
+<p><code>rpc_unflatten</code> needs the named path and method to exist and its JSON
+request body to be a <code>oneOf</code> whose every member has a string <code>const</code> (or
+one-value <code>enum</code>) under <code>discriminator</code>, with distinct values that leave
+a dotted name after <code>name_strip_prefix</code>. Any failure is a TG0506 error
+and the envelope stays one ordinary operation.</p>
+</li>
+<li>
+<p>A single OpenAPI file checked without a manifest compiles with a default
+one: namespace and <code>api.name</code> from the file stem, no
+filters, no profiles. Acme's documents compiled that way show every
+route as callable and infer their paginations (TG0501).</p>
+</li>
+<li>
+<p><code>pagination.&lt;op&gt;</code> declares one style (<code>cursor</code>, <code>offset</code>, <code>page</code>,
+<code>link_header</code>) or <code>none: true</code>, which only switches inference off.
+Declared entries apply to planned operations too.</p>
+</li>
+<li>
+<p><code>types.prune_unreferenced</code> (default <code>true</code>) drops the named types no
+operation reaches, after the agent manifest has been applied: roots are
+the parameters, request and response bodies and headers of every
+callable and planned operation and the error envelopes (including the
+one <code>agent.yml</code> names); everything they reach through arrays, maps,
+records, unions (discriminator mappings included) and intersections
+stays. The warnings and notes about the schemas of dropped types go with
+them (errors never do), and one TG0760 note counts the dropped types and
+names the first eight. A document without operations is a library of
+schemas and keeps every type. <code>false</code> generates every schema.</p>
+</li>
+</ul>
+<h3 id="auth-profiles"><a class="header" href="#auth-profiles">Auth profiles</a></h3>
+<ul>
+<li>A <code>composite</code> profile becomes one <code>AuthScheme::Composite</code> with the
+profile's name, its parts in order (<code>cookie</code>, <code>header</code> with
+<code>equals_cookie</code> / <code>from_config</code> / <code>when: mutation</code> → <code>mutation_only</code>,
+<code>bearer</code> with <code>env</code> / <code>prefix</code>) and <code>satisfies</code> resolved to IR scheme
+names. A <code>satisfies</code> entry naming no scheme of any namespace is TG0503;
+a spec name that was namespace-qualified expands to every qualified
+variant.</li>
+<li>The profile may share its name with a spec scheme it satisfies. Both stay in <code>Ir.auth</code>, the composite sorted after the spec
+scheme; operation requirements keep naming the spec schemes.</li>
+<li>Cookie and header names supplied by a composite give matching
+parameters the <code>Auth</code> role, except <code>Origin</code>, which keeps <code>Origin</code>.</li>
+<li><code>config</code> entries of other profiles are runtime configuration and do not
+change the IR.</li>
+<li>a non-composite profile with <code>bearer</code> configures the HTTP
+bearer scheme of the same name (spec or IR name): <code>HttpBearer.prefix</code> and <code>HttpBearer.env</code> are
+additive IR fields. The spec's <code>bearerFormat</code> stays <code>format</code> and is only
+documentation; the prefix is enforced by the runtime before sending.</li>
+</ul>
+<h3 id="mcp-embedding-index-targetsmcpsearchembeddings"><a class="header" href="#mcp-embedding-index-targetsmcpsearchembeddings">MCP embedding index (<code>targets.mcp.search.embeddings</code>)</a></h3>
+<pre><code class="language-yaml">targets:
+  mcp:
+    package: "@acme/mcp"
+    out: generated/mcp
+    search:
+      embeddings:
+        provider: command           # command | http
+        command: "node tools/embed.mjs"   # provider: command (words split on spaces; quotes group)
+        # url: http://127.0.0.1:8080/v1/embeddings   # provider: http (plain http at generation)
+        model: my-embedding-model   # required: recorded in the header, keys the cache
+        dimensions: 384             # optional: checked on every answer, sent to http endpoints
+        # api_key_env: EMBED_API_KEY  # http: Bearer token read from this variable, never written
+        required: false             # true: a provider failure fails generation
+        batch_size: 32              # documents per call, 1 to 512
+        timeout_ms: 60000           # per call, 1 to 3600000
+</code></pre>
+<div class="table-wrapper"><table><thead><tr><th>Key</th><th>Meaning</th><th>Default</th></tr></thead><tbody>
+<tr><td><code>provider</code></td><td><code>command</code> (JSON on standard input and output) or <code>http</code> (the common <code>/embeddings</code> request shape)</td><td>required</td></tr>
+<tr><td><code>command</code></td><td>the command line of a <code>command</code> provider, run from the directory of <code>tungsten.yml</code></td><td>required for <code>command</code></td></tr>
+<tr><td><code>url</code></td><td>the endpoint of an <code>http</code> provider</td><td>required for <code>http</code></td></tr>
+<tr><td><code>model</code></td><td>model name sent to the provider and recorded in <code>index.embeddings.json</code></td><td>required</td></tr>
+<tr><td><code>dimensions</code></td><td>vector length; a different answer is TG0572</td><td>taken from the first answer</td></tr>
+<tr><td><code>api_key_env</code></td><td>environment variable with the endpoint's API key (<code>http</code> only)</td><td>none</td></tr>
+<tr><td><code>required</code></td><td>a provider failure is an error instead of a warning and BM25 only</td><td><code>false</code></td></tr>
+<tr><td><code>batch_size</code></td><td>documents per provider call</td><td>32</td></tr>
+<tr><td><code>timeout_ms</code></td><td>wall-clock limit of one provider call</td><td>60000</td></tr>
+</tbody></table>
+</div>
+<p>Command protocol (version 1), request on standard input and answer on
+standard output (exit status 0; standard error is free text):</p>
+<pre><code class="language-json">{ "protocol": 1, "kind": "document", "model": "m", "dimensions": 384, "inputs": ["text", "..."] }
+{ "embeddings": [[0.12, -0.03, "..."], ["..."]] }
+</code></pre>
+<h2 id="agentyml"><a class="header" href="#agentyml"><code>agent.yml</code></a></h2>
+<p>Agent semantics. Every key compiles into <code>AgentModel</code> / <code>OperationAgentMeta</code>
+in the IR.</p>
+<pre><code class="language-yaml">agent: 1
+defaults:
+  safety:
+    get: read_only
+    post: mutating
+    put: mutating
+    patch: mutating
+    delete: destructive
+  idempotency: none
+  preview: local
+  unknown_outcome:
+    on_timeout: unknown            # never "retry"
+    on_connection_reset: unknown
+    on_ambiguous_status: unknown   # statuses marked ambiguous in `errors`
+  retries:
+    read_only: { max: 3, backoff: { base_ms: 200, max_ms: 5000, jitter: full } }
+    mutating:  { max: 0 }          # retries only with an idempotency key, see idempotency
+    honor_retry_after: true
+  disclosure:
+    mode: auto                     # auto | discrete | progressive
+    threshold: 24
+    description_budget_tokens: 60
+    schema_budget_tokens: 600
+
+tools:
+  - operation: public.submitAlphaMessage
+    safety: irreversible
+    idempotency: { policy: caller_owned, header: Idempotency-Key, format: uuid_v4, persist: required }
+    confirmation:
+      summary_fields: [recipient_e164, device_id, test_case_id, expires_at_ms]
+      message: "This queues an SMS to {recipient_e164} from device {device_id}. Carrier charges may apply."
+    verify:
+      operation: public.getAlphaMessageStatus
+      args: { message_id: $response.message_id }
+      expect: { state: { in: [accepted, queued, claimed, submitting, submitted, delivered] } }
+      terminal: { state: { in: [delivered, delivery_unknown, unknown, failed, cancelled, expired] } }
+      poll: { interval_ms: 1000, budget_ms: 60000 }
+    remediation:
+      queue_full: { text: "The device queue is full. Wait and retry with the SAME Idempotency-Key.", retryable: same_key_only }
+      recipient_suppressed: { text: "Recipient opted out. Do not retry, do not pick another number. Stop and report.", retryable: never }
+      billing_pending: { text: "Account billing is not active. Stop; the owner must act.", retryable: never }
+      payment_hold: { text: "Payment hold on the account. Stop; the owner must act.", retryable: never }
+  - operation: public.revokeOwnerDevice
+    safety: destructive
+    confirmation: { summary_fields: [device_id] }
+  - operation: public.rotateWebhookEndpoint
+    safety: destructive
+    response: { sensitive_fields: [secret], shown_once: true }
+    remediation_note: "Rotation disables the endpoint and retires pending deliveries. Re-enable after storing the new secret."
+  - operation: public.createWebhookEndpoint
+    response: { sensitive_fields: [secret], shown_once: true }
+  - operation: public.disableWebhookEndpoint
+    safety: destructive
+  - operation: public.replayWebhookDelivery
+    idempotency: { policy: caller_owned, header: Idempotency-Key, format: uuid_v4, persist: required }
+    remediation:
+      replay_not_eligible: { text: "Only exhausted failed deliveries on an enabled endpoint can be replayed. Check the delivery's terminal_reason and the endpoint's enabled flag; do not retry.", retryable: never }
+      replay_limit: { text: "All three replay generations were used. Stop.", retryable: never }
+  - operation: sealed.submitSealedOutbound
+    safety: irreversible
+    idempotency: { policy: content_identity, note: "Retries must resend the identical envelope bytes; the unsigned digest is the identity. Never attach an Idempotency-Key header." }
+
+errors:
+  envelope: { schema: Error, code_field: code }
+  ambiguous_statuses: [408, 503]                  # on mutations → OUTCOME_UNKNOWN
+  non_json:
+    - { status: 413, media: text/plain, category: REQUEST_TOO_LARGE, retryable: never }
+    - { status: 400, media: text/plain, category: MALFORMED_REQUEST, retryable: never, text: "A path or query parameter failed framework parsing before authentication. Fix the parameter format (UUIDs must be canonical)." }
+  codes:
+    unauthorized: { category: AUTH_FAILED, retryable: never, text: "Credential missing, expired or revoked. Do not retry; obtain a new credential." }
+    forbidden:    { category: AUTH_FAILED, retryable: never, text: "CSRF or Origin check failed, or scope insufficient." }
+    rate_limited: { category: RATE_LIMITED, retryable: after_delay }
+    unavailable:  { category: UPSTREAM_UNAVAILABLE, retryable: after_delay }
+    not_found:    { category: NOT_FOUND, retryable: never }
+    conflict:     { category: CONFLICT, retryable: never }
+    invalid_request: { category: VALIDATION_FAILED, retryable: never }
+
+gates:                                              # x-runtime-gate rendering
+  SEALED_WEBHOOK_DELIVERY_ENABLED:
+    text: "This deployment returns 404 for sealed-event selection because SEALED_WEBHOOK_DELIVERY_ENABLED is off. This is a deployment setting, not a missing resource."
+
+macros:
+  - name: public.submitAlphaMessageAndAwait
+    summary: "Submit a synthetic-alpha message and wait for a terminal delivery state."
+    safety: irreversible                             # inherits the strictest step
+    steps:
+      - call: public.submitAlphaMessage
+        args: $input
+        as: accepted
+      - poll: public.getAlphaMessageStatus
+        args: { message_id: $accepted.message_id }
+        until: { state: { in: [delivered, delivery_unknown, unknown, failed, cancelled, expired] } }
+        interval_ms: 1000
+        budget_ms: $input.wait_budget_ms
+        as: status
+    output: { message_id: $accepted.message_id, created: $accepted.created, state: $status.state, requires_reconciliation: { expr: "$status.state in ['unknown','delivery_unknown']" } }
+  - name: public.bootstrapWebhookEndpoint
+    summary: "Create a webhook endpoint, enable it, return the one-time secret."
+    steps:
+      - call: public.createWebhookEndpoint
+        args: $input
+        as: created
+      - call: public.enableWebhookEndpoint
+        args: { endpoint_id: $created.endpoint_id }
+    output: { endpoint_id: $created.endpoint_id, secret: $created.secret }
+    response: { sensitive_fields: [secret], shown_once: true }
+  - name: public.listAllOwnerDevices
+    summary: "All enrolled devices across pages."
+    steps:
+      - paginate: public.listOwnerDevices
+        max_pages: 20
+        as: devices
+    output: $devices
+
+disclosure:
+  clusters:                                          # semantic grouping for search_tools
+    - { name: messaging, operations: [public.alpha_messages.*, public.owner_messages.*, sealed.sealed_messages.*] }
+    - { name: webhooks,  operations: [public.webhooks.*, sealed.sealed_webhooks.*] }
+    - { name: devices,   operations: [public.devices.*, sealed.sealed_devices.*] }
+    - { name: workflow,  operations: [workflow.*] }
+  prune:
+    descriptions: { max_sentences: 2, drop_phrases: ["Implemented today (", "crates/server/src/"] }
+    drop_fields: []                                  # fields hidden from agent schemas
+    keep_examples: false
+</code></pre>
+<h3 id="safety-tiers"><a class="header" href="#safety-tiers">Safety tiers</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Tier</th><th>Meaning</th><th>SDK</th><th>CLI</th><th>MCP</th></tr></thead><tbody>
+<tr><td><code>read_only</code></td><td>No side effects</td><td>retries allowed</td><td>runs</td><td><code>readOnlyHint: true</code></td></tr>
+<tr><td><code>mutating</code></td><td>Side effect, reversible or idempotent</td><td>no blind retry; preview available</td><td>runs</td><td><code>destructiveHint: false</code>, <code>idempotentHint</code> from policy</td></tr>
+<tr><td><code>destructive</code></td><td>Deletes or disables something; recoverable only by re-creation</td><td>requires <code>{confirm: true}</code> option or preview first</td><td>requires <code>--yes</code> or TTY confirmation</td><td><code>destructiveHint: true</code>; needs <code>confirmation_token</code> from a prior <code>preview</code> call</td></tr>
+<tr><td><code>irreversible</code></td><td>Cannot be undone (money, messages sent to people, permanent deletion)</td><td>requires <code>{confirm: {token}}</code> obtained from <code>preview()</code></td><td>requires <code>--yes --i-understand</code> and prints the summary</td><td><code>destructiveHint: true</code>; needs <code>confirmation_token</code>; the MCP server refuses unless the client supplies the token returned by <code>preview</code> in the same session</td></tr>
+</tbody></table>
+</div>
+<h3 id="idempotency-policies"><a class="header" href="#idempotency-policies">Idempotency policies</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Policy</th><th>Who generates the key</th><th>Persistence</th><th>Retry rule</th></tr></thead><tbody>
+<tr><td><code>none</code></td><td>nobody</td><td>–</td><td>mutation never auto-retried</td></tr>
+<tr><td><code>auto</code></td><td>runtime, UUIDv4 per logical call</td><td>runtime <code>IdempotencyStore</code> (memory by default; file or caller-provided)</td><td>retried with the same key within <code>retries.mutating</code></td></tr>
+<tr><td><code>caller_owned</code></td><td>the caller, validated against <code>format</code></td><td>caller must persist; <code>persist: required</code> makes the runtime refuse a call without a key</td><td>retried with the same key only</td></tr>
+<tr><td><code>content_hash</code></td><td>runtime, hash of the canonical body</td><td>store keyed by hash</td><td>same</td></tr>
+<tr><td><code>content_identity</code></td><td>the body itself is the identity (binary envelopes)</td><td>n/a</td><td>resend identical bytes only</td></tr>
+</tbody></table>
+</div>
+<p>The blueprint's "auto-generate a key per call" is wrong for APIs like Acme
+where a key must survive the agent's own crash. <code>persist: required</code> exists for
+exactly that case and the generated docs say why.</p>
+<h3 id="preview-modes"><a class="header" href="#preview-modes">Preview modes</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Mode</th><th>Behavior</th></tr></thead><tbody>
+<tr><td><code>local</code></td><td>Validate arguments, resolve the auth profile, render the request (method, URL, headers with secrets redacted, body) and the manifest's side-effect summary. No network. Returns a <code>confirmation_token</code> bound to the argument digest.</td></tr>
+<tr><td><code>header</code></td><td>As <code>local</code>, then send with <code>preview.header</code> (for example <code>X-Dry-Run: true</code>) and return the server's response as the preview.</td></tr>
+<tr><td><code>endpoint</code></td><td>Call <code>preview.operation</code> with mapped args.</td></tr>
+<tr><td><code>none</code></td><td><code>.preview()</code> is not emitted.</td></tr>
+</tbody></table>
+</div>
+<h3 id="remediation-table-resolution"><a class="header" href="#remediation-table-resolution">Remediation table resolution</a></h3>
+<p>Runtime lookup order for an HTTP error: operation-specific
+<code>tools[].remediation[code]</code> → global <code>errors.codes[code]</code> → <code>errors.non_json</code>
+match on status and media type → generic by status class. The matched entry
+supplies <code>category</code>, <code>remediation</code>, <code>retryable</code> and, when present, a
+<code>next_action</code> referencing a verification hook or macro.</p>
+<h3 id="server-rules-what-the-server-enforces-and-the-spec-leaves-out"><a class="header" href="#server-rules-what-the-server-enforces-and-the-spec-leaves-out">Server rules: what the server enforces and the spec leaves out</a></h3>
+<p><code>tools[].server_rules</code> declares rules of the real server that the API
+description does not state, so that <code>tungsten mock</code> answers a request that
+breaks one the way the server does (the Acme live pilot found two: reserved
+callback hosts and an expiry window, <code>pilots/acme/REPORT.md</code> findings 1
+and 2). The key is additive: a manifest without it, and the IR of an
+operation without rules, are unchanged. It is data, never read by the SDKs,
+the MCP server or the docs.</p>
+<pre><code class="language-yaml">tools:
+  - operation: public.createWebhookEndpoint
+    server_rules:
+      - { field: callback_url, reject_host_suffixes: [".test", ".example", ".invalid", ".local", ".localhost"], status: 400, code: invalid_webhook_endpoint }
+  - operation: public.submitAlphaMessage
+    server_rules:
+      - { field: expires_at_ms, max_ahead_minutes: 15, status: 400, code: invalid_request }
+</code></pre>
+<div class="table-wrapper"><table><thead><tr><th>Key</th><th>Meaning</th></tr></thead><tbody>
+<tr><td><code>field</code></td><td>The request member read: a dotted path into the JSON body (<code>options.expires_at_ms</code>), else a query parameter of that name. A member that is absent, or whose value is not of the kind the check reads, is not this rule's business.</td></tr>
+<tr><td><code>reject_host_suffixes</code></td><td>The value is a URL; the rule is broken when its host (without userinfo, port, case or a trailing dot) is a suffix or the bare name of one (<code>.test</code> matches <code>a.test</code> and <code>test</code>, not <code>latest.com</code>).</td></tr>
+<tr><td><code>max_ahead_minutes</code></td><td>The value is epoch milliseconds (a number or numeric text); the rule is broken when it is later than now plus that many minutes. A time in the past passes.</td></tr>
+<tr><td><code>status</code></td><td>The refusal's status, 400 to 599; default 400.</td></tr>
+<tr><td><code>code</code></td><td>The API error code written at the error envelope's code field (text/plain APIs lead the text with it).</td></tr>
+<tr><td><code>message</code></td><td>The reason (<code>X-Tungsten-Reason</code>); default names the field and the rule.</td></tr>
+</tbody></table>
+</div>
+<p>Exactly one of <code>reject_host_suffixes</code> and <code>max_ahead_minutes</code> per rule
+(TG0602 otherwise). Compiled form: <code>OperationAgentMeta.server_rules: Vec&lt;ServerRule&gt;</code> (<code>field</code>, <code>check</code> tagged <code>host_suffixes { suffixes }</code> or
+<code>max_ahead_minutes { minutes }</code>, <code>status</code>, <code>code?</code>, <code>message?</code>), written only
+when non-empty. The mock checks them after the description's own checks
+(authentication, parameters, body schema) and before idempotent replay, so a
+refused request is never stored; rules apply to their operation only, the
+first broken one answers. Tests: <code>unit_mock_rules</code>, <code>unit_agent_*</code>, corpus
+<code>agent-server-rules</code>, contract scenarios
+<code>mock-refuses-reserved-callback-hosts</code> and
+<code>mock-refuses-an-expiry-beyond-the-window</code>.</p>
+<h3 id="vendor-extensions-accepted-from-the-spec"><a class="header" href="#vendor-extensions-accepted-from-the-spec">Vendor extensions accepted from the spec</a></h3>
+<p><code>x-agent-safety</code>, <code>x-agent-idempotency</code>, <code>x-agent-preview</code>,
+<code>x-agent-confirmation</code>, <code>x-agent-remediation</code>, <code>x-agent-verify</code>,
+<code>x-agent-sensitive</code> (on schema fields), <code>x-agent-cluster</code>. Same shapes as the
+manifest entries. Unknown <code>x-agent-*</code> keys raise <code>TG0610</code>.</p>
+<h3 id="details"><a class="header" href="#details">Details</a></h3>
+<p><code>tungsten-agent</code> loads <code>agent.yml</code> (next to <code>tungsten.yml</code>; schema
+<code>specs/agent-manifest.schema.json</code>, printed by <code>tungsten schema agent</code>)
+and applies it to the IR after the build. Refinements of the plan above:</p>
+<ul>
+<li>Precedence: <code>agent.yml</code> &gt; <code>x-agent-*</code> &gt; inferred (a required
+<code>Idempotency-Key</code> header makes a side-effecting operation
+<code>caller_owned</code> with <code>persist_required</code>) &gt; the manifest's <code>defaults</code> &gt;
+the method defaults. A rule that cannot apply is dropped with a warning
+(TG0603–TG0611) and the rest of the manifest still applies.</li>
+<li><code>AgentModel</code> is flat: <code>macros</code>, <code>clusters</code>, <code>gates</code>, <code>error_codes</code>,
+<code>ambiguous_statuses</code>, <code>non_json</code>, <code>retries</code>, <code>unknown_outcome</code>,
+<code>disclosure</code>. <code>OperationAgentMeta</code> also has <code>remediation_note</code> and
+<code>hidden</code>. A <code>gates</code> entry may declare <code>disabled_status</code>.</li>
+<li><code>compact_doc</code> is the summary plus the description, sentences with a
+<code>drop_phrases</code> entry removed, the first <code>max_sentences</code> kept, cut at a
+word boundary to <code>description_budget_tokens</code> (a token counted as four
+characters).</li>
+<li>Clusters: each operation and macro belongs to at most one cluster, the
+one its tools entry or <code>x-agent-cluster</code> names, else the first declared
+cluster whose list (operation references, macro names, <code>&lt;ns&gt;.*</code> and
+<code>&lt;ns&gt;.&lt;resource path&gt;.*</code> globs) covers it.</li>
+<li>Macros are checked against the compiled API and normalized to the
+canonical form on <code>tungsten_ir::Macro</code> (steps <code>{kind, operation, args, as, until, interval_ms, budget_ms, max_pages}</code>, <code>input: {extends, add}</code>); a macro carries <code>cluster</code>, <code>sensitive_response_fields</code> and
+<code>shown_once</code>. Its safety is the strictest step's (a poll counts as
+<code>read_only</code>); a weaker declared tier is raised (TG0609).</li>
+<li>Macro confirmation is macro-level. A macro whose tier is <code>destructive</code>
+or <code>irreversible</code> (or that has such a step) needs one confirmation for
+the whole run: <code>confirm: true</code> for <code>destructive</code>, otherwise a token from
+the macro's own preview, bound to the macro name and its exact input
+(after defaults). That confirmation authorizes every step; steps never
+ask for tokens of their own, since their arguments can depend on
+earlier results. The macro preview validates and renders the first step
+and lists every step's effects (arguments only known later read <code>&lt;from an earlier step&gt;</code>), without sending anything.</li>
+<li>At run time an added input field's JSON Schema <code>default</code> is applied
+when the input omits it, and a <code>poll</code> step whose budget runs out binds
+its <code>as</code> name to <code>null</code> (so <code>{expr: "$status == null"}</code> reports the
+timeout; the <code>timed_out</code> output). The first failing step's
+envelope is returned with the completed steps named in its remediation.</li>
+<li><code>disclosure.prune.drop_fields</code> and <code>keep_examples</code> are accepted but not
+applied in this release: agent tool schemas list exactly the SDK's
+arguments, and a non-empty <code>drop_fields</code> (or <code>keep_examples: true</code>) is
+a TG0613 warning instead of a silent no-op. Their semantics (which
+fields may be hidden, how they are named, what the MCP server does with
+a hidden field) are decided with the MCP emitter in this release.</li>
+<li><code>tungsten.yml</code> targets must have distinct, non-nested <code>out</code> directories
+(TG0612): each target's <code>.tungsten/manifest.json</code> removes the files it
+no longer generates, so targets sharing a directory deleted each
+other's output on every run.</li>
+</ul>
+<h2 id="overlays"><a class="header" href="#overlays">Overlays</a></h2>
+<p><code>overlays:</code> in <code>tungsten.yml</code> lists OpenAPI Overlay 1.0 files, applied in order before the document is compiled. Use them to repair a third-party description without editing it. <code>tungsten overlay suggest</code> writes an overlay whose actions fix a missing or repeated <code>operationId</code>:</p>
+<pre><code class="language-sh">tungsten overlay suggest . --write fixes.overlay.yaml
+</code></pre>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="changelog.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="safety.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="changelog.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="safety.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr.min.js"></script>
+        <script src="mark.min.js"></script>
+        <script src="searcher.js"></script>
+
+        <script src="clipboard.min.js"></script>
+        <script src="highlight.js"></script>
+        <script src="book.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+
+    </div>
+    </body>
+</html>

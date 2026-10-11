@@ -1,0 +1,313 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>The ZROtext pilot - tungsten</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="Documentation for tungsten, the agent-native SDK generator and MCP compiler">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon.svg">
+        <link rel="shortcut icon" href="favicon.png">
+        <link rel="stylesheet" href="css/variables.css">
+        <link rel="stylesheet" href="css/general.css">
+        <link rel="stylesheet" href="css/chrome.css">
+        <link rel="stylesheet" href="css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="highlight-css" href="highlight.css">
+        <link rel="stylesheet" id="tomorrow-night-css" href="tomorrow-night.css">
+        <link rel="stylesheet" id="ayu-highlight-css" href="ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "";
+            const default_light_theme = "light";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "searchindex.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="toc.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+            </noscript>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">tungsten</h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/pboachie/tungsten" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <i class="fa fa-spinner fa-spin"></i>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="case-study-the-zrotext-pilot"><a class="header" href="#case-study-the-zrotext-pilot">Case study: the ZROtext pilot</a></h1>
+<p><a href="https://github.com/pboachie/zrotext">ZROtext</a> is an open-source Android SMS gateway with a Rust server. Its contract is three OpenAPI 3.1 documents (the public, sealed and workflow planes, 44 operations in all), and it ships hand-written clients, which makes it a useful baseline. It was the first real API tungsten was pointed at: the TypeScript, Python and Rust SDKs, the generated CLI and the MCP server were generated from those documents and two manifests, then every scenario was run against a live instance on loopback. Nothing in the pilot sends a real SMS. This page summarises what the run showed.</p>
+<h3 id="headline"><a class="header" href="#headline">Headline</a></h3>
+<ul>
+<li>The generated TypeScript, Python (sync and async) and Rust SDKs pass all 26
+live scenarios against the real server: 4 driver runs, 104 scenario runs.</li>
+<li>The parity check finds the four records identical (26/26, three times).
+The generated Rust CLI passes 20/20 live checks.</li>
+<li>All the live scenarios pass in every SDK and in the CLI.</li>
+<li>No runtime or emitter defect was found. The live run found four defects in
+the agent manifest; all are fixed with offline regression tests, and
+one led to the new <code>tungsten check</code> warning TG0614.</li>
+<li>ZROtext's hand-written alpha clients behave the same on the wire but give
+their caller only status, code and Retry-After.</li>
+</ul>
+<h3 id="criteria"><a class="header" href="#criteria">Criteria</a></h3>
+<div class="table-wrapper"><table><thead><tr><th></th><th>Result</th></tr></thead><tbody>
+<tr><td>Compile</td><td>44 operations, 0 errors, 3 TG0301 warnings</td></tr>
+<tr><td>Golden output</td><td>goldens regenerated</td></tr>
+<tr><td>Generated CLI</td><td>unchanged</td></tr>
+<tr><td>Contract suite</td><td>64/64 on each of 4 runs, parity 64/64 ×3</td></tr>
+<tr><td>Tool schema size</td><td>largest tool schema 538 tokens, median 116, none over the budget</td></tr>
+<tr><td>Webhook lifecycle</td><td>webhook lifecycle with the verification hook, the bootstrap macro, replay of a dead delivery (generation 2, created true then false, then 409 (not eligible)): pass in 4 SDK runs and the CLI</td></tr>
+<tr><td>Submit and cancel a message</td><td>submit 202 created:true → identical resubmit 202 created:false → status 200 → cancel 204 → cancel again 409 <code>never</code> → status 200: pass in 4 SDK runs and the CLI</td></tr>
+<tr><td>Missing idempotency key</td><td>missing key refused before sending: <code>attempts</code> 0, the proxy recorded 0 requests; CLI exit 2</td></tr>
+<tr><td>Disabled feature</td><td>gate off → bare 404 → <code>GATE_DISABLED</code> with the gate's text (also the sealed and workflow planes); CLI exit 3</td></tr>
+<tr><td>Pagination and revoke</td><td>50 + 50 + 6 devices via the list-all macro; revoke needs confirmation; CLI exit 6 without <code>--yes</code></td></tr>
+<tr><td>Timeout with an unknown outcome</td><td>the 600 ms client timeout fires while the proxy holds the 202 for 2.5 s → <code>OUTCOME_UNKNOWN</code> / <code>same_key_only</code>; the same-key retry gives created:false; the owner message list holds one message; CLI exit 5</td></tr>
+</tbody></table>
+</div>
+<p>Extra live scenarios: 409 for the same key with another body; the await macro
+reports <code>timed_out</code> honestly; a device queue holds 16, the 17th is 429 (queue full) with Retry-After 60 and <code>same_key_only</code>; a CSRF value the session
+does not own and a foreign origin are 403; an unknown bearer is 401; the key
+bound to one device is 403 for the other; an unknown endpoint is 404; <code>limit</code>
+21 on the delivery page is refused before sending.</p>
+<h3 id="findings"><a class="header" href="#findings">Findings</a></h3>
+<p>Each finding has a fix and an offline regression test, so the mock-based suite
+catches it next time.</p>
+<ol>
+<li><strong>Reserved callback hosts.</strong> The server refuses callback hosts under <code>.test</code>,
+<code>.example</code>, <code>.invalid</code>, <code>.local</code> and similar suffixes with a 400 error; the example host and the mock both
+accept them. Fix: the <code>agent.yml</code> remediation text names the rule.</li>
+<li><strong>Expiry window.</strong> An expiry more than 15 minutes ahead gets a bare 400 that the spec never explains. Fix: an operation-specific
+remediation with <code>retryable: after_remediation</code>.</li>
+<li><strong>Ungated planes.</strong> The sealed plane's gate was declared but no
+sealed operation named it, and the workflow plane had no gate, so a default
+deployment's 404 came back as <code>NOT_FOUND</code>. Fix: a <code>gate</code> on all 15 sealed and
+9 workflow operations, plus a gate for the workflow plane; new
+<code>tungsten check</code> warning TG0614 for a <code>gates</code> entry no operation uses.</li>
+<li><strong>Rate-limit text.</strong> A rate-limit answer on submit carried the "four requests in
+flight" text when the live cause was the 60-per-minute budget, and had no
+same-key rule. Fix: an operation-specific remediation with
+<code>same_key_only</code>.</li>
+<li><strong>Harness.</strong> Live runs were order dependent because of the server's budgets
+and caps (8 webhook endpoints, 16 pending messages per device, 60
+submissions per minute). Fix: the proxy's reset restores server state before
+every scenario.</li>
+<li><strong>Policy, unchanged.</strong> The manifest requires a UUIDv4 submit key; the server
+accepts any 1–128 character <code>[A-Za-z0-9._-]</code> key.</li>
+</ol>
+<h3 id="comparison-baseline"><a class="header" href="#comparison-baseline">Comparison baseline</a></h3>
+<div class="table-wrapper"><table><thead><tr><th></th><th>Hand-written (ZROtext's own clients)</th><th>Generated by tungsten</th></tr></thead><tbody>
+<tr><td>Coverage</td><td>alpha plane only (no owner-webhook or device client)</td><td>public, sealed and workflow planes</td></tr>
+<tr><td>Size</td><td>TypeScript 284 lines, Python 239; signature verification 96 / 80</td><td>TS 6,461 lines, Python 8,535, Rust 13,140 + CLI 812</td></tr>
+<tr><td>MCP <code>tools/list</code></td><td>its MCP server 9,473 tokens, its send-only MCP server 539</td><td>progressive 765, discrete 14,205</td></tr>
+</tbody></table>
+</div>
+<p>Run live through the same flows:</p>
+<div class="table-wrapper"><table><thead><tr><th>Flow</th><th>Hand-written</th><th>Generated</th></tr></thead><tbody>
+<tr><td>submit, resubmit, status, cancel</td><td>same</td><td>same</td></tr>
+<tr><td>cancel again</td><td>an API error with status 409</td><td>envelope <code>CONFLICT</code> / <code>never</code> with remediation</td></tr>
+<tr><td>queue full</td><td>an API error with status 429</td><td><code>RATE_LIMITED</code> / <code>same_key_only</code>, <code>retry_after_ms</code> 60000</td></tr>
+<tr><td>bad key</td><td>a type or value error before sending</td><td><code>VALIDATION_FAILED</code> before sending</td></tr>
+<tr><td>drop or timeout</td><td>an outcome-unknown error; same-key retry gives created:false</td><td><code>OUTCOME_UNKNOWN</code> / <code>same_key_only</code> with <code>next_action</code>; same-key retry gives created:false</td></tr>
+</tbody></table>
+</div>
+<p>Equal: wire behaviour and no automatic retry. Better in the generated SDKs: the
+envelope, preview tokens, secret handling and owner-plane coverage. Missing or
+worse in the generated SDKs: webhook signature verification, sealed envelope
+composition, and the stricter UUIDv4 key.</p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="reference/diagnostics.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="downloads.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="reference/diagnostics.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="downloads.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr.min.js"></script>
+        <script src="mark.min.js"></script>
+        <script src="searcher.js"></script>
+
+        <script src="clipboard.min.js"></script>
+        <script src="highlight.js"></script>
+        <script src="book.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+
+    </div>
+    </body>
+</html>
