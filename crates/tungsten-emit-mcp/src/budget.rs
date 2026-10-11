@@ -8,7 +8,7 @@
 //!   budget, after the closure of its types was bounded
 //!   ([`crate::manifest::bound_closure`]); over it is TG0727.
 //! - Progressive mode: what a client receives before its first search, the
-//!   `tools/list` answer of `@tungsten/mcp` in progressive mode
+//!   `tools/list` answer of `@elysra/tungsten-mcp` in progressive mode
 //!   (`search_tools`, `describe_tool`, `invoke`, `preview`, `list_clusters`;
 //!   the opt-in `run_script` is not counted) plus the `initialize`
 //!   instructions, which carry the cluster index, must stay within
@@ -18,7 +18,7 @@
 //!   annotations, and the `preview` meta tool) plus that mode's
 //!   instructions.
 //!
-//! [`tools_list`] renders `tools/list` exactly as `@tungsten/mcp`
+//! [`tools_list`] renders `tools/list` exactly as `@elysra/tungsten-mcp`
 //! (`runtimes/mcp/src/catalog.ts`, `listTools`) serves it for a manifest,
 //! in the same key order, so the compact JSON is byte-identical to what a
 //! client receives (the MCP gate compares the two). The emitter's budgets,
@@ -33,7 +33,7 @@ use crate::manifest::{McpManifest, Mode, OUTPUT_BUDGET_FACTOR, tokens};
 pub const INDEX_BUDGET: usize = 2000;
 
 /// Replacement of a sensitive response field on a repeated identical call
-/// (`REDACTED_REPEAT` of `@tungsten/mcp`).
+/// (`REDACTED_REPEAT` of `@elysra/tungsten-mcp`).
 pub const REDACTED_REPEAT: &str = "<redacted after first read>";
 
 /// The measured budgets of one manifest.
@@ -298,7 +298,7 @@ fn meta_write() -> Value {
     json!({ "readOnlyHint": false, "destructiveHint": true, "idempotentHint": false, "openWorldHint": false })
 }
 
-/// The `tools/list` tools of `@tungsten/mcp` serving `manifest` (the
+/// The `tools/list` tools of `@elysra/tungsten-mcp` serving `manifest` (the
 /// manifest as JSON, as written to `manifest.json`) in `mode`, without the
 /// opt-in `run_script`.
 pub fn tools_list(manifest: &Value, mode: Mode) -> Value {

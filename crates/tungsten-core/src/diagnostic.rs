@@ -415,6 +415,16 @@ pub mod codes {
             "TG0760",
             "types no operation reaches were not generated (types.prune_unreferenced)",
         ),
+        ("TG0790", "invalid WebMCP target option; default used"),
+        ("TG0791", "WebMCP generated file could not be added"),
+        (
+            "TG0792",
+            "WebMCP SDK dependency defaults to the TypeScript target package",
+        ),
+        (
+            "TG0793",
+            "WebMCP preview tool name collides with an invocation tool",
+        ),
         ("TG0801", "external emitter not found or cannot be started"),
         (
             "TG0802",

@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! `tungsten doctor`: which optional external tools are installed.
-//!
-//! Every tool is optional, so doctor always succeeds. Tool paths are not
-//! reported (they are machine-specific); versions are.
+//! `tungsten doctor`: installed tools and local project prerequisites.
+//! Bare doctor is informational; project strict mode enforces required tools.
+//! No package registry request, installation, or authentication is performed.
 
 use std::fmt::Write as _;
 use std::io::Read;
@@ -14,8 +13,9 @@ use std::time::{Duration, Instant};
 
 use tungsten_emit::external::find_executable;
 
-use crate::output::{CommandName, CommandResult, DoctorResult, ToolReport};
-use crate::{CliEnv, Report};
+use crate::args::DoctorArgs;
+use crate::output::{CliError, CommandName, CommandResult, DoctorResult, ErrorKind, ToolReport};
+use crate::{CliEnv, Report, exit, input};
 
 /// Tools in report order, with what tungsten uses them for.
 const TOOLS: [(&str, &str); 8] = [
@@ -32,13 +32,13 @@ const TOOLS: [(&str, &str); 8] = [
 const VERSION_TIMEOUT: Duration = Duration::from_secs(5);
 const POLL_INTERVAL: Duration = Duration::from_millis(10);
 
-pub(crate) fn run(env: &CliEnv) -> Report {
+pub(crate) fn run(args: &DoctorArgs, env: &CliEnv) -> Report {
     let search_path = env
         .search_path
         .clone()
         .or_else(|| std::env::var_os("PATH"))
         .unwrap_or_default();
-    let tools: Vec<ToolReport> = TOOLS
+    let mut tools: Vec<ToolReport> = TOOLS
         .iter()
         .map(|&(name, purpose)| {
             let exe = find_executable(name, &search_path);
@@ -51,8 +51,141 @@ pub(crate) fn run(env: &CliEnv) -> Report {
         })
         .collect();
     let mut report = Report::new(CommandName::Doctor);
+    let project = args
+        .path
+        .as_deref()
+        .or_else(|| args.strict.then_some(Path::new(".")));
+    let mut failures = vec![];
+    if let Some(path) = project {
+        let manifest = match input::resolve(path) {
+            Ok(input::Input::Project(manifest)) => manifest,
+            _ => {
+                return report.failed(
+                    exit::FAILED,
+                    CliError::new(
+                        ErrorKind::Usage,
+                        "doctor requires a project directory or tungsten manifest",
+                    ),
+                );
+            }
+        };
+        let (config, diagnostics) = tungsten_config::load(&manifest);
+        if diagnostics.has_errors() || config.is_none() {
+            report.diagnostics = diagnostics.0;
+            report.exit = exit::FAILED;
+            return report;
+        }
+        let config = config.unwrap();
+        let has = |name: &str| {
+            config.targets.get(name).is_some_and(|options| {
+                tungsten_config::external_target(options)
+                    .ok()
+                    .flatten()
+                    .is_none()
+            })
+        };
+        let javascript = has("typescript") || has("mcp") || has("webmcp");
+        if javascript {
+            let exe = find_executable("npm", &search_path);
+            tools.push(ToolReport {
+                name: "npm".into(),
+                found: exe.is_some(),
+                version: exe.as_deref().and_then(tool_version),
+                purpose: "JavaScript package installation".into(),
+            });
+        }
+        if has("rust") {
+            let exe = find_executable("rustc", &search_path);
+            tools.push(ToolReport {
+                name: "rustc".into(),
+                found: exe.is_some(),
+                version: exe.as_deref().and_then(tool_version),
+                purpose: "Rust compiler".into(),
+            });
+        }
+        for (name, required, minimum) in [
+            ("node", javascript, Some((22, 0))),
+            ("npm", javascript, None),
+            ("python3", has("python"), Some((3, 12))),
+            ("cargo", has("rust"), Some((1, 88))),
+            ("rustc", has("rust"), Some((1, 88))),
+        ] {
+            if !required {
+                continue;
+            }
+            let tool = tools.iter_mut().find(|tool| tool.name == name).unwrap();
+            let supported = tool.found
+                && minimum.is_none_or(|minimum| {
+                    tool.version
+                        .as_deref()
+                        .and_then(version_pair)
+                        .is_some_and(|v| v >= minimum)
+                });
+            let requirement = minimum.map_or_else(
+                || "installed".into(),
+                |(major, minor)| format!(">={major}.{minor}"),
+            );
+            tool.purpose = format!(
+                "required {requirement} for configured targets; {}",
+                if supported {
+                    "ready"
+                } else {
+                    "unavailable or unsupported"
+                }
+            );
+            if !supported {
+                failures.push(format!("{name} {requirement}"));
+            }
+        }
+        let base = manifest.parent().unwrap_or(Path::new("."));
+        for target in ["typescript", "mcp", "webmcp"] {
+            let Some(options) = config.targets.get(target) else {
+                continue;
+            };
+            for (key, package) in [
+                ("sdk_path", "SDK"),
+                ("runtime_path", "runtime"),
+                ("sdk_runtime_path", "SDK runtime"),
+            ] {
+                if let Some(relative) = options.get(key).and_then(serde_json::Value::as_str) {
+                    let out = options
+                        .get("out")
+                        .and_then(serde_json::Value::as_str)
+                        .map(|p| base.join(p))
+                        .unwrap_or_else(|| base.join("generated").join(target));
+                    let local = out.join(relative).join("package.json");
+                    let found = local.is_file();
+                    tools.push(ToolReport { name: format!("{target}.{key}"), found, version: None,
+                        purpose: format!("local {package} package {} (informational; generate/install may be pending)", local.display()) });
+                }
+            }
+        }
+    }
     report.human = human(&tools);
+    if project.is_some() {
+        report.human = report.human.replace(
+            "all tools are optional; a missing tool only disables what it is listed for\n",
+            "project prerequisites checked locally; package registry access was not checked\n",
+        );
+        if !failures.is_empty() {
+            let _ = writeln!(
+                report.human,
+                "missing or unsupported prerequisites: {}",
+                failures.join(", ")
+            );
+        }
+    }
     report.result = Some(CommandResult::Doctor(DoctorResult { tools }));
+    if args.strict && !failures.is_empty() {
+        report.exit = exit::FAILED;
+        report.error = Some(
+            CliError::new(
+                ErrorKind::Usage,
+                format!("project prerequisites unavailable: {}", failures.join(", ")),
+            )
+            .with_help("install compatible tools, then run doctor --strict again"),
+        );
+    }
     report
 }
 
@@ -128,4 +261,9 @@ pub(crate) fn parse_version(text: &str) -> Option<String> {
                 .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '+'));
         version_like.then(|| token.to_string())
     })
+}
+
+fn version_pair(version: &str) -> Option<(u64, u64)> {
+    let mut parts = version.split('.');
+    Some((parts.next()?.parse().ok()?, parts.next()?.parse().ok()?))
 }

@@ -1,0 +1,46 @@
+# npm publishing is performed by release.yml after this controller-reported check succeeds.
+# No registry or GitHub write credential is passed to the worker.
+when:
+  - event: tag
+    ref: refs/tags/v*
+
+labels:
+  backend: kubernetes
+  platform: linux/amd64
+
+clone:
+  - name: git
+    image: woodpeckerci/plugin-git:2.10.1@sha256:550075c844fcec0af41d9d28f9860aa5d8c43e1e9419be4b9266dc02c2f29804
+    settings:
+      home: /tmp
+      ref: ${CI_COMMIT_SHA}
+      depth: 0
+      lfs: false
+      recursive: false
+    backend_options:
+      kubernetes:
+        securityContext: &restricted
+          runAsUser: 1000
+          runAsGroup: 1000
+          fsGroup: 1000
+          runAsNonRoot: true
+          allowPrivilegeEscalation: false
+          capabilities: {drop: [ALL]}
+          seccompProfile: {type: RuntimeDefault}
+
+steps:
+  - name: validate-npm-artifacts
+    image: node:22.23.3-bookworm@sha256:0e5f906573693feaa1e21057ebdcfdb5bd5021f050b2dc7c9deceb629c7da2a8
+    commands:
+      - test "$CI_REPO" = pboachie/tungsten
+      - test "$(git rev-parse HEAD)" = "$CI_COMMIT_SHA"
+      - git fetch origin main
+      - git merge-base --is-ancestor HEAD FETCH_HEAD
+      - node .github/scripts/check-release-version.mjs
+      - timeout --signal=TERM --kill-after=30s 15m node .github/scripts/check-runtime-artifacts.mjs runtime-dist
+    backend_options:
+      kubernetes:
+        securityContext: *restricted
+        resources:
+          requests: {cpu: "1", memory: 1Gi, ephemeral-storage: 2Gi}
+          limits: {cpu: "2", memory: 2Gi, ephemeral-storage: 4Gi}

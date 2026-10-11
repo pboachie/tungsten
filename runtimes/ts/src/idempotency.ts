@@ -9,7 +9,7 @@ import type { IdempotencyStore, OperationDescriptor } from "./types.js";
 /**
  * The default {@link IdempotencyStore}: keys live as long as the process.
  * Use a persistent store (`FileIdempotencyStore` from
- * `@tungsten/runtime/node`, or your own) when a key must survive a crash.
+ * `@elysra/tungsten-runtime/node`, or your own) when a key must survive a crash.
  */
 export class MemoryIdempotencyStore implements IdempotencyStore {
   readonly #keys = new Map<string, string>();

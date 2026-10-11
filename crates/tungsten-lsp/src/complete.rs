@@ -209,6 +209,17 @@ fn target_keys(target: &str) -> &'static [&'static str] {
         "python" => &["package", "runtime", "models", "out"],
         "rust" => &["crate", "runtime", "cli", "out"],
         "mcp" => &["package", "runtime", "out"],
+        "webmcp" => &[
+            "package",
+            "version",
+            "runtime",
+            "runtime_path",
+            "sdk",
+            "sdk_path",
+            "sdk_runtime",
+            "sdk_runtime_path",
+            "out",
+        ],
         _ => &["out"],
     }
 }

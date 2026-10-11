@@ -49,7 +49,8 @@
 //! Patch: documentation, the HTTP method or path, a runtime gate, or the
 //! steps of a macro change, with the same signatures.
 //!
-//! None: the snapshots are equal.
+//! None: no API compatibility change (release metadata and dependency
+//! requirement changes can still require deployment review).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -68,7 +69,7 @@ use crate::args::{BodyArg, args_layout};
 pub const SURFACE_PATH: &str = ".tungsten/surface.json";
 
 /// Version of the [`ApiSurface`] format.
-pub const SURFACE_FORMAT: u32 = 2;
+pub const SURFACE_FORMAT: u32 = 3;
 
 /// What callers of the generated code depend on. Maps are sorted by key.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -89,6 +90,18 @@ pub struct ApiSurface {
     /// calls, for targets that serve tools; empty otherwise.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub tools: BTreeMap<String, String>,
+    /// Package metadata from generated manifests. Absent in older snapshots.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<TargetSurface>,
+}
+
+/// Package identity and dependency requirements, without installation claims.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TargetSurface {
+    pub package: Option<String>,
+    pub version: Option<String>,
+    pub dependencies: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -103,6 +116,9 @@ pub struct OperationSurface {
     #[serde(default, skip_serializing_if = "is_false")]
     pub gated: bool,
     pub safety: Safety,
+    /// Unknown for snapshots written before format 3.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deprecated: Option<bool>,
     /// A caller-owned idempotency key is required.
     #[serde(default, skip_serializing_if = "is_false")]
     pub key_required: bool,
@@ -391,6 +407,7 @@ impl ApiSurface {
             macros,
             types,
             tools: BTreeMap::new(),
+            target: None,
         }
     }
 
@@ -398,6 +415,125 @@ impl ApiSurface {
     /// operation id or macro name).
     pub fn with_tools(mut self, tools: BTreeMap<String, String>) -> ApiSurface {
         self.tools = tools;
+        self
+    }
+
+    /// Record package metadata from the actual generated manifests, so defaults
+    /// and target-specific runtime ranges are captured too. Custom files are ignored.
+    pub fn with_generated_files(mut self, files: &crate::FileSet) -> ApiSurface {
+        if let Some(value) = files
+            .get("package.json")
+            .and_then(|bytes| serde_json::from_slice::<Value>(bytes).ok())
+        {
+            self.target = Some(TargetSurface {
+                package: value["name"].as_str().map(str::to_string),
+                version: value["version"].as_str().map(str::to_string),
+                dependencies: value["dependencies"]
+                    .as_object()
+                    .into_iter()
+                    .flat_map(|map| map.iter())
+                    .filter_map(|(name, range)| {
+                        range
+                            .as_str()
+                            .map(|range| (name.clone(), range.to_string()))
+                    })
+                    .collect(),
+            });
+        } else if let Some(value) = files
+            .get("pyproject.toml")
+            .and_then(|bytes| std::str::from_utf8(bytes).ok())
+            .and_then(|text| toml::from_str::<toml::Value>(text).ok())
+        {
+            let Some(project) = value.get("project") else {
+                return self;
+            };
+            let mut dependencies = BTreeMap::new();
+            if let Some(deps) = project.get("dependencies").and_then(toml::Value::as_array) {
+                for dep in deps.iter().filter_map(toml::Value::as_str) {
+                    let split = dep
+                        .find(|c: char| {
+                            !c.is_ascii_alphanumeric() && c != '-' && c != '_' && c != '.'
+                        })
+                        .unwrap_or(dep.len());
+                    dependencies.insert(dep[..split].to_string(), dep[split..].to_string());
+                }
+            }
+            if let Some(source) = value
+                .get("tool")
+                .and_then(|v| v.get("uv"))
+                .and_then(|v| v.get("sources"))
+                .and_then(|v| v.get("tungsten-runtime"))
+            {
+                dependencies.insert("tungsten-runtime".into(), source.to_string());
+            }
+            self.target = Some(TargetSurface {
+                package: project
+                    .get("name")
+                    .and_then(toml::Value::as_str)
+                    .map(str::to_string),
+                version: project
+                    .get("version")
+                    .and_then(toml::Value::as_str)
+                    .map(str::to_string),
+                dependencies,
+            });
+        } else {
+            let workspace = files
+                .get("Cargo.toml")
+                .and_then(|bytes| std::str::from_utf8(bytes).ok())
+                .and_then(|text| toml::from_str::<toml::Value>(text).ok());
+            for (_, bytes) in files
+                .iter()
+                .filter(|(path, _)| path.ends_with("Cargo.toml") && !crate::is_custom_path(path))
+            {
+                let Some(value) = std::str::from_utf8(bytes)
+                    .ok()
+                    .and_then(|text| toml::from_str::<toml::Value>(text).ok())
+                else {
+                    continue;
+                };
+                let Some(dependencies) = value.get("dependencies").and_then(toml::Value::as_table)
+                else {
+                    continue;
+                };
+                if !dependencies.contains_key("tungsten-runtime") || value.get("lib").is_none() {
+                    continue;
+                }
+                self.target = Some(TargetSurface {
+                    package: value
+                        .get("package")
+                        .and_then(|p| p.get("name"))
+                        .and_then(toml::Value::as_str)
+                        .map(str::to_string),
+                    version: value
+                        .get("package")
+                        .and_then(|p| p.get("version"))
+                        .and_then(toml::Value::as_str)
+                        .or_else(|| {
+                            workspace
+                                .as_ref()
+                                .and_then(|w| w.get("workspace"))
+                                .and_then(|w| w.get("package"))
+                                .and_then(|p| p.get("version"))
+                                .and_then(toml::Value::as_str)
+                        })
+                        .map(str::to_string),
+                    dependencies: dependencies
+                        .iter()
+                        .map(|(name, range)| {
+                            (
+                                name.clone(),
+                                range
+                                    .as_str()
+                                    .map(str::to_string)
+                                    .unwrap_or_else(|| range.to_string()),
+                            )
+                        })
+                        .collect(),
+                });
+                break;
+            }
+        }
         self
     }
 
@@ -425,9 +561,9 @@ impl ApiSurface {
     pub fn parse(bytes: &[u8]) -> Result<ApiSurface, String> {
         let surface: ApiSurface = serde_json::from_slice(bytes)
             .map_err(|e| format!("not a tungsten API surface: {e}"))?;
-        if surface.format != SURFACE_FORMAT {
+        if !(2..=SURFACE_FORMAT).contains(&surface.format) {
             return Err(format!(
-                "surface format {} is not supported (expected {SURFACE_FORMAT})",
+                "surface format {} is not supported (expected 2 through {SURFACE_FORMAT})",
                 surface.format
             ));
         }
@@ -525,6 +661,7 @@ fn operation(ir: &Ir, op: &Operation, accessor: String) -> OperationSurface {
         path: op.path.raw.clone(),
         gated: matches!(op.status, OperationStatus::Gated { .. }),
         safety: op.agent.safety,
+        deprecated: Some(op.deprecated),
         key_required: idem.policy == IdempotencyKind::CallerOwned && idem.persist_required,
         args,
         extra_args,
@@ -731,6 +868,7 @@ pub fn compare(old: &ApiSurface, new: &ApiSurface) -> Vec<SurfaceChange> {
     cx.macros();
     cx.types();
     cx.tools();
+    cx.target();
     let mut changes: Vec<SurfaceChange> = cx.out.into_iter().collect();
     changes.sort_by(|a, b| {
         b.level
@@ -769,6 +907,50 @@ impl Cx<'_> {
             subject: subject.to_string(),
             detail: detail.into(),
         });
+    }
+
+    fn target(&mut self) {
+        let (Some(old), Some(new)) = (&self.old.target, &self.new.target) else {
+            return;
+        };
+        if old.package != new.package {
+            self.push(
+                Level::Major,
+                "package_renamed",
+                "package",
+                format!("{:?} → {:?}", old.package, new.package),
+            );
+        }
+        if old.version != new.version {
+            self.push(
+                Level::None,
+                "package_version_changed",
+                "package",
+                format!(
+                    "{:?} → {:?}; release metadata only",
+                    old.version, new.version
+                ),
+            );
+        }
+        for name in old
+            .dependencies
+            .keys()
+            .chain(new.dependencies.keys())
+            .collect::<BTreeSet<_>>()
+        {
+            if old.dependencies.get(name) != new.dependencies.get(name) {
+                self.push(
+                    Level::None,
+                    "runtime_dependency_changed",
+                    name,
+                    format!(
+                        "{:?} → {:?}; verify installed dependency compatibility",
+                        old.dependencies.get(name),
+                        new.dependencies.get(name)
+                    ),
+                );
+            }
+        }
     }
 
     fn safety(&mut self, subject: &str, old: Safety, new: Safety) {
@@ -820,6 +1002,20 @@ impl Cx<'_> {
             }
             if o.docs != n.docs {
                 self.push(Level::Patch, "docs_changed", id, "documentation changed");
+            }
+            if let (Some(before), Some(after)) = (o.deprecated, n.deprecated)
+                && before != after
+            {
+                self.push(
+                    Level::Patch,
+                    "deprecation_changed",
+                    id,
+                    if after {
+                        "operation is deprecated"
+                    } else {
+                        "operation is no longer deprecated"
+                    },
+                );
             }
             self.safety(id, o.safety, n.safety);
             match (o.key_required, n.key_required) {

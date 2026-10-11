@@ -1202,8 +1202,8 @@ pub(crate) fn descriptors_file(
     body.line(format!("{prefix}{};", list.render("  ", prefix.len())));
 
     let mut imports = Imports::new();
-    imports.add_type("@tungsten/runtime", "ApiDescriptor");
-    imports.add_type("@tungsten/runtime", "OperationDescriptor");
+    imports.add_type("@elysra/tungsten-runtime", "ApiDescriptor");
+    imports.add_type("@elysra/tungsten-runtime", "OperationDescriptor");
     imports.add("zod", "z");
     imports.add("./internal.js", "toSchemaLike");
     if uses.integer {

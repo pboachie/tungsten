@@ -283,7 +283,7 @@ pub(crate) fn resource_file(
 ) -> String {
     let r = &plan.resources[idx];
     let mut imports = Imports::new();
-    imports.add_type("@tungsten/runtime", "ClientCoreApi");
+    imports.add_type("@elysra/tungsten-runtime", "ClientCoreApi");
     let mut namespaces: BTreeSet<String> = BTreeSet::new();
     let mut has_ops = false;
     for m in &r.members {
@@ -293,20 +293,20 @@ pub(crate) fn resource_file(
                 let info = &plan.ops[o];
                 let shape = &shapes[o];
                 for t in ["CallOptions", "OperationDescriptor", "Result"] {
-                    imports.add_type("@tungsten/runtime", t);
+                    imports.add_type("@elysra/tungsten-runtime", t);
                 }
                 if has_preview(info) {
-                    imports.add_type("@tungsten/runtime", "PreviewResult");
+                    imports.add_type("@elysra/tungsten-runtime", "PreviewResult");
                 }
                 if shape.page_item.is_some() {
-                    imports.add_type("@tungsten/runtime", "Page");
+                    imports.add_type("@elysra/tungsten-runtime", "Page");
                 }
                 namespaces.extend(shape.result_namespaces.iter().cloned());
             }
             MemberKind::Stream(o) => {
                 has_ops = true;
                 for t in ["CallOptions", "EventStream", "OperationDescriptor"] {
-                    imports.add_type("@tungsten/runtime", t);
+                    imports.add_type("@elysra/tungsten-runtime", t);
                 }
                 namespaces.extend(shapes[o].result_namespaces.iter().cloned());
             }
@@ -404,8 +404,8 @@ pub(crate) fn resource_file(
 pub(crate) fn client_file(plan: &Plan<'_>, has_macros: bool, header: &str) -> String {
     let ir = plan.ir;
     let mut imports = Imports::new();
-    imports.add("@tungsten/runtime", "ClientCore");
-    imports.add_type("@tungsten/runtime", "ClientOptions");
+    imports.add("@elysra/tungsten-runtime", "ClientCore");
+    imports.add_type("@elysra/tungsten-runtime", "ClientOptions");
     imports.add("./descriptors.js", "api");
     imports.add("./descriptors.js", "operations");
     if has_macros {
@@ -418,10 +418,10 @@ pub(crate) fn client_file(plan: &Plan<'_>, has_macros: bool, header: &str) -> St
         .map(tungsten_ir::AuthScheme::name)
         .collect();
     if !flows.is_empty() {
-        imports.add_type("@tungsten/runtime", "OAuthFlow");
+        imports.add_type("@elysra/tungsten-runtime", "OAuthFlow");
     }
     let tops: Vec<usize> = if plan.multi() {
-        imports.add_type("@tungsten/runtime", "ClientCoreApi");
+        imports.add_type("@elysra/tungsten-runtime", "ClientCoreApi");
         plan.client_namespaces
             .iter()
             .flat_map(|n| n.members.iter().map(|(_, i)| *i))
@@ -563,7 +563,7 @@ pub(crate) fn index_file(plan: &Plan<'_>, has_macros: bool, header: &str) -> Str
     ));
     let streams = plan.ops.iter().any(|o| o.op.stream.is_some());
     w.line(format!(
-        "export type {{ CallOptions, ClientOptions, Diagnostic, Page, PreviewResult, Result{} }} from \"@tungsten/runtime\";",
+        "export type {{ CallOptions, ClientOptions, Diagnostic, Page, PreviewResult, Result{} }} from \"@elysra/tungsten-runtime\";",
         if streams { ", EventStream, StreamItem" } else { "" }
     ));
     // With one namespace its models are exported directly; otherwise each
