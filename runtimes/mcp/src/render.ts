@@ -5,7 +5,7 @@
  * by the server itself, canonical JSON, redaction of sensitive response
  * fields and truncation of large results.
  */
-import type { Category, Diagnostic, Retryable } from "@tungsten/runtime";
+import type { Category, Diagnostic, Retryable } from "@elysra/tungsten-runtime";
 
 /** Replacement for a sensitive response field on a repeated identical call. */
 export const REDACTED_REPEAT = "<redacted after first read>";

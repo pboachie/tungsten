@@ -213,7 +213,7 @@ fn object_shape<'m>(
 }
 
 /// An object-typed query parameter rebuilt from the request the way
-/// `@tungsten/runtime` serializes it: `deepObject` as `name[key]=v`
+/// `@elysra/tungsten-runtime` serializes it: `deepObject` as `name[key]=v`
 /// (nested `name[a][b]=v`), `form` with `explode` as the members' own keys
 /// (`size=10`; for open objects every key no other parameter claims), and
 /// `form` without `explode` as `name=k,v,k2,v2`. An empty object when the

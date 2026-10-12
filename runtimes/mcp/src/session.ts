@@ -12,7 +12,7 @@
  */
 import { createHash } from "node:crypto";
 
-import type { ClientCore, CallOptions, Diagnostic, MacroDescriptor, MacroStepPreview, OperationDescriptor, PreviewResult, Result } from "@tungsten/runtime";
+import type { ClientCore, CallOptions, Diagnostic, MacroDescriptor, MacroStepPreview, OperationDescriptor, PreviewResult, Result } from "@elysra/tungsten-runtime";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 
 import { inCluster, PROGRESSIVE_TOOLS, TOOL_META_KEY, verifies, type Catalog, type CatalogTool } from "./catalog.js";
@@ -220,7 +220,7 @@ export class Session {
       return this.#failure(
         null,
         envelope(name, "UNEXPECTED_RESPONSE", {
-          remediation: `The MCP server failed while handling ${clip(name)} (${error instanceof Error ? error.message : String(error)}). This is a bug in @tungsten/mcp; report it. If the call may have been sent, check its effect before repeating it.`,
+          remediation: `The MCP server failed while handling ${clip(name)} (${error instanceof Error ? error.message : String(error)}). This is a bug in @elysra/tungsten-mcp; report it. If the call may have been sent, check its effect before repeating it.`,
         }),
       );
     }

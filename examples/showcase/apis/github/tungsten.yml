@@ -1,0 +1,19 @@
+tungsten: 1
+
+api:
+  name: github
+  title: "GitHub REST API"
+
+inputs:
+  - namespace: github
+    spec: "../../.cache/specs/github.json"
+
+servers:
+  default: "https://api.github.com"
+  allow_override: true
+
+targets:
+  typescript: { out: ../../.cache/out/github/typescript }
+  python: { out: ../../.cache/out/github/python }
+  rust: { out: ../../.cache/out/github/rust }
+  docs: { out: ../../.cache/out/github/docs }

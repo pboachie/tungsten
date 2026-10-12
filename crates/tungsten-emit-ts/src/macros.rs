@@ -435,6 +435,11 @@ impl Gen<'_, '_> {
                 let step = &self.mp.steps[*i];
                 let shape = &self.shapes[step.op];
                 if step.kind == StepKind::Paginate {
+                    if path.is_empty() {
+                        self.uses
+                            .namespaces
+                            .extend(shape.result_namespaces.iter().cloned());
+                    }
                     let item = shape
                         .page_item
                         .as_ref()
@@ -447,6 +452,9 @@ impl Gen<'_, '_> {
                 }
                 let polled = step.kind == StepKind::Poll;
                 if path.is_empty() {
+                    self.uses
+                        .namespaces
+                        .extend(shape.result_namespaces.iter().cloned());
                     let t = &shape.success.text;
                     return match (polled, t.strip_suffix(" | undefined")) {
                         (false, _) => t.clone(),
@@ -845,10 +853,10 @@ pub(crate) fn macros_file(
         "MacroDescriptor",
         "Result",
     ] {
-        imports.add_type("@tungsten/runtime", t);
+        imports.add_type("@elysra/tungsten-runtime", t);
     }
     if any_preview {
-        imports.add_type("@tungsten/runtime", "PreviewResult");
+        imports.add_type("@elysra/tungsten-runtime", "PreviewResult");
     }
     let mut w = Writer::new("  ");
     w.line(header);

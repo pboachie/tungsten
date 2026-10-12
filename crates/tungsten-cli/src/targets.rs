@@ -17,11 +17,13 @@ use tungsten_emit_mcp::McpEmitter;
 use tungsten_emit_py::PythonEmitter;
 use tungsten_emit_rs::RustEmitter;
 use tungsten_emit_ts::TypeScriptEmitter;
+use tungsten_emit_webmcp::WebMcpEmitter;
 use tungsten_ir::Ir;
 
 static TYPESCRIPT: TypeScriptEmitter = TypeScriptEmitter;
 static DOCS: DocsEmitter = DocsEmitter;
 static MCP: McpEmitter = McpEmitter;
+static WEBMCP: WebMcpEmitter = WebMcpEmitter;
 static PYTHON: PythonEmitter = PythonEmitter;
 static RUST: RustEmitter = RustEmitter;
 static JAVA: JavaEmitter = JavaEmitter;
@@ -32,6 +34,7 @@ pub fn emitter(id: &str) -> Option<&'static dyn Emitter> {
         "typescript" => Some(&TYPESCRIPT),
         "docs" => Some(&DOCS),
         "mcp" => Some(&MCP),
+        "webmcp" => Some(&WEBMCP),
         "python" => Some(&PYTHON),
         "rust" => Some(&RUST),
         "java" => Some(&JAVA),
@@ -41,10 +44,12 @@ pub fn emitter(id: &str) -> Option<&'static dyn Emitter> {
 
 /// The agent tool names target `id` serves (tool name → operation id or
 /// macro name), recorded in its API surface snapshot: the MCP server's
-/// tools; none for SDK and docs targets.
+/// tools and the browser WebMCP invocation and preview tools; none for SDK and
+/// docs targets.
 pub fn tool_names(id: &str, ir: &Ir) -> BTreeMap<String, String> {
     match id {
         "mcp" => tungsten_emit_mcp::tool_names(ir),
+        "webmcp" => tungsten_emit_webmcp::tool_names(ir),
         _ => BTreeMap::new(),
     }
 }
@@ -81,14 +86,14 @@ pub fn target_config_for(
         .and_then(|c| c.targets.get(name))
         .cloned()
         .unwrap_or_else(|| serde_json::json!({}));
-    if name == "mcp" && options.is_null() {
+    if matches!(name, "mcp" | "webmcp") && options.is_null() {
         options = serde_json::json!({});
     }
-    if name == "mcp"
+    if matches!(name, "mcp" | "webmcp")
         && let Some(map) = options.as_object_mut()
         && let Some(ts) = config.and_then(|c| c.targets.get("typescript"))
     {
-        // The server depends on the SDK the `typescript` target generates.
+        // Agent adapters depend on the SDK the `typescript` target generates.
         let pick: serde_json::Map<String, serde_json::Value> = ["package", "version"]
             .iter()
             .filter_map(|k| Some(((*k).to_string(), ts.get(*k)?.clone())))
