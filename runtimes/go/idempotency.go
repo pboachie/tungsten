@@ -4,6 +4,7 @@ package tungsten
 
 import (
 	"bytes"
+	"context"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -324,4 +325,51 @@ func (s *FileIdempotencyStore) Reserve(scope, id, candidate string) (string, err
 		return "", err
 	}
 	return candidate, nil
+}
+
+// A permit is retained until persistence completes, including after caller
+// cancellation. Waiting callers never enqueue an unbounded number of workers.
+var reservationWorkers = make(chan struct{}, 16)
+
+type reservationResult struct {
+	key string
+	err error
+}
+
+func reserveKeyContext(ctx context.Context, store IdempotencyStore, scope, id, candidate string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	select {
+	case reservationWorkers <- struct{}{}:
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+	if err := ctx.Err(); err != nil {
+		<-reservationWorkers
+		return "", err
+	}
+	finished := make(chan reservationResult, 1)
+	go func() {
+		defer func() { <-reservationWorkers }()
+		result := reservationResult{}
+		func() {
+			defer func() {
+				if recover() != nil {
+					result.err = errors.New("idempotency store worker panicked")
+				}
+			}()
+			result.key, result.err = reserveKey(store, scope, id, candidate)
+		}()
+		finished <- result
+	}()
+	select {
+	case result := <-finished:
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		return result.key, result.err
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
 }

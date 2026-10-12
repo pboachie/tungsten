@@ -559,7 +559,7 @@ func (c *ClientCore) prepare(ctx context.Context, op *OperationDescriptor, rawAr
 		headers.set("Content-Type", encoded.contentType, false)
 	}
 	header := keyHeader(op)
-	key, hasIdem, err := c.idempotencyKey(op, args, opts, p, encoded)
+	key, hasIdem, err := c.idempotencyKey(ctx, op, args, opts, p, encoded)
 	if err != nil {
 		return nil, err
 	}
@@ -870,7 +870,7 @@ func (c *ClientCore) buildHeaders(op *OperationDescriptor, args *Object, opts Ca
 	}
 }
 
-func (c *ClientCore) idempotencyKey(op *OperationDescriptor, args *Object, opts CallOptions, p purpose, encoded encodedBody) (string, bool, *Error) {
+func (c *ClientCore) idempotencyKey(ctx context.Context, op *OperationDescriptor, args *Object, opts CallOptions, p purpose, encoded encodedBody) (string, bool, *Error) {
 	supplied, hasSupplied := opts.IdempotencyKey, opts.IdempotencyKey != ""
 	switch op.Agent.Idempotency.Policy {
 	case IdempotencyContentIdentity:
@@ -898,7 +898,7 @@ func (c *ClientCore) idempotencyKey(op *OperationDescriptor, args *Object, opts 
 		if !ok {
 			return "", false, refuse("no source of randomness")
 		}
-		key, err := reserveKey(c.store, op.ID, logical, candidate)
+		key, err := reserveKeyContext(ctx, c.store, op.ID, logical, candidate)
 		if err != nil {
 			return "", false, refuse(err.Error())
 		}
