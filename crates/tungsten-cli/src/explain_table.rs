@@ -894,7 +894,7 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
         "TG1013",
         "The Java runtime sends an OpenID Connect scheme as a bearer token. It does not run \
          discovery or obtain tokens itself.",
-        "Configure the scheme with `Credential.secret(token)` holding an access token you \
+        "Configure the scheme with `AuthCredential.secret(token)` holding an access token you \
          obtained from the provider.",
     ),
     e(
