@@ -20,7 +20,7 @@ Tree rules:
   - no documentation files and no documentation directories (doc/, docs/,
     documentation/). The only documentation files allowed are the community
     files: README.md, LICENSE, CONTRIBUTING.md, SECURITY.md,
-    CODE_OF_CONDUCT.md and CHANGELOG.md at the root; the Apache-2.0 LICENSE
+    CODE_OF_CONDUCT.md, CHANGELOG.md and AGENTS.md at the root; the Apache-2.0 LICENSE
     in runtimes/ (and a copy of it in a runtime package directory, for npm
     packaging); Markdown directly in .github/ (pull request template and the
     like); .github/ISSUE_TEMPLATE/*.md and *.yml; examples/<name>/README.md, and README.md in the three npm runtime packages.
@@ -112,7 +112,7 @@ DOC_NAME = re.compile(
 # Community files, matched against the whole path: nothing else may be
 # documentation, and a documentation directory is refused even around these.
 ALLOWED_DOCS = re.compile(
-    r"^(?:README\.md|LICENSE|CONTRIBUTING\.md|SECURITY\.md|CODE_OF_CONDUCT\.md|CHANGELOG\.md"
+    r"^(?:README\.md|LICENSE|CONTRIBUTING\.md|SECURITY\.md|CODE_OF_CONDUCT\.md|CHANGELOG\.md|AGENTS\.md"
     r"|runtimes/LICENSE|runtimes/[^/]+/LICENSE|runtimes/rust/(?:runtime|cli-kit)/LICENSE"
     r"|runtimes/(?:ts|mcp|webmcp)/README\.md"
     r"|\.github/[^/]+\.md"
@@ -216,7 +216,7 @@ def path_violations(path: str) -> list[str]:
     elif not ALLOWED_DOCS.match(path) and (suffix in DOC_EXTENSIONS or (not suffix and DOC_NAME.match(name))):
         found.append(
             "documentation file (only the community files are allowed: README.md, LICENSE, CONTRIBUTING.md,"
-            " SECURITY.md, CODE_OF_CONDUCT.md and CHANGELOG.md at the root, Markdown in .github/ and"
+            " SECURITY.md, CODE_OF_CONDUCT.md, CHANGELOG.md and AGENTS.md at the root, Markdown in .github/ and"
             " .github/ISSUE_TEMPLATE/, examples/<name>/README.md, npm runtime README.md; docs live in the private repository)"
         )
     if (suffix == ".go" or name in GO_MODULE_FILES) and not path.startswith(GO_ROOTS):

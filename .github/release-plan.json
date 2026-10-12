@@ -1,0 +1,11 @@
+{
+  "latest_stable": "0.1.1",
+  "default_target": "0.1.2",
+  "targets": {
+    "0.1.2": {
+      "status": "open",
+      "coordinator": "pboachie",
+      "tracking_pr": 46
+    }
+  }
+}
