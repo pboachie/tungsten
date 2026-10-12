@@ -24,16 +24,16 @@ flowchart LR
 ## The six at a glance
 
 <!-- showcase:begin summary -->
-Numbers from tungsten 0.1.0.
+Numbers from tungsten 0.1.1.
 
 | API | Operations | Errors / warnings / infos | MCP listing, discrete (tokens) | MCP listing, progressive (tokens) |
 |---|---:|---:|---:|---:|
-| Stripe | 612 | 0 / 1,626 / 305 | 29,369,721 | 855 |
-| GitHub REST | 1,232 | 0 / 404 / 50 | 1,240,738 | 860 |
+| Stripe | 612 | 0 / 1,626 / 305 | 1,128,102 | 855 |
+| GitHub REST | 1,232 | 0 / 404 / 50 | 1,140,213 | 860 |
 | Twilio | 197 | 0 / 22 / 309 | 207,004 | 865 |
-| OpenAI | 359 | 0 / 195 / 58 | 1,114,418 | 857 |
-| Kubernetes (core/v1) | 248 | 0 / 65 / 0 | 2,326,388 | 863 |
-| Discord | 246 | 0 / 282 / 7 | 681,029 | 858 |
+| OpenAI | 359 | 0 / 195 / 58 | 759,853 | 857 |
+| Kubernetes (core/v1) | 248 | 0 / 65 / 0 | 1,507,247 | 863 |
+| Discord | 246 | 0 / 282 / 7 | 410,070 | 858 |
 <!-- showcase:end summary -->
 
 Each row expands below. "Errors / warnings / infos" is what `tungsten check` reports for the description with the manifests in [`apis/`](apis). "MCP listing" is the size of the tool list a server would send to a model: `discrete` lists one tool per operation, `progressive` lists a handful of meta-tools (`search_tools`, `describe_tool`, `invoke`, `preview`, `list_clusters`) that find the operation on demand. Token counts come from tungsten's built-in estimator (`tungsten-estimate-v2`), not from a model's tokenizer: compare them with each other, not with a bill. The discrete figure counts what a server in discrete mode would send for every tool (name, description, input schema, output schema and annotations), so descriptions with large, deeply nested schemas (Stripe's) grow far faster than their operation count.
@@ -42,7 +42,7 @@ Each row expands below. "Errors / warnings / infos" is what `tungsten check` rep
 
 <!-- showcase:begin api-stripe -->
 <details>
-<summary><b>Stripe</b> · 612 operations · 0 errors, 1,626 warnings · MCP listing 29,369,721 to 855 tokens</summary>
+<summary><b>Stripe</b> · 612 operations · 0 errors, 1,626 warnings · MCP listing 1,128,102 to 855 tokens</summary>
 
 Payments. The public OpenAPI description. The largest description of the six by schema count (about 9,000 types).
 
@@ -51,7 +51,7 @@ Payments. The public OpenAPI description. The largest description of the six by 
 `tungsten check apis/stripe`
 
 ```text
-tungsten 0.1.0 · stripe · 1 document · 612 operations (612 implemented, 0 planned, 0 gated)
+tungsten 0.1.1 · stripe · 1 document · 612 operations (612 implemented, 0 planned, 0 gated)
   inputs   ../../.cache/specs/stripe.json (OpenAPI 3.0.0)
   refs     1538 schemas · 2064 edges · 7 cycles (120 recursive) · 0 cross-document
   ir       1 namespace · 233 resources · 612 operations · 9338 types · 2 auth schemes
@@ -74,7 +74,7 @@ Safety tiers assigned to the 612 operations: read-only 273 · mutating 307 · de
 
 | | |
 |---|---|
-| Tools if every operation were listed (discrete) | 29,369,721 tokens |
+| Tools if every operation were listed (discrete) | 1,128,102 tokens |
 | Listing in progressive mode | 855 tokens |
 | Mode `auto` chose | `progressive` (threshold 24 tools, 612 here) |
 | Tools above the 600-token schema budget | 110 |
@@ -268,7 +268,7 @@ tungsten mock apis/stripe --port 8099
 
 <!-- showcase:begin api-github -->
 <details>
-<summary><b>GitHub REST</b> · 1,232 operations · 0 errors, 404 warnings · MCP listing 1,240,738 to 860 tokens</summary>
+<summary><b>GitHub REST</b> · 1,232 operations · 0 errors, 404 warnings · MCP listing 1,140,213 to 860 tokens</summary>
 
 Repositories, issues, pull requests, organizations. The api.github.com description. The largest by operation count. Operation ids are GitHub's own (`repos/delete`).
 
@@ -277,7 +277,7 @@ Repositories, issues, pull requests, organizations. The api.github.com descripti
 `tungsten check apis/github`
 
 ```text
-tungsten 0.1.0 · github · 1 document · 1232 operations (1232 implemented, 0 planned, 0 gated)
+tungsten 0.1.1 · github · 1 document · 1232 operations (1232 implemented, 0 planned, 0 gated)
   inputs   ../../.cache/specs/github.json (OpenAPI 3.0.3)
   refs     994 schemas · 2591 edges · 0 cycles (0 recursive) · 0 cross-document
   ir       1 namespace · 680 resources · 1232 operations · 2724 types · 0 auth schemes
@@ -302,7 +302,7 @@ Safety tiers assigned to the 1,232 operations: read-only 644 · mutating 400 · 
 
 | | |
 |---|---|
-| Tools if every operation were listed (discrete) | 1,240,738 tokens |
+| Tools if every operation were listed (discrete) | 1,140,213 tokens |
 | Listing in progressive mode | 860 tokens |
 | Mode `auto` chose | `progressive` (threshold 24 tools, 1,232 here) |
 | Tools above the 600-token schema budget | 38 |
@@ -519,7 +519,7 @@ Messaging and voice. The core Api v2010 description (Twilio publishes one file p
 `tungsten check apis/twilio`
 
 ```text
-tungsten 0.1.0 · twilio · 1 document · 197 operations (197 implemented, 0 planned, 0 gated)
+tungsten 0.1.1 · twilio · 1 document · 197 operations (197 implemented, 0 planned, 0 gated)
   inputs   ../../.cache/specs/twilio.json (OpenAPI 3.0.1)
   refs     150 schemas · 43 edges · 0 cycles (0 recursive) · 0 cross-document
   ir       1 namespace · 116 resources · 197 operations · 388 types · 1 auth scheme
@@ -718,7 +718,7 @@ tungsten mock apis/twilio --port 8099
 
 <!-- showcase:begin api-openai -->
 <details>
-<summary><b>OpenAI</b> · 359 operations · 0 errors, 195 warnings · MCP listing 1,114,418 to 857 tokens</summary>
+<summary><b>OpenAI</b> · 359 operations · 0 errors, 195 warnings · MCP listing 759,853 to 857 tokens</summary>
 
 Models, assistants, files, batches. The published OpenAPI 3.1 description (YAML). OpenAPI 3.1 with streaming responses.
 
@@ -727,7 +727,7 @@ Models, assistants, files, batches. The published OpenAPI 3.1 description (YAML)
 `tungsten check apis/openai`
 
 ```text
-tungsten 0.1.0 · openai · 1 document · 359 operations (359 implemented, 0 planned, 0 gated)
+tungsten 0.1.1 · openai · 1 document · 359 operations (359 implemented, 0 planned, 0 gated)
   inputs   ../../.cache/specs/openai.yaml (OpenAPI 3.1.0)
   refs     2048 schemas · 3019 edges · 2 cycles (2 recursive) · 0 cross-document
   ir       1 namespace · 153 resources · 359 operations · 2690 types · 2 auth schemes
@@ -754,7 +754,7 @@ Safety tiers assigned to the 359 operations: read-only 159 · mutating 149 · de
 
 | | |
 |---|---|
-| Tools if every operation were listed (discrete) | 1,114,418 tokens |
+| Tools if every operation were listed (discrete) | 759,853 tokens |
 | Listing in progressive mode | 857 tokens |
 | Mode `auto` chose | `progressive` (threshold 24 tools, 359 here) |
 | Tools above the 600-token schema budget | 47 |
@@ -979,7 +979,7 @@ tungsten mock apis/openai --port 8099
 
 <!-- showcase:begin api-kubernetes -->
 <details>
-<summary><b>Kubernetes (core/v1)</b> · 248 operations · 0 errors, 65 warnings · MCP listing 2,326,388 to 863 tokens</summary>
+<summary><b>Kubernetes (core/v1)</b> · 248 operations · 0 errors, 65 warnings · MCP listing 1,507,247 to 863 tokens</summary>
 
 Pods, services, namespaces. The OpenAPI v3 description of the core/v1 group at release v1.37.1. One API group of many; the cluster-wide aggregated description is far larger.
 
@@ -988,7 +988,7 @@ Pods, services, namespaces. The OpenAPI v3 description of the core/v1 group at r
 `tungsten check apis/kubernetes`
 
 ```text
-tungsten 0.1.0 · kubernetes · 1 document · 248 operations (248 implemented, 0 planned, 0 gated)
+tungsten 0.1.1 · kubernetes · 1 document · 248 operations (248 implemented, 0 planned, 0 gated)
   inputs   ../../.cache/specs/kubernetes.json (OpenAPI 3.0.0)
   refs     258 schemas · 375 edges · 0 cycles (0 recursive) · 0 cross-document
   ir       1 namespace · 78 resources · 248 operations · 258 types · 1 auth scheme
@@ -1007,7 +1007,7 @@ Safety tiers assigned to the 248 operations: read-only 120 · mutating 93 · des
 
 | | |
 |---|---|
-| Tools if every operation were listed (discrete) | 2,326,388 tokens |
+| Tools if every operation were listed (discrete) | 1,507,247 tokens |
 | Listing in progressive mode | 863 tokens |
 | Mode `auto` chose | `progressive` (threshold 24 tools, 248 here) |
 | Tools above the 600-token schema budget | 145 |
@@ -1205,7 +1205,7 @@ tungsten mock apis/kubernetes --port 8099
 
 <!-- showcase:begin api-discord -->
 <details>
-<summary><b>Discord</b> · 246 operations · 0 errors, 282 warnings · MCP listing 681,029 to 858 tokens</summary>
+<summary><b>Discord</b> · 246 operations · 0 errors, 282 warnings · MCP listing 410,070 to 858 tokens</summary>
 
 Channels, messages, guilds. Discord labels this description a preview of its v10 HTTP API. OpenAPI 3.1.
 
@@ -1214,7 +1214,7 @@ Channels, messages, guilds. Discord labels this description a preview of its v10
 `tungsten check apis/discord`
 
 ```text
-tungsten 0.1.0 · discord · 1 document · 246 operations (246 implemented, 0 planned, 0 gated)
+tungsten 0.1.1 · discord · 1 document · 246 operations (246 implemented, 0 planned, 0 gated)
   inputs   ../../.cache/specs/discord.json (OpenAPI 3.1.0)
   refs     538 schemas · 1272 edges · 1 cycle (1 recursive) · 0 cross-document
   ir       1 namespace · 132 resources · 246 operations · 870 types · 2 auth schemes
@@ -1238,7 +1238,7 @@ Safety tiers assigned to the 246 operations: read-only 103 · mutating 103 · de
 
 | | |
 |---|---|
-| Tools if every operation were listed (discrete) | 681,029 tokens |
+| Tools if every operation were listed (discrete) | 410,070 tokens |
 | Listing in progressive mode | 858 tokens |
 | Mode `auto` chose | `progressive` (threshold 24 tools, 246 here) |
 | Tools above the 600-token schema budget | 25 |
