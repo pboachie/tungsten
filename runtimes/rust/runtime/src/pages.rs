@@ -146,16 +146,14 @@ impl ClientCore {
             st.done = true;
             return Some(Err(Error::new(Diag::new(op.id.clone(), Category::UnexpectedResponse).remediation("Pagination reached max_pages before another request. Increase max_pages to continue.").build())));
         }
-        if st.count == 0 {
-            if let Some(PaginationDescriptor::Cursor { request_param, .. }) = &op.pagination {
-                if let Some(initial) = st
-                    .args
-                    .get(arg_name(op, request_param))
-                    .filter(|v| !v.is_null() && v.as_str() != Some(""))
-                {
-                    st.seen.insert(canonical_json(initial));
-                }
-            }
+        if st.count == 0
+            && let Some(PaginationDescriptor::Cursor { request_param, .. }) = &op.pagination
+            && let Some(initial) = st
+                .args
+                .get(arg_name(op, request_param))
+                .filter(|v| !v.is_null() && v.as_str() != Some(""))
+        {
+            st.seen.insert(canonical_json(initial));
         }
         let mut request_url = String::new();
         let response = match self

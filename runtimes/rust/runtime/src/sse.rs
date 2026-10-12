@@ -216,15 +216,13 @@ impl SseParser {
                     self.id = Some(value.to_owned());
                 }
             }
-            "retry" => {
-                if !value.is_empty() && value.bytes().all(|b| b.is_ascii_digit()) {
-                    let digits = value.trim_start_matches('0');
-                    let digits = if digits.is_empty() { "0" } else { digits };
-                    if let Ok(ms) = digits.parse::<u64>()
-                        && ms <= 9_007_199_254_740_991
-                    {
-                        self.retry = Some(ms);
-                    }
+            "retry" if !value.is_empty() && value.bytes().all(|b| b.is_ascii_digit()) => {
+                let digits = value.trim_start_matches('0');
+                let digits = if digits.is_empty() { "0" } else { digits };
+                if let Ok(ms) = digits.parse::<u64>()
+                    && ms <= 9_007_199_254_740_991
+                {
+                    self.retry = Some(ms);
                 }
             }
             _ => {}
