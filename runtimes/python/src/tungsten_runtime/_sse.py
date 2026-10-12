@@ -48,17 +48,19 @@ class SseParser:
         "_max",
         "_retry",
         "_started",
+        "_pending_cr",
     )
 
     def __init__(self, max_event_bytes: int = DEFAULT_MAX_EVENT_BYTES) -> None:
         self._max = max_event_bytes
         self._event_bytes = 0
         self._exceeded = False
-        self._buffer = ""
+        self._buffer: list[str] = []
         self._buffer_bytes = 0
         self._started = False
+        self._pending_cr = False
         self._event = ""
-        self._data = ""
+        self._data: list[str] = []
         self._has_data = False
         self._id: str | None = None
         self._retry: int | None = None
@@ -74,63 +76,72 @@ class SseParser:
         follows."""
         if self._exceeded:
             return []
-        text = self._buffer + chunk
-        self._buffer = ""
-        chunk_bytes = len(chunk.encode("utf-8"))
-        if not self._started and len(text) > 0:
+        if not self._started and chunk:
             self._started = True
-            if text[0] == "﻿":
-                text = text[1:]
-                chunk_bytes -= 3
+            chunk = chunk.removeprefix("\ufeff")
         out: list[SseEvent] = []
-        completed = False
+        if self._pending_cr:
+            if not chunk:
+                return out
+            self._pending_cr = False
+            self._complete(out)
+            chunk = chunk.removeprefix("\n")
         start = 0
         i = 0
-        size = len(text)
-        while i < size:
-            c = text[i]
-            if c != "\n" and c != "\r":
+        while i < len(chunk) and not self._exceeded:
+            c = chunk[i]
+            if c not in "\r\n":
                 i += 1
                 continue
-            if c == "\r" and i + 1 == size:
-                self._hold(text, start, completed, chunk_bytes)
+            self._buffer.append(chunk[start:i])
+            if c == "\r" and i + 1 == len(chunk):
+                self._buffer_bytes += len(chunk[start:i].encode("utf-8")) + 1
+                self._pending_cr = True
+                self._check_limit()
                 return out
-            line = text[start:i]
-            if c == "\r" and text[i + 1] == "\n":
+            self._complete(out)
+            if c == "\r" and chunk[i + 1] == "\n":
                 i += 1
-            start = i + 1
             i += 1
-            completed = True
-            self._line(line, out)
-            if self._exceeded:
-                return out
-        self._hold(text, start, completed, chunk_bytes)
+            start = i
+        if not self._exceeded:
+            tail = chunk[start:]
+            self._buffer_bytes += len(tail.encode("utf-8"))
+            if self._check_limit() and tail:
+                self._buffer.append(tail)
         return out
 
-    def _hold(self, text: str, start: int, completed: bool, chunk_bytes: int) -> None:
-        """Keep the unfinished line ``text[start:]``; its bytes are counted
-        from the chunk alone unless a line ended in this push. Too much ends
-        the parser."""
-        self._buffer = text[start:]
-        self._buffer_bytes = (
-            len(self._buffer.encode("utf-8")) if completed else self._buffer_bytes + chunk_bytes
-        )
+    def _check_limit(self) -> bool:
         if self._event_bytes + self._buffer_bytes > self._max:
             self._exceeded = True
-            self._buffer = ""
+        if self._exceeded:
+            self._buffer.clear()
             self._buffer_bytes = 0
+            self._data = []
+            self._event = ""
+            self._id = None
+            self._has_data = False
+        return not self._exceeded
+
+    def _complete(self, out: list[SseEvent]) -> None:
+        line = "".join(self._buffer)
+        self._buffer.clear()
+        self._buffer_bytes = 0
+        self._line(line, out)
+        self._check_limit()
 
     def end(self) -> list[SseEvent]:
-        """The stream ended: a CR held back ends its line. Whatever is still
-        open is discarded."""
+        """A held CR ends its line; any open event is discarded."""
         out: list[SseEvent] = []
-        if not self._exceeded and self._buffer.endswith("\r"):
-            self._line(self._buffer[:-1], out)
-        self._buffer = ""
+        if not self._exceeded and self._pending_cr:
+            self._complete(out)
+        self._pending_cr = False
+        self._buffer.clear()
         self._buffer_bytes = 0
         self._event = ""
-        self._data = ""
+        self._data = []
         self._has_data = False
+        self._event_bytes = 0
         return out
 
     def _line(self, line: str, out: list[SseEvent]) -> None:
@@ -139,13 +150,13 @@ class SseParser:
                 out.append(
                     SseEvent(
                         self._event if self._event != "" else "message",
-                        self._data[:-1],
+                        "\n".join(self._data),
                         self._id,
                         self._retry,
                     )
                 )
             self._event = ""
-            self._data = ""
+            self._data = []
             self._has_data = False
             self._event_bytes = 0
             return
@@ -163,12 +174,12 @@ class SseParser:
         if name == "event":
             self._event = value
         elif name == "data":
-            self._data += value + "\n"
+            self._data.append(value)
             self._has_data = True
         elif name == "id":
             if "\0" not in value:
                 self._id = value
         elif name == "retry" and value.isascii() and value.isdigit():
-            ms = int(value)
-            if ms <= 9_007_199_254_740_991:
-                self._retry = ms
+            digits = value.lstrip("0") or "0"
+            if len(digits) < 16 or (len(digits) == 16 and digits <= "9007199254740991"):
+                self._retry = int(digits)

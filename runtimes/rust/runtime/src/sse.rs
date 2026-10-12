@@ -35,6 +35,7 @@ pub struct SseEvent {
 pub struct SseParser {
     buffer: String,
     started: bool,
+    pending_cr: bool,
     event: String,
     data: String,
     has_data: bool,
@@ -62,6 +63,7 @@ impl SseParser {
         SseParser {
             buffer: String::new(),
             started: false,
+            pending_cr: false,
             event: String::new(),
             data: String::new(),
             has_data: false,
@@ -84,61 +86,89 @@ impl SseParser {
         if self.exceeded {
             return Vec::new();
         }
-        let mut text = std::mem::take(&mut self.buffer);
-        text.push_str(chunk);
-        if !self.started && !text.is_empty() {
+        let mut chunk = chunk;
+        if !self.started && !chunk.is_empty() {
             self.started = true;
-            if let Some(rest) = text.strip_prefix('\u{feff}') {
-                text = rest.to_owned();
-            }
+            chunk = chunk.strip_prefix('\u{feff}').unwrap_or(chunk);
         }
         let mut out = Vec::new();
-        let bytes = text.as_bytes();
+        if self.pending_cr {
+            if chunk.is_empty() {
+                return out;
+            }
+            self.pending_cr = false;
+            self.complete(&mut out);
+            chunk = chunk.strip_prefix('\n').unwrap_or(chunk);
+        }
+        let bytes = chunk.as_bytes();
         let mut start = 0;
         let mut i = 0;
-        while i < bytes.len() {
+        while i < bytes.len() && !self.exceeded {
             let c = bytes[i];
             if c != b'\n' && c != b'\r' {
                 i += 1;
                 continue;
             }
+            self.buffer.push_str(&chunk[start..i]);
             if c == b'\r' && i + 1 == bytes.len() {
-                self.buffer = text[start..].to_owned();
+                self.pending_cr = true;
+                self.check_limit(1);
                 return out;
             }
-            let line = &text[start..i];
+            self.complete(&mut out);
             if c == b'\r' && bytes[i + 1] == b'\n' {
                 i += 1;
             }
-            start = i + 1;
             i += 1;
-            self.line(line, &mut out);
-            if self.exceeded {
-                return out;
-            }
+            start = i;
         }
-        self.buffer = text[start..].to_owned();
-        if self.event_bytes + self.buffer.len() > self.max {
-            self.exceeded = true;
-            self.buffer.clear();
+        if !self.exceeded {
+            let tail = &chunk[start..];
+            // Check before growing the amortized line buffer.
+            if self.check_limit(tail.len()) {
+                self.buffer.push_str(tail);
+            }
         }
         out
     }
 
-    /// The stream ended: a CR held back ends its line. Whatever is still open
-    /// is discarded.
+    fn check_limit(&mut self, extra: usize) -> bool {
+        if self
+            .event_bytes
+            .saturating_add(self.buffer.len())
+            .saturating_add(extra)
+            > self.max
+        {
+            self.exceeded = true;
+        }
+        if self.exceeded {
+            self.buffer = String::new();
+            self.data = String::new();
+            self.event = String::new();
+            self.id = None;
+            self.has_data = false;
+        }
+        !self.exceeded
+    }
+
+    fn complete(&mut self, out: &mut Vec<SseEvent>) {
+        let line = std::mem::take(&mut self.buffer);
+        self.line(&line, out);
+        self.check_limit(0);
+    }
+
+    /// A held CR ends its line; any open event is discarded.
     pub fn end(&mut self) -> Vec<SseEvent> {
         let mut out = Vec::new();
-        if !self.exceeded
-            && let Some(line) = self.buffer.strip_suffix('\r')
-        {
-            let line = line.to_owned();
-            self.line(&line, &mut out);
+        if !self.exceeded && self.pending_cr {
+            self.complete(&mut out);
         }
-        self.buffer.clear();
+        self.pending_cr = false;
+        self.buffer = String::new();
         self.event.clear();
         self.data.clear();
         self.has_data = false;
+        self.event_bytes = 0;
         out
     }
 
@@ -187,12 +217,14 @@ impl SseParser {
                 }
             }
             "retry" => {
-                if !value.is_empty()
-                    && value.bytes().all(|b| b.is_ascii_digit())
-                    && let Ok(ms) = value.parse::<u64>()
-                    && ms <= 9_007_199_254_740_991
-                {
-                    self.retry = Some(ms);
+                if !value.is_empty() && value.bytes().all(|b| b.is_ascii_digit()) {
+                    let digits = value.trim_start_matches('0');
+                    let digits = if digits.is_empty() { "0" } else { digits };
+                    if let Ok(ms) = digits.parse::<u64>()
+                        && ms <= 9_007_199_254_740_991
+                    {
+                        self.retry = Some(ms);
+                    }
                 }
             }
             _ => {}
