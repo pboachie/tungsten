@@ -143,6 +143,10 @@ func (c *ClientCore) pollWith(ctx context.Context, op *OperationDescriptor, args
 	once.Verify = false
 	var last *Response[Polled]
 	for {
+		if last != nil && spec.budget > 0 && time.Since(started) >= spec.budget {
+			last.Value.TimedOut = true
+			return last, nil
+		}
 		response, err := c.callWith(ctx, op, args, once, "", claim)
 		if err != nil {
 			if last != nil && spec.budget > 0 && time.Since(started) >= spec.budget && !isMutation(op) {
@@ -168,7 +172,7 @@ func (c *ClientCore) pollWith(ctx context.Context, op *OperationDescriptor, args
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			if spec.budget > 0 && time.Since(started) >= spec.budget && !isMutation(op) {
+			if spec.budget > 0 && time.Since(started) >= spec.budget {
 				last.Value.TimedOut = true
 				return last, nil
 			}

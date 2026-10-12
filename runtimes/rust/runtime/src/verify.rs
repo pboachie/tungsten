@@ -120,6 +120,22 @@ impl ClientCore {
                 response.value.timed_out = true;
                 return Ok(response);
             }
+            if called.is_err()
+                && !budget.is_zero()
+                && started.elapsed() >= budget
+                && !crate::classify::is_mutation(op)
+            {
+                return Err(crate::prepare::fail(
+                    crate::envelope::Diag::new(
+                        op.id.clone(),
+                        crate::types::Category::TransportFailed,
+                    )
+                    .remediation(
+                        "The polling budget expired before any observation completed.".to_owned(),
+                    )
+                    .build(),
+                ));
+            }
             let response = called?;
             let done = evaluate_predicate(until, response.value.as_ref());
             let out_of_time = (!budget.is_zero() && started.elapsed() >= budget)
