@@ -10,6 +10,7 @@ import (
 )
 
 type pageState struct {
+	requestURLs  map[string]bool
 	args         any
 	overrideURL  string
 	seen         map[string]bool
@@ -28,7 +29,7 @@ func newPageState(args any) *pageState {
 	if o, ok := args.(*Object); ok {
 		args = o.Clone()
 	}
-	return &pageState{args: args, seen: map[string]bool{}}
+	return &pageState{args: args, seen: map[string]bool{}, requestURLs: map[string]bool{}}
 }
 
 // Pages iterates the pages of an operation, like bufio.Scanner:
@@ -127,10 +128,17 @@ func (c *ClientCore) pageStep(ctx context.Context, op *OperationDescriptor, st *
 			st.seen[CanonicalJSON(initial)] = true
 		}
 	}
-	response, err := c.callWith(ctx, op, st.args, opts, st.overrideURL, claim)
+	var requestURLs map[string]bool
+	if op.Pagination != nil && op.Pagination.Style == "link_header" {
+		requestURLs = st.requestURLs
+	}
+	response, err := c.callWithPages(ctx, op, st.args, opts, st.overrideURL, claim, requestURLs)
 	if err != nil {
 		st.done = true
 		return nil, err, true
+	}
+	if requestURLs != nil && response.Meta.requestURL != nil {
+		requestURLs[*response.Meta.requestURL] = true
 	}
 	body := response.Value
 	itemsField := ""

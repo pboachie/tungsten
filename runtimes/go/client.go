@@ -251,9 +251,19 @@ func (c *ClientCore) PreviewMacro(ctx context.Context, m *MacroDescriptor, input
 
 // callWith is the pipeline shared by calls, pages, polls and macro steps.
 func (c *ClientCore) callWith(ctx context.Context, op *OperationDescriptor, args any, opts CallOptions, urlOverride string, claim *macroClaim) (*Outcome, *Error) {
+	return c.callWithPages(ctx, op, args, opts, urlOverride, claim, nil)
+}
+
+func (c *ClientCore) callWithPages(ctx context.Context, op *OperationDescriptor, args any, opts CallOptions, urlOverride string, claim *macroClaim, pageURLs map[string]bool) (*Outcome, *Error) {
 	prepared, err := c.prepare(ctx, op, args, opts, purposeCall, urlOverride, claim)
 	if err != nil {
 		return nil, err
+	}
+	if pageURLs != nil {
+		if pageURLs[prepared.url] {
+			return nil, newDiag(op.ID, UnexpectedResponse).remedy("Pagination detected a repeated effective page request URL after authentication. Fix the server's next-page Link before continuing; no repeated request was sent.").err()
+		}
+		pageURLs[prepared.url] = true
 	}
 	response, err := c.send(ctx, prepared, opts)
 	if err != nil {

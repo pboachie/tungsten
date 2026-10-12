@@ -662,9 +662,13 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     return Array.isArray(this.options.middleware) ? this.options.middleware.filter(isRecord) : [];
   }
 
-  async #call<T>(op: OperationDescriptor, args: Record<string, unknown>, opts: CallOptions, urlOverride: string | null): Promise<Result<T>> {
+  async #call<T>(op: OperationDescriptor, args: Record<string, unknown>, opts: CallOptions, urlOverride: string | null, pageUrls?: Set<string>): Promise<Result<T>> {
     const prepared = await this.#prepare(op, args, opts, "call", urlOverride);
     if (!prepared.ok) return prepared;
+    if (pageUrls) {
+      if (pageUrls.has(prepared.value.url)) return fail(diagnostic(op.id, "UNEXPECTED_RESPONSE", { remediation: "Pagination detected a repeated effective page request URL after authentication. Fix the server's next-page Link before continuing; no repeated request was sent." }));
+      pageUrls.add(prepared.value.url);
+    }
     let result = await this.#send<T>(prepared.value, opts);
     if (!result.ok && result.error.http_status === 401 && prepared.value.oauth !== null) {
       // An authorization-code token the server no longer accepts: refresh
@@ -1683,6 +1687,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     let current: Record<string, unknown> = isRecord(args) ? { ...args } : args;
     let override: string | null = null;
     const seen = new Set<string>();
+    const requestUrls = pagination?.style === "link_header" ? new Set<string>() : undefined;
     const maxPages = typeof opts.maxPages === "number" && Number.isSafeInteger(opts.maxPages) && opts.maxPages > 0 ? opts.maxPages : undefined;
     let count = 0;
     if (pagination?.style === "cursor") {
@@ -1690,11 +1695,13 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
       if (initial !== undefined && initial !== null && initial !== "") seen.add(canonicalJson(initial));
     }
     for (;;) {
-      const result = await this.#call<unknown>(op, current, opts, override);
+      const result = await this.#call<unknown>(op, current, opts, override, requestUrls);
       if (!result.ok) {
         yield result;
         return;
       }
+      const effectiveUrl = pageRequestUrls.get(result.meta);
+      if (requestUrls && effectiveUrl) requestUrls.add(effectiveUrl);
       const body = result.value;
       const itemsField = pagination ? pagination.itemsField : "";
       const found = itemsField ? getPath(body, itemsField) : body;

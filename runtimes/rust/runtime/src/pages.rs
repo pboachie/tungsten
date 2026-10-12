@@ -24,6 +24,7 @@ pub(crate) struct PageState {
     pub args: Value,
     pub override_url: Option<String>,
     pub seen: HashSet<String>,
+    pub request_urls: HashSet<String>,
     pub count: usize,
     pub done: bool,
     /// An error to report after the page that precedes it.
@@ -36,6 +37,7 @@ impl PageState {
             args,
             override_url: None,
             seen: HashSet::new(),
+            request_urls: HashSet::new(),
             count: 0,
             done: false,
             pending_error: None,
@@ -163,7 +165,17 @@ impl ClientCore {
                 opts,
                 st.override_url.as_deref(),
                 step,
-                &mut request_url,
+                (
+                    &mut request_url,
+                    if matches!(
+                        &op.pagination,
+                        Some(PaginationDescriptor::LinkHeader { .. })
+                    ) {
+                        Some(&mut st.request_urls)
+                    } else {
+                        None
+                    },
+                ),
             )
             .await
         {
@@ -173,6 +185,12 @@ impl ClientCore {
                 return Some(Err(error));
             }
         };
+        if matches!(
+            &op.pagination,
+            Some(PaginationDescriptor::LinkHeader { .. })
+        ) {
+            st.request_urls.insert(request_url.clone());
+        }
         let body = response.value.clone().unwrap_or(Value::Null);
         let items_field = match &op.pagination {
             Some(

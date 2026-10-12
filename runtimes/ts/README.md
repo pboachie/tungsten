@@ -56,7 +56,7 @@ Use the descriptor import path, operation ID and arguments generated for your ow
 
 ## Pagination
 
-Pass `{ maxPages: 100 }` to a generated operation's `pages()` helper to bound a traversal. The default (or zero) is unbounded. A repeated cursor or effective page URL stops traversal with `UNEXPECTED_RESPONSE`; reaching a positive page budget reports the same category when another page remains. Successful pages are delivered first, with `next: null` on the stopping page, followed by the diagnostic. Terminal cursors and `has_more: false` finish normally even at the budget. Relative Link references use the successful request URL, including same-origin redirects; cross-origin Links remain blocked.
+Pass `{ maxPages: 100 }` to a generated operation's `pages()` helper to bound a traversal. The default (or zero) is unbounded. A repeated cursor or effective page URL stops traversal with `UNEXPECTED_RESPONSE`; reaching a positive page budget reports the same category when another page remains. Successful pages are delivered first, followed by the diagnostic. When a stop is known from a page response, that page has `next: null`; a repeat found after authentication stops before dispatching the next request. Terminal cursors and `has_more: false` finish normally even at the budget. Relative Link references use the successful request URL, including same-origin redirects; cross-origin Links remain blocked.
 
 ## Safety and persistence
 

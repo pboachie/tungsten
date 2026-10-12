@@ -507,10 +507,15 @@ class Engine:
         opts: Mapping[str, object],
         url_override: str | None,
         step: StepControl | None,
+        page_urls: set[str] | None = None,
     ) -> Flow[Answer]:
         prepared = yield from self._prepare(op, args, opts, "call", url_override, step)
         if isinstance(prepared, Err):
             return Answer(prepared)
+        if page_urls is not None:
+            if prepared.url in page_urls:
+                return Answer(_fail(diagnostic(op["id"], "UNEXPECTED_RESPONSE", remediation="Pagination detected a repeated effective page request URL after authentication. Fix the server's next-page Link before continuing; no repeated request was sent.")))
+            page_urls.add(prepared.url)
         answer = yield from self._send(prepared, opts)
         if (
             prepared.oauth is not None
@@ -1833,6 +1838,7 @@ class Engine:
         current: dict[str, object] | None = dict(args) if is_record(args) else None
         override: str | None = None
         seen: set[str] = set()
+        request_urls: set[str] | None = set() if field(pagination, "style") == "link_header" else None
         count = 0
         max_pages = opts.get("max_pages")
         budget = max_pages if isinstance(max_pages, int) and not isinstance(max_pages, bool) and max_pages > 0 else None
@@ -1841,11 +1847,13 @@ class Engine:
             if initial is not None and initial != "":
                 seen.add(canonical_json(initial))
         while True:
-            answer = yield from self._call(op, current if current is not None else args, opts, override, step)
+            answer = yield from self._call(op, current if current is not None else args, opts, override, step, request_urls)
             result = answer.result
             if isinstance(result, Err):
                 yield from sink(PageAnswer(result, []))
                 return
+            if request_urls is not None and answer.request_url is not None:
+                request_urls.add(answer.request_url)
             body = answer.raw
             items_field = str_field(pagination, "items_field") or ""
             found = get_path(body, items_field) if items_field else body
