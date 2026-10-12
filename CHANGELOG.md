@@ -9,6 +9,20 @@ changes.
 
 ## [Unreleased]
 
+### Fixed
+
+- Reject noncanonical confirmation tokens and prototype-derived MCP arguments.
+  Confirmation previews bind immutable Blob/File contents and metadata.
+- Reserve automatic idempotency keys atomically across clients sharing a store;
+  bound Python/Rust asynchronous file-store work and stop dispatch after cancellation.
+- Parse fragmented event streams with linear scanning, consistent trailing-CR
+  limits and safe oversized retry hints across TypeScript, Python, Rust and Go.
+- Apply positive polling deadlines across authentication, transport, retries and
+  sleeps; isolate OAuth refresh by scheme with cancellable waiters in Go and Rust.
+- Propagate Rust emitter graph facts with worklists and coalesce concurrent MCP
+  query embeddings. Complete the README's generated Python SDK installation steps.
+
+
 ### Added
 
 - Project setup with `init --targets` and a project-aware `doctor --strict`;
