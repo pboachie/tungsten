@@ -29,6 +29,7 @@ module Tungsten
         case format.to_s.downcase.gsub(/[^a-z0-9]/, "")
         when "uuidv4", "uuid4" then "uuid_v4"
         when "uuid" then "uuid"
+        when "asciitoken128" then "ascii_token_128"
         else "token"
         end
       end
@@ -38,6 +39,7 @@ module Tungsten
         case format_kind(format)
         when "uuid_v4" then "UUIDv4 string"
         when "uuid" then "UUID string"
+        when "ascii_token_128" then "1-128 ASCII letters, digits, dots, underscores or hyphens"
         else "a non-empty printable ASCII string of at most 255 characters"
         end
       end
@@ -53,6 +55,7 @@ module Tungsten
           case format_kind(format)
           when "uuid_v4" then uuid?(key, true)
           when "uuid" then uuid?(key, false)
+          when "ascii_token_128" then key.is_a?(String) && key.match?(/\A[A-Za-z0-9._-]{1,128}\z/)
           else key.is_a?(String) && !key.empty? && key.bytesize <= 255 && key.match?(/\A[\x21-\x7e]+\z/)
           end
         valid ? nil : format_description(format)
