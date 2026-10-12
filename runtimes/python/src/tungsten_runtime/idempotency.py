@@ -12,6 +12,7 @@ storage must implement atomic reserve.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import inspect
 import json
 import os
@@ -169,7 +170,7 @@ _workers = ThreadPoolExecutor(max_workers=4, thread_name_prefix="tungsten-store"
 _capacity = threading.BoundedSemaphore(4)
 
 
-async def async_store_call(fn: Callable[[], object]) -> object:
+async def async_store_call(fn: Callable[[], object], *, finish_on_cancel: bool = False) -> object:
     while not _capacity.acquire(blocking=False):
         await asyncio.sleep(0.001)
 
@@ -184,12 +185,38 @@ async def async_store_call(fn: Callable[[], object]) -> object:
     except BaseException:
         _capacity.release()
         raise
-    return await asyncio.shield(asyncio.wrap_future(future))
+    wrapped = asyncio.wrap_future(future)
+    try:
+        return await asyncio.shield(wrapped)
+    except asyncio.CancelledError:
+        if finish_on_cancel:
+            # Runtime shutdown can cancel the retained transaction itself.
+            # Its lock must still outlive any dispatched synchronous write.
+            def retrieve(completed: asyncio.Future[object]) -> None:
+                if not completed.cancelled():
+                    completed.exception()
+
+            wrapped.add_done_callback(retrieve)
+            # Use physical completion, not the asyncio wrapper's cancelled state.
+            while not future.done():
+                try:
+                    await asyncio.sleep(0.001)
+                except asyncio.CancelledError:
+                    continue
+            with contextlib.suppress(Exception):
+                value = future.result()
+                if inspect.iscoroutine(value):
+                    value.close()
+        raise
 
 
-async def async_store_method(fn: Callable[..., object], *args: str) -> object:
+async def async_store_method(fn: Callable[..., object], *args: str, finish_on_cancel: bool = False) -> object:
     """Dispatch only the selected method; other async methods are irrelevant."""
-    result = fn(*args) if inspect.iscoroutinefunction(fn) else await async_store_call(lambda: fn(*args))
+    result = (
+        fn(*args)
+        if inspect.iscoroutinefunction(fn)
+        else await async_store_call(lambda: fn(*args), finish_on_cancel=finish_on_cancel)
+    )
     return await result if inspect.isawaitable(result) else result
 
 
@@ -227,11 +254,11 @@ async def _reserve_legacy_async(store: Any, scope: str, logical_id: str, candida
 
 async def _legacy_transaction(store: Any, scope: str, logical_id: str, candidate: str) -> str:
     try:
-        existing = await async_store_method(store.get, scope, logical_id)
+        existing = await async_store_method(store.get, scope, logical_id, finish_on_cancel=True)
         if isinstance(existing, str) and existing:
             return existing
-        await async_store_method(store.put, scope, logical_id, candidate)
-        if await async_store_method(store.get, scope, logical_id) != candidate:
+        await async_store_method(store.put, scope, logical_id, candidate, finish_on_cancel=True)
+        if await async_store_method(store.get, scope, logical_id, finish_on_cancel=True) != candidate:
             raise ValueError("the key could not be stored")
         return candidate
     finally:
