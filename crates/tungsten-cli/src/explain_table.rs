@@ -891,7 +891,7 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
     ),
     e(
         "TG1023",
-        "The .NET runtime sends an OpenID Connect scheme as a bearer token: it does not run \
+        "The .NET runtime sends an OpenID Connect scheme as a bearer token. It does not run \
          discovery or obtain tokens itself.",
         "Configure the scheme with `Credential.Secret(token)` holding an access token you \
          obtained from the provider.",
