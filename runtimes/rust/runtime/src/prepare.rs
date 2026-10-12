@@ -501,6 +501,9 @@ impl ClientCore {
         bind: Option<String>,
         preview_call: &str,
     ) -> Option<Error> {
+        let identity = crate::confirm::token_expiry(token)
+            .map(|(expiry, signature)| format!("tgc1.{expiry}.{signature}"));
+        let token = identity.as_deref().unwrap_or(token);
         let now = self.now();
         let mut used = crate::idempotency::lock(&self.inner.used_tokens);
         used.retain(|_, (_, expiry)| *expiry > now);

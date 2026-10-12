@@ -25,7 +25,7 @@ import {
   requestIdOf,
   verifyCallable,
 } from "./classify.js";
-import { checkToken, CONFIRMATION_TTL_MS, issueToken } from "./confirm.js";
+import { argumentSnapshot, argsDigest, checkToken, CONFIRMATION_TTL_MS, issueToken } from "./confirm.js";
 import { diagnostic, scrubDiagnostic, scrubText } from "./envelope.js";
 import { OAuthFlow, OAuthSession } from "./oauth.js";
 import {
@@ -334,26 +334,11 @@ function valuesAt(value: unknown, segments: string[], out: string[], depth = 0):
   valuesAt(value[head], rest, out, depth + 1);
 }
 
-/** A copy of the args without `undefined` members at any depth: an
- * optional argument set to `undefined` (`{cursor: maybe}`) is absent, as
- * TypeScript callers without `exactOptionalPropertyTypes` expect. Only
- * plain objects and arrays are copied; dates, bytes and blobs are kept. */
-function withoutUndefined(value: unknown, depth = 0): unknown {
-  if (depth > 64) return value;
-  if (Array.isArray(value)) return value.map((item) => withoutUndefined(item, depth + 1));
-  if (!isRecord(value)) return value;
-  const proto: unknown = Object.getPrototypeOf(value);
-  if (proto !== Object.prototype && proto !== null) return value;
-  const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(value)) if (v !== undefined) out[k] = withoutUndefined(v, depth + 1);
-  return out;
-}
-
 /** `args` plus each parameter's value under its wire name, so references
  * written against the API (agent.yml `{device_id}`, `$args.endpoint_id`)
  * find arguments whose generated name differs (`deviceId`). */
 function withWireNames(op: OperationDescriptor, args: Record<string, unknown>): Record<string, unknown> {
-  const out: Record<string, unknown> = { ...args };
+  const out: Record<string, unknown> = Object.assign(Object.create(null), args);
   for (const p of Array.isArray(op.params) ? op.params : []) {
     if (!isRecord(p) || typeof p.name !== "string" || typeof p.wire !== "string") continue;
     if (args[p.name] !== undefined && !Object.prototype.hasOwnProperty.call(out, p.wire)) out[p.wire] = args[p.name];
@@ -845,6 +830,9 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
   #claimToken(id: string, token: string, bind: string | null, previewCall: string): Failure | null {
     const now = this.#now();
     for (const [used, entry] of this.#usedTokens) if (entry.expiry <= now) this.#usedTokens.delete(used);
+    // Verification accepts one spelling; canonical identity is also the cache key.
+    const parts = token.split(".");
+    token = `tgc1.${Number(parts[1])}.${parts[2]}`;
     const previous = this.#usedTokens.get(token);
     if (previous) {
       if (previous.bind !== null && previous.bind === bind) return null;
@@ -909,7 +897,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     } catch {
       return this.#validation(op, [], "<cyclic value>", "a JSON-like value without cycles", "Pass arguments without circular references.");
     }
-    const args = withoutUndefined(rawArgs) as Record<string, unknown>;
+    const args = argumentSnapshot(rawArgs) as Record<string, unknown>;
     const invalid = this.#validateArgs(op, args, purpose === "macro_preview") ?? this.#checkKey(op, opts, purpose);
     if (invalid) return invalid;
     if (purpose === "call") {
@@ -1183,7 +1171,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
       case "auto": {
         if (supplied !== null) return { ok: true, value: supplied };
         if (purpose !== "call") return { ok: true, value: null };
-        const logicalId = await sha256Hex(canonicalJson(args));
+        const logicalId = await argsDigest(args);
         try {
           const existing = await this.#store.get(op.id, logicalId);
           if (typeof existing === "string" && existing !== "") return { ok: true, value: existing };
@@ -1392,7 +1380,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
         if (read.path !== path) continue;
         const required = argParams(read).filter((p) => p.required);
         if (!required.every((p) => p.in === "path" && known.has(p.wire))) continue;
-        const readArgs: Record<string, unknown> = {};
+        const readArgs: Record<string, unknown> = Object.create(null);
         for (const p of argParams(read)) if (p.in === "path" && known.has(p.wire)) readArgs[p.wire] = known.get(p.wire);
         return { id: read.id, args: readArgs };
       }
@@ -1632,6 +1620,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
   // -------------------------------------------------------------- preview
 
   async #preview(op: OperationDescriptor, args: Record<string, unknown>, opts: CallOptions): Promise<Result<PreviewResult>> {
+    args = argumentSnapshot(args) as Record<string, unknown>;
     const prepared = await this.#prepare(op, args, opts, "preview", null);
     if (!prepared.ok) return prepared;
     const p = prepared.value;
@@ -2065,7 +2054,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     const scope = { response: value, args: withWireNames(op, args) };
     const evaluated = evaluateExpr(hook.args ?? {}, scope);
     if (!isRecord(evaluated)) return unchecked;
-    const mapped: Record<string, unknown> = {};
+    const mapped: Record<string, unknown> = Object.create(null);
     for (const [key, arg] of Object.entries(evaluated)) mapped[this.#argName(target, key)] = arg;
     // A reference that does not resolve never matches (it is not dropped,
     // which would make the predicate hold vacuously).
@@ -2098,12 +2087,12 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     if (!isRecord(input)) {
       return fail(diagnostic(name, "VALIDATION_FAILED", { failed_parameter: "input", expected: "an object", remediation: `Pass the input of ${name} as one object.` }));
     }
-    const effective: Record<string, unknown> = { ...input };
+    const effective: Record<string, unknown> = Object.assign(Object.create(null), argumentSnapshot(input));
     const add = isRecord(macro.input) && isRecord(macro.input.add) ? macro.input.add : {};
     for (const [key, schema] of Object.entries(add)) {
       if (effective[key] === undefined && isRecord(schema) && schema.default !== undefined) effective[key] = schema.default;
     }
-    return { ok: true, value: effective };
+    return { ok: true, value: argumentSnapshot(effective) as Record<string, unknown> };
   }
 
   /** The macro's steps resolved against the registry, and its effective
@@ -2153,7 +2142,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     const { confirm: _confirm, verify: _verify, ...rest } = opts;
     // A dry evaluation: the input is known, earlier steps' results are
     // placeholders (`<from step NAME: path>`).
-    const scope: Record<string, unknown> = { input: effective.value };
+    const scope: Record<string, unknown> = Object.assign(Object.create(null), { input: effective.value });
     const pending = new Set<string>();
     const previews: MacroStepPreview[] = [];
     const effects: string[] = [];
@@ -2267,7 +2256,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
       claimed = true;
       return this.#claimToken(name, token, bind, "the macro's preview(...)");
     };
-    const scope: Record<string, unknown> = { input: effective.value };
+    const scope: Record<string, unknown> = Object.assign(Object.create(null), { input: effective.value });
     const completed: string[] = [];
     /** Results of completed steps by `as` name: returned as `partial` when a later step fails. */
     const produced: Record<string, unknown> = {};

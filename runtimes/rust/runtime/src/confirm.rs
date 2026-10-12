@@ -57,7 +57,8 @@ pub fn token_expiry(token: &str) -> Option<(u64, &str)> {
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-');
     if digits && shaped {
-        Some((expiry.parse().ok()?, signature))
+        let parsed: u64 = expiry.parse().ok()?;
+        (parsed.to_string() == expiry).then_some((parsed, signature))
     } else {
         None
     }

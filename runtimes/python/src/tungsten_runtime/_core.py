@@ -749,6 +749,8 @@ class Engine:
         first use binds it to that call's replay protection, and a later use
         is accepted only as a retry under the same protection. A call without
         protection can use a token once."""
+        parts = token.split(".")
+        token = f"tgc1.{int(parts[1])}.{parts[2]}"
         now = self.now()
         with self._tokens_lock:
             for used, (_, expiry) in list(self._used_tokens.items()):

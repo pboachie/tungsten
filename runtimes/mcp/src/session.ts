@@ -141,7 +141,7 @@ function streamRequested(op: OperationDescriptor, args: Record<string, unknown>)
   if (flag === undefined || !body) return false;
   if (body.shape.kind === "merged") return args[flag] === true;
   const inner = args[body.shape.arg];
-  return isRecord(inner) && inner[flag] === true;
+  return isRecord(inner) && Object.hasOwn(inner, flag) && inner[flag] === true;
 }
 
 export class Session {
@@ -500,13 +500,13 @@ export class Session {
     }
     if (!isRecord(args)) return { tool, args, idempotencyKey: undefined, confirm: undefined };
     const { idempotencyKey: keyField, confirmationToken: tokenField } = tool.reserved;
-    const sdkArgs: Record<string, unknown> = {};
+    const sdkArgs: Record<string, unknown> = Object.create(null);
     for (const [key, value] of Object.entries(args)) if (key !== keyField && key !== tokenField) sdkArgs[key] = value;
-    const token = tokenField ? args[tokenField] : undefined;
+    const token = tokenField && Object.hasOwn(args, tokenField) ? args[tokenField] : undefined;
     const prepared: Prepared = {
       tool,
       args: sdkArgs,
-      idempotencyKey: keyField ? args[keyField] : undefined,
+      idempotencyKey: keyField && Object.hasOwn(args, keyField) ? args[keyField] : undefined,
       // Only a string token is forwarded: `true` never confirms through MCP.
       confirm: typeof token === "string" && token !== "" ? token : undefined,
     };

@@ -395,6 +395,9 @@ func (c *ClientCore) confirmed(t confirmTarget, safety Safety, args any, opts Ca
 // use binds it to that call's replay protection, and a later use is
 // accepted only as a retry under the same protection.
 func (c *ClientCore) claimToken(id, token, bind string, hasBind bool, previewCall string) *Error {
+	if expiry, signature, ok := tokenExpiry(token); ok {
+		token = fmt.Sprintf("tgc1.%d.%s", expiry, signature)
+	}
 	now := c.now()
 	c.mu.Lock()
 	defer c.mu.Unlock()
