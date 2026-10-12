@@ -96,6 +96,8 @@ pub(crate) struct Inner {
     /// their first use, until they expire.
     pub used_tokens: Mutex<HashMap<String, (Option<String>, u64)>>,
     pub oauth_tokens: tokio::sync::Mutex<HashMap<String, CachedToken>>,
+    pub oauth_refreshes:
+        tokio::sync::Mutex<HashMap<String, std::sync::Arc<tokio::sync::Mutex<()>>>>,
     /// The tokens of the `authorizationCode` schemes.
     pub token_store: Arc<dyn TokenStore>,
     /// The refresh gate of each `authorizationCode` scheme.
@@ -198,6 +200,7 @@ impl ClientCore {
                 registry: Mutex::new(BTreeMap::new()),
                 used_tokens: Mutex::new(HashMap::new()),
                 oauth_tokens: tokio::sync::Mutex::new(HashMap::new()),
+                oauth_refreshes: tokio::sync::Mutex::new(HashMap::new()),
                 token_store,
                 oauth_gates: Mutex::new(HashMap::new()),
             }),

@@ -2031,13 +2031,45 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
   ): Promise<Result<T> & { timedOut?: boolean }> {
     const interval = bounded(intervalMs, DEFAULT_POLL_INTERVAL_MS, 0);
     const budget = bounded(budgetMs, 0, 0);
-    const started = Date.now();
-    for (;;) {
-      const result = await this.#call<T>(op, args, { ...opts, verify: false }, null);
-      if (!result.ok) return result;
-      if (evaluatePredicate(until, result.value)) return { ...result, timedOut: false };
-      if (Date.now() - started + interval > budget) return { ...result, timedOut: true };
-      if (!(await sleep(interval, opts.signal))) return { ...result, timedOut: true };
+    const started = performance.now();
+    const controller = new AbortController();
+    let interrupt: (() => void) | undefined;
+    const abort = () => { controller.abort(); interrupt?.(); };
+    opts.signal?.addEventListener("abort", abort, { once: true });
+    if (opts.signal?.aborted) abort();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const expired = new Promise<Result<T>>((resolve) => {
+      interrupt = () => resolve(fail(diagnostic(op.id, isMutation(op) ? "OUTCOME_UNKNOWN" : "TRANSPORT_FAILED", {
+        retryable: "never", remediation: "The caller cancelled the poll.",
+      })));
+      if (opts.signal?.aborted) interrupt();
+      if (budget > 0) timer = setTimeout(() => {
+        controller.abort();
+        resolve(fail(diagnostic(op.id, isMutation(op) ? "OUTCOME_UNKNOWN" : "TRANSPORT_FAILED", {
+          retryable: "never", remediation: "The polling budget expired during the call.",
+        })));
+      }, budget);
+    });
+    let last: Result<T> | undefined;
+    try {
+      for (;;) {
+        const call = this.#call<T>(op, args, { ...opts, signal: controller.signal, verify: false }, null);
+        const result = await Promise.race([call, expired]);
+        if (!result.ok) {
+          if (budget > 0 && performance.now() - started >= budget && last?.ok && !isMutation(op)) return { ...last, timedOut: true };
+          return result;
+        }
+        last = result;
+        const elapsed = performance.now() - started;
+        if (budget > 0 && elapsed >= budget) return { ...result, timedOut: true };
+        if (evaluatePredicate(until, result.value)) return { ...result, timedOut: false };
+        if (budget === 0 || elapsed + interval > budget) return { ...result, timedOut: true };
+        if (!(await sleep(interval, controller.signal))) return { ...result, timedOut: true };
+        if (budget > 0 && performance.now() - started >= budget) return { ...result, timedOut: true };
+      }
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+      opts.signal?.removeEventListener("abort", abort);
     }
   }
 

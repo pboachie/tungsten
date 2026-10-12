@@ -49,9 +49,10 @@ type ClientCore struct {
 	usedTokens map[string]usedToken
 	oauthGates map[string]*gate
 	// keyMu makes "find or create the key of a logical call" atomic.
-	keyMu    sync.Mutex
-	ccMu     sync.Mutex
-	ccTokens map[string]cachedToken
+	keyMu     sync.Mutex
+	ccMu      sync.Mutex
+	ccTokens  map[string]cachedToken
+	ccFlights map[string]*ccFlight
 }
 
 type usedToken struct {
@@ -115,6 +116,7 @@ func NewClientCore(api *APIDescriptor, options ClientOptions) (*ClientCore, erro
 		usedTokens:        map[string]usedToken{},
 		oauthGates:        map[string]*gate{},
 		ccTokens:          map[string]cachedToken{},
+		ccFlights:         map[string]*ccFlight{},
 	}
 	if c.auth == nil {
 		c.auth = AuthConfig{}

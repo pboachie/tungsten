@@ -17,7 +17,7 @@ import ssl
 import threading
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from http.cookiejar import CookieJar, DefaultCookiePolicy
 from typing import Any, Literal, cast
 
@@ -25,6 +25,8 @@ import httpx
 
 from ._effects import (
     Answered,
+    Bounded,
+    PollExpired,
     AttemptOutcome,
     AttemptRequest,
     Chunk,
@@ -231,6 +233,8 @@ def _drain(flow: Flow[Any], outcome: AttemptOutcome) -> object:
         sent, thrown = None, None
         if isinstance(effect, _Finished):
             return effect.value.error if isinstance(effect.value, Err) else failure
+        if isinstance(effect, Bounded):
+            effect = cast(Effect, effect.effect)
         if isinstance(effect, Emit):
             if isinstance(effect.item, Err):
                 failure = effect.item.error
@@ -410,7 +414,39 @@ class SyncDriver:
         except Exception as error:
             return None, error
 
+    _poll_workers = threading.BoundedSemaphore(16)
+
     def _perform(self, effect: Effect) -> object:
+        if isinstance(effect, Bounded):
+            if isinstance(effect.effect, Send):
+                effect = replace(effect, effect=Send(replace(effect.effect.request, deadline_ms=effect.deadline_ms)))
+            remaining = effect.deadline_ms / 1000 - time.monotonic()
+            if remaining <= 0:
+                raise PollExpired()
+            if not self._poll_workers.acquire(timeout=remaining):
+                raise PollExpired()
+            completed = threading.Event()
+            result: list[object] = []
+            def perform() -> None:
+                try:
+                    if time.monotonic() * 1000 >= effect.deadline_ms:
+                        result.extend((None, PollExpired()))
+                    else:
+                        result.extend(self._perform_safely(cast(Effect, effect.effect)))
+                finally:
+                    self._poll_workers.release()
+                    completed.set()
+            # An abandoned synchronous effect cannot resume the calling flow.
+            # In-flight network work may finish, so mutations remain unknown.
+            threading.Thread(target=perform, daemon=True).start()
+            if not completed.wait(max(0, effect.deadline_ms / 1000 - time.monotonic())):
+                if isinstance(effect.effect, Send):
+                    return TimedOut()
+                raise PollExpired()
+            value, error = result
+            if isinstance(error, Exception):
+                raise error
+            return value
         if isinstance(effect, Send):
             return self._attempt(effect.request)
         if isinstance(effect, ReadChunk):
@@ -447,11 +483,16 @@ class SyncDriver:
 
     def _attempt(self, req: AttemptRequest) -> AttemptOutcome:
         seconds, deadline = _deadline(req)
+        if req.deadline_ms is not None:
+            deadline = min(deadline, req.deadline_ms / 1000)
+            seconds = max(0.001, min(seconds, deadline - time.monotonic()))
         try:
             request = _request(self.http, req, seconds)
         except Exception as error:
             return NotSent(_detail(error))
         try:
+            if time.monotonic() >= deadline:
+                return NotSent("polling deadline expired before send")
             response = self.http.send(request, stream=True)
         except Exception as error:
             return _send_failure(error)
@@ -540,7 +581,8 @@ class AsyncDriver:
         try:
             return await self._perform_safely(effect)
         except asyncio.CancelledError:
-            if isinstance(effect, Send):
+            effective = effect.effect if isinstance(effect, Bounded) else effect
+            if isinstance(effective, Send):
                 self._report(_drain(flow, Lost("cancelled")))
             flow.close()
             raise
@@ -564,6 +606,30 @@ class AsyncDriver:
             return None, error
 
     async def _perform(self, effect: Effect) -> object:
+        if isinstance(effect, Bounded):
+            if isinstance(effect.effect, Send):
+                effect = replace(effect, effect=Send(replace(effect.effect.request, deadline_ms=effect.deadline_ms)))
+            remaining = effect.deadline_ms / 1000 - time.monotonic()
+            if remaining <= 0:
+                raise PollExpired()
+            try:
+                async with asyncio.timeout(remaining):
+                    inner = effect.effect
+                    if isinstance(inner, Invoke | Observe):
+                        try:
+                            value = await asyncio.to_thread(inner.fn, *inner.args)
+                            if inspect.isawaitable(value):
+                                value = await cast(Awaitable[object], value)
+                            return None if isinstance(inner, Observe) else value
+                        except Exception:
+                            if isinstance(inner, Observe):
+                                return None
+                            raise
+                    return await self._perform(cast(Effect, inner))
+            except TimeoutError:
+                if isinstance(effect.effect, Send):
+                    return TimedOut()
+                raise PollExpired() from None
         if isinstance(effect, Send):
             return await self._attempt(effect.request)
         if isinstance(effect, ReadChunk):
@@ -622,11 +688,16 @@ class AsyncDriver:
 
     async def _attempt(self, req: AttemptRequest) -> AttemptOutcome:
         seconds, deadline = _deadline(req)
+        if req.deadline_ms is not None:
+            deadline = min(deadline, req.deadline_ms / 1000)
+            seconds = max(0.001, min(seconds, deadline - time.monotonic()))
         try:
             request = _request(self.http, req, seconds)
         except Exception as error:
             return NotSent(_detail(error))
         try:
+            if time.monotonic() >= deadline:
+                return NotSent("polling deadline expired before send")
             response = await self.http.send(request, stream=True)
         except Exception as error:
             return _send_failure(error)

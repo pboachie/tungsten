@@ -691,7 +691,14 @@ impl ClientCore {
 
     /// Fetch (and cache) an OAuth2 client-credentials token.
     async fn oauth_token(&self, client: OAuthClient<'_>) -> std::result::Result<String, String> {
-        let mut cache = self.inner.oauth_tokens.lock().await;
+        // Short map locks; only refreshes of this scheme wait for each other.
+        let gate = {
+            let mut gates = self.inner.oauth_refreshes.lock().await;
+            gates.entry(client.name.to_owned()).or_default().clone()
+        };
+        // Dropping a cancelled owner releases this gate; another waiter can retry.
+        let _refresh = gate.lock().await;
+        let cache = self.inner.oauth_tokens.lock().await;
         let real_now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX));
@@ -700,6 +707,7 @@ impl ClientCore {
         {
             return Ok(cached.token.clone());
         }
+        drop(cache);
         let name = client.name;
         let mut form = vec!["grant_type=client_credentials".to_owned()];
         if !client.scopes.is_empty() {
@@ -764,7 +772,7 @@ impl ClientCore {
             .and_then(Value::as_f64)
             .filter(|n| n.is_finite())
             .map_or(3_600_000, |n| (n * 1000.0).max(0.0) as u64);
-        cache.insert(
+        self.inner.oauth_tokens.lock().await.insert(
             name.to_owned(),
             CachedToken {
                 token: token.clone(),

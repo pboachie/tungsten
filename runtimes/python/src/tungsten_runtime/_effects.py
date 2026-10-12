@@ -33,6 +33,7 @@ class AttemptRequest:
     #: With ``stream``: the silence, in milliseconds, after which a read of
     #: the body times out. Default ``timeout_ms``.
     idle_ms: float | None = None
+    deadline_ms: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -175,7 +176,6 @@ class StreamFailed:
 
 type ReadOutcome = Chunk | StreamEnded | StreamFailed
 
-
 @dataclass(frozen=True, slots=True)
 class StoreReserve:
     store: object
@@ -184,19 +184,21 @@ class StoreReserve:
     key: str
 
 
+class PollExpired(Exception):
+    """The absolute polling deadline elapsed."""
+
+
+@dataclass(frozen=True, slots=True)
+class Bounded:
+    effect: object
+    deadline_ms: float
+
+
 type Effect = (
-    Send
-    | Sleep
-    | StoreGet
-    | StorePut
-    | StoreReserve
-    | Observe
-    | Invoke
-    | Shared
-    | Emit
-    | ReadChunk
-    | CloseStream
+    Bounded | Send | Sleep | StoreGet | StorePut | StoreReserve
+    | Observe | Invoke | Shared | Emit | ReadChunk | CloseStream
 )
+
 
 type Flow[T] = Generator[Effect, object, T]
 

@@ -47,6 +47,8 @@ from ._classify import (
 from ._confirm import CONFIRMATION_TTL_MS, check_token, issue_token, token_expiry
 from ._effects import (
     Answered,
+    Bounded,
+    PollExpired,
     AttemptRequest,
     Chunk,
     Flow,
@@ -2297,16 +2299,56 @@ class Engine:
         budget = bounded(budget_ms, 0, 0)
         started = _monotonic_ms()
         once = {**opts, "verify": False}
+        deadline = started + budget
+        last: Answer | None = None
         while True:
-            answer = yield from self._call(op, args, once, None, step)
+            flow = self._call(op, args, once, None, step)
+            if budget <= 0:
+                answer = yield from flow
+            else:
+                sent: object = None
+                thrown: Exception | None = None
+                try:
+                    while True:
+                        try:
+                            effect = flow.throw(thrown) if thrown is not None else flow.send(sent)
+                        except StopIteration as finished:
+                            answer = cast(Answer, finished.value)
+                            break
+                        try:
+                            sent = yield Bounded(effect, deadline)
+                            thrown = None
+                        except PollExpired:
+                            raise
+                        except Exception as error:
+                            sent, thrown = None, error
+                except PollExpired:
+                    flow.close()
+                    if last is not None and not is_mutation(op):
+                        return Answer(replace(last.result, timed_out=True), last.raw)
+                    return Answer(_fail(diagnostic(op["id"], "OUTCOME_UNKNOWN" if is_mutation(op) else "TRANSPORT_FAILED",
+                        retryable="never", remediation="The polling budget expired during the call.")), UNSET)
+                finally:
+                    flow.close()
             result = answer.result
             if isinstance(result, Err):
+                if budget > 0 and _monotonic_ms() >= deadline and last is not None and not is_mutation(op):
+                    return Answer(replace(last.result, timed_out=True), last.raw)
+                if budget > 0 and _monotonic_ms() >= deadline and not is_mutation(op):
+                    return Answer(_fail(diagnostic(op["id"], "TRANSPORT_FAILED", retryable="never",
+                        remediation="The polling budget expired before any observation completed.")), UNSET)
                 return answer
+            elapsed = _monotonic_ms() - started
+            if budget > 0 and elapsed >= budget:
+                return Answer(replace(result, timed_out=True), answer.raw)
             if evaluate_predicate(until, answer.raw):
                 return Answer(replace(result, timed_out=False), answer.raw)
-            if _monotonic_ms() - started + interval > budget:
+            if budget == 0 or elapsed + interval > budget:
                 return Answer(replace(result, timed_out=True), answer.raw)
+            last = answer
             yield from sleep(interval)
+            if budget > 0 and _monotonic_ms() >= deadline:
+                return Answer(replace(result, timed_out=True), answer.raw)
 
     def _verify(
         self, op: OperationDescriptor, args: Mapping[str, object], value: object, opts: Mapping[str, object]

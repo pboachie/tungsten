@@ -439,11 +439,42 @@ func (c *ClientCore) tokenRequest(ctx context.Context, scheme, url string, clien
 // token.
 func (c *ClientCore) clientCredentialsToken(ctx context.Context, s *satisfier) (string, string) {
 	c.ccMu.Lock()
-	defer c.ccMu.Unlock()
 	realNow := time.Now().UnixMilli()
 	if cached, ok := c.ccTokens[s.name]; ok && cached.expiresAt > realNow+30000 {
+		c.ccMu.Unlock()
 		return cached.token, ""
 	}
+	flight := c.ccFlights[s.name]
+	if flight == nil {
+		flight = &ccFlight{done: make(chan struct{})}
+		c.ccFlights[s.name] = flight
+		// The exchange belongs to the shared refresh, not its first waiter.
+		// It remains bounded by tokenAttemptTimeout even if every waiter leaves.
+		go func() {
+			token, reason := c.fetchClientCredentialsToken(context.Background(), s)
+			c.ccMu.Lock()
+			flight.token, flight.reason = token, reason
+			delete(c.ccFlights, s.name)
+			close(flight.done)
+			c.ccMu.Unlock()
+		}()
+	}
+	c.ccMu.Unlock()
+	select {
+	case <-ctx.Done():
+		return "", "OAuth2 token acquisition was cancelled by the caller's context."
+	case <-flight.done:
+		return flight.token, flight.reason
+	}
+}
+
+type ccFlight struct {
+	done          chan struct{}
+	token, reason string
+}
+
+func (c *ClientCore) fetchClientCredentialsToken(ctx context.Context, s *satisfier) (string, string) {
+	realNow := time.Now().UnixMilli()
 	form := []string{"grant_type=client_credentials"}
 	if len(s.scopes) > 0 {
 		form = append(form, "scope="+encodeFormComponent(strings.Join(s.scopes, " ")))
@@ -474,7 +505,9 @@ func (c *ClientCore) clientCredentialsToken(ctx context.Context, s *satisfier) (
 			lifetime = int64(math.Max(n*1000, 0))
 		}
 	}
+	c.ccMu.Lock()
 	c.ccTokens[s.name] = cachedToken{token: token, expiresAt: realNow + lifetime}
+	c.ccMu.Unlock()
 	return token, ""
 }
 
