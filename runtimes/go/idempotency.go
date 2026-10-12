@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -259,4 +260,68 @@ func keyHeader(op *OperationDescriptor) string {
 		}
 	}
 	return "Idempotency-Key"
+}
+
+// AtomicIdempotencyStore persists candidate only if there is no existing key.
+// Custom cross-process stores should implement this transactional extension.
+type AtomicIdempotencyStore interface {
+	Reserve(scope, logicalID, candidate string) (string, error)
+}
+
+var legacyReservationMu sync.Mutex
+var fileReservationMu sync.Mutex
+
+func reserveKey(store IdempotencyStore, scope, id, candidate string) (string, error) {
+	if atomic, ok := store.(AtomicIdempotencyStore); ok {
+		return atomic.Reserve(scope, id, candidate)
+	}
+	legacyReservationMu.Lock()
+	defer legacyReservationMu.Unlock()
+	if old, ok := store.Get(scope, id); ok && old != "" {
+		return old, nil
+	}
+	store.Put(scope, id, candidate)
+	if old, ok := store.Get(scope, id); !ok || old != candidate {
+		return "", fmt.Errorf("the key could not be stored")
+	}
+	return candidate, nil
+}
+func (s *MemoryIdempotencyStore) Reserve(scope, id, candidate string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	slot := [2]string{scope, id}
+	if old := s.keys[slot]; old != "" {
+		return old, nil
+	}
+	s.keys[slot] = candidate
+	return candidate, nil
+}
+func (s *FileIdempotencyStore) Reserve(scope, id, candidate string) (string, error) {
+	fileReservationMu.Lock()
+	defer fileReservationMu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := os.MkdirAll(filepath.Dir(s.path), 0700); err != nil {
+		return "", err
+	}
+	lease := s.path + ".lock"
+	if err := os.Mkdir(lease, 0700); err != nil {
+		return "", err
+	}
+	defer os.Remove(lease)
+	data, ok := s.read()
+	if !ok {
+		return "", fmt.Errorf("invalid idempotency store")
+	}
+	if old := data[scope][id]; old != "" {
+		return old, nil
+	}
+	if data[scope] == nil {
+		data[scope] = map[string]string{}
+	}
+	data[scope][id] = candidate
+	if err := s.write(data); err != nil {
+		return "", err
+	}
+	return candidate, nil
 }

@@ -33,6 +33,12 @@ impl MemoryIdempotencyStore {
 }
 
 impl IdempotencyStore for MemoryIdempotencyStore {
+    fn reserve(&self, scope: &str, logical_id: &str, candidate: &str) -> Result<String, String> {
+        Ok(lock(&self.keys)
+            .entry((scope.to_owned(), logical_id.to_owned()))
+            .or_insert_with(|| candidate.to_owned())
+            .clone())
+    }
     fn get(&self, scope: &str, logical_id: &str) -> Option<String> {
         lock(&self.keys)
             .get(&(scope.to_owned(), logical_id.to_owned()))
@@ -143,6 +149,36 @@ impl FileIdempotencyStore {
 }
 
 impl IdempotencyStore for FileIdempotencyStore {
+    fn reserve(&self, scope: &str, logical_id: &str, candidate: &str) -> Result<String, String> {
+        static FILES: Mutex<()> = Mutex::new(());
+        let _files = lock(&FILES);
+        let _guard = lock(&self.lock);
+        let parent = self
+            .path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        let lease = PathBuf::from(format!("{}.lock", self.path.display()));
+        std::fs::create_dir(&lease).map_err(|e| e.to_string())?;
+        let result = (|| {
+            let mut data = self.read().ok_or("invalid idempotency store")?;
+            if let Some(key) = data
+                .get(scope)
+                .and_then(|m| m.get(logical_id))
+                .filter(|k| !k.is_empty())
+            {
+                return Ok(key.clone());
+            }
+            data.entry(scope.to_owned())
+                .or_default()
+                .insert(logical_id.to_owned(), candidate.to_owned());
+            self.write(&data).map_err(|e| e.to_string())?;
+            Ok(candidate.to_owned())
+        })();
+        std::fs::remove_dir(&lease).map_err(|e| e.to_string())?;
+        result
+    }
     fn get(&self, scope: &str, logical_id: &str) -> Option<String> {
         let _guard = lock(&self.lock);
         self.read()?.get(scope)?.get(logical_id).cloned()

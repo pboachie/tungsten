@@ -175,7 +175,28 @@ class StreamFailed:
 
 type ReadOutcome = Chunk | StreamEnded | StreamFailed
 
-type Effect = Send | Sleep | StoreGet | StorePut | Observe | Invoke | Shared | Emit | ReadChunk | CloseStream
+
+@dataclass(frozen=True, slots=True)
+class StoreReserve:
+    store: object
+    scope: str
+    logical_id: str
+    key: str
+
+
+type Effect = (
+    Send
+    | Sleep
+    | StoreGet
+    | StorePut
+    | StoreReserve
+    | Observe
+    | Invoke
+    | Shared
+    | Emit
+    | ReadChunk
+    | CloseStream
+)
 
 type Flow[T] = Generator[Effect, object, T]
 
@@ -224,3 +245,7 @@ def shared(key: str, flow: Callable[[], Flow[str]]) -> Flow[str]:
 
 def emit(item: object) -> Flow[None]:
     yield Emit(item)
+
+
+def store_reserve(store: object, scope: str, logical_id: str, key: str) -> Flow[object]:
+    return (yield StoreReserve(store, scope, logical_id, key))

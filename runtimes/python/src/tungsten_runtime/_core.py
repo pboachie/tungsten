@@ -63,8 +63,7 @@ from ._effects import (
     send,
     shared,
     sleep,
-    store_get,
-    store_put,
+    store_reserve,
 )
 from ._envelope import diagnostic, scrub_diagnostic, scrub_text, with_fields
 from ._expr import (
@@ -1201,11 +1200,9 @@ class Engine:
             return None
         logical_id = sha256_hex(canonical_json(args))
         try:
-            existing = yield from store_get(self.store, op["id"], logical_id)
-            if isinstance(existing, str) and existing != "":
-                return existing
-            key = str(uuid.uuid4())
-            yield from store_put(self.store, op["id"], logical_id, key)
+            key = yield from store_reserve(self.store, op["id"], logical_id, str(uuid.uuid4()))
+            if not isinstance(key, str) or not key:
+                raise ValueError("store returned an invalid key")
             return key
         except Exception as error:
             return _fail(

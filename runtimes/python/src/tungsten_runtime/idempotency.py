@@ -3,19 +3,24 @@
 
 ``MemoryIdempotencyStore`` is the default: keys live as long as the process.
 ``FileIdempotencyStore`` persists them to one JSON file, so ``auto`` keys
-survive a restart. Both are synchronous and work with ``ClientCore`` and
-``AsyncClientCore``; any object with ``get(scope, logical_id)`` and
-``put(scope, logical_id, key)`` methods (plain or ``async``) is a store.
+survive a restart. Both expose atomic ``reserve(scope, logical_id, candidate)`` and get/put.
+Async clients offload synchronous storage using bounded workers. Legacy custom
+get/put stores are serialized within this loaded runtime; shared external
+storage must implement atomic reserve.
 """
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 import json
 import os
 import tempfile
 import threading
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import Any
 
 from ._util import is_record
 
@@ -30,6 +35,10 @@ class MemoryIdempotencyStore:
     def __init__(self) -> None:
         self._keys: dict[tuple[str, str], str] = {}
         self._lock = threading.Lock()
+
+    def reserve(self, scope: str, logical_id: str, candidate: str) -> str:
+        with self._lock:
+            return self._keys.setdefault((scope, logical_id), candidate)
 
     def get(self, scope: str, logical_id: str) -> str | None:
         with self._lock:
@@ -59,6 +68,9 @@ def _valid_store(value: object) -> dict[str, dict[str, str]] | None:
     return out
 
 
+_file_lock = threading.RLock()
+
+
 class FileIdempotencyStore:
     """A store persisted to one JSON file (``{"version": 1, "keys": {scope:
     {logical_id: key}}}``, the format of the TypeScript runtime's
@@ -74,7 +86,7 @@ class FileIdempotencyStore:
 
     def __init__(self, path: str | os.PathLike[str]) -> None:
         self.path = Path(path)
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
 
     def _read(self) -> dict[str, dict[str, str]]:
         try:
@@ -89,6 +101,20 @@ class FileIdempotencyStore:
         if keys is None:
             raise ValueError("the idempotency store file has an unknown format")
         return keys
+
+    def reserve(self, scope: str, logical_id: str, candidate: str) -> str:
+        with _file_lock, self._lock:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            lease = Path(str(self.path) + ".lock")
+            lease.mkdir()  # Busy/stale leases fail closed; never steal one.
+            try:
+                existing = self.get(scope, logical_id)
+                if existing:
+                    return existing
+                self.put(scope, logical_id, candidate)
+                return candidate
+            finally:
+                lease.rmdir()
 
     def get(self, scope: str, logical_id: str) -> str | None:
         with self._lock:
@@ -109,8 +135,73 @@ class FileIdempotencyStore:
             try:
                 with os.fdopen(fd, "w", encoding="utf-8") as handle:
                     handle.write(text)
+                    handle.flush()
+                    os.fsync(handle.fileno())
                 os.chmod(temporary, 0o600)
                 os.replace(temporary, self.path)
             except BaseException:
                 Path(temporary).unlink(missing_ok=True)
                 raise
+
+
+_legacy_lock = threading.Lock()
+
+
+def reserve_key(store: Any, scope: str, logical_id: str, candidate: str) -> object:
+    reserve = getattr(store, "reserve", None)
+    if callable(reserve):
+        return reserve(scope, logical_id, candidate)
+    if inspect.iscoroutinefunction(store.get) or inspect.iscoroutinefunction(store.put):
+        return _reserve_legacy_async(store, scope, logical_id, candidate)
+    with _legacy_lock:
+        existing = store.get(scope, logical_id)
+        if existing:
+            return existing
+        store.put(scope, logical_id, candidate)
+        if store.get(scope, logical_id) != candidate:
+            raise ValueError("the key could not be stored")
+        return candidate
+
+
+# Completion, rather than cancellation of the awaiter, releases the capacity.
+# No unbounded executor queue can accumulate behind a slow disk.
+_workers = ThreadPoolExecutor(max_workers=4, thread_name_prefix="tungsten-store")
+_capacity = threading.BoundedSemaphore(4)
+
+
+async def async_store_call(fn: Callable[[], object]) -> object:
+    while not _capacity.acquire(blocking=False):
+        await asyncio.sleep(0.001)
+
+    def run() -> object:
+        try:
+            return fn()
+        finally:
+            _capacity.release()
+
+    try:
+        future = _workers.submit(run)
+    except BaseException:
+        _capacity.release()
+        raise
+    return await asyncio.shield(asyncio.wrap_future(future))
+
+
+async def _reserve_legacy_async(store: Any, scope: str, logical_id: str, candidate: str) -> str:
+    while not _legacy_lock.acquire(blocking=False):
+        await asyncio.sleep(0.001)
+
+    async def invoke(fn: Any, *args: str) -> object:
+        result = fn(*args)
+        return await result if inspect.isawaitable(result) else result
+
+    try:
+        existing = await invoke(store.get, scope, logical_id)
+        if isinstance(existing, str) and existing:
+            return existing
+        await invoke(store.put, scope, logical_id, candidate)
+        if await invoke(store.get, scope, logical_id) != candidate:
+            raise ValueError("the key could not be stored")
+        return candidate
+    finally:
+        _legacy_lock.release()

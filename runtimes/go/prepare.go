@@ -894,18 +894,16 @@ func (c *ClientCore) idempotencyKey(op *OperationDescriptor, args *Object, opts 
 				remedy(fmt.Sprintf("The idempotency store failed (%s), so the call was not sent rather than risk a second key for the same intent. Fix or replace ClientOptions.IdempotencyStore.", why)).err()
 		}
 		logical := sha256Hex([]byte(CanonicalJSON(args)))
-		c.keyMu.Lock()
-		defer c.keyMu.Unlock()
-		if existing, ok := c.store.Get(op.ID, logical); ok && existing != "" {
-			return existing, true, nil
-		}
-		key, ok := uuidV4()
+		candidate, ok := uuidV4()
 		if !ok {
 			return "", false, refuse("no source of randomness")
 		}
-		c.store.Put(op.ID, logical, key)
-		if stored, ok := c.store.Get(op.ID, logical); !ok || stored != key {
-			return "", false, refuse("the key could not be stored")
+		key, err := reserveKey(c.store, op.ID, logical, candidate)
+		if err != nil {
+			return "", false, refuse(err.Error())
+		}
+		if key == "" {
+			return "", false, refuse("store returned an invalid key")
 		}
 		return key, true, nil
 	}

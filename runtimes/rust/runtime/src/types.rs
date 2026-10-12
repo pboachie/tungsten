@@ -712,6 +712,24 @@ pub type AuthConfig = BTreeMap<String, Credential>;
 pub trait IdempotencyStore: Send + Sync + fmt::Debug {
     fn get(&self, scope: &str, logical_id: &str) -> Option<String>;
     fn put(&self, scope: &str, logical_id: &str, key: &str);
+    /// Override with a transaction when storage is shared across processes.
+    fn reserve(
+        &self,
+        scope: &str,
+        logical_id: &str,
+        candidate: &str,
+    ) -> std::result::Result<String, String> {
+        static LEGACY: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _guard = crate::idempotency::lock(&LEGACY);
+        if let Some(key) = self.get(scope, logical_id).filter(|k| !k.is_empty()) {
+            return Ok(key);
+        }
+        self.put(scope, logical_id, candidate);
+        if self.get(scope, logical_id).as_deref() != Some(candidate) {
+            return Err("the key could not be stored".into());
+        }
+        Ok(candidate.to_owned())
+    }
 }
 
 /// What middleware sees of one attempt. Secrets are redacted: secret

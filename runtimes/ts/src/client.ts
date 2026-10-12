@@ -38,7 +38,7 @@ import {
   resolveRef,
   type Scope,
 } from "./expr.js";
-import { checkKeyFormat, hasReplayProtection, keyFormatDescription, keyHeader, MemoryIdempotencyStore } from "./idempotency.js";
+import { checkKeyFormat, hasReplayProtection, keyFormatDescription, keyHeader, MemoryIdempotencyStore, reserveKey } from "./idempotency.js";
 import {
   bodyValue,
   encodeBody,
@@ -1173,10 +1173,8 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
         if (purpose !== "call") return { ok: true, value: null };
         const logicalId = await argsDigest(args);
         try {
-          const existing = await this.#store.get(op.id, logicalId);
-          if (typeof existing === "string" && existing !== "") return { ok: true, value: existing };
-          const key = crypto.randomUUID();
-          await this.#store.put(op.id, logicalId, key);
+          const key = await reserveKey(this.#store, op.id, logicalId, crypto.randomUUID());
+          if (typeof key !== "string" || key === "") throw new Error("store returned an invalid key");
           return { ok: true, value: key };
         } catch (error) {
           return fail(

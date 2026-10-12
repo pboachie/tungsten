@@ -698,8 +698,9 @@ impl ClientCore {
         }
 
         let header = key_header(op);
-        let key =
-            self.idempotency_key(op, &args, opts, purpose, encoded.hash_material.as_deref())?;
+        let key = self
+            .idempotency_key(op, &args, opts, purpose, encoded.hash_material.as_deref())
+            .await?;
         if let Some(key) = &key {
             headers.set(&header, key.clone(), true);
             secrets.insert(key.clone());
@@ -1086,7 +1087,7 @@ impl ClientCore {
         }
     }
 
-    fn idempotency_key(
+    async fn idempotency_key(
         &self,
         op: &OperationDescriptor,
         args: &Map<String, Value>,
@@ -1128,15 +1129,23 @@ impl ClientCore {
                     )
                 };
                 let logical = sha256_hex(canonical_json(&Value::Object(args.clone())).as_bytes());
-                let store = &self.inner.store;
-                let _atomic = crate::idempotency::lock(&self.inner.key_lock);
-                if let Some(existing) = store.get(&op.id, &logical).filter(|k| !k.is_empty()) {
-                    return Ok(Some(existing));
-                }
+                static CAPACITY: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
+                let permit = CAPACITY
+                    .acquire()
+                    .await
+                    .map_err(|_| refuse("storage workers are busy"))?;
+                let store = self.inner.store.clone();
+                let scope = op.id.clone();
                 let key = uuid_v4().ok_or_else(|| refuse("no source of randomness"))?;
-                store.put(&op.id, &logical, &key);
-                if store.get(&op.id, &logical).as_deref() != Some(key.as_str()) {
-                    return Err(refuse("the key could not be stored"));
+                let result = tokio::task::spawn_blocking(move || {
+                    let _permit = permit;
+                    store.reserve(&scope, &logical, &key)
+                })
+                .await
+                .map_err(|_| refuse("storage worker failed"))?;
+                let key = result.map_err(|why| refuse(&why))?;
+                if key.is_empty() {
+                    return Err(refuse("store returned an invalid key"));
                 }
                 Ok(Some(key))
             }

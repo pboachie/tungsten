@@ -43,6 +43,7 @@ from ._effects import (
     Sleep,
     StoreGet,
     StorePut,
+    StoreReserve,
     StreamEnded,
     StreamFailed,
     Streaming,
@@ -180,8 +181,12 @@ def _read_failure(error: Exception) -> StreamFailed:
     return StreamFailed("timeout" if isinstance(error, httpx.TimeoutException) else "lost")
 
 
-def _store_call(effect: StoreGet | StorePut) -> object:
+def _store_call(effect: StoreGet | StorePut | StoreReserve) -> object:
     store = cast(Any, effect.store)
+    if isinstance(effect, StoreReserve):
+        from .idempotency import reserve_key
+
+        return reserve_key(store, effect.scope, effect.logical_id, effect.key)
     if isinstance(effect, StoreGet):
         return store.get(effect.scope, effect.logical_id)
     return store.put(effect.scope, effect.logical_id, effect.key)
@@ -233,15 +238,17 @@ def _drain(flow: Flow[Any], outcome: AttemptOutcome) -> object:
             sent = Lost("cancelled")
         elif isinstance(effect, ReadChunk):
             sent = StreamFailed("lost")
-        elif isinstance(effect, StoreGet | StorePut | Observe):
+        elif isinstance(effect, StoreGet | StorePut | StoreReserve):
+            thrown = RuntimeError("the call was cancelled")
+        elif isinstance(effect, Observe):
             try:
-                result = _store_call(effect) if not isinstance(effect, Observe) else effect.fn(*effect.args)
+                result = effect.fn(*effect.args)
             except Exception:
                 result = None
             if inspect.isawaitable(result):
                 _discard(result)
                 result = None
-            sent = None if isinstance(effect, Observe) else result
+            sent = None
         elif isinstance(effect, Invoke | CloseStream):
             sent = None
         elif isinstance(effect, Shared):
@@ -414,7 +421,7 @@ class SyncDriver:
         if isinstance(effect, Sleep):
             time.sleep(max(0.0, effect.ms) / 1000)
             return None
-        if isinstance(effect, StoreGet | StorePut):
+        if isinstance(effect, StoreGet | StorePut | StoreReserve):
             result = _store_call(effect)
             if inspect.isawaitable(result):
                 _discard(result)
@@ -567,8 +574,18 @@ class AsyncDriver:
         if isinstance(effect, Sleep):
             await asyncio.sleep(max(0.0, effect.ms) / 1000)
             return None
-        if isinstance(effect, StoreGet | StorePut):
-            result = _store_call(effect)
+        if isinstance(effect, StoreGet | StorePut | StoreReserve):
+            from .idempotency import async_store_call
+
+            methods = (
+                ("reserve", "get", "put")
+                if isinstance(effect, StoreReserve)
+                else (("get",) if isinstance(effect, StoreGet) else ("put",))
+            )
+            if any(inspect.iscoroutinefunction(getattr(effect.store, name, None)) for name in methods):
+                result = _store_call(effect)
+            else:
+                result = await async_store_call(lambda: _store_call(effect))
             if inspect.isawaitable(result):
                 return await cast(Awaitable[object], result)
             return result

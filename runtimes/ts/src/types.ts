@@ -346,6 +346,8 @@ export interface ApiDescriptor {
 export type AuthConfig = Record<string, string | Record<string, string>>;
 
 export interface IdempotencyStore {
+  /** Atomically return the existing key or persist candidate. */
+  reserve?(scope: string, logicalId: string, candidate: string): Promise<string>;
   get(scope: string, logicalId: string): Promise<string | undefined>;
   put(scope: string, logicalId: string, key: string): Promise<void>;
 }

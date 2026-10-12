@@ -6,7 +6,7 @@
  * this module.
  */
 import { randomBytes } from "node:crypto";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, rename, rm } from "node:fs/promises";
 import { dirname } from "node:path";
 
 import type { IdempotencyStore } from "./types.js";
@@ -48,6 +48,8 @@ function sorted(keys: StoreFile["keys"]): StoreFile["keys"] {
  * and `put` reject, and the runtime then refuses the call rather than
  * issue a second key for the same intent.
  */
+let fileQueue: Promise<unknown> = Promise.resolve();
+
 export class FileIdempotencyStore implements IdempotencyStore {
   readonly path: string;
   #queue: Promise<unknown> = Promise.resolve();
@@ -81,6 +83,23 @@ export class FileIdempotencyStore implements IdempotencyStore {
     return scoped && Object.hasOwn(scoped, logicalId) ? scoped[logicalId] : undefined;
   }
 
+  async reserve(scope: string, logicalId: string, candidate: string): Promise<string> {
+    const result = fileQueue.catch(() => undefined).then(async () => {
+      await mkdir(dirname(this.path), { recursive: true });
+      const lease = `${this.path}.lock`;
+      // A busy/stale lease refuses the call. Never steal a crashed writer's lease.
+      await mkdir(lease);
+      try {
+        const existing = await this.get(scope, logicalId);
+        if (existing) return existing;
+        await this.put(scope, logicalId, candidate);
+        return candidate;
+      } finally { await rm(lease, { recursive: true }); }
+    });
+    fileQueue = result;
+    return result;
+  }
+
   put(scope: string, logicalId: string, key: string): Promise<void> {
     const write = this.#queue
       .catch(() => undefined)
@@ -93,7 +112,11 @@ export class FileIdempotencyStore implements IdempotencyStore {
         await mkdir(dirname(this.path), { recursive: true });
         const temporary = `${this.path}.${randomBytes(6).toString("hex")}.tmp`;
         try {
-          await writeFile(temporary, text, { mode: 0o600 });
+          const handle = await open(temporary, "wx", 0o600);
+          try {
+            await handle.writeFile(text);
+            await handle.sync();
+          } finally { await handle.close(); }
           await rename(temporary, this.path);
         } catch (error) {
           await rm(temporary, { force: true });
