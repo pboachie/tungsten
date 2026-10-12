@@ -1,6 +1,5 @@
+[![Woodpecker CI](https://badges.boachiefamily.net/api/badges/4/status.svg)](https://ci.boachiefamily.net/repos/4)
 
-[![Release CI](https://badges.boachiefamily.net/api/badges/4/status.svg)](https://ci.boachiefamily.net/repos/4)
-[![Ops CI](https://badges.boachiefamily.net/api/badges/1/status.svg?branch=main)](https://ci.boachiefamily.net/repos/1)
 <div align="center">
 
 <img src="assets/logo.svg" alt="tungsten" width="360">
