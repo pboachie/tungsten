@@ -328,6 +328,11 @@ fn key_field(p: &IdempotencyPolicy) -> Value {
     if uuid {
         schema["format"] = json!("uuid");
     }
+    if p.format.as_deref() == Some("ascii_token_128") {
+        schema["minLength"] = json!(1);
+        schema["maxLength"] = json!(128);
+        schema["pattern"] = json!("^[A-Za-z0-9._-]+$");
+    }
     schema["description"] = json!(description);
     schema
 }

@@ -296,7 +296,7 @@ const AGENT: Table = &[
     ),
     (
         "tools[].idempotency.format",
-        "Required key format for `caller_owned`: `uuid_v4`, `uuid` or `opaque`.",
+        "Required key format for `caller_owned`: `uuid_v4`, `uuid`, `opaque` or `ascii_token_128` (1–128 ASCII letters, digits, dots, underscores or hyphens).",
     ),
     (
         "tools[].idempotency.persist",

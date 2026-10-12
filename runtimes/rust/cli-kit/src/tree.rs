@@ -228,7 +228,7 @@ fn leaf_command(
                     .value_name("KEY")
                     .action(ArgAction::Set)
                     .help_heading("Safety")
-                    .help("Idempotency key (a UUIDv4) for operations that need one; reuse it on a retry"),
+                    .help("Caller-owned idempotency key for operations that need one; reuse it on a retry"),
             )
             .arg(
                 Arg::new("verify")

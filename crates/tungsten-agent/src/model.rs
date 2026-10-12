@@ -133,6 +133,9 @@ pub enum KeyFormat {
     UuidV4,
     Uuid,
     Opaque,
+    // 1–128 ASCII letters, digits, dots, underscores or hyphens.
+    #[serde(rename = "ascii_token_128")]
+    AsciiToken128,
 }
 
 impl KeyFormat {
@@ -141,6 +144,7 @@ impl KeyFormat {
             KeyFormat::UuidV4 => "uuid_v4",
             KeyFormat::Uuid => "uuid",
             KeyFormat::Opaque => "opaque",
+            KeyFormat::AsciiToken128 => "ascii_token_128",
         }
     }
 }
