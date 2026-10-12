@@ -1,4 +1,3 @@
-[![Woodpecker CI](https://badges.boachiefamily.net/api/badges/4/status.svg)](https://ci.boachiefamily.net/repos/4)
 
 <div align="center">
 
