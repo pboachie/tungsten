@@ -61,6 +61,7 @@ pub mod blocking;
 mod classify;
 mod client;
 mod confirm;
+pub mod crypto;
 mod dispatch;
 mod envelope;
 mod expr;

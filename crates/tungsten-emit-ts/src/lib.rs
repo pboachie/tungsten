@@ -55,6 +55,9 @@ impl Emitter for TypeScriptEmitter {
 
     fn emit(&self, ir: &Ir, cfg: &TargetConfig, out: &mut FileSet) -> Diagnostics {
         let (opts, mut diags) = Options::resolve(ir, cfg);
+        if diags.has_errors() {
+            return diags;
+        }
         for (path, text) in generate(ir, &opts) {
             if let Err(e) = out.add(path, text) {
                 diags.push(Diagnostic::error(
