@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.github.pboachie.tungsten.runtime;
 
-import java.net.http.HttpClient;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -11,6 +10,7 @@ import java.util.Map;
 import java.util.function.Consumer;
 import java.util.function.DoubleSupplier;
 import java.util.function.LongSupplier;
+import javax.net.ssl.SSLSocketFactory;
 
 /** Options of a client. Build them with {@link #builder}. */
 public final class ClientOptions {
@@ -59,7 +59,7 @@ public final class ClientOptions {
     final Duration reconnectMax;
     final Duration idleTimeout;
     final byte[] confirmationKey;
-    final HttpClient httpClient;
+    final SSLSocketFactory sslSocketFactory;
     final LongSupplier clock;
     final DoubleSupplier random;
     final RuntimeIdentity identity;
@@ -86,7 +86,7 @@ public final class ClientOptions {
         confirmationKey = b.confirmationKey != null && b.confirmationKey.length > 0
                 ? b.confirmationKey.clone()
                 : Text.randomBytes(32);
-        httpClient = b.httpClient;
+        sslSocketFactory = b.sslSocketFactory;
         clock = b.clock;
         random = b.random;
         identity = b.identity != null ? b.identity : RuntimeIdentity.JAVA;
@@ -120,7 +120,7 @@ public final class ClientOptions {
         private Duration reconnectMax;
         private Duration idleTimeout;
         private byte[] confirmationKey;
-        private HttpClient httpClient;
+        private SSLSocketFactory sslSocketFactory;
         private LongSupplier clock;
         private DoubleSupplier random;
         private RuntimeIdentity identity;
@@ -247,12 +247,12 @@ public final class ClientOptions {
         }
 
         /**
-         * The HTTP client of every request. It must use HTTP/1.1 and must not follow redirects
-         * (the runtime follows same-origin redirects of reads itself). Default: such a client
-         * without a cookie handler.
+         * The TLS sockets of https requests (a custom trust store, for instance). Default: the
+         * JVM's default {@link SSLSocketFactory}. Every attempt opens its own HTTP/1.1
+         * connection.
          */
-        public Builder httpClient(HttpClient value) {
-            httpClient = value;
+        public Builder sslSocketFactory(SSLSocketFactory value) {
+            sslSocketFactory = value;
             return this;
         }
 

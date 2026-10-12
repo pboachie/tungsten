@@ -3,7 +3,6 @@ package io.github.pboachie.tungsten.runtime;
 
 import java.net.URI;
 import java.net.URISyntaxException;
-import java.net.http.HttpClient;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -17,6 +16,7 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
+import javax.net.ssl.SSLSocketFactory;
 
 /**
  * The engine behind every generated client: pre-flight validation, auth, idempotency keys,
@@ -47,7 +47,7 @@ public final class ClientCore {
     final ClientOptions.ValidateResponses validateResponses;
     final Consumer<Diagnostic> onDiagnostic;
     final byte[] confirmationKey;
-    final HttpClient http;
+    final SSLSocketFactory http;
     final ClientOptions options;
     final TokenStore tokenStore;
     final RuntimeIdentity identity;
@@ -95,7 +95,9 @@ public final class ClientCore {
         this.validateResponses = options.validateResponses;
         this.onDiagnostic = options.onDiagnostic;
         this.confirmationKey = options.confirmationKey;
-        this.http = options.httpClient != null ? options.httpClient : Transport.newClient();
+        this.http = options.sslSocketFactory != null
+                ? options.sslSocketFactory
+                : (SSLSocketFactory) SSLSocketFactory.getDefault();
         this.tokenStore = options.tokenStore;
         this.identity = options.identity;
         this.authResolver = new Auth(this);

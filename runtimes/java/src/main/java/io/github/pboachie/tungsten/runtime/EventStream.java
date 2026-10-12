@@ -197,6 +197,11 @@ public final class EventStream<T> implements Iterator<Result<StreamEvent<T>>>, I
                 }
                 continue;
             }
+            if (cancelled) {
+                // Events already read but not yet delivered are dropped too.
+                close();
+                return null;
+            }
             Open o = open;
             if (!o.queue.isEmpty()) {
                 Sse.Event ev = o.queue.poll();
