@@ -15,6 +15,13 @@ use crate::resources::has_preview;
 use crate::ts::{prop_key, string_lit};
 
 pub(crate) fn package_json(plan: &Plan<'_>, opts: &Options) -> String {
+    let mut dependencies = json!({
+        "@elysra/tungsten-runtime": opts.runtime,
+        "zod": ZOD_RANGE
+    });
+    for (name, version) in &opts.dependencies {
+        dependencies[name] = json!(version);
+    }
     let doc = json!({
         "name": opts.package,
         "version": opts.version,
@@ -26,16 +33,13 @@ pub(crate) fn package_json(plan: &Plan<'_>, opts: &Options) -> String {
         "exports": {
             ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" }
         },
-        "files": ["dist"],
+        "files": ["dist", "src/custom"],
         "engines": { "node": ">=22" },
         "scripts": {
             "build": "tsc -p tsconfig.json",
             "typecheck": "tsc -p tsconfig.json --noEmit"
         },
-        "dependencies": {
-            "@elysra/tungsten-runtime": opts.runtime,
-            "zod": ZOD_RANGE
-        },
+        "dependencies": dependencies,
         "devDependencies": {
             "typescript": TYPESCRIPT_VERSION
         }

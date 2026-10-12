@@ -502,9 +502,12 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
     e(
         "TG0711",
         "An option of the `typescript` target is not valid (for example a `package` that is \
-         not an npm package name or a `version` that is not a semantic version), so its \
-         default is used.",
-        "Fix the option under `targets.typescript` in tungsten.yml.",
+         not an npm package name or a `version` that is not a semantic version). Invalid \
+         scalar options use their defaults. Invalid `dependencies` entries fail generation: \
+         package names must be valid npm names and version specifiers must be non-empty \
+         strings. Emitter-managed runtime, zod and typescript packages cannot be replaced.",
+        "Fix the option under `targets.typescript` in tungsten.yml. Configure the runtime \
+         with `runtime` or `runtime_path`; remove zod and typescript from `dependencies`.",
     ),
     e(
         "TG0712",
