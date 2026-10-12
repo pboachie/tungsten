@@ -453,7 +453,10 @@ pub mod codes {
             "TG0921",
             "overlay suggest: no overlay action can fix this diagnostic code",
         ),
-        ("TG1020", "invalid csharp target option; the default is used"),
+        (
+            "TG1020",
+            "invalid csharp target option; the default is used",
+        ),
         (
             "TG1021",
             "schema has no C# type in the csharp target; the runtime's JsonNode is used",

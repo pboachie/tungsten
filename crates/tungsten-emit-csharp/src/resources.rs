@@ -113,7 +113,9 @@ impl Ctx<'_> {
                     doc: match &a.source {
                         ArgSource::Param { param, .. } => doc_text(param.doc.as_ref()),
                         ArgSource::Field(f) => doc_text(f.doc.as_ref()),
-                        ArgSource::Body { media_type, .. } => format!("The request body ({media_type})."),
+                        ArgSource::Body { media_type, .. } => {
+                            format!("The request body ({media_type}).")
+                        }
                     },
                 })
                 .collect();
@@ -181,7 +183,10 @@ impl Ctx<'_> {
             .collect();
         for (f, code) in fields.iter().zip(&codes) {
             if f.doc.trim().is_empty() {
-                w.line(format!("/// <summary>The argument <c>{}</c>.</summary>", cs::xml(&f.key)));
+                w.line(format!(
+                    "/// <summary>The argument <c>{}</c>.</summary>",
+                    cs::xml(&f.key)
+                ));
             } else {
                 cs::summary(w, &f.doc);
             }

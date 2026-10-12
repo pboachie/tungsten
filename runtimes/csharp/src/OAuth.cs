@@ -307,7 +307,7 @@ public sealed partial class ClientCore
 
     internal async Task<(string? Token, TokenFailure? Failure)> StoredTokenInnerAsync(string scheme, bool force, CancellationToken ct)
     {
-        var missing = new TokenFailure($"No OAuth2 token is stored for {scheme}; send the user to authorization_url(), then call exchange_code() with the code, or put a token in ClientOptions.token_store.", false);
+        var missing = new TokenFailure($"No OAuth2 token is stored for {scheme}; send the user to OAuthFlow.AuthorizationUrl, then call ExchangeCodeAsync with the code, or put a token in ClientOptions.TokenStore.", false);
         var stored = ReadToken(scheme);
         if (stored is null)
         {
@@ -381,8 +381,12 @@ public sealed partial class ClientCore
         }
         if (string.IsNullOrEmpty(stored.RefreshToken))
         {
-            var what = force ? "has no refresh token" : "expired and has no refresh token";
-            return (null, new TokenFailure($"The OAuth2 token for {scheme} {what}; authorize again with authorization_url() and exchange_code().", false));
+            var what = "has no refresh token";
+            if (!force)
+            {
+                what = "expired and " + what;
+            }
+            return (null, new TokenFailure($"The OAuth2 token for {scheme} {what}; authorize again with OAuthFlow.AuthorizationUrl and ExchangeCodeAsync.", false));
         }
         var url = string.IsNullOrEmpty(flow.RefreshUrl) ? flow.TokenUrl ?? "" : flow.RefreshUrl;
         var fields = new List<(string, string)> { ("grant_type", "refresh_token"), ("refresh_token", stored.RefreshToken) };

@@ -30,7 +30,10 @@ pub enum Ck {
     /// The runtime's JSON value (`JsonNode?`).
     Any,
     /// A generated model: its (qualified) name and whether it is a struct.
-    Named { name: String, value: bool },
+    Named {
+        name: String,
+        value: bool,
+    },
     List(Box<Ct>),
     Map(Box<Ct>),
 }
@@ -239,10 +242,7 @@ pub fn member_code(ct: &Ct, presence: Presence, prop: &str, wire: &str) -> Membe
                 ty: format!("{}?", inner.base()),
                 required: true,
                 dec: format!("d.{dh}<{}>(o, {w}, {})", inner.base(), inner.dec(0)),
-                enc: format!(
-                    "Encode.{eh}(o, {w}, {prop}, x0 => {});",
-                    inner.enc("x0", 1)
-                ),
+                enc: format!("Encode.{eh}(o, {w}, {prop}, x0 => {});", inner.enc("x0", 1)),
             }
         }
         Presence::Optional if !null_allowed => {
@@ -255,10 +255,7 @@ pub fn member_code(ct: &Ct, presence: Presence, prop: &str, wire: &str) -> Membe
                 ty: format!("{}?", ct.base()),
                 required: false,
                 dec: format!("d.{dh}<{}>(o, {w}, {})", ct.base(), ct.dec(0)),
-                enc: format!(
-                    "Encode.{eh}(o, {w}, {prop}, x0 => {});",
-                    ct.enc("x0", 1)
-                ),
+                enc: format!("Encode.{eh}(o, {w}, {prop}, x0 => {});", ct.enc("x0", 1)),
             }
         }
         Presence::Optional | Presence::OptionalNullable => {
@@ -537,20 +534,23 @@ impl Ctx<'_> {
         for ((f, p), code) in fields.iter().zip(props).zip(&codes) {
             let doc = doc_text(f.doc.as_ref());
             if doc.is_empty() {
-                w.line(format!("/// <summary>The <c>{}</c> member.</summary>", cs::xml(&f.wire_name)));
+                w.line(format!(
+                    "/// <summary>The <c>{}</c> member.</summary>",
+                    cs::xml(&f.wire_name)
+                ));
             } else {
                 cs::summary(w, &doc);
             }
             let required = if code.required { "required " } else { "" };
-            w.line(format!(
-                "public {required}{} {p} {{ get; init; }}",
-                code.ty
-            ));
+            w.line(format!("public {required}{} {p} {{ get; init; }}", code.ty));
             w.blank();
         }
         match additional {
             Additional::Open => {
-                cs::summary_line(w, "Members the API description does not list, kept as they are.");
+                cs::summary_line(
+                    w,
+                    "Members the API description does not list, kept as they are.",
+                );
                 w.line("public JsonObject? AdditionalProperties { get; init; }");
                 w.blank();
             }
@@ -614,7 +614,10 @@ impl Ctx<'_> {
         w.dedent();
         w.line("}");
         w.blank();
-        cs::summary_line(w, "Decodes a JSON value, ignoring members the type does not list.");
+        cs::summary_line(
+            w,
+            "Decodes a JSON value, ignoring members the type does not list.",
+        );
         w.line(format!(
             "public static {name} FromJson(JsonNode? node) => FromJson(node, Decoder.Lenient());"
         ));
@@ -655,7 +658,12 @@ impl Ctx<'_> {
         } else {
             ("long", "Decoder.Int64", "Encode.Int64(Value)")
         };
-        let variant_names = self.names.enum_variants.get(&t.id).cloned().unwrap_or_default();
+        let variant_names = self
+            .names
+            .enum_variants
+            .get(&t.id)
+            .cloned()
+            .unwrap_or_default();
         let mut taken: Vec<String> = ["Value", "Values", "FromJson", "ToJson", "ToString", name]
             .iter()
             .map(|s| s.to_string())
@@ -703,7 +711,10 @@ impl Ctx<'_> {
             "public static IReadOnlyList<{name}> Values {{ get; }} = new[] {{ {list} }};"
         ));
         w.blank();
-        cs::summary_line(w, "Decodes a JSON value: one of the known values, else a failure.");
+        cs::summary_line(
+            w,
+            "Decodes a JSON value: one of the known values, else a failure.",
+        );
         w.line(format!(
             "public static {name} FromJson(JsonNode? node, Decoder d)"
         ));
@@ -753,7 +764,12 @@ impl Ctx<'_> {
         };
         // Fully qualified: a variant record may share its model's name.
         let from = None;
-        let variant_names = self.names.union_variants.get(&t.id).cloned().unwrap_or_default();
+        let variant_names = self
+            .names
+            .union_variants
+            .get(&t.id)
+            .cloned()
+            .unwrap_or_default();
         let mut taken: Vec<String> = ["FromJson", "ToJson", "ToString", "Equals", name]
             .iter()
             .map(|s| s.to_string())
@@ -802,7 +818,10 @@ impl Ctx<'_> {
         w.line("{");
         w.indent();
         match plan {
-            UnionPlan::Tagged { tag, variants: tagged } => {
+            UnionPlan::Tagged {
+                tag,
+                variants: tagged,
+            } => {
                 w.line("var o = d.Object(node);");
                 w.line(format!("var tag = d.Tag(o, {});", lit(tag)));
                 w.line("return tag switch");
@@ -824,10 +843,7 @@ impl Ctx<'_> {
                 }
                 let mut args = vec![lit(tag), "tag".into()];
                 args.extend(all);
-                w.line(format!(
-                    "_ => throw d.UnknownTag({}),",
-                    args.join(", ")
-                ));
+                w.line(format!("_ => throw d.UnknownTag({}),", args.join(", ")));
                 w.dedent();
                 w.line("};");
             }
@@ -868,10 +884,7 @@ impl Ctx<'_> {
                 ));
             }
             UnionPlan::Empty => {
-                w.line(format!(
-                    "return d.FirstOf<{name}>(node, {});",
-                    lit(name)
-                ));
+                w.line(format!("return d.FirstOf<{name}>(node, {});", lit(name)));
             }
         }
         w.dedent();

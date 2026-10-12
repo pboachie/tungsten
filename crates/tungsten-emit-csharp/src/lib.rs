@@ -177,7 +177,10 @@ pub fn namer_options() -> NamerOptions {
     let types: Vec<String> = TAKEN_TYPES.iter().map(|s| s.to_string()).collect();
     reserved.insert(Scope::Types, types.clone());
     reserved.insert(Scope::Classes, types);
-    reserved.insert(Scope::UnionVariants, vec!["FromJson".into(), "ToJson".into()]);
+    reserved.insert(
+        Scope::UnionVariants,
+        vec!["FromJson".into(), "ToJson".into()],
+    );
     reserved.insert(
         Scope::Fields,
         cs::RECORD_MEMBERS.iter().map(|s| s.to_string()).collect(),

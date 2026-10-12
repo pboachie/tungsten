@@ -168,7 +168,10 @@ impl Ctx<'_> {
         Self::root_usings(&mut w);
         w.line(format!("namespace {};", self.opts.namespace));
         w.blank();
-        cs::summary_line(&mut w, &format!("The client of the {} API.", self.ir.api.title));
+        cs::summary_line(
+            &mut w,
+            &format!("The client of the {} API.", self.ir.api.title),
+        );
         w.line(format!("public sealed partial class {client}"));
         w.line("{");
         w.indent();
@@ -283,7 +286,12 @@ impl Ctx<'_> {
             let record = format!("{member}Input");
             let fields = self.macro_fields(k, &record);
             w.blank();
-            self.args_record(&mut w, &record, &format!("The input of {}.", m.name()), &fields);
+            self.args_record(
+                &mut w,
+                &record,
+                &format!("The input of {}.", m.name()),
+                &fields,
+            );
             let optional = fields.iter().all(|f| {
                 matches!(
                     f.presence,
@@ -396,80 +404,80 @@ impl Ctx<'_> {
             w.line("Task<Result<PreviewResult>> IDispatch.PreviewOperationAsync(string operation, JsonObject args, CallOptions? options, CancellationToken cancellationToken) =>");
             w.line("    Task.FromResult(Typed.UnknownOperation<PreviewResult>(operation));");
         } else {
-        w.line("async Task<Result<JsonNode?>> IDispatch.InvokeAsync(string operation, JsonObject args, CallOptions? options, CancellationToken cancellationToken)");
-        w.line("{");
-        w.indent();
-        w.line("switch (operation)");
-        w.line("{");
-        w.indent();
-        for (p, info) in self.plan.operations.iter().zip(infos) {
-            let ty = request_type(p.resource, info);
-            w.line(format!("case {}:", lit(&p.op.id.0)));
+            w.line("async Task<Result<JsonNode?>> IDispatch.InvokeAsync(string operation, JsonObject args, CallOptions? options, CancellationToken cancellationToken)");
             w.line("{");
             w.indent();
-            decode(&mut w, &ty);
+            w.line("switch (operation)");
             w.line("{");
-            w.line(format!(
-                "    return await Core.CallAsync(Ops.{}, args, options, cancellationToken);",
-                info.field
-            ));
-            w.line("}");
-            w.line(format!(
-                "return Typed.Untyped(await {}.{}Async(request, options, cancellationToken));",
-                paths[p.resource], info.member
-            ));
+            w.indent();
+            for (p, info) in self.plan.operations.iter().zip(infos) {
+                let ty = request_type(p.resource, info);
+                w.line(format!("case {}:", lit(&p.op.id.0)));
+                w.line("{");
+                w.indent();
+                decode(&mut w, &ty);
+                w.line("{");
+                w.line(format!(
+                    "    return await Core.CallAsync(Ops.{}, args, options, cancellationToken);",
+                    info.field
+                ));
+                w.line("}");
+                w.line(format!(
+                    "return Typed.Untyped(await {}.{}Async(request, options, cancellationToken));",
+                    paths[p.resource], info.member
+                ));
+                w.dedent();
+                w.line("}");
+            }
+            w.line("default:");
+            w.line("    return Typed.UnknownOperation<JsonNode?>(operation);");
             w.dedent();
             w.line("}");
-        }
-        w.line("default:");
-        w.line("    return Typed.UnknownOperation<JsonNode?>(operation);");
-        w.dedent();
-        w.line("}");
-        w.dedent();
-        w.line("}");
-        // PreviewOperationAsync
-        w.blank();
-        w.line("async Task<Result<PreviewResult>> IDispatch.PreviewOperationAsync(string operation, JsonObject args, CallOptions? options, CancellationToken cancellationToken)");
-        w.line("{");
-        w.indent();
-        w.line("switch (operation)");
-        w.line("{");
-        w.indent();
-        for (p, info) in self.plan.operations.iter().zip(infos) {
-            w.line(format!("case {}:", lit(&p.op.id.0)));
-            match &info.preview {
-                Some(preview) => {
-                    let ty = request_type(p.resource, info);
-                    w.line("{");
-                    w.indent();
-                    decode(&mut w, &ty);
-                    w.line("{");
-                    w.line(format!(
+            w.dedent();
+            w.line("}");
+            // PreviewOperationAsync
+            w.blank();
+            w.line("async Task<Result<PreviewResult>> IDispatch.PreviewOperationAsync(string operation, JsonObject args, CallOptions? options, CancellationToken cancellationToken)");
+            w.line("{");
+            w.indent();
+            w.line("switch (operation)");
+            w.line("{");
+            w.indent();
+            for (p, info) in self.plan.operations.iter().zip(infos) {
+                w.line(format!("case {}:", lit(&p.op.id.0)));
+                match &info.preview {
+                    Some(preview) => {
+                        let ty = request_type(p.resource, info);
+                        w.line("{");
+                        w.indent();
+                        decode(&mut w, &ty);
+                        w.line("{");
+                        w.line(format!(
                         "    return await Core.PreviewAsync(Ops.{}, args, options, cancellationToken);",
                         info.field
                     ));
-                    w.line("}");
-                    w.line(format!(
-                        "return await {}.{preview}Async(request, options, cancellationToken);",
-                        paths[p.resource]
-                    ));
-                    w.dedent();
-                    w.line("}");
-                }
-                None => {
-                    w.line(format!(
+                        w.line("}");
+                        w.line(format!(
+                            "return await {}.{preview}Async(request, options, cancellationToken);",
+                            paths[p.resource]
+                        ));
+                        w.dedent();
+                        w.line("}");
+                    }
+                    None => {
+                        w.line(format!(
                         "    return await Core.PreviewAsync(Ops.{}, args, options, cancellationToken);",
                         info.field
                     ));
+                    }
                 }
             }
-        }
-        w.line("default:");
-        w.line("    return Typed.UnknownOperation<PreviewResult>(operation);");
-        w.dedent();
-        w.line("}");
-        w.dedent();
-        w.line("}");
+            w.line("default:");
+            w.line("    return Typed.UnknownOperation<PreviewResult>(operation);");
+            w.dedent();
+            w.line("}");
+            w.dedent();
+            w.line("}");
         }
         // PaginateAsync
         w.blank();
@@ -558,7 +566,9 @@ impl Ctx<'_> {
                 w.line(format!(
                     "Task<Result<{ret}>> IDispatch.{run}(string name, JsonObject input, CallOptions? options, CancellationToken cancellationToken) =>"
                 ));
-                w.line(format!("    Task.FromResult(Typed.UnknownMacro<{ret}>(name));"));
+                w.line(format!(
+                    "    Task.FromResult(Typed.UnknownMacro<{ret}>(name));"
+                ));
                 continue;
             }
             w.line(format!(
