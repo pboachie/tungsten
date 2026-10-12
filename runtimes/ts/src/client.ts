@@ -129,7 +129,8 @@ const MACRO_CONFIRMED: unique symbol = Symbol("tungsten.macroConfirmed");
  * once a step's request passed pre-flight and is about to be sent, so a
  * step that fails pre-flight leaves the token unspent. */
 const MACRO_CLAIM: unique symbol = Symbol("tungsten.macroClaim");
-type StepOptions = CallOptions & { [MACRO_CONFIRMED]?: true; [MACRO_CLAIM]?: () => Failure | null };
+const POLL_DEADLINE: unique symbol = Symbol("tungsten.pollDeadline");
+type StepOptions = CallOptions & { [POLL_DEADLINE]?: number | undefined; [MACRO_CONFIRMED]?: true; [MACRO_CLAIM]?: () => Failure | null };
 
 const SAFETY_RANK: Readonly<Record<string, number>> = { read_only: 0, mutating: 1, destructive: 2, irreversible: 3 };
 
@@ -650,6 +651,19 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     return bounded(opts.timeoutMs, bounded(this.options.timeoutMs, DEFAULT_TIMEOUT_MS, 1), 1);
   }
 
+  /** Timers cannot interrupt synchronous preflight or a chain of microtasks.
+   * Check the same absolute deadline at each boundary before effects. */
+  #beforeDispatch(op: OperationDescriptor, opts: CallOptions): Failure | null {
+    if (opts.signal?.aborted) return fail(diagnostic(op.id, "TRANSPORT_FAILED", {
+      retryable: "never", remediation: "The caller cancelled the call before it was sent.",
+    }));
+    const deadline = (opts as StepOptions)[POLL_DEADLINE];
+    if (deadline !== undefined && performance.now() >= deadline) return fail(diagnostic(op.id, "TRANSPORT_FAILED", {
+      retryable: "never", remediation: "The polling budget expired before the request was sent.",
+    }));
+    return null;
+  }
+
   #emit(d: Diagnostic): void {
     try {
       this.options.onDiagnostic?.(d);
@@ -685,6 +699,8 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
    * the refreshed token is put on the same request, which is sent once more;
    * `rejected` stands when nothing could be refreshed. */
   async #retryRejected<T>(prepared: Prepared, rejected: Failure, opts: CallOptions): Promise<Result<T>> {
+    const interrupted = this.#beforeDispatch(prepared.op, opts);
+    if (interrupted) return interrupted;
     const scheme = prepared.oauth;
     const current = prepared.headers.get("Authorization");
     if (scheme === null || current === undefined || !current.startsWith("Bearer ")) return rejected;
@@ -903,6 +919,8 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
       return this.#validation(op, [], "<cyclic value>", "a JSON-like value without cycles", "Pass arguments without circular references.");
     }
     const args = argumentSnapshot(rawArgs) as Record<string, unknown>;
+    const interrupted = this.#beforeDispatch(op, opts);
+    if (interrupted) return interrupted;
     const invalid = this.#validateArgs(op, args, purpose === "macro_preview") ?? this.#checkKey(op, opts, purpose);
     if (invalid) return invalid;
     if (purpose === "call") {
@@ -911,6 +929,8 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     }
 
     const method = op.method;
+    const beforeAuth = this.#beforeDispatch(op, opts);
+    if (beforeAuth) return beforeAuth;
     const auth = await resolveAuth(this.api, op, isRecord(this.options.auth) ? this.options.auth : {}, method, this.#tokenSource);
     if (!auth.ok) return fail(diagnostic(op.id, "AUTH_FAILED", { remediation: auth.remediation }));
     const secrets = new Set(auth.secrets.filter((s) => s !== ""));
@@ -947,6 +967,8 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     const observedBody = observableBody(op.body?.encoding ?? "json", encoded);
 
     const header = keyHeader(op);
+    const beforeKey = this.#beforeDispatch(op, opts);
+    if (beforeKey) return beforeKey;
     const key = await this.#idempotencyKey(op, args, opts, purpose, encoded.hashMaterial);
     if (!key.ok) return key;
     if (key.value !== null) {
@@ -975,6 +997,8 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
         );
       }
     }
+    const beforeClaim = this.#beforeDispatch(op, opts);
+    if (beforeClaim) return beforeClaim;
     const claimMacro = (opts as StepOptions)[MACRO_CLAIM];
     if (purpose === "call" && typeof claimMacro === "function") {
       const spent = claimMacro();
@@ -1247,6 +1271,8 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     const timeoutMs = this.#timeout(opts);
     let attempts = 0;
     for (;;) {
+      const beforeAttempt = this.#beforeDispatch(op, opts);
+      if (beforeAttempt) return beforeAttempt;
       attempts += 1;
       const ctx: RequestContext = {
         operation: op,
@@ -1257,6 +1283,8 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
         body: prepared.observedBody,
       };
       const headers = await this.#beforeRequest(ctx, prepared);
+      const interrupted = this.#beforeDispatch(op, opts);
+      if (interrupted) return interrupted;
       // Redirects are never followed by fetch: it would forward custom
       // credential headers (API keys, CSRF headers) to another origin. A
       // read follows same-origin redirects here; a mutation follows none.
@@ -1271,6 +1299,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
         stream,
         idleMs,
         maxResponseBytes: opts.maxResponseBytes,
+        deadlineMs: (opts as StepOptions)[POLL_DEADLINE],
       });
       let current = { url: prepared.url, method: prepared.method, body: prepared.body };
       for (let hops = 0; !mutation && hops < MAX_REDIRECTS && outcome.kind === "response" && REDIRECT_STATUSES.has(outcome.status); hops += 1) {
@@ -1282,6 +1311,8 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
         ctx.method = current.method;
         const hopHeaders = { ...headers };
         if (rewrite) for (const name of Object.keys(hopHeaders)) if (name.toLowerCase() === "content-type") delete hopHeaders[name];
+        const beforeRedirect = this.#beforeDispatch(op, opts);
+        if (beforeRedirect) return beforeRedirect;
         outcome = await attempt(this.#fetch(), {
           url: current.url,
           method: current.method,
@@ -1293,6 +1324,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
           stream,
           idleMs,
           maxResponseBytes: opts.maxResponseBytes,
+          deadlineMs: (opts as StepOptions)[POLL_DEADLINE],
         });
       }
       const callCtx: CallContext = { api: this.api, op, key: prepared.key, keyHeader: prepared.keyHeader, attempts, check };
@@ -2080,7 +2112,9 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     let last: Result<T> | undefined;
     try {
       for (;;) {
-        const call = this.#call<T>(op, args, { ...opts, signal: controller.signal, verify: false }, null);
+        const once: StepOptions = { ...opts, signal: controller.signal, verify: false,
+          [POLL_DEADLINE]: budget > 0 ? started + budget : undefined };
+        const call = this.#call<T>(op, args, once, null);
         const result = await Promise.race([call, expired]);
         if (!result.ok) {
           if (budget > 0 && performance.now() - started >= budget && last?.ok && !isMutation(op)) return { ...last, timedOut: true };
@@ -2091,7 +2125,12 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
         if (budget > 0 && elapsed >= budget) return { ...result, timedOut: true };
         if (evaluatePredicate(until, result.value)) return { ...result, timedOut: false };
         if (budget === 0 || elapsed + interval > budget) return { ...result, timedOut: true };
-        if (!(await sleep(interval, controller.signal))) return { ...result, timedOut: true };
+        if (!(await sleep(interval, controller.signal))) {
+          if (opts.signal?.aborted) return fail(diagnostic(op.id, "TRANSPORT_FAILED", {
+            retryable: "never", remediation: "The caller cancelled the poll between observations.",
+          }));
+          return { ...result, timedOut: true };
+        }
         if (budget > 0 && performance.now() - started >= budget) return { ...result, timedOut: true };
       }
     } finally {
