@@ -60,7 +60,7 @@ final class Auth {
         Kind kind;
         String name;
         List<ApiDescriptor.CompositePart> parts;
-        Credential values;
+        AuthCredential values;
         boolean mutation;
         ApiDescriptor.AuthScheme scheme;
         String secret;
@@ -111,7 +111,7 @@ final class Auth {
         return p.kind().equals("header") && p.mutationOnly() && !mutation;
     }
 
-    private static Tried tryComposite(String name, List<ApiDescriptor.CompositePart> parts, Credential cred, String method) {
+    private static Tried tryComposite(String name, List<ApiDescriptor.CompositePart> parts, AuthCredential cred, String method) {
         if (!cred.isParts()) {
             return new Tried(null, null, List.of("auth." + name + " (an object for the composite profile " + name + ")"));
         }
@@ -150,7 +150,7 @@ final class Auth {
         return new Tried("composite:" + name, s, null);
     }
 
-    private static Tried tryDirect(ApiDescriptor.AuthScheme scheme, Credential cred) {
+    private static Tried tryDirect(ApiDescriptor.AuthScheme scheme, AuthCredential cred) {
         String name = scheme.name();
         if (scheme.kind().equals("oauth2") && cred != null && cred.isParts()) {
             if ("authorizationCode".equals(cred.part("flow"))) {
@@ -211,7 +211,7 @@ final class Auth {
             if (!s.kind().equals("composite") || !s.satisfies().contains(name)) {
                 continue;
             }
-            Credential cred = core.auth.get(s.name());
+            AuthCredential cred = core.auth.get(s.name());
             if (cred == null) {
                 missing.add("auth." + s.name() + " (composite profile " + s.name() + ")");
                 continue;
@@ -457,8 +457,8 @@ final class Auth {
     }
 
     CodeClient codeClient(String scheme, String[] reason) {
-        String invalid = "auth." + scheme + " must be Credential.parts with flow \"authorizationCode\", client_id, and optionally client_secret and redirect_uri";
-        Credential cred = core.auth.get(scheme);
+        String invalid = "auth." + scheme + " must be AuthCredential.parts with flow \"authorizationCode\", client_id, and optionally client_secret and redirect_uri";
+        AuthCredential cred = core.auth.get(scheme);
         if (cred == null || !cred.isParts() || !"authorizationCode".equals(cred.part("flow"))) {
             reason[0] = invalid;
             return null;
@@ -567,7 +567,10 @@ final class Auth {
             return Token.failed("Cannot refresh the OAuth2 token for " + scheme + ": " + reason[0] + ".");
         }
         if (stored.refreshToken() == null || stored.refreshToken().isEmpty()) {
-            String why = force ? "has no refresh token" : "expired and has no refresh token";
+            String why = "has no refresh token";
+            if (!force) {
+                why = "expired and " + why;
+            }
             return Token.failed("The OAuth2 token for " + scheme + " " + why
                     + "; authorize again with authorization_url() and exchange_code().");
         }

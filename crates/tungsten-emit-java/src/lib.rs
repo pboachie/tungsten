@@ -113,6 +113,7 @@ impl Emitter for JavaEmitter {
 /// import both the runtime and their models.
 const TAKEN_TYPES: &[&str] = &[
     "ApiDescriptor",
+    "AuthCredential",
     "Binary",
     "Builder",
     "CallOptions",
@@ -120,7 +121,6 @@ const TAKEN_TYPES: &[&str] = &[
     "ClientCore",
     "ClientOptions",
     "Confirm",
-    "Credential",
     "Decode",
     "Descriptors",
     "Diagnostic",

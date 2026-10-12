@@ -43,7 +43,7 @@ public final class ClientOptions {
     }
 
     final String baseUrl;
-    final Map<String, Credential> auth;
+    final Map<String, AuthCredential> auth;
     final TokenStore tokenStore;
     final Duration timeout;
     final RetryOptions retries;
@@ -104,7 +104,7 @@ public final class ClientOptions {
     /** Builds {@link ClientOptions}. */
     public static final class Builder {
         private String baseUrl;
-        private final Map<String, Credential> auth = new LinkedHashMap<>();
+        private final Map<String, AuthCredential> auth = new LinkedHashMap<>();
         private TokenStore tokenStore;
         private Duration timeout;
         private RetryOptions retries;
@@ -134,14 +134,14 @@ public final class ClientOptions {
         }
 
         /** The credential of an auth scheme (or composite profile) by name. */
-        public Builder auth(String scheme, Credential credential) {
+        public Builder auth(String scheme, AuthCredential credential) {
             auth.put(scheme, credential);
             return this;
         }
 
         /**
          * Where the tokens of authorization-code schemes are kept (configure such a scheme with
-         * {@code Credential.parts({flow: "authorizationCode", client_id: ...})}); in memory by
+         * {@code AuthCredential.parts({flow: "authorizationCode", client_id: ...})}); in memory by
          * default.
          */
         public Builder tokenStore(TokenStore value) {

@@ -120,7 +120,7 @@ impl Ctx<'_> {
         ));
         if let Some(scheme) = self.ir.auth.first() {
             s.push_str(&format!(
-                "        .auth(\"{}\", Credential.secret(System.getenv(\"API_TOKEN\")))\n",
+                "        .auth(\"{}\", AuthCredential.secret(System.getenv(\"API_TOKEN\")))\n",
                 scheme.name()
             ));
         }

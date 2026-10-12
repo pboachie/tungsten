@@ -10,23 +10,23 @@ import java.util.TreeMap;
  * (or {client_id, client_secret} of an OAuth2 scheme, {flow: "authorizationCode", client_id, ...}
  * for its authorization-code flow). {@link #toString} never shows it.
  */
-public final class Credential {
+public final class AuthCredential {
     private final String secret;
     private final Map<String, String> parts;
 
-    private Credential(String secret, Map<String, String> parts) {
+    private AuthCredential(String secret, Map<String, String> parts) {
         this.secret = secret;
         this.parts = parts;
     }
 
     /** A secret string credential. */
-    public static Credential secret(String value) {
-        return new Credential(value == null ? "" : value, null);
+    public static AuthCredential secret(String value) {
+        return new AuthCredential(value == null ? "" : value, null);
     }
 
     /** A credential made of named parts. */
-    public static Credential parts(Map<String, String> parts) {
-        return new Credential(null, new TreeMap<>(parts));
+    public static AuthCredential parts(Map<String, String> parts) {
+        return new AuthCredential(null, new TreeMap<>(parts));
     }
 
     boolean isParts() {
@@ -50,8 +50,8 @@ public final class Credential {
     @Override
     public String toString() {
         if (parts != null) {
-            return "Credential.parts(" + parts.size() + " parts, " + Text.REDACTED + ")";
+            return "AuthCredential.parts(" + parts.size() + " parts, " + Text.REDACTED + ")";
         }
-        return "Credential.secret(" + Text.REDACTED + ")";
+        return "AuthCredential.secret(" + Text.REDACTED + ")";
     }
 }
