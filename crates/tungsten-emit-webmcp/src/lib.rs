@@ -226,6 +226,7 @@ fn group_files(
             package: options.sdk_package.clone(),
             version: options.version.clone(),
             runtime: options.sdk_runtime.clone(),
+            dependencies: Default::default(),
         };
         for (path, content) in tungsten_emit_ts::generate(&scoped, &ts_options) {
             if path == "src/descriptors.ts"
