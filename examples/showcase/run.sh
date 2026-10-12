@@ -64,6 +64,23 @@ mkdir -p "$specs"
 # Entries of specs.lock: <sha256>  <file>  <url>
 lock_entries() { grep -v '^[[:space:]]*#' "$here/specs.lock" | grep -v '^[[:space:]]*$'; }
 
+ids=$(for d in "$here"/apis/*/; do basename "$d"; done)
+if [ -n "$only" ]; then
+    if printf '%s\n' "$ids" | grep -qx -- "$only"; then
+        ids=$only
+    else
+        echo "run.sh: unknown API '$only' (known: $(printf '%s ' $ids))" >&2
+        exit 3
+    fi
+fi
+
+selected_spec=
+if [ -n "$only" ]; then
+    selected_spec=$(awk -F '"' '/spec:.*\.cache\/specs\// {print $2}' "$here/apis/$only/tungsten.yml")
+    selected_spec=${selected_spec##*/}
+    [ -n "$selected_spec" ] || { echo "run.sh: no pinned spec for $only" >&2; exit 3; }
+fi
+
 if [ "$mode" = update-lock ]; then
     tmp=$cache/specs.lock.new
     grep '^[[:space:]]*#' "$here/specs.lock" >"$tmp" || true
@@ -85,6 +102,7 @@ fi
 command -v python3 >/dev/null 2>&1 || { echo "run.sh: python3 is needed to render the README" >&2; exit 2; }
 
 lock_entries | while read -r sha file url; do
+    [ -z "$only" ] || [ "$file" = "$selected_spec" ] || continue
     if [ -f "$specs/$file" ] && [ "$(sha256_of "$specs/$file")" = "$sha" ]; then
         continue
     fi
@@ -107,15 +125,6 @@ lock_entries | while read -r sha file url; do
     mv "$specs/$file.part" "$specs/$file"
 done
 
-ids=$(for d in "$here"/apis/*/; do basename "$d"; done)
-if [ -n "$only" ]; then
-    if printf '%s\n' "$ids" | grep -qx -- "$only"; then
-        ids=$only
-    else
-        echo "run.sh: unknown API '$only' (known: $(printf '%s ' $ids))" >&2
-        exit 3
-    fi
-fi
 
 cd "$here"
 for id in $ids; do

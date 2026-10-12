@@ -404,7 +404,8 @@ def block_re(name: str) -> re.Pattern[str]:
 def render(readme: str, only: str | None, data: Path, out: Path) -> str:
     apis = load_json(HERE / "apis.json")["apis"]
     lock = load_lock(HERE / "specs.lock")
-    version = load_json(data / apis[0]["id"] / "check.json")["version"]
+    version_api = next((api for api in apis if api["id"] == only), apis[0])
+    version = load_json(data / version_api["id"] / "check.json")["version"]
     blocks = {
         "summary": lambda: summary_block(apis, data, version),
         "sources": lambda: sources_block(apis, lock),
