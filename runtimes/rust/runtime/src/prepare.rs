@@ -61,6 +61,9 @@ pub(crate) struct MacroClaim {
 impl MacroClaim {
     pub fn claim(&self, core: &ClientCore) -> Option<Error> {
         let token = self.token.as_deref()?;
+        if let Err(expired) = crate::verify::check_poll_deadline(&self.name) {
+            return Some(expired);
+        }
         if self.claimed.swap(true, Ordering::SeqCst) {
             return None;
         }
@@ -103,6 +106,8 @@ pub(crate) struct Prepared<'a> {
     pub secrets: SecretSet,
     /// The authorization-code scheme whose stored token this request carries.
     pub oauth: Option<String>,
+    /// Persists across retries and a 401 refresh of this logical request.
+    pub may_have_sent: AtomicBool,
 }
 
 pub(crate) fn fail(diagnostic: crate::types::Diagnostic) -> Error {
@@ -505,6 +510,9 @@ impl ClientCore {
             .map(|(expiry, signature)| format!("tgc1.{expiry}.{signature}"));
         let token = identity.as_deref().unwrap_or(token);
         let now = self.now();
+        if let Err(expired) = crate::verify::check_poll_deadline(id) {
+            return Some(expired);
+        }
         let mut used = crate::idempotency::lock(&self.inner.used_tokens);
         used.retain(|_, (_, expiry)| *expiry > now);
         if let Some((previous, _)) = used.get(token) {
@@ -537,6 +545,9 @@ impl ClientCore {
             || now.saturating_add(CONFIRMATION_TTL_MS),
             |(expiry, _)| expiry,
         );
+        if let Err(expired) = crate::verify::check_poll_deadline(id) {
+            return Some(expired);
+        }
         used.insert(token.to_owned(), (bind, expiry));
         None
     }
@@ -601,6 +612,7 @@ impl ClientCore {
             ));
         }
         let args = self.validate_args(op, supplied, purpose == Purpose::MacroPreview)?;
+        crate::verify::check_poll_deadline(&op.id)?;
         self.check_key(op, opts.idempotency_key.as_deref(), purpose)?;
         if purpose == Purpose::Call && step.is_none() {
             self.confirmed(
@@ -616,6 +628,7 @@ impl ClientCore {
         }
 
         let method = op.method;
+        crate::verify::check_poll_deadline(&op.id)?;
         let plan = match resolve_auth(&self.inner.api, op, &self.inner.auth, method, self).await {
             AuthResolution::Ok {
                 plan,
@@ -698,6 +711,7 @@ impl ClientCore {
         }
 
         let header = key_header(op);
+        crate::verify::check_poll_deadline(&op.id)?;
         let key = self
             .idempotency_key(op, &args, opts, purpose, encoded.hash_material.as_deref())
             .await?;
@@ -758,6 +772,7 @@ impl ClientCore {
             }
         }
         if purpose == Purpose::Call {
+            crate::verify::check_poll_deadline(&op.id)?;
             if let Some(claim) = step {
                 if let Some(spent) = claim.claim(self) {
                     return Err(spent);
@@ -800,6 +815,7 @@ impl ClientCore {
             hidden_query,
             secrets,
             oauth,
+            may_have_sent: AtomicBool::new(false),
         })
     }
 

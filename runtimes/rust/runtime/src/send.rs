@@ -3,6 +3,7 @@
 //! result or an envelope, and OAuth2 client-credentials tokens.
 
 use std::collections::BTreeMap;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use serde_json::{Map, Value};
@@ -50,6 +51,36 @@ fn retryable_category(category: Category) -> bool {
 const EMPTY_PAYLOAD: &Payload = &Payload::Empty;
 
 impl ClientCore {
+    pub(crate) fn check_send_deadline(
+        &self,
+        prepared: &Prepared<'_>,
+        attempts: u32,
+        check: Option<&OutcomeCheck>,
+    ) -> Step<()> {
+        if let Err(expired) = crate::verify::check_poll_deadline(&prepared.op.id) {
+            if is_mutation(prepared.op) && prepared.may_have_sent.load(Ordering::Relaxed) {
+                let ctx = CallContext {
+                    api: &self.inner.api,
+                    op: prepared.op,
+                    key: prepared.key.as_deref(),
+                    key_header: &prepared.key_header,
+                    attempts,
+                    check,
+                };
+                return Err(fail(scrub_diagnostic(
+                    outcome_unknown(
+                        &ctx,
+                        "The polling budget expired after a request was possibly sent.",
+                        UnknownFields::default(),
+                    ),
+                    &prepared.secrets,
+                )));
+            }
+            return Err(expired);
+        }
+        Ok(())
+    }
+
     pub(crate) async fn send(
         &self,
         prepared: &Prepared<'_>,
@@ -106,6 +137,7 @@ impl ClientCore {
             .collect();
         let mut attempts: u32 = 0;
         loop {
+            self.check_send_deadline(prepared, attempts, check.as_ref())?;
             attempts += 1;
             let mut ctx = RequestContext {
                 operation: op.id.clone(),
@@ -121,6 +153,7 @@ impl ClientCore {
             for m in &self.inner.middleware {
                 m.on_request(&ctx);
             }
+            self.check_send_deadline(prepared, attempts, check.as_ref())?;
             // Redirects are never followed by the HTTP client: it would
             // forward custom credential headers (API keys, CSRF headers) to
             // another origin. A read follows same-origin redirects here; a
@@ -142,6 +175,9 @@ impl ClientCore {
                 },
             )
             .await;
+            if !matches!(outcome, AttemptOutcome::NotSent(_)) {
+                prepared.may_have_sent.store(true, Ordering::Relaxed);
+            }
             let mut hops = 0;
             while !mutation && hops < MAX_REDIRECTS {
                 let AttemptOutcome::Response {
@@ -173,6 +209,7 @@ impl ClientCore {
                 }
                 ctx.url = shown;
                 ctx.method = method;
+                self.check_send_deadline(prepared, attempts, check.as_ref())?;
                 outcome = attempt(
                     &self.inner.http,
                     &AttemptRequest {
@@ -186,6 +223,9 @@ impl ClientCore {
                     },
                 )
                 .await;
+                if !matches!(outcome, AttemptOutcome::NotSent(_)) {
+                    prepared.may_have_sent.store(true, Ordering::Relaxed);
+                }
                 hops += 1;
             }
             let call_ctx = CallContext {
@@ -245,6 +285,7 @@ impl ClientCore {
             for m in &self.inner.middleware {
                 m.on_retry(&ctx, &diagnostic);
             }
+            self.check_send_deadline(prepared, attempts, check.as_ref())?;
             tokio::time::sleep(crate::util::duration_from_ms(delay_ms)).await;
         }
     }

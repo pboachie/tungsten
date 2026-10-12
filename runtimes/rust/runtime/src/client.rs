@@ -382,6 +382,7 @@ impl ClientCore {
         opts: &CallOptions,
         request_url: &mut String,
     ) -> std::result::Result<Response<Option<Value>>, crate::types::Error> {
+        self.check_send_deadline(prepared, rejected.diagnostic.trace.attempts, None)?;
         let Some(scheme) = prepared.oauth.take() else {
             return Err(rejected);
         };
@@ -393,7 +394,9 @@ impl ClientCore {
         else {
             return Err(rejected);
         };
-        let Some(token) = self.refresh_after_rejection(&scheme, &current).await else {
+        let refreshed = self.refresh_after_rejection(&scheme, &current).await;
+        self.check_send_deadline(prepared, rejected.diagnostic.trace.attempts, None)?;
+        let Some(token) = refreshed else {
             return Err(rejected);
         };
         prepared
