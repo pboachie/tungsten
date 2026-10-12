@@ -1,0 +1,32 @@
+agent: 1
+
+defaults:
+  safety:
+    get: read_only
+    post: mutating
+    put: mutating
+    patch: mutating
+    delete: destructive
+  idempotency: none
+  preview: local
+  unknown_outcome:
+    on_timeout: unknown
+    on_connection_reset: unknown
+    on_ambiguous_status: unknown
+  retries:
+    read_only: { max: 3, backoff: { base_ms: 200, max_ms: 5000, jitter: full } }
+    mutating: { max: 0 }
+    honor_retry_after: true
+  disclosure:
+    mode: auto
+    threshold: 24
+    list_budget_tokens: 10000
+    description_budget_tokens: 60
+    schema_budget_tokens: 600
+
+tools:
+  - operation: twilio.DeleteIncomingPhoneNumber
+    safety: destructive
+    confirmation:
+      summary_fields: [AccountSid, Sid]
+      message: "Releases phone number {Sid} of account {AccountSid}. The number returns to the pool and may not be recoverable."
