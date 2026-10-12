@@ -82,5 +82,5 @@
   <path class="arrow" d="M705 348 V362"/>
   <path class="head" d="M699 362 L705 372 L711 362 Z"/>
   <rect class="rt" x="20" y="374" width="920" height="30" rx="8"/>
-  <text class="s" x="36" y="394">Generated code depends on the Apache-2.0 runtimes: @tungsten/runtime, @tungsten/mcp, tungsten-runtime (Python, Rust), tungsten-cli-kit</text>
+  <text class="s" x="36" y="394">Generated code depends on the Apache-2.0 runtimes: @elysra/tungsten-runtime, @elysra/tungsten-mcp, tungsten-runtime (Python, Rust), tungsten-cli-kit</text>
 </svg>

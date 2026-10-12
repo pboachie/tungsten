@@ -4,7 +4,7 @@
  * shares, and the `tools/list` answer of each disclosure mode
  * (planning/05 "MCP server", planning/07 "MCP tool surface").
  */
-import type { Safety } from "@tungsten/runtime";
+import type { Safety } from "@elysra/tungsten-runtime";
 import type { Tool as McpTool } from "@modelcontextprotocol/sdk/types.js";
 
 import { REDACTED_REPEAT, isRecord } from "./render.js";

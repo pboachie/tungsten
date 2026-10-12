@@ -6,7 +6,7 @@ use tungsten_emit::TargetConfig;
 use tungsten_ir::Ir;
 use tungsten_ir::naming::{self, Case};
 
-/// Default `@tungsten/runtime` version range.
+/// Default `@elysra/tungsten-runtime` version range.
 pub const DEFAULT_RUNTIME_RANGE: &str = "^0.1.0";
 /// Zod version range of generated packages: `exactOptional()`, which keeps
 /// optional properties exact, exists since 4.3.0.
@@ -21,7 +21,7 @@ pub struct Options {
     pub package: String,
     /// Package version.
     pub version: String,
-    /// `@tungsten/runtime` dependency specifier.
+    /// `@elysra/tungsten-runtime` dependency specifier.
     pub runtime: String,
 }
 

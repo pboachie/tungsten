@@ -1,0 +1,19 @@
+tungsten: 1
+
+api:
+  name: kubernetes
+  title: "Kubernetes API (core/v1)"
+
+inputs:
+  - namespace: kubernetes
+    spec: "../../.cache/specs/kubernetes.json"
+
+servers:
+  default: "https://kubernetes.default.svc"
+  allow_override: true
+
+targets:
+  typescript: { out: ../../.cache/out/kubernetes/typescript }
+  python: { out: ../../.cache/out/kubernetes/python }
+  rust: { out: ../../.cache/out/kubernetes/rust }
+  docs: { out: ../../.cache/out/kubernetes/docs }

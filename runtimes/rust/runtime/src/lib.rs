@@ -3,7 +3,7 @@
 //!
 //! A generated SDK is mostly data plus thin typed wrappers; everything with
 //! behaviour lives here, so every operation of every generated client
-//! behaves the same way and the same way as `@tungsten/runtime` (TypeScript)
+//! behaves the same way and the same way as `@elysra/tungsten-runtime` (TypeScript)
 //! and the Python `tungsten-runtime`.
 //!
 //! # What the runtime does

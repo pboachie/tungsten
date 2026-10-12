@@ -111,8 +111,11 @@ pub(crate) fn walk<'v>(
         if !visit(&node) {
             continue;
         }
-        // A Reference Object outside schemas has no other meaningful members.
-        if kind != Kind::Schema && node.reference().is_some() {
+        // A Path Item is not a Reference Object: its $ref can coexist with
+        // operations and parameters. Walk those siblings too, so their refs
+        // are checked and their 3.0 schemas normalized. Resolving overlapping
+        // fields between a Path Item and its target is undefined by OpenAPI.
+        if !matches!(kind, Kind::Schema | Kind::PathItem) && node.reference().is_some() {
             continue;
         }
         let mut children = vec![];

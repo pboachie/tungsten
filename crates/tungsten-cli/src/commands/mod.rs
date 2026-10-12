@@ -28,7 +28,7 @@ pub(crate) fn dispatch(cli: &Cli, env: &CliEnv) -> Report {
         Command::Explain(args) => explain::run(args),
         Command::Schema(args) => schema::run(args),
         Command::Init(args) => init::run(args),
-        Command::Doctor => doctor::run(env),
+        Command::Doctor(args) => doctor::run(args, env),
         Command::Emitters(args) => emitters::run(args, env),
         Command::Generate(args) => generate::run(args, env),
         Command::Mock(args) => mock::start(args),

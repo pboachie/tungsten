@@ -11,6 +11,28 @@ changes.
 
 ### Added
 
+- Project setup with `init --targets` and a project-aware `doctor --strict`;
+  browser targets automatically include their sibling TypeScript SDK.
+- Browser registration lifecycle controller for route and framework cleanup,
+  cancellation of stale dynamic imports, and scoped loading.
+- Opt-in bounded streaming and binary WebMCP results; response byte limits
+  and stream reader cancellation in the TypeScript runtime.
+- `diff --migration` upgrade actions, deprecation reporting and recorded
+  runtime requirements. API surface snapshots use format 3 and read format 2.
+- A transport-neutral, versioned tool catalogue with JSON Schema, scoped
+  groups and external emitter conformance helpers (`schema tool-catalog`).
+- Runtime tarball installation checks and gated npm trusted publishing for
+  the TypeScript, MCP and WebMCP packages.
+
+- Built-in `webmcp` target: a browser ESM package with a shared tool manifest
+  and an explicit registration helper backed by the generated TypeScript SDK
+  and the new Apache-2.0 `@elysra/tungsten-webmcp` runtime. Registration defaults to
+  read-only operations, supports scoped opt-in writes and macros, confirmation
+  previews, cancellation and disposal. The runtime adapts the experimental
+  `document.modelContext` API and the legacy `navigator.modelContext` shape;
+  generated-package browser smoke passed in Chromium 154.0.8037.57 with
+  `WebMCPTesting` enabled. Full cross-browser conformance remains a follow-up.
+
 - A C# SDK target, `csharp` (short form `cs`): a net10.0 project with records,
   enums and unions that decode and encode themselves (no reflection, trimming
   and AOT safe), async methods returning `Result<T>`, `IAsyncEnumerable` pages
@@ -50,7 +72,7 @@ changes.
   provider (a command speaking a small JSON protocol, or a plain `http://`
   `/embeddings` endpoint); `tungsten generate` writes `index.embeddings.bin`
   and `index.embeddings.json` next to `manifest.json`, caching vectors by
-  content hash. `@tungsten/mcp` ranks hybrid (BM25 and cosine, reciprocal
+  content hash. `@elysra/tungsten-mcp` ranks hybrid (BM25 and cosine, reciprocal
   rank fusion) when `search.embeddings` is set, and falls back to BM25 with
   the reason in the result when the query embedder fails. Diagnostics
   TG0570 to TG0574.
@@ -73,9 +95,9 @@ changes.
 
 ## [0.1.0] - Unreleased
 
-First release. The compiler, the three SDK runtimes (`@tungsten/runtime`,
+First release. The compiler, the three SDK runtimes (`@elysra/tungsten-runtime`,
 `tungsten-runtime` on PyPI and `tungsten-runtime` on crates.io), the MCP
-runtime (`@tungsten/mcp`) and the installers ship together at 0.1.0.
+runtime (`@elysra/tungsten-mcp`) and the installers ship together at 0.1.0.
 
 ### Added
 
@@ -86,7 +108,7 @@ runtime (`@tungsten/mcp`) and the installers ship together at 0.1.0.
 - Commands: `init`, `check`, `generate` (with `--check` for stale output),
   `diff`, `report` (text, JSON and a self-contained HTML report), `doctor`,
   `ir dump`, `schema`, `explain` and `mock`.
-- TypeScript SDK emitter and the `@tungsten/runtime` client runtime
+- TypeScript SDK emitter and the `@elysra/tungsten-runtime` client runtime
   (Apache-2.0): `Result` values, Zod validation, the diagnostic error
   envelope, safety tiers, previews with confirmation tokens, idempotency keys,
   unknown-outcome reporting and retries.
@@ -98,7 +120,7 @@ runtime (`@tungsten/mcp`) and the installers ship together at 0.1.0.
   `tungsten-cli-kit`, with a stable output contract, exit codes,
   confirmation for destructive operations (`--yes`, `--i-understand`),
   configuration and pagination.
-- MCP server emitter and the `@tungsten/mcp` runtime: discrete or
+- MCP server emitter and the `@elysra/tungsten-mcp` runtime: discrete or
   token-budgeted progressive tool surfaces, an automatic mode chosen from the
   tool count, stdio and Streamable HTTP transports, a sandboxed script tool
   and confirmation of destructive operations.

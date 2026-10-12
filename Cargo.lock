@@ -665,6 +665,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_spanned"
+version = "1.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4e7523beb55eece201a2356bee0bbca0d1ab466c14c07703b2e0ee6d42cb0c2c"
+dependencies = [
+ "serde_core",
+]
+
+[[package]]
 name = "shlex"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -729,8 +738,47 @@ dependencies = [
 ]
 
 [[package]]
+name = "toml"
+version = "0.9.12+spec-1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cf92845e79fc2e2def6a5d828f0801e29a2f8acc037becc5ab08595c7d5e9863"
+dependencies = [
+ "indexmap",
+ "serde_core",
+ "serde_spanned",
+ "toml_datetime",
+ "toml_parser",
+ "toml_writer",
+ "winnow 0.7.15",
+]
+
+[[package]]
+name = "toml_datetime"
+version = "0.7.5+spec-1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "92e1cfed4a3038bc5a127e35a2d360f145e1f4b971b551a2ba5fd7aedf7e1347"
+dependencies = [
+ "serde_core",
+]
+
+[[package]]
+name = "toml_parser"
+version = "1.1.5+spec-1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "baa693a8032d7e1cada7d0041e96126df243179ff061456783ac7f12bda4744c"
+dependencies = [
+ "winnow 1.0.4",
+]
+
+[[package]]
+name = "toml_writer"
+version = "1.1.3+spec-1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "06bdbd8cfc056b8d2e2e85f29b56a3bdbecb527cef81eb39e3e7b98af4652770"
+
+[[package]]
 name = "tungsten-agent"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "indexmap",
  "schemars",
@@ -743,7 +791,7 @@ dependencies = [
 
 [[package]]
 name = "tungsten-build"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "indexmap",
  "petgraph",
@@ -758,7 +806,7 @@ dependencies = [
 
 [[package]]
 name = "tungsten-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "clap",
  "schemars",
@@ -775,6 +823,7 @@ dependencies = [
  "tungsten-emit-py",
  "tungsten-emit-rs",
  "tungsten-emit-ts",
+ "tungsten-emit-webmcp",
  "tungsten-ir",
  "tungsten-lsp",
  "tungsten-mock",
@@ -784,7 +833,7 @@ dependencies = [
 
 [[package]]
 name = "tungsten-config"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "indexmap",
  "schemars",
@@ -797,7 +846,7 @@ dependencies = [
 
 [[package]]
 name = "tungsten-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "blake3",
  "schemars",
@@ -807,13 +856,15 @@ dependencies = [
 
 [[package]]
 name = "tungsten-emit"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "toml",
  "tungsten-core",
  "tungsten-ir",
+ "tungsten-tokens",
 ]
 
 [[package]]
@@ -828,7 +879,7 @@ dependencies = [
 
 [[package]]
 name = "tungsten-emit-docs"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde_json",
  "tungsten-core",
@@ -839,7 +890,7 @@ dependencies = [
 
 [[package]]
 name = "tungsten-emit-mcp"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -852,7 +903,7 @@ dependencies = [
 
 [[package]]
 name = "tungsten-emit-py"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde_json",
  "tungsten-core",
@@ -862,7 +913,7 @@ dependencies = [
 
 [[package]]
 name = "tungsten-emit-rs"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde_json",
  "tungsten-core",
@@ -872,7 +923,7 @@ dependencies = [
 
 [[package]]
 name = "tungsten-emit-ts"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "petgraph",
  "serde_json",
@@ -882,8 +933,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "tungsten-emit-webmcp"
+version = "0.1.1"
+dependencies = [
+ "serde_json",
+ "tungsten-core",
+ "tungsten-emit",
+ "tungsten-emit-ts",
+ "tungsten-ir",
+]
+
+[[package]]
 name = "tungsten-ir"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "indexmap",
  "schemars",
@@ -895,7 +957,7 @@ dependencies = [
 
 [[package]]
 name = "tungsten-lsp"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "crossbeam-channel",
  "lsp-server",
@@ -912,7 +974,7 @@ dependencies = [
 
 [[package]]
 name = "tungsten-mock"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "bytes",
  "fancy-regex",
@@ -927,7 +989,7 @@ dependencies = [
 
 [[package]]
 name = "tungsten-openapi"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "petgraph",
  "serde_json",
@@ -937,7 +999,7 @@ dependencies = [
 
 [[package]]
 name = "tungsten-tokens"
-version = "0.1.0"
+version = "0.1.1"
 
 [[package]]
 name = "unicode-ident"
@@ -971,6 +1033,18 @@ checksum = "ae137229bcbd6cdf0f7b80a31df61766145077ddf49416a728b02cb3921ff3fc"
 dependencies = [
  "windows-link",
 ]
+
+[[package]]
+name = "winnow"
+version = "0.7.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df79d97927682d2fd8adb29682d1140b343be4ac0f08fd68b7765d9c059d3945"
+
+[[package]]
+name = "winnow"
+version = "1.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "23b97319f7b8343df12cc98938e5c3eb436064524c8d2b4e30a1d3a36eecdf81"
 
 [[package]]
 name = "yaml-rust2"

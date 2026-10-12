@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! TypeScript SDK emitter.
 //!
-//! Generated packages are mostly data for `@tungsten/runtime`
+//! Generated packages are mostly data for `@elysra/tungsten-runtime`
 //! (`runtimes/ts/src/types.ts` is the contract):
 //!
 //! - `src/descriptors.ts`: one `OperationDescriptor` per callable
