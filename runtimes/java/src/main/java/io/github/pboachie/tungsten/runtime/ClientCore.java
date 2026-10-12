@@ -483,6 +483,8 @@ public final class ClientCore {
                 return "uuid_v4";
             case "uuid":
                 return "uuid";
+            case "asciitoken128":
+                return "ascii_token_128";
             default:
                 return "token";
         }
@@ -494,6 +496,8 @@ public final class ClientCore {
                 return "UUIDv4 string";
             case "uuid":
                 return "UUID string";
+            case "ascii_token_128":
+                return "1-128 ASCII letters, digits, dots, underscores or hyphens";
             default:
                 return "a non-empty printable ASCII string of at most 255 characters";
         }
@@ -544,6 +548,14 @@ public final class ClientCore {
                 break;
             case "uuid":
                 valid = isUuid(key, false);
+                break;
+            case "ascii_token_128":
+                valid = !key.isEmpty() && key.length() <= 128;
+                for (int i = 0; i < key.length() && valid; i++) {
+                    char c = key.charAt(i);
+                    valid = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
+                            || c == '.' || c == '_' || c == '-';
+                }
                 break;
             default:
                 valid = !key.isEmpty() && key.length() <= 255;
