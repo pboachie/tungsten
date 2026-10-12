@@ -19,6 +19,9 @@ changes.
   limits and safe oversized retry hints across TypeScript, Python, Rust and Go.
 - Apply positive polling deadlines across authentication, transport, retries and
   sleeps; isolate OAuth refresh by scheme with cancellable waiters in Go and Rust.
+- Resolve pagination links against the final response URL, preserve nested page
+  item types, reject cursor and URL cycles before repeated dispatch, and support
+  explicit page limits across the four runtimes.
 - Propagate Rust emitter graph facts with worklists and coalesce concurrent MCP
   query embeddings. Complete the README's generated Python SDK installation steps.
 
