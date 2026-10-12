@@ -436,6 +436,8 @@ export interface ClientOptions {
 }
 
 export interface CallOptions {
+  /** Maximum successful pages per traversal; omitted or zero means unbounded. */
+  maxPages?: number;
   /** Required for `caller_owned` operations with `persistRequired`. */
   idempotencyKey?: string;
   /** Token from `preview()`; required for `irreversible`, and for

@@ -22,7 +22,7 @@ import threading
 import time
 import uuid
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field as dataclass_field, replace
 from typing import Any, Final, Literal, cast
 from urllib.parse import urljoin, urlsplit
 
@@ -269,6 +269,7 @@ class Answer:
 
     result: Ok[Any] | Err
     raw: object = UNSET
+    request_url: str | None = dataclass_field(default=None, repr=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -525,7 +526,7 @@ class Engine:
             and is_record(field(op["agent"], "verify"))
         ):
             verification = yield from self._verify(op, prepared.args, answer.raw, opts)
-            return Answer(replace(answer.result, verification=verification), answer.raw)
+            return replace(answer, result=replace(answer.result, verification=verification))
         return answer
 
     def _retry_rejected(
@@ -1333,7 +1334,7 @@ class Engine:
             answer = yield from self._classify(call_ctx, prepared, outcome, ctx, timeout_ms)
             result = answer.result
             if isinstance(result, Ok):
-                return answer
+                return replace(answer, request_url=current_url)
             error = scrub_diagnostic(result.error, prepared.secrets)
             done = Answer(_fail(error, result.partial), answer.raw)
             if attempts > retries.max or error["category"] not in _RETRY_CATEGORIES:
@@ -1831,7 +1832,14 @@ class Engine:
         pagination = field(op, "pagination")
         current: dict[str, object] | None = dict(args) if is_record(args) else None
         override: str | None = None
-        previous_cursor: object = UNSET
+        seen: set[str] = set()
+        count = 0
+        max_pages = opts.get("max_pages")
+        budget = max_pages if isinstance(max_pages, int) and not isinstance(max_pages, bool) and max_pages > 0 else None
+        if field(pagination, "style") == "cursor" and current is not None:
+            initial = current.get(arg_name(op, str_field(pagination, "request_param") or ""))
+            if initial is not None and initial != "":
+                seen.add(canonical_json(initial))
         while True:
             answer = yield from self._call(op, current if current is not None else args, opts, override, step)
             result = answer.result
@@ -1857,12 +1865,10 @@ class Engine:
                     or cursor is UNSET
                     or cursor is None
                     or cursor == ""
-                    or _same(cursor, previous_cursor)
                 ):
                     next_value = None
                 else:
                     next_value = cursor
-                    previous_cursor = cursor
                     current = {**current, arg_name(op, str_field(pagination, "request_param") or ""): cursor}
             elif style == "offset" and current is not None:
                 offset_key = arg_name(op, str_field(pagination, "offset_param") or "")
@@ -1883,10 +1889,11 @@ class Engine:
             elif style == "link_header":
                 link = next_link(result.meta.headers.get("link"))
                 if link is not None:
-                    base = override if override is not None else self._base_url() or ""
+                    base = answer.request_url or override or ""
+                    seen.add(base)
                     origin = origin_of(base)
                     try:
-                        resolved = urljoin(base, link)
+                        resolved = urljoin(base, link).split("#", 1)[0]
                     except ValueError:
                         resolved = ""
                     if origin is None or origin_of(resolved) != origin:
@@ -1922,12 +1929,27 @@ class Engine:
                         return
                     next_value = resolved
                     override = resolved
+            count += 1
+            stop = None
+            if next_value is not None:
+                key = str(next_value) if style == "link_header" else canonical_json(next_value)
+                if key in seen:
+                    stop = "Pagination detected a repeated cursor or page URL. Fix the server's next-page value before continuing."
+                elif budget is not None and count >= budget:
+                    stop = "Pagination reached max_pages before another request. Increase max_pages to continue."
+                else:
+                    seen.add(key)
             page_result = Ok(
-                value=Page(items=self._page_items(op, items), body=result.value, next=next_value),
+                value=Page(items=self._page_items(op, items), body=result.value, next=None if stop else next_value),
                 meta=result.meta,
             )
             more = yield from sink(PageAnswer(page_result, items))
-            if next_value is None or not more:
+            if not more:
+                return
+            if stop:
+                yield from sink(PageAnswer(_fail(diagnostic(op["id"], "UNEXPECTED_RESPONSE", http_status=result.meta.status, request_id=result.meta.request_id, remediation=stop, attempts=result.meta.attempts)), []))
+                return
+            if next_value is None:
                 return
 
     def _page_items(self, op: OperationDescriptor, items: list[object]) -> list[object]:

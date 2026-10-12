@@ -313,6 +313,19 @@ impl ClientCore {
         url_override: Option<&str>,
         step: Option<&crate::prepare::MacroClaim>,
     ) -> Outcome {
+        self.call_with_tracked(op, args, opts, url_override, step, &mut String::new())
+            .await
+    }
+
+    pub(crate) async fn call_with_tracked(
+        &self,
+        op: &OperationDescriptor,
+        args: &Value,
+        opts: &CallOptions,
+        url_override: Option<&str>,
+        step: Option<&crate::prepare::MacroClaim>,
+        request_url: &mut String,
+    ) -> Outcome {
         let mut prepared = self
             .prepare(
                 op,
@@ -323,13 +336,14 @@ impl ClientCore {
                 step,
             )
             .await?;
-        let mut response = match self.send(&prepared, opts).await {
+        let mut response = match self.send_tracked(&prepared, opts, request_url).await {
             Err(rejected)
                 if rejected.diagnostic.http_status == Some(401) && prepared.oauth.is_some() =>
             {
                 // An authorization-code token the server no longer accepts:
                 // refresh it and send once more. Never a second time.
-                self.resend_rejected(&mut prepared, rejected, opts).await?
+                self.resend_rejected(&mut prepared, rejected, opts, request_url)
+                    .await?
             }
             sent => sent?,
         };
@@ -353,6 +367,7 @@ impl ClientCore {
         prepared: &mut crate::prepare::Prepared<'_>,
         rejected: crate::types::Error,
         opts: &CallOptions,
+        request_url: &mut String,
     ) -> std::result::Result<Response<Option<Value>>, crate::types::Error> {
         let Some(scheme) = prepared.oauth.take() else {
             return Err(rejected);
@@ -372,7 +387,7 @@ impl ClientCore {
             .headers
             .set("Authorization", format!("Bearer {token}"), true);
         prepared.secrets.insert(token);
-        self.send(prepared, opts).await
+        self.send_tracked(prepared, opts, request_url).await
     }
 
     /// Epoch milliseconds from the configured clock.

@@ -54,6 +54,10 @@ if (result.ok) {
 
 Use the descriptor import path, operation ID and arguments generated for your own API. API and transport failures return a `Result` with a diagnostic envelope; they do not require parsing exception messages. `unwrap` and `throwing` are available for applications that prefer exceptions.
 
+## Pagination
+
+Pass `{ maxPages: 100 }` to a generated operation's `pages()` helper to bound a traversal. The default (or zero) is unbounded. A repeated cursor or effective page URL stops traversal with `UNEXPECTED_RESPONSE`; reaching a positive page budget reports the same category when another page remains. Successful pages are delivered first, with `next: null` on the stopping page, followed by the diagnostic. Terminal cursors and `has_more: false` finish normally even at the budget. Relative Link references use the successful request URL, including same-origin redirects; cross-origin Links remain blocked.
+
 ## Safety and persistence
 
 Generated safety policies determine whether calls can retry, need idempotency keys, or require a preview and confirmation token. Confirmation tokens are bound to the arguments and client session that created them. Your API still enforces authentication and authorization.

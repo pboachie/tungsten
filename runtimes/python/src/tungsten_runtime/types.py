@@ -666,6 +666,8 @@ class ClientOptions:
 
 
 class CallOptions(TypedDict, total=False):
+    #: Maximum successful pages; omitted or zero means unbounded.
+    max_pages: int
     idempotency_key: str
     #: Token from ``preview()``; required for irreversible, and for destructive unless ``True``.
     confirm: str | Literal[True]

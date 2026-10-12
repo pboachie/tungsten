@@ -127,6 +127,9 @@ func (c *ClientCore) sendWith(ctx context.Context, p *prepared, opts CallOptions
 		cctx := &callContext{api: c.api, op: op, key: p.key, hasKey: p.hasKey, keyHeader: p.keyHeader, attempts: attempts, check: check}
 		result, err := c.classifyResponse(cctx, p, outcome, rctx, timeout)
 		if err == nil {
+			if result.response != nil {
+				result.response.Meta.requestURL = &target
+			}
 			return result, nil
 		}
 		d := scrubDiagnostic(err.Diagnostic, &p.secrets)

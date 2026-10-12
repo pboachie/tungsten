@@ -543,18 +543,7 @@ fn optional_slot(ty: String, presence: Presence) -> Slot {
 /// The item type of a page: the items of the array at `items_field` of the
 /// success body (the body itself when the field is empty).
 fn items_ref<'p>(plan: &'p Plan<'_>, body: &'p TypeRef, items_field: &str) -> Option<&'p TypeRef> {
-    let list = if items_field.is_empty() {
-        body
-    } else {
-        let Some(Shape::Record { fields, .. }) = plan.resolve(body) else {
-            return None;
-        };
-        &fields.iter().find(|f| f.wire_name == items_field)?.ty
-    };
-    match plan.resolve(list)? {
-        Shape::Array { items, .. } => Some(items),
-        _ => None,
-    }
+    tungsten_emit::args::page_items_ref(plan.ir, body, items_field)
 }
 
 // ------------------------------------------------------- request structs

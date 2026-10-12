@@ -156,6 +156,8 @@ type ResponseMeta struct {
 	Headers   map[string]string
 	RequestID *string
 	Attempts  int
+	// A pointer keeps credential-bearing URLs out of formatted public metadata.
+	requestURL *string
 }
 
 // Verification is the result of an operation's verification hook.
@@ -758,6 +760,8 @@ func (c Confirm) String() string {
 
 // CallOptions configures one call.
 type CallOptions struct {
+	// MaxPages bounds a traversal; zero means unbounded.
+	MaxPages int
 	// IdempotencyKey is required for caller_owned operations with a
 	// required persisted key.
 	IdempotencyKey string

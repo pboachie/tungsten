@@ -925,6 +925,8 @@ impl fmt::Debug for Confirm {
 
 #[derive(Clone)]
 pub struct CallOptions {
+    /// Maximum successful pages per traversal; None or zero means unbounded.
+    pub max_pages: Option<usize>,
     /// Required for `caller_owned` operations with `persist_required`.
     pub idempotency_key: Option<String>,
     /// A token authorizes one intent: the first call that sends spends it,
@@ -952,6 +954,7 @@ impl fmt::Debug for CallOptions {
             )
             .field("confirm", &self.confirm)
             .field("allow_confirm_true", &self.allow_confirm_true)
+            .field("max_pages", &self.max_pages)
             .field("timeout", &self.timeout)
             .field("verify", &self.verify)
             .field("headers", &self.headers.keys().collect::<Vec<_>>())
@@ -962,6 +965,7 @@ impl fmt::Debug for CallOptions {
 impl Default for CallOptions {
     fn default() -> Self {
         CallOptions {
+            max_pages: None,
             idempotency_key: None,
             confirm: None,
             allow_confirm_true: true,

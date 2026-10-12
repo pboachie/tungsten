@@ -55,8 +55,20 @@ impl ClientCore {
         prepared: &Prepared<'_>,
         opts: &CallOptions,
     ) -> Step<Response<Option<Value>>> {
+        self.send_tracked(prepared, opts, &mut String::new()).await
+    }
+
+    pub(crate) async fn send_tracked(
+        &self,
+        prepared: &Prepared<'_>,
+        opts: &CallOptions,
+        request_url: &mut String,
+    ) -> Step<Response<Option<Value>>> {
         match self.send_with(prepared, opts, false).await? {
-            Sent::Response(response) => Ok(response),
+            Sent::Response(response, url) => {
+                *request_url = url;
+                Ok(response)
+            }
             Sent::Stream(_) => Err(fail(
                 Diag::new(prepared.op.id.clone(), Category::UnexpectedResponse)
                     .remediation(
@@ -185,7 +197,12 @@ impl ClientCore {
                 check: check.as_ref(),
             };
             let error = match self.classify_response(&call_ctx, prepared, outcome, &ctx, timeout) {
-                Ok(sent) => return Ok(sent),
+                Ok(mut sent) => {
+                    if let Sent::Response(_, ref mut effective) = sent {
+                        *effective = url;
+                    }
+                    return Ok(sent);
+                }
                 Err(error) => error,
             };
             let Error {
@@ -541,16 +558,19 @@ impl ClientCore {
             }
             self.emit(&scrubbed);
         }
-        Ok(Sent::Response(Response {
-            value: decoded.value,
-            meta: ResponseMeta {
-                status,
-                headers,
-                request_id,
-                attempts,
+        Ok(Sent::Response(
+            Response {
+                value: decoded.value,
+                meta: ResponseMeta {
+                    status,
+                    headers,
+                    request_id,
+                    attempts,
+                },
+                verification: None,
             },
-            verification: None,
-        }))
+            String::new(),
+        ))
     }
 
     /// How to find out whether `op` (a mutation without replay protection)

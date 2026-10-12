@@ -113,6 +113,7 @@ const DEFAULT_VERIFY_BUDGET_MS = 30_000;
 const DEFAULT_MACRO_BUDGET_MS = 30_000;
 const MACRO_PAGE_LIMIT = 100;
 /** Same-origin redirects followed for one read attempt. */
+const pageRequestUrls = new WeakMap<object, string>();
 const MAX_REDIRECTS = 5;
 const REDIRECT_STATUSES: ReadonlySet<number> = new Set([301, 302, 303, 307, 308]);
 
@@ -1292,7 +1293,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
       }
       const callCtx: CallContext = { api: this.api, op, key: prepared.key, keyHeader: prepared.keyHeader, attempts, check };
       const result = await this.#classify<T>(callCtx, prepared, outcome, ctx, timeoutMs);
-      if (result.ok) return result;
+      if (result.ok) { pageRequestUrls.set(result.meta, current.url); return result; }
       const error = scrubDiagnostic(result.error, prepared.secrets);
       const done = (): Failure => (result.partial === undefined ? fail(error) : { ok: false, error, partial: result.partial });
       const cancelled = opts.signal?.aborted === true;
@@ -1681,7 +1682,13 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     const pagination = isRecord(op) && isRecord(op.pagination) ? op.pagination : null;
     let current: Record<string, unknown> = isRecord(args) ? { ...args } : args;
     let override: string | null = null;
-    let previousCursor: unknown = undefined;
+    const seen = new Set<string>();
+    const maxPages = typeof opts.maxPages === "number" && Number.isSafeInteger(opts.maxPages) && opts.maxPages > 0 ? opts.maxPages : undefined;
+    let count = 0;
+    if (pagination?.style === "cursor") {
+      const initial = current[this.#argName(op, pagination.requestParam)];
+      if (initial !== undefined && initial !== null && initial !== "") seen.add(canonicalJson(initial));
+    }
     for (;;) {
       const result = await this.#call<unknown>(op, current, opts, override);
       if (!result.ok) {
@@ -1701,9 +1708,8 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
               cursor = getPath(items[items.length - 1], pagination.cursorItemField);
             }
             const more = pagination.hasMoreField ? getPath(body, pagination.hasMoreField) : undefined;
-            next = more === false || cursor === undefined || cursor === null || cursor === "" || canonicalJson(cursor) === canonicalJson(previousCursor) ? null : cursor;
+            next = more === false || cursor === undefined || cursor === null || cursor === "" ? null : cursor;
             if (next !== null) {
-              previousCursor = next;
               current = { ...current, [this.#argName(op, pagination.requestParam)]: next };
             }
             break;
@@ -1729,7 +1735,8 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
           case "link_header": {
             const link = nextLink(result.meta.headers.link);
             if (link !== null) {
-              const base = override ?? (typeof this.options.baseUrl === "string" ? this.options.baseUrl : (this.api.servers?.[0] ?? ""));
+              const base = pageRequestUrls.get(result.meta) ?? override ?? "";
+              seen.add(new URL(base).toString());
               let resolved: URL;
               try {
                 resolved = new URL(link, base);
@@ -1755,6 +1762,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
                 );
                 return;
               }
+              resolved.hash = "";
               next = resolved.toString();
               override = next as string;
             }
@@ -1762,7 +1770,19 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
           }
         }
       }
-      yield { ok: true, value: { items, body, next }, meta: result.meta };
+      count += 1;
+      let stop: string | null = null;
+      if (next !== null) {
+        const key = pagination?.style === "link_header" ? String(next) : canonicalJson(next);
+        if (seen.has(key)) stop = "Pagination detected a repeated cursor or page URL. Fix the server's next-page value before continuing.";
+        else if (maxPages !== undefined && count >= maxPages) stop = "Pagination reached maxPages before another request. Increase maxPages to continue.";
+        else seen.add(key);
+      }
+      yield { ok: true, value: { items, body, next: stop ? null : next }, meta: result.meta };
+      if (stop) {
+        yield fail(diagnostic(op.id, "UNEXPECTED_RESPONSE", { http_status: result.meta.status, request_id: result.meta.requestId, remediation: stop, trace: { attempts: result.meta.attempts } }));
+        return;
+      }
       if (next === null) return;
     }
   }

@@ -217,3 +217,100 @@ fn free_key(taken: &[&str], base: &str) -> String {
         .map(|i| naming::render(i, Target::TypeScript, Role::Param))
         .unwrap_or_else(|| base.to_string())
 }
+
+/// Resolve the array item at a runtime pagination path (dots and numeric brackets).
+/// Nullable named and inline records are transparent to type traversal.
+pub fn page_items_ref<'a>(ir: &'a Ir, body: &'a TypeRef, path: &str) -> Option<&'a TypeRef> {
+    page_items_resolution(ir, body, path).ok().flatten()
+}
+
+fn page_items_resolution<'a>(
+    ir: &'a Ir,
+    body: &'a TypeRef,
+    path: &str,
+) -> Result<Option<&'a TypeRef>, ()> {
+    fn shape<'a>(ir: &'a Ir, mut ty: &'a TypeRef) -> Option<&'a Shape> {
+        for _ in 0..=ir.types.types.len() + 64 {
+            match resolve(ir, ty)? {
+                Shape::Nullable { inner } => ty = inner,
+                value => return Some(value),
+            }
+        }
+        None
+    }
+    let mut normalized = String::new();
+    let bytes = path.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'[' {
+            let start = i + 1;
+            let mut end = start;
+            while end < bytes.len() && bytes[end].is_ascii_digit() {
+                end += 1;
+            }
+            if end > start && bytes.get(end) == Some(&b']') {
+                normalized.push('.');
+                normalized.push_str(&path[start..end]);
+                i = end + 1;
+                continue;
+            }
+        }
+        let ch = path[i..].chars().next().ok_or(())?;
+        normalized.push(ch);
+        i += ch.len_utf8();
+    }
+    let mut current = body;
+    for segment in normalized.split('.').filter(|s| !s.is_empty()) {
+        current = match shape(ir, current).ok_or(())? {
+            Shape::Record { fields, .. } => {
+                &fields.iter().find(|f| f.wire_name == segment).ok_or(())?.ty
+            }
+            Shape::Array { items, .. } if segment.bytes().all(|c| c.is_ascii_digit()) => items,
+            Shape::Any => return Ok(None),
+            _ => return Err(()),
+        };
+    }
+    match shape(ir, current).ok_or(())? {
+        Shape::Array { items, .. } => Ok(Some(items)),
+        Shape::Any => Ok(None),
+        _ => Err(()),
+    }
+}
+
+/// Diagnose invalid pagination paths without constructing another SDK type graph.
+pub fn pagination_notes(ir: &Ir) -> tungsten_core::Diagnostics {
+    fn walk(ir: &Ir, resource: &tungsten_ir::Resource, out: &mut tungsten_core::Diagnostics) {
+        for op in &resource.operations {
+            let Some(pagination) = &op.pagination else {
+                continue;
+            };
+            let bodies: Vec<_> = op
+                .responses
+                .iter()
+                .filter(|r| r.kind == tungsten_ir::ResponseKind::Success)
+                .flat_map(|r| &r.content)
+                .filter(|c| matches!(c.encoding, BodyEncoding::Json | BodyEncoding::Jsonl))
+                .map(|c| c.value_type())
+                .collect();
+            if !bodies.is_empty()
+                && bodies
+                    .iter()
+                    .all(|body| page_items_resolution(ir, body, &pagination.items_field).is_err())
+            {
+                out.push(tungsten_core::Diagnostic::warning("TG0704", format!(
+                    "pagination items path {:?} on {} does not resolve to an array in the success schema; correct the path to generate typed page items",
+                    pagination.items_field, op.id.0)));
+            }
+        }
+        for child in &resource.children {
+            walk(ir, child, out);
+        }
+    }
+    let mut out = tungsten_core::Diagnostics::new();
+    for ns in &ir.namespaces {
+        for resource in &ns.resources {
+            walk(ir, resource, &mut out);
+        }
+    }
+    out
+}
