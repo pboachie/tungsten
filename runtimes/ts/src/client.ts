@@ -1270,9 +1270,10 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     const check = mutation && !protectedReplay ? this.#outcomeCheck(op, prepared.args) : null;
     const timeoutMs = this.#timeout(opts);
     let attempts = 0;
+    let previousMutationFailure: Failure | undefined;
     for (;;) {
       const beforeAttempt = this.#beforeDispatch(op, opts);
-      if (beforeAttempt) return beforeAttempt;
+      if (beforeAttempt) return previousMutationFailure ?? beforeAttempt;
       attempts += 1;
       const ctx: RequestContext = {
         operation: op,
@@ -1284,7 +1285,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
       };
       const headers = await this.#beforeRequest(ctx, prepared);
       const interrupted = this.#beforeDispatch(op, opts);
-      if (interrupted) return interrupted;
+      if (interrupted) return previousMutationFailure ?? interrupted;
       // Redirects are never followed by fetch: it would forward custom
       // credential headers (API keys, CSRF headers) to another origin. A
       // read follows same-origin redirects here; a mutation follows none.
@@ -1332,8 +1333,13 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
       if (result.ok) { pageRequestUrls.set(result.meta, current.url); return result; }
       const error = scrubDiagnostic(result.error, prepared.secrets);
       const done = (): Failure => (result.partial === undefined ? fail(error) : { ok: false, error, partial: result.partial });
-      const cancelled = opts.signal?.aborted === true;
-      if (cancelled || attempts > retries.max || !RETRY_CATEGORIES.has(error.category)) return done();
+      // An interruption before a retry cannot undo an earlier mutation's
+      // possible effect. Later definite failures do not resolve that uncertainty.
+      if (mutation && (previousMutationFailure?.error.category !== "OUTCOME_UNKNOWN" || error.category === "OUTCOME_UNKNOWN")) {
+        previousMutationFailure = done();
+      }
+      if (previousMutationFailure && this.#beforeDispatch(op, opts)) return previousMutationFailure;
+      if (opts.signal?.aborted === true || attempts > retries.max || !RETRY_CATEGORIES.has(error.category)) return done();
       if (error.retryable === "never" || error.retryable === "after_remediation") return done();
       if (mutation && !protectedReplay) return done();
       let delay: number;
@@ -1352,7 +1358,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
           // Observers never change the call.
         }
       }
-      if (!(await sleep(delay, opts.signal))) return done();
+      if (!(await sleep(delay, opts.signal))) return previousMutationFailure ?? done();
     }
   }
 
