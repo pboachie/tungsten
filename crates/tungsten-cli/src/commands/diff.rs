@@ -25,8 +25,8 @@ use tungsten_ir::Ir;
 use crate::args::DiffArgs;
 use crate::commands::generate::{Emitted, Project, emit_target, select};
 use crate::output::{
-    CommandName, CommandResult, DiffResult, DiffStatus, FileChange, FileDiff, SemverLevel,
-    SemverReport, SnapshotState, SurfaceChange, TargetDiff,
+    CommandName, CommandResult, DiffResult, DiffStatus, FileChange, FileDiff, MigrationAction,
+    MigrationReport, SemverLevel, SemverReport, SnapshotState, SurfaceChange, TargetDiff,
 };
 use crate::stats::{headline, ir_stats, plural};
 use crate::textdiff::{Side, unified};
@@ -60,7 +60,7 @@ pub(crate) fn run(args: &DiffArgs, env: &CliEnv) -> Report {
     let project = Project::of(&args.input.path, env);
     let opts = DiffOptions {
         patches: true,
-        semver: args.semver,
+        semver: args.semver || args.migration,
     };
     let mut changes = vec![];
     for name in &names {
@@ -77,7 +77,38 @@ pub(crate) fn run(args: &DiffArgs, env: &CliEnv) -> Report {
             &mut report.diagnostics,
         ));
     }
-    let level = args.semver.then(|| overall_level(&changes)).flatten();
+    if args.migration {
+        for target in &mut changes {
+            if let Some(semver) = &mut target.semver {
+                let previous = ApiSurface::read(Path::new(&target.out)).ok().flatten();
+                let known = previous.as_ref().is_some_and(|s| s.target.is_some());
+                let mut actions: Vec<MigrationAction> = semver
+                    .changes
+                    .iter()
+                    .map(|change| MigrationAction {
+                        rule: change.rule.clone(),
+                        subject: change.subject.clone(),
+                        action: migration_action(change),
+                    })
+                    .collect();
+                if !known {
+                    actions.push(MigrationAction {
+                        rule: "runtime_requirements_unknown".into(),
+                        subject: target.target.clone(),
+                        action: "The previous snapshot does not record dependency requirements; inspect the previous generated package manifest and installed runtimes before upgrading.".into(),
+                    });
+                }
+                semver.migration = Some(MigrationReport {
+                    actions,
+                    runtime_requirements_known: known,
+                    preserves_custom_files: true,
+                });
+            }
+        }
+    }
+    let level = (args.semver || args.migration)
+        .then(|| overall_level(&changes))
+        .flatten();
     report.exit = if report
         .diagnostics
         .iter()
@@ -89,7 +120,7 @@ pub(crate) fn run(args: &DiffArgs, env: &CliEnv) -> Report {
     };
     let result = DiffResult {
         changes,
-        semver: args.semver,
+        semver: args.semver || args.migration,
         level,
     };
     let path = args.input.path.display().to_string();
@@ -172,7 +203,7 @@ pub(crate) fn target_diff(
         DiffStatus::Changed
     };
     if opts.semver {
-        diff.semver = Some(semver(ir, &emitted.tools, out_dir, out));
+        diff.semver = Some(semver(ir, &emitted.tools, files, out_dir, out));
     }
     diff
 }
@@ -214,16 +245,22 @@ fn file_diff(path: &str, change: FileChange, old: &[u8], new: &[u8], patches: bo
 fn semver(
     ir: &Ir,
     tools: &BTreeMap<String, String>,
+    files: &tungsten_emit::FileSet,
     out_dir: &Path,
     out: &mut Vec<Diagnostic>,
 ) -> SemverReport {
     let shown = out_dir.join(surface::SURFACE_PATH).display().to_string();
     match ApiSurface::read(out_dir) {
         Ok(Some(previous)) => {
-            let changes =
-                surface::compare(&previous, &ApiSurface::of(ir).with_tools(tools.clone()));
+            let changes = surface::compare(
+                &previous,
+                &ApiSurface::of(ir)
+                    .with_tools(tools.clone())
+                    .with_generated_files(files),
+            );
             SemverReport {
                 snapshot: SnapshotState::Present,
+                migration: None,
                 level: Some(level(surface::classify(&changes))),
                 changes: changes
                     .into_iter()
@@ -261,9 +298,54 @@ fn semver(
     }
 }
 
+fn migration_action(change: &SurfaceChange) -> String {
+    let action = match change.rule.as_str() {
+        "operation_renamed" => {
+            "Update SDK method accessors at call sites using the before/after names above."
+        }
+        "operation_removed" | "macro_removed" => {
+            "Replace calls to the removed operation or macro with a supported replacement; remove obsolete calls if no replacement exists."
+        }
+        "tool_removed" | "tool_retargeted" => {
+            "Update agent tool allowlists, stored tool calls and prompts; refresh the discovered tool catalogue."
+        }
+        "package_renamed" => {
+            "Update package installation declarations and imports to the new package identity."
+        }
+        "package_version_changed" => {
+            "Update the released package version as intended; version metadata alone does not imply an API break."
+        }
+        "runtime_dependency_changed" => {
+            "Review the old and new dependency requirements above, update installed runtimes and lockfiles, and run SDK integration tests before deploying."
+        }
+        "required_arg_added" | "arg_became_required" => {
+            "Supply the newly required input at every affected call site and update request fixtures."
+        }
+        "arg_removed" => "Remove the obsolete argument from calls and request fixtures.",
+        "confirmation_required" => {
+            "Add the required confirmation flow before invoking this operation."
+        }
+        "deprecation_changed" => {
+            "Review deprecated calls and schedule migration to the API provider's supported replacement."
+        }
+        "response_removed" | "response_field_removed" => {
+            "Update response consumers and fixtures to handle the removed response data."
+        }
+        _ if change.level == SemverLevel::Major => {
+            "Update affected input or response types, call sites and fixtures to match the new contract; run consumer tests."
+        }
+        _ if change.level == SemverLevel::Minor => {
+            "Review the additive contract change and regenerate consumer types and fixtures as needed."
+        }
+        _ => "Review the reported change and regenerate generated files when ready.",
+    };
+    action.to_string()
+}
+
 fn unclassified(snapshot: SnapshotState) -> SemverReport {
     SemverReport {
         snapshot,
+        migration: None,
         level: None,
         changes: vec![],
     }
@@ -348,6 +430,24 @@ fn human(headline: &str, r: &DiffResult) -> String {
                     c.subject,
                     c.detail
                 );
+            }
+            if let Some(migration) = &s.migration {
+                let _ = writeln!(
+                    out,
+                    "  migration   custom files are preserved; dependency requirements {}",
+                    if migration.runtime_requirements_known {
+                        "recorded"
+                    } else {
+                        "unknown for previous generation"
+                    }
+                );
+                for action in &migration.actions {
+                    let _ = writeln!(
+                        out,
+                        "    {} · {}: {}",
+                        action.rule, action.subject, action.action
+                    );
+                }
             }
         }
     }

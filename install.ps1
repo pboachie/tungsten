@@ -1,5 +1,5 @@
 <#
-Installs the tungsten CLI from a GitHub Release on Windows (x86_64). No
+Installs the tungsten CLI from a GitHub Release on Windows (x86_64 or ARM64). No
 administrator rights are needed.
 
   irm https://raw.githubusercontent.com/pboachie/tungsten/main/install.ps1 | iex
@@ -36,8 +36,16 @@ $build = "from source with: cargo install --git https://github.com/$repo tungste
 
 $arch = $env:PROCESSOR_ARCHITEW6432
 if (-not $arch) { $arch = $env:PROCESSOR_ARCHITECTURE }
-if ($arch -ne 'AMD64') { Fail "unsupported CPU architecture: $arch (releases cover x86_64 on Windows)" }
-$target = 'x86_64-pc-windows-msvc'
+# PowerShell 7 reports the native OS architecture even under x64 emulation.
+if ('System.Runtime.InteropServices.RuntimeInformation' -as [type]) {
+    $arch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
+}
+switch ($arch) {
+    'AMD64' { $target = 'x86_64-pc-windows-msvc' }
+    'X64' { $target = 'x86_64-pc-windows-msvc' }
+    'ARM64' { $target = 'aarch64-pc-windows-msvc' }
+    default { Fail "unsupported CPU architecture: $arch (releases cover x86_64 and ARM64 on Windows)" }
+}
 
 if (-not $InstallDir) {
     if (-not $env:LOCALAPPDATA) { Fail 'LOCALAPPDATA is not set; pass -InstallDir' }

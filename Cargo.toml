@@ -4,7 +4,7 @@ members = ["crates/*"]
 exclude = ["runtimes", "examples"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 rust-version = "1.95"
 license = "AGPL-3.0-only"
@@ -28,6 +28,7 @@ tungsten-emit-ts = { path = "crates/tungsten-emit-ts" }
 tungsten-emit-docs = { path = "crates/tungsten-emit-docs" }
 tungsten-mock = { path = "crates/tungsten-mock" }
 tungsten-emit-mcp = { path = "crates/tungsten-emit-mcp" }
+tungsten-emit-webmcp = { path = "crates/tungsten-emit-webmcp" }
 tungsten-emit-py = { path = "crates/tungsten-emit-py" }
 tungsten-emit-rs = { path = "crates/tungsten-emit-rs" }
 tungsten-tokens = { path = "crates/tungsten-tokens" }

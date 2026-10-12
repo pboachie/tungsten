@@ -406,10 +406,12 @@ pub fn write_output(
             .map_err(|e| fail(io_error(shown(out_dir, rel), "write", &e)))?;
     }
     let manifest = OutputManifest::new(files, opts.generator.as_ref()).to_bytes();
-    let surface = opts
-        .ir
-        .as_ref()
-        .map(|ir| ApiSurface::of(ir).with_tools(opts.tools.clone()).to_bytes());
+    let surface = opts.ir.as_ref().map(|ir| {
+        ApiSurface::of(ir)
+            .with_tools(opts.tools.clone())
+            .with_generated_files(files)
+            .to_bytes()
+    });
     let bookkeeping = [(MANIFEST_PATH, Some(manifest)), (SURFACE_PATH, surface)];
     for (rel, bytes) in bookkeeping {
         let Some(bytes) = bytes else { continue };

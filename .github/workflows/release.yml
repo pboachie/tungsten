@@ -9,8 +9,8 @@
 #   tungsten-<version>-<target>.{tar.gz,zip} for x86_64 and aarch64 Linux
 #   (musl, static), x86_64 and aarch64 macOS and x86_64 Windows, SHA256SUMS,
 #   a CycloneDX SBOM and a build provenance attestation per archive.
-# Registry publishing (crates.io, npm) is dry-run only here; PyPI has a
-# publish job that stays off until PYPI_PUBLISH is set. The runbook is
+# Registry publishing stays off by default. npm and PyPI trusted publishing
+# require the NPM_PUBLISH and PYPI_PUBLISH repository switches respectively. The runbook is
 # runbooks/release.md in tungsten-ops.
 #
 # Hardening: read-only token by default, each job asks only for what it needs
@@ -85,7 +85,7 @@ jobs:
           fi
           if [ "$release" = true ]; then
             manifest="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)"
-            if [ "$manifest" != "${version%%-*}" ]; then
+            if [ "$manifest" != "$version" ]; then
               echo "tag $tag does not match the workspace version $manifest in Cargo.toml" >&2
               exit 1
             fi
@@ -100,6 +100,30 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           echo "release=$release tag=${tag:-none} version=$version"
 
+  woodpecker-release:
+    name: Woodpecker npm release validation
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    permissions:
+      contents: read
+      statuses: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: "24"
+      - name: Require the exact Woodpecker tag validation when enabled
+        env:
+          WOODPECKER_RELEASE: ${{ needs.prepare.outputs.release == 'true' && vars.WOODPECKER_RELEASE == 'true' && 'true' || 'false' }}
+          WOODPECKER_REPO_ID: ${{ vars.WOODPECKER_REPO_ID }}
+          WOODPECKER_URL: ${{ vars.WOODPECKER_URL }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node .github/scripts/wait-woodpecker-release.mjs
+
   build:
     name: build ${{ matrix.target }}
     needs: prepare
@@ -113,9 +137,12 @@ jobs:
         include:
           - { target: x86_64-unknown-linux-musl, os: ubuntu-latest }
           - { target: aarch64-unknown-linux-musl, os: ubuntu-24.04-arm }
+          - { target: x86_64-unknown-linux-gnu, os: ubuntu-22.04 }
+          - { target: aarch64-unknown-linux-gnu, os: ubuntu-24.04-arm }
           - { target: x86_64-apple-darwin, os: macos-latest }
           - { target: aarch64-apple-darwin, os: macos-latest }
           - { target: x86_64-pc-windows-msvc, os: windows-latest }
+          - { target: aarch64-pc-windows-msvc, os: windows-11-arm }
     env:
       TARGET: ${{ matrix.target }}
       VERSION: ${{ needs.prepare.outputs.version }}
@@ -157,6 +184,37 @@ jobs:
           exe=tungsten
           case "$TARGET" in *windows*) exe=tungsten.exe ;; esac
           sh .github/scripts/package.sh "$VERSION" "$TARGET" "target/$TARGET/release/$exe" dist
+      - name: Smoke test the Windows installer against the built archive
+        if: contains(matrix.target, 'windows')
+        shell: pwsh
+        run: |
+          $asset = "tungsten-$env:VERSION-$env:TARGET.zip"
+          # Exercise the real installer offline against this job's archive.
+          $global:tungstenSmokeTamper = $false
+          function Invoke-WebRequest {
+            param([uri]$Uri, [string]$OutFile, [switch]$UseBasicParsing)
+            $requested = [IO.Path]::GetFileName($Uri.AbsolutePath)
+            if ($requested -eq 'SHA256SUMS') {
+              Copy-Item "dist/$asset.sha256" $OutFile
+            } elseif ($requested -eq $asset) {
+              Copy-Item "dist/$asset" $OutFile
+              if ($global:tungstenSmokeTamper) { [IO.File]::AppendAllText($OutFile, 'tampered') }
+            } else { throw "Unexpected installer download: $requested" }
+          }
+          $dest = Join-Path $env:RUNNER_TEMP 'tungsten-installer-smoke'
+          & ./install.ps1 -Version $env:VERSION -InstallDir $dest -BaseUrl 'https://release.invalid'
+          $expected = & "target/$env:TARGET/release/tungsten.exe" --version
+          $actual = & "$dest/tungsten.exe" --version
+          if ($LASTEXITCODE -ne 0 -or $actual -ne $expected) { throw 'Installed binary smoke test failed' }
+          $global:tungstenSmokeTamper = $true
+          $rejected = Join-Path $env:RUNNER_TEMP 'tungsten-installer-rejected'
+          try {
+            & ./install.ps1 -Version $env:VERSION -InstallDir $rejected -BaseUrl 'https://release.invalid'
+            throw 'Installer accepted a tampered archive'
+          } catch {
+            if ($_.ToString() -notlike '*checksum mismatch*') { throw }
+          }
+          if (Test-Path "$rejected/tungsten.exe") { throw 'Tampered binary was installed' }
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: dist-${{ matrix.target }}
@@ -229,7 +287,7 @@ jobs:
 
   github-release:
     name: GitHub Release
-    needs: [prepare, bundle, attest]
+    needs: [prepare, bundle, attest, crates-dry-run, npm-dry-run, npm-artifacts, pypi-build]
     if: needs.prepare.outputs.release == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -288,7 +346,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        package: [ts, mcp]
+        package: [ts, mcp, webmcp]
     permissions:
       contents: read
       # npm refuses --provenance without an OIDC token, even for a dry run.
@@ -299,18 +357,98 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
-          node-version: "22"
+          node-version: "24"
           registry-url: https://registry.npmjs.org
-      - name: Build @tungsten/runtime (the MCP package links to it)
-        if: matrix.package == 'mcp'
+      - name: Build @elysra/tungsten-runtime (adapter packages link to it)
+        if: matrix.package != 'ts'
         working-directory: runtimes/ts
         run: npm ci && npm run build
       - name: Build
         working-directory: runtimes/${{ matrix.package }}
         run: npm ci && npm run build
+      - name: Use an unpublished version for rehearsal only
+        if: needs.prepare.outputs.release != 'true'
+        working-directory: runtimes/${{ matrix.package }}
+        env:
+          REHEARSAL_VERSION: ${{ needs.prepare.outputs.version }}
+        # npm checks registry version conflicts even with --dry-run. Only this
+        # throwaway dry-run checkout changes; release manifests stay exact.
+        run: npm version "$REHEARSAL_VERSION" --no-git-tag-version --ignore-scripts
       - name: npm publish --dry-run --provenance
         working-directory: runtimes/${{ matrix.package }}
-        run: npm publish --dry-run --provenance --access public
+        run: npm publish --dry-run --provenance --access public --tag next
+
+  npm-artifacts:
+    name: npm distributed artifact validation
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: "24"
+          registry-url: https://registry.npmjs.org
+      - name: Pack and install the distributed runtime tree
+        run: node .github/scripts/check-runtime-artifacts.mjs runtime-dist
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: npm-dist
+          path: runtime-dist/*
+          if-no-files-found: error
+          retention-days: 14
+
+  # npm trusted publishers must name release.yml and the npm environment for
+  # all three packages before NPM_PUBLISH is enabled. No stored token is used.
+  npm-publish:
+    name: npm publish (trusted publishing)
+    needs: [prepare, crates-dry-run, npm-dry-run, npm-artifacts, pypi-build, github-release, woodpecker-release]
+    if: needs.prepare.outputs.release == 'true' && vars.NPM_PUBLISH == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: "24"
+          registry-url: https://registry.npmjs.org
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: npm-dist
+          path: runtime-dist
+      - name: Install the supported npm CLI
+        run: npm install --global npm@12.2.0
+      - name: Publish validated archives, core runtime first
+        env:
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          set -eu
+          cd runtime-dist
+          sha256sum --check SHA256SUMS
+          npm --version
+          dist_tag=latest
+          case "$RELEASE_TAG" in *-*) dist_tag=next ;; esac
+          # Validate every archive's version before the first registry write.
+          for package in elysra-tungsten-runtime elysra-tungsten-mcp elysra-tungsten-webmcp; do
+            set -- "$package"-*.tgz
+            [ "$#" -eq 1 ] && [ -f "$1" ] || { echo "expected one archive for $package" >&2; exit 1; }
+            package_version=$(tar -xOf "$1" package/package.json | node -e 'let input=""; process.stdin.on("data", chunk => input += chunk); process.stdin.on("end", () => console.log(JSON.parse(input).version));')
+            [ "$package_version" = "${RELEASE_TAG#v}" ] || { echo "$package version $package_version does not match release tag $RELEASE_TAG; refusing to consume a different version" >&2; exit 1; }
+          done
+          for package in elysra-tungsten-runtime elysra-tungsten-mcp elysra-tungsten-webmcp; do
+            set -- "$package"-*.tgz
+            npm publish "$1" --provenance --access public --tag "$dist_tag" || {
+              echo "npm publication failed for $package. Verify the npm trusted publisher for pboachie/tungsten, release.yml, environment npm; no token fallback is configured. Inspect registry state before retrying a partially completed release." >&2
+              exit 1
+            }
+          done
 
   pypi-build:
     name: PyPI build and twine check

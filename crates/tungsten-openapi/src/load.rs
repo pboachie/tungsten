@@ -506,10 +506,53 @@ impl<'o> Loader<'o> {
         let name = format!("{}{relative}", root.display);
         let (text, digest) = self.read(&canonical, &name, Some(at))?;
         let source = self.ws.sources.add(name.as_str(), text);
-        let parsed = self.parse(&relative, source, Some(at))?;
-        let mut doc = Document::new(source, name, SpecVersion::Fragment, parsed.value, digest);
-        doc.spans = parsed.spans;
-        let id = self.push(doc, Some(lexical), false);
+        let Parsed {
+            value: mut root,
+            mut spans,
+        } = self.parse(&relative, source, Some(at))?;
+        // Relative references can target another complete OpenAPI document,
+        // not just a dialectless schema fragment. Its declared dialect wins
+        // over the referring document's dialect (notably for 3.0 nullable).
+        // A fragment may itself be a map containing a schema named
+        // `openapi` or `swagger`. Object/boolean schema values alone do not
+        // declare a document version; document metadata disambiguates an
+        // invalid version value that should still receive a diagnostic.
+        let declares_document = ["openapi", "swagger"].iter().any(|key| {
+            root.get(*key).is_some_and(|value| {
+                value.is_string() || root.get("info").is_some() || root.get("paths").is_some()
+            })
+        });
+        let version = if declares_document {
+            match version::detect(&root, &name, &spans, self.opts) {
+                Ok((version, warnings)) => {
+                    for warning in warnings {
+                        self.ws.diagnostics.push(warning);
+                    }
+                    version
+                }
+                Err(errors) => {
+                    for mut error in errors {
+                        error.labels.push(Label {
+                            message: Some("referenced here".into()),
+                            ..site_label(&self.ws, at)
+                        });
+                        self.ws.diagnostics.push(error);
+                    }
+                    return None;
+                }
+            }
+        } else {
+            SpecVersion::Fragment
+        };
+        let v30 = matches!(version, SpecVersion::V30(_));
+        let mut moves = vec![];
+        if v30 {
+            normalize::normalize(&mut root, &mut spans, &mut moves, "", Kind::Document);
+        }
+        let mut doc = Document::new(source, name, version, root, digest);
+        doc.spans = spans;
+        doc.moves = moves;
+        let id = self.push(doc, Some(lexical), v30);
         self.ws.files.insert(canonical, id);
         Some(id)
     }

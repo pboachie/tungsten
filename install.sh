@@ -12,6 +12,7 @@
 #                                 (<base>/<tag>/<asset>), for mirrors and tests; needs a version
 #   TUNGSTEN_REQUIRE_ATTESTATION  1: fail unless the `gh` CLI verifies the build attestation
 #   TUNGSTEN_NO_ATTESTATION       1: do not look for an attestation at all
+#   TUNGSTEN_LIBC                 Linux archive ABI: musl (default, static) or gnu
 #
 # The archive is checked against the release's SHA256SUMS before anything is
 # installed. When the GitHub CLI (gh) is available the archive's build
@@ -50,8 +51,15 @@ target_triple() {
     *) die "unsupported CPU architecture: $arch (releases cover x86_64 and aarch64)" ;;
   esac
   case "$os" in
-    Linux) echo "$arch-unknown-linux-musl" ;;
-    Darwin) echo "$arch-apple-darwin" ;;
+    Linux)
+      libc=${TUNGSTEN_LIBC:-musl}
+      case "$libc" in musl | gnu) ;; *) die "unsupported Linux libc: $libc (use musl or gnu)" ;; esac
+      echo "$arch-unknown-linux-$libc"
+      ;;
+    Darwin)
+      [ -z "${TUNGSTEN_LIBC:-}" ] || die "TUNGSTEN_LIBC is only supported on Linux"
+      echo "$arch-apple-darwin"
+      ;;
     *) die "unsupported operating system: $os (on Windows use install.ps1)" ;;
   esac
 }
@@ -76,7 +84,7 @@ main() {
     case "$1" in
       --version) [ "$#" -ge 2 ] || die "--version needs a value"; version=$2; shift 2 ;;
       --dir) [ "$#" -ge 2 ] || die "--dir needs a value"; dir=$2; shift 2 ;;
-      -h | --help) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; return 0 ;;
+      -h | --help) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; return 0 ;;
       *) die "unknown option: $1" ;;
     esac
   done
