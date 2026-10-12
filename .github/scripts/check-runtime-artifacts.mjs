@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { builtinModules, createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
@@ -23,8 +23,19 @@ const run = (command, args, cwd, capture = false) => execFileSync(command, args,
 const npm = process.platform === "win32" ? "npm.cmd" : "npm";
 const tarballs = [];
 try {
+  // Build source snapshots: reusable test artifacts may be linked into the
+  // checkout. Direct npm/tsc builds must never mutate those cached outputs.
+  const buildRoot = join(scratch, "source", "runtimes");
+  mkdirSync(buildRoot, { recursive: true });
+  for (const pkg of packages) {
+    const source = join(root, "runtimes", pkg);
+    cpSync(source, join(buildRoot, pkg), {
+      recursive: true,
+      filter: path => !relative(source, path).split(/[\\/]/).some(part => ["node_modules", "dist", "target"].includes(part)),
+    });
+  }
   for (const [i, pkg] of packages.entries()) {
-    const cwd = join(root, "runtimes", pkg);
+    const cwd = join(buildRoot, pkg);
     run(npm, ["ci", "--ignore-scripts"], cwd);
     run(npm, ["run", "build"], cwd);
     const [packed] = JSON.parse(run(npm, ["pack", "--json", "--pack-destination", output], cwd, true));
