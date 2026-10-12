@@ -30,6 +30,7 @@ tungsten-mock = { path = "crates/tungsten-mock" }
 tungsten-emit-mcp = { path = "crates/tungsten-emit-mcp" }
 tungsten-emit-py = { path = "crates/tungsten-emit-py" }
 tungsten-emit-rs = { path = "crates/tungsten-emit-rs" }
+tungsten-emit-csharp = { path = "crates/tungsten-emit-csharp" }
 tungsten-tokens = { path = "crates/tungsten-tokens" }
 tungsten-lsp = { path = "crates/tungsten-lsp" }
 

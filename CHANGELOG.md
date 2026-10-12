@@ -11,6 +11,13 @@ changes.
 
 ### Added
 
+- A C# SDK target, `csharp` (short form `cs`): a net10.0 project with records,
+  enums and unions that decode and encode themselves (no reflection, trimming
+  and AOT safe), async methods returning `Result<T>`, `IAsyncEnumerable` pages
+  and `EventStream<T>` streams, typed macros and an `IDispatch` entry point,
+  over the new dependency-free .NET runtime `Tungsten.Runtime`
+  (`runtimes/csharp`). Options `package_id`, `namespace`, `version`,
+  `runtime` and `runtime_path`; diagnostics TG1020 to TG1025.
 - The language-neutral foundation of the coming Java, C#, Kotlin, Swift, PHP,
   Ruby and Dart SDKs in `tungsten-emit` (`sdk`): one SDK plan per API (types,
   operations, resource tree, macros), naming profiles for the seven languages

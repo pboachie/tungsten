@@ -11,6 +11,7 @@ use std::path::Path;
 use tungsten_config::TungstenConfig;
 use tungsten_core::Diagnostic;
 use tungsten_emit::{Emitter, TargetConfig};
+use tungsten_emit_csharp::CSharpEmitter;
 use tungsten_emit_docs::DocsEmitter;
 use tungsten_emit_mcp::McpEmitter;
 use tungsten_emit_py::PythonEmitter;
@@ -23,6 +24,7 @@ static DOCS: DocsEmitter = DocsEmitter;
 static MCP: McpEmitter = McpEmitter;
 static PYTHON: PythonEmitter = PythonEmitter;
 static RUST: RustEmitter = RustEmitter;
+static CSHARP: CSharpEmitter = CSharpEmitter;
 
 /// The emitter for a target id, if this version has one.
 pub fn emitter(id: &str) -> Option<&'static dyn Emitter> {
@@ -32,6 +34,7 @@ pub fn emitter(id: &str) -> Option<&'static dyn Emitter> {
         "mcp" => Some(&MCP),
         "python" => Some(&PYTHON),
         "rust" => Some(&RUST),
+        "csharp" => Some(&CSHARP),
         _ => None,
     }
 }
@@ -47,12 +50,13 @@ pub fn tool_names(id: &str, ir: &Ir) -> BTreeMap<String, String> {
 }
 
 /// The target id for a name given on the command line: the ids themselves
-/// and the short forms `ts`, `py` and `rs`.
+/// and the short forms `ts`, `py`, `rs` and `cs`.
 pub fn canonical(name: &str) -> &str {
     match name {
         "ts" => "typescript",
         "py" => "python",
         "rs" => "rust",
+        "cs" => "csharp",
         other => other,
     }
 }
