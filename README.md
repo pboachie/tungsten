@@ -5,7 +5,7 @@
 
 **Compile an OpenAPI description into SDKs, a CLI and an MCP server that AI agents can use safely.**
 
-[![CI](https://github.com/pboachie/tungsten/actions/workflows/ci.yml/badge.svg)](https://github.com/pboachie/tungsten/actions/workflows/ci.yml)
+[![Woodpecker CI](https://badges.boachiefamily.net/api/badges/4/status.svg)](https://ci.boachiefamily.net/repos/4) [![CI](https://github.com/pboachie/tungsten/actions/workflows/ci.yml/badge.svg)](https://github.com/pboachie/tungsten/actions/workflows/ci.yml)
 [![Docs](https://img.shields.io/badge/docs-pboachie.github.io-informational.svg)](https://pboachie.github.io/tungsten/)
 [![License: AGPL-3.0](https://img.shields.io/badge/compiler-AGPL--3.0-blue.svg)](LICENSE)
 [![Runtimes: Apache-2.0](https://img.shields.io/badge/runtimes-Apache--2.0-blue.svg)](runtimes/LICENSE)
