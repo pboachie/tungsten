@@ -3,7 +3,7 @@
 //! fields need a `Box` (recursion), which aliases become newtypes, which
 //! types need a check function and which can derive `Default`.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use tungsten_ir::{
     Additional, Constraints, Field, NamedType, Presence, Primitive, Shape, StringFormat, TypeId,
@@ -199,21 +199,35 @@ impl Graph {
         plan: &Plan<'_>,
         kinds: &BTreeMap<&TypeId, Emit>,
     ) -> BTreeSet<TypeId> {
-        let mut set: BTreeSet<TypeId> = BTreeSet::new();
-        loop {
-            let before = set.len();
-            for t in &plan.ir.types.types {
-                if set.contains(&t.id) {
-                    continue;
-                }
-                if type_needs_check(plan, kinds[&t.id], &t.shape, &set) {
-                    set.insert(t.id.clone());
-                }
+        let table = &plan.ir.types.types;
+        let mut reverse: BTreeMap<TypeId, Vec<TypeId>> = BTreeMap::new();
+        let mut set = BTreeSet::new();
+        let mut work = VecDeque::new();
+        for t in table {
+            if type_needs_check(plan, kinds[&t.id], &t.shape, &BTreeSet::new()) {
+                set.insert(t.id.clone());
+                work.push_back(t.id.clone());
             }
-            if set.len() == before {
-                return set;
+            if matches!(
+                kinds[&t.id],
+                Emit::StrEnum | Emit::IntEnum | Emit::MixedEnum
+            ) {
+                continue;
+            }
+            let mut refs = vec![];
+            check_refs(&t.shape, &mut refs);
+            for id in refs.into_iter().collect::<BTreeSet<_>>() {
+                reverse.entry(id).or_default().push(t.id.clone());
             }
         }
+        while let Some(id) = work.pop_front() {
+            for owner in reverse.get(&id).into_iter().flatten() {
+                if set.insert(owner.clone()) {
+                    work.push_back(owner.clone());
+                }
+            }
+        }
+        set
     }
 
     fn compute_defaultable(
@@ -221,33 +235,96 @@ impl Graph {
         plan: &Plan<'_>,
         kinds: &BTreeMap<&TypeId, Emit>,
     ) -> BTreeSet<TypeId> {
-        let mut set: BTreeSet<TypeId> = BTreeSet::new();
-        loop {
-            let before = set.len();
-            for t in &plan.ir.types.types {
-                if set.contains(&t.id) || self.cyclic.contains(&t.id) {
-                    continue;
-                }
-                let ok = match (&t.shape, kinds[&t.id]) {
-                    (Shape::Record { fields, .. }, _) => fields.iter().all(|f| {
-                        !matches!(f.presence, Presence::Required) || ref_defaultable(&f.ty, &set)
-                    }),
-                    (shape, Emit::Alias) => shape_defaultable(shape),
-                    _ => false,
-                };
-                if ok {
-                    set.insert(t.id.clone());
-                }
+        let mut reverse: BTreeMap<TypeId, Vec<TypeId>> = BTreeMap::new();
+        let mut remaining = BTreeMap::new();
+        let mut set = BTreeSet::new();
+        let mut work = VecDeque::new();
+        for t in &plan.ir.types.types {
+            if self.cyclic.contains(&t.id) {
+                continue;
             }
-            if set.len() == before {
-                return set;
+            let mut deps = BTreeSet::new();
+            let possible = match (&t.shape, kinds[&t.id]) {
+                (Shape::Record { fields, .. }, _) => fields.iter().all(|f| {
+                    if !matches!(f.presence, Presence::Required) {
+                        return true;
+                    }
+                    match &f.ty {
+                        TypeRef::Named(id) => {
+                            deps.insert(id.clone());
+                            true
+                        }
+                        TypeRef::Inline(s) => shape_defaultable(s),
+                    }
+                }),
+                (shape, Emit::Alias) => shape_defaultable(shape),
+                _ => false,
+            };
+            if !possible {
+                continue;
+            }
+            if deps.is_empty() {
+                set.insert(t.id.clone());
+                work.push_back(t.id.clone());
+            } else {
+                remaining.insert(t.id.clone(), deps.len());
+                for dep in deps {
+                    reverse.entry(dep).or_default().push(t.id.clone());
+                }
             }
         }
+        while let Some(id) = work.pop_front() {
+            for owner in reverse.get(&id).into_iter().flatten() {
+                let count = remaining.get_mut(owner).expect("dependent count");
+                *count -= 1;
+                if *count == 0 && set.insert(owner.clone()) {
+                    work.push_back(owner.clone());
+                }
+            }
+        }
+        set
     }
 
     /// Whether a field or variant is behind a `Box`.
     pub(crate) fn is_boxed(&self, owner: &TypeId, slot: usize) -> bool {
         self.boxed.contains(&(owner.clone(), slot))
+    }
+}
+
+/// References whose checks contribute to this shape. Inline constant union
+/// variants select themselves by value and therefore do not need a check.
+fn check_refs(shape: &Shape, out: &mut Vec<TypeId>) {
+    if let Shape::Union(u) = shape {
+        for v in &u.variants {
+            match &v.ty {
+                TypeRef::Named(id) => out.push(id.clone()),
+                TypeRef::Inline(s) if !matches!(s.as_ref(), Shape::Const { .. }) => {
+                    check_refs(s, out)
+                }
+                _ => {}
+            }
+        }
+    } else {
+        // All other shapes use every nested reference; inline unions still
+        // need their constant-variant rule applied recursively.
+        let mut add = |r: &TypeRef| match r {
+            TypeRef::Named(id) => out.push(id.clone()),
+            TypeRef::Inline(s) => check_refs(s, out),
+        };
+        match shape {
+            Shape::Array { items, .. } => add(items),
+            Shape::Map { values } => add(values),
+            Shape::Nullable { inner } => add(inner),
+            Shape::Record { fields, additional } => {
+                for f in fields {
+                    add(&f.ty);
+                }
+                if let Additional::Typed { values } = additional {
+                    add(values);
+                }
+            }
+            _ => {}
+        }
     }
 }
 

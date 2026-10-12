@@ -54,7 +54,7 @@ curl -fsSL https://raw.githubusercontent.com/pboachie/tungsten/main/install.sh |
 irm https://raw.githubusercontent.com/pboachie/tungsten/main/install.ps1 | iex        # Windows
 ```
 
-Pass `--version v0.1.0` to `install.sh` (or `-Version v0.1.0` to `install.ps1`) to pin a release, and `--dir` (`-InstallDir`) to choose the target directory.
+Pass `--version v0.1.2` to `install.sh` (or `-Version v0.1.2` to `install.ps1`) to pin a release, and `--dir` (`-InstallDir`) to choose the target directory.
 
 Or build from source, with Rust 1.95 or newer (the repository pins 1.97.0 in [`rust-toolchain.toml`](rust-toolchain.toml) for development):
 
@@ -69,59 +69,72 @@ Node, Python and the formatters are optional: a missing tool only disables the t
 
 ## Quickstart
 
-```sh
-tungsten init --from openapi.json   # writes tungsten.yml and agent.yml
-```
+Install the compiler above first. This walkthrough uses Python 3.12 or newer and
+[uv](https://docs.astral.sh/uv/getting-started/installation/). TypeScript targets
+require Node 22 or newer. Installing the compiler does not install generated
+SDKs or their language runtimes.
 
-`init` writes no targets, so `generate` has nothing to do until you add some. Edit `tungsten.yml` to add targets, and `agent.yml` to review every operation with side effects (init lists them as TODO):
-
-```yaml
-# tungsten.yml
-targets:
-  typescript: { package: "@acme/petstore", out: generated/typescript }
-  python:     { package: acme-petstore, module: acme_petstore, out: generated/python }
-  docs:       { out: generated/docs }
-```
+This walkthrough continues from the source installation above, using the same
+checkout for the v0.1.2 compiler and runtime. From that `tungsten` directory, set
+its absolute path and create a separate project. If you installed a release
+binary, obtain its matching source archive from the release first:
 
 ```sh
-tungsten check              # validate specs and manifests
-tungsten generate           # write every configured target
-tungsten mock . --port 8099 # serve the API from the IR, no backend needed
+export TUNGSTEN_SOURCE="$(pwd)"
+mkdir ../petstore-demo
+cd ../petstore-demo
 ```
 
-Then call the generated SDK. Python (the TypeScript client is symmetrical: `const res = await client.pets.list({ limit: 10 })`):
-
-```python
-from acme_petstore import SwaggerPetstoreClient, Ok
-
-client = SwaggerPetstoreClient(base_url="http://127.0.0.1:8099")
-res = client.pets.list(limit=10)
-if isinstance(res, Ok):
-    print(res.value)
-else:
-    print(res.error["category"], res.error["remediation"])
-```
-
-Calls return a `Result` and do not raise for API or transport errors. Arguments are validated before anything is sent, so a wrong type produces this envelope (real output of the snippet above with `limit="ten"`, no request made):
+Use your own `openapi.json`, or create this complete tiny example:
 
 ```json
-{
-  "status": "error",
-  "category": "VALIDATION_FAILED",
-  "operation": "petstore.listPets",
-  "http_status": null,
-  "code": null,
-  "failed_parameter": "args.limit",
-  "received_value": "ten",
-  "expected": "Input should be a valid integer",
-  "remediation": "Fix args.limit (Input should be a valid integer) and call again.",
-  "retryable": "never",
-  "retry_after_ms": null,
-  "next_action": null,
-  "request_id": null,
-  "trace": { "attempts": 0 }
-}
+{"openapi":"3.1.0","info":{"title":"Acme Petstore","version":"1"},"paths":{"/pets":{"get":{"operationId":"listPets","responses":{"200":{"description":"Pets","content":{"application/json":{"schema":{"type":"array","items":{"type":"string"}}}}}}}}}}
 ```
+
+`init` writes `tungsten.yml` and `agent.yml` with **TypeScript, Python and docs**
+targets by default. Edit the existing `targets` block rather than appending a
+second one. For this example, replace its Python entry with:
+
+```yaml
+  python: { package: acme-petstore, module: acme_petstore, out: generated/python }
+```
+
+Review `agent.yml` and resolve the TODO entries for operations with side effects
+before generating. The tiny example has only a read operation.
+
+```sh
+tungsten init --from openapi.json
+# Edit tungsten.yml and agent.yml as described above.
+tungsten check
+tungsten generate
+uv venv --python 3.12 .venv
+# Install the language runtime and generated SDK into this environment.
+# The local runtime satisfies the generated package's runtime dependency.
+uv pip install --python .venv/bin/python "$TUNGSTEN_SOURCE/runtimes/python" ./generated/python
+tungsten mock . --port 8099
+```
+
+Leave the mock running. In another terminal in `petstore-demo`, make the first
+call using the environment where you installed the SDK:
+
+```sh
+.venv/bin/python - <<'PYTHON'
+from acme_petstore import AcmePetstoreClient, Ok
+
+with AcmePetstoreClient(base_url="http://127.0.0.1:8099") as client:
+    result = client.pets.list()
+    assert isinstance(result, Ok), result
+    print(result.value)
+PYTHON
+```
+
+The tiny example returns a successful list. For your own spec, the client class,
+resource and method names follow its title and operation IDs. Calls return a
+`Result`; API and transport errors carry a diagnostic envelope. When installing
+a generated TypeScript SDK, build its matching source runtime first with
+`npm ci && npm run build` in `runtimes/ts`, then install that directory and the
+SDK's dependencies in the generated package and run `npm run build`. The Python
+route above works without assuming runtime registry publication.
 
 Destructive operations use the preview flow. From the TypeScript SDK generated for the ZROtext pilot:
 
@@ -258,7 +271,7 @@ The CLI that tungsten generates for a Rust target has its own exit codes (0 succ
 
 ## Project status
 
-tungsten is **pre-0.1**. The compiler, the three SDK targets, the generated CLI, the MCP server, the docs emitter and the mock server exist and are exercised end to end against a real pilot API (ZROtext), including a live run of its scenarios. Prebuilt binaries are attached to the v0.1.0 release, but nothing is published to a package registry yet: the runtimes are used by path or from source. Expect breaking changes to manifests, the IR and generated code between releases. Known limits are tracked in the maintainers' status notes; open an issue if one blocks you.
+tungsten is **early-stage**. The compiler, the three SDK targets, the generated CLI, the MCP server, the docs emitter and the mock server exist and are exercised end to end against a real pilot API (ZROtext), including a live run of its scenarios. Check the [GitHub releases](https://github.com/pboachie/tungsten/releases) for available compiler binaries and matching sources. The quickstart installs a runtime from matching source and does not require registry publication; compiler and runtime packages have independent versions. Expect breaking changes to manifests, the IR and generated code between releases. Known limits are tracked in the maintainers' status notes; open an issue if one blocks you.
 
 The test suite, conformance corpus and design documents live in a separate maintainers' repository, which runs against every pull request. This repository is source only.
 
