@@ -364,13 +364,14 @@ internal sealed class StreamCore
             {
                 return null;
             }
+            // A cancelled stream delivers nothing more, not even events already parsed.
+            if (Cancelled)
+            {
+                Close();
+                return null;
+            }
             if (state == 0)
             {
-                if (Cancelled)
-                {
-                    state = 2;
-                    return null;
-                }
                 OpenStream fresh;
                 try
                 {

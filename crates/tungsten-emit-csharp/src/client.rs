@@ -359,7 +359,8 @@ impl Ctx<'_> {
             .collect::<Vec<_>>()
             .join(", ");
         w.line(format!(
-            "private static readonly OperationDescriptor[] DispatchOperations = {{ {ops} }};"
+            "private static readonly OperationDescriptor[] DispatchOperations = {};",
+            array_literal(&ops)
         ));
         let macros = self
             .names
@@ -369,7 +370,8 @@ impl Ctx<'_> {
             .collect::<Vec<_>>()
             .join(", ");
         w.line(format!(
-            "private static readonly MacroDescriptor[] DispatchMacros = {{ {macros} }};"
+            "private static readonly MacroDescriptor[] DispatchMacros = {};",
+            array_literal(&macros)
         ));
         w.blank();
         w.line("ClientCore IDispatch.Core => Core;");
@@ -602,5 +604,14 @@ impl Ctx<'_> {
         w.dedent();
         w.line("}");
         w.finish()
+    }
+}
+
+/// `{ a, b }`, or `{ }` without items, as `dotnet format` spaces them.
+fn array_literal(items: &str) -> String {
+    if items.is_empty() {
+        "{ }".into()
+    } else {
+        format!("{{ {items} }}")
     }
 }

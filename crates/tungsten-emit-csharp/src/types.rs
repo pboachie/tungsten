@@ -328,8 +328,8 @@ impl Ctx<'_> {
         }
     }
 
-    /// The name of a model class, as written from the model namespace
-    /// `from` (`None`: anywhere else, fully qualified).
+    /// The fully qualified name of a model class (`from`, the namespace it is
+    /// written from, does not shorten it).
     pub fn class_ref(&self, id: &TypeId, from: Option<&str>) -> String {
         let name = self.names.types.get(id).cloned().unwrap_or_default();
         let ns = self
@@ -338,11 +338,10 @@ impl Ctx<'_> {
             .get(id)
             .map(|t| t.namespace.as_str())
             .unwrap_or_default();
-        if from == Some(ns) {
-            name
-        } else {
-            format!("global::{}.{name}", self.model_ns(ns))
-        }
+        // Always qualified: a member may share its type's name (a `Status? Status`
+        // property hides the type in static code), and so may a union variant.
+        let _ = from;
+        format!("global::{}.{name}", self.model_ns(ns))
     }
 
     /// The C# type of a type reference.
@@ -752,7 +751,8 @@ impl Ctx<'_> {
         let Shape::Union(u) = &t.shape else {
             return;
         };
-        let from = Some(t.namespace.as_str());
+        // Fully qualified: a variant record may share its model's name.
+        let from = None;
         let variant_names = self.names.union_variants.get(&t.id).cloned().unwrap_or_default();
         let mut taken: Vec<String> = ["FromJson", "ToJson", "ToString", "Equals", name]
             .iter()

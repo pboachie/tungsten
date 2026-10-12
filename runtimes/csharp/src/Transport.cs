@@ -82,6 +82,10 @@ internal sealed class EventBody
 
     public async Task<(byte[] Chunk, BodyRead Kind)> ReadAsync(CancellationToken caller)
     {
+        if (Volatile.Read(ref closed) == 1)
+        {
+            return (System.Array.Empty<byte>(), BodyRead.Lost);
+        }
         using var timer = CancellationTokenSource.CreateLinkedTokenSource(cancel.Token, caller);
         timer.CancelAfter(idle);
         try
@@ -123,7 +127,7 @@ internal sealed class EventBody
         }
         stream.Dispose();
         response.Dispose();
-        cancel.Dispose();
+        // The token source is not disposed: a read on another thread may still be linking to it.
     }
 }
 
@@ -175,9 +179,44 @@ internal static class Transport
             ActivityHeadersPropagator = null,
             RequestHeaderEncodingSelector = (_, _) => Encoding.Latin1,
             ResponseHeaderEncodingSelector = (_, _) => Encoding.Latin1,
-            PooledConnectionLifetime = TimeSpan.FromMinutes(5),
+            // SocketsHttpHandler resends a request on a new connection when its connection closes
+            // before any response byte, which would repeat a lost attempt outside the runtime's
+            // retry policy. Each attempt gets a connection of its own (no pooling), and a second
+            // connection for the same attempt is refused (see AttemptState).
+            PooledConnectionLifetime = TimeSpan.Zero,
+            PooledConnectionIdleTimeout = TimeSpan.Zero,
+            ConnectCallback = ConnectOnceAsync,
         };
         return new HttpClient(handler) { Timeout = System.Threading.Timeout.InfiniteTimeSpan };
+    }
+
+    /// <summary>What the connect callback knows about one attempt.</summary>
+    internal sealed class AttemptState
+    {
+        public int Connects;
+        public volatile bool Resent;
+    }
+
+    internal static readonly HttpRequestOptionsKey<AttemptState> AttemptKey = new("tungsten.attempt");
+
+    private static async ValueTask<Stream> ConnectOnceAsync(SocketsHttpConnectionContext context, CancellationToken ct)
+    {
+        if (context.InitialRequestMessage.Options.TryGetValue(AttemptKey, out var state) && Interlocked.Increment(ref state.Connects) > 1)
+        {
+            state.Resent = true;
+            throw new HttpRequestException(HttpRequestError.ConnectionError, "the HTTP stack tried to resend a lost attempt; the runtime refuses it");
+        }
+        var socket = new Socket(SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
+        try
+        {
+            await socket.ConnectAsync(context.DnsEndPoint, ct).ConfigureAwait(false);
+            return new NetworkStream(socket, ownsSocket: true);
+        }
+        catch
+        {
+            socket.Dispose();
+            throw;
+        }
     }
 
     internal static bool IsEventStream(IReadOnlyDictionary<string, string> headers) =>
@@ -320,6 +359,7 @@ internal static class Transport
     {
         HttpRequestMessage message;
         TrackedContent? content = null;
+        var attemptState = new AttemptState();
         try
         {
             message = new HttpRequestMessage(new HttpMethod(req.Method), req.Url)
@@ -327,6 +367,7 @@ internal static class Transport
                 Version = HttpVersion.Version11,
                 VersionPolicy = HttpVersionPolicy.RequestVersionExact,
             };
+            message.Options.Set(AttemptKey, attemptState);
         }
         catch (Exception e) when (e is UriFormatException or ArgumentException or InvalidOperationException)
         {
@@ -417,6 +458,11 @@ internal static class Transport
             if (caller.IsCancellationRequested)
             {
                 return new AttemptOutcome { Kind = OutcomeKind.Aborted, Sent = content is null || content.Started };
+            }
+            if (attemptState.Resent)
+            {
+                // The first connection was lost after the request went out.
+                return new AttemptOutcome { Kind = OutcomeKind.Lost, Detail = "CONNECTION_CLOSED" };
             }
             if (NotSent(e))
             {

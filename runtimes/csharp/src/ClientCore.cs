@@ -27,7 +27,7 @@ public sealed class ClientConfigException : Exception
 public sealed partial class ClientCore
 {
     /// <summary>The version of this runtime, sent as <c>X-Tungsten-Runtime: tungsten-cs/&lt;version&gt;</c>.</summary>
-    public const string Version = "0.1.0";
+    public const string Version = "0.1.1";
 
     private readonly ApiDescriptor api;
     private readonly IReadOnlyDictionary<string, Credential> auth;

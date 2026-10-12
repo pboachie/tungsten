@@ -17,7 +17,7 @@ use tungsten_ir::Ir;
 use tungsten_ir::naming::{self, Role, Target};
 
 /// The runtime version generated SDKs depend on.
-pub const DEFAULT_RUNTIME: &str = "0.1.0";
+pub const DEFAULT_RUNTIME: &str = "0.1.1";
 
 /// Resolved target options.
 #[derive(Debug, Clone, PartialEq, Eq)]

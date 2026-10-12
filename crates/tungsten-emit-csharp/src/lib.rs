@@ -310,7 +310,39 @@ fn tidy(text: &str) -> String {
         }
         out.push(l);
     }
-    out.join("\n")
+    indent_case_blocks(&out).join("\n")
+}
+
+/// Indents the brace block that follows a `case ...:` label one level, as
+/// `dotnet format` lays it out.
+fn indent_case_blocks(lines: &[&str]) -> Vec<String> {
+    let mut out: Vec<String> = lines.iter().map(|l| l.to_string()).collect();
+    let mut i = 0;
+    while i + 1 < lines.len() {
+        let label = lines[i];
+        let indent = label.len() - label.trim_start().len();
+        let next = lines[i + 1];
+        if label.trim_start().starts_with("case ")
+            && label.ends_with(':')
+            && next.trim() == "{"
+            && next.len() - next.trim_start().len() == indent
+        {
+            let close = format!("{}}}", " ".repeat(indent));
+            let mut j = i + 1;
+            while j < lines.len() {
+                if !lines[j].is_empty() {
+                    out[j] = format!("    {}", lines[j]);
+                }
+                if lines[j] == close {
+                    break;
+                }
+                j += 1;
+            }
+            i = j;
+        }
+        i += 1;
+    }
+    out
 }
 
 /// TG1021 to TG1025 for the IR.
