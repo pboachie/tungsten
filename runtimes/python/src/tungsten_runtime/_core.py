@@ -515,7 +515,15 @@ class Engine:
             return Answer(prepared)
         if page_urls is not None:
             if prepared.url in page_urls:
-                return Answer(_fail(diagnostic(op["id"], "UNEXPECTED_RESPONSE", remediation="Pagination detected a repeated effective page request URL after authentication. Fix the server's next-page Link before continuing; no repeated request was sent.")))
+                return Answer(
+                    _fail(
+                        diagnostic(
+                            op["id"],
+                            "UNEXPECTED_RESPONSE",
+                            remediation="Pagination detected a repeated effective page request URL after authentication. Fix the server's next-page Link before continuing; no repeated request was sent.",
+                        )
+                    )
+                )
             page_urls.add(prepared.url)
         answer = yield from self._send(prepared, opts)
         if (
@@ -1852,7 +1860,9 @@ class Engine:
             if initial is not None and initial != "":
                 seen.add(canonical_json(initial))
         while True:
-            answer = yield from self._call(op, current if current is not None else args, opts, override, step, request_urls)
+            answer = yield from self._call(
+                op, current if current is not None else args, opts, override, step, request_urls
+            )
             result = answer.result
             if isinstance(result, Err):
                 yield from sink(PageAnswer(result, []))
