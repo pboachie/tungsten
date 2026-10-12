@@ -34,6 +34,7 @@ internal static class Keys
         {
             "uuidv4" or "uuid4" => "uuid_v4",
             "uuid" => "uuid",
+            "asciitoken128" => "ascii_token_128",
             _ => "token",
         };
     }
@@ -43,6 +44,7 @@ internal static class Keys
     {
         "uuid_v4" => "UUIDv4 string",
         "uuid" => "UUID string",
+        "ascii_token_128" => "1-128 ASCII letters, digits, dots, underscores or hyphens",
         _ => "a non-empty printable ASCII string of at most 255 characters",
     };
 
@@ -92,6 +94,7 @@ internal static class Keys
         {
             "uuid_v4" => IsUuid(key, true),
             "uuid" => IsUuid(key, false),
+            "ascii_token_128" => key.Length is >= 1 and <= 128 && key.All(c => c is (>= 'A' and <= 'Z') or (>= 'a' and <= 'z') or (>= '0' and <= '9') or '.' or '_' or '-'),
             _ => key.Length > 0 && key.Length <= 255 && key.All(c => c >= 0x21 && c <= 0x7e),
         };
         return valid ? null : FormatDescription(format);
