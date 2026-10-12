@@ -11,6 +11,13 @@ changes.
 
 ### Added
 
+- TypeScript SDK targets can declare npm dependencies for preserved custom
+  extensions; package archives include custom source and license notices.
+- The `ascii_token_128` caller-owned idempotency format accepts 1–128 ASCII
+  letters, digits, dots, underscores or hyphens in all four SDK runtimes.
+- Rust runtime HMAC-SHA256 computation and constant-time verification
+  primitives for custom SDK extensions.
+
 - Project setup with `init --targets` and a project-aware `doctor --strict`;
   browser targets automatically include their sibling TypeScript SDK.
 - Browser registration lifecycle controller for route and framework cleanup,

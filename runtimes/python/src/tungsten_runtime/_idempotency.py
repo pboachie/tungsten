@@ -16,10 +16,12 @@ _UUID_V4 = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[
 _PRINTABLE = re.compile(r"[\x21-\x7e]+")
 
 
-def _format_kind(fmt: str | None) -> Literal["uuid_v4", "uuid", "token"]:
+def _format_kind(fmt: str | None) -> Literal["uuid_v4", "uuid", "ascii_token_128", "token"]:
     f = re.sub(r"[^a-z0-9]", "", (fmt or "").lower())
     if f in ("uuidv4", "uuid4"):
         return "uuid_v4"
+    if f == "asciitoken128":
+        return "ascii_token_128"
     return "uuid" if f == "uuid" else "token"
 
 
@@ -30,6 +32,8 @@ def key_format_description(fmt: str | None) -> str:
         return "UUIDv4 string"
     if kind == "uuid":
         return "UUID string"
+    if kind == "ascii_token_128":
+        return "1-128 ASCII letters, digits, dots, underscores or hyphens"
     return "a non-empty printable ASCII string of at most 255 characters"
 
 
@@ -41,6 +45,8 @@ def check_key_format(key: str, fmt: str | None) -> str | None:
         valid = _UUID_V4.fullmatch(key) is not None
     elif kind == "uuid":
         valid = _UUID_ANY.fullmatch(key) is not None
+    elif kind == "ascii_token_128":
+        valid = re.fullmatch(r"[A-Za-z0-9._-]{1,128}", key) is not None
     else:
         valid = 0 < len(key) <= 255 and _PRINTABLE.fullmatch(key) is not None
     return None if valid else key_format_description(fmt)

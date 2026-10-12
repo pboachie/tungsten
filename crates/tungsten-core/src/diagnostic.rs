@@ -322,7 +322,10 @@ pub mod codes {
             "TG0710",
             "macro not emitted by the TypeScript SDK (not in the canonical form)",
         ),
-        ("TG0711", "invalid TypeScript target option; default used"),
+        (
+            "TG0711",
+            "invalid TypeScript target option or custom dependency",
+        ),
         (
             "TG0712",
             "OpenID Connect scheme sent as a bearer token by the TypeScript SDK",

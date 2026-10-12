@@ -167,6 +167,7 @@ impl IdempotencyStore for FileIdempotencyStore {
 enum FormatKind {
     UuidV4,
     Uuid,
+    AsciiToken128,
     Token,
 }
 
@@ -180,6 +181,7 @@ fn format_kind(format: Option<&str>) -> FormatKind {
     match normalized.as_str() {
         "uuidv4" | "uuid4" => FormatKind::UuidV4,
         "uuid" => FormatKind::Uuid,
+        "asciitoken128" => FormatKind::AsciiToken128,
         _ => FormatKind::Token,
     }
 }
@@ -189,6 +191,7 @@ pub fn key_format_description(format: Option<&str>) -> &'static str {
     match format_kind(format) {
         FormatKind::UuidV4 => "UUIDv4 string",
         FormatKind::Uuid => "UUID string",
+        FormatKind::AsciiToken128 => "1-128 ASCII letters, digits, dots, underscores or hyphens",
         FormatKind::Token => "a non-empty printable ASCII string of at most 255 characters",
     }
 }
@@ -224,6 +227,13 @@ pub fn check_key_format(key: &str, format: Option<&str>) -> Option<&'static str>
     let valid = match format_kind(format) {
         FormatKind::UuidV4 => is_uuid(key, true),
         FormatKind::Uuid => is_uuid(key, false),
+        FormatKind::AsciiToken128 => {
+            !key.is_empty()
+                && key.len() <= 128
+                && key
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+        }
         FormatKind::Token => {
             !key.is_empty() && key.len() <= 255 && key.bytes().all(|b| (0x21..=0x7e).contains(&b))
         }
