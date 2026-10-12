@@ -344,10 +344,10 @@ impl ClientCore {
                 step,
             )
             .await?;
-        if let Some(page_urls) = page_urls {
-            if !page_urls.insert(prepared.url.clone()) {
-                return Err(crate::types::Error::new(crate::envelope::Diag::new(op.id.clone(), crate::types::Category::UnexpectedResponse).remediation("Pagination detected a repeated effective page request URL after authentication. Fix the server's next-page Link before continuing; no repeated request was sent.").build()));
-            }
+        if let Some(page_urls) = page_urls
+            && !page_urls.insert(prepared.url.clone())
+        {
+            return Err(crate::types::Error::new(crate::envelope::Diag::new(op.id.clone(), crate::types::Category::UnexpectedResponse).remediation("Pagination detected a repeated effective page request URL after authentication. Fix the server's next-page Link before continuing; no repeated request was sent.").build()));
         }
         let mut response = match self.send_tracked(&prepared, opts, request_url).await {
             Err(rejected)
