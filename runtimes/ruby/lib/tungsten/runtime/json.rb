@@ -20,7 +20,7 @@ module Tungsten
     Binary = Data.define(:data, :filename, :content_type) do
       def initialize(data:, filename: nil, content_type: nil)
         bytes = data.to_s.dup.force_encoding(Encoding::BINARY).freeze
-        super(data: bytes, filename: filename, content_type: content_type)
+        super(data: bytes, filename: filename&.dup&.freeze, content_type: content_type&.dup&.freeze)
       end
 
       def inspect = "#<Tungsten::Runtime::Binary #{data.bytesize} bytes>"
@@ -39,6 +39,8 @@ module Tungsten
       MAX_SAFE = 9_007_199_254_740_992
       INT64_MIN = -(2**63)
       INT64_MAX = (2**63) - 1
+      # Bound recursion before parsing or traversing caller-controlled values.
+      MAX_DEPTH = 512
 
       # Raised when a text is not one JSON document.
       class ParseError < StandardError; end
@@ -51,8 +53,8 @@ module Tungsten
         source = text.to_s.dup.force_encoding(Encoding::UTF_8)
         source = source.scrub("\uFFFD") unless source.valid_encoding?
         source = source.delete_prefix("\uFEFF")
-        normalize(JSON.parse(source, max_nesting: 10_000, allow_nan: false, create_additions: false))
-      rescue JSON::ParserError, EncodingError => e
+        normalize(JSON.parse(source, max_nesting: MAX_DEPTH, allow_nan: false, create_additions: false))
+      rescue JSON::ParserError, EncodingError, ArgumentError => e
         raise ParseError, e.message
       end
 
@@ -64,10 +66,11 @@ module Tungsten
       end
 
       # A parsed value with the number rules applied.
-      def normalize(value)
+      def normalize(value, depth = 0)
+        check_depth(depth)
         case value
-        when Hash then value.each_with_object({}) { |(k, v), out| out[k] = normalize(v) }
-        when Array then value.map { |v| normalize(v) }
+        when Hash then value.each_with_object({}) { |(k, v), out| out[k] = normalize(v, depth + 1) }
+        when Array then value.map { |v| normalize(v, depth + 1) }
         when Float then number(value)
         when Integer then value.between?(INT64_MIN, INT64_MAX) ? value : value.to_f
         else value
@@ -88,11 +91,11 @@ module Tungsten
       # items are dropped. Raises ArgumentError for a value that has no JSON
       # form (an object, a non-finite number).
       def from_ruby(value, depth = 0)
-        raise ArgumentError, "the value is nested too deeply" if depth > 10_000
+        check_depth(depth)
 
         case value
         when nil, true, false, Binary then value
-        when String then value.encoding == Encoding::BINARY ? Binary.new(data: value) : utf8(value)
+        when String then value.encoding == Encoding::BINARY ? Binary.new(data: value) : utf8(value).dup
         when Symbol then value.to_s
         when Integer then value.between?(INT64_MIN, INT64_MAX) ? value : value.to_f
         when Float
@@ -103,7 +106,7 @@ module Tungsten
           value.each_with_object({}) do |(k, v), out|
             next if UNSET.equal?(v)
 
-            out[k.to_s] = from_ruby(v, depth + 1)
+            out[k.to_s.dup] = from_ruby(v, depth + 1)
           end
         when Array then value.reject { |v| UNSET.equal?(v) }.map { |v| from_ruby(v, depth + 1) }
         when Model then from_ruby(value.to_h, depth + 1)
@@ -136,7 +139,8 @@ module Tungsten
         out
       end
 
-      def write(out, value, canonical)
+      def write(out, value, canonical, depth = 0)
+        check_depth(depth)
         case value
         when nil then out << "null"
         when true then out << "true"
@@ -147,7 +151,7 @@ module Tungsten
           out << "["
           value.each_with_index do |item, i|
             out << "," if i.positive?
-            write(out, item, canonical)
+            write(out, item, canonical, depth + 1)
           end
           out << "]"
         when Hash
@@ -157,11 +161,11 @@ module Tungsten
           keys.each_with_index do |k, i|
             out << "," if i.positive?
             out << quote(k) << ":"
-            write(out, value.key?(k) ? value[k] : value[k.to_sym], canonical)
+            write(out, value.key?(k) ? value[k] : value[k.to_sym], canonical, depth + 1)
           end
           out << "}"
         when Binary then write_binary(out, value, canonical)
-        else write(out, from_ruby(value), canonical)
+        else write(out, from_ruby(value), canonical, depth + 1)
         end
       end
 
@@ -268,12 +272,18 @@ module Tungsten
       end
 
       # A deep copy of a JSON value.
-      def copy(value)
+      def copy(value, depth = 0)
+        check_depth(depth)
         case value
-        when Hash then value.each_with_object({}) { |(k, v), out| out[k] = copy(v) }
-        when Array then value.map { |v| copy(v) }
+        when Hash then value.each_with_object({}) { |(k, v), out| out[k.dup] = copy(v, depth + 1) }
+        when Array then value.map { |v| copy(v, depth + 1) }
+        when String then value.dup
         else value
         end
+      end
+
+      def check_depth(depth)
+        raise ArgumentError, "the value is nested too deeply" if depth > MAX_DEPTH
       end
 
       # The JSON type of a value: null, boolean, integer, number, string,

@@ -19,6 +19,10 @@ module Tungsten
     class EventStream
       include Enumerable
 
+      # Like the transport deadline, this must cross the call pipeline's
+      # StandardError handlers before collect turns it into a diagnostic.
+      class CollectionDeadline < Exception; end # rubocop:disable Lint/InheritException
+
       # The connection being read and where the stream is.
       Open = Struct.new(:body, :parser, :decoder, :queue, :ended, :oversize, :meta, :delivered_count, :key, :key_header, :check,
                         :secrets, :timeout_ms, :repeatable, :reconnects, :last_id, :last_retry, :delivered, :replaying,
@@ -121,22 +125,25 @@ module Tungsten
       # once the kept events hold more than ClientOptions `max_collect_bytes`
       # of JSON or it ran longer than `max_collect_ms`.
       def collect
-        started = Transport.monotonic_ms
+        return [[], @error] unless @core
+
         events = []
         size = 0
-        each do |event|
-          if Transport.monotonic_ms - started > @core.max_collect_ms
-            close
-            return [events, @core.send(:over_budget, @op, false, events.length)]
+        Timeout.timeout(@core.max_collect_ms / 1000.0, CollectionDeadline) do
+          each do |event|
+            size += Json.text(event.raw).bytesize
+            if size > @core.max_collect_bytes
+              return [events, @core.send(:over_budget, @op, true, events.length)]
+            end
+            events << event
           end
-          size += Json.text(event.raw).bytesize
-          if size > @core.max_collect_bytes
-            close
-            return [events, @core.send(:over_budget, @op, true, events.length)]
-          end
-          events << event
         end
         [events, @error]
+      rescue CollectionDeadline
+        @error = @core.send(:over_budget, @op, false, events.length)
+        [events, @error]
+      ensure
+        close
       end
 
       private

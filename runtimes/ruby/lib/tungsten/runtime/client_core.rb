@@ -474,6 +474,12 @@ module Tungsten
         end
         headers.secrets.each { |s| secrets << s }
         hidden = auth.plan.query.map(&:first)
+        op.argument_params.each do |p|
+          next unless p.location == "query" && args.key?(p.name)
+          next if request_display_value(op, p, args[p.name]) == args[p.name]
+
+          hidden.concat(Serialize.query_param(p, args[p.name]).map { |part| query_pairs(part).first&.first }.compact)
+        end
         Prepared.new(op: op, args: args, http_method: method, url: full_url, display_url: display_url, headers: headers,
                      body: encoded, key: key, key_header: header, auth_query: auth.plan.query, hidden_query: hidden,
                      secrets: secrets, oauth: auth.oauth)
@@ -497,6 +503,32 @@ module Tungsten
         segment.empty? || (rest.empty? && count.between?(1, 2))
       end
 
+      def request_display_value(op, param, value)
+        return REDACTED if Helpers.sensitive_arg?(op, [param.name]) || Util.looks_sensitive?(param.wire)
+
+        Util.redact_sensitive_keys(Helpers.redact_below(op, [param.name], value))
+      end
+
+      # Redirects and pagination can supply paths other than the template.
+      # Hide the path conservatively when it may carry sensitive arguments.
+      def display_override_url(op, args, url)
+        uri = URI.parse(url)
+        hidden = []
+        op.argument_params.each do |p|
+          next unless args.key?(p.name)
+          next if request_display_value(op, p, args[p.name]) == args[p.name]
+
+          if p.location == "path"
+            uri.path = "/#{Serialize.encode_component(REDACTED)}"
+          elsif p.location == "query"
+            hidden.concat(Serialize.query_param(p, args[p.name]).flat_map { |part| query_pairs(part).map(&:first) })
+          end
+        end
+        with_query(uri.to_s, [], hidden, replace: true)
+      rescue URI::Error
+        url # The caller rejects invalid URLs before sending.
+      end
+
       # [url, display url], or an Err.
       def build_url(op, args, plan, url_override)
         if @base_url.empty? && url_override.nil?
@@ -506,7 +538,7 @@ module Tungsten
         params = op.argument_params
         if url_override
           full = url_override
-          display = url_override
+          display = display_override_url(op, args, url_override)
           unless plan.query.empty?
             begin
               full = with_query(full, plan.query, [], replace: false)
@@ -518,6 +550,7 @@ module Tungsten
         else
           unknown = nil
           missing = nil
+          displayed_path = {}
           built = op.path.gsub(/\{([^{}]+)\}/) do
             inner = Regexp.last_match(1)
             p = params.find { |x| x.location == "path" && x.wire == inner } || params.find { |x| x.location == "path" && x.name == inner }
@@ -528,6 +561,7 @@ module Tungsten
               missing ||= p
               "{#{inner}}"
             else
+              displayed_path[inner] = Serialize.path_param(p, request_display_value(op, p, args[p.name]))
               Serialize.path_param(p, args[p.name])
             end
           end
@@ -557,7 +591,7 @@ module Tungsten
             next unless p.location == "query" && args.key?(p.name)
 
             serialized = Serialize.query_param(p, args[p.name])
-            shown.concat(serialized)
+            shown.concat(Serialize.query_param(p, request_display_value(op, p, args[p.name])))
             parts.concat(serialized)
           end
           plan.query.each do |k, v|
@@ -567,7 +601,8 @@ module Tungsten
           root = @base_url.sub(%r{/+\z}, "")
           join = ->(list) { list.empty? ? "" : (built.include?("?") ? "&" : "?") + list.join("&") }
           full = root + built + join.call(parts)
-          display = root + built + join.call(shown)
+          displayed = op.path.gsub(/\{([^{}]+)\}/) { displayed_path.fetch(Regexp.last_match(1)) }
+          display = root + displayed + join.call(shown)
         end
         return bad_base(op) unless valid_base_url?(full)
 
@@ -631,7 +666,9 @@ module Tungsten
           next unless args.key?(p.name) && !args[p.name].nil?
 
           case p.location
-          when "header" then headers.set(p.wire, Serialize.header_param(p, args[p.name]), false)
+          when "header"
+            secret = request_display_value(op, p, args[p.name]) != args[p.name]
+            headers.set(p.wire, Serialize.header_param(p, args[p.name]), secret)
           when "cookie" then cookies << Serialize.cookie_param(p, args[p.name])
           end
         end
@@ -708,7 +745,8 @@ module Tungsten
         return nil unless same_origin?(base, target) && target.userinfo.nil?
 
         sent = with_query(target.to_s, p.auth_query, [], replace: false)
-        [sent, with_query(sent, [], p.hidden_query, replace: true)]
+        display = display_override_url(p.op, p.args, sent)
+        [sent, with_query(display, [], p.hidden_query, replace: true)]
       rescue URI::Error
         nil
       end
@@ -1015,7 +1053,9 @@ module Tungsten
           answer = call_with(target, raw_args, opts.with(confirm: nil, verify: false), nil, nil)
           return answer if answer.is_a?(Err)
 
-          Ok.new(value: result.with(server_preview: answer.raw.nil? ? UNSET : answer.raw), meta: answer.meta)
+          fields = op.agent["sensitive_response_fields"] | target.agent["sensitive_response_fields"]
+          shown = answer.raw.nil? ? UNSET : Util.redact_paths(answer.raw, fields)
+          Ok.new(value: result.with(server_preview: shown), meta: answer.meta)
         else
           Ok.new(value: result, meta: ResponseMeta.local)
         end

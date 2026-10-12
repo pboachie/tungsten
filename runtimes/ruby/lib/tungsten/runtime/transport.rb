@@ -3,6 +3,7 @@
 
 require "net/http"
 require "uri"
+require "timeout"
 
 module Tungsten
   module Runtime
@@ -11,11 +12,15 @@ module Tungsten
     # of reads itself), no automatic retries (`max_retries = 0`), no
     # compression (`Accept-Encoding` is not sent), an explicit `Accept` and
     # `User-Agent`, `Content-Length: 0` on a bodiless POST, PUT or PATCH,
-    # and a deadline per attempt: the open, read and write timeouts are the
-    # time left on a monotonic clock. An event stream's body is handed back
+    # and an absolute deadline per attempt, including all response headers:
+    # the open, read and write timeouts also use the time left on a
+    # monotonic clock. An event stream's body is handed back
     # unread; each read of it waits at most the idle timeout (else the
     # attempt timeout), and closing it closes the connection.
     module Transport
+      # Internal control flow must escape broad StandardError handlers in
+      # Net::HTTP and the call pipeline. Only the deadline owner catches it.
+      class DeadlineExceeded < Exception; end # rubocop:disable Lint/InheritException
       # What one attempt gave. `kind` is :response, :streaming, :not_sent
       # (the request never left: DNS, connect, TLS), :lost (the connection
       # failed after the request was written) or :timeout. A :response has
@@ -107,29 +112,40 @@ module Tungsten
       # @param stream [Boolean] hand a 2xx text/event-stream answer back unread
       # @param idle_ms [Integer, nil] the silence a stream read waits for (default: timeout_ms)
       def attempt(url:, method:, headers:, body:, timeout_ms:, stream: false, idle_ms: nil)
-        uri = URI.parse(url)
-        deadline = monotonic_ms + timeout_ms
-        left = -> { [(deadline - monotonic_ms) / 1000.0, 0.001].max }
-        http = Net::HTTP.new(uri.hostname, uri.port)
-        http.use_ssl = uri.scheme == "https"
-        http.max_retries = 0
-        http.open_timeout = left.call
-        http.read_timeout = left.call
-        http.write_timeout = left.call
-        http.keep_alive_timeout = 0
-        begin
-          http.start
-        rescue Net::OpenTimeout, IO::TimeoutError
-          return Outcome.new(kind: :timeout)
-        rescue StandardError => e
-          return Outcome.new(kind: :not_sent, detail: detail(e, false))
-        end
-        request = build(uri, method, headers, body)
-        return Outcome.new(kind: :not_sent, detail: request) if request.is_a?(String)
+        http = nil
+        handed_off = false
+        Timeout.timeout(timeout_ms / 1000.0, DeadlineExceeded) do
+          uri = URI.parse(url)
+          deadline = monotonic_ms + timeout_ms
+          left = -> { [(deadline - monotonic_ms) / 1000.0, 0.001].max }
+          http = Net::HTTP.new(uri.hostname, uri.port)
+          http.use_ssl = uri.scheme == "https"
+          http.max_retries = 0
+          http.open_timeout = left.call
+          http.read_timeout = left.call
+          http.write_timeout = left.call
+          http.keep_alive_timeout = 0
+          begin
+            http.start
+          rescue Net::OpenTimeout, IO::TimeoutError, DeadlineExceeded
+            return Outcome.new(kind: :timeout)
+          rescue StandardError => e
+            return Outcome.new(kind: :not_sent, detail: detail(e, false))
+          end
+          request = build(uri, method, headers, body)
+          return Outcome.new(kind: :not_sent, detail: request) if request.is_a?(String)
 
-        exchange(http, request, stream, left, idle_ms ? idle_ms / 1000.0 : nil, timeout_ms / 1000.0)
+          result = exchange(http, request, stream, left, idle_ms ? idle_ms / 1000.0 : nil, timeout_ms / 1000.0)
+          handed_off = result.kind == :streaming
+          result
+        end
+      rescue DeadlineExceeded
+        handed_off = false
+        Outcome.new(kind: :timeout)
       rescue URI::Error, ArgumentError
         Outcome.new(kind: :not_sent, detail: "INVALID_REQUEST")
+      ensure
+        close(http) if http && (!handed_off || $!)
       end
 
       def build(uri, method, headers, body)
@@ -178,7 +194,7 @@ module Tungsten
         end
         begin
           first = chunks.next
-        rescue Net::ReadTimeout, Net::WriteTimeout, IO::TimeoutError
+        rescue Net::ReadTimeout, Net::WriteTimeout, IO::TimeoutError, DeadlineExceeded
           close(http)
           return Outcome.new(kind: :timeout)
         rescue StandardError => e
@@ -207,7 +223,7 @@ module Tungsten
           body << item[1].b
         rescue StopIteration
           break
-        rescue Net::ReadTimeout, IO::TimeoutError
+        rescue Net::ReadTimeout, IO::TimeoutError, DeadlineExceeded
           failure = "timeout"
           break
         rescue StandardError

@@ -100,19 +100,25 @@ module Tungsten
       def accepts?(value) = validate(value).empty?
 
       def run(schema, value)
+        # Descriptors share validators across clients. Keep each validation's
+        # issue lists on its own worker, including recursive union probes.
+        self.class.new(schema, @defs).send(:run_validation, schema, value)
+      end
+
+      # Whether `schema` admits `value`, in a fresh run (union variants).
+      def admits?(schema, value)
+        run(schema, value).empty?
+      end
+
+      private
+
+      def run_validation(schema, value)
         @structure = []
         @constraints = []
         @unknown = []
         check(schema, value, [], 0)
         @structure + @constraints + @unknown
       end
-
-      # Whether `schema` admits `value`, in a fresh run (union variants).
-      def admits?(schema, value)
-        Schema.new(schema, @defs).run(schema, value).empty?
-      end
-
-      private
 
       def bad(path, message) = @structure << Issue.new(path: path, message: message)
       def limit(path, message) = @constraints << Issue.new(path: path, message: message)
@@ -194,14 +200,37 @@ module Tungsten
       def array(schema, value, path, depth)
         return bad(path, "expected an array, found #{describe(value)}") unless value.is_a?(Array)
 
-        value.each_with_index { |item, i| check(schema["items"], item, path + [i], depth + 1) }
         n = value.length
         limit(path, "must have at least #{schema['min_items']} items") if schema["min_items"] && n < schema["min_items"]
-        limit(path, "must have at most #{schema['max_items']} items") if schema["max_items"] && n > schema["max_items"]
+        if schema["max_items"] && n > schema["max_items"]
+          # Reject an oversized array before traversing or comparing its items.
+          return limit(path, "must have at most #{schema['max_items']} items")
+        end
+
+        value.each_with_index { |item, i| check(schema["items"], item, path + [i], depth + 1) }
         return unless schema["unique"]
 
-        repeated = value.each_index.any? { |i| value[0...i].any? { |b| Json.same?(value[i], b) } }
+        seen = {}
+        repeated = value.any? do |item|
+          bucket = (seen[uniqueness_hash(item)] ||= [])
+          duplicate = bucket.any? { |other| Json.same?(item, other) }
+          bucket << item unless duplicate
+          duplicate
+        end
         limit(path, "items must be unique") if repeated
+      end
+
+      # Hash structurally equal JSON values alike, then confirm matches with
+      # same? so hash collisions never turn distinct values into duplicates.
+      # Numeric forms and Binary metadata differ from Ruby's Hash equality.
+      def uniqueness_hash(value)
+        case value
+        when Integer, Float then [:number, value.to_f].hash
+        when Binary then [:binary, value.data].hash
+        when Array then [:array, value.map { |item| uniqueness_hash(item) }].hash
+        when Hash then [:object, value.transform_values { |item| uniqueness_hash(item) }].hash
+        else [value.class, value].hash
+        end
       end
 
       def object(schema, value, path, depth)

@@ -257,9 +257,17 @@ module Tungsten
           list.each do |x|
             bin = Json.binary_of(x)
             if !UNSET.equal?(bin)
+              content_type = bin.content_type || "application/octet-stream"
+              unless valid_header_value?(content_type)
+                return SerializationError.new(parameter: "body", expected: "multipart file content types without header control characters",
+                                              value: value)
+              end
+
+              # Keep the checked header value stable until the body is sent.
+              content_type = content_type.dup.freeze
               shown << binary_display(bin.bytesize, bin.content_type)
               parts << Part.new(name: k, kind: :file, text: nil, data: bin.data, filename: bin.filename || k,
-                                content_type: bin.content_type || "application/octet-stream")
+                                content_type: content_type)
             elsif x.is_a?(Hash)
               parts << Part.new(name: k, kind: :json, text: Json.text(x), data: nil, filename: nil, content_type: nil)
               shown << x
