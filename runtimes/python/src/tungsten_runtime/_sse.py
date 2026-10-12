@@ -46,9 +46,9 @@ class SseParser:
         "_has_data",
         "_id",
         "_max",
+        "_pending_cr",
         "_retry",
         "_started",
-        "_pending_cr",
     )
 
     def __init__(self, max_event_bytes: int = DEFAULT_MAX_EVENT_BYTES) -> None:

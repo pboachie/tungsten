@@ -187,20 +187,51 @@ async def async_store_call(fn: Callable[[], object]) -> object:
     return await asyncio.shield(asyncio.wrap_future(future))
 
 
+async def async_store_method(fn: Callable[..., object], *args: str) -> object:
+    """Dispatch only the selected method; other async methods are irrelevant."""
+    result = fn(*args) if inspect.iscoroutinefunction(fn) else await async_store_call(lambda: fn(*args))
+    return await result if inspect.isawaitable(result) else result
+
+
+async def async_reserve_key(store: object, scope: str, logical_id: str, candidate: str) -> object:
+    reserve = getattr(store, "reserve", None)
+    if callable(reserve):
+        return await async_store_method(reserve, scope, logical_id, candidate)
+    return await _reserve_legacy_async(store, scope, logical_id, candidate)
+
+
+_legacy_tasks: set[asyncio.Task[str]] = set()
+
+
 async def _reserve_legacy_async(store: Any, scope: str, logical_id: str, candidate: str) -> str:
+    # Keep the transaction lock through a late worker completion after the
+    # caller cancels. Otherwise a second client could overwrite its candidate.
+    # Cancelled waiters never become retained transactions or submit disk work.
     while not _legacy_lock.acquire(blocking=False):
         await asyncio.sleep(0.001)
-
-    async def invoke(fn: Any, *args: str) -> object:
-        result = fn(*args)
-        return await result if inspect.isawaitable(result) else result
-
     try:
-        existing = await invoke(store.get, scope, logical_id)
+        task = asyncio.create_task(_legacy_transaction(store, scope, logical_id, candidate))
+    except BaseException:
+        _legacy_lock.release()
+        raise
+    _legacy_tasks.add(task)
+
+    def completed(task: asyncio.Task[str]) -> None:
+        _legacy_tasks.discard(task)
+        if not task.cancelled():
+            task.exception()  # Retrieve late failures if the caller already left.
+
+    task.add_done_callback(completed)
+    return await asyncio.shield(task)
+
+
+async def _legacy_transaction(store: Any, scope: str, logical_id: str, candidate: str) -> str:
+    try:
+        existing = await async_store_method(store.get, scope, logical_id)
         if isinstance(existing, str) and existing:
             return existing
-        await invoke(store.put, scope, logical_id, candidate)
-        if await invoke(store.get, scope, logical_id) != candidate:
+        await async_store_method(store.put, scope, logical_id, candidate)
+        if await async_store_method(store.get, scope, logical_id) != candidate:
             raise ValueError("the key could not be stored")
         return candidate
     finally:

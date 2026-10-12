@@ -176,6 +176,7 @@ class StreamFailed:
 
 type ReadOutcome = Chunk | StreamEnded | StreamFailed
 
+
 @dataclass(frozen=True, slots=True)
 class StoreReserve:
     store: object
@@ -195,8 +196,18 @@ class Bounded:
 
 
 type Effect = (
-    Bounded | Send | Sleep | StoreGet | StorePut | StoreReserve
-    | Observe | Invoke | Shared | Emit | ReadChunk | CloseStream
+    Bounded
+    | Send
+    | Sleep
+    | StoreGet
+    | StorePut
+    | StoreReserve
+    | Observe
+    | Invoke
+    | Shared
+    | Emit
+    | ReadChunk
+    | CloseStream
 )
 
 

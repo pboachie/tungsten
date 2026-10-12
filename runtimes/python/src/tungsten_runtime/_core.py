@@ -22,7 +22,8 @@ import threading
 import time
 import uuid
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field as dataclass_field, replace
+from dataclasses import dataclass, replace
+from dataclasses import field as dataclass_field
 from typing import Any, Final, Literal, cast
 from urllib.parse import urljoin, urlsplit
 
@@ -47,13 +48,13 @@ from ._classify import (
 from ._confirm import CONFIRMATION_TTL_MS, check_token, issue_token, token_expiry
 from ._effects import (
     Answered,
-    Bounded,
-    PollExpired,
     AttemptRequest,
+    Bounded,
     Chunk,
     Flow,
     Lost,
     NotSent,
+    PollExpired,
     StreamEnded,
     StreamFailed,
     Streaming,
@@ -1841,7 +1842,11 @@ class Engine:
         request_urls: set[str] | None = set() if field(pagination, "style") == "link_header" else None
         count = 0
         max_pages = opts.get("max_pages")
-        budget = max_pages if isinstance(max_pages, int) and not isinstance(max_pages, bool) and max_pages > 0 else None
+        budget = (
+            max_pages
+            if isinstance(max_pages, int) and not isinstance(max_pages, bool) and max_pages > 0
+            else None
+        )
         if field(pagination, "style") == "cursor" and current is not None:
             initial = current.get(arg_name(op, str_field(pagination, "request_param") or ""))
             if initial is not None and initial != "":
@@ -1868,12 +1873,7 @@ class Engine:
                     cursor = get_path(items[-1], item_field)
                 more_field = str_field(pagination, "has_more_field")
                 more = get_path(body, more_field) if more_field else UNSET
-                if (
-                    more is False
-                    or cursor is UNSET
-                    or cursor is None
-                    or cursor == ""
-                ):
+                if more is False or cursor is UNSET or cursor is None or cursor == "":
                     next_value = None
                 else:
                     next_value = cursor
@@ -1944,18 +1944,36 @@ class Engine:
                 if key in seen:
                     stop = "Pagination detected a repeated cursor or page URL. Fix the server's next-page value before continuing."
                 elif budget is not None and count >= budget:
-                    stop = "Pagination reached max_pages before another request. Increase max_pages to continue."
+                    stop = (
+                        "Pagination reached max_pages before another request. Increase max_pages to continue."
+                    )
                 else:
                     seen.add(key)
             page_result = Ok(
-                value=Page(items=self._page_items(op, items), body=result.value, next=None if stop else next_value),
+                value=Page(
+                    items=self._page_items(op, items), body=result.value, next=None if stop else next_value
+                ),
                 meta=result.meta,
             )
             more = yield from sink(PageAnswer(page_result, items))
             if not more:
                 return
             if stop:
-                yield from sink(PageAnswer(_fail(diagnostic(op["id"], "UNEXPECTED_RESPONSE", http_status=result.meta.status, request_id=result.meta.request_id, remediation=stop, attempts=result.meta.attempts)), []))
+                yield from sink(
+                    PageAnswer(
+                        _fail(
+                            diagnostic(
+                                op["id"],
+                                "UNEXPECTED_RESPONSE",
+                                http_status=result.meta.status,
+                                request_id=result.meta.request_id,
+                                remediation=stop,
+                                attempts=result.meta.attempts,
+                            )
+                        ),
+                        [],
+                    )
+                )
                 return
             if next_value is None:
                 return
@@ -2356,8 +2374,17 @@ class Engine:
                     flow.close()
                     if last is not None and not is_mutation(op):
                         return Answer(replace(last.result, timed_out=True), last.raw)
-                    return Answer(_fail(diagnostic(op["id"], "OUTCOME_UNKNOWN" if is_mutation(op) else "TRANSPORT_FAILED",
-                        retryable="never", remediation="The polling budget expired during the call.")), UNSET)
+                    return Answer(
+                        _fail(
+                            diagnostic(
+                                op["id"],
+                                "OUTCOME_UNKNOWN" if is_mutation(op) else "TRANSPORT_FAILED",
+                                retryable="never",
+                                remediation="The polling budget expired during the call.",
+                            )
+                        ),
+                        UNSET,
+                    )
                 finally:
                     flow.close()
             result = answer.result
@@ -2365,8 +2392,17 @@ class Engine:
                 if budget > 0 and _monotonic_ms() >= deadline and last is not None and not is_mutation(op):
                     return Answer(replace(last.result, timed_out=True), last.raw)
                 if budget > 0 and _monotonic_ms() >= deadline and not is_mutation(op):
-                    return Answer(_fail(diagnostic(op["id"], "TRANSPORT_FAILED", retryable="never",
-                        remediation="The polling budget expired before any observation completed.")), UNSET)
+                    return Answer(
+                        _fail(
+                            diagnostic(
+                                op["id"],
+                                "TRANSPORT_FAILED",
+                                retryable="never",
+                                remediation="The polling budget expired before any observation completed.",
+                            )
+                        ),
+                        UNSET,
+                    )
                 return answer
             elapsed = _monotonic_ms() - started
             if budget > 0 and elapsed >= budget:
@@ -2870,13 +2906,6 @@ class _Collector:
         self.meta = page.result.meta
         self.pages += 1
         return self.pages < self.limit
-
-
-def _same(a: object, b: object) -> bool:
-    try:
-        return canonical_json(a) == canonical_json(b)
-    except (TypeError, RecursionError):
-        return False
 
 
 def _valid_url(url: str) -> bool:

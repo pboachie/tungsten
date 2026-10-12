@@ -25,10 +25,9 @@ import httpx
 
 from ._effects import (
     Answered,
-    Bounded,
-    PollExpired,
     AttemptOutcome,
     AttemptRequest,
+    Bounded,
     Chunk,
     CloseStream,
     Effect,
@@ -38,6 +37,7 @@ from ._effects import (
     Lost,
     NotSent,
     Observe,
+    PollExpired,
     ReadChunk,
     ReadOutcome,
     Send,
@@ -419,23 +419,27 @@ class SyncDriver:
     def _perform(self, effect: Effect) -> object:
         if isinstance(effect, Bounded):
             if isinstance(effect.effect, Send):
-                effect = replace(effect, effect=Send(replace(effect.effect.request, deadline_ms=effect.deadline_ms)))
+                effect = replace(
+                    effect, effect=Send(replace(effect.effect.request, deadline_ms=effect.deadline_ms))
+                )
             remaining = effect.deadline_ms / 1000 - time.monotonic()
             if remaining <= 0:
                 raise PollExpired()
             if not self._poll_workers.acquire(timeout=remaining):
                 raise PollExpired()
             completed = threading.Event()
-            result: list[object] = []
+            bounded_result: list[object] = []
+
             def perform() -> None:
                 try:
                     if time.monotonic() * 1000 >= effect.deadline_ms:
-                        result.extend((None, PollExpired()))
+                        bounded_result.extend((None, PollExpired()))
                     else:
-                        result.extend(self._perform_safely(cast(Effect, effect.effect)))
+                        bounded_result.extend(self._perform_safely(cast(Effect, effect.effect)))
                 finally:
                     self._poll_workers.release()
                     completed.set()
+
             # An abandoned synchronous effect cannot resume the calling flow.
             # In-flight network work may finish, so mutations remain unknown.
             threading.Thread(target=perform, daemon=True).start()
@@ -443,7 +447,7 @@ class SyncDriver:
                 if isinstance(effect.effect, Send):
                     return TimedOut()
                 raise PollExpired()
-            value, error = result
+            value, error = bounded_result
             if isinstance(error, Exception):
                 raise error
             return value
@@ -608,7 +612,9 @@ class AsyncDriver:
     async def _perform(self, effect: Effect) -> object:
         if isinstance(effect, Bounded):
             if isinstance(effect.effect, Send):
-                effect = replace(effect, effect=Send(replace(effect.effect.request, deadline_ms=effect.deadline_ms)))
+                effect = replace(
+                    effect, effect=Send(replace(effect.effect.request, deadline_ms=effect.deadline_ms))
+                )
             remaining = effect.deadline_ms / 1000 - time.monotonic()
             if remaining <= 0:
                 raise PollExpired()
@@ -641,20 +647,17 @@ class AsyncDriver:
             await asyncio.sleep(max(0.0, effect.ms) / 1000)
             return None
         if isinstance(effect, StoreGet | StorePut | StoreReserve):
-            from .idempotency import async_store_call
+            from .idempotency import async_reserve_key, async_store_method
 
-            methods = (
-                ("reserve", "get", "put")
-                if isinstance(effect, StoreReserve)
-                else (("get",) if isinstance(effect, StoreGet) else ("put",))
+            if isinstance(effect, StoreReserve):
+                return await async_reserve_key(effect.store, effect.scope, effect.logical_id, effect.key)
+            method = getattr(effect.store, "get" if isinstance(effect, StoreGet) else "put")
+            args = (
+                (effect.scope, effect.logical_id)
+                if isinstance(effect, StoreGet)
+                else (effect.scope, effect.logical_id, effect.key)
             )
-            if any(inspect.iscoroutinefunction(getattr(effect.store, name, None)) for name in methods):
-                result = _store_call(effect)
-            else:
-                result = await async_store_call(lambda: _store_call(effect))
-            if inspect.isawaitable(result):
-                return await cast(Awaitable[object], result)
-            return result
+            return await async_store_method(method, *args)
         if isinstance(effect, Observe):
             try:
                 result = effect.fn(*effect.args)
