@@ -31,7 +31,7 @@ public final class ClientCore {
     static final int MAX_ARG_DEPTH = 256;
 
     final ApiDescriptor api;
-    final Map<String, Credential> auth;
+    final Map<String, AuthCredential> auth;
     final Map<String, String> headers;
     final String baseUrl;
     final Duration timeout;

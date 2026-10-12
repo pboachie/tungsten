@@ -10,7 +10,7 @@ import java.util.TreeMap;
 
 /**
  * The authorization-code helpers of one OAuth2 scheme, as generated clients expose them
- * ({@code client.oauth()}). Configure the scheme with {@code Credential.parts({flow:
+ * ({@code client.oauth()}). Configure the scheme with {@code AuthCredential.parts({flow:
  * "authorizationCode", client_id, client_secret?, redirect_uri?})}. Failures are AUTH_FAILED
  * envelopes.
  */
