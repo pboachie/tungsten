@@ -17,6 +17,8 @@ changes.
 
 - Opt-in guided `init` with multi-output selection, consent before writes,
   explicit non-interactive generation and configuration-preserving resume.
+- Bounded offline Swagger 2 conversion through the OpenAPI loader, preserving
+  local definitions, parameter serialization, media types and authentication.
 
 - TypeScript SDK targets can declare npm dependencies for preserved custom
   extensions; package archives include custom source and license notices.
