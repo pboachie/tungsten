@@ -159,8 +159,31 @@ pub(super) fn import(args: &mut InitArgs) -> Result<(), String> {
     if root.get("swagger").is_none() {
         return Ok(());
     }
-    let converted = tungsten_openapi::swagger::convert(&root)
+    let mut converted = tungsten_openapi::swagger::convert(&root)
         .map_err(|error| format!("Swagger conversion failed: {}", error.message))?;
+    if let Some(paths) = converted
+        .get_mut("paths")
+        .and_then(serde_json::Value::as_object_mut)
+    {
+        for item in paths
+            .values_mut()
+            .filter_map(serde_json::Value::as_object_mut)
+        {
+            for method in [
+                "get", "post", "put", "patch", "delete", "head", "options", "trace",
+            ] {
+                if let Some(op) = item
+                    .get_mut(method)
+                    .and_then(serde_json::Value::as_object_mut)
+                {
+                    op.insert("x-tungsten-imported".into(), serde_json::Value::Bool(true));
+                    // Imported annotations cannot review their own safety or origins.
+                    op.remove("x-tungsten-reviewed-safety");
+                    op.remove("x-tungsten-reviewed-origins");
+                }
+            }
+        }
+    }
     for name in ["tungsten.yml", "agent.yml", "imported.openapi.json"] {
         if std::fs::symlink_metadata(args.dir.join(name)).is_ok() {
             return Err("Swagger import requires a new project; resume the existing converted configuration".into());

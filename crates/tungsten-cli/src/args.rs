@@ -348,6 +348,9 @@ pub enum SchemaName {
 
 #[derive(Debug, Clone, Args)]
 pub(crate) struct InitArgs {
+    /// Advanced: use an explicitly supplied local TypeScript runtime package.
+    #[arg(long, conflicts_with = "resume")]
+    pub typescript_runtime: Option<PathBuf>,
     /// Add outputs to an existing project while retaining all existing settings.
     /// Saves the original manifest as tungsten.yml.init-backup before replacement.
     #[arg(long, requires = "resume", value_delimiter = ',', value_parser = parse_init_target)]

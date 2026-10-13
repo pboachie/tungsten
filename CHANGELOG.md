@@ -12,7 +12,8 @@ changes.
 ### Added
 
 - Opt-in guided `init` with multi-output selection, consent before writes,
-  explicit non-interactive generation and configuration-preserving resume.
+  explicit non-interactive generation, additive output edits with backups,
+  no-schema inference and a scoped generated TypeScript client/mock walkthrough.
 - Bounded offline Swagger 2 conversion through the OpenAPI loader, preserving
   local definitions, parameter serialization, media types and authentication.
 - Imported operations retain review provenance and require argument-bound

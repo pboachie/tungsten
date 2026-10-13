@@ -158,6 +158,12 @@ function find(object, depth = 0) {
 }
 const call = find(client);
 if (!call) throw new Error('generated operation not found');
-const result = await call({});
+let options = {};
+if (typeof call.preview === 'function') {
+  const preview = await call.preview({});
+  if (!preview.ok) throw new Error('local preview failed');
+  if (preview.value.confirmation_token) options.confirm = preview.value.confirmation_token;
+}
+const result = await call({}, options);
 if (!result.ok) throw new Error('local generated call failed');
 "#;

@@ -140,6 +140,7 @@ pub(crate) fn run(args: &InitArgs) -> Report {
         spec.is_some(),
         &info,
         &args.targets,
+        args.typescript_runtime.as_deref(),
     );
     if tungsten_config::parse_str("tungsten.yml", &manifest)
         .0
@@ -373,6 +374,7 @@ fn tungsten_yml(
     spec_found: bool,
     info: &SpecInfo,
     selected: &[String],
+    runtime: Option<&Path>,
 ) -> String {
     let mut out = format!(
         "# yaml-language-server: $schema={TUNGSTEN_SCHEMA_URL}\n\
@@ -425,7 +427,16 @@ fn tungsten_yml(
         if !written.insert(target) {
             continue;
         }
-        if target == "rust" && has_cli {
+        if target == "typescript"
+            && let Some(runtime) = runtime
+        {
+            let path = std::path::absolute(runtime).unwrap_or_else(|_| runtime.to_path_buf());
+            let _ = writeln!(
+                out,
+                "  typescript: {{ out: generated/typescript, runtime_path: {} }}",
+                yaml_scalar(&path.to_string_lossy().replace('\\', "/"))
+            );
+        } else if target == "rust" && has_cli {
             let _ = writeln!(out, "  rust: {{ out: generated/rust, cli: true }}");
         } else if matches!(target, "mcp" | "webmcp") && has_typescript {
             let _ = writeln!(
