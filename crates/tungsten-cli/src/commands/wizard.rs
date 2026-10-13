@@ -305,7 +305,7 @@ fn walkthrough(args: &mut InitArgs) -> io::Result<bool> {
                 .map(|p| p.display().to_string())
                 .unwrap_or_default();
             let Some(source) = answer(
-                "API input file (OpenAPI, Swagger, Postman or endpoint manifest); none for no schema; back",
+                "API input file (OpenAPI, Swagger, Postman, .curl, .http or endpoint manifest); none for no schema; back",
                 &default,
             )?
             else {
@@ -355,6 +355,39 @@ fn walkthrough(args: &mut InitArgs) -> io::Result<bool> {
                     "No OpenAPI input found. Supply an existing OpenAPI file to generate outputs."
                 );
                 continue;
+            }
+            if let Some(source) = &args.from {
+                let request_file = source
+                    .extension()
+                    .is_some_and(|extension| matches!(extension.to_str(), Some("http" | "curl")));
+                if request_file || args.input_format != "auto" {
+                    let Some(routes) = answer(
+                        "Saved request route templates, in request order (comma-separated)",
+                        &args.route.join(","),
+                    )?
+                    else {
+                        return Ok(false);
+                    };
+                    args.route = routes
+                        .split(',')
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(str::to_owned)
+                        .collect();
+                    if source
+                        .extension()
+                        .is_some_and(|extension| extension == "curl")
+                    {
+                        let Some(dialect) = answer(
+                            "Saved cURL quoting: posix / cmd / powershell",
+                            &args.shell_dialect,
+                        )?
+                        else {
+                            return Ok(false);
+                        };
+                        args.shell_dialect = dialect;
+                    }
+                }
             }
             args.resume = false;
         }

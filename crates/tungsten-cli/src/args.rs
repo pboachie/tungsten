@@ -120,7 +120,7 @@ pub(crate) enum Command {
     /// Print a JSON Schema published by tungsten.
     Schema(SchemaArgs),
     /// Write tungsten.yml and agent.yml for a new project.
-    Init(InitArgs),
+    Init(Box<InitArgs>),
     /// Report installed tools and optionally check project prerequisites.
     Doctor(DoctorArgs),
     /// List the external emitters (`tungsten-emit-<name>`) that can be
@@ -348,6 +348,15 @@ pub enum SchemaName {
 
 #[derive(Debug, Clone, Args)]
 pub(crate) struct InitArgs {
+    /// Advanced input detection override for saved requests.
+    #[arg(long, default_value = "auto", value_parser = ["auto", "curl", "http"])]
+    pub input_format: String,
+    /// Trusted path template for each saved request, in input order; repeat as needed.
+    #[arg(long, conflicts_with = "method")]
+    pub route: Vec<String>,
+    /// Shell quoting syntax of a saved cURL command; never executes a shell.
+    #[arg(long, default_value = "posix", value_parser = ["posix", "cmd", "powershell"])]
+    pub shell_dialect: String,
     /// Advanced: use an explicitly supplied local TypeScript runtime package.
     #[arg(long, conflicts_with = "resume")]
     pub typescript_runtime: Option<PathBuf>,

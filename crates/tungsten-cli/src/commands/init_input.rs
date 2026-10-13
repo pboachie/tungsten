@@ -157,9 +157,42 @@ pub(super) fn import(args: &mut InitArgs) -> Result<Vec<String>, String> {
     let text = std::str::from_utf8(&bytes).map_err(|_| "input must be UTF-8 JSON or YAML")?;
     let root = tungsten_config::parse_yaml("input", text)
         .0
-        .map_err(|_| "input must be valid JSON or YAML")?;
+        .unwrap_or(serde_json::Value::Null);
+    let is_curl = args.input_format == "curl"
+        || (args.input_format == "auto"
+            && (text.trim_start().starts_with("curl ")
+                || text.trim_start().starts_with("curl.exe ")));
+    let is_http = args.input_format == "http"
+        || (args.input_format == "auto" && source.extension().is_some_and(|ext| ext == "http"));
     let mut import_report = None;
-    let mut converted = if root.get("item").is_some() && root.get("info").is_some() {
+    let mut converted = if is_curl || is_http {
+        let limits = Limits::default();
+        let evidence = if is_curl {
+            if args.route.len() != 1 {
+                return Err(
+                    "saved cURL requires exactly one explicit --route path template".into(),
+                );
+            }
+            let dialect = match args.shell_dialect.as_str() {
+                "cmd" => tungsten_contract::request_import::ShellDialect::WindowsCmd,
+                "powershell" => tungsten_contract::request_import::ShellDialect::PowerShell,
+                _ => tungsten_contract::request_import::ShellDialect::Posix,
+            };
+            tungsten_contract::request_import::curl(text, dialect, &args.route[0], &limits)
+        } else {
+            tungsten_contract::request_import::http(
+                text,
+                &args.route,
+                &std::collections::BTreeMap::new(),
+                &limits,
+            )
+        }
+        .map_err(|error| error.to_string())?;
+        let output = tungsten_contract::infer(&evidence, &ReviewedOverrides::default(), &limits)
+            .map_err(|error| error.to_string())?;
+        import_report = Some(serde_json::json!({"contract": output.report}));
+        output.openapi
+    } else if root.get("item").is_some() && root.get("info").is_some() {
         let limits = Limits::default();
         let imported = tungsten_contract::postman::import_collection(
             &bytes,

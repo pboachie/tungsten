@@ -120,7 +120,7 @@ fn unsupported_import_policy(ir: &Ir, name: &str) -> bool {
         .any(|op| op.agent.import_policy.is_some())
         && (!matches!(
             name,
-            "typescript" | "python" | "rust" | "go" | "mcp" | "webmcp" | "docs"
+            "typescript" | "python" | "rust" | "mcp" | "webmcp" | "docs"
         ) || targets::emitter(name).is_none())
 }
 
@@ -145,7 +145,7 @@ pub(crate) fn emit_target_live(
     if unsupported_import_policy(ir, name) {
         let mut diagnostics = Diagnostics::new();
         diagnostics.push(Diagnostic::error("TG0702", format!("target `{name}` does not declare enforced imported-operation policy support"))
-            .with_help("select a supported TypeScript, Python, Rust, Go, MCP, WebMCP or docs target; imported-policy metadata must not be discarded"));
+            .with_help("select a supported TypeScript, Python, Rust, MCP, WebMCP or docs target; imported-policy metadata must not be discarded"));
         return Emitted {
             cfg,
             files: Some(FileSet::new()),
