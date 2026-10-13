@@ -479,6 +479,26 @@ pub mod codes {
         (
             "TG1025",
             "discriminated union variant without a tag value: the csharp target tries variants in order",
+        ("TG1060", "invalid Ruby target option; default used"),
+        (
+            "TG1061",
+            "allOf type that cannot be merged is a JSON value in the Ruby SDK",
+        ),
+        (
+            "TG1062",
+            "macro not in the canonical form; left out of the Ruby SDK",
+        ),
+        (
+            "TG1063",
+            "OpenID Connect scheme sent as a bearer token by the Ruby SDK",
+        ),
+        (
+            "TG1064",
+            "different success bodies by status; the Ruby SDK's typed result is the JSON value",
+        ),
+        (
+            "TG1065",
+            "discriminated union variant without a tag value; the Ruby SDK tries the variants in order",
         ),
     ];
 
