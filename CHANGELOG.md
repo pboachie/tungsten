@@ -18,8 +18,10 @@ changes.
   variables must hold an origin only; a value with a path prefix is refused
   (PM005). Dynamic variables such as `{{$guid}}` are refused in every path
   segment (PM004), including after an unresolved base URL variable.
-- `tungsten init` from a HAR capture requires a reviewed `--route` template for
-  every imported path (literal paths too, for example `--route /health`); a
+- `tungsten init` from a HAR capture requires a reviewed path for every
+  imported path before saving: a `--route` template (literal paths too, for
+  example `--route /health`) or a `--har-paths` JSON mapping of captured paths
+  to templates, which the interactive setup also asks for; a
   captured path without one, a `--route` that matches no imported entry, or two
   equally specific matching templates are refused. `HarOptions` gains a
   `route_templates` field.
