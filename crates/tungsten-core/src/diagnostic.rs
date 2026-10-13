@@ -456,6 +456,72 @@ pub mod codes {
             "TG0921",
             "overlay suggest: no overlay action can fix this diagnostic code",
         ),
+        ("TG1010", "invalid java target option; the default is used"),
+        (
+            "TG1011",
+            "schema has no Java type in the java target; the runtime's JSON value is used",
+        ),
+        (
+            "TG1012",
+            "macro is not in the canonical form; the java target leaves it out",
+        ),
+        (
+            "TG1013",
+            "OpenID Connect scheme is sent as a bearer token by the java target",
+        ),
+        (
+            "TG1014",
+            "different success bodies by status: the java typed result is the JSON value",
+        ),
+        (
+            "TG1015",
+            "discriminated union variant without a tag value: the java target tries variants in order",
+        ),
+        (
+            "TG1020",
+            "invalid csharp target option; the default is used",
+        ),
+        (
+            "TG1021",
+            "schema has no C# type in the csharp target; the runtime's JsonNode is used",
+        ),
+        (
+            "TG1022",
+            "macro is not in the canonical form; the csharp target leaves it out",
+        ),
+        (
+            "TG1023",
+            "OpenID Connect scheme is sent as a bearer token by the csharp target",
+        ),
+        (
+            "TG1024",
+            "different success bodies by status: the csharp typed result is the JsonNode",
+        ),
+        (
+            "TG1025",
+            "discriminated union variant without a tag value: the csharp target tries variants in order",
+        ),
+        ("TG1060", "invalid Ruby target option; default used"),
+        (
+            "TG1061",
+            "allOf type that cannot be merged is a JSON value in the Ruby SDK",
+        ),
+        (
+            "TG1062",
+            "macro not in the canonical form; left out of the Ruby SDK",
+        ),
+        (
+            "TG1063",
+            "OpenID Connect scheme sent as a bearer token by the Ruby SDK",
+        ),
+        (
+            "TG1064",
+            "different success bodies by status; the Ruby SDK's typed result is the JSON value",
+        ),
+        (
+            "TG1065",
+            "discriminated union variant without a tag value; the Ruby SDK tries the variants in order",
+        ),
     ];
 
     pub fn describe(code: &str) -> Option<&'static str> {
