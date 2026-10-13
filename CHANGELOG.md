@@ -9,6 +9,10 @@ changes.
 
 ## [Unreleased]
 
+### Fixed
+
+- Keep Postman path parameters explicit and restrict URL variables to origins.
+
 ### Added
 
 - Import supported Postman Collection v2.1 requests through the offline contract
