@@ -78,11 +78,11 @@ fn retryable_meaning(r: Retryable) -> &'static str {
 
 /// What the CLI's flags mean for a category.
 fn flag_notes(c: Category, bin: &str, env_prefix: &str) -> Vec<String> {
-    let key = "--idempotency-key KEY: a UUIDv4 generated once, kept with the intent of the call and passed again, unchanged, on every retry";
+    let key = "--idempotency-key KEY: a caller-owned key generated once, kept with the intent of the call and passed again, unchanged, on every retry";
     match c {
         Category::ValidationFailed => vec![
             format!("`{bin} schema <command>` prints the arguments the command takes; fix the flag or body field the remediation names"),
-            "--idempotency-key KEY: required by operations that need a caller-owned key; generate a UUIDv4 once and reuse it on every retry".into(),
+            "--idempotency-key KEY: required by operations that need a caller-owned key; generate a key in the operation’s required format once and reuse it on every retry".into(),
             "--dry-run: print the request without sending it, to check arguments".into(),
         ],
         Category::MalformedRequest => vec![

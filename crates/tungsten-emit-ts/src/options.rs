@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! Target options (`tungsten.yml` `targets.typescript`).
 
+use std::collections::BTreeMap;
+
 use tungsten_core::{Diagnostic, Diagnostics};
 use tungsten_emit::TargetConfig;
 use tungsten_ir::Ir;
@@ -23,11 +25,14 @@ pub struct Options {
     pub version: String,
     /// `@elysra/tungsten-runtime` dependency specifier.
     pub runtime: String,
+    /// Additional npm dependencies of hand-written `src/custom` extensions.
+    pub dependencies: BTreeMap<String, String>,
 }
 
 impl Options {
     /// Read the options of `cfg`, falling back to defaults with a TG0711
-    /// warning for each invalid value.
+    /// warning for each invalid scalar value. Invalid custom dependencies
+    /// produce TG0711 errors so generation cannot silently omit required packages.
     pub fn resolve(ir: &Ir, cfg: &TargetConfig) -> (Options, Diagnostics) {
         let mut diags = Diagnostics::new();
         let default_package = format!("{}-sdk", naming::to_case(&ir.api.name.words, Case::Kebab));
@@ -68,15 +73,66 @@ impl Options {
             Some(p) => format!("file:{p}"),
             None => runtime_range.unwrap_or_else(|| DEFAULT_RUNTIME_RANGE.to_string()),
         };
+        let dependencies = read_dependencies(cfg, &mut diags);
         (
             Options {
                 package,
                 version,
                 runtime,
+                dependencies,
             },
             diags,
         )
     }
+}
+
+fn read_dependencies(cfg: &TargetConfig, diags: &mut Diagnostics) -> BTreeMap<String, String> {
+    let mut dependencies = BTreeMap::new();
+    let Some(value) = cfg.options.get("dependencies") else {
+        return dependencies;
+    };
+    let Some(entries) = value.as_object() else {
+        diags.push(
+            Diagnostic::error("TG0711", "target option `dependencies` must be an npm package-to-version mapping")
+                .with_help("set targets.typescript.dependencies to an object, for example {\"@hpke/core\": \"1.7.5\"}"),
+        );
+        return dependencies;
+    };
+    for (name, version) in entries {
+        let help = match name.as_str() {
+            "@elysra/tungsten-runtime" => {
+                Some("configure targets.typescript.runtime or runtime_path instead")
+            }
+            "zod" | "typescript" => {
+                Some("remove this entry; the emitter controls this package's compatible version")
+            }
+            _ => None,
+        };
+        if let Some(help) = help {
+            diags.push(
+                Diagnostic::error("TG0711", format!("target option `dependencies.{name}` conflicts with an emitter-managed package"))
+                    .with_help(help),
+            );
+        } else if !is_package_name(name) {
+            diags.push(
+                Diagnostic::error(
+                    "TG0711",
+                    format!(
+                        "target option `dependencies.{name}` must use a valid npm package name"
+                    ),
+                )
+                .with_help("use a lowercase npm package name, optionally scoped as @scope/name"),
+            );
+        } else if let Some(version) = version.as_str().filter(|s| !s.trim().is_empty()) {
+            dependencies.insert(name.clone(), version.to_string());
+        } else {
+            diags.push(
+                Diagnostic::error("TG0711", format!("target option `dependencies.{name}` must be a non-empty npm version specifier"))
+                    .with_help("quote the version or range, for example \"1.7.5\" or \"^1.7.5\""),
+            );
+        }
+    }
+    dependencies
 }
 
 /// npm package name rules: at most 214 characters, lowercase, URL-safe,

@@ -792,7 +792,12 @@ export class Session {
     const example = skeleton(tool.inputSchema);
     const call: Record<string, unknown> = isRecord(example) ? example : {};
     const { idempotencyKey: keyField, confirmationToken: tokenField } = tool.reserved;
-    if (keyField) call[keyField] = "<UUIDv4: generate once, persist with the intent, reuse on every retry>";
+    if (keyField) {
+      const properties = isRecord(tool.inputSchema.properties) ? tool.inputSchema.properties : {};
+      const keySchema = properties[keyField];
+      const label = isRecord(keySchema) && keySchema.format === "uuid" ? "UUIDv4" : "unique key";
+      call[keyField] = `<${label}: generate once, persist with the intent, reuse on every retry>`;
+    }
     if (tokenField) {
       if (tool.safety === "destructive" || tool.safety === "irreversible") call[tokenField] = "<confirmation_token from preview with these arguments>";
       else delete call[tokenField];

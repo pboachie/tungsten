@@ -412,7 +412,7 @@ pub(crate) fn readme(
              generate it once, persist it with your intent, and reuse it on every retry.\n\n```rust\n",
         );
         out.push_str(&format!("{}\n\n", request_import(plan, *o, &lib)));
-        out.push_str("let opts = CallOptions {\n    idempotency_key: Some(key), // a UUIDv4 you persisted\n    ..Default::default()\n};\n");
+        out.push_str("let opts = CallOptions {\n    idempotency_key: Some(key), // a caller-owned key you persisted\n    ..Default::default()\n};\n");
         out.push_str(&format!(
             "let result = {path}({request}, &opts).await;\n```\n\n"
         ));

@@ -146,6 +146,8 @@ if (preview.ok && preview.value.confirmation_token) {
 }
 ```
 
+More examples: [tungsten on six public APIs](examples/showcase/README.md) (the public OpenAPI descriptions of Stripe, GitHub, Twilio, OpenAI, Kubernetes and Discord): what `tungsten check` finds, MCP listing sizes, and generated SDK code in TypeScript, Python and Rust, reproducible with one script. [`examples/external-emitter-markdown`](examples/external-emitter-markdown) shows how to write an external emitter.
+
 ## Browser WebMCP
 
 Add a browser target alongside your TypeScript SDK:

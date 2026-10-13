@@ -34,9 +34,10 @@ export class MemoryIdempotencyStore implements IdempotencyStore {
 const UUID_ANY = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-function formatKind(format: string | null): "uuid_v4" | "uuid" | "token" {
+function formatKind(format: string | null): "uuid_v4" | "uuid" | "ascii_token_128" | "token" {
   const f = (format ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
   if (f === "uuidv4" || f === "uuid4") return "uuid_v4";
+  if (f === "asciitoken128") return "ascii_token_128";
   return f === "uuid" ? "uuid" : "token";
 }
 
@@ -47,6 +48,8 @@ export function keyFormatDescription(format: string | null): string {
       return "UUIDv4 string";
     case "uuid":
       return "UUID string";
+    case "ascii_token_128":
+      return "1-128 ASCII letters, digits, dots, underscores or hyphens";
     case "token":
       return "a non-empty printable ASCII string of at most 255 characters";
   }
@@ -56,8 +59,21 @@ export function keyFormatDescription(format: string | null): string {
  * description of the expected format when the key does not match. */
 export function checkKeyFormat(key: string, format: string | null): string | null {
   const kind = formatKind(format);
-  const valid =
-    kind === "uuid_v4" ? UUID_V4.test(key) : kind === "uuid" ? UUID_ANY.test(key) : key.length > 0 && key.length <= 255 && /^[\x21-\x7e]+$/.test(key);
+  let valid: boolean;
+  switch (kind) {
+    case "uuid_v4":
+      valid = UUID_V4.test(key);
+      break;
+    case "uuid":
+      valid = UUID_ANY.test(key);
+      break;
+    case "ascii_token_128":
+      valid = key.length >= 1 && key.length <= 128 && !/[^A-Za-z0-9._-]/.test(key);
+      break;
+    case "token":
+      valid = key.length > 0 && key.length <= 255 && /^[\x21-\x7e]+$/.test(key);
+      break;
+  }
   return valid ? null : keyFormatDescription(format);
 }
 

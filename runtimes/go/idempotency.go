@@ -182,6 +182,8 @@ func formatKind(format string) string {
 		return "uuid_v4"
 	case "uuid":
 		return "uuid"
+	case "asciitoken128":
+		return "ascii_token_128"
 	}
 	return "token"
 }
@@ -193,6 +195,8 @@ func keyFormatDescription(format string) string {
 		return "UUIDv4 string"
 	case "uuid":
 		return "UUID string"
+	case "ascii_token_128":
+		return "1-128 ASCII letters, digits, dots, underscores or hyphens"
 	}
 	return "a non-empty printable ASCII string of at most 255 characters"
 }
@@ -238,6 +242,12 @@ func checkKeyFormat(key, format string) (string, bool) {
 		valid = isUUID(key, true)
 	case "uuid":
 		valid = isUUID(key, false)
+	case "ascii_token_128":
+		valid = len(key) >= 1 && len(key) <= 128
+		for i := 0; i < len(key) && valid; i++ {
+			b := key[i]
+			valid = (b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z') || (b >= '0' && b <= '9') || b == '.' || b == '_' || b == '-'
+		}
 	default:
 		valid = key != "" && len(key) <= 255
 		for i := 0; i < len(key) && valid; i++ {
