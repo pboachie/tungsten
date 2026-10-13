@@ -12,6 +12,7 @@ use tungsten_config::TungstenConfig;
 use tungsten_core::Diagnostic;
 use tungsten_emit::{Emitter, TargetConfig};
 use tungsten_emit_docs::DocsEmitter;
+use tungsten_emit_java::JavaEmitter;
 use tungsten_emit_mcp::McpEmitter;
 use tungsten_emit_py::PythonEmitter;
 use tungsten_emit_rs::RustEmitter;
@@ -26,6 +27,7 @@ static MCP: McpEmitter = McpEmitter;
 static WEBMCP: WebMcpEmitter = WebMcpEmitter;
 static PYTHON: PythonEmitter = PythonEmitter;
 static RUST: RustEmitter = RustEmitter;
+static JAVA: JavaEmitter = JavaEmitter;
 static RUBY: RubyEmitter = RubyEmitter;
 
 /// The emitter for a target id, if this version has one.
@@ -37,6 +39,7 @@ pub fn emitter(id: &str) -> Option<&'static dyn Emitter> {
         "webmcp" => Some(&WEBMCP),
         "python" => Some(&PYTHON),
         "rust" => Some(&RUST),
+        "java" => Some(&JAVA),
         "ruby" => Some(&RUBY),
         _ => None,
     }
