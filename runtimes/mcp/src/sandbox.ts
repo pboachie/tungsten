@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * `run_script` (planning/02 D7): agent-written TypeScript runs in a Deno
- * subprocess with network access to the API host only, no file, env, run
+ * subprocess with no network, file, env, run
  * or FFI permission, a wall-clock limit, a V8 heap limit and a process data
  * limit. The script's `client` is a proxy whose calls come back to this
  * server over the child's stdin/stdout and go through the session's tool
@@ -70,10 +70,11 @@ export function apiHost(baseUrl: unknown): string | null {
   return /^[A-Za-z0-9.\-[\]:]+$/.test(url.host) ? url.host : null;
 }
 
-/** The `deno run` arguments of one script: network to `host` only, no
+/** The `deno run` arguments of one script: no network permission, no
  * prompts, no remote or npm modules, no config or lock file, and the
- * heap limit. Every other permission stays denied (no `--allow-read`). */
-export function denoArguments(input: { host: string; memoryMb: number; entry: string }): string[] {
+ * heap limit. Every other permission stays denied (no `--allow-read`).
+ * `host` is retained for source compatibility and ignored. */
+export function denoArguments(input: { host?: string; memoryMb: number; entry: string }): string[] {
   return [
     "run",
     "--quiet",
@@ -82,7 +83,6 @@ export function denoArguments(input: { host: string; memoryMb: number; entry: st
     "--no-npm",
     "--no-config",
     "--no-lock",
-    `--allow-net=${input.host}`,
     `--v8-flags=--max-old-space-size=${Math.max(16, Math.floor(input.memoryMb))}`,
     input.entry,
   ];
@@ -102,8 +102,9 @@ const LIMIT_SCRIPT = 'h=$(ulimit -H -d); if [ "$h" = unlimited ] || [ "$h" -gt "
 /** The command that runs one script: on POSIX systems deno under
  * `/bin/sh` with the process data limit of `processMemoryMb` (enforced by
  * Linux; macOS does not enforce RLIMIT_DATA, so there the heap limit is the
- * only memory bound), elsewhere deno itself. */
-export function sandboxCommand(input: { deno: string; host: string; memoryMb: number; entry: string }, platform: string = process.platform): { command: string; args: string[] } {
+ * only memory bound), elsewhere deno itself. `host` is retained for source
+ * compatibility and ignored. */
+export function sandboxCommand(input: { deno: string; host?: string; memoryMb: number; entry: string }, platform: string = process.platform): { command: string; args: string[] } {
   const args = denoArguments(input);
   if (platform === "win32") return { command: input.deno, args };
   return { command: "/bin/sh", args: ["-c", LIMIT_SCRIPT, "tungsten-sandbox", String(processMemoryMb(input.memoryMb) * 1024), input.deno, ...args] };
@@ -207,7 +208,8 @@ export function selectEngine(configured: unknown, denoFound: boolean): SandboxEn
 export interface SandboxRun extends SandboxRunBase {
   engine?: SandboxEngine;
   deno: string;
-  host: string;
+  /** @deprecated Ignored; all calls use the parent RPC channel. */
+  host?: string;
 }
 
 /** Run one script on the engine `run.engine` (default deno); never throws. */
@@ -226,7 +228,7 @@ export async function runSandboxed(run: SandboxRun): Promise<SandboxOutcome> {
 }
 
 function execute(run: SandboxRun, dir: string): Promise<SandboxOutcome> {
-  const { command, args } = sandboxCommand({ deno: run.deno, host: run.host, memoryMb: run.memoryMb, entry: join(dir, "main.ts") });
+  const { command, args } = sandboxCommand({ deno: run.deno, memoryMb: run.memoryMb, entry: join(dir, "main.ts") });
   const child = spawn(command, args, {
     cwd: dir,
     env: { NO_COLOR: "1", DENO_NO_UPDATE_CHECK: "1", DENO_NO_PROMPT: "1", DENO_DIR: join(dir, ".deno"), HOME: dir },

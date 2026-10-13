@@ -72,10 +72,12 @@ function readTool(raw: unknown, position: number, warnings: string[]): CatalogTo
   const derived = annotationsFor(safety);
   const a = isRecord(raw.annotations) ? raw.annotations : {};
   const flag = (key: keyof Omit<ToolAnnotations, "title">): boolean => (typeof a[key] === "boolean" ? (a[key] as boolean) : derived[key]);
+  // A manifest may make hints more cautious, never less cautious than its
+  // safety tier. The session also checks that tier against the SDK target.
   const annotations: ToolAnnotations = {
-    readOnlyHint: flag("readOnlyHint"),
-    destructiveHint: flag("destructiveHint"),
-    idempotentHint: flag("idempotentHint"),
+    readOnlyHint: derived.readOnlyHint && flag("readOnlyHint"),
+    destructiveHint: derived.destructiveHint || flag("destructiveHint"),
+    idempotentHint: derived.idempotentHint && flag("idempotentHint"),
     openWorldHint: flag("openWorldHint"),
   };
   if (typeof a.title === "string" && a.title !== "") annotations.title = a.title;

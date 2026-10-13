@@ -9,6 +9,21 @@ changes.
 
 ## [Unreleased]
 
+### Security
+
+- Reserve MCP session capacity during asynchronous initialization, validate
+  manifest safety against executable descriptors, and keep Deno scripts on
+  the client RPC channel without direct network permission.
+- Bound upstream MCP response bodies to 4 MiB by default (configurable through
+  `maxResponseBytes`), and apply WebMCP result byte limits before HTTP body
+  materialization. Oversized responses return the SDK's `RESPONSE_TOO_LARGE`
+  diagnostic; inconsistent MCP manifest/SDK safety tiers fail before dispatch.
+- Bound Java transport queues with backpressure and cancellation cleanup.
+- Check locked dependency names, sources, hashes and current advisories in CI
+  and release preparation; disable npm install hooks in release builds.
+- Hash-lock Python release tooling and disable build isolation during package
+  creation to prevent unpinned build-tool resolution.
+
 ### Fixed
 
 - Make generated Rust CLIs packageable with a versioned SDK dependency and share
