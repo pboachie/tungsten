@@ -17,6 +17,7 @@ categories = ["development-tools", "command-line-utilities"]
 publish = false
 
 [workspace.dependencies]
+tungsten-contract = { path = "crates/tungsten-contract" }
 tungsten-core = { path = "crates/tungsten-core" }
 tungsten-config = { path = "crates/tungsten-config" }
 tungsten-openapi = { path = "crates/tungsten-openapi" }
