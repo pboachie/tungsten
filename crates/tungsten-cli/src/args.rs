@@ -348,6 +348,15 @@ pub enum SchemaName {
 
 #[derive(Debug, Clone, Args)]
 pub(crate) struct InitArgs {
+    /// Advanced: local Python runtime checkout (used only with explicit setup consent).
+    #[arg(long, conflicts_with = "resume")]
+    pub python_runtime: Option<PathBuf>,
+    /// Advanced: local Rust runtime crate.
+    #[arg(long, conflicts_with = "resume")]
+    pub rust_runtime: Option<PathBuf>,
+    /// Advanced: local Rust CLI kit crate.
+    #[arg(long, conflicts_with = "resume")]
+    pub cli_kit_runtime: Option<PathBuf>,
     /// Exact HTTP(S) origin to select from a multi-origin HAR (no credentials).
     #[arg(long, conflicts_with = "method")]
     pub har_origin: Option<String>,
@@ -379,8 +388,8 @@ pub(crate) struct InitArgs {
     /// Saves the original manifest as tungsten.yml.init-backup before replacement.
     #[arg(long, requires = "resume", value_delimiter = ',', value_parser = parse_init_target)]
     pub add_targets: Vec<String>,
-    /// Acquire project npm dependencies, build TypeScript and call a loopback mock.
-    /// Requires Node >=22 and npm; supports new TypeScript/MCP/WebMCP/docs projects.
+    /// Acquire project dependencies, build selected outputs and call a loopback mock.
+    /// Requires the selected Node, Python or Rust toolchains; only new projects.
     #[arg(long, requires = "generate", conflicts_with_all = ["resume", "force"])]
     pub local_example: bool,
     /// No-schema HTTP method; use a path template with --endpoint, never credentials.

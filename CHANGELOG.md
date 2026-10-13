@@ -13,7 +13,7 @@ changes.
 
 - Opt-in guided `init` with multi-output selection, consent before writes,
   explicit non-interactive generation, additive output edits with backups,
-  no-schema inference and a scoped generated TypeScript client/mock walkthrough.
+  no-schema inference and scoped TypeScript/Python/Rust client and MCP mock checks.
 - Bounded offline Swagger 2 conversion through the OpenAPI loader, preserving
   local definitions, parameter serialization, media types and authentication.
 - Imported operations retain review provenance and require argument-bound

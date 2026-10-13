@@ -201,7 +201,7 @@ pub(crate) fn run(args: &InitArgs, json: bool, env: &CliEnv) -> Report {
             result.setup = Some(setup);
         }
         match success {
-            Ok(()) => report.human.push_str("Built TypeScript SDK and completed a generated client call against the local mock. The mock has stopped.\n"),
+            Ok(()) => report.human.push_str("Built selected outputs and completed generated client/MCP calls against the local mock. The mock has stopped.\n"),
             Err(message) => { report.exit = exit::FAILED; report.error = Some(CliError::new(ErrorKind::Io, message).with_help("source and manifests are preserved; inspect the project dependencies and rebuild before retrying the local example")); }
         }
         return report;
@@ -404,14 +404,97 @@ fn walkthrough(args: &mut InitArgs) -> io::Result<bool> {
             }
             args.resume = false;
         }
+        if !args.resume {
+            let Some(advanced) = answer("Advanced options? yes / no", "no")? else {
+                return Ok(false);
+            };
+            if advanced == "yes" {
+                let Some(name) = answer(
+                    "Optional API name (blank uses input title)",
+                    args.name.as_deref().unwrap_or(""),
+                )?
+                else {
+                    return Ok(false);
+                };
+                args.name = (!name.is_empty()).then_some(name);
+                let has_node = args
+                    .targets
+                    .iter()
+                    .any(|t| matches!(t.as_str(), "typescript" | "mcp" | "webmcp"));
+                let has_rust = args
+                    .targets
+                    .iter()
+                    .any(|t| matches!(t.as_str(), "rust" | "cli"));
+                for (label, enabled, setting) in [
+                    (
+                        "TypeScript runtime path (blank uses registry)",
+                        has_node,
+                        &mut args.typescript_runtime,
+                    ),
+                    (
+                        "WebMCP runtime path (blank uses registry)",
+                        args.targets.iter().any(|t| t == "webmcp"),
+                        &mut args.webmcp_runtime,
+                    ),
+                    (
+                        "Python runtime path (blank uses registry)",
+                        args.targets.iter().any(|t| t == "python"),
+                        &mut args.python_runtime,
+                    ),
+                    (
+                        "Rust runtime crate path (blank uses registry)",
+                        has_rust,
+                        &mut args.rust_runtime,
+                    ),
+                    (
+                        "CLI kit crate path (blank uses registry)",
+                        has_rust,
+                        &mut args.cli_kit_runtime,
+                    ),
+                ] {
+                    if enabled {
+                        let Some(value) = answer(
+                            label,
+                            &setting
+                                .as_ref()
+                                .map(|p| p.display().to_string())
+                                .unwrap_or_default(),
+                        )?
+                        else {
+                            return Ok(false);
+                        };
+                        *setting = (!value.is_empty()).then(|| value.into());
+                    }
+                }
+                eprintln!(
+                    "Configuration precedence: input shapes, tungsten.yml target/server overrides, then agent.yml per-operation policy. Inspect the effective contract with tungsten --json ir dump. Imported operations retain preview confirmation until explicitly reviewed; no credentials are required for the mock."
+                );
+            }
+            if args.targets.iter().any(|t| t != "docs") {
+                eprintln!(
+                    "Local setup prerequisites: Node >=22/npm for TypeScript/MCP/WebMCP; Python >=3.12/venv/pip for Python; Rust >=1.88/Cargo for Rust/CLI. Downloads dependencies into this project, builds selected outputs and calls only a temporary loopback mock. npm lifecycle scripts are disabled; Python uses wheel downloads and the package build backend; Cargo runs dependency build scripts. Explicit runtime paths must be trusted source."
+                );
+                let Some(local) =
+                    answer("Local setup? yes / no (no keeps offline generation)", "yes")?
+                else {
+                    return Ok(false);
+                };
+                args.local_example = local == "yes";
+            }
+        }
         eprintln!(
-            "Plan: {} in {}. Generate configured source outputs using the regular compiler. Local setup, if selected above, downloads npm packages with scripts disabled, runs the TypeScript compiler and starts a temporary loopback mock. No live API calls. Advanced settings remain editable in tungsten.yml and agent.yml.",
+            "Plan: {} in {}. Generate configured source outputs using the regular compiler. Local setup: {}. Shared TypeScript output is reused for MCP/WebMCP. No live API calls or application integration installation. Advanced settings remain editable in tungsten.yml and agent.yml.",
             if args.resume {
                 "preserve reviewed settings; optionally add outputs with a manifest backup"
             } else {
                 "create tungsten.yml and agent.yml"
             },
-            args.dir.display()
+            args.dir.display(),
+            if args.local_example {
+                "download project dependencies, build selected targets and run temporary local checks"
+            } else {
+                "disabled; generate source only"
+            }
         );
         let Some(consent) = answer("Proceed? yes / back / cancel", "cancel")? else {
             return Ok(false);
