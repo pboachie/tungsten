@@ -26,6 +26,7 @@ changes.
   query embeddings. Complete the README's generated Python SDK installation steps.
 
 - Keep Postman path parameters explicit and restrict URL variables to origins.
+- Bound aggregate Swagger reference and media-schema expansion during conversion.
 
 ### Added
 
