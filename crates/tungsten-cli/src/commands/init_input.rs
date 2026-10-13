@@ -183,7 +183,10 @@ pub(super) fn import(args: &mut InitArgs) -> Result<Vec<String>, String> {
                 || text.trim_start().starts_with("curl.exe ")
                 || source.extension().is_some_and(|ext| ext == "curl")));
     let is_http = args.input_format == "http"
-        || (args.input_format == "auto" && source.extension().is_some_and(|ext| ext == "http"));
+        || (args.input_format == "auto"
+            && source
+                .extension()
+                .is_some_and(|ext| matches!(ext.to_str(), Some("http" | "rest"))));
     let mut import_report = None;
     let mut converted = if is_curl || is_http {
         let limits = Limits::default();
