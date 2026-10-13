@@ -55,7 +55,8 @@ final class Tokens {
                 return null;
             }
         }
-        return Long.parseLong(expiry);
+        long parsed = Long.parseLong(expiry);
+        return Long.toString(parsed).equals(expiry) ? parsed : null;
     }
 
     static Check check(byte[] key, String token, String operation, Object args, long now) {
