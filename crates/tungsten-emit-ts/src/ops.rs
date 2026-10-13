@@ -630,6 +630,20 @@ fn agent_js(a: &OperationAgentMeta, sensitive_request: &[String]) -> Js {
             Js::strs(&a.sensitive_response_fields),
         ),
     ];
+    if let Some(policy) = &a.import_policy {
+        entries.push((
+            "importPolicy",
+            Js::obj(vec![
+                (
+                    "inferredSafety",
+                    Js::str(safety_str(policy.inferred_safety)),
+                ),
+                ("reviewed", Js::bool(policy.reviewed)),
+                ("source", Js::str(&policy.source)),
+                ("allowedOrigins", Js::strs(&policy.allowed_origins)),
+            ]),
+        ));
+    }
     if !sensitive_request.is_empty() {
         entries.push(("sensitiveRequestFields", Js::strs(sensitive_request)));
     }
@@ -1195,6 +1209,13 @@ pub(crate) fn descriptors_file(
     let mut imports = Imports::new();
     imports.add_type("@elysra/tungsten-runtime", "ApiDescriptor");
     imports.add_type("@elysra/tungsten-runtime", "OperationDescriptor");
+    let imported = plan
+        .ops
+        .iter()
+        .any(|info| info.op.agent.import_policy.is_some());
+    if imported {
+        imports.add("@elysra/tungsten-runtime", "requireImportPolicyV1");
+    }
     imports.add("zod", "z");
     imports.add("./internal.js", "toSchemaLike");
     if uses.integer {
@@ -1213,6 +1234,9 @@ pub(crate) fn descriptors_file(
     w.line("// Operation descriptors: what the runtime needs to call each operation.");
     w.blank();
     write_imports(&mut w, &imports);
+    if imported {
+        w.line("requireImportPolicyV1();");
+    }
     for ns in &uses.namespaces {
         if let Some(m) = plan.model_ns(ns) {
             w.line(format!(

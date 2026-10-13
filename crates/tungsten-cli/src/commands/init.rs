@@ -139,7 +139,7 @@ pub(crate) fn run(args: &InitArgs) -> Report {
         &spec_ref,
         spec.is_some(),
         &info,
-        &args.targets,
+        args,
     );
     if tungsten_config::parse_str("tungsten.yml", &manifest)
         .0
@@ -185,6 +185,9 @@ pub(crate) fn run(args: &InitArgs) -> Report {
         spec: spec_ref,
         spec_found: spec.is_some(),
         files,
+        generation: None,
+        local_example: None,
+        setup: None,
     };
     report.human = human(&result);
     report.result = Some(CommandResult::Init(result));
@@ -370,8 +373,10 @@ fn tungsten_yml(
     spec_ref: &str,
     spec_found: bool,
     info: &SpecInfo,
-    selected: &[String],
+    args: &InitArgs,
 ) -> String {
+    let selected = &args.targets;
+    let runtime = args.typescript_runtime.as_deref();
     let mut out = format!(
         "# yaml-language-server: $schema={TUNGSTEN_SCHEMA_URL}\n\
          # Shape manifest: what the generated SDKs look like. Written by `tungsten init`;\n\
@@ -411,16 +416,43 @@ fn tungsten_yml(
     } else {
         selected.iter().map(String::as_str).collect()
     };
-    if targets.contains(&"webmcp") && !targets.contains(&"typescript") {
+    if (targets.contains(&"webmcp") || targets.contains(&"mcp")) && !targets.contains(&"typescript")
+    {
         targets.insert(0, "typescript");
     }
+    let has_cli = targets.contains(&"cli");
     let has_typescript = targets.contains(&"typescript");
     let mut written = std::collections::BTreeSet::new();
     for target in targets {
+        let target = if target == "cli" { "rust" } else { target };
         if !written.insert(target) {
             continue;
         }
-        if matches!(target, "mcp" | "webmcp") && has_typescript {
+        if target == "typescript"
+            && let Some(runtime) = runtime
+        {
+            let path = std::path::absolute(runtime).unwrap_or_else(|_| runtime.to_path_buf());
+            let _ = writeln!(
+                out,
+                "  typescript: {{ out: generated/typescript, runtime_path: {} }}",
+                yaml_scalar(&path.to_string_lossy().replace('\\', "/"))
+            );
+        } else if target == "rust" && has_cli {
+            let _ = writeln!(out, "  rust: {{ out: generated/rust, cli: true }}");
+        } else if target == "webmcp" && (runtime.is_some() || args.webmcp_runtime.is_some()) {
+            let mut options =
+                serde_json::json!({"out":"generated/webmcp", "sdk_path":"../typescript"});
+            for (key, path) in [
+                ("sdk_runtime_path", runtime),
+                ("runtime_path", args.webmcp_runtime.as_deref()),
+            ] {
+                if let Some(path) = path {
+                    let path = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+                    options[key] = serde_json::json!(path.to_string_lossy().replace('\\', "/"));
+                }
+            }
+            let _ = writeln!(out, "  webmcp: {options}");
+        } else if matches!(target, "mcp" | "webmcp") && has_typescript {
             let _ = writeln!(
                 out,
                 "  {target}: {{ out: generated/{target}, sdk_path: ../typescript }}"

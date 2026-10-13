@@ -28,6 +28,27 @@ changes.
 
 ### Added
 
+- Opt-in guided `init` with multi-output selection, consent before writes,
+  explicit non-interactive generation, additive output edits with backups,
+  no-schema inference and a scoped generated TypeScript client/mock walkthrough.
+- Bounded offline Swagger 2 conversion through the OpenAPI loader, preserving
+  local definitions, parameter serialization, media types and authentication.
+- Imported operations retain review provenance and require argument-bound
+  confirmation until explicitly reviewed per operation.
+- Import supported Postman Collection v2.1 requests through the offline contract
+  engine, preserving explicit authentication and reporting unsupported behavior.
+- Parse a bounded saved cURL and HTTP-file subset as offline contract evidence,
+  with explicit route templates and no shell execution or implicit file reads.
+
+- Add a bounded offline HTTP evidence engine with deterministic OpenAPI inference,
+  provenance, and persistent reviewed overrides.
+- Versioned endpoint manifests can combine declared JSON Schema models with
+  explicit HTTP routing and auth references using bounded offline model reads.
+  confirmation until explicitly reviewed per operation and exact server origin.
+  Scoped reviews are enforced by every SDK runtime and require a runtime with
+  import-policy support. Regenerate Rust SDKs when upgrading; handwritten
+  `AgentMeta` literals must add `import_policy: None` or an explicit policy.
+
 - TypeScript SDK targets can declare npm dependencies for preserved custom
   extensions; package archives include custom source and license notices.
 - The `ascii_token_128` caller-owned idempotency format accepts 1–128 ASCII

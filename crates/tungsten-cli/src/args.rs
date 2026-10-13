@@ -120,7 +120,7 @@ pub(crate) enum Command {
     /// Print a JSON Schema published by tungsten.
     Schema(SchemaArgs),
     /// Write tungsten.yml and agent.yml for a new project.
-    Init(InitArgs),
+    Init(Box<InitArgs>),
     /// Report installed tools and optionally check project prerequisites.
     Doctor(DoctorArgs),
     /// List the external emitters (`tungsten-emit-<name>`) that can be
@@ -346,8 +346,55 @@ pub enum SchemaName {
     ToolCatalog,
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Clone, Args)]
 pub(crate) struct InitArgs {
+    /// Advanced: use an explicitly supplied local WebMCP runtime package.
+    #[arg(long, conflicts_with = "resume")]
+    pub webmcp_runtime: Option<PathBuf>,
+    /// Advanced input detection override for saved requests.
+    #[arg(long, default_value = "auto", value_parser = ["auto", "curl", "http"])]
+    pub input_format: String,
+    /// Trusted path template for each saved request, in input order; repeat as needed.
+    #[arg(long, conflicts_with = "method")]
+    pub route: Vec<String>,
+    /// Shell quoting syntax of a saved cURL command; never executes a shell.
+    #[arg(long, default_value = "posix", value_parser = ["posix", "cmd", "powershell"])]
+    pub shell_dialect: String,
+    /// Advanced: use an explicitly supplied local TypeScript runtime package.
+    #[arg(long, conflicts_with = "resume")]
+    pub typescript_runtime: Option<PathBuf>,
+    /// Add outputs to an existing project while retaining all existing settings.
+    /// Saves the original manifest as tungsten.yml.init-backup before replacement.
+    #[arg(long, requires = "resume", value_delimiter = ',', value_parser = parse_init_target)]
+    pub add_targets: Vec<String>,
+    /// Acquire project npm dependencies, build TypeScript and call a loopback mock.
+    /// Requires Node >=22 and npm; supports new TypeScript/MCP/WebMCP/docs projects.
+    #[arg(long, requires = "generate", conflicts_with_all = ["resume", "force"])]
+    pub local_example: bool,
+    /// No-schema HTTP method; use a path template with --endpoint, never credentials.
+    #[arg(long, requires = "endpoint", conflicts_with_all = ["from", "resume"], value_parser = ["get", "post", "put", "patch", "delete", "head", "options"])]
+    pub method: Option<String>,
+    /// No-schema path template, for example /pets/{id}; not a live URL.
+    #[arg(long, requires = "method")]
+    pub endpoint: Option<String>,
+    /// JSON request example file; only its structure is persisted.
+    #[arg(long, requires = "method")]
+    pub request_example: Option<PathBuf>,
+    /// JSON response example file; only its structure is persisted (status 200).
+    #[arg(long, requires = "method")]
+    pub response_example: Option<PathBuf>,
+    /// Start the guided terminal setup (requires a terminal, incompatible with JSON).
+    #[arg(long, conflicts_with = "no_interactive")]
+    pub interactive: bool,
+    /// Never prompt, including when attached to a terminal.
+    #[arg(long)]
+    pub no_interactive: bool,
+    /// Generate configured outputs after initializing, without acquiring dependencies.
+    #[arg(long)]
+    pub generate: bool,
+    /// Generate from existing manifests without overwriting reviewed settings.
+    #[arg(long, requires = "generate", conflicts_with_all = ["force", "from", "targets", "name"])]
+    pub resume: bool,
     /// OpenAPI document to start from. Default: openapi.json, openapi.yaml
     /// or openapi.yml in the target directory.
     #[arg(long, value_name = "SPEC")]
@@ -404,7 +451,7 @@ fn parse_init_target(s: &str) -> Result<String, String> {
         "rs" => "rust",
         name => name,
     };
-    if tungsten_config::KNOWN_TARGETS.contains(&target) {
+    if target == "cli" || tungsten_config::KNOWN_TARGETS.contains(&target) {
         Ok(target.to_string())
     } else {
         Err(format!(

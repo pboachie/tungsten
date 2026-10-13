@@ -449,6 +449,23 @@ pub struct InitResult {
     /// False when no spec was given or found and a placeholder was written.
     pub spec_found: bool,
     pub files: Vec<InitFile>,
+    /// Output generation details, when requested; not dependency/build acceptance.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub generation: Option<GenerateResult>,
+    /// Whether a generated TypeScript client completed a real loopback mock call.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub local_example: Option<bool>,
+    /// Separate build outcomes for every resolved output during local setup.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub setup: Option<Vec<InitSetupTarget>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct InitSetupTarget {
+    pub target: String,
+    /// built, generated (documentation), failed, or not_attempted.
+    pub status: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]

@@ -443,6 +443,7 @@ pub(crate) fn put(w: &mut Writer, indent: usize, prefix: &str, value: &Rx, suffi
 /// Names a generated file can use unqualified, and where they come from.
 const TOKENS: &[(&str, &str)] = &[
     ("AgentMeta", "tungsten_runtime"),
+    ("ImportPolicy", "tungsten_runtime"),
     ("ApiDescriptor", "tungsten_runtime"),
     ("ApiKeyLocation", "tungsten_runtime"),
     ("Arc", "std::sync"),

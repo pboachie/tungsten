@@ -577,6 +577,7 @@ impl ClientCore {
                     .build(),
             ));
         }
+        self.check_import_scope(op, url_override.or(self.inner.base_url.as_deref()))?;
         self.register_one(op);
         let empty = Map::new();
         let supplied = match raw_args {
@@ -819,6 +820,26 @@ impl ClientCore {
         })
     }
 
+    fn check_import_scope(&self, op: &OperationDescriptor, target_url: Option<&str>) -> Step<()> {
+        if let Some(policy) = op.agent.import_policy.as_ref().filter(|p| p.reviewed) {
+            let target = target_url.and_then(|u| Url::parse(u).ok());
+            let allowed = target.as_ref().is_some_and(|target| {
+                matches!(target.scheme(), "http" | "https")
+                    && target.username().is_empty()
+                    && target.password().is_none()
+                    && policy.allowed_origins.iter().any(|origin| {
+                        Url::parse(origin).is_ok_and(|scope| scope.origin() == target.origin())
+                    })
+            });
+            if !allowed {
+                return Err(fail(Diag::new(op.id.clone(), Category::ValidationFailed)
+                    .failed_parameter("base_url").retryable(Retryable::Never)
+                    .remediation("The target origin is outside this operation's saved review policy. Select a reviewed server or review a separate policy for this environment. Nothing was sent.").build()));
+            }
+        }
+        Ok(())
+    }
+
     fn build_url(
         &self,
         op: &OperationDescriptor,
@@ -1013,6 +1034,7 @@ impl ClientCore {
                     && parsed.host_str().is_some() => {}
             _ => return Err(bad_base()),
         }
+        self.check_import_scope(op, Some(&url))?;
         Ok((url, display))
     }
 

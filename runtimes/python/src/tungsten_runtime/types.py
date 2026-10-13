@@ -308,7 +308,15 @@ class ConfirmationMeta(TypedDict):
     message: str | None
 
 
+class ImportPolicy(TypedDict):
+    inferred_safety: Safety
+    reviewed: bool
+    source: str
+    allowed_origins: list[str]
+
+
 class AgentMeta(TypedDict):
+    import_policy: NotRequired[ImportPolicy]
     safety: Safety
     idempotency: IdempotencyMeta
     preview: PreviewLocal | PreviewHeader | PreviewEndpoint | PreviewNone
@@ -777,6 +785,7 @@ __all__ = [
     "IdempotencyMeta",
     "IdempotencyStore",
     "ImplementedStatus",
+    "ImportPolicy",
     "Invalid",
     "Issue",
     "LinkHeaderPagination",

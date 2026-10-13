@@ -30,3 +30,7 @@ export { DEFAULT_RETRYABLE } from "./envelope.js";
 export { CONFIRMATION_TTL_MS } from "./confirm.js";
 export { RUNTIME_VERSION } from "./version.js";
 export { isBinaryInput, type BinaryInput, type NamedBinary } from "./util.js";
+
+/** Capability handshake used by generated imported descriptors. Older runtimes
+ * do not export it, so loading scoped reviews fails before any call. */
+export function requireImportPolicyV1(): void {}

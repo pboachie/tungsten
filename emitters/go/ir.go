@@ -359,9 +359,17 @@ type RPCBinding struct {
 	Constants          map[string]json.RawMessage `json:"constants"`
 }
 
+type ImportPolicy struct {
+	InferredSafety string   `json:"inferred_safety"`
+	Reviewed       bool     `json:"reviewed"`
+	Source         string   `json:"source"`
+	AllowedOrigins []string `json:"allowed_origins"`
+}
+
 type AgentMeta struct {
-	Safety      string `json:"safety"`
-	Idempotency struct {
+	ImportPolicy *ImportPolicy `json:"import_policy"`
+	Safety       string        `json:"safety"`
+	Idempotency  struct {
 		Policy          string `json:"policy"`
 		Header          string `json:"header"`
 		Format          string `json:"format"`

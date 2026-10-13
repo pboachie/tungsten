@@ -9,12 +9,16 @@ pub(crate) mod emitters;
 pub(crate) mod explain;
 pub(crate) mod generate;
 pub(crate) mod init;
+mod init_edit;
+mod init_input;
+mod init_setup;
 mod ir;
 pub(crate) mod lsp;
 pub(crate) mod mock;
 pub(crate) mod overlay;
 pub(crate) mod report;
 mod schema;
+mod wizard;
 
 use crate::args::{Cli, Command, IrCommand, OverlayCommand};
 use crate::{CliEnv, Report};
@@ -27,7 +31,7 @@ pub(crate) fn dispatch(cli: &Cli, env: &CliEnv) -> Report {
         } => ir::dump(args, cli.json),
         Command::Explain(args) => explain::run(args),
         Command::Schema(args) => schema::run(args),
-        Command::Init(args) => init::run(args),
+        Command::Init(args) => wizard::run(args, cli.json, env),
         Command::Doctor(args) => doctor::run(args, env),
         Command::Emitters(args) => emitters::run(args, env),
         Command::Generate(args) => generate::run(args, env),

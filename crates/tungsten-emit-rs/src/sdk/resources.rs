@@ -43,6 +43,7 @@ pub(crate) fn op_doc(
         .map(|p| format!("`{p}()`"))
         .unwrap_or_else(|| "a preview".to_string());
     match a.safety {
+        Safety::Irreversible if a.import_policy.as_ref().is_some_and(|p| !p.reviewed) => parts.push(format!("Unreviewed imported operation: effects are unknown. Call {preview_call} first and pass its argument-bound `confirmation_token` as `Confirm::Token`.")),
         Safety::Destructive => parts.push(format!(
             "Requires confirmation: pass `confirm: Some(Confirm::Yes)` in the call options, or the `confirmation_token` of {preview_call} as `Confirm::Token`."
         )),

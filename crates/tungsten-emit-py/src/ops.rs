@@ -683,6 +683,20 @@ fn agent_py(a: &OperationAgentMeta, sensitive_request: &[String]) -> Py {
             Py::strs(&a.sensitive_response_fields),
         ),
     ];
+    if let Some(policy) = &a.import_policy {
+        entries.push((
+            "import_policy",
+            Py::dict(vec![
+                (
+                    "inferred_safety",
+                    Py::str(safety_str(policy.inferred_safety)),
+                ),
+                ("reviewed", Py::bool(policy.reviewed)),
+                ("source", Py::str(&policy.source)),
+                ("allowed_origins", Py::strs(&policy.allowed_origins)),
+            ]),
+        ));
+    }
     if !sensitive_request.is_empty() {
         entries.push(("sensitive_request_fields", Py::strs(sensitive_request)));
     }
@@ -1236,6 +1250,13 @@ pub(crate) fn descriptors_file(
     imports.add("__future__", "annotations");
     imports.add("tungsten_runtime", "ApiDescriptor");
     imports.add("tungsten_runtime", "OperationDescriptor");
+    let imported = plan
+        .ops
+        .iter()
+        .any(|info| info.op.agent.import_policy.is_some());
+    if imported {
+        imports.add("tungsten_runtime", "require_import_policy_v1");
+    }
     // Every descriptor names `_internal.Request`.
     uses.internal |= !plan.ops.is_empty();
     uses.add_to(plan, &mut imports, ".", ".models");
@@ -1248,6 +1269,10 @@ pub(crate) fn descriptors_file(
     );
     w.blank();
     w.line(imports.render());
+    if imported {
+        w.blank();
+        w.line("require_import_policy_v1()");
+    }
     let mut out = w.finish();
     let text = body.finish();
     let text = text.trim_start_matches('\n');
