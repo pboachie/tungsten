@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 )
 
 // MemoryIdempotencyStore keeps keys for the life of the process.
@@ -52,7 +53,9 @@ func (s *MemoryIdempotencyStore) Put(scope, logicalID, key string) {
 // atomic (a temporary file, then a rename); the file is created with mode
 // 0600. A file that cannot be parsed makes Get report nothing and Put write
 // nothing, and the runtime then refuses the call rather than issue a second
-// key for the same intent.
+// key for the same intent. Reserve also holds the cross-process lease
+// <path>.lock: it waits up to 2 s for another process's lease and breaks one
+// older than 30 s (its writer died).
 type FileIdempotencyStore struct {
 	path string
 	mu   sync.Mutex
@@ -316,10 +319,11 @@ func (s *FileIdempotencyStore) Reserve(scope, id, candidate string) (string, err
 		return "", err
 	}
 	lease := s.path + ".lock"
-	if err := os.Mkdir(lease, 0700); err != nil {
+	if err := acquireLease(lease); err != nil {
 		return "", err
 	}
-	defer os.Remove(lease)
+	// The outcome is decided; a lease left behind turns stale and is broken.
+	defer func() { _ = os.Remove(lease) }()
 	data, ok := s.read()
 	if !ok {
 		return "", fmt.Errorf("invalid idempotency store")
@@ -335,6 +339,42 @@ func (s *FileIdempotencyStore) Reserve(scope, id, candidate string) (string, err
 		return "", err
 	}
 	return candidate, nil
+}
+
+// leaseWait is how long Reserve waits for another writer's lease before
+// refusing; a lease older than leaseStale is a crashed writer's and is broken.
+const (
+	leaseWait  = 2 * time.Second
+	leaseStale = 30 * time.Second
+)
+
+// acquireLease takes the cross-process lease (a directory: mkdir is atomic).
+// A busy lease is retried with backoff for up to leaseWait; one whose mtime is
+// older than leaseStale was left by a writer that died and is removed. A lease
+// still busy after the wait refuses the call.
+func acquireLease(lease string) error {
+	deadline := time.Now().Add(leaseWait)
+	for delay := 5 * time.Millisecond; ; {
+		err := os.Mkdir(lease, 0700)
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, fs.ErrExist) {
+			return err
+		}
+		// Retry at once when the lease is gone or a stale one was removed.
+		info, err := os.Stat(lease)
+		retryNow := errors.Is(err, fs.ErrNotExist) ||
+			(err == nil && time.Since(info.ModTime()) > leaseStale && os.Remove(lease) == nil)
+		left := time.Until(deadline)
+		if left <= 0 {
+			return fmt.Errorf("the idempotency store is locked by another writer (%s); try again", lease)
+		}
+		if !retryNow {
+			time.Sleep(min(delay, left))
+			delay = min(delay*2, 100*time.Millisecond)
+		}
+	}
 }
 
 // A permit is retained until persistence completes, including after caller

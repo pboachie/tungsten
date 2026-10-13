@@ -18,6 +18,7 @@ import json
 import os
 import tempfile
 import threading
+import time
 from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -71,6 +72,42 @@ def _valid_store(value: object) -> dict[str, dict[str, str]] | None:
 
 _file_lock = threading.RLock()
 
+# How long ``reserve`` waits for another writer's lease before refusing, and
+# the age after which a lease is a crashed writer's and is broken (seconds).
+_LEASE_WAIT = 2.0
+_LEASE_STALE = 30.0
+
+
+def _acquire_lease(lease: Path) -> None:
+    """Take the cross-process lease ``lease`` (a directory: mkdir is atomic).
+    A busy lease is retried with backoff for up to ``_LEASE_WAIT``; one whose
+    mtime is older than ``_LEASE_STALE`` was left by a writer that died and is
+    removed. A lease still busy after the wait refuses the call."""
+    deadline = time.monotonic() + _LEASE_WAIT
+    delay = 0.005
+    while True:
+        try:
+            lease.mkdir()
+            return
+        except FileExistsError:
+            pass
+        # Retry at once when the lease is gone or a stale one was removed.
+        try:
+            stale = time.time() - lease.stat().st_mtime > _LEASE_STALE
+            retry_now = False
+            if stale:
+                with contextlib.suppress(OSError):
+                    lease.rmdir()
+                    retry_now = True
+        except FileNotFoundError:
+            retry_now = True
+        left = deadline - time.monotonic()
+        if left <= 0:
+            raise OSError(f"the idempotency store is locked by another writer ({lease}); try again")
+        if not retry_now:
+            time.sleep(min(delay, left))
+            delay = min(delay * 2, 0.1)
+
 
 class FileIdempotencyStore:
     """A store persisted to one JSON file (``{"version": 1, "keys": {scope:
@@ -81,7 +118,9 @@ class FileIdempotencyStore:
     the same directory, then a rename); the file is created with mode 0600
     because keys are never meant to be shown. A file that exists but cannot
     be parsed makes ``get`` and ``put`` raise, and the runtime then refuses
-    the call rather than issue a second key for the same intent."""
+    the call rather than issue a second key for the same intent. ``reserve``
+    also holds the cross-process lease ``<path>.lock``: it waits up to 2 s for
+    another process's lease and breaks one older than 30 s (its writer died)."""
 
     __slots__ = ("_lock", "path")
 
@@ -107,7 +146,7 @@ class FileIdempotencyStore:
         with _file_lock, self._lock:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             lease = Path(str(self.path) + ".lock")
-            lease.mkdir()  # Busy/stale leases fail closed; never steal one.
+            _acquire_lease(lease)
             try:
                 existing = self.get(scope, logical_id)
                 if existing:
@@ -115,7 +154,9 @@ class FileIdempotencyStore:
                 self.put(scope, logical_id, candidate)
                 return candidate
             finally:
-                lease.rmdir()
+                # The outcome is decided; a lease left behind turns stale and is broken.
+                with contextlib.suppress(OSError):
+                    lease.rmdir()
 
     def get(self, scope: str, logical_id: str) -> str | None:
         with self._lock:

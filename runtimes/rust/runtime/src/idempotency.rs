@@ -6,6 +6,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
+use std::time::{Duration, Instant, SystemTime};
 
 use serde_json::{Map, Value};
 
@@ -59,7 +60,9 @@ type StoreData = BTreeMap<String, BTreeMap<String, String>>;
 /// is created with mode 0600 because keys are never meant to be shown. A file
 /// that exists but cannot be parsed makes `get` return `None` and `put`
 /// write nothing, and the runtime then refuses the call rather than issue a
-/// second key for the same intent.
+/// second key for the same intent. `reserve` also holds the cross-process
+/// lease `<path>.lock`: it waits up to 2 s for another process's lease and
+/// breaks one older than 30 s (its writer died).
 #[derive(Debug)]
 pub struct FileIdempotencyStore {
     path: PathBuf,
@@ -148,6 +151,48 @@ impl FileIdempotencyStore {
     }
 }
 
+/// How long `reserve` waits for another writer's lease before refusing.
+const LEASE_WAIT: Duration = Duration::from_secs(2);
+/// A lease older than this is a crashed writer's and is broken.
+const LEASE_STALE: Duration = Duration::from_secs(30);
+
+/// Takes the cross-process lease `lease` (a directory: creating one is
+/// atomic). A busy lease is retried with backoff for up to [`LEASE_WAIT`];
+/// one whose mtime is older than [`LEASE_STALE`] was left by a writer that
+/// died and is removed. A lease still busy after the wait refuses the call.
+fn acquire_lease(lease: &Path) -> Result<(), String> {
+    let deadline = Instant::now() + LEASE_WAIT;
+    let mut delay = Duration::from_millis(5);
+    loop {
+        match std::fs::create_dir(lease) {
+            Ok(()) => return Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(e) => return Err(e.to_string()),
+        }
+        // Retry at once when the lease is gone or a stale one was removed.
+        let retry_now = match std::fs::metadata(lease).and_then(|m| m.modified()) {
+            Ok(modified) => {
+                SystemTime::now()
+                    .duration_since(modified)
+                    .is_ok_and(|held| held > LEASE_STALE)
+                    && std::fs::remove_dir(lease).is_ok()
+            }
+            Err(e) => e.kind() == std::io::ErrorKind::NotFound,
+        };
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Err(format!(
+                "the idempotency store is locked by another writer ({}); try again",
+                lease.display()
+            ));
+        }
+        if !retry_now {
+            std::thread::sleep(delay.min(left));
+            delay = (delay * 2).min(Duration::from_millis(100));
+        }
+    }
+}
+
 impl IdempotencyStore for FileIdempotencyStore {
     fn reserve(&self, scope: &str, logical_id: &str, candidate: &str) -> Result<String, String> {
         static FILES: Mutex<()> = Mutex::new(());
@@ -160,7 +205,7 @@ impl IdempotencyStore for FileIdempotencyStore {
             .unwrap_or(Path::new("."));
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         let lease = PathBuf::from(format!("{}.lock", self.path.display()));
-        std::fs::create_dir(&lease).map_err(|e| e.to_string())?;
+        acquire_lease(&lease)?;
         let result = (|| {
             let mut data = self.read().ok_or("invalid idempotency store")?;
             if let Some(key) = data
@@ -176,7 +221,8 @@ impl IdempotencyStore for FileIdempotencyStore {
             self.write(&data).map_err(|e| e.to_string())?;
             Ok(candidate.to_owned())
         })();
-        std::fs::remove_dir(&lease).map_err(|e| e.to_string())?;
+        // The outcome is decided; a lease left behind turns stale and is broken.
+        let _ = std::fs::remove_dir(&lease);
         result
     }
     fn get(&self, scope: &str, logical_id: &str) -> Option<String> {

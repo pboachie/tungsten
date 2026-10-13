@@ -6,7 +6,7 @@
  * this module.
  */
 import { randomBytes } from "node:crypto";
-import { mkdir, open, readFile, rename, rm } from "node:fs/promises";
+import { mkdir, open, readFile, rename, rm, rmdir, stat } from "node:fs/promises";
 import { dirname } from "node:path";
 
 import type { IdempotencyStore } from "./types.js";
@@ -39,6 +39,45 @@ function sorted(keys: StoreFile["keys"]): StoreFile["keys"] {
   return out;
 }
 
+/** How long `reserve` waits for another writer's lease before refusing. */
+const LEASE_WAIT_MS = 2000;
+/** A lease older than this is a crashed writer's and is broken. */
+const LEASE_STALE_MS = 30_000;
+
+const pause = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Takes the cross-process lease `lease` (a directory: mkdir is atomic). A
+ * busy lease is retried with backoff for up to {@link LEASE_WAIT_MS}; one
+ * whose mtime is older than {@link LEASE_STALE_MS} is left by a writer that
+ * died and is removed. A lease still busy after the wait refuses the call.
+ */
+async function acquireLease(lease: string): Promise<void> {
+  const deadline = Date.now() + LEASE_WAIT_MS;
+  for (let delay = 5; ; ) {
+    try {
+      await mkdir(lease);
+      return;
+    } catch (error) {
+      if ((error as { code?: unknown }).code !== "EEXIST") throw error;
+    }
+    // Retry at once when the lease is gone or a stale one was removed.
+    let retryNow: boolean;
+    try {
+      const held = Date.now() - (await stat(lease)).mtimeMs;
+      retryNow = held > LEASE_STALE_MS && (await rmdir(lease).then(() => true, () => false));
+    } catch (error) {
+      retryNow = (error as { code?: unknown }).code === "ENOENT";
+    }
+    const left = deadline - Date.now();
+    if (left <= 0) throw new Error(`the idempotency store is locked by another writer (${lease}); try again`);
+    if (!retryNow) {
+      await pause(Math.min(delay, left));
+      delay = Math.min(delay * 2, 100);
+    }
+  }
+}
+
 /**
  * An {@link IdempotencyStore} persisted to one JSON file, so `auto` keys
  * survive a restart: a call retried after a crash reuses its key. Writes
@@ -46,7 +85,9 @@ function sorted(keys: StoreFile["keys"]): StoreFile["keys"] {
  * rename); the file is created with mode 0600 because keys are never
  * meant to be shown. A file that exists but cannot be parsed makes `get`
  * and `put` reject, and the runtime then refuses the call rather than
- * issue a second key for the same intent.
+ * issue a second key for the same intent. `reserve` also holds the
+ * cross-process lease `<path>.lock`: it waits up to 2 s for another
+ * process's lease and breaks one older than 30 s (its writer died).
  */
 let fileQueue: Promise<unknown> = Promise.resolve();
 
@@ -87,14 +128,16 @@ export class FileIdempotencyStore implements IdempotencyStore {
     const result = fileQueue.catch(() => undefined).then(async () => {
       await mkdir(dirname(this.path), { recursive: true });
       const lease = `${this.path}.lock`;
-      // A busy/stale lease refuses the call. Never steal a crashed writer's lease.
-      await mkdir(lease);
+      await acquireLease(lease);
       try {
         const existing = await this.get(scope, logicalId);
         if (existing) return existing;
         await this.put(scope, logicalId, candidate);
         return candidate;
-      } finally { await rm(lease, { recursive: true }); }
+      } finally {
+        // The outcome is decided; a lease left behind turns stale and is broken.
+        await rmdir(lease).catch(() => undefined);
+      }
     });
     fileQueue = result;
     return result;
