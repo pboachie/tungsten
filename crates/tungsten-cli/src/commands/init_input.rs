@@ -4,8 +4,9 @@ use crate::args::InitArgs;
 use std::io::{Read, Write};
 use std::path::Path;
 use tungsten_contract::{
-    EvidenceDocument, Frontend, HttpEvidence, Limits, MediaEvidence, ResponseEvidence,
-    ReviewedOverrides, ShapeEvidence, SourceLocation, UnknownFact,
+    EvidenceDocument, Frontend, HttpEvidence, Limits, MediaEvidence, ParameterEvidence,
+    ParameterLocation, ResponseEvidence, ReviewedOverrides, ShapeEvidence, SourceLocation,
+    UnknownFact,
 };
 
 fn example(path: &Path) -> Result<Vec<MediaEvidence>, String> {
@@ -52,6 +53,24 @@ pub(super) fn prepare(args: &mut InitArgs) -> Result<(), String> {
             );
         }
     }
+    // The supplied template declares string path parameters; requiredness is
+    // intrinsic to path parameters. The engine validates syntax and uniqueness.
+    let parameters = path
+        .split('/')
+        .filter_map(|segment| {
+            segment
+                .strip_prefix('{')
+                .and_then(|s| s.strip_suffix('}'))
+                .map(|name| ParameterEvidence {
+                    name: name.into(),
+                    location: ParameterLocation::Path,
+                    shape: ShapeEvidence {
+                        samples: vec![],
+                        declared_schema: Some(serde_json::json!({"type":"string"})),
+                    },
+                })
+        })
+        .collect();
     let operation = HttpEvidence {
         method: args.method.clone().ok_or("HTTP method is required")?,
         path,
@@ -60,7 +79,7 @@ pub(super) fn prepare(args: &mut InitArgs) -> Result<(), String> {
             line: None,
             column: None,
         },
-        parameters: vec![],
+        parameters,
         request: args
             .request_example
             .as_deref()
