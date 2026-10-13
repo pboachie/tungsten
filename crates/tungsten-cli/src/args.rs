@@ -486,12 +486,7 @@ pub(crate) struct DoctorArgs {
 }
 
 fn parse_init_target(s: &str) -> Result<String, String> {
-    let target = match s.trim() {
-        "ts" => "typescript",
-        "py" => "python",
-        "rs" => "rust",
-        name => name,
-    };
+    let target = crate::targets::canonical(s.trim());
     if target == "cli" || tungsten_config::KNOWN_TARGETS.contains(&target) {
         Ok(target.to_string())
     } else {
