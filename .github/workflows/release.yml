@@ -30,6 +30,16 @@ on:
         required: true
         default: true
         type: boolean
+      bootstrap_only:
+        description: "Run only fresh-OS bootstrap rehearsal; skip all release and publication jobs"
+        required: true
+        default: false
+        type: boolean
+      bootstrap_ops_sha:
+        description: "Exact private helper commit (40 hexadecimal characters), required for bootstrap-only"
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
@@ -46,7 +56,7 @@ env:
 jobs:
   prepare:
     name: prepare
-    if: github.repository == 'pboachie/tungsten'
+    if: github.repository == 'pboachie/tungsten' && !(github.event_name == 'workflow_dispatch' && inputs.bootstrap_only)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -99,6 +109,134 @@ jobs:
             echo "version=$version"
           } >> "$GITHUB_OUTPUT"
           echo "release=$release tag=${tag:-none} version=$version"
+
+  # Private helpers remain private. Only bounded, sanitized result JSON is
+  # uploaded; helper contents and logs stay in the ephemeral runner directory.
+  bootstrap:
+    name: bootstrap (${{ matrix.os }})
+    if: github.repository == 'pboachie/tungsten' && github.event_name == 'workflow_dispatch' && inputs.bootstrap_only
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2025, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Require an immutable private helper commit
+        env:
+          OPS_SHA: ${{ inputs.bootstrap_ops_sha }}
+        run: '[[ "$OPS_SHA" =~ ^[0-9a-fA-F]{40}$ ]]'
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: "22"
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+      - name: Fetch only the pinned private bootstrap helpers
+        env:
+          GH_TOKEN: ${{ secrets.OPS_DISPATCH_TOKEN }}
+          OPS_SHA: ${{ inputs.bootstrap_ops_sha }}
+        run: |
+          python - <<'PY'
+          import base64, json, os, pathlib, re, subprocess
+          sha = os.environ['OPS_SHA']
+          if not re.fullmatch(r'[0-9a-fA-F]{40}', sha) or not os.environ.get('GH_TOKEN'):
+              raise SystemExit('Pinned helpers require a valid commit and private contents read access.')
+          destination = pathlib.Path(os.environ['RUNNER_TEMP']) / 'bootstrap-private'
+          destination.mkdir()
+          for name in ('test_bootstrap_wizard.py', 'pack_bootstrap_runtimes.py'):
+              result = subprocess.run(['gh', 'api', f'repos/pboachie/tungsten-ops/contents/scripts/{name}?ref={sha}'], capture_output=True, timeout=60)
+              if result.returncode:
+                  raise SystemExit('Cannot fetch pinned bootstrap helpers; check commit availability and token contents read permission.')
+              try:
+                  item = json.loads(result.stdout)
+                  if item.get('type') != 'file' or item.get('encoding') != 'base64' or item.get('size', 0) > 131072:
+                      raise ValueError()
+                  contents = base64.b64decode(item['content'])
+                  if len(contents) != item['size']:
+                      raise ValueError()
+              except (ValueError, KeyError, TypeError):
+                  raise SystemExit('Pinned helper response was invalid.') from None
+              (destination / name).write_bytes(contents)
+          PY
+      - name: Install Windows terminal prerequisite
+        if: runner.os == 'Windows'
+        run: python -m pip install --disable-pip-version-check pywinpty==3.0.5
+      - name: Install the pinned Rust toolchain and build candidate
+        run: |
+          rustup toolchain install
+          cargo build --locked --release -p tungsten-cli
+      - name: Build genuine candidate npm archives
+        run: |
+          python - <<'PY'
+          import os, pathlib, subprocess, sys
+          root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'bootstrap-private'
+          with (root / 'pack.log').open('wb') as log:
+              result = subprocess.run([sys.executable, str(root / 'pack_bootstrap_runtimes.py'), '--source', os.getcwd(), '--out', str(root / 'npm-candidate')], stdout=log, stderr=log, timeout=900)
+          if result.returncode:
+              raise SystemExit('Candidate runtime build/pack failed; private logs are not published.')
+          PY
+      - name: Exercise both inputs through saved and fetched installers
+        env:
+          OPS_SHA: ${{ inputs.bootstrap_ops_sha }}
+          PUBLIC_SHA: ${{ github.sha }}
+        run: |
+          python - <<'PY'
+          import hashlib, json, os, pathlib, platform, re, subprocess, sys
+          root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'bootstrap-private'
+          evidence = pathlib.Path(os.environ['RUNNER_TEMP']) / 'bootstrap-evidence'
+          evidence.mkdir()
+          binary = pathlib.Path.cwd() / 'target/release' / ('tungsten.exe' if os.name == 'nt' else 'tungsten')
+          digest = hashlib.sha256(binary.read_bytes()).hexdigest()
+          failed = False
+          for delivery in ('file', 'pipe'):
+              for scenario in ('openapi', 'no-schema'):
+                  name = f'{delivery}-{scenario}'
+                  report = root / f'{name}.json'
+                  result = None
+                  with (root / f'{name}.log').open('wb') as log:
+                      try:
+                          result = subprocess.run([sys.executable, str(root / 'test_bootstrap_wizard.py'), '--source', os.getcwd(), '--binary', str(binary), '--npm-artifacts', str(root / 'npm-candidate'), '--delivery', delivery, '--case', scenario, '--report', str(report)], stdout=log, stderr=log, timeout=360)
+                      except subprocess.TimeoutExpired:
+                          pass
+                  raw = {}
+                  try:
+                      if report.stat().st_size <= 16384:
+                          raw = json.loads(report.read_text())
+                  except (OSError, ValueError):
+                      pass
+                  archive = raw.get('archive_sha256', '')
+                  ok = result is not None and result.returncode == 0 and raw.get('ok') is True and raw.get('local_mock_call') is True and raw.get('nonterminal_refused_before_install') is True and raw.get('installed_binary_verified') is True and raw.get('binary_sha256') == digest and isinstance(archive, str) and re.fullmatch(r'[0-9a-f]{64}', archive) is not None
+                  # Never copy arbitrary helper text or diagnostics into public artifacts.
+                  sanitized = {'ok': ok, 'case': scenario, 'delivery': delivery, 'public_sha': os.environ['PUBLIC_SHA'], 'private_helpers_sha': os.environ['OPS_SHA'], 'platform': platform.system(), 'binary_sha256': digest, 'prerelease_rehearsal': True, 'user_commands': 1}
+                  if ok:
+                      sanitized.update(archive_sha256=archive, local_mock_call=True, nonterminal_refused_before_install=True, installed_binary_verified=True)
+                  else:
+                      stage = raw.get('last_stage')
+                      if stage not in ('checking_prerequisites', 'nonterminal_refusal', 'terminal_bootstrap_and_first_call'):
+                          stage = 'helper_result_unavailable'
+                      sanitized.update(last_stage=stage, exit_code=result.returncode if result is not None else None, timed_out=result is None)
+                  (evidence / f'{name}.json').write_text(json.dumps(sanitized, indent=2) + '\n')
+                  print(f'{name}: {"passed" if ok else "failed (private logs withheld)"}')
+                  failed |= not ok
+          raise SystemExit(1 if failed else 0)
+          PY
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: bootstrap-${{ matrix.os }}-${{ github.sha }}
+          path: ${{ runner.temp }}/bootstrap-evidence/*.json
+          if-no-files-found: warn
+          retention-days: 14
 
   woodpecker-release:
     name: Woodpecker npm release validation
