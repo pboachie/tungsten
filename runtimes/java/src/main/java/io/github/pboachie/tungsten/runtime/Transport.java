@@ -103,7 +103,8 @@ final class Transport {
      * the attempt reads the socket and queues the chunks.
      */
     static final class Body {
-        private final LinkedBlockingQueue<Object> queue = new LinkedBlockingQueue<>();
+        // Apply backpressure when the caller consumes a stream slowly.
+        private final LinkedBlockingQueue<Object> queue = new LinkedBlockingQueue<>(64);
         private volatile boolean closed;
         private volatile Socket socket;
         private boolean finished;
@@ -123,11 +124,21 @@ final class Transport {
         }
 
         void push(Object item) {
-            queue.add(item);
+            try {
+                while (!closed && !queue.offer(item, 100, TimeUnit.MILLISECONDS)) {
+                    // A timed offer lets close release the producer as well as the reader.
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                close();
+            }
         }
 
         /** Reads the next chunk into {@link #chunk}, waiting at most wait. */
         Read read(Duration wait) {
+            if (closed) {
+                return Read.LOST;
+            }
             if (finished) {
                 return Read.END;
             }
@@ -171,7 +182,8 @@ final class Transport {
                     // closing is best effort
                 }
             }
-            queue.add(new IOException("closed"));
+            queue.clear();
+            queue.offer(new IOException("closed"));
         }
     }
 

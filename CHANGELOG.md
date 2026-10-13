@@ -38,6 +38,20 @@ changes.
 - Propagate Rust emitter graph facts with worklists and coalesce concurrent MCP
   query embeddings. Complete the README's generated Python SDK installation steps.
 
+### Security
+
+- Reserve MCP session capacity during asynchronous initialization, validate
+  manifest safety against executable descriptors, and keep Deno scripts on
+  the client RPC channel without direct network permission.
+- Bound upstream MCP response bodies to 4 MiB by default (configurable through
+  `maxResponseBytes`), and apply WebMCP result byte limits before HTTP body
+  materialization. Oversized responses return the SDK's `RESPONSE_TOO_LARGE`
+  diagnostic; inconsistent MCP manifest/SDK safety tiers fail before dispatch.
+- Require canonical decimal expiry in Java and Ruby confirmation tokens, and
+  bound Java transport queues with backpressure and cancellation cleanup.
+- Check locked dependency names, sources, hashes and current advisories in CI
+  and release preparation; disable npm install hooks in release builds.
+
 
 ### Added
 
