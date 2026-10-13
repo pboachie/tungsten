@@ -22,6 +22,7 @@ pub const KNOWN_TARGETS: &[&str] = &[
     "mcp",
     "mock",
     "python",
+    "ruby",
     "rust",
     "typescript",
     "webmcp",
