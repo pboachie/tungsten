@@ -34,21 +34,6 @@ changes.
   advisory. Release npm installs run with `--ignore-scripts`, and Python
   packages build with hash-locked tools and `--no-isolation`.
 
-### Security
-
-- Reserve MCP session capacity during asynchronous initialization, validate
-  manifest safety against executable descriptors, and keep Deno scripts on
-  the client RPC channel without direct network permission.
-- Bound upstream MCP response bodies to 4 MiB by default (configurable through
-  `maxResponseBytes`), and apply WebMCP result byte limits before HTTP body
-  materialization. Oversized responses return the SDK's `RESPONSE_TOO_LARGE`
-  diagnostic; inconsistent MCP manifest/SDK safety tiers fail before dispatch.
-- Bound Java transport queues with backpressure and cancellation cleanup.
-- Check locked dependency names, sources, hashes and current advisories in CI
-  and release preparation; disable npm install hooks in release builds.
-- Hash-lock Python release tooling and disable build isolation during package
-  creation to prevent unpinned build-tool resolution.
-
 ### Fixed
 
 - Wait for the MCP sandbox child to close before removing its temporary files,
@@ -94,21 +79,21 @@ changes.
   `maxResponseBytes`), and apply WebMCP result byte limits before HTTP body
   materialization. Oversized responses return the SDK's `RESPONSE_TOO_LARGE`
   diagnostic; inconsistent MCP manifest/SDK safety tiers fail before dispatch.
-- Require canonical decimal expiry in Java and Ruby confirmation tokens, and
-  bound Java transport queues with backpressure and cancellation cleanup.
+- Require canonical decimal expiry in C#, Java and Ruby confirmation tokens.
+- Bound Java transport queues with backpressure and cancellation cleanup.
 - Check locked dependency names, sources, hashes and current advisories in CI
   and release preparation; disable npm install hooks in release builds.
+- Hash-lock Python release tooling and disable build isolation during package
+  creation to prevent unpinned build-tool resolution.
 - Keep Postman path parameters explicit and restrict URL variables to origins.
-
-(Keep Postman path parameters explicit during import)
-
 
 ### Added
 
 - Add `defaults.redirects: none` and client redirect options across all seven SDK
   runtimes. Either setting disables every 3xx redirect without retries; the default
   remains same-origin reads only. Regenerate Rust SDKs; handwritten `ApiDescriptor`
-  literals must add `redirects: RedirectPolicy::SameOriginRead` (or `None`).
+  literals must add `redirects: RedirectPolicy::SameOriginRead` (or
+  `redirects: RedirectPolicy::None`).
 
 - Opt-in guided `init` with multi-output selection, consent before writes,
   explicit non-interactive generation, additive output edits with backups,
