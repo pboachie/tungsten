@@ -234,6 +234,10 @@ function execute(run: SandboxRun, dir: string): Promise<SandboxOutcome> {
     env: { NO_COLOR: "1", DENO_NO_UPDATE_CHECK: "1", DENO_NO_PROMPT: "1", DENO_DIR: join(dir, ".deno"), HOME: dir },
     stdio: ["pipe", "pipe", "pipe"],
   });
+  // `close` follows process exit (or a spawn error) and closure of its stdio.
+  // The driver's outcome alone can settle while the killed child still owns
+  // files in its working directory, preventing cleanup on Windows.
+  const closed = new Promise<void>((resolve) => child.once("close", () => resolve()));
   const driver = createDriver(run, {
     reply: (line) => void child.stdin.write(line),
     stop: () => void child.kill("SIGKILL"),
@@ -251,5 +255,5 @@ function execute(run: SandboxRun, dir: string): Promise<SandboxOutcome> {
     const detail = stderr.split(dir).join(".").replace(/data:application\/typescript;charset=utf-8,[^\s:]*/g, "script.ts").trim().slice(0, MAX_STDERR_CHARS);
     driver.fail("exit", `The script exited (${signal ?? `code ${code}`}) without returning${detail === "" ? "" : `: ${detail}`}`);
   });
-  return driver.outcome;
+  return Promise.all([driver.outcome, closed]).then(([outcome]) => outcome);
 }

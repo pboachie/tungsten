@@ -11,6 +11,9 @@ changes.
 
 ### Fixed
 
+- Wait for the MCP sandbox child to close before removing its temporary files,
+  including failed starts and terminated scripts on Windows.
+
 - Make generated Rust CLIs packageable with a versioned SDK dependency and share
   the generated workspace's Rust 1.88 minimum.
 
