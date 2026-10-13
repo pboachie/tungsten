@@ -447,16 +447,72 @@ impl Shapes {
     }
 }
 
-/// Nodes of one contribution keyed by normalized merged path, so every merged node
-/// finds its contributors with one lookup instead of re-walking every contribution.
+/// A scalar schema value, hashed with exactly `serde_json::Value` equality: integers
+/// equal only integers of the same sign class, and floats compare numerically
+/// (`-0.0 == 0.0`; serde_json values are always finite).
+#[derive(PartialEq, Eq, Hash)]
+enum Leaf<'a> {
+    Null,
+    Bool(bool),
+    Unsigned(u64),
+    Signed(i64),
+    Float(u64),
+    String(&'a str),
+}
+
+fn leaf(value: &Value) -> Option<Leaf<'_>> {
+    Some(match value {
+        Value::Null => Leaf::Null,
+        Value::Bool(b) => Leaf::Bool(*b),
+        Value::Number(n) => match (n.as_u64(), n.as_i64(), n.as_f64()) {
+            (Some(u), _, _) => Leaf::Unsigned(u),
+            (None, Some(i), _) => Leaf::Signed(i),
+            (None, None, Some(f)) => Leaf::Float(if f == 0.0 { 0 } else { f.to_bits() }),
+            (None, None, None) => return None,
+        },
+        Value::String(s) => Leaf::String(s),
+        Value::Array(_) | Value::Object(_) => return None,
+    })
+}
+
+fn add_provenance(provenance: &mut FactProvenance, state: EvidenceState, source: &SourceLocation) {
+    provenance.states.insert(state);
+    if !provenance.sources.contains(source) {
+        provenance.sources.insert(source.clone());
+    }
+}
+
+fn empty_provenance() -> FactProvenance {
+    FactProvenance {
+        states: BTreeSet::new(),
+        sources: BTreeSet::new(),
+    }
+}
+
+/// Provenance available at one normalized merged path: a container merged node takes
+/// every contribution node there, a scalar merged node only the equal ones.
+struct Bucket<'a> {
+    any: FactProvenance,
+    leaves: HashMap<Leaf<'a>, FactProvenance>,
+}
+
+/// Contribution provenance keyed by normalized merged path, built in one walk of
+/// each contribution so every merged node resolves with one hash lookup.
 ///
 /// A merged path is normalized by dropping each `anyOf` step together with the step
 /// after it (the branch index), and a trailing `anyOf`. A contribution reaches a
 /// normalized path by stepping through object keys and array indices, flattening any
-/// `anyOf` array at a node into its branches before taking the next step.
-type ContributionIndex<'a> = HashMap<Vec<String>, Vec<(&'a Value, usize)>>;
+/// `anyOf` array at a node into its branches before taking the next step. Branches
+/// therefore share buckets; aggregating per bucket and leaf value keeps the merged
+/// walk linear even when thousands of branches land in the same bucket.
+type ContributionIndex<'a> = HashMap<Vec<String>, Bucket<'a>>;
 
-fn index_contribution<'a>(schema: &'a Value, id: usize, index: &mut ContributionIndex<'a>) {
+fn index_contribution<'a>(
+    schema: &'a Value,
+    state: EvidenceState,
+    source: &SourceLocation,
+    index: &mut ContributionIndex<'a>,
+) {
     let mut pending = vec![(schema, Vec::new())];
     while let Some((node, path)) = pending.pop() {
         let mut branches = vec![node];
@@ -483,7 +539,18 @@ fn index_contribution<'a>(schema: &'a Value, id: usize, index: &mut Contribution
                 _ => {}
             }
         }
-        index.entry(path).or_default().push((node, id));
+        let bucket = index.entry(path).or_insert_with(|| Bucket {
+            any: empty_provenance(),
+            leaves: HashMap::new(),
+        });
+        add_provenance(&mut bucket.any, state, source);
+        if let Some(key) = leaf(node) {
+            add_provenance(
+                bucket.leaves.entry(key).or_insert_with(empty_provenance),
+                state,
+                source,
+            );
+        }
     }
 }
 
@@ -496,22 +563,17 @@ fn record_contributions(
     facts: &mut BTreeMap<String, FactProvenance>,
 ) {
     let mut index = ContributionIndex::new();
-    for (id, (schema, _, _)) in contributions.iter().enumerate() {
-        index_contribution(schema, id, &mut index);
+    for (schema, state, source) in contributions {
+        index_contribution(schema, *state, source, &mut index);
     }
     let mut pending = vec![(value, pointer.to_owned(), Vec::<String>::new(), false)];
     while let Some((value, pointer, normalized, skip)) = pending.pop() {
-        let mut provenance = FactProvenance {
-            states: BTreeSet::new(),
-            sources: BTreeSet::new(),
+        let bucket = index.get(&normalized);
+        let found = match leaf(value) {
+            None => bucket.map(|bucket| &bucket.any),
+            Some(key) => bucket.and_then(|bucket| bucket.leaves.get(&key)),
         };
-        for (node, id) in index.get(&normalized).into_iter().flatten() {
-            if value.is_object() || value.is_array() || *node == value {
-                let (_, state, source) = &contributions[*id];
-                provenance.states.insert(*state);
-                provenance.sources.insert(source.clone());
-            }
-        }
+        let mut provenance = found.cloned().unwrap_or_else(empty_provenance);
         if provenance.states.is_empty() {
             provenance.states.insert(EvidenceState::Unknown);
         }
