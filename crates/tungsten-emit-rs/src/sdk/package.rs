@@ -11,10 +11,7 @@ use tungsten_ir::{AuthScheme, CompositePart, IdempotencyKind, Safety};
 use super::ops::{OpShape, has_preview, safety_str};
 use super::plan::{MemberKind, Plan};
 use super::rs::string_lit;
-use crate::options::{Dep, Options};
-
-/// The oldest compiler the generated code builds with (let chains).
-const RUST_VERSION: &str = "1.88";
+use crate::options::{Dep, Options, RUST_VERSION};
 
 /// A TOML basic string (JSON string escapes are valid TOML escapes).
 fn toml_str(s: &str) -> String {

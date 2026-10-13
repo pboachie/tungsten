@@ -19,6 +19,9 @@ use tungsten_ir::naming::{self, Case};
 /// Default version requirement of `tungsten-runtime` and `tungsten-cli-kit`.
 pub const DEFAULT_RUNTIME_REQ: &str = "0.1";
 
+/// The oldest compiler supported by generated SDK and CLI code (let chains).
+pub(crate) const RUST_VERSION: &str = "1.88";
+
 /// Where a dependency comes from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Dep {
