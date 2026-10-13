@@ -101,6 +101,7 @@ pub fn curl(
         i += 1;
     }
     let url = url.ok_or_else(|| err("saved curl requires one URL"))?;
+    reject_curl_globbing(&url)?;
     if json_flag
         && !headers.iter().any(|h| {
             h.split_once(':')
@@ -129,6 +130,23 @@ pub fn curl(
             limits,
         )?],
     })
+}
+
+// cURL expands URL lists/ranges even inside shell quotes. Only a literal IPv6
+// authority may contain brackets; percent-encoded URL characters stay literal.
+fn reject_curl_globbing(url: &str) -> Result<(), Diagnostic> {
+    let remainder = url
+        .split_once("://")
+        .and_then(|(_, rest)| rest.strip_prefix('['))
+        .and_then(|rest| rest.split_once(']'))
+        .filter(|(host, _)| host.parse::<std::net::Ipv6Addr>().is_ok())
+        .map_or(url, |(_, rest)| rest);
+    if remainder.contains(['{', '}', '[', ']', '\\']) {
+        return Err(err(
+            "curl URL globbing and glob escapes are unsupported; percent-encode literal brackets or braces",
+        ));
+    }
+    Ok(())
 }
 
 /// Parse the HTTP-file subset: `###` separators, METHOD URL, headers and an
@@ -557,6 +575,11 @@ fn words(input: &str, dialect: ShellDialect) -> Result<Vec<String>, Diagnostic> 
             }
             i += 1;
             continue;
+        }
+        if dialect == ShellDialect::Posix && matches!(c, '*' | '?' | '[' | ']' | '{' | '}' | '~') {
+            return Err(err(
+                "unquoted shell globbing, brace and tilde expansion are unsupported; quote literal arguments",
+            ));
         }
         if matches!(c, '|' | '&' | ';' | '<' | '>' | '$' | '`' | '(' | ')')
             || dialect == ShellDialect::WindowsCmd && matches!(c, '%' | '!')
