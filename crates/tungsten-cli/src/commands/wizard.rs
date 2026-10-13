@@ -369,6 +369,18 @@ fn walkthrough(args: &mut InitArgs) -> io::Result<bool> {
                         return Ok(false);
                     };
                     args.har_origin = (!origin.is_empty()).then_some(origin);
+                    let Some(paths) = answer(
+                        "Reviewed HAR path mapping JSON file (required before saving)",
+                        &args
+                            .har_paths
+                            .as_ref()
+                            .map(|path| path.display().to_string())
+                            .unwrap_or_default(),
+                    )?
+                    else {
+                        return Ok(false);
+                    };
+                    args.har_paths = (!paths.is_empty()).then(|| paths.into());
                 }
                 let request_file = source
                     .extension()
