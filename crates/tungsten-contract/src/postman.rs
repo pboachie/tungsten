@@ -790,15 +790,6 @@ impl Context<'_> {
                 segments.push(segment.into());
             }
         }
-        if let Some(path) = value.get("path") {
-            let path = format!("/{}", components(Some(path), "/")?.trim_start_matches('/'));
-            if path != parsed.path() {
-                return Err(error(
-                    "PM005",
-                    "Structured and raw URL paths disagree; re-export a consistent URL before importing.",
-                ));
-            }
-        }
         let mut keys = BTreeSet::new();
         if value.get("query").is_some() {
             for query in array(value, "query")? {
