@@ -479,6 +479,7 @@ pub mod codes {
         (
             "TG1025",
             "discriminated union variant without a tag value: the csharp target tries variants in order",
+        ),
         ("TG1060", "invalid Ruby target option; default used"),
         (
             "TG1061",

@@ -913,6 +913,8 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
          a named type, so the C# SDK cannot pick the variant by its tag: it decodes the variants \
          in the plan's order and takes the first that fits.",
         "Give every variant a named schema and a discriminator mapping value.",
+    ),
+    e(
         "TG1060",
         "An option of the `ruby` target is not valid (a `gem` that is not a lowercase gem name, \
          a `module` that is not a Ruby constant path or names a core class or the runtime's \
