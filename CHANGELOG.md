@@ -20,6 +20,8 @@ changes.
   confirmation until explicitly reviewed per operation.
 - Add a bounded offline HTTP evidence engine with deterministic OpenAPI inference,
   provenance, and persistent reviewed overrides.
+- Versioned endpoint manifests can combine declared JSON Schema models with
+  explicit HTTP routing and auth references using bounded offline model reads.
 
 - TypeScript SDK targets can declare npm dependencies for preserved custom
   extensions; package archives include custom source and license notices.
