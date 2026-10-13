@@ -203,6 +203,7 @@ export interface VerifyDescriptor {
 }
 
 export interface AgentMeta {
+  importPolicy?: { inferredSafety: Safety; reviewed: boolean; source: string; allowedOrigins: string[] };
   safety: Safety;
   idempotency: { policy: IdempotencyKind; header: string | null; format: string | null; persistRequired: boolean; note: string | null };
   preview:

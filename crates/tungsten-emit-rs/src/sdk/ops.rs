@@ -1142,6 +1142,23 @@ fn agent_rs(a: &OperationAgentMeta, sensitive_request: &[String], lets: &mut Let
     Rx::record(
         "AgentMeta",
         vec![
+            (
+                "import_policy",
+                a.import_policy.as_ref().map_or_else(Rx::none, |policy| {
+                    Rx::some(Rx::record(
+                        "ImportPolicy",
+                        vec![
+                            (
+                                "inferred_safety",
+                                Rx::atom(safety_rs(policy.inferred_safety)),
+                            ),
+                            ("reviewed", Rx::boolean(policy.reviewed)),
+                            ("source", Rx::string(&policy.source)),
+                            ("allowed_origins", Rx::strings(&policy.allowed_origins)),
+                        ],
+                    ))
+                }),
+            ),
             ("safety", Rx::atom(safety_rs(a.safety))),
             (
                 "idempotency",

@@ -639,6 +639,20 @@ fn agent_js(a: &OperationAgentMeta, sensitive_request: &[String]) -> Js {
             Js::strs(&a.sensitive_response_fields),
         ),
     ];
+    if let Some(policy) = &a.import_policy {
+        entries.push((
+            "importPolicy",
+            Js::obj(vec![
+                (
+                    "inferredSafety",
+                    Js::str(safety_str(policy.inferred_safety)),
+                ),
+                ("reviewed", Js::bool(policy.reviewed)),
+                ("source", Js::str(&policy.source)),
+                ("allowedOrigins", Js::strs(&policy.allowed_origins)),
+            ]),
+        ));
+    }
     if !sensitive_request.is_empty() {
         entries.push(("sensitiveRequestFields", Js::strs(sensitive_request)));
     }

@@ -890,6 +890,20 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
         }),
       );
     }
+    const policy = op.agent.importPolicy;
+    if (policy?.reviewed === true) {
+      const base = urlOverride ?? this.options.baseUrl ?? this.api.servers?.[0];
+      let allowed = false;
+      try {
+        const target = new URL(base ?? "");
+        allowed = !target.username && !target.password && ["http:", "https:"].includes(target.protocol)
+          && policy.allowedOrigins.some((origin) => new URL(origin).origin === target.origin);
+      } catch { /* malformed or missing policy scope fails closed */ }
+      if (!allowed) return fail(diagnostic(op.id, "VALIDATION_FAILED", {
+        failed_parameter: "baseUrl", retryable: "never",
+        remediation: "The target origin is outside this operation's saved review policy. Select a reviewed server or review a separate policy for this environment. Nothing was sent.",
+      }));
+    }
     this.register(op);
     if (!isRecord(rawArgs)) {
       return fail(

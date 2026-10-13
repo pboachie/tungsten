@@ -448,7 +448,16 @@ pub struct ConfirmationMeta {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct ImportPolicy {
+    pub inferred_safety: Safety,
+    pub reviewed: bool,
+    pub source: String,
+    pub allowed_origins: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct AgentMeta {
+    pub import_policy: Option<ImportPolicy>,
     pub safety: Safety,
     pub idempotency: IdempotencyMeta,
     pub preview: PreviewMode,
