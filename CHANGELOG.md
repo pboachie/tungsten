@@ -27,6 +27,10 @@ changes.
   provenance, and persistent reviewed overrides.
 - Versioned endpoint manifests can combine declared JSON Schema models with
   explicit HTTP routing and auth references using bounded offline model reads.
+  confirmation until explicitly reviewed per operation and exact server origin.
+  Scoped reviews are enforced by every SDK runtime and require a runtime with
+  import-policy support. Regenerate Rust SDKs when upgrading; handwritten
+  `AgentMeta` literals must add `import_policy: None` or an explicit policy.
 
 - TypeScript SDK targets can declare npm dependencies for preserved custom
   extensions; package archives include custom source and license notices.

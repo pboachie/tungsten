@@ -1259,6 +1259,13 @@ pub(crate) fn descriptors_file(
     imports.add("__future__", "annotations");
     imports.add("tungsten_runtime", "ApiDescriptor");
     imports.add("tungsten_runtime", "OperationDescriptor");
+    let imported = plan
+        .ops
+        .iter()
+        .any(|info| info.op.agent.import_policy.is_some());
+    if imported {
+        imports.add("tungsten_runtime", "require_import_policy_v1");
+    }
     // Every descriptor names `_internal.Request`.
     uses.internal |= !plan.ops.is_empty();
     uses.add_to(plan, &mut imports, ".", ".models");
@@ -1271,6 +1278,10 @@ pub(crate) fn descriptors_file(
     );
     w.blank();
     w.line(imports.render());
+    if imported {
+        w.blank();
+        w.line("require_import_policy_v1()");
+    }
     let mut out = w.finish();
     let text = body.finish();
     let text = text.trim_start_matches('\n');

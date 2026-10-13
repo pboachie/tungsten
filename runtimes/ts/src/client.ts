@@ -890,20 +890,8 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
         }),
       );
     }
-    const policy = op.agent.importPolicy;
-    if (policy?.reviewed === true) {
-      const base = urlOverride ?? this.options.baseUrl ?? this.api.servers?.[0];
-      let allowed = false;
-      try {
-        const target = new URL(base ?? "");
-        allowed = !target.username && !target.password && ["http:", "https:"].includes(target.protocol)
-          && policy.allowedOrigins.some((origin) => new URL(origin).origin === target.origin);
-      } catch { /* malformed or missing policy scope fails closed */ }
-      if (!allowed) return fail(diagnostic(op.id, "VALIDATION_FAILED", {
-        failed_parameter: "baseUrl", retryable: "never",
-        remediation: "The target origin is outside this operation's saved review policy. Select a reviewed server or review a separate policy for this environment. Nothing was sent.",
-      }));
-    }
+    const scopeFailure = this.#importScope(op, urlOverride ?? this.options.baseUrl ?? this.api.servers?.[0]);
+    if (scopeFailure) return scopeFailure;
     this.register(op);
     if (!isRecord(rawArgs)) {
       return fail(
@@ -1030,6 +1018,23 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     };
   }
 
+  #importScope(op: OperationDescriptor, targetUrl: string | undefined): Failure | null {
+    const policy = op.agent.importPolicy;
+    if (policy?.reviewed === true) {
+      let allowed = false;
+      try {
+        const target = new URL(targetUrl ?? "");
+        allowed = !target.username && !target.password && ["http:", "https:"].includes(target.protocol)
+          && policy.allowedOrigins.some((origin) => new URL(origin).origin === target.origin);
+      } catch { /* malformed or missing policy scope fails closed */ }
+      if (!allowed) return fail(diagnostic(op.id, "VALIDATION_FAILED", {
+        failed_parameter: "baseUrl", retryable: "never",
+        remediation: "The target origin is outside this operation's saved review policy. Select a reviewed server or review a separate policy for this environment. Nothing was sent.",
+      }));
+    }
+    return null;
+  }
+
   #buildUrl(op: OperationDescriptor, args: Record<string, unknown>, plan: AuthPlan, urlOverride: string | null): Step<{ url: string; display: string }> {
     const servers = Array.isArray(this.api.servers) ? this.api.servers.filter((s) => typeof s === "string") : [];
     const base = typeof this.options.baseUrl === "string" ? this.options.baseUrl : servers[0];
@@ -1125,6 +1130,8 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
         }),
       );
     }
+    const scopeFailure = this.#importScope(op, url);
+    if (scopeFailure) return scopeFailure;
     return { ok: true, value: { url, display } };
   }
 
