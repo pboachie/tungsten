@@ -18,12 +18,12 @@ import json
 import os
 import tempfile
 import threading
-import time
 from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
+from . import _lease
 from ._util import is_record
 
 
@@ -47,6 +47,11 @@ class MemoryIdempotencyStore:
             return self._keys.get((scope, logical_id))
 
     def put(self, scope: str, logical_id: str, key: str) -> None:
+        self._write(scope, logical_id, key, None)
+
+    def _write(self, scope: str, logical_id: str, key: str, fence: Callable[[], None] | None) -> None:
+        """Store one key; ``fence``, when set, runs just before the rename that
+        commits the file, and its error abandons the write."""
         with self._lock:
             self._keys[(scope, logical_id)] = key
 
@@ -81,43 +86,6 @@ def _file_lock(path: Path) -> threading.Lock:
         return _file_locks.setdefault(os.path.abspath(path), threading.Lock())
 
 
-# How long ``reserve`` waits for another writer's lease before refusing, and
-# the age after which a lease is a crashed writer's and is broken (seconds).
-_LEASE_WAIT = 2.0
-_LEASE_STALE = 30.0
-
-
-def _acquire_lease(lease: Path) -> None:
-    """Take the cross-process lease ``lease`` (a directory: mkdir is atomic).
-    A busy lease is retried with backoff for up to ``_LEASE_WAIT``; one whose
-    mtime is older than ``_LEASE_STALE`` was left by a writer that died and is
-    removed. A lease still busy after the wait refuses the call."""
-    deadline = time.monotonic() + _LEASE_WAIT
-    delay = 0.005
-    while True:
-        try:
-            lease.mkdir()
-            return
-        except FileExistsError:
-            pass
-        # Retry at once when the lease is gone or a stale one was removed.
-        try:
-            stale = time.time() - lease.stat().st_mtime > _LEASE_STALE
-            retry_now = False
-            if stale:
-                with contextlib.suppress(OSError):
-                    lease.rmdir()
-                    retry_now = True
-        except FileNotFoundError:
-            retry_now = True
-        left = deadline - time.monotonic()
-        if left <= 0:
-            raise OSError(f"the idempotency store is locked by another writer ({lease}); try again")
-        if not retry_now:
-            time.sleep(min(delay, left))
-            delay = min(delay * 2, 0.1)
-
-
 class FileIdempotencyStore:
     """A store persisted to one JSON file (``{"version": 1, "keys": {scope:
     {logical_id: key}}}``, the format of the TypeScript runtime's
@@ -128,8 +96,9 @@ class FileIdempotencyStore:
     because keys are never meant to be shown. A file that exists but cannot
     be parsed makes ``get`` and ``put`` raise, and the runtime then refuses
     the call rather than issue a second key for the same intent. ``reserve``
-    also holds the cross-process lease ``<path>.lock``: it waits up to 2 s for
-    another process's lease and breaks one older than 30 s (its writer died)."""
+    also holds the cross-process lease ``<path>.lock`` (``_lease``): it waits up
+    to 2 s for another writer and reclaims the lease only from an owner whose
+    process provably ended."""
 
     __slots__ = ("_lock", "path")
 
@@ -155,23 +124,26 @@ class FileIdempotencyStore:
         with _file_lock(self.path), self._lock:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             lease = Path(str(self.path) + ".lock")
-            _acquire_lease(lease)
+            token = _lease.acquire(lease)
             try:
                 existing = self.get(scope, logical_id)
                 if existing:
                     return existing
-                self.put(scope, logical_id, candidate)
+                self._write(scope, logical_id, candidate, lambda: _lease.fence(lease, token))
                 return candidate
             finally:
-                # The outcome is decided; a lease left behind turns stale and is broken.
-                with contextlib.suppress(OSError):
-                    lease.rmdir()
+                _lease.release(lease, token)
 
     def get(self, scope: str, logical_id: str) -> str | None:
         with self._lock:
             return self._read().get(scope, {}).get(logical_id)
 
     def put(self, scope: str, logical_id: str, key: str) -> None:
+        self._write(scope, logical_id, key, None)
+
+    def _write(self, scope: str, logical_id: str, key: str, fence: Callable[[], None] | None) -> None:
+        """Store one key; ``fence``, when set, runs just before the rename that
+        commits the file, and its error abandons the write."""
         with self._lock:
             keys = self._read()
             keys.setdefault(scope, {})[logical_id] = key
@@ -189,6 +161,8 @@ class FileIdempotencyStore:
                     handle.flush()
                     os.fsync(handle.fileno())
                 os.chmod(temporary, 0o600)
+                if fence is not None:
+                    fence()
                 os.replace(temporary, self.path)
             except BaseException:
                 Path(temporary).unlink(missing_ok=True)
