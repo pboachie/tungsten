@@ -101,7 +101,7 @@ class _NativeSyncTransport(httpx.BaseTransport):
         self._client: httpx.AsyncClient | None = None
         # Stops the loop thread and closes the pool of a transport that is
         # dropped (its client never closed); close() detaches it.
-        self._finalizer: weakref.finalize[..., None] | None = None
+        self._finalizer: weakref.finalize[..., Any] | None = None
         self._closed = False
         self._stopped = threading.Event()
         self._responses: set[httpx.Response] = set()
