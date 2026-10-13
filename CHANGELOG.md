@@ -9,6 +9,24 @@ changes.
 
 ## [Unreleased]
 
+### Breaking
+
+- A 3xx status an operation declares (exactly or by class) is its success in all
+  seven runtimes, also with `redirects: none`, so a mutation answered with a
+  declared `303 See Other` succeeds. Redirects are still never followed on
+  mutations, and with `redirects: none` a 3xx the operation does not declare (no
+  match, or only `default`) fails as `UNEXPECTED_RESPONSE` without being
+  followed. Java, Ruby and C# report that refusal with the redirect remediation the
+  other runtimes use.
+- Java: `ApiDescriptor` has the `redirects` record component; the eleven-argument
+  constructor is removed, so construct it with the canonical constructor.
+- Ruby: `ClientOptions` has the `redirects` member (first), which shifts positional
+  construction and `deconstruct`; pass options by keyword.
+- Rust: `CallOptions` has the public `max_pages` field (pages of one traversal;
+  None or zero: unbounded), and `ApiDescriptor` the `redirects` field. Build
+  `CallOptions` with `..CallOptions::default()` so later fields do not break
+  handwritten literals.
+
 ### Fixed
 
 - Make generated Rust CLIs packageable with a versioned SDK dependency and share
@@ -37,6 +55,12 @@ changes.
   explicit page limits across the four runtimes.
 - Propagate Rust emitter graph facts with worklists and coalesce concurrent MCP
   query embeddings. Complete the README's generated Python SDK installation steps.
+- Release a Python sync client's native transport thread, event loop and connection
+  pool when the client is garbage collected without `close()`, and run polling
+  waits on the caller's thread so expiring polls no longer hold worker permits.
+- File idempotency stores (TypeScript, Python, Go, Rust) wait up to 2 s for another
+  process's `<path>.lock` lease, break a lease older than 30 s left by a crashed
+  writer, and keep a reserved key when removing the lease fails.
 
 
 ### Added
