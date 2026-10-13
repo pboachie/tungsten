@@ -437,6 +437,30 @@ fn tungsten_yml(
                 "  typescript: {{ out: generated/typescript, runtime_path: {} }}",
                 yaml_scalar(&path.to_string_lossy().replace('\\', "/"))
             );
+        } else if target == "python"
+            && let Some(runtime) = &args.python_runtime
+        {
+            let path = std::path::absolute(runtime).unwrap_or_else(|_| runtime.to_path_buf());
+            let _ = writeln!(
+                out,
+                "  python: {{ out: generated/python, runtime_path: {} }}",
+                yaml_scalar(&path.to_string_lossy().replace('\\', "/"))
+            );
+        } else if target == "rust"
+            && (args.rust_runtime.is_some() || args.cli_kit_runtime.is_some())
+        {
+            let mut options = serde_json::json!({"out":"generated/rust", "cli":true});
+            if let Some(runtime) = &args.rust_runtime {
+                let path = std::path::absolute(runtime).unwrap_or_else(|_| runtime.to_path_buf());
+                options["runtime_path"] =
+                    serde_json::json!(path.to_string_lossy().replace('\\', "/"));
+            }
+            if let Some(runtime) = &args.cli_kit_runtime {
+                let path = std::path::absolute(runtime).unwrap_or_else(|_| runtime.to_path_buf());
+                options["cli"] =
+                    serde_json::json!({"kit_path":path.to_string_lossy().replace('\\', "/")});
+            }
+            let _ = writeln!(out, "  rust: {options}");
         } else if target == "rust" && has_cli {
             let _ = writeln!(out, "  rust: {{ out: generated/rust, cli: true }}");
         } else if target == "webmcp" && (runtime.is_some() || args.webmcp_runtime.is_some()) {

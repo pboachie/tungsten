@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Scoped first-use check for freshly generated TypeScript projects.
+//! Scoped first-use checks for freshly generated projects.
 use crate::args::InitArgs;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -7,24 +7,43 @@ use std::time::{Duration, Instant};
 
 pub(super) fn preflight(args: &InitArgs) -> Result<(), &'static str> {
     if args.targets.is_empty()
-        || !args
-            .targets
-            .iter()
-            .any(|t| matches!(t.as_str(), "typescript" | "mcp" | "webmcp"))
-        || args
-            .targets
-            .iter()
-            .any(|t| !matches!(t.as_str(), "typescript" | "mcp" | "webmcp" | "docs"))
+        || !args.targets.iter().any(|t| {
+            matches!(
+                t.as_str(),
+                "typescript" | "mcp" | "webmcp" | "python" | "rust" | "cli"
+            )
+        })
+        || args.targets.iter().any(|t| {
+            !matches!(
+                t.as_str(),
+                "typescript" | "mcp" | "webmcp" | "docs" | "python" | "rust" | "cli"
+            )
+        })
     {
-        return Err(
-            "local setup supports TypeScript, MCP, WebMCP and docs; Python/Rust need their documented toolchain setup",
-        );
+        return Err("local setup supports TypeScript, Python, Rust/CLI, MCP, WebMCP and docs");
     }
     if ["tungsten.yml", "agent.yml", "generated"]
         .iter()
         .any(|name| std::fs::symlink_metadata(args.dir.join(name)).is_ok())
     {
         return Err("local setup requires a new project to avoid executing existing custom code");
+    }
+    if args
+        .targets
+        .iter()
+        .any(|t| matches!(t.as_str(), "rust" | "cli"))
+    {
+        super::init_setup_rust::preflight()?;
+    }
+    if args.targets.iter().any(|t| t == "python") {
+        super::init_setup_python::interpreter()?;
+    }
+    if !args
+        .targets
+        .iter()
+        .any(|t| matches!(t.as_str(), "typescript" | "mcp" | "webmcp"))
+    {
+        return Ok(());
     }
     let version = Command::new("node")
         .arg("--version")
@@ -54,7 +73,12 @@ fn npm() -> &'static str {
     if cfg!(windows) { "npm.cmd" } else { "npm" }
 }
 
-fn execute(program: &str, args: &[&str], dir: &Path, timeout: Duration) -> Result<(), String> {
+pub(super) fn execute(
+    program: &str,
+    args: &[&str],
+    dir: &Path,
+    timeout: Duration,
+) -> Result<(), String> {
     let mut child = Command::new(program)
         .args(args)
         .current_dir(dir)
@@ -91,12 +115,23 @@ fn execute(program: &str, args: &[&str], dir: &Path, timeout: Duration) -> Resul
 }
 
 pub(super) fn run(args: &InitArgs) -> (Vec<crate::output::InitSetupTarget>, Result<(), String>) {
-    let mut results = vec![crate::output::InitSetupTarget {
-        target: "typescript".into(),
-        status: "not_attempted".into(),
-    }];
-    for target in ["mcp", "webmcp", "docs"] {
-        if args.targets.iter().any(|t| t == target) {
+    let mut results = vec![];
+    if args
+        .targets
+        .iter()
+        .any(|t| matches!(t.as_str(), "typescript" | "mcp" | "webmcp"))
+    {
+        results.push(crate::output::InitSetupTarget {
+            target: "typescript".into(),
+            status: "not_attempted".into(),
+        });
+    }
+    for target in ["python", "rust", "mcp", "webmcp", "docs"] {
+        if args
+            .targets
+            .iter()
+            .any(|t| t == target || (target == "rust" && t == "cli"))
+        {
             results.push(crate::output::InitSetupTarget {
                 target: target.into(),
                 status: if target == "docs" {
@@ -120,9 +155,21 @@ fn setup(args: &InitArgs, results: &mut [crate::output::InitSetupTarget]) -> Res
         .ok_or("cannot compile project for the local example")?;
     let operation = ir.operations().into_iter().find(|op| op.method == tungsten_ir::HttpMethod::Get && op.body.is_none() && op.security.is_empty() && op.streaming.is_none() && matches!(op.status, tungsten_ir::OperationStatus::Implemented) && op.params.path.is_empty() && !op.params.query.iter().chain(&op.params.header).chain(&op.params.cookie).any(|p| p.required)).ok_or("local example needs an implemented, unauthenticated GET without required parameters or a body; use the advanced generated example for other APIs")?;
     let operation_id = operation.id.0.clone();
+    let rust_binary =
+        tungsten_ir::naming::to_case(&ir.api.name.words, tungsten_ir::naming::Case::Kebab);
     for result in results.iter_mut().filter(|r| r.target != "docs") {
         let directory = args.dir.join("generated").join(&result.target);
         result.status = "failed".into();
+        if result.target == "rust" {
+            super::init_setup_rust::build(&directory)?;
+            result.status = "built".into();
+            continue;
+        }
+        if result.target == "python" {
+            super::init_setup_python::build(&directory, args.python_runtime.as_deref())?;
+            result.status = "built".into();
+            continue;
+        }
         execute(
             npm(),
             &["install", "--ignore-scripts", "--no-audit", "--no-fund"],
@@ -137,31 +184,52 @@ fn setup(args: &InitArgs, results: &mut [crate::output::InitSetupTarget]) -> Res
         )?;
         result.status = "built".into();
     }
-    let directory = args.dir.join("generated/typescript");
     let server = tungsten_mock::MockServer::start(ir, tungsten_mock::MockOptions::default())
         .map_err(|_| "cannot start the loopback mock")?;
     let base_url = server.base_url();
-    let result = execute(
-        "node",
-        &[
-            "--input-type=module",
-            "-e",
-            LOCAL_CALL,
-            &base_url,
-            &operation_id,
-        ],
-        &directory,
-        Duration::from_secs(20),
-    );
-    let observed = server.calls().iter().any(|call| {
-        call.operation.as_deref() == Some(&operation_id)
-            && (200..300).contains(&call.response_status)
-    });
-    server.shutdown();
-    result?;
-    if !observed {
-        return Err("generated client did not produce a successful mock receipt".into());
+    for target in results
+        .iter()
+        .filter(|r| matches!(r.target.as_str(), "typescript" | "python" | "rust" | "mcp"))
+    {
+        let directory = args.dir.join("generated").join(&target.target);
+        let before = server.calls().len();
+        let result = if target.target == "python" {
+            super::init_setup_python::run(&directory, &base_url, &operation_id)
+        } else if target.target == "rust" {
+            super::init_setup_rust::run(&directory, &rust_binary, &base_url, &operation_id)
+        } else if target.target == "mcp" {
+            super::init_setup_mcp::run(&directory, &base_url, &operation_id)
+        } else {
+            execute(
+                "node",
+                &[
+                    "--input-type=module",
+                    "-e",
+                    LOCAL_CALL,
+                    &base_url,
+                    &operation_id,
+                ],
+                &directory,
+                Duration::from_secs(20),
+            )
+        };
+        let observed = server.calls().iter().skip(before).any(|call| {
+            call.operation.as_deref() == Some(&operation_id)
+                && (200..300).contains(&call.response_status)
+        });
+        if let Err(error) = result {
+            server.shutdown();
+            return Err(error);
+        }
+        if !observed {
+            server.shutdown();
+            return Err(format!(
+                "generated {} client did not produce a successful mock receipt",
+                target.target
+            ));
+        }
     }
+    server.shutdown();
     Ok(())
 }
 
