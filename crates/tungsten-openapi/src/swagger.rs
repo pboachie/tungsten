@@ -55,8 +55,11 @@ fn strings(v: Option<&Value>, p: &str) -> Result<Vec<String>> {
         .collect()
 }
 fn fields(v: &Value, keys: &[&str]) -> Map<String, Value> {
-    keys.iter()
-        .filter_map(|k| v.get(*k).map(|v| ((*k).into(), v.clone())))
+    v.as_object()
+        .into_iter()
+        .flatten()
+        .filter(|(k, _)| keys.contains(&k.as_str()) || k.starts_with("x-"))
+        .map(|(k, v)| (k.clone(), v.clone()))
         .collect()
 }
 
@@ -308,7 +311,14 @@ pub fn convert(input: &Value) -> Result<Value> {
                 {
                     return fail(&p, "file upload requires multipart/form-data");
                 }
-                let content:Map<String,Value>=consumes.iter().map(|m|(m.clone(),json!({"schema":{"type":"object","properties":form,"required":required},"encoding":encoding}))).collect();
+                let mut form_schema = json!({"type":"object","properties":form});
+                if !required.is_empty() {
+                    form_schema["required"] = json!(required);
+                }
+                let content: Map<String, Value> = consumes
+                    .iter()
+                    .map(|m| (m.clone(), json!({"schema":form_schema,"encoding":encoding})))
+                    .collect();
                 body = Some(json!({"required":!required.is_empty(),"content":content}));
             }
             if !normal.is_empty() {
