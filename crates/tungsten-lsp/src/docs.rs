@@ -187,7 +187,7 @@ const MANIFEST: Table = &[
     ),
     (
         "targets",
-        "What to generate. Known targets: `typescript`, `python`, `rust`, `mcp`, `webmcp`, `docs`, `mock`. Each needs its own `out` directory; directories must be distinct and not nested (TG0612).",
+        "What to generate. Known targets: `typescript`, `python`, `rust`, `ruby`, `mcp`, `webmcp`, `docs`, `mock`. Each needs its own `out` directory; directories must be distinct and not nested (TG0612).",
     ),
     (
         "targets.*",
@@ -202,6 +202,16 @@ const MANIFEST: Table = &[
         "Package name of the generated SDK or server.",
     ),
     ("targets.*.crate", "Crate name of the generated Rust SDK."),
+    ("targets.*.gem", "Gem name of the generated Ruby SDK."),
+    (
+        "targets.*.module",
+        "Ruby module of the generated SDK, a constant path such as `Acme::Sdk`.",
+    ),
+    ("targets.*.version", "Version of the generated package."),
+    (
+        "targets.*.runtime_path",
+        "A local checkout of the runtime library, used instead of the published one.",
+    ),
     (
         "targets.*.cli",
         "Generate a command-line tool from the Rust SDK: `bin` names the binary.",
