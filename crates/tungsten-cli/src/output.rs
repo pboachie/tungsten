@@ -452,6 +452,9 @@ pub struct InitResult {
     /// Output generation details, when requested; not dependency/build acceptance.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub generation: Option<GenerateResult>,
+    /// Whether a generated TypeScript client completed a real loopback mock call.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub local_example: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]

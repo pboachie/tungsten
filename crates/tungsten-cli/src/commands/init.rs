@@ -186,6 +186,7 @@ pub(crate) fn run(args: &InitArgs) -> Report {
         spec_found: spec.is_some(),
         files,
         generation: None,
+        local_example: None,
     };
     report.human = human(&result);
     report.result = Some(CommandResult::Init(result));

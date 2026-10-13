@@ -348,6 +348,22 @@ pub enum SchemaName {
 
 #[derive(Debug, Clone, Args)]
 pub(crate) struct InitArgs {
+    /// Acquire project npm dependencies, build TypeScript and call a loopback mock.
+    /// Requires Node >=22 and npm; supports new TypeScript/docs projects only.
+    #[arg(long, requires = "generate", conflicts_with_all = ["resume", "force"])]
+    pub local_example: bool,
+    /// No-schema HTTP method; use a path template with --endpoint, never credentials.
+    #[arg(long, requires = "endpoint", conflicts_with_all = ["from", "resume"], value_parser = ["get", "post", "put", "patch", "delete", "head", "options"])]
+    pub method: Option<String>,
+    /// No-schema path template, for example /pets/{id}; not a live URL.
+    #[arg(long, requires = "method")]
+    pub endpoint: Option<String>,
+    /// JSON request example file; only its structure is persisted.
+    #[arg(long, requires = "method")]
+    pub request_example: Option<PathBuf>,
+    /// JSON response example file; only its structure is persisted (status 200).
+    #[arg(long, requires = "method")]
+    pub response_example: Option<PathBuf>,
     /// Start the guided terminal setup (requires a terminal, incompatible with JSON).
     #[arg(long, conflicts_with = "no_interactive")]
     pub interactive: bool,

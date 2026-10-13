@@ -815,6 +815,7 @@ dependencies = [
  "tungsten-agent",
  "tungsten-build",
  "tungsten-config",
+ "tungsten-contract",
  "tungsten-core",
  "tungsten-emit",
  "tungsten-emit-docs",
