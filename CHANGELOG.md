@@ -11,6 +11,10 @@ changes.
 
 ### Fixed
 
+- Warn when conditional JSON Schema constraints are ignored; strict check and
+  generation reject them before writing output. Conditional validation is not
+  implemented in generated clients.
+
 - Preserve explicit confirmation restrictions on imported operations even when
   an earlier scoped review classified the operation as read-only.
 - Reject noncanonical confirmation tokens and prototype-derived MCP arguments.
