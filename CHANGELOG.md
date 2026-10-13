@@ -18,6 +18,9 @@ changes.
   local definitions, parameter serialization, media types and authentication.
 - Imported operations retain review provenance and require argument-bound
   confirmation until explicitly reviewed per operation.
+- Import supported Postman Collection v2.1 requests through the offline contract
+  engine, preserving explicit authentication and reporting unsupported behavior.
+
 - Add a bounded offline HTTP evidence engine with deterministic OpenAPI inference,
   provenance, and persistent reviewed overrides.
 - Versioned endpoint manifests can combine declared JSON Schema models with
