@@ -9,6 +9,31 @@ changes.
 
 ## [Unreleased]
 
+### Breaking
+
+- MCP `run_script`: the Deno sandbox no longer gets `--allow-net`. Scripts
+  reach the API only through the session's client RPC. `denoArguments` and
+  `sandboxCommand` ignore `host`, now optional, and `run_script` no longer
+  needs or validates a `baseUrl`.
+- MCP servers bound upstream response bodies to 4 MiB by default (new
+  `maxResponseBytes` server option). Larger responses fail with
+  `RESPONSE_TOO_LARGE` before they are materialized.
+- WebMCP `maxResultBytes` now always bounds the upstream HTTP body before
+  parsing, not only with `binaryResults` or `streamCollection`. An oversized
+  response reports `RESPONSE_TOO_LARGE` instead of `RESULT_TOO_LARGE`.
+- MCP sessions refuse a tool, sending nothing (`UNEXPECTED_RESPONSE`), when the
+  manifest safety tier differs from the SDK operation's tier or from a macro's
+  strictest declared or step tier. Regenerate the manifest and SDK together.
+  Manifest annotations can make hints more cautious than the tier, never less.
+- MCP HTTP servers answer 503 `Server closing` once `close()` starts, wait for
+  sessions still initializing, and count those sessions against `maxSessions`.
+- The Java transport buffers at most 64 response chunks per body and applies
+  backpressure to the socket reader. Closing a body discards buffered chunks.
+- CI and release preparation fail when a committed lockfile gains a package
+  name missing from `.github/dependency-policy.json` or when OSV reports an
+  advisory. Release npm installs run with `--ignore-scripts`, and Python
+  packages build with hash-locked tools and `--no-isolation`.
+
 ### Security
 
 - Reserve MCP session capacity during asynchronous initialization, validate
