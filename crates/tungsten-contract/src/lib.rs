@@ -3,5 +3,6 @@
 
 mod engine;
 mod model;
+pub mod request_import;
 pub use engine::{infer, parameter_schema_pointer, parse_evidence, stable_operation_id};
 pub use model::*;
