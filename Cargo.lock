@@ -1066,7 +1066,7 @@ dependencies = [
 
 [[package]]
 name = "tungsten-emit-java"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "serde_json",
  "tungsten-core",

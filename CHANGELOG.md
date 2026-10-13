@@ -11,6 +11,8 @@ changes.
 
 ### Fixed
 
+- Preserve explicit confirmation restrictions on imported operations even when
+  an earlier scoped review classified the operation as read-only.
 - Reject noncanonical confirmation tokens and prototype-derived MCP arguments.
   Confirmation previews bind immutable Blob/File contents and metadata.
 - Reserve automatic idempotency keys atomically across clients sharing a store;
