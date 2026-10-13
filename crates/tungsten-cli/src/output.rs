@@ -449,6 +449,9 @@ pub struct InitResult {
     /// False when no spec was given or found and a placeholder was written.
     pub spec_found: bool,
     pub files: Vec<InitFile>,
+    /// Output generation details, when requested; not dependency/build acceptance.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub generation: Option<GenerateResult>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]

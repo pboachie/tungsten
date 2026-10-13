@@ -11,6 +11,9 @@ changes.
 
 ### Added
 
+- Opt-in guided `init` with multi-output selection, consent before writes,
+  explicit non-interactive generation and configuration-preserving resume.
+
 - TypeScript SDK targets can declare npm dependencies for preserved custom
   extensions; package archives include custom source and license notices.
 - The `ascii_token_128` caller-owned idempotency format accepts 1–128 ASCII

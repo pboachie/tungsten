@@ -185,6 +185,7 @@ pub(crate) fn run(args: &InitArgs) -> Report {
         spec: spec_ref,
         spec_found: spec.is_some(),
         files,
+        generation: None,
     };
     report.human = human(&result);
     report.result = Some(CommandResult::Init(result));
@@ -411,16 +412,21 @@ fn tungsten_yml(
     } else {
         selected.iter().map(String::as_str).collect()
     };
-    if targets.contains(&"webmcp") && !targets.contains(&"typescript") {
+    if (targets.contains(&"webmcp") || targets.contains(&"mcp")) && !targets.contains(&"typescript")
+    {
         targets.insert(0, "typescript");
     }
+    let has_cli = targets.contains(&"cli");
     let has_typescript = targets.contains(&"typescript");
     let mut written = std::collections::BTreeSet::new();
     for target in targets {
+        let target = if target == "cli" { "rust" } else { target };
         if !written.insert(target) {
             continue;
         }
-        if matches!(target, "mcp" | "webmcp") && has_typescript {
+        if target == "rust" && has_cli {
+            let _ = writeln!(out, "  rust: {{ out: generated/rust, cli: true }}");
+        } else if matches!(target, "mcp" | "webmcp") && has_typescript {
             let _ = writeln!(
                 out,
                 "  {target}: {{ out: generated/{target}, sdk_path: ../typescript }}"

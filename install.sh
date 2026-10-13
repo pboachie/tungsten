@@ -80,14 +80,19 @@ main() {
   repo=${TUNGSTEN_REPO:-pboachie/tungsten}
   version=${TUNGSTEN_VERSION:-}
   dir=${TUNGSTEN_INSTALL_DIR:-}
+  launch_init=0
   while [ "$#" -gt 0 ]; do
     case "$1" in
+      --init) launch_init=1; shift ;;
       --version) [ "$#" -ge 2 ] || die "--version needs a value"; version=$2; shift 2 ;;
       --dir) [ "$#" -ge 2 ] || die "--dir needs a value"; dir=$2; shift 2 ;;
       -h | --help) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; return 0 ;;
       *) die "unknown option: $1" ;;
     esac
   done
+  if [ "$launch_init" -eq 1 ]; then
+    (test -t 0 </dev/tty) 2>/dev/null || die "--init requires a controlling terminal; install without --init then run tungsten init interactively"
+  fi
   if [ -z "$dir" ]; then
     [ -n "${HOME:-}" ] || die "HOME is not set; pass --dir"
     dir=$HOME/.local/bin
@@ -137,6 +142,9 @@ main() {
   chmod 755 "$dir/.tungsten.$$"
   mv -f "$dir/.tungsten.$$" "$dir/tungsten"
   say "installed $dir/tungsten"
+  if [ "$launch_init" -eq 1 ]; then
+    "$dir/tungsten" init --interactive </dev/tty || die "setup did not finish; the installed binary can resume with init"
+  fi
   case ":$PATH:" in
     *":$dir:"*) ;;
     *) say "note: $dir is not on your PATH; add it, for example: export PATH=\"$dir:\$PATH\"" ;;

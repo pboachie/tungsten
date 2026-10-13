@@ -346,8 +346,20 @@ pub enum SchemaName {
     ToolCatalog,
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Clone, Args)]
 pub(crate) struct InitArgs {
+    /// Start the guided terminal setup (requires a terminal, incompatible with JSON).
+    #[arg(long, conflicts_with = "no_interactive")]
+    pub interactive: bool,
+    /// Never prompt, including when attached to a terminal.
+    #[arg(long)]
+    pub no_interactive: bool,
+    /// Generate configured outputs after initializing, without acquiring dependencies.
+    #[arg(long)]
+    pub generate: bool,
+    /// Generate from existing manifests without overwriting reviewed settings.
+    #[arg(long, requires = "generate", conflicts_with_all = ["force", "from", "targets", "name"])]
+    pub resume: bool,
     /// OpenAPI document to start from. Default: openapi.json, openapi.yaml
     /// or openapi.yml in the target directory.
     #[arg(long, value_name = "SPEC")]
@@ -404,7 +416,7 @@ fn parse_init_target(s: &str) -> Result<String, String> {
         "rs" => "rust",
         name => name,
     };
-    if tungsten_config::KNOWN_TARGETS.contains(&target) {
+    if target == "cli" || tungsten_config::KNOWN_TARGETS.contains(&target) {
         Ok(target.to_string())
     } else {
         Err(format!(

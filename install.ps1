@@ -19,10 +19,13 @@ available. The directory is not added to PATH; the script prints the command.
 #>
 [CmdletBinding()]
 param(
+    [switch]$Init,
     [string]$Version = $env:TUNGSTEN_VERSION,
     [string]$InstallDir = $env:TUNGSTEN_INSTALL_DIR,
     [string]$BaseUrl = $env:TUNGSTEN_RELEASE_BASE_URL
 )
+
+if ($Init -and [Console]::IsInputRedirected) { throw '-Init requires terminal input; install without -Init, then run tungsten init interactively' }
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
@@ -118,6 +121,10 @@ try {
     Copy-Item -Path $exe -Destination $staged -Force
     Move-Item -Path $staged -Destination (Join-Path $InstallDir 'tungsten.exe') -Force
     Write-Host "install.ps1: installed $(Join-Path $InstallDir 'tungsten.exe')"
+    if ($Init) {
+        & (Join-Path $InstallDir 'tungsten.exe') init --interactive
+        if ($LASTEXITCODE -ne 0) { Fail 'setup did not finish; run the installed binary with init to resume' }
+    }
     $onPath = ($env:PATH -split ';') -contains $InstallDir
     if (-not $onPath) {
         Write-Host "install.ps1: note: $InstallDir is not on your PATH; add it for your user with:"
