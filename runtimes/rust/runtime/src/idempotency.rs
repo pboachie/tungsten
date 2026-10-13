@@ -5,7 +5,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime};
 
 use serde_json::{Map, Value};
@@ -151,6 +151,13 @@ impl FileIdempotencyStore {
     }
 }
 
+/// The in-process lock of one store file, by absolute path.
+fn file_lock(path: &Path) -> Arc<Mutex<()>> {
+    static FILES: Mutex<BTreeMap<PathBuf, Arc<Mutex<()>>>> = Mutex::new(BTreeMap::new());
+    let key = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+    lock(&FILES).entry(key).or_default().clone()
+}
+
 /// How long `reserve` waits for another writer's lease before refusing.
 const LEASE_WAIT: Duration = Duration::from_secs(2);
 /// A lease older than this is a crashed writer's and is broken.
@@ -195,8 +202,10 @@ fn acquire_lease(lease: &Path) -> Result<(), String> {
 
 impl IdempotencyStore for FileIdempotencyStore {
     fn reserve(&self, scope: &str, logical_id: &str, candidate: &str) -> Result<String, String> {
-        static FILES: Mutex<()> = Mutex::new(());
-        let _files = lock(&FILES);
+        // Reservations of one file are serialized within the process; the
+        // lease serializes them across processes. Other files never wait.
+        let file = file_lock(&self.path);
+        let _file = lock(&file);
         let _guard = lock(&self.lock);
         let parent = self
             .path

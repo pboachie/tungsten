@@ -7,7 +7,7 @@
  */
 import { randomBytes } from "node:crypto";
 import { mkdir, open, readFile, rename, rm, rmdir, stat } from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, resolve } from "node:path";
 
 import type { IdempotencyStore } from "./types.js";
 
@@ -78,6 +78,10 @@ async function acquireLease(lease: string): Promise<void> {
   }
 }
 
+/** Reservations of one store file, serialized within the process (by
+ * absolute path); the lease serializes them across processes. */
+const fileQueues = new Map<string, Promise<unknown>>();
+
 /**
  * An {@link IdempotencyStore} persisted to one JSON file, so `auto` keys
  * survive a restart: a call retried after a crash reuses its key. Writes
@@ -89,8 +93,6 @@ async function acquireLease(lease: string): Promise<void> {
  * cross-process lease `<path>.lock`: it waits up to 2 s for another
  * process's lease and breaks one older than 30 s (its writer died).
  */
-let fileQueue: Promise<unknown> = Promise.resolve();
-
 export class FileIdempotencyStore implements IdempotencyStore {
   readonly path: string;
   #queue: Promise<unknown> = Promise.resolve();
@@ -125,7 +127,8 @@ export class FileIdempotencyStore implements IdempotencyStore {
   }
 
   async reserve(scope: string, logicalId: string, candidate: string): Promise<string> {
-    const result = fileQueue.catch(() => undefined).then(async () => {
+    const file = resolve(this.path);
+    const result = (fileQueues.get(file) ?? Promise.resolve()).catch(() => undefined).then(async () => {
       await mkdir(dirname(this.path), { recursive: true });
       const lease = `${this.path}.lock`;
       await acquireLease(lease);
@@ -139,7 +142,10 @@ export class FileIdempotencyStore implements IdempotencyStore {
         await rmdir(lease).catch(() => undefined);
       }
     });
-    fileQueue = result;
+    fileQueues.set(file, result);
+    // The last reservation of a file removes its queue entry when it settles.
+    const forget = (): void => { if (fileQueues.get(file) === result) fileQueues.delete(file); };
+    result.then(forget, forget);
     return result;
   }
 

@@ -283,7 +283,18 @@ type AtomicIdempotencyStore interface {
 }
 
 var legacyReservationMu sync.Mutex
-var fileReservationMu sync.Mutex
+
+// fileReservationLocks serializes the reservations of one store file within
+// the process (by absolute path); the lease serializes them across processes.
+var fileReservationLocks sync.Map
+
+func fileReservationLock(path string) *sync.Mutex {
+	if abs, err := filepath.Abs(path); err == nil {
+		path = abs
+	}
+	mu, _ := fileReservationLocks.LoadOrStore(path, &sync.Mutex{})
+	return mu.(*sync.Mutex)
+}
 
 func reserveKey(store IdempotencyStore, scope, id, candidate string) (string, error) {
 	if atomic, ok := store.(AtomicIdempotencyStore); ok {
@@ -311,8 +322,9 @@ func (s *MemoryIdempotencyStore) Reserve(scope, id, candidate string) (string, e
 	return candidate, nil
 }
 func (s *FileIdempotencyStore) Reserve(scope, id, candidate string) (string, error) {
-	fileReservationMu.Lock()
-	defer fileReservationMu.Unlock()
+	fileMu := fileReservationLock(s.path)
+	fileMu.Lock()
+	defer fileMu.Unlock()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := os.MkdirAll(filepath.Dir(s.path), 0700); err != nil {

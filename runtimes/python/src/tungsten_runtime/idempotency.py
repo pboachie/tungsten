@@ -70,7 +70,16 @@ def _valid_store(value: object) -> dict[str, dict[str, str]] | None:
     return out
 
 
-_file_lock = threading.RLock()
+# Reservations of one store file are serialized within the process (by
+# absolute path); the lease serializes them across processes.
+_file_locks: dict[str, threading.Lock] = {}
+_file_locks_guard = threading.Lock()
+
+
+def _file_lock(path: Path) -> threading.Lock:
+    with _file_locks_guard:
+        return _file_locks.setdefault(os.path.abspath(path), threading.Lock())
+
 
 # How long ``reserve`` waits for another writer's lease before refusing, and
 # the age after which a lease is a crashed writer's and is broken (seconds).
@@ -143,7 +152,7 @@ class FileIdempotencyStore:
         return keys
 
     def reserve(self, scope: str, logical_id: str, candidate: str) -> str:
-        with _file_lock, self._lock:
+        with _file_lock(self.path), self._lock:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             lease = Path(str(self.path) + ".lock")
             _acquire_lease(lease)
