@@ -40,6 +40,12 @@ changes.
   generated-package browser smoke passed in Chromium 154.0.8037.57 with
   `WebMCPTesting` enabled. Full cross-browser conformance remains a follow-up.
 
+- A Java target (`java`, `tungsten-emit-java`) and the Java runtime
+  `runtimes/java` (`io.github.pboachie.tungsten:tungsten-runtime`, Java 17,
+  standard library only): records for models, sealed interfaces for unions,
+  typed resource methods returning `Result`, pages, event streams, previews,
+  macros and `Dispatch`; a Maven project per SDK. Diagnostics TG1010 to
+  TG1015.
 - A C# SDK target, `csharp` (short form `cs`): a net10.0 project with records,
   enums and unions that decode and encode themselves (no reflection, trimming
   and AOT safe), async methods returning `Result<T>`, `IAsyncEnumerable` pages

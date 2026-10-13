@@ -456,6 +456,27 @@ pub mod codes {
             "TG0921",
             "overlay suggest: no overlay action can fix this diagnostic code",
         ),
+        ("TG1010", "invalid java target option; the default is used"),
+        (
+            "TG1011",
+            "schema has no Java type in the java target; the runtime's JSON value is used",
+        ),
+        (
+            "TG1012",
+            "macro is not in the canonical form; the java target leaves it out",
+        ),
+        (
+            "TG1013",
+            "OpenID Connect scheme is sent as a bearer token by the java target",
+        ),
+        (
+            "TG1014",
+            "different success bodies by status: the java typed result is the JSON value",
+        ),
+        (
+            "TG1015",
+            "discriminated union variant without a tag value: the java target tries variants in order",
+        ),
         (
             "TG1020",
             "invalid csharp target option; the default is used",

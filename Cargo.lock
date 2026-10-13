@@ -819,6 +819,7 @@ dependencies = [
  "tungsten-emit",
  "tungsten-emit-csharp",
  "tungsten-emit-docs",
+ "tungsten-emit-java",
  "tungsten-emit-mcp",
  "tungsten-emit-py",
  "tungsten-emit-rs",
@@ -887,6 +888,16 @@ dependencies = [
  "tungsten-emit",
  "tungsten-ir",
  "tungsten-tokens",
+]
+
+[[package]]
+name = "tungsten-emit-java"
+version = "0.1.1"
+dependencies = [
+ "serde_json",
+ "tungsten-core",
+ "tungsten-emit",
+ "tungsten-ir",
 ]
 
 [[package]]
