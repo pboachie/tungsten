@@ -18,6 +18,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 LOCK_NAMES = {"Cargo.lock", "uv.lock", "package-lock.json"}
+PACKAGING_LOCK = ".github/packaging-requirements.lock"
 
 
 def require(condition: object, message: str) -> None:
@@ -28,12 +29,30 @@ def require(condition: object, message: str) -> None:
 def inventory(root: Path, files: list[str]) -> dict[str, list[tuple[str, str, str]]]:
     result = {}
     for file in files:
-        if Path(file).name not in LOCK_NAMES:
+        if Path(file).name not in LOCK_NAMES and file != PACKAGING_LOCK:
             continue
         path = root / file
         require(not path.is_symlink(), f"{file}: symbolic lockfile")
         entries = []
-        if path.name == "package-lock.json":
+        if file == PACKAGING_LOCK:
+            index_seen = False
+            names = set()
+            for number, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                line = raw.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if line == "--index-url https://pypi.org/simple":
+                    require(not index_seen, f"{file}:{number}: duplicate index")
+                    index_seen = True
+                    continue
+                match = re.fullmatch(r"([a-z0-9]+(?:-[a-z0-9]+)*)==([0-9][A-Za-z0-9.!+_-]*) --hash=sha256:([a-f0-9]{64})", line)
+                require(match, f"{file}:{number}: expected one exact package pin and SHA-256 hash")
+                name, version, _ = match.groups()
+                require(name not in names, f"{file}:{number}: duplicate package {name}")
+                names.add(name)
+                entries.append(("PyPI", name, version))
+            require(index_seen and entries, f"{file}: missing approved index or packages")
+        elif path.name == "package-lock.json":
             lock = json.loads(path.read_text(encoding="utf-8"))
             require(lock.get("lockfileVersion") == 3, f"{file}: expected lockfile version 3")
             for location, package in lock["packages"].items():
