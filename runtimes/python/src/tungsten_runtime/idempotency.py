@@ -23,6 +23,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
+from . import _lease
 from ._util import is_record
 
 
@@ -46,6 +47,11 @@ class MemoryIdempotencyStore:
             return self._keys.get((scope, logical_id))
 
     def put(self, scope: str, logical_id: str, key: str) -> None:
+        self._write(scope, logical_id, key, None)
+
+    def _write(self, scope: str, logical_id: str, key: str, fence: Callable[[], None] | None) -> None:
+        """Store one key; ``fence``, when set, runs just before the rename that
+        commits the file, and its error abandons the write."""
         with self._lock:
             self._keys[(scope, logical_id)] = key
 
@@ -69,7 +75,15 @@ def _valid_store(value: object) -> dict[str, dict[str, str]] | None:
     return out
 
 
-_file_lock = threading.RLock()
+# Reservations of one store file are serialized within the process (by
+# absolute path); the lease serializes them across processes.
+_file_locks: dict[str, threading.Lock] = {}
+_file_locks_guard = threading.Lock()
+
+
+def _file_lock(path: Path) -> threading.Lock:
+    with _file_locks_guard:
+        return _file_locks.setdefault(os.path.abspath(path), threading.Lock())
 
 
 class FileIdempotencyStore:
@@ -81,7 +95,9 @@ class FileIdempotencyStore:
     the same directory, then a rename); the file is created with mode 0600
     because keys are never meant to be shown. A file that exists but cannot
     be parsed makes ``get`` and ``put`` raise, and the runtime then refuses
-    the call rather than issue a second key for the same intent."""
+    the call rather than issue a second key for the same intent. ``reserve``
+    also holds the cross-process lease ``<path>.lock`` (``_lease``): it waits up
+    to 2 s for another writer, then refuses; only its owner removes a lease."""
 
     __slots__ = ("_lock", "path")
 
@@ -104,24 +120,29 @@ class FileIdempotencyStore:
         return keys
 
     def reserve(self, scope: str, logical_id: str, candidate: str) -> str:
-        with _file_lock, self._lock:
+        with _file_lock(self.path), self._lock:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             lease = Path(str(self.path) + ".lock")
-            lease.mkdir()  # Busy/stale leases fail closed; never steal one.
+            token = _lease.acquire(lease)
             try:
                 existing = self.get(scope, logical_id)
                 if existing:
                     return existing
-                self.put(scope, logical_id, candidate)
+                self._write(scope, logical_id, candidate, lambda: _lease.fence(lease, token))
                 return candidate
             finally:
-                lease.rmdir()
+                _lease.release(lease, token)
 
     def get(self, scope: str, logical_id: str) -> str | None:
         with self._lock:
             return self._read().get(scope, {}).get(logical_id)
 
     def put(self, scope: str, logical_id: str, key: str) -> None:
+        self._write(scope, logical_id, key, None)
+
+    def _write(self, scope: str, logical_id: str, key: str, fence: Callable[[], None] | None) -> None:
+        """Store one key; ``fence``, when set, runs just before the rename that
+        commits the file, and its error abandons the write."""
         with self._lock:
             keys = self._read()
             keys.setdefault(scope, {})[logical_id] = key
@@ -139,6 +160,8 @@ class FileIdempotencyStore:
                     handle.flush()
                     os.fsync(handle.fileno())
                 os.chmod(temporary, 0o600)
+                if fence is not None:
+                    fence()
                 os.replace(temporary, self.path)
             except BaseException:
                 Path(temporary).unlink(missing_ok=True)
