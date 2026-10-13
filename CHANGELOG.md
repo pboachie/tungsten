@@ -14,6 +14,10 @@ changes.
 - Warn when conditional JSON Schema constraints are ignored; strict check and
   generation reject them before writing output. Conditional validation is not
   implemented in generated clients.
+- Enforce Python native HTTP attempt deadlines across response headers and body,
+  joining cancellation and response cleanup; custom transports remain cooperative.
+- Normalize embedded Rust support templates so LF and CRLF checkouts generate
+  identical support files.
 
 - Preserve explicit confirmation restrictions on imported operations even when
   an earlier scoped review classified the operation as read-only.
@@ -33,6 +37,11 @@ changes.
 
 
 ### Added
+
+- Add `defaults.redirects: none` and client redirect options across all seven SDK
+  runtimes. Either setting disables every 3xx redirect without retries; the default
+  remains same-origin reads only. Regenerate Rust SDKs; handwritten `ApiDescriptor`
+  literals must add `redirects: RedirectPolicy::SameOriginRead` (or `None`).
 
 - Opt-in guided `init` with multi-output selection, consent before writes,
   explicit non-interactive generation, additive output edits with backups,

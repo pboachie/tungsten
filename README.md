@@ -151,6 +151,23 @@ if (preview.ok && preview.value.confirmation_token) {
 }
 ```
 
+Redirects default to bounded same-origin reads; mutations never follow redirects.
+Set `defaults.redirects: none` in `agent.yml`, or the SDK client's `redirects`
+option to `none`, to reject every 3xx response without a second request or retry.
+Either `none` setting wins: client options cannot relax a manifest restriction.
+Rust and C# require the runtime-owned HTTP client for this policy; omit a custom
+`http_client`/`HttpClient`. Custom fetch/transport callbacks must honor the runtime's
+no-follow contract. Upgrade runtimes together with generated clients; older
+runtimes fail explicitly when a generated client requires this capability.
+
+Python's `ClientOptions.timeout_ms` covers each native HTTP attempt through headers
+and the complete ordinary body, with cancellation cleanup joined before capacity
+is released. It is not an overall deadline across retries. Streaming bodies use
+the idle timeout after successful headers. Custom transports must cooperate;
+uninterruptible callbacks retain capacity until completion and late results are
+rejected, without a hard settlement deadline. OS resolver cancellation depends on
+the platform.
+
 More examples: [tungsten on six public APIs](examples/showcase/README.md) (the public OpenAPI descriptions of Stripe, GitHub, Twilio, OpenAI, Kubernetes and Discord): what `tungsten check` finds, MCP listing sizes, and generated SDK code in TypeScript, Python and Rust, reproducible with one script. [`examples/external-emitter-markdown`](examples/external-emitter-markdown) shows how to write an external emitter.
 
 ## Browser WebMCP

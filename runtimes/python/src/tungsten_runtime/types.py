@@ -635,6 +635,12 @@ class ClientOptions:
     #: Holds the tokens of ``authorizationCode`` schemes (``TokenStore``, or
     #: ``AsyncTokenStore`` with ``AsyncClientCore``). Default: in memory.
     token_store: object = None
+    #: Per native HTTP attempt: covers response headers and the complete ordinary
+    #: body, not the overall call including retries. Cancellation joins transport
+    #: cleanup before releasing capacity. After successful streaming headers, use
+    #: idle_timeout_ms. Custom transports must cooperate: uninterruptible callbacks
+    #: retain capacity until completion and late results are rejected, without a
+    #: hard settlement guarantee. OS resolver cancellation is platform-dependent.
     timeout_ms: int = 30_000
     #: Overrides the API's per-tier retry defaults (``ApiDescriptor.retries``)
     #: for every tier: a ``RetryPolicy`` mapping field by field, a
@@ -820,13 +826,13 @@ __all__ = [
     "PreviewLocal",
     "PreviewNone",
     "PreviewResult",
+    "RedirectPolicy",
     "RemediationEntry",
     "RenderedRequest",
     "RequestContext",
     "ResponseDescriptor",
     "ResponseMeta",
     "Result",
-    "RedirectPolicy",
     "RetryOptions",
     "RetryPolicy",
     "Retryable",

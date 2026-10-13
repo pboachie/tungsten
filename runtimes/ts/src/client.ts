@@ -465,14 +465,22 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
   readonly #usedTokens = new Map<string, { bind: string | null; expiry: number }>();
 
   readonly #redirectsDisabled: boolean;
+  readonly #redirectPolicyInvalid: boolean;
 
   constructor(api: ApiDescriptor, options: ClientOptions = {}) {
     this.api = isRecord(api) ? api : ({} as ApiDescriptor);
     this.options = isRecord(options) ? options : {};
-    for (const value of [this.api.redirects, this.options.redirects]) {
-      if (value !== undefined && value !== "same_origin_read" && value !== "none") throw new TypeError("redirects must be same_origin_read or none");
+    let disabled = true;
+    let invalid = true;
+    try {
+      const policies = [this.api.redirects, this.options.redirects];
+      invalid = policies.some(value => value !== undefined && value !== "same_origin_read" && value !== "none");
+      disabled = invalid || policies.includes("none");
+    } catch {
+      // Hostile/unreadable settings are rejected by preflight without dispatch.
     }
-    this.#redirectsDisabled = this.api.redirects === "none" || this.options.redirects === "none";
+    this.#redirectsDisabled = disabled;
+    this.#redirectPolicyInvalid = invalid;
     let store: IdempotencyStore | undefined;
     let key: Uint8Array | undefined;
     try {
@@ -889,6 +897,12 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     purpose: Purpose,
     urlOverride: string | null,
   ): Promise<Step<Prepared>> {
+    if (this.#redirectPolicyInvalid) {
+      return fail(diagnostic(safeId(op), "VALIDATION_FAILED", {
+        failed_parameter: "redirects",
+        remediation: "redirects must be same_origin_read or none; nothing was sent.",
+      }));
+    }
     if (opts.maxResponseBytes !== undefined && (!Number.isSafeInteger(opts.maxResponseBytes) || opts.maxResponseBytes < 1)) {
       return fail(diagnostic(safeId(op), "VALIDATION_FAILED", {
         failed_parameter: "maxResponseBytes",
