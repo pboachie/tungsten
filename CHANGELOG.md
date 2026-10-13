@@ -9,6 +9,10 @@ changes.
 
 ## [Unreleased]
 
+### Fixed
+
+- Bound aggregate Swagger reference and media-schema expansion during conversion.
+
 ### Added
 
 - Bounded offline Swagger 2 conversion through the OpenAPI loader, preserving

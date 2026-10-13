@@ -67,6 +67,8 @@ fn fields(v: &Value, keys: &[&str]) -> Map<String, Value> {
 /// on an unsupported semantic. Call the normal OpenAPI loader on the result.
 pub fn convert(input: &Value) -> Result<Value> {
     bounded(input, "", 0, &mut 0)?;
+    let mut expansion = ExpansionBudget::default();
+    expansion.charge(input, 1, "")?;
     object(input, "")?;
     known(
         input,
@@ -186,6 +188,11 @@ pub fn convert(input: &Value) -> Result<Value> {
             if operation.get("schemes").is_some() {
                 op.insert("servers".into(), servers(input, operation, &p)?);
             }
+            for key in ["consumes", "produces"] {
+                if let Some(media) = operation.get(key).or_else(|| input.get(key)) {
+                    expansion.charge(media, 1, &format!("{p}/{key}"))?;
+                }
+            }
             let consumes = strings(
                 operation.get("consumes").or_else(|| input.get("consumes")),
                 &format!("{p}/consumes"),
@@ -240,6 +247,7 @@ pub fn convert(input: &Value) -> Result<Value> {
                         }) {
                             parameters.remove(index);
                         }
+                        expansion.charge(param, 1, &site)?;
                         parameters.push((param.clone(), site));
                     }
                 }
@@ -266,6 +274,7 @@ pub fn convert(input: &Value) -> Result<Value> {
                         }
                         let mut b = fields(&param, &["description", "required"]);
                         let s = schema(s, &format!("{site}/schema"))?;
+                        expansion.charge(&s, consumes.len(), &site)?;
                         b.insert(
                             "content".into(),
                             Value::Object(
@@ -323,6 +332,10 @@ pub fn convert(input: &Value) -> Result<Value> {
                 if !required.is_empty() {
                     form_schema["required"] = json!(required);
                 }
+                expansion.charge(&form_schema, consumes.len(), &p)?;
+                for value in encoding.values() {
+                    expansion.charge(value, consumes.len(), &p)?;
+                }
                 let content: Map<String, Value> = consumes
                     .iter()
                     .map(|m| (m.clone(), json!({"schema":form_schema,"encoding":encoding})))
@@ -345,6 +358,7 @@ pub fn convert(input: &Value) -> Result<Value> {
                 }
                 let site = format!("{p}/responses/{}", esc(status));
                 let response = resolve(input, raw, "responses", &site)?;
+                expansion.charge(response, 1, &site)?;
                 known(
                     response,
                     &site,
@@ -359,6 +373,7 @@ pub fn convert(input: &Value) -> Result<Value> {
                         );
                     }
                     let s = schema(s, &format!("{site}/schema"))?;
+                    expansion.charge(&s, produces.len(), &site)?;
                     if let Some(examples) = response.get("examples")
                         && object(examples, &format!("{site}/examples"))?
                             .keys()
@@ -411,6 +426,45 @@ pub fn convert(input: &Value) -> Result<Value> {
     }
     out.insert("paths".into(), Value::Object(converted));
     Ok(Value::Object(out))
+}
+
+/// Bound aggregate expansion work before copying referenced parameters,
+/// responses or media schemas. Input-only limits do not bound these products.
+#[derive(Default)]
+struct ExpansionBudget {
+    nodes: usize,
+    bytes: usize,
+}
+
+impl ExpansionBudget {
+    fn charge(&mut self, value: &Value, copies: usize, pointer: &str) -> Result<()> {
+        let mut pending = vec![value];
+        while let Some(value) = pending.pop() {
+            self.nodes = self.nodes.saturating_add(copies);
+            // Include container/scalar overhead as well as retained text.
+            self.bytes = self.bytes.saturating_add(8usize.saturating_mul(copies));
+            match value {
+                Value::Object(map) => {
+                    for (key, child) in map {
+                        self.bytes = self.bytes.saturating_add(key.len().saturating_mul(copies));
+                        pending.push(child);
+                    }
+                }
+                Value::Array(values) => pending.extend(values),
+                Value::String(text) => {
+                    self.bytes = self.bytes.saturating_add(text.len().saturating_mul(copies));
+                }
+                _ => {}
+            }
+            if self.nodes > 200_000 || self.bytes > 32 * 1024 * 1024 {
+                return fail(
+                    pointer,
+                    "Swagger conversion exceeds aggregate expansion budget; split the document or reduce repeated schemas and media types",
+                );
+            }
+        }
+        Ok(())
+    }
 }
 
 fn bounded(v: &Value, p: &str, depth: usize, count: &mut usize) -> Result<()> {
