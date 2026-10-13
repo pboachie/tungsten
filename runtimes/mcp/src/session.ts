@@ -30,12 +30,14 @@ import {
   truncate,
 } from "./render.js";
 import { progressSink } from "./progress.js";
-import { apiHost, runSandboxed, type SandboxEngine, type SandboxOutcome } from "./sandbox.js";
+import { runSandboxed, type SandboxEngine, type SandboxOutcome } from "./sandbox.js";
 import { bm25, suggest, type Hit } from "./search.js";
 import type { Ranking, Semantic } from "./semantic.js";
 import type { ClusterEntry, ServerOptions } from "./types.js";
 
 export const DEFAULT_MAX_RESULT_CHARS = 50000;
+const DEFAULT_MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
+const SAFETY_TIERS: readonly string[] = ["read_only", "mutating", "destructive", "irreversible"];
 /** The `maxLength` of run_script's `code`. */
 const MAX_SCRIPT_CHARS = 100000;
 const DEFAULT_SEARCH_LIMIT = 10;
@@ -149,6 +151,7 @@ export class Session {
   readonly #options: ServerOptions;
   readonly #sandbox: SandboxConfig | null;
   readonly #maxChars: number;
+  readonly #maxResponseBytes: number;
   readonly #maxStreamBytes: number;
   readonly #maxStreamMs: number;
   readonly #core: ClientCore | null;
@@ -166,6 +169,8 @@ export class Session {
     this.#sandbox = sandbox;
     const cap = options.maxResultChars;
     this.#maxChars = typeof cap === "number" && Number.isFinite(cap) && cap >= 200 ? Math.floor(cap) : DEFAULT_MAX_RESULT_CHARS;
+    const responseCap = options.maxResponseBytes;
+    this.#maxResponseBytes = typeof responseCap === "number" && Number.isSafeInteger(responseCap) && responseCap > 0 ? responseCap : DEFAULT_MAX_RESPONSE_BYTES;
     this.#maxStreamBytes = positive(options.maxStreamBytes, DEFAULT_MAX_STREAM_BYTES);
     this.#maxStreamMs = positive(options.maxStreamMs, DEFAULT_MAX_STREAM_MS);
     let core: ClientCore | null = null;
@@ -533,7 +538,7 @@ export class Session {
 
   #callOptions(prepared: Prepared, withConfirm: boolean): CallOptions {
     // Only preview tokens are forwarded, so the runtime must not offer `true`.
-    const opts: CallOptions = { allowConfirmTrue: false };
+    const opts: CallOptions = { allowConfirmTrue: false, maxResponseBytes: this.#maxResponseBytes };
     // A non-string key is passed through so the runtime reports it.
     if (prepared.idempotencyKey !== undefined && prepared.idempotencyKey !== null) opts.idempotencyKey = prepared.idempotencyKey as string;
     if (withConfirm && prepared.confirm !== undefined) opts.confirm = prepared.confirm;
@@ -555,10 +560,22 @@ export class Session {
     if (tool.kind === "macro") {
       const macros = isRecord(this.#options.macros) ? this.#options.macros : {};
       const macro = Object.prototype.hasOwnProperty.call(macros, tool.target) ? macros[tool.target] : undefined;
-      return macro ? { macro } : { error: this.#unavailable(tool, `macro ${tool.target} of tool ${tool.name} is not in ServerOptions.macros`) };
+      if (!macro) return { error: this.#unavailable(tool, `macro ${tool.target} of tool ${tool.name} is not in ServerOptions.macros`) };
+      let tier = SAFETY_TIERS.indexOf(macro.safety);
+      if (tier < 0 || !Array.isArray(macro.steps)) return { error: this.#unavailable(tool, `macro ${tool.target} has invalid safety metadata`) };
+      for (const step of macro.steps) {
+        const op = typeof core.operation === "function" && typeof step?.operation === "string" ? core.operation(step.operation) : undefined;
+        const stepTier = op ? SAFETY_TIERS.indexOf(op.agent?.safety) : -1;
+        if (stepTier < 0) return { error: this.#unavailable(tool, `macro ${tool.target} has an unregistered step or invalid step safety`) };
+        tier = Math.max(tier, stepTier);
+      }
+      if (SAFETY_TIERS[tier] !== tool.safety) return { error: this.#unavailable(tool, `manifest safety for ${tool.name} disagrees with its macro and steps; regenerate the manifest and SDK together`) };
+      return { macro };
     }
     const op = typeof core.operation === "function" ? core.operation(tool.target) : undefined;
-    return op ? { op } : { error: this.#unavailable(tool, `operation ${tool.target} of tool ${tool.name} is not registered with the client core`) };
+    if (!op) return { error: this.#unavailable(tool, `operation ${tool.target} of tool ${tool.name} is not registered with the client core`) };
+    if (!SAFETY_TIERS.includes(op.agent?.safety) || op.agent.safety !== tool.safety) return { error: this.#unavailable(tool, `manifest safety for ${tool.name} disagrees with its operation; regenerate the manifest and SDK together`) };
+    return { op };
   }
 
   async #execute(prepared: Prepared): Promise<Outcome> {
@@ -861,25 +878,11 @@ export class Session {
 
   async #runScript(code: string): Promise<CallToolResult> {
     const sandbox = this.#sandbox as SandboxConfig;
-    const core = this.#core;
-    const base = core && isRecord(core.options) && typeof core.options.baseUrl === "string" ? core.options.baseUrl : core?.api?.servers?.[0];
-    // The deno engine scopes its network permission to the API host; the
-    // wasm isolate has no network at all and needs none.
-    const host = sandbox.engine === "wasm" ? "" : apiHost(base);
-    if (host === null) {
-      return this.#failure(
-        null,
-        envelope("run_script", "VALIDATION_FAILED", {
-          failed_parameter: "baseUrl",
-          expected: "an absolute http(s) API base URL",
-          remediation: `run_script needs the API's base URL to scope the sandbox's network access${this.#coreError ? ` (${this.#coreError})` : ""}; configure it in the server. Nothing ran.`,
-        }),
-      );
-    }
+    // Both engines reach the API exclusively through this session's RPC
+    // handlers. The sandbox itself needs no network permission or API host.
     const outcome: SandboxOutcome = await runSandboxed({
       engine: sandbox.engine,
       deno: sandbox.deno,
-      host,
       code,
       timeoutMs: sandbox.timeoutMs,
       memoryMb: sandbox.memoryMb,
