@@ -39,7 +39,7 @@ pub struct PostmanReport {
     pub authentication: BTreeMap<String, BTreeSet<Authentication>>,
     /// Origin-only variables whose values must be supplied at client setup.
     pub configure_origin_variables: BTreeMap<String, BTreeSet<String>>,
-    /// Opaque engine source ID to source JSON pointers (never item names).
+    /// Stable operation ID to source JSON pointers (never item names).
     pub locations: BTreeMap<String, BTreeSet<String>>,
     pub skipped_test_scripts: usize,
     pub disabled_items: usize,
@@ -362,7 +362,11 @@ impl Context<'_> {
                 }
                 self.visit(item, &scope, &inherited, &pointer, depth + 1)?;
             } else {
-                self.request(item, &scope, &inherited, &pointer)?;
+                self.request(item, &scope, &inherited, &pointer)
+                    .map_err(|mut diagnostic| {
+                        diagnostic.message.push_str(&format!(" Source: {pointer}."));
+                        diagnostic
+                    })?;
             }
         }
         Ok(())
@@ -590,6 +594,12 @@ impl Context<'_> {
                 )
             })?;
             let key = &raw[2..end];
+            if !raw[end + 2..].is_empty() && !raw[end + 2..].starts_with('/') {
+                return Err(error(
+                    "PM005",
+                    "An unresolved base URL variable must occupy the entire origin before the path.",
+                ));
+            }
             if key.starts_with('$') {
                 return Err(error(
                     "PM004",
@@ -757,6 +767,32 @@ pub fn import_collection(
             "Invalid or excessively nested collection JSON; export Postman Collection v2.1.",
         )
     })?;
+    let mut pending = vec![(&root, 0usize)];
+    let mut nodes = 0usize;
+    while let Some((value, depth)) = pending.pop() {
+        nodes += 1;
+        if nodes > limits.max_nodes || depth > limits.max_depth {
+            return Err(error(
+                "PM001",
+                "Collection exceeds node or nesting budget; reduce the collection.",
+            ));
+        }
+        match value {
+            Value::Array(values) => pending.extend(values.iter().map(|v| (v, depth + 1))),
+            Value::Object(values) => pending.extend(values.values().map(|v| (v, depth + 1))),
+            _ => {}
+        }
+    }
+    if options.environment.len() > limits.max_nodes
+        || options.environment.iter().fold(0usize, |n, (k, v)| {
+            n.saturating_add(k.len()).saturating_add(v.len())
+        }) > limits.max_bytes
+    {
+        return Err(error(
+            "PM001",
+            "Environment overrides exceed the input budget; provide only needed values.",
+        ));
+    }
     let schema = root
         .pointer("/info/schema")
         .and_then(Value::as_str)
