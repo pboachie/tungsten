@@ -9,6 +9,19 @@ changes.
 
 ## [Unreleased]
 
+### Security
+
+- Reserve MCP session capacity during asynchronous initialization, validate
+  manifest safety against executable descriptors, and keep Deno scripts on
+  the client RPC channel without direct network permission.
+- Bound upstream MCP response bodies to 4 MiB by default (configurable through
+  `maxResponseBytes`), and apply WebMCP result byte limits before HTTP body
+  materialization. Oversized responses return the SDK's `RESPONSE_TOO_LARGE`
+  diagnostic; inconsistent MCP manifest/SDK safety tiers fail before dispatch.
+- Require canonical decimal expiry in Ruby confirmation tokens.
+- Check locked dependency names, sources, hashes and current advisories in CI
+  and release preparation; disable npm install hooks in release builds.
+
 ### Added
 
 - TypeScript SDK targets can declare npm dependencies for preserved custom
