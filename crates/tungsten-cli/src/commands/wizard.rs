@@ -348,7 +348,7 @@ fn walkthrough(args: &mut InitArgs) -> io::Result<bool> {
                 .map(|p| p.display().to_string())
                 .unwrap_or_default();
             let Some(source) = answer(
-                "API input file (OpenAPI, Swagger, Postman, HAR, .curl, .http or endpoint manifest); none for no schema; back",
+                "API input file (OpenAPI, Swagger, Postman, HAR, .curl, .http/.rest or endpoint manifest); none for no schema; back",
                 &default,
             )?
             else {
@@ -413,9 +413,9 @@ fn walkthrough(args: &mut InitArgs) -> io::Result<bool> {
                     };
                     args.har_origin = (!origin.is_empty()).then_some(origin);
                 }
-                let request_file = source
-                    .extension()
-                    .is_some_and(|extension| matches!(extension.to_str(), Some("http" | "curl")));
+                let request_file = source.extension().is_some_and(|extension| {
+                    matches!(extension.to_str(), Some("http" | "rest" | "curl"))
+                });
                 if request_file || args.input_format != "auto" {
                     let Some(routes) = answer(
                         "Saved request route templates, in request order (comma-separated)",
