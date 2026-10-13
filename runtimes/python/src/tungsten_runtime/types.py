@@ -523,7 +523,11 @@ class ApiRetries(TypedDict):
     mutating: RetryPolicy
 
 
+RedirectPolicy = Literal["same_origin_read", "none"]
+
+
 class ApiDescriptor(TypedDict):
+    redirects: NotRequired[RedirectPolicy]
     name: str
     version: str
     tungsten_version: str
@@ -671,6 +675,8 @@ class ClientOptions:
     #: ``timeout_ms``, which ends the stream without a reconnect. While the
     #: response headers are awaited the idle timeout applies too.
     idle_timeout_ms: int | None = None
+    #: May tighten the API default; an API configured with none cannot be relaxed.
+    redirects: RedirectPolicy | None = None
 
 
 class CallOptions(TypedDict, total=False):
@@ -820,6 +826,7 @@ __all__ = [
     "ResponseDescriptor",
     "ResponseMeta",
     "Result",
+    "RedirectPolicy",
     "RetryOptions",
     "RetryPolicy",
     "Retryable",

@@ -1140,10 +1140,7 @@ fn api_js(plan: &Plan<'_>, opts: &Options) -> Js {
                     .collect(),
             ),
         ),
-        (
-            "redirects",
-            Js::str(ir.agent.redirects.as_str()),
-        ),
+        ("redirects", Js::str(ir.agent.redirects.as_str())),
         (
             "retries",
             Js::obj(vec![
@@ -1220,6 +1217,9 @@ pub(crate) fn descriptors_file(
     if imported {
         imports.add("@elysra/tungsten-runtime", "requireImportPolicyV1");
     }
+    if plan.ir.agent.redirects == tungsten_ir::RedirectPolicy::None {
+        imports.add("@elysra/tungsten-runtime", "requireRedirectPolicyV1");
+    }
     imports.add("zod", "z");
     imports.add("./internal.js", "toSchemaLike");
     if uses.integer {
@@ -1240,6 +1240,9 @@ pub(crate) fn descriptors_file(
     write_imports(&mut w, &imports);
     if imported {
         w.line("requireImportPolicyV1();");
+    }
+    if plan.ir.agent.redirects == tungsten_ir::RedirectPolicy::None {
+        w.line("requireRedirectPolicyV1();");
     }
     for ns in &uses.namespaces {
         if let Some(m) = plan.model_ns(ns) {

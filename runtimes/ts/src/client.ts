@@ -464,9 +464,15 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
    * of their first use, until they expire. */
   readonly #usedTokens = new Map<string, { bind: string | null; expiry: number }>();
 
+  readonly #redirectsDisabled: boolean;
+
   constructor(api: ApiDescriptor, options: ClientOptions = {}) {
     this.api = isRecord(api) ? api : ({} as ApiDescriptor);
     this.options = isRecord(options) ? options : {};
+    for (const value of [this.api.redirects, this.options.redirects]) {
+      if (value !== undefined && value !== "same_origin_read" && value !== "none") throw new TypeError("redirects must be same_origin_read or none");
+    }
+    this.#redirectsDisabled = this.api.redirects === "none" || this.options.redirects === "none";
     let store: IdempotencyStore | undefined;
     let key: Uint8Array | undefined;
     try {
@@ -1324,7 +1330,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
         deadlineMs: (opts as StepOptions)[POLL_DEADLINE],
       });
       let current = { url: prepared.url, method: prepared.method, body: prepared.body };
-      for (let hops = 0; !mutation && hops < MAX_REDIRECTS && outcome.kind === "response" && REDIRECT_STATUSES.has(outcome.status); hops += 1) {
+      for (let hops = 0; !this.#redirectsDisabled && !mutation && hops < MAX_REDIRECTS && outcome.kind === "response" && REDIRECT_STATUSES.has(outcome.status); hops += 1) {
         const next = this.#redirectTarget(prepared, current.url, outcome.headers.location);
         if (next === null) break;
         const rewrite = outcome.status !== 307 && outcome.status !== 308 && current.method !== "GET" && current.method !== "HEAD";
@@ -1570,7 +1576,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     const requestId = requestIdOf(headers);
     const retryAfter = parseRetryAfter(headers["retry-after"], this.#now());
     const declared = matchResponse(op.responses, status);
-    const success = (status >= 200 && status <= 299) || (declared?.kind === "success" && status >= 100 && status <= 399);
+    const success = !((this.#redirectsDisabled || mutation) && status >= 300 && status <= 399) && ((status >= 200 && status <= 299) || (declared?.kind === "success" && status >= 100 && status <= 399));
     const hint = op.agent.verify ? `Call ${op.agent.verify.operation} to read the current state.` : null;
 
     if (success && outcome.stream !== undefined) {
@@ -1617,7 +1623,9 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
             request_id: requestId,
             remediation: mutation
               ? `The server answered with a redirect${to}. Redirects are never followed on mutations; check baseUrl (scheme, host, trailing slash). Whether the call took effect is unknown only if the server applied it before redirecting.`
-              : `The server answered with a redirect${to} that leaves the API's origin (or too many redirects). It is not followed, so credentials never leave the API's host; check baseUrl.`,
+              : this.#redirectsDisabled
+                ? `The server answered with a redirect${to}. Redirects are disabled; check redirects and baseUrl.`
+                : `The server answered with a redirect${to} that leaves the API's origin (or too many redirects). It is not followed, so credentials never leave the API's host; check baseUrl.`,
             next_action: mutation ? hint : null,
             trace: { attempts },
           }),

@@ -99,7 +99,7 @@ func (c *ClientCore) sendWith(ctx context.Context, p *prepared, opts CallOptions
 		body := &p.payload
 		headers := append([]headerEntry(nil), p.headers.entries...)
 		outcome := attempt(ctx, c.http, attemptRequest{url: target, method: method, headers: headers, body: body, timeout: timeout, stream: stream, idle: c.streamIdle(stream)})
-		for hops := 0; !mutation && hops < maxRedirects; hops++ {
+		for hops := 0; !c.redirectsDisabled && !mutation && hops < maxRedirects; hops++ {
 			if outcome.kind != outcomeResponse || !isRedirect(outcome.status) {
 				break
 			}
@@ -271,7 +271,7 @@ func (c *ClientCore) classifyResponse(cctx *callContext, p *prepared, outcome at
 	retryAfterValue, hasRetryAfter := headers["retry-after"]
 	retryAfter := parseRetryAfter(retryAfterValue, hasRetryAfter, c.now())
 	declared := matchResponse(op.Responses, status)
-	success := (status >= 200 && status <= 299) || (declared != nil && declared.Kind == KindSuccess && status >= 100 && status <= 399)
+	success := !((c.redirectsDisabled || mutation) && status >= 300 && status <= 399) && ((status >= 200 && status <= 299) || (declared != nil && declared.Kind == KindSuccess && status >= 100 && status <= 399))
 	var hint *string
 	if v := op.Agent.Verify; v != nil {
 		hint = strPtr(fmt.Sprintf("Call %s to read the current state.", v.Operation))
@@ -306,6 +306,8 @@ func (c *ClientCore) classifyResponse(cctx *callContext, p *prepared, outcome at
 			if mutation {
 				remediation = fmt.Sprintf("The server answered with a redirect%s. Redirects are never followed on mutations; check BaseURL (scheme, host, trailing slash). Whether the call took effect is unknown only if the server applied it before redirecting.", to)
 				next = hint
+			} else if c.redirectsDisabled {
+				remediation = fmt.Sprintf("The server answered with a redirect%s. Redirects are disabled; check Redirects and BaseURL.", to)
 			} else {
 				remediation = fmt.Sprintf("The server answered with a redirect%s that leaves the API's origin (or too many redirects). It is not followed, so credentials never leave the API's host; check BaseURL.", to)
 			}

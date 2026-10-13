@@ -447,7 +447,7 @@ type CompositePart struct {
 }
 
 type AgentModel struct {
-	Redirects string `json:"redirects"`
+	Redirects         string                 `json:"redirects"`
 	Macros            []Macro                `json:"macros"`
 	Gates             map[string]string      `json:"gates"`
 	ErrorCodes        map[string]Remediation `json:"error_codes"`

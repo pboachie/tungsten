@@ -69,6 +69,7 @@ pub(crate) struct CachedToken {
 }
 
 pub(crate) struct Inner {
+    pub redirects_disabled: bool,
     pub api: Arc<ApiDescriptor>,
     pub auth: AuthConfig,
     pub headers: BTreeMap<String, String>,
@@ -152,6 +153,13 @@ impl ClientCore {
                 }
             }
         }
+        let redirects_disabled = api.redirects == crate::types::RedirectPolicy::None
+            || options.redirects == Some(crate::types::RedirectPolicy::None);
+        if redirects_disabled && options.http_client.is_some() {
+            return Err(config_error(
+                "redirects=none requires the runtime-owned HTTP client; omit http_client because a supplied reqwest client has opaque redirect configuration",
+            ));
+        }
         let http = match options.http_client.clone() {
             Some(client) => client,
             None => reqwest::Client::builder()
@@ -175,6 +183,7 @@ impl ClientCore {
             .unwrap_or_else(|| Arc::new(MemoryTokenStore::new()));
         let core = ClientCore {
             inner: Arc::new(Inner {
+                redirects_disabled,
                 api: Arc::new(api),
                 auth: options.auth,
                 headers: options.headers,

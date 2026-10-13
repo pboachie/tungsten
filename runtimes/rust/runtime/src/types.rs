@@ -673,6 +673,8 @@ pub struct TierRetries {
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ApiDescriptor {
+    /// Restrictive redirect default; None cannot be relaxed by client options.
+    pub redirects: RedirectPolicy,
     /// Machine name (`zrotext`).
     pub name: String,
     /// SDK package version.
@@ -810,6 +812,8 @@ pub type DiagnosticSink = Arc<dyn Fn(&Diagnostic) + Send + Sync>;
 
 #[derive(Clone)]
 pub struct ClientOptions {
+    /// May tighten the API default; None policy always wins.
+    pub redirects: Option<RedirectPolicy>,
     /// Defaults to the first server.
     pub base_url: Option<String>,
     pub auth: AuthConfig,
@@ -868,6 +872,8 @@ pub struct ClientOptions {
     /// not follow redirects (`reqwest::redirect::Policy::none()`): the runtime
     /// follows same-origin redirects of reads itself and never on mutations,
     /// and a client that follows them would forward credentials.
+    /// Rejected when either redirect policy is `None`: omit this option to use
+    /// the runtime-owned client, whose redirect configuration is enforceable.
     pub http_client: Option<reqwest::Client>,
     /// Clock in epoch milliseconds (token expiry, Retry-After dates).
     pub now: Option<Arc<dyn Fn() -> u64 + Send + Sync>>,
@@ -878,6 +884,7 @@ pub struct ClientOptions {
 impl Default for ClientOptions {
     fn default() -> Self {
         ClientOptions {
+            redirects: None,
             base_url: None,
             auth: AuthConfig::new(),
             token_store: None,
@@ -1098,4 +1105,12 @@ pub struct MacroDescriptor {
     pub shown_once: bool,
     /// Disclosure cluster (agent.yml `disclosure.clusters`).
     pub cluster: Option<String>,
+}
+
+/// Mutations and cross-origin redirects are never followed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RedirectPolicy {
+    #[default]
+    SameOriginRead,
+    None,
 }

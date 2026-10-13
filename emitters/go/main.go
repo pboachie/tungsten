@@ -140,10 +140,10 @@ type request struct {
 }
 
 type response struct {
-	Capabilities []string `json:"capabilities,omitempty"`
-	Protocol    int           `json:"protocol"`
-	Files       []emittedFile `json:"files"`
-	Diagnostics []diagnostic  `json:"diagnostics"`
+	Capabilities []string      `json:"capabilities,omitempty"`
+	Protocol     int           `json:"protocol"`
+	Files        []emittedFile `json:"files"`
+	Diagnostics  []diagnostic  `json:"diagnostics"`
 }
 
 // emit turns a request into the response.

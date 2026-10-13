@@ -313,7 +313,11 @@ export type AuthSchemeDescriptor =
       >;
     };
 
+/** `none` wins over both manifest and client defaults. */
+export type RedirectPolicy = "same_origin_read" | "none";
+
 export interface ApiDescriptor {
+  redirects?: RedirectPolicy;
   /** Machine name (`zrotext`). */
   name: string;
   /** SDK package version. */
@@ -381,6 +385,8 @@ export interface RetryOptions {
 }
 
 export interface ClientOptions {
+  /** May tighten the API default; cannot re-enable an API configured with none. */
+  redirects?: RedirectPolicy;
   /** Defaults to the first server. */
   baseUrl?: string;
   auth?: AuthConfig;

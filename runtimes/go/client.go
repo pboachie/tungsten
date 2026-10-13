@@ -22,6 +22,7 @@ const Version = "0.1.0"
 // envelope. It is safe for concurrent use. API and transport failures are
 // returned as *Error values carrying the envelope.
 type ClientCore struct {
+	redirectsDisabled bool
 	api               *APIDescriptor
 	auth              AuthConfig
 	headers           map[string]string
@@ -78,6 +79,11 @@ func NewClientCore(api *APIDescriptor, options ClientOptions) (*ClientCore, erro
 	if api == nil {
 		return nil, &ConfigError{Message: "the API descriptor is missing"}
 	}
+	for _, policy := range []RedirectPolicy{api.Redirects, options.Redirects} {
+		if policy != "" && policy != RedirectSameOriginRead && policy != RedirectNone {
+			return nil, &ConfigError{Message: "redirects must be same_origin_read or none"}
+		}
+	}
 	base := options.BaseURL
 	if base == "" && len(api.Servers) > 0 {
 		base = api.Servers[0]
@@ -94,6 +100,7 @@ func NewClientCore(api *APIDescriptor, options ClientOptions) (*ClientCore, erro
 		key = random
 	}
 	c := &ClientCore{
+		redirectsDisabled: api.Redirects == RedirectNone || options.Redirects == RedirectNone,
 		api:               api,
 		auth:              options.Auth,
 		headers:           options.Headers,
@@ -152,6 +159,11 @@ func NewClientCore(api *APIDescriptor, options ClientOptions) (*ClientCore, erro
 	}
 	if c.http == nil {
 		c.http = newHTTPClient()
+	} else if c.redirectsDisabled {
+		// Preserve the caller's transport and settings without mutating its client.
+		copy := *c.http
+		copy.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
+		c.http = &copy
 	}
 	if c.tokenStore == nil {
 		c.tokenStore = NewMemoryTokenStore()

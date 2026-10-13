@@ -1730,7 +1730,15 @@ fn api_rx(plan: &Plan<'_>, version: &str, lets: &mut Lets) -> Rx {
     Rx::record(
         "ApiDescriptor",
         vec![
-            ("redirects", Rx::atom(match ir.agent.redirects { tungsten_ir::RedirectPolicy::None => "tungsten_runtime::RedirectPolicy::None", tungsten_ir::RedirectPolicy::SameOriginRead => "tungsten_runtime::RedirectPolicy::SameOriginRead" })),
+            (
+                "redirects",
+                Rx::atom(match ir.agent.redirects {
+                    tungsten_ir::RedirectPolicy::None => "tungsten_runtime::RedirectPolicy::None",
+                    tungsten_ir::RedirectPolicy::SameOriginRead => {
+                        "tungsten_runtime::RedirectPolicy::SameOriginRead"
+                    }
+                }),
+            ),
             ("name", Rx::string(&ir.api.name.wire)),
             ("version", Rx::string(version)),
             (
