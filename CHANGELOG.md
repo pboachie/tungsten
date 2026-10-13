@@ -38,6 +38,8 @@ changes.
 - Propagate Rust emitter graph facts with worklists and coalesce concurrent MCP
   query embeddings. Complete the README's generated Python SDK installation steps.
 
+- Bound aggregate Swagger reference and media-schema expansion during conversion.
+
 ### Security
 
 - Reserve MCP session capacity during asynchronous initialization, validate
@@ -54,6 +56,7 @@ changes.
 - Keep Postman path parameters explicit and restrict URL variables to origins.
 
 (Keep Postman path parameters explicit during import)
+
 
 ### Added
 
