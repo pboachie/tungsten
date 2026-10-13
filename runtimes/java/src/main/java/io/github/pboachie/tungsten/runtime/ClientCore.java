@@ -49,6 +49,10 @@ public final class ClientCore {
     final byte[] confirmationKey;
     final SSLSocketFactory http;
     final ClientOptions options;
+    private final boolean redirectsDisabled;
+
+    /** Generated clients call this when their manifest forbids redirects. */
+    public static void requireRedirectPolicyV1() {}
     final TokenStore tokenStore;
     final RuntimeIdentity identity;
     final Auth authResolver;
@@ -71,6 +75,7 @@ public final class ClientCore {
      */
     public ClientCore(ApiDescriptor api, Collection<OperationDescriptor> operations, ClientOptions options) {
         this.api = api;
+        redirectsDisabled = api.redirects() == RedirectPolicy.NONE || options.redirects == RedirectPolicy.NONE;
         this.options = options;
         this.auth = options.auth;
         this.headers = options.headers;
@@ -1286,7 +1291,7 @@ public final class ClientCore {
             List<Serialize.Header> hs = new ArrayList<>(p.headers.entries);
             Transport.Outcome outcome = Transport.attempt(http,
                     new Transport.Request(target, method, hs, body, attemptTimeout, stream, idle));
-            for (int hops = 0; !mutation && hops < MAX_REDIRECTS; hops++) {
+            for (int hops = 0; !redirectsDisabled && !mutation && hops < MAX_REDIRECTS; hops++) {
                 if (outcome.kind != Transport.Kind.RESPONSE || !isRedirect(outcome.status)) {
                     break;
                 }
@@ -1434,6 +1439,11 @@ public final class ClientCore {
         Map<String, String> hs = outcome.headers;
         onResponse(rctx, status, hs);
         String requestId = Classify.requestId(hs);
+        if (redirectsDisabled && status >= 300 && status <= 399) {
+            throw diag(op.id(), Category.UNEXPECTED_RESPONSE).status(status).retry(Retryable.NEVER)
+                    .remedy("Redirect policy is none; the 3xx response was not followed. Check the configured API URL.")
+                    .attempts(attempts).fail();
+        }
         Long retryAfter = Text.parseRetryAfter(hs.get("retry-after"), now());
         OperationDescriptor.Response declared = Classify.match(op.responses(), status);
         boolean success = (status >= 200 && status <= 299)

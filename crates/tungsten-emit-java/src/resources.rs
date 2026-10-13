@@ -549,6 +549,9 @@ impl Ctx<'_> {
             format!("public {client}(ClientOptions options) {{"),
             "}",
             |w| {
+                if self.ir.agent.redirects == tungsten_ir::RedirectPolicy::None {
+                    w.line("ClientCore.requireRedirectPolicyV1();");
+                }
                 w.line("this.core = new ClientCore(Ops.DOCUMENT.api(), Ops.OPERATIONS, options);");
             },
         );

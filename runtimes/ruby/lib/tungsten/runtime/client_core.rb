@@ -15,6 +15,9 @@ module Tungsten
     class ClientCore
       # Same-origin redirects one read follows.
       MAX_REDIRECTS = 5
+
+      # Generated clients require this capability when redirects are forbidden.
+      def self.require_redirect_policy_v1; end
       DEFAULT_POLL_INTERVAL_MS = 1000
       DEFAULT_VERIFY_BUDGET_MS = 30_000
       RETRYABLE_CATEGORIES = %w[RATE_LIMITED UPSTREAM_UNAVAILABLE TRANSPORT_FAILED OUTCOME_UNKNOWN].freeze
@@ -34,6 +37,11 @@ module Tungsten
         o = options.is_a?(ClientOptions) ? options : ClientOptions.from(options)
         @descriptors = descriptors
         @api = descriptors.api
+        policies = [@api["redirects"], o.redirects]
+        unless policies.all? { |policy| policy.nil? || %w[same_origin_read none].include?(policy) }
+          raise ConfigError, "redirects must be same_origin_read or none"
+        end
+        @redirects_disabled = policies.include?("none")
         base = o.base_url.to_s
         base = (@api["servers"] || []).first.to_s if base.empty?
         if !base.empty? && !valid_base_url?(base)
@@ -774,7 +782,7 @@ module Tungsten
                               idle_ms: stream ? @idle_timeout_ms : nil)
           end
           outcome = send_once.call
-          unless mutation
+          unless mutation || @redirects_disabled
             MAX_REDIRECTS.times do
               break unless outcome.kind == :response && redirect?(outcome.status)
 
@@ -848,6 +856,10 @@ module Tungsten
         headers = outcome.headers
         hook(:on_response, rctx, ResponseContext.new(status: status, headers: headers))
         rid = Classify.request_id(headers)
+        if @redirects_disabled && status.between?(300, 399)
+          return Runtime.diag(op.id, "UNEXPECTED_RESPONSE").status(status).request_id(rid).retrying("never")
+                        .remedy("Redirect policy is none; the 3xx response was not followed. Check the configured API URL.").attempts(attempts).err
+        end
         retry_after = Transport.parse_retry_after(headers["retry-after"], now)
         declared = Classify.match_response(op.responses, status)
         success = status.between?(200, 299) || (declared&.kind == "success" && status.between?(100, 399))

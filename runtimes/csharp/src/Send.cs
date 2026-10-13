@@ -70,7 +70,7 @@ public sealed partial class ClientCore
             var entries = p.Headers.Entries.ToList();
             var idle = stream ? idleTimeout : null;
             var outcome = await Transport.AttemptAsync(http, new AttemptRequest { Url = target, Method = method, Headers = entries, Body = body, Timeout = attemptTimeout, Stream = stream, Idle = idle }, ct).ConfigureAwait(false);
-            for (int hops = 0; !mutation && hops < MaxRedirects; hops++)
+            for (int hops = 0; !redirectsDisabled && !mutation && hops < MaxRedirects; hops++)
             {
                 if (outcome.Kind != OutcomeKind.Response || !IsRedirect(outcome.Status))
                 {
@@ -228,6 +228,12 @@ public sealed partial class ClientCore
         var headersIn = outcome.Headers;
         Hooks(m => m.OnResponse(rctx, new ResponseContext { Status = status, Headers = headersIn }));
         var requestId = Envelope.RequestIdOf(headersIn);
+        if (redirectsDisabled && status >= 300 && status <= 399)
+        {
+            throw new Diag(op.Id, Category.UnexpectedResponse).Status(status).Retry(Retryable.Never)
+                .Remedy("Redirect policy is none; the 3xx response was not followed. Check the configured API URL.")
+                .Attempts(attempts).Fail();
+        }
         headersIn.TryGetValue("retry-after", out var retryAfterValue);
         var retryAfter = Transport.ParseRetryAfter(retryAfterValue, Now());
         var declared = Envelope.MatchResponse(op.Responses, status);
