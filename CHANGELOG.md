@@ -24,7 +24,8 @@ changes.
   `Dep::Path { path, version }`; generated `runtime_path` and `cli.kit_path`
   dependencies carry the `runtime` or `cli.kit` requirement (default `0.1`).
 - The `ghcr.io/pboachie/tungsten:latest` container tag moves only when the
-  distributed tag is the newest stable release.
+  distributed tag is itself the newest published stable release (not a draft,
+  not flagged prerelease).
 
 ### Fixed
 

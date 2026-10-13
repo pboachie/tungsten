@@ -103,17 +103,19 @@ jobs:
           printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
           image=ghcr.io/pboachie/tungsten
           set -- --tag "$image:${TAG#v}"
-          # `latest` follows the newest stable release only: a prerelease or a
-          # redistributed older tag never moves it backwards.
+          # `latest` follows the newest published stable release only: TAG must
+          # itself be a published, non-prerelease release with a plain version
+          # and the highest of them, so a release flagged prerelease, a draft
+          # or a redistributed older tag never moves it.
           releases=$(gh api --paginate "repos/$GH_REPO/releases" --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name')
           newest=$(RELEASES="$releases" python3 - <<'PY'
           import os, re
           stable = re.compile(r"v(\d+)\.(\d+)\.(\d+)")
-          tags = [t for t in os.environ["RELEASES"].split() + [os.environ["TAG"]] if stable.fullmatch(t)]
+          tags = [t for t in os.environ["RELEASES"].split() if stable.fullmatch(t)]
           print(max(tags, key=lambda t: tuple(map(int, stable.fullmatch(t).groups())), default=""))
           PY
           )
-          if [ "$TAG" = "$newest" ]; then set -- "$@" --tag "$image:latest"; fi
+          if [ -n "$newest" ] && [ "$TAG" = "$newest" ]; then set -- "$@" --tag "$image:latest"; fi
           docker buildx build --platform linux/amd64,linux/arm64 --file Dockerfile --label "org.opencontainers.image.source=https://github.com/pboachie/tungsten" --label "org.opencontainers.image.version=${TAG#v}" "$@" --push distribution/container
           tar -czf winget-manifests.tar.gz -C distribution/winget manifests
           gh release upload "$TAG" distribution/tungsten.rb winget-manifests.tar.gz distribution/DISTRIBUTION_SHA256SUMS
