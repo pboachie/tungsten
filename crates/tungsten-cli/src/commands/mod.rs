@@ -9,6 +9,7 @@ pub(crate) mod emitters;
 pub(crate) mod explain;
 pub(crate) mod generate;
 pub(crate) mod init;
+mod init_edit;
 mod init_input;
 mod init_setup;
 mod ir;

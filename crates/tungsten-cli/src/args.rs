@@ -348,6 +348,10 @@ pub enum SchemaName {
 
 #[derive(Debug, Clone, Args)]
 pub(crate) struct InitArgs {
+    /// Add outputs to an existing project while retaining all existing settings.
+    /// Saves the original manifest as tungsten.yml.init-backup before replacement.
+    #[arg(long, requires = "resume", value_delimiter = ',', value_parser = parse_init_target)]
+    pub add_targets: Vec<String>,
     /// Acquire project npm dependencies, build TypeScript and call a loopback mock.
     /// Requires Node >=22 and npm; supports new TypeScript/docs projects only.
     #[arg(long, requires = "generate", conflicts_with_all = ["resume", "force"])]

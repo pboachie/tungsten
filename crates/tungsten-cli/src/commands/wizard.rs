@@ -3,7 +3,9 @@
 use std::io::{self, IsTerminal, Write};
 
 use crate::args::{GenerateArgs, InitArgs, InputArgs};
-use crate::output::{CliError, CommandName, CommandResult, ErrorKind, InitResult};
+use crate::output::{
+    CliError, CommandName, CommandResult, ErrorKind, InitAction, InitFile, InitResult,
+};
 use crate::{CliEnv, Report, exit};
 
 pub(crate) fn run(args: &InitArgs, json: bool, env: &CliEnv) -> Report {
@@ -75,15 +77,50 @@ pub(crate) fn run(args: &InitArgs, json: bool, env: &CliEnv) -> Report {
                 );
             }
         }
-        // Generation reads the existing configuration; no configuration is rewritten.
+        if !selected.add_targets.is_empty()
+            && let Err(error) = super::init_edit::add_outputs(&selected)
+        {
+            return refused(
+                &error,
+                "inspect tungsten.yml.init-backup and tungsten.yml.init-pending before retrying",
+            );
+        }
+        // Existing reviewed values survive output additions; plain resume writes nothing.
+        let manifest =
+            std::fs::read_to_string(selected.dir.join("tungsten.yml")).unwrap_or_default();
+        let (configuration, _) = tungsten_config::parse_str("tungsten.yml", &manifest);
+        let Some(configuration) = configuration else {
+            return refused(
+                "existing project configuration is invalid",
+                "correct tungsten.yml before resuming",
+            );
+        };
+        let first = configuration.inputs.first();
         let mut r = Report::new(CommandName::Init);
         r.result = Some(CommandResult::Init(InitResult {
             dir: selected.dir.display().to_string(),
-            api_name: String::new(),
-            namespace: String::new(),
-            spec: String::new(),
+            api_name: configuration.api.name.clone(),
+            namespace: first.map(|i| i.namespace.clone()).unwrap_or_default(),
+            spec: first.map(|i| i.spec.clone()).unwrap_or_default(),
             spec_found: true,
-            files: vec![],
+            files: if selected.add_targets.is_empty() {
+                vec![]
+            } else {
+                vec![
+                    InitFile {
+                        path: selected.dir.join("tungsten.yml").display().to_string(),
+                        action: InitAction::Overwritten,
+                    },
+                    InitFile {
+                        path: selected
+                            .dir
+                            .join("tungsten.yml.init-backup")
+                            .display()
+                            .to_string(),
+                        action: InitAction::Created,
+                    },
+                ]
+            },
             generation: None,
             local_example: None,
         }));
@@ -91,6 +128,17 @@ pub(crate) fn run(args: &InitArgs, json: bool, env: &CliEnv) -> Report {
     } else {
         super::init::run(&selected)
     };
+    if report.exit == exit::OK
+        && selected.method.is_some()
+        && let Some(CommandResult::Init(result)) = &mut report.result
+    {
+        for name in ["inferred.openapi.json", "inference-report.json"] {
+            result.files.push(InitFile {
+                path: selected.dir.join(name).display().to_string(),
+                action: InitAction::Created,
+            });
+        }
+    }
     if report.exit != exit::OK || !selected.generate {
         return report;
     }
@@ -183,6 +231,19 @@ fn walkthrough(args: &mut InitArgs) -> io::Result<bool> {
             if choice != "yes" {
                 return Ok(false);
             }
+            let Some(additions) = answer(
+                "Optional outputs to add (comma-separated; blank preserves configuration)",
+                "",
+            )?
+            else {
+                return Ok(false);
+            };
+            args.add_targets = additions
+                .split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(|s| crate::targets::canonical(s).to_string())
+                .collect();
             args.resume = true;
         } else {
             eprintln!(
@@ -270,7 +331,7 @@ fn walkthrough(args: &mut InitArgs) -> io::Result<bool> {
         eprintln!(
             "Plan: {} in {}. Generate configured source outputs using the regular compiler. Local setup, if selected above, downloads npm packages with scripts disabled, runs the TypeScript compiler and starts a temporary loopback mock. No live API calls. Advanced settings remain editable in tungsten.yml and agent.yml.",
             if args.resume {
-                "preserve manifests"
+                "preserve reviewed settings; optionally add outputs with a manifest backup"
             } else {
                 "create tungsten.yml and agent.yml"
             },
