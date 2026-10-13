@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use serde_json::{Map, Value, json};
 
@@ -442,79 +442,105 @@ impl Shapes {
                 .map(|(s, _, _)| s.clone())
                 .collect(),
         );
-        record_contributions(&schema, pointer, &[], &self.contributions, facts);
+        record_contributions(&schema, pointer, &self.contributions, facts);
         schema
     }
 }
 
-fn contributing_values<'a>(schema: &'a Value, path: &[String]) -> Vec<&'a Value> {
-    if path.is_empty() {
-        return vec![schema];
+/// Nodes of one contribution keyed by normalized merged path, so every merged node
+/// finds its contributors with one lookup instead of re-walking every contribution.
+///
+/// A merged path is normalized by dropping each `anyOf` step together with the step
+/// after it (the branch index), and a trailing `anyOf`. A contribution reaches a
+/// normalized path by stepping through object keys and array indices, flattening any
+/// `anyOf` array at a node into its branches before taking the next step.
+type ContributionIndex<'a> = HashMap<Vec<String>, Vec<(&'a Value, usize)>>;
+
+fn index_contribution<'a>(schema: &'a Value, id: usize, index: &mut ContributionIndex<'a>) {
+    let mut pending = vec![(schema, Vec::new())];
+    while let Some((node, path)) = pending.pop() {
+        let mut branches = vec![node];
+        while let Some(branch) = branches.pop() {
+            if let Some(nested) = branch.get("anyOf").and_then(Value::as_array) {
+                branches.extend(nested);
+                continue;
+            }
+            match branch {
+                Value::Object(map) => {
+                    for (key, child) in map.iter().filter(|(key, _)| *key != "anyOf") {
+                        let mut child_path = path.clone();
+                        child_path.push(key.clone());
+                        pending.push((child, child_path));
+                    }
+                }
+                Value::Array(values) => {
+                    for (i, child) in values.iter().enumerate() {
+                        let mut child_path = path.clone();
+                        child_path.push(i.to_string());
+                        pending.push((child, child_path));
+                    }
+                }
+                _ => {}
+            }
+        }
+        index.entry(path).or_default().push((node, id));
     }
-    if path[0] == "anyOf" {
-        return contributing_values(schema, &path[path.len().min(2)..]);
-    }
-    if let Some(branches) = schema.get("anyOf").and_then(Value::as_array) {
-        return branches
-            .iter()
-            .flat_map(|s| contributing_values(s, path))
-            .collect();
-    }
-    let child = if let Some(array) = schema.as_array() {
-        path[0].parse::<usize>().ok().and_then(|i| array.get(i))
-    } else {
-        schema.get(&path[0])
-    };
-    child.map_or_else(Vec::new, |v| contributing_values(v, &path[1..]))
 }
 
+/// Record provenance for every node of the merged schema. Each contribution and the
+/// merged schema are walked once, so the cost is linear in their sizes.
 fn record_contributions(
     value: &Value,
     pointer: &str,
-    path: &[String],
     contributions: &[(Value, EvidenceState, SourceLocation)],
     facts: &mut BTreeMap<String, FactProvenance>,
 ) {
-    let mut provenance = FactProvenance {
-        states: BTreeSet::new(),
-        sources: BTreeSet::new(),
-    };
-    for (schema, state, source) in contributions {
-        let candidates = contributing_values(schema, path);
-        if candidates
-            .iter()
-            .any(|v| value.is_object() || value.is_array() || *v == value)
-        {
-            provenance.states.insert(*state);
-            provenance.sources.insert(source.clone());
+    let mut index = ContributionIndex::new();
+    for (id, (schema, _, _)) in contributions.iter().enumerate() {
+        index_contribution(schema, id, &mut index);
+    }
+    let mut pending = vec![(value, pointer.to_owned(), Vec::<String>::new(), false)];
+    while let Some((value, pointer, normalized, skip)) = pending.pop() {
+        let mut provenance = FactProvenance {
+            states: BTreeSet::new(),
+            sources: BTreeSet::new(),
+        };
+        for (node, id) in index.get(&normalized).into_iter().flatten() {
+            if value.is_object() || value.is_array() || *node == value {
+                let (_, state, source) = &contributions[*id];
+                provenance.states.insert(*state);
+                provenance.sources.insert(source.clone());
+            }
         }
-    }
-    if provenance.states.is_empty() {
-        provenance.states.insert(EvidenceState::Unknown);
-    }
-    facts.insert(pointer.into(), provenance);
-    let children: Vec<_> = match value {
-        Value::Object(map) => map
-            .iter()
-            .map(|(key, value)| (key.clone(), value))
-            .collect(),
-        Value::Array(values) => values
-            .iter()
-            .enumerate()
-            .map(|(i, v)| (i.to_string(), v))
-            .collect(),
-        _ => vec![],
-    };
-    for (key, child) in children {
-        let mut child_path = path.to_vec();
-        child_path.push(key.clone());
-        record_contributions(
-            child,
-            &format!("{pointer}/{}", escape(&key)),
-            &child_path,
-            contributions,
-            facts,
-        );
+        if provenance.states.is_empty() {
+            provenance.states.insert(EvidenceState::Unknown);
+        }
+        let children: Vec<_> = match value {
+            Value::Object(map) => map
+                .iter()
+                .map(|(key, value)| (key.clone(), value))
+                .collect(),
+            Value::Array(values) => values
+                .iter()
+                .enumerate()
+                .map(|(i, v)| (i.to_string(), v))
+                .collect(),
+            _ => vec![],
+        };
+        for (key, child) in children {
+            let child_pointer = format!("{pointer}/{}", escape(&key));
+            let mut child_normalized = normalized.clone();
+            let child_skip = if skip {
+                false
+            } else if key == "anyOf" {
+                true
+            } else {
+                child_normalized.push(key);
+                false
+            };
+            pending.push((child, child_pointer, child_normalized, child_skip));
+        }
+        facts.insert(pointer, provenance);
     }
 }
 
