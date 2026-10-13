@@ -83,6 +83,8 @@ export async function serveHttp(options: HttpOptions, factory: SessionFactory): 
   const boundLoopback = LOOPBACK.has(host.toLowerCase());
   const sessions = new Map<string, Entry>();
   const pending = new Set<{ close(): Promise<void> }>();
+  // Reserve capacity while an asynchronous factory is still opening a session.
+  let opening = 0;
 
   /** Forget a session and close it (idempotent). */
   const drop = async (id: string, entry: Entry): Promise<void> => {
@@ -145,7 +147,7 @@ export async function serveHttp(options: HttpOptions, factory: SessionFactory): 
         return entry.transport.handleRequest(req, res, body);
       }
       if (!initializes(body)) return sendError(res, 400, -32000, "Bad Request: no valid Mcp-Session-Id; start with initialize");
-      if (sessions.size + pending.size >= maxSessions) return sendError(res, 503, -32000, "Too many sessions", { "retry-after": "5" });
+      if (sessions.size + pending.size + opening >= maxSessions) return sendError(res, 503, -32000, "Too many sessions", { "retry-after": "5" });
       let opened: { close(): Promise<void> } | null = null;
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => randomUUID(),
@@ -163,7 +165,12 @@ export async function serveHttp(options: HttpOptions, factory: SessionFactory): 
         if (entry.idle !== null) clearTimeout(entry.idle);
         sessions.delete(id);
       };
-      opened = await factory.open(transport);
+      opening += 1;
+      try {
+        opened = await factory.open(transport);
+      } finally {
+        opening -= 1;
+      }
       pending.add(opened);
       try {
         await transport.handleRequest(req, res, body);
