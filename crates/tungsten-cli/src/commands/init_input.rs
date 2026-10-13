@@ -161,7 +161,8 @@ pub(super) fn import(args: &mut InitArgs) -> Result<Vec<String>, String> {
     let is_curl = args.input_format == "curl"
         || (args.input_format == "auto"
             && (text.trim_start().starts_with("curl ")
-                || text.trim_start().starts_with("curl.exe ")));
+                || text.trim_start().starts_with("curl.exe ")
+                || source.extension().is_some_and(|ext| ext == "curl")));
     let is_http = args.input_format == "http"
         || (args.input_format == "auto" && source.extension().is_some_and(|ext| ext == "http"));
     let mut import_report = None;
@@ -176,7 +177,8 @@ pub(super) fn import(args: &mut InitArgs) -> Result<Vec<String>, String> {
             let dialect = match args.shell_dialect.as_str() {
                 "cmd" => tungsten_contract::request_import::ShellDialect::WindowsCmd,
                 "powershell" => tungsten_contract::request_import::ShellDialect::PowerShell,
-                _ => tungsten_contract::request_import::ShellDialect::Posix,
+                "posix" => tungsten_contract::request_import::ShellDialect::Posix,
+                _ => return Err("shell dialect must be posix, cmd or powershell".into()),
             };
             tungsten_contract::request_import::curl(text, dialect, &args.route[0], &limits)
         } else {
@@ -192,6 +194,23 @@ pub(super) fn import(args: &mut InitArgs) -> Result<Vec<String>, String> {
             .map_err(|error| error.to_string())?;
         import_report = Some(serde_json::json!({"contract": output.report}));
         output.openapi
+    } else if root.get("log").is_some() {
+        let limits = Limits::default();
+        let options = tungsten_contract::har::HarOptions {
+            origin: args.har_origin.clone(),
+            include_prefixes: args.include_prefix.clone(),
+            exclude_prefixes: args.exclude_prefix.clone(),
+            redact_properties: args.redact_property.iter().cloned().collect(),
+            ..Default::default()
+        };
+        let imported = tungsten_contract::har::import_har(&bytes, &options, &limits)
+            .map_err(|error| error.to_string())?;
+        let output = imported
+            .infer(&ReviewedOverrides::default(), &limits)
+            .map_err(|error| error.to_string())?;
+        import_report =
+            Some(serde_json::json!({"source": output.report, "contract": output.contract.report}));
+        output.contract.openapi
     } else if root.get("item").is_some() && root.get("info").is_some() {
         let limits = Limits::default();
         let imported = tungsten_contract::postman::import_collection(

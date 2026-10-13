@@ -42,6 +42,8 @@ changes.
   engine, preserving explicit authentication and reporting unsupported behavior.
 - Parse a bounded saved cURL and HTTP-file subset as offline contract evidence,
   with explicit route templates and no shell execution or implicit file reads.
+- Import bounded HAR captures offline with explicit origin selection, reviewed
+  path templates, configurable structural redaction, and omission reports.
 
 - Add a bounded offline HTTP evidence engine with deterministic OpenAPI inference,
   provenance, and persistent reviewed overrides.

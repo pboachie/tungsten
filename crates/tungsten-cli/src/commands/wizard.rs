@@ -305,7 +305,7 @@ fn walkthrough(args: &mut InitArgs) -> io::Result<bool> {
                 .map(|p| p.display().to_string())
                 .unwrap_or_default();
             let Some(source) = answer(
-                "API input file (OpenAPI, Swagger, Postman, .curl, .http or endpoint manifest); none for no schema; back",
+                "API input file (OpenAPI, Swagger, Postman, HAR, .curl, .http or endpoint manifest); none for no schema; back",
                 &default,
             )?
             else {
@@ -357,6 +357,19 @@ fn walkthrough(args: &mut InitArgs) -> io::Result<bool> {
                 continue;
             }
             if let Some(source) = &args.from {
+                if source
+                    .extension()
+                    .is_some_and(|extension| extension == "har")
+                {
+                    let Some(origin) = answer(
+                        "HAR origin (blank auto-selects only a single-origin capture)",
+                        args.har_origin.as_deref().unwrap_or(""),
+                    )?
+                    else {
+                        return Ok(false);
+                    };
+                    args.har_origin = (!origin.is_empty()).then_some(origin);
+                }
                 let request_file = source
                     .extension()
                     .is_some_and(|extension| matches!(extension.to_str(), Some("http" | "curl")));

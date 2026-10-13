@@ -348,6 +348,18 @@ pub enum SchemaName {
 
 #[derive(Debug, Clone, Args)]
 pub(crate) struct InitArgs {
+    /// Exact HTTP(S) origin to select from a multi-origin HAR (no credentials).
+    #[arg(long, conflicts_with = "method")]
+    pub har_origin: Option<String>,
+    /// HAR path prefixes to include; repeatable, exclusions take precedence.
+    #[arg(long)]
+    pub include_prefix: Vec<String>,
+    /// HAR path prefixes to exclude; repeatable.
+    #[arg(long)]
+    pub exclude_prefix: Vec<String>,
+    /// Additional HAR property names to redact from structural observations.
+    #[arg(long)]
+    pub redact_property: Vec<String>,
     /// Advanced: use an explicitly supplied local WebMCP runtime package.
     #[arg(long, conflicts_with = "resume")]
     pub webmcp_runtime: Option<PathBuf>,
