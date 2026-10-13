@@ -471,6 +471,12 @@ pub fn import_har(
             }
             if !seen.insert(name.clone()) {
                 notes.insert(CaptureNote::RepeatedParameterUnknown);
+                if let Some(parameter) = parameters
+                    .iter_mut()
+                    .find(|p| p.location == ParameterLocation::Header && p.name == name)
+                {
+                    parameter.shape = unknown();
+                }
                 continue;
             }
             parameters.push(ParameterEvidence {
