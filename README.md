@@ -151,9 +151,11 @@ if (preview.ok && preview.value.confirmation_token) {
 }
 ```
 
-Redirects default to bounded same-origin reads; mutations never follow redirects.
-Set `defaults.redirects: none` in `agent.yml`, or the SDK client's `redirects`
-option to `none`, to reject every 3xx response without a second request or retry.
+Redirects default to bounded same-origin reads; mutations never follow redirects
+under any policy. Set `defaults.redirects: none` in `agent.yml`, or the SDK client's
+`redirects` option to `none`, to follow no redirect at all. A 3xx the operation
+declares (exactly or by class) is still its success response; a 3xx it does not
+declare fails as `UNEXPECTED_RESPONSE` without a second request or retry.
 Either `none` setting wins: client options cannot relax a manifest restriction.
 Rust and C# require the runtime-owned HTTP client for this policy; omit a custom
 `http_client`/`HttpClient`. Custom fetch/transport callbacks must honor the runtime's
