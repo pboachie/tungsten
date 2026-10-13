@@ -26,6 +26,9 @@ fn python(directory: &Path) -> std::path::PathBuf {
 }
 
 pub(super) fn build(directory: &Path, runtime: Option<&Path>) -> Result<(), String> {
+    let directory =
+        std::path::absolute(directory).map_err(|_| "cannot resolve Python project directory")?;
+    let directory = directory.as_path();
     use super::init_setup::execute;
     execute(
         interpreter()?,
@@ -102,6 +105,9 @@ pub(super) fn build(directory: &Path, runtime: Option<&Path>) -> Result<(), Stri
 }
 
 pub(super) fn run(directory: &Path, base_url: &str, operation_id: &str) -> Result<(), String> {
+    let directory =
+        std::path::absolute(directory).map_err(|_| "cannot resolve Python project directory")?;
+    let directory = directory.as_path();
     super::init_setup::execute(
         python(directory)
             .to_str()

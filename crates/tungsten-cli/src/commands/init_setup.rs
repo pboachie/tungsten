@@ -153,8 +153,37 @@ fn setup(args: &InitArgs, results: &mut [crate::output::InitSetupTarget]) -> Res
         .ir
         .filter(|_| !compiled.diagnostics.has_errors())
         .ok_or("cannot compile project for the local example")?;
-    let operation = ir.operations().into_iter().find(|op| op.method == tungsten_ir::HttpMethod::Get && op.body.is_none() && op.security.is_empty() && op.streaming.is_none() && matches!(op.status, tungsten_ir::OperationStatus::Implemented) && op.params.path.is_empty() && !op.params.query.iter().chain(&op.params.header).chain(&op.params.cookie).any(|p| p.required)).ok_or("local example needs an implemented, unauthenticated GET without required parameters or a body; use the advanced generated example for other APIs")?;
+    let native = args
+        .targets
+        .iter()
+        .any(|t| matches!(t.as_str(), "python" | "rust" | "cli"));
+    let simple = |op: &&tungsten_ir::Operation| {
+        op.method == tungsten_ir::HttpMethod::Get
+            && op.body.is_none()
+            && op.params.path.is_empty()
+            && !op
+                .params
+                .query
+                .iter()
+                .chain(&op.params.header)
+                .chain(&op.params.cookie)
+                .any(|p| p.required)
+    };
+    let mut candidates: Vec<_> = ir
+        .operations()
+        .into_iter()
+        .filter(|op| {
+            op.security.is_empty()
+                && op.streaming.is_none()
+                && matches!(op.status, tungsten_ir::OperationStatus::Implemented)
+                && !op.agent.hidden
+        })
+        .collect();
+    candidates.sort_by_key(|op| !simple(op));
+    let (operation, example) = candidates.into_iter().filter(|op| !native || simple(op)).find_map(|op| super::init_example::arguments(&ir, op).ok().map(|example| (op, example))).ok_or("local example needs an implemented unauthenticated operation with a synthesizable JSON request; Python/Rust checks currently require a GET without required arguments")?;
     let operation_id = operation.id.0.clone();
+    let method = format!("{:?}", operation.method).to_ascii_uppercase();
+    let example = serde_json::to_string(&example).map_err(|_| "cannot encode local arguments")?;
     let rust_binary =
         tungsten_ir::naming::to_case(&ir.api.name.words, tungsten_ir::naming::Case::Kebab);
     for result in results.iter_mut().filter(|r| r.target != "docs") {
@@ -198,7 +227,7 @@ fn setup(args: &InitArgs, results: &mut [crate::output::InitSetupTarget]) -> Res
         } else if target.target == "rust" {
             super::init_setup_rust::run(&directory, &rust_binary, &base_url, &operation_id)
         } else if target.target == "mcp" {
-            super::init_setup_mcp::run(&directory, &base_url, &operation_id)
+            super::init_setup_mcp::run(&directory, &base_url, &operation_id, &method, &example)
         } else {
             execute(
                 "node",
@@ -208,6 +237,8 @@ fn setup(args: &InitArgs, results: &mut [crate::output::InitSetupTarget]) -> Res
                     LOCAL_CALL,
                     &base_url,
                     &operation_id,
+                    &method,
+                    &example,
                 ],
                 &directory,
                 Duration::from_secs(20),
@@ -235,12 +266,13 @@ fn setup(args: &InitArgs, results: &mut [crate::output::InitSetupTarget]) -> Res
 
 const LOCAL_CALL: &str = r#"
 import * as sdk from './dist/index.js';
-const [baseUrl, operationId] = process.argv.slice(1);
+const [baseUrl, operationId, method, encodedArgs] = process.argv.slice(1);
+const args = JSON.parse(encodedArgs);
 const Client = Object.values(sdk).find(v => typeof v === 'function' && /Client$/.test(v.name));
 if (!Client) throw new Error('generated client not found');
 const guardedFetch = (input, options) => {
   const url = new URL(typeof input === 'string' || input instanceof URL ? input : input.url);
-  if (url.origin !== new URL(baseUrl).origin) throw new Error('non-local request blocked');
+  if (url.origin !== new URL(baseUrl).origin || (options?.method ?? 'GET').toUpperCase() !== method) throw new Error('non-local request blocked');
   return fetch(input, {...options, redirect: 'error'});
 };
 const client = new Client({baseUrl, fetch: guardedFetch, retries: {max: 0}, timeoutMs: 5000});
@@ -258,10 +290,10 @@ const call = find(client);
 if (!call) throw new Error('generated operation not found');
 let options = {};
 if (typeof call.preview === 'function') {
-  const preview = await call.preview({});
+  const preview = await call.preview(args);
   if (!preview.ok) throw new Error('local preview failed');
   if (preview.value.confirmation_token) options.confirm = preview.value.confirmation_token;
 }
-const result = await call({}, options);
+const result = await call(args, options);
 if (!result.ok) throw new Error('local generated call failed');
 "#;

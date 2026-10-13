@@ -1002,6 +1002,7 @@ dependencies = [
  "tungsten-mock",
  "tungsten-openapi",
  "tungsten-tokens",
+ "url",
 ]
 
 [[package]]
