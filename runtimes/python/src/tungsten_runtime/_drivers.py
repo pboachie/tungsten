@@ -22,6 +22,7 @@ import ssl
 import threading
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Iterator
+from concurrent.futures import CancelledError
 from dataclasses import dataclass, replace
 from http.cookiejar import CookieJar, DefaultCookiePolicy
 from typing import Any, Literal, cast
@@ -98,35 +99,65 @@ class _NativeSyncTransport(httpx.BaseTransport):
         self._thread: threading.Thread | None = None
         self._client: httpx.AsyncClient | None = None
         self._closed = False
+        self._stopped = threading.Event()
+        self._responses: set[httpx.Response] = set()
+        self._response_closers: dict[httpx.Response, asyncio.Task[None]] = {}
 
     def _start(self) -> asyncio.AbstractEventLoop:
-        with self._lock:
-            if self._closed:
-                raise RuntimeError("The transport is closed")
-            if self._loop is None:
-                loop = asyncio.new_event_loop()
-                self._loop = loop
+        # Caller holds _lock through submission, so close cannot stop the loop
+        # between accepting a coroutine and scheduling it.
+        if self._closed:
+            raise RuntimeError("The transport is closed")
+        if self._loop is None:
+            loop = asyncio.new_event_loop()
+            self._loop = loop
 
-                def serve() -> None:
-                    asyncio.set_event_loop(loop)
-                    try:
-                        loop.run_forever()
-                    finally:
-                        loop.run_until_complete(loop.shutdown_asyncgens())
-                        loop.run_until_complete(loop.shutdown_default_executor())
-                        loop.close()
+            def serve() -> None:
+                asyncio.set_event_loop(loop)
+                try:
+                    loop.run_forever()
+                finally:
+                    loop.run_until_complete(loop.shutdown_asyncgens())
+                    loop.run_until_complete(loop.shutdown_default_executor())
+                    loop.close()
 
-                self._thread = threading.Thread(target=serve, name="tungsten-http", daemon=True)
-                self._thread.start()
-            return self._loop
+            self._thread = threading.Thread(target=serve, name="tungsten-http", daemon=True)
+            self._thread.start()
+        return self._loop
 
     def run[T](self, work: Coroutine[Any, Any, T]) -> T:
         try:
-            loop = self._start()
+            with self._lock:
+                pending = asyncio.run_coroutine_threadsafe(work, self._start())
         except Exception:
             work.close()
             raise
-        return asyncio.run_coroutine_threadsafe(work, loop).result()
+        return pending.result()
+
+    def cleanup(self, work: Coroutine[Any, Any, None]) -> None:
+        with self._lock:
+            if self._closed:
+                work.close()
+                pending = None
+            else:
+                pending = asyncio.run_coroutine_threadsafe(work, self._start())
+        if pending is not None:
+            try:
+                pending.result()
+                return
+            except CancelledError:
+                pass  # Shutdown has taken ownership of response cleanup.
+        self._stopped.wait()
+
+    async def close_response(self, response: httpx.Response) -> None:
+        closing = self._response_closers.get(response)
+        if closing is None:
+            closing = asyncio.create_task(response.aclose())
+            self._response_closers[response] = closing
+        # Once response cleanup starts, shutdown must join it, not cancel it.
+        await asyncio.shield(closing)
+        self._responses.discard(response)
+        self._response_closers.pop(response, None)
 
     def notify(self, callback: Callable[[], None]) -> None:
         with self._lock:
@@ -145,7 +176,9 @@ class _NativeSyncTransport(httpx.BaseTransport):
             content=request.content,
             extensions=request.extensions,
         )
-        return await _before_deadline(self._client.send(inner, stream=True), deadline)
+        response = await _before_deadline(self._client.send(inner, stream=True), deadline)
+        self._responses.add(response)
+        return response
 
     def handle_request(self, request: httpx.Request) -> httpx.Response:
         request.read()
@@ -167,25 +200,38 @@ class _NativeSyncTransport(httpx.BaseTransport):
 
     async def _shutdown(self) -> None:
         current = asyncio.current_task()
-        tasks = [task for task in asyncio.all_tasks() if task is not current]
+        tasks = [
+            task
+            for task in asyncio.all_tasks()
+            if task is not current and task not in self._response_closers.values()
+        ]
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+        for response in list(self._responses):
+            await self.close_response(response)
+        await asyncio.gather(*self._response_closers.values())
+        self._response_closers.clear()
         if self._client is not None:
             await self._client.aclose()
 
     def close(self) -> None:
         with self._lock:
-            if self._closed:
-                return
+            first = not self._closed
             self._closed = True
             loop, thread = self._loop, self._thread
-        if loop is not None and thread is not None:
-            try:
-                asyncio.run_coroutine_threadsafe(self._shutdown(), loop).result()
-            finally:
-                loop.call_soon_threadsafe(loop.stop)
-                thread.join()
+        if not first:
+            self._stopped.wait()
+            return
+        try:
+            if loop is not None and thread is not None:
+                try:
+                    asyncio.run_coroutine_threadsafe(self._shutdown(), loop).result()
+                finally:
+                    loop.call_soon_threadsafe(loop.stop)
+                    thread.join()
+        finally:
+            self._stopped.set()
 
 
 class _NativeSyncBody(httpx.SyncByteStream):
@@ -229,10 +275,10 @@ class _NativeSyncBody(httpx.SyncByteStream):
         if reading is not None:
             reading.cancel()
             await asyncio.gather(reading, return_exceptions=True)
-        await self._response.aclose()
+        await self._transport.close_response(self._response)
 
     def close(self) -> None:
-        self._transport.run(self._close())
+        self._transport.cleanup(self._close())
 
 
 def async_http(transport: object) -> httpx.AsyncClient:
