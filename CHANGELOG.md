@@ -34,7 +34,10 @@ changes.
 - Bounded offline Swagger 2 conversion through the OpenAPI loader, preserving
   local definitions, parameter serialization, media types and authentication.
 - Imported operations retain review provenance and require argument-bound
-  confirmation until explicitly reviewed per operation.
+  confirmation until explicitly reviewed per operation and exact server origin.
+  Scoped reviews require a runtime with import-policy support. Regenerate Rust
+  SDKs when upgrading; handwritten `AgentMeta` literals must add
+  `import_policy: None` or an explicit policy.
 - Import supported Postman Collection v2.1 requests through the offline contract
   engine, preserving explicit authentication and reporting unsupported behavior.
 - Parse a bounded saved cURL and HTTP-file subset as offline contract evidence,
@@ -44,10 +47,6 @@ changes.
   provenance, and persistent reviewed overrides.
 - Versioned endpoint manifests can combine declared JSON Schema models with
   explicit HTTP routing and auth references using bounded offline model reads.
-  confirmation until explicitly reviewed per operation and exact server origin.
-  Scoped reviews are enforced by every SDK runtime and require a runtime with
-  import-policy support. Regenerate Rust SDKs when upgrading; handwritten
-  `AgentMeta` literals must add `import_policy: None` or an explicit policy.
 
 - TypeScript SDK targets can declare npm dependencies for preserved custom
   extensions; package archives include custom source and license notices.
