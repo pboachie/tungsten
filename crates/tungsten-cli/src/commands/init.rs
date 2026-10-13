@@ -473,11 +473,18 @@ fn tungsten_yml(
                     serde_json::json!({"kit_path":path.to_string_lossy().replace('\\', "/")});
             }
             let _ = writeln!(out, "  rust: {options}");
-        } else if target == "mcp"
-            && let Some(runtime) = &args.mcp_runtime
-        {
-            let path = std::path::absolute(runtime).unwrap_or_else(|_| runtime.to_path_buf());
-            let options = serde_json::json!({"out":"generated/mcp", "sdk_path":"../typescript", "runtime_path":path.to_string_lossy().replace('\\', "/")});
+        } else if target == "mcp" && (runtime.is_some() || args.mcp_runtime.is_some()) {
+            let mut options =
+                serde_json::json!({"out":"generated/mcp", "sdk_path":"../typescript"});
+            for (key, path) in [
+                ("sdk_runtime_path", runtime),
+                ("runtime_path", args.mcp_runtime.as_deref()),
+            ] {
+                if let Some(path) = path {
+                    let path = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+                    options[key] = serde_json::json!(path.to_string_lossy().replace('\\', "/"));
+                }
+            }
             let _ = writeln!(out, "  mcp: {options}");
         } else if target == "rust" && has_cli {
             let _ = writeln!(out, "  rust: {{ out: generated/rust, cli: true }}");
