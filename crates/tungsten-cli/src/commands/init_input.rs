@@ -123,3 +123,62 @@ pub(super) fn prepare(args: &mut InitArgs) -> Result<(), String> {
     args.from = Some(args.dir.join("inferred.openapi.json"));
     Ok(())
 }
+
+/// Detect a Swagger document and persist its bounded conversion for the ordinary
+/// compiler. OpenAPI input is left in place so relative references retain meaning.
+pub(super) fn import(args: &mut InitArgs) -> Result<(), String> {
+    let source = args.from.clone().or_else(|| {
+        [
+            "openapi.json",
+            "openapi.yaml",
+            "openapi.yml",
+            "swagger.json",
+            "swagger.yaml",
+        ]
+        .iter()
+        .map(|name| args.dir.join(name))
+        .find(|path| path.is_file())
+    });
+    let Some(source) = source else { return Ok(()) };
+    let mut bytes = Vec::new();
+    std::fs::File::open(&source)
+        .map_err(|_| "cannot open input file")?
+        .take(8 * 1024 * 1024 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| "cannot read input file")?;
+    if bytes.len() > 8 * 1024 * 1024 {
+        return Err(
+            "setup input exceeds 8 MiB; use the explicit compiler flow for larger OpenAPI files"
+                .into(),
+        );
+    }
+    let text = std::str::from_utf8(&bytes).map_err(|_| "input must be UTF-8 JSON or YAML")?;
+    let root = tungsten_config::parse_yaml("input", text)
+        .0
+        .map_err(|_| "input must be valid JSON or YAML")?;
+    if root.get("swagger").is_none() {
+        return Ok(());
+    }
+    let converted = tungsten_openapi::swagger::convert(&root)
+        .map_err(|error| format!("Swagger conversion failed: {}", error.message))?;
+    for name in ["tungsten.yml", "agent.yml", "imported.openapi.json"] {
+        if std::fs::symlink_metadata(args.dir.join(name)).is_ok() {
+            return Err("Swagger import requires a new project; resume the existing converted configuration".into());
+        }
+    }
+    std::fs::create_dir_all(&args.dir).map_err(|_| "cannot create project directory")?;
+    let destination = args.dir.join("imported.openapi.json");
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&destination)
+        .map_err(|_| "cannot create converted input; choose a fresh project directory")?;
+    file.write_all(
+        serde_json::to_string_pretty(&converted)
+            .map_err(|_| "cannot encode converted input")?
+            .as_bytes(),
+    )
+    .map_err(|_| "cannot write converted input; inspect partial files before retrying")?;
+    args.from = Some(destination);
+    Ok(())
+}

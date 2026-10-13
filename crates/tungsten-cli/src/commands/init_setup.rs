@@ -124,7 +124,8 @@ pub(super) fn run(args: &InitArgs) -> Result<(), String> {
         Duration::from_secs(20),
     );
     let observed = server.calls().iter().any(|call| {
-        call.operation.as_deref() == Some(&operation_id) && (200..300).contains(&call.status)
+        call.operation.as_deref() == Some(&operation_id)
+            && (200..300).contains(&call.response_status)
     });
     server.shutdown();
     result?;

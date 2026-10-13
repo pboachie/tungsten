@@ -56,6 +56,15 @@ pub(crate) fn run(args: &InitArgs, json: bool, env: &CliEnv) -> Report {
             "correct the no-schema input; existing files are never overwritten",
         );
     }
+    if !selected.resume
+        && selected.method.is_none()
+        && let Err(error) = super::init_input::import(&mut selected)
+    {
+        return refused(
+            &error,
+            "correct the input or resume the existing project; no imported commands are executed",
+        );
+    }
     let mut report = if selected.resume {
         for name in ["tungsten.yml", "agent.yml"] {
             let path = selected.dir.join(name);
