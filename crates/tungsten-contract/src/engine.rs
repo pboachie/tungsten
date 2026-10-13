@@ -496,15 +496,44 @@ struct Bucket<'a> {
     leaves: HashMap<Leaf<'a>, FactProvenance>,
 }
 
+/// Where a node sits in a structural schema. `anyOf` is a keyword only on a schema
+/// node; inside `properties` the same text is an ordinary property name.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Position {
+    /// A schema object: its keys are keywords.
+    Schema,
+    /// The value of `properties`: its keys are property names, its values schemas.
+    Properties,
+    /// The value of `anyOf`: its elements are schemas.
+    Branches,
+    /// Any other keyword value (`type`, `required`, bounds, ...).
+    Value,
+}
+
+impl Position {
+    fn child(self, key: &str) -> Position {
+        match self {
+            Position::Schema => match key {
+                "properties" => Position::Properties,
+                "items" | "additionalProperties" => Position::Schema,
+                "anyOf" => Position::Branches,
+                _ => Position::Value,
+            },
+            Position::Properties | Position::Branches => Position::Schema,
+            Position::Value => Position::Value,
+        }
+    }
+}
+
 /// Contribution provenance keyed by normalized merged path, built in one walk of
 /// each contribution so every merged node resolves with one hash lookup.
 ///
-/// A merged path is normalized by dropping each `anyOf` step together with the step
-/// after it (the branch index), and a trailing `anyOf`. A contribution reaches a
-/// normalized path by stepping through object keys and array indices, flattening any
-/// `anyOf` array at a node into its branches before taking the next step. Branches
-/// therefore share buckets; aggregating per bucket and leaf value keeps the merged
-/// walk linear even when thousands of branches land in the same bucket.
+/// A merged path is normalized by dropping each `anyOf` keyword step on a schema
+/// node together with the branch index after it. A contribution reaches a
+/// normalized path by stepping through object keys and array indices, flattening an
+/// `anyOf` keyword array on a schema node into its branches before taking the next
+/// step. Branches therefore share buckets; aggregating per bucket and leaf value
+/// keeps the merged walk linear even when thousands of branches land in one bucket.
 type ContributionIndex<'a> = HashMap<Vec<String>, Bucket<'a>>;
 
 fn index_contribution<'a>(
@@ -513,27 +542,35 @@ fn index_contribution<'a>(
     source: &SourceLocation,
     index: &mut ContributionIndex<'a>,
 ) {
-    let mut pending = vec![(schema, Vec::new())];
-    while let Some((node, path)) = pending.pop() {
+    let mut pending = vec![(schema, Position::Schema, Vec::new())];
+    while let Some((node, position, path)) = pending.pop() {
         let mut branches = vec![node];
         while let Some(branch) = branches.pop() {
-            if let Some(nested) = branch.get("anyOf").and_then(Value::as_array) {
+            if position == Position::Schema
+                && let Some(nested) = branch.get("anyOf").and_then(Value::as_array)
+            {
                 branches.extend(nested);
                 continue;
             }
             match branch {
                 Value::Object(map) => {
-                    for (key, child) in map.iter().filter(|(key, _)| *key != "anyOf") {
+                    for (key, child) in map {
+                        // A schema's own anyOf keyword is reached through its branches.
+                        if position == Position::Schema && key == "anyOf" {
+                            continue;
+                        }
                         let mut child_path = path.clone();
                         child_path.push(key.clone());
-                        pending.push((child, child_path));
+                        pending.push((child, position.child(key), child_path));
                     }
                 }
                 Value::Array(values) => {
                     for (i, child) in values.iter().enumerate() {
+                        let key = i.to_string();
+                        let child_position = position.child(&key);
                         let mut child_path = path.clone();
-                        child_path.push(i.to_string());
-                        pending.push((child, child_path));
+                        child_path.push(key);
+                        pending.push((child, child_position, child_path));
                     }
                 }
                 _ => {}
@@ -566,8 +603,13 @@ fn record_contributions(
     for (schema, state, source) in contributions {
         index_contribution(schema, *state, source, &mut index);
     }
-    let mut pending = vec![(value, pointer.to_owned(), Vec::<String>::new(), false)];
-    while let Some((value, pointer, normalized, skip)) = pending.pop() {
+    let mut pending = vec![(
+        value,
+        Position::Schema,
+        pointer.to_owned(),
+        Vec::<String>::new(),
+    )];
+    while let Some((value, position, pointer, normalized)) = pending.pop() {
         let bucket = index.get(&normalized);
         let found = match leaf(value) {
             None => bucket.map(|bucket| &bucket.any),
@@ -591,16 +633,14 @@ fn record_contributions(
         };
         for (key, child) in children {
             let child_pointer = format!("{pointer}/{}", escape(&key));
+            let child_position = position.child(&key);
             let mut child_normalized = normalized.clone();
-            let child_skip = if skip {
-                false
-            } else if key == "anyOf" {
-                true
-            } else {
+            // The anyOf keyword and its branch index do not change the schema position.
+            let keyword = position == Position::Schema && key == "anyOf";
+            if !keyword && position != Position::Branches {
                 child_normalized.push(key);
-                false
-            };
-            pending.push((child, child_pointer, child_normalized, child_skip));
+            }
+            pending.push((child, child_position, child_pointer, child_normalized));
         }
         facts.insert(pointer, provenance);
     }
