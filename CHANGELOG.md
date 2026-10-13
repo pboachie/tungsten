@@ -11,6 +11,9 @@ changes.
 
 ### Added
 
+- Import bounded HAR captures offline with explicit origin selection, reviewed
+  path templates, configurable structural redaction, and omission reports.
+
 - Add a bounded offline HTTP evidence engine with deterministic OpenAPI inference,
   provenance, and persistent reviewed overrides.
 
