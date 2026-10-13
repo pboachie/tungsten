@@ -60,6 +60,8 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - name: Check dependency sources and current advisories before release preparation
+        run: python3 .github/scripts/dependency_audit.py
       - name: Decide dry run or release
         id: plan
         env:
@@ -362,10 +364,10 @@ jobs:
       - name: Build @elysra/tungsten-runtime (adapter packages link to it)
         if: matrix.package != 'ts'
         working-directory: runtimes/ts
-        run: npm ci && npm run build
+        run: npm ci --ignore-scripts && npm run build
       - name: Build
         working-directory: runtimes/${{ matrix.package }}
-        run: npm ci && npm run build
+        run: npm ci --ignore-scripts && npm run build
       - name: Use an unpublished version for rehearsal only
         if: needs.prepare.outputs.release != 'true'
         working-directory: runtimes/${{ matrix.package }}
@@ -424,7 +426,7 @@ jobs:
           name: npm-dist
           path: runtime-dist
       - name: Install the supported npm CLI
-        run: npm install --global npm@12.2.0
+        run: npm install --global --ignore-scripts npm@12.2.0
       - name: Publish validated archives, core runtime first
         env:
           RELEASE_TAG: ${{ needs.prepare.outputs.tag }}

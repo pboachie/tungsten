@@ -58,8 +58,7 @@ jobs:
           cargo fmt --check
           cargo clippy --locked -- -D warnings
           cargo build --locked
-      # The Rust runtimes are their own workspace (runtimes/rust). No Cargo.lock
-      # is committed for it yet, so these steps do not pass --locked.
+      # The Rust runtimes have a separate, committed lockfile.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: runtimes/rust
@@ -68,10 +67,23 @@ jobs:
         run: cargo fmt --all --check
       - name: Rust runtimes (runtimes/rust) clippy
         working-directory: runtimes/rust
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - name: Rust runtimes (runtimes/rust) build
         working-directory: runtimes/rust
-        run: cargo build --workspace
+        run: cargo build --locked --workspace
+
+  dependencies:
+    name: dependency sources and advisories
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check all committed Cargo, npm and uv locks without installing packages
+        run: python3 .github/scripts/dependency_audit.py
 
   deny:
     name: cargo-deny
