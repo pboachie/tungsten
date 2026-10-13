@@ -310,6 +310,18 @@ fn walkthrough(args: &mut InitArgs) -> io::Result<bool> {
             eprintln!(
                 "Outputs (comma-separated multi-select):\n  [ ] typescript - JavaScript/TypeScript SDK (Node/npm)\n  [ ] python - Python SDK\n  [ ] rust - Rust SDK and CLI (Cargo)\n  [ ] cli - command-line client (Rust SDK + Cargo)\n  [ ] mcp - local MCP server (Node/npm; adds TypeScript)\n  [ ] webmcp - browser adapter (Node/npm; adds TypeScript)\n  [ ] docs - documentation"
             );
+            for target in tungsten_config::KNOWN_TARGETS {
+                if crate::targets::emitter(target).is_some()
+                    && !matches!(
+                        *target,
+                        "typescript" | "python" | "rust" | "mcp" | "webmcp" | "docs"
+                    )
+                {
+                    eprintln!(
+                        "  [ ] {target} - SDK source generation only; declared OpenAPI, no imported contracts or local build/setup"
+                    );
+                }
+            }
             let defaults = if args.targets.is_empty() {
                 "typescript,docs".to_owned()
             } else {
@@ -324,7 +336,7 @@ fn walkthrough(args: &mut InitArgs) -> io::Result<bool> {
                 .collect();
             if targets
                 .iter()
-                .any(|s| s != "cli" && !tungsten_config::KNOWN_TARGETS.contains(&s.as_str()))
+                .any(|s| s != "cli" && crate::targets::emitter(s).is_none())
             {
                 eprintln!("Unknown output; choose from the displayed list.");
                 continue;
@@ -557,7 +569,18 @@ fn walkthrough(args: &mut InitArgs) -> io::Result<bool> {
                     "Configuration precedence: input shapes, tungsten.yml target/server overrides, then agent.yml per-operation policy. Inspect the effective contract with tungsten --json ir dump. Imported operations retain preview confirmation until explicitly reviewed; no credentials are required for the mock."
                 );
             }
-            if args.targets.iter().any(|t| t != "docs") {
+            let setup_supported = args.targets.iter().all(|t| {
+                matches!(
+                    t.as_str(),
+                    "typescript" | "python" | "rust" | "cli" | "mcp" | "webmcp" | "docs"
+                )
+            });
+            if !setup_supported {
+                eprintln!(
+                    "This selection includes source-only SDK outputs. Generate and inspect those sources with their language toolchains; this combination has no automated local setup or successful first-call claim."
+                );
+                args.local_example = false;
+            } else if args.targets.iter().any(|t| t != "docs") {
                 eprintln!(
                     "Local setup prerequisites: Node >=22/npm for TypeScript/MCP/WebMCP; Python >=3.12/venv/pip for Python; Rust >=1.88/Cargo for Rust/CLI. Downloads dependencies into this project, builds selected outputs and calls only a temporary loopback mock. npm lifecycle scripts are disabled; Python uses wheel downloads and the package build backend; Cargo runs dependency build scripts. Explicit runtime paths must be trusted source."
                 );

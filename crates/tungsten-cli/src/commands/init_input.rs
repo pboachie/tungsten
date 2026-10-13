@@ -256,10 +256,21 @@ pub(super) fn import(args: &mut InitArgs) -> Result<Vec<String>, String> {
             &[allowed],
             &tungsten_openapi::LoadOptions::default(),
         )
-        .map_err(|error| format!("endpoint manifest import failed: {}", error.message))?
+        .map_err(|error| {
+            format!(
+                "endpoint manifest import failed: {}",
+                error.render_short(None)
+            )
+        })?
     } else if root.get("swagger").is_some() {
-        tungsten_openapi::swagger::convert(&root)
-            .map_err(|error| format!("Swagger conversion failed: {}", error.message))?
+        tungsten_openapi::swagger::convert(&root).map_err(|error| {
+            format!(
+                "Swagger conversion failed at {}#{}: {}",
+                source.display(),
+                error.pointer,
+                error.message
+            )
+        })?
     } else {
         return Ok(vec![]);
     };
