@@ -244,7 +244,9 @@ class _NativeSyncTransport(httpx.BaseTransport):
             self._stopped.set()
 
 
-def _abandon_loop(loop: asyncio.AbstractEventLoop, thread: threading.Thread, client: httpx.AsyncClient) -> None:
+def _abandon_loop(
+    loop: asyncio.AbstractEventLoop, thread: threading.Thread, client: httpx.AsyncClient
+) -> None:
     """Release a dropped transport's loop thread: cancel its work, close the
     pool, stop the loop (whose thread then closes it). Runs when the
     transport is garbage collected without close(), or at interpreter exit;
