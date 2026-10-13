@@ -4,7 +4,7 @@
 
 use crate::LoadOptions;
 use schemars::JsonSchema;
-use serde::Deserialize;
+use serde::{Deserialize, de::IntoDeserializer};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Read;
@@ -65,6 +65,14 @@ enum Auth {
 fn error(p: &str, message: &str) -> Diagnostic {
     Diagnostic::error("TG0112", message).at("endpoint-manifest", p, None)
 }
+fn locate(mut diagnostic: Diagnostic, file: &Path) -> Diagnostic {
+    for label in &mut diagnostic.labels {
+        if label.file == "endpoint-manifest" {
+            label.file = file.to_string_lossy().into_owned();
+        }
+    }
+    diagnostic
+}
 fn esc(s: &str) -> String {
     s.replace('~', "~0").replace('/', "~1")
 }
@@ -89,6 +97,14 @@ pub fn load(
     allowed_roots: &[PathBuf],
     opts: &LoadOptions,
 ) -> Result<Value, Diagnostic> {
+    load_inner(path, allowed_roots, opts).map_err(|diagnostic| locate(diagnostic, path))
+}
+
+fn load_inner(
+    path: &Path,
+    allowed_roots: &[PathBuf],
+    opts: &LoadOptions,
+) -> Result<Value, Diagnostic> {
     let roots: Vec<PathBuf> = allowed_roots
         .iter()
         .map(|r| {
@@ -107,7 +123,16 @@ pub fn load(
         nodes: 0,
     };
     let value = reader.read(&path)?;
-    let manifest:Manifest=serde_json::from_value(value.clone()).map_err(|_|error("","invalid endpoint manifest; provide endpoint_manifest: 1, title, version, base_url, models and endpoints with routing metadata"))?;
+    let manifest: Manifest = serde_path_to_error::deserialize(value.clone().into_deserializer())
+        .map_err(|failure| {
+            let pointer = failure.path().iter().filter_map(|segment| match segment {
+                serde_path_to_error::Segment::Seq { index } => Some(index.to_string()),
+                serde_path_to_error::Segment::Map { key } => Some(esc(key)),
+                serde_path_to_error::Segment::Enum { variant } => Some(esc(variant)),
+                serde_path_to_error::Segment::Unknown => None,
+            }).map(|segment| format!("/{segment}")).collect::<String>();
+            error(&pointer, "invalid endpoint manifest field; check the versioned manifest schema and required HTTP routing metadata")
+        })?;
     if manifest.endpoint_manifest != 1 {
         return Err(error(
             "/endpoint_manifest",
@@ -321,6 +346,10 @@ struct Reader<'a> {
 }
 impl Reader<'_> {
     fn read(&mut self, path: &Path) -> Result<Value, Diagnostic> {
+        self.read_inner(path)
+            .map_err(|diagnostic| locate(diagnostic, path))
+    }
+    fn read_inner(&mut self, path: &Path) -> Result<Value, Diagnostic> {
         if !self.roots.iter().any(|root| path.starts_with(root)) {
             return Err(error("", "model reference escapes allowed roots"));
         }
@@ -368,6 +397,16 @@ impl Reader<'_> {
         Ok(json!(out))
     }
     fn schema(
+        &mut self,
+        v: Value,
+        file: &Path,
+        p: &str,
+        depth: usize,
+    ) -> Result<Value, Diagnostic> {
+        self.schema_inner(v, file, p, depth)
+            .map_err(|diagnostic| locate(diagnostic, file))
+    }
+    fn schema_inner(
         &mut self,
         mut v: Value,
         file: &Path,
