@@ -39,6 +39,7 @@ changes.
   query embeddings. Complete the README's generated Python SDK installation steps.
 
 - Bound aggregate Swagger reference and media-schema expansion during conversion.
+- Require an explicit reviewed HAR path mapping before saving imported contracts.
 
 ### Security
 
