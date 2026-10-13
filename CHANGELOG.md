@@ -9,7 +9,37 @@ changes.
 
 ## [Unreleased]
 
+### Breaking
+
+- Postman import never copies variable values into contract paths. A
+  `{{name}}` path segment is accepted only as a whole segment naming a variable
+  declared in the request URL's `variable` list, and becomes the `{name}` path
+  parameter; any other path variable is refused (PM005, use `:name`). Base URL
+  variables must hold an origin only; a value with a path prefix is refused
+  (PM005). Dynamic variables such as `{{$guid}}` are refused in every path
+  segment (PM004), including after an unresolved base URL variable.
+- `tungsten init` from a HAR capture requires a reviewed `--route` template for
+  every imported path (literal paths too, for example `--route /health`); a
+  captured path without one, a `--route` that matches no imported entry, or two
+  equally specific matching templates are refused. `HarOptions` gains a
+  `route_templates` field.
+- `tungsten init` reports JSON setup input it cannot parse (invalid syntax or
+  nesting deeper than 128 levels) instead of passing it on as OpenAPI.
+
 ### Fixed
+
+- Bound Postman variable expansion and parsed examples by one import-wide byte
+  and node budget (PM001), so a large variable referenced many times cannot
+  amplify memory use.
+- Compare structured and raw Postman URL paths after the same normalization.
+- Record imported schema provenance in time linear in the merged schema and
+  samples.
+- Filter HAR entries by origin and prefix before validating their URLs, and
+  count non-HTTP(S) entries such as WebSocket or extension requests as filtered.
+- Accept JSON `Content-Type` parameters such as `charset` in saved cURL and HTTP
+  requests.
+- Detect deeply nested JSON setup inputs with a JSON parser instead of
+  misreading Postman or Swagger files as OpenAPI.
 
 - Make generated Rust CLIs packageable with a versioned SDK dependency and share
   the generated workspace's Rust 1.88 minimum.
