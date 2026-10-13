@@ -25,6 +25,7 @@ changes.
 - Propagate Rust emitter graph facts with worklists and coalesce concurrent MCP
   query embeddings. Complete the README's generated Python SDK installation steps.
 
+- Keep Postman path parameters explicit and restrict URL variables to origins.
 
 ### Added
 
