@@ -13,6 +13,8 @@ changes.
 
 - Make generated Rust CLIs packageable with a versioned SDK dependency and share
   the generated workspace's Rust 1.88 minimum.
+- Require canonical decimal expiry in C#, Java and Ruby confirmation tokens,
+  matching the TypeScript and Python runtimes.
 
 - Warn when conditional JSON Schema constraints are ignored; strict check and
   generation reject them before writing output. Conditional validation is not
