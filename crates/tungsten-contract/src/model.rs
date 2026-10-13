@@ -49,7 +49,7 @@ pub struct HttpEvidence {
     pub unknown: BTreeSet<UnknownFact>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ShapeEvidence {
     #[serde(default)]
@@ -57,6 +57,15 @@ pub struct ShapeEvidence {
     /// Structural schema subset only; value-bearing annotations are rejected.
     #[serde(default)]
     pub declared_schema: Option<Value>,
+}
+
+impl std::fmt::Debug for ShapeEvidence {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ShapeEvidence")
+            .field("sample_count", &self.samples.len())
+            .field("has_declaration", &self.declared_schema.is_some())
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -131,12 +140,15 @@ pub enum SafetyDecision {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct ReviewedOverrides {
-    /// OpenAPI JSON pointers ending in `/schema` to explicitly reviewed schemas.
+    /// OpenAPI body schema pointers, or stable `parameter_schema_pointer` keys.
     #[serde(default)]
     pub schemas: BTreeMap<String, Value>,
     /// Stable operation IDs to explicit human safety decisions.
     #[serde(default)]
     pub safety: BTreeMap<String, SafetyDecision>,
+    /// Trusted exact origins reviewed for each operation; never inferred.
+    #[serde(default)]
+    pub reviewed_origins: BTreeMap<String, BTreeSet<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

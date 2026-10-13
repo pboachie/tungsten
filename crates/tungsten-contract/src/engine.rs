@@ -72,6 +72,27 @@ fn bounded(value: &Value, limits: &Limits) -> Result<(), Diagnostic> {
 }
 
 fn validate(document: &EvidenceDocument, limits: &Limits) -> Result<(), Diagnostic> {
+    // Check caller-constructed values before recursively serializing the model.
+    for op in &document.operations {
+        for shape in op
+            .parameters
+            .iter()
+            .map(|p| &p.shape)
+            .chain(op.request.iter().map(|m| &m.shape))
+            .chain(
+                op.responses
+                    .iter()
+                    .flat_map(|r| r.content.iter().map(|m| &m.shape)),
+            )
+        {
+            for sample in &shape.samples {
+                bounded(sample, limits)?;
+            }
+            if let Some(schema) = &shape.declared_schema {
+                bounded(schema, limits)?;
+            }
+        }
+    }
     if document.version != EVIDENCE_VERSION {
         return Err(fail(
             "TC003",
@@ -104,7 +125,7 @@ fn validate(document: &EvidenceDocument, limits: &Limits) -> Result<(), Diagnost
         let path = &operation.path;
         if !path.starts_with('/')
             || path.contains(['?', '#', '\\'])
-            || path.chars().any(char::is_whitespace)
+            || path.chars().any(|c| c.is_whitespace() || c.is_control())
         {
             return Err(fail(
                 "TC004",
@@ -374,37 +395,126 @@ fn escape(text: &str) -> String {
     text.replace('~', "~0").replace('/', "~1")
 }
 
+/// Stable review key independent of the OpenAPI parameter array order.
+pub fn parameter_schema_pointer(id: &str, location: ParameterLocation, name: &str) -> String {
+    let location = match location {
+        ParameterLocation::Path => "path",
+        ParameterLocation::Query => "query",
+        ParameterLocation::Header => "header",
+        ParameterLocation::Cookie => "cookie",
+    };
+    let name = if location == "header" {
+        name.to_ascii_lowercase()
+    } else {
+        name.into()
+    };
+    format!(
+        "/operations/{}/parameters/{location}/{}/schema",
+        escape(id),
+        escape(&name)
+    )
+}
+
 #[derive(Default)]
 struct Shapes {
-    schemas: Vec<Value>,
-    states: BTreeSet<EvidenceState>,
-    sources: BTreeSet<SourceLocation>,
+    contributions: Vec<(Value, EvidenceState, SourceLocation)>,
 }
 
 impl Shapes {
     fn add(&mut self, shape: &ShapeEvidence, source: &SourceLocation) {
-        self.sources.insert(source.clone());
         if let Some(schema) = &shape.declared_schema {
-            self.states.insert(EvidenceState::Declared);
-            self.schemas.push(schema.clone());
+            self.contributions
+                .push((schema.clone(), EvidenceState::Declared, source.clone()));
         }
         for sample in &shape.samples {
-            self.states.insert(EvidenceState::Observed);
-            self.schemas.push(inferred(sample));
+            self.contributions
+                .push((inferred(sample), EvidenceState::Observed, source.clone()));
         }
         if shape.samples.is_empty() && shape.declared_schema.is_none() {
-            self.states.insert(EvidenceState::Unknown);
-            self.schemas.push(json!({}));
+            self.contributions
+                .push((json!({}), EvidenceState::Unknown, source.clone()));
         }
     }
     fn finish(self, pointer: &str, facts: &mut BTreeMap<String, FactProvenance>) -> Value {
-        let schema = merge(self.schemas);
-        let provenance = FactProvenance {
-            states: self.states,
-            sources: self.sources,
-        };
-        record(&schema, pointer, &provenance, facts);
+        let schema = merge(
+            self.contributions
+                .iter()
+                .map(|(s, _, _)| s.clone())
+                .collect(),
+        );
+        record_contributions(&schema, pointer, &[], &self.contributions, facts);
         schema
+    }
+}
+
+fn contributing_values<'a>(schema: &'a Value, path: &[String]) -> Vec<&'a Value> {
+    if path.is_empty() {
+        return vec![schema];
+    }
+    if path[0] == "anyOf" {
+        return contributing_values(schema, &path[path.len().min(2)..]);
+    }
+    if let Some(branches) = schema.get("anyOf").and_then(Value::as_array) {
+        return branches
+            .iter()
+            .flat_map(|s| contributing_values(s, path))
+            .collect();
+    }
+    let child = if let Some(array) = schema.as_array() {
+        path[0].parse::<usize>().ok().and_then(|i| array.get(i))
+    } else {
+        schema.get(&path[0])
+    };
+    child.map_or_else(Vec::new, |v| contributing_values(v, &path[1..]))
+}
+
+fn record_contributions(
+    value: &Value,
+    pointer: &str,
+    path: &[String],
+    contributions: &[(Value, EvidenceState, SourceLocation)],
+    facts: &mut BTreeMap<String, FactProvenance>,
+) {
+    let mut provenance = FactProvenance {
+        states: BTreeSet::new(),
+        sources: BTreeSet::new(),
+    };
+    for (schema, state, source) in contributions {
+        let candidates = contributing_values(schema, path);
+        if candidates
+            .iter()
+            .any(|v| value.is_object() || value.is_array() || *v == value)
+        {
+            provenance.states.insert(*state);
+            provenance.sources.insert(source.clone());
+        }
+    }
+    if provenance.states.is_empty() {
+        provenance.states.insert(EvidenceState::Unknown);
+    }
+    facts.insert(pointer.into(), provenance);
+    let children: Vec<_> = match value {
+        Value::Object(map) => map
+            .iter()
+            .map(|(key, value)| (key.clone(), value))
+            .collect(),
+        Value::Array(values) => values
+            .iter()
+            .enumerate()
+            .map(|(i, v)| (i.to_string(), v))
+            .collect(),
+        _ => vec![],
+    };
+    for (key, child) in children {
+        let mut child_path = path.to_vec();
+        child_path.push(key.clone());
+        record_contributions(
+            child,
+            &format!("{pointer}/{}", escape(&key)),
+            &child_path,
+            contributions,
+            facts,
+        );
     }
 }
 
@@ -443,18 +553,52 @@ pub fn infer(
     limits: &Limits,
 ) -> Result<ContractOutput, Diagnostic> {
     validate(document, limits)?;
+    for schema in overrides.schemas.values() {
+        bounded(schema, limits)?;
+    }
     bounded(
         &serde_json::to_value(overrides).map_err(|_| fail("TC003", "Invalid overrides."))?,
         limits,
     )?;
     for (pointer, schema) in &overrides.schemas {
-        if !pointer.starts_with("/paths/") || !pointer.ends_with("/schema") {
+        let parts: Vec<_> = pointer.split('/').collect();
+        let parameter_key = parts.len() == 7
+            && parts[1] == "operations"
+            && parts[3] == "parameters"
+            && ["path", "query", "header", "cookie"].contains(&parts[4])
+            && !parts[5].is_empty()
+            && parts[6] == "schema";
+        if !parameter_key
+            && (!pointer.starts_with("/paths/")
+                || !pointer.ends_with("/schema")
+                || pointer.contains("/parameters/"))
+        {
             return Err(fail(
                 "TC007",
-                "Reviewed schema pointers must identify an operation schema under /paths/.",
+                "Use /paths/ body schema pointers or stable parameter_schema_pointer keys; numeric parameter indices are unstable.",
             ));
         }
         validate_schema(schema)?;
+    }
+    for origins in overrides.reviewed_origins.values() {
+        for origin in origins {
+            let valid = url::Url::parse(origin).ok().is_some_and(|url| {
+                matches!(url.scheme(), "http" | "https")
+                    && url.host_str().is_some()
+                    && url.username().is_empty()
+                    && url.password().is_none()
+                    && url.query().is_none()
+                    && url.fragment().is_none()
+                    && url.path() == "/"
+                    && url.origin().ascii_serialization() == *origin
+            });
+            if !valid {
+                return Err(fail(
+                    "TC007",
+                    "Reviewed origins must be canonical exact HTTP(S) origins without credentials, paths, queries or fragments.",
+                ));
+            }
+        }
     }
     let mut groups: BTreeMap<(String, String), Vec<&HttpEvidence>> = BTreeMap::new();
     for op in &document.operations {
@@ -471,6 +615,7 @@ pub fn infer(
         unknown: BTreeMap::new(),
     };
     let mut seen_safety = BTreeSet::new();
+    let mut parameter_pointers = BTreeMap::new();
     for ((path, method), operations) in groups {
         let id = stable_operation_id(&method, &path);
         let pointer = format!("/paths/{}/{}", escape(&path), method);
@@ -528,6 +673,10 @@ pub fn infer(
         let mut params = Vec::new();
         for ((location, name), shapes) in parameters {
             let schema_pointer = format!("{pointer}/parameters/{}/schema", params.len());
+            parameter_pointers.insert(
+                parameter_schema_pointer(&id, location, &name),
+                schema_pointer.clone(),
+            );
             let mut parameter = json!({"name":name,"in":location,"schema":shapes.finish(&schema_pointer,&mut report.facts)});
             // Required here is a path-template declaration, never a sample inference.
             if location == ParameterLocation::Path {
@@ -586,12 +735,24 @@ pub fn infer(
                 );
             }
         }
+        if let Some(origins) = overrides.reviewed_origins.get(&id) {
+            seen_safety.insert(id.clone());
+            operation["x-tungsten-reviewed-origins"] = json!(origins);
+            report.facts.insert(
+                format!("{pointer}/x-tungsten-reviewed-origins"),
+                FactProvenance {
+                    states: BTreeSet::from([EvidenceState::UserReviewed]),
+                    sources: BTreeSet::new(),
+                },
+            );
+        }
         report.unknown.insert(id, unknown);
         paths.entry(path).or_insert_with(|| json!({}))[method] = operation;
     }
     let mut openapi = json!({"openapi":"3.1.0", "info":{"title":"Imported contract","version":"0.0.0"},"paths":paths});
     for (pointer, schema) in &overrides.schemas {
-        let generated = openapi.pointer(pointer).cloned();
+        let target_pointer = parameter_pointers.get(pointer).unwrap_or(pointer);
+        let generated = openapi.pointer(target_pointer).cloned();
         if generated.as_ref() != Some(schema) {
             report.review_diff.push(ReviewDiff {
                 pointer: pointer.clone(),
@@ -599,14 +760,14 @@ pub fn infer(
                 reviewed: schema.clone(),
             });
         }
-        if let Some(target) = openapi.pointer_mut(pointer) {
+        if let Some(target) = openapi.pointer_mut(target_pointer) {
             *target = schema.clone();
-            report
-                .facts
-                .retain(|p, _| p != pointer && !p.starts_with(&format!("{pointer}/")));
+            report.facts.retain(|p, _| {
+                p != target_pointer && !p.starts_with(&format!("{target_pointer}/"))
+            });
             record(
                 schema,
-                pointer,
+                target_pointer,
                 &FactProvenance {
                     states: BTreeSet::from([EvidenceState::UserReviewed]),
                     sources: BTreeSet::new(),
@@ -621,6 +782,15 @@ pub fn infer(
                 pointer: format!("/overrides/safety/{}", escape(id)),
                 generated: None,
                 reviewed: json!(safety),
+            });
+        }
+    }
+    for (id, origins) in &overrides.reviewed_origins {
+        if !seen_safety.contains(id) {
+            report.review_diff.push(ReviewDiff {
+                pointer: format!("/overrides/reviewed_origins/{}", escape(id)),
+                generated: None,
+                reviewed: json!(origins),
             });
         }
     }

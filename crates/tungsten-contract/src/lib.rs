@@ -3,5 +3,5 @@
 
 mod engine;
 mod model;
-pub use engine::{infer, parse_evidence, stable_operation_id};
+pub use engine::{infer, parameter_schema_pointer, parse_evidence, stable_operation_id};
 pub use model::*;
