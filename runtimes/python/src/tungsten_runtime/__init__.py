@@ -57,6 +57,11 @@ __all__ = [
     "evaluate_predicate",
     "generate_pkce",
     "pkce_challenge",
+    "require_import_policy_v1",
     "unwrap",
 ]
 __all__ += types.__all__
+
+
+def require_import_policy_v1() -> None:
+    """Capability handshake: older runtimes cannot load imported descriptors."""

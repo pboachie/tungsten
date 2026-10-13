@@ -458,26 +458,12 @@ func (c *ClientCore) prepare(ctx context.Context, op *OperationDescriptor, rawAr
 			expected("a valid operation descriptor").
 			remedy(fmt.Sprintf("The operation descriptor is invalid: %s. Regenerate the SDK or fix the descriptor; nothing was sent.", problem)).err()
 	}
-	if policy := op.Agent.ImportPolicy; policy != nil && policy.Reviewed {
-		target := c.baseURL
-		if urlOverride != "" {
-			target = urlOverride
-		}
-		parsed, err := url.Parse(target)
-		allowed := false
-		if err == nil && parsed.User == nil && (parsed.Scheme == "http" || parsed.Scheme == "https") && parsed.Host != "" {
-			for _, origin := range policy.AllowedOrigins {
-				scope, err := url.Parse(origin)
-				if err == nil && sameOrigin(parsed, scope) {
-					allowed = true
-					break
-				}
-			}
-		}
-		if !allowed {
-			return nil, newDiag(op.ID, ValidationFailed).param("base_url").retry(RetryNever).
-				remedy("The target origin is outside this operation's saved review policy. Select a reviewed server or review a separate policy for this environment. Nothing was sent.").err()
-		}
+	scopeTarget := c.baseURL
+	if urlOverride != "" {
+		scopeTarget = urlOverride
+	}
+	if failure := checkImportScope(op, scopeTarget); failure != nil {
+		return nil, failure
 	}
 	c.Register(op)
 	supplied, shown, ok := normalizeArgs(rawArgs)
@@ -658,6 +644,27 @@ func (c *ClientCore) badBase(op *OperationDescriptor) *Error {
 		remedy("The base URL is not a valid absolute http(s) URL without credentials: fix ClientOptions.BaseURL. Nothing was sent.").err()
 }
 
+func checkImportScope(op *OperationDescriptor, target string) *Error {
+	if policy := op.Agent.ImportPolicy; policy != nil && policy.Reviewed {
+		parsed, err := url.Parse(target)
+		allowed := false
+		if err == nil && parsed.User == nil && (parsed.Scheme == "http" || parsed.Scheme == "https") && parsed.Host != "" {
+			for _, origin := range policy.AllowedOrigins {
+				scope, err := url.Parse(origin)
+				if err == nil && sameOrigin(parsed, scope) {
+					allowed = true
+					break
+				}
+			}
+		}
+		if !allowed {
+			return newDiag(op.ID, ValidationFailed).param("base_url").retry(RetryNever).
+				remedy("The target origin is outside this operation's saved review policy. Select a reviewed server or review a separate policy for this environment. Nothing was sent.").err()
+		}
+	}
+	return nil
+}
+
 func (c *ClientCore) buildURL(op *OperationDescriptor, args *Object, plan *authPlan, urlOverride string) (string, string, *Error) {
 	if c.baseURL == "" && urlOverride == "" {
 		return "", "", newDiag(op.ID, TransportFailed).retry(RetryNever).
@@ -819,6 +826,9 @@ func (c *ClientCore) buildURL(op *OperationDescriptor, args *Object, plan *authP
 	}
 	if !validBaseURL(full) {
 		return "", "", c.badBase(op)
+	}
+	if failure := checkImportScope(op, full); failure != nil {
+		return "", "", failure
 	}
 	return full, display, nil
 }

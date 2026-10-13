@@ -1218,6 +1218,13 @@ pub(crate) fn descriptors_file(
     let mut imports = Imports::new();
     imports.add_type("@elysra/tungsten-runtime", "ApiDescriptor");
     imports.add_type("@elysra/tungsten-runtime", "OperationDescriptor");
+    let imported = plan
+        .ops
+        .iter()
+        .any(|info| info.op.agent.import_policy.is_some());
+    if imported {
+        imports.add("@elysra/tungsten-runtime", "requireImportPolicyV1");
+    }
     imports.add("zod", "z");
     imports.add("./internal.js", "toSchemaLike");
     if uses.integer {
@@ -1236,6 +1243,9 @@ pub(crate) fn descriptors_file(
     w.line("// Operation descriptors: what the runtime needs to call each operation.");
     w.blank();
     write_imports(&mut w, &imports);
+    if imported {
+        w.line("requireImportPolicyV1();");
+    }
     for ns in &uses.namespaces {
         if let Some(m) = plan.model_ns(ns) {
             w.line(format!(

@@ -808,28 +808,9 @@ class Engine:
                     ),
                 )
             )
-        policy = op["agent"].get("import_policy")
-        if isinstance(policy, dict) and policy.get("reviewed") is True:
-            target = url_override if url_override is not None else self._base_url()
-            origins = field(policy, "allowed_origins")
-            actual = origin_of(target) if isinstance(target, str) else None
-            allowed = (
-                actual is not None
-                and isinstance(target, str)
-                and not has_credentials(target)
-                and is_array(origins)
-                and any(isinstance(origin, str) and origin_of(origin) == actual for origin in origins)
-            )
-            if not allowed:
-                return _fail(
-                    diagnostic(
-                        op["id"],
-                        "VALIDATION_FAILED",
-                        failed_parameter="base_url",
-                        retryable="never",
-                        remediation="The target origin is outside this operation's saved review policy. Select a reviewed server or review a separate policy for this environment. Nothing was sent.",
-                    )
-                )
+        scope_failure = self._import_scope(op, url_override if url_override is not None else self._base_url())
+        if scope_failure is not None:
+            return scope_failure
         self.register(op)
         op_id = op["id"]
         if not is_record(raw_args):
@@ -1022,6 +1003,30 @@ class Engine:
         listed = [s for s in servers if isinstance(s, str)] if is_array(servers) else []
         return listed[0] if len(listed) > 0 else None
 
+    def _import_scope(self, op: OperationDescriptor, target: str | None) -> Err | None:
+        policy = op["agent"].get("import_policy")
+        if isinstance(policy, dict) and policy.get("reviewed") is True:
+            origins = field(policy, "allowed_origins")
+            actual = origin_of(target) if isinstance(target, str) else None
+            allowed = (
+                actual is not None
+                and isinstance(target, str)
+                and not has_credentials(target)
+                and is_array(origins)
+                and any(isinstance(origin, str) and origin_of(origin) == actual for origin in origins)
+            )
+            if not allowed:
+                return _fail(
+                    diagnostic(
+                        op["id"],
+                        "VALIDATION_FAILED",
+                        failed_parameter="base_url",
+                        retryable="never",
+                        remediation="The target origin is outside this operation's saved review policy. Select a reviewed server or review a separate policy for this environment. Nothing was sent.",
+                    )
+                )
+        return None
+
     def _build_url(
         self, op: OperationDescriptor, args: Mapping[str, object], plan: AuthPlan, url_override: str | None
     ) -> tuple[str, str] | Err:
@@ -1144,6 +1149,9 @@ class Engine:
                     ),
                 )
             )
+        scope_failure = self._import_scope(op, url)
+        if scope_failure is not None:
+            return scope_failure
         return url, display
 
     def _build_headers(
