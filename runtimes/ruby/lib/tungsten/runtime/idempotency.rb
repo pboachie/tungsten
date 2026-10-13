@@ -90,7 +90,9 @@ module Tungsten
       # [expiry, signature] of a token of the right shape, else nil.
       def token_expiry(token)
         m = token.to_s.match(/\A#{PREFIX}\.(\d{1,16})\.([A-Za-z0-9_-]{43})\z/o)
-        m && [m[1].to_i, m[2]]
+        return nil unless m && m[1].to_i.to_s == m[1]
+
+        [m[1].to_i, m[2]]
       end
 
       # :valid, :expired, :mismatch or :malformed.
