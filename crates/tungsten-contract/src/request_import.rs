@@ -512,7 +512,7 @@ fn words(input: &str, dialect: ShellDialect) -> Result<Vec<String>, Diagnostic> 
                     "shell expansion and command substitution are unsupported",
                 ));
             }
-            if dialect == ShellDialect::WindowsCmd && c == '%' {
+            if dialect == ShellDialect::WindowsCmd && matches!(c, '%' | '!') {
                 return Err(err("CMD variable expansion is unsupported"));
             }
             let escape = match dialect {
