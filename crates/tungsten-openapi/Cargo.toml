@@ -27,6 +27,7 @@ schemars.workspace = true
 url.workspace = true
 tungsten-core.workspace = true
 serde_json.workspace = true
+url.workspace = true
 petgraph.workspace = true
 yaml-rust2.workspace = true
 
