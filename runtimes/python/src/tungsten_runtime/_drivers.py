@@ -133,7 +133,13 @@ class _NativeSyncTransport(httpx.BaseTransport):
             self._finalizer = weakref.finalize(self, _abandon_loop, loop, self._thread, self._client)
         return self._loop
 
+    def _on_loop(self) -> bool:
+        return self._thread is not None and threading.current_thread() is self._thread
+
     def run[T](self, work: Coroutine[Any, Any, T]) -> T:
+        if self._on_loop():
+            work.close()
+            raise RuntimeError("a synchronous call cannot run on the transport's own loop thread")
         try:
             with self._lock:
                 pending = asyncio.run_coroutine_threadsafe(work, self._start())
@@ -143,6 +149,15 @@ class _NativeSyncTransport(httpx.BaseTransport):
         return pending.result()
 
     def cleanup(self, work: Coroutine[Any, Any, None]) -> None:
+        if self._on_loop():
+            # A response finalized on the loop thread (garbage collection can
+            # run there) cannot wait for the loop; shutdown joins its cleanup.
+            with self._lock:
+                if self._closed or self._loop is None:
+                    work.close()
+                else:
+                    self._loop.create_task(work)
+            return
         with self._lock:
             if self._closed:
                 work.close()
