@@ -2,6 +2,7 @@
 //! Deterministic, offline inference from explicitly routed HTTP evidence.
 
 mod engine;
+pub mod har;
 mod model;
 pub mod postman;
 pub mod request_import;
