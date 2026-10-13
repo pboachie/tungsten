@@ -145,6 +145,14 @@ pub fn convert(input: &Value) -> Result<Value> {
             }
             let p = format!("{pointer}/{method}");
             object(operation, &p)?;
+            for key in object(operation, &p)?.keys() {
+                if key.starts_with("x-tungsten-reviewed-") {
+                    return fail(
+                        &format!("{p}/{}", esc(key)),
+                        "review assertions require separately supplied reviewed overrides",
+                    );
+                }
+            }
             known(
                 operation,
                 &p,
@@ -396,6 +404,7 @@ pub fn convert(input: &Value) -> Result<Value> {
                     op.insert(key.clone(), value.clone());
                 }
             }
+            op.insert("x-tungsten-imported".into(), json!(true));
             target.insert(method.clone(), Value::Object(op));
         }
         converted.insert(path.clone(), Value::Object(target));
@@ -618,17 +627,44 @@ fn servers(root: &Value, op: &Value, p: &str) -> Result<Value> {
     {
         return fail(p, "only HTTP and HTTPS server schemes are supported");
     }
-    let base = root.get("basePath").and_then(Value::as_str).unwrap_or("/");
-    if !base.starts_with('/') || base.contains(['?', '#']) {
+    let base = match root.get("basePath") {
+        Some(value) => value.as_str().ok_or_else(|| ConversionError {
+            pointer: "/basePath".into(),
+            message: "expected string".into(),
+        })?,
+        None => "/",
+    };
+    if !base.starts_with('/')
+        || base.starts_with("//")
+        || base.contains(['?', '#', '\\'])
+        || base.chars().any(char::is_control)
+    {
         return fail("/basePath", "invalid basePath");
     }
-    let host = root.get("host").and_then(Value::as_str);
+    let host = match root.get("host") {
+        Some(value) => Some(value.as_str().ok_or_else(|| ConversionError {
+            pointer: "/host".into(),
+            message: "expected string".into(),
+        })?),
+        None => None,
+    };
     if let Some(host) = host {
-        if host.is_empty() || host.contains(['/', '?', '#', '@']) {
+        if host.is_empty()
+            || host.contains(['/', '?', '#', '@', '\\', '%'])
+            || host.chars().any(char::is_whitespace)
+            || host.chars().any(char::is_control)
+        {
             return fail(
                 "/host",
                 "host must contain only a hostname and optional port",
             );
+        }
+        let parsed = url::Url::parse(&format!("http://{host}/"));
+        if !parsed
+            .as_ref()
+            .is_ok_and(|url| url.host_str().is_some() && url.path() == "/")
+        {
+            return fail("/host", "invalid hostname or port");
         }
         if schemes.is_empty() {
             return fail(
