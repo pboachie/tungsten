@@ -63,7 +63,7 @@ test suite, conformance corpus, golden files and design documents live in a
 separate private repository, so pull requests here must not add tests, test
 data, `#[cfg(test)]` modules, `[dev-dependencies]`, doctests or documentation
 directories. A repository guard job in CI enforces this. Besides the community
-files and `AGENTS.md` at the root and in `.github/`, only images in `assets/` and code in
+files at the root and in `.github/`, only images in `assets/` and code in
 `examples/` (with a `README.md` per example), and package READMEs in
 `runtimes/ts`, `runtimes/mcp` and `runtimes/webmcp` are accepted.
 
@@ -75,11 +75,12 @@ maintainer will add it.
 
 ## Pull requests
 
-- Every PR, including drafts and maintenance changes, needs exactly one
-  `release:X.Y.Z` label and a matching `Release target: X.Y.Z` description line.
-  Read the live [release plan](.github/release-plan.json) on the default branch
-  and follow [release coordination](.github/RELEASES.md). Use its approved
-  default target; do not independently bump versions or retarget existing PRs.
+- Submit your PR without needing to choose a release or apply labels. A
+  maintainer assigns its intended release using a `release:X.Y.Z` label and
+  updates that label if plans change. You may suggest a target in the PR
+  description; the label is a plan, not a promise that the change has shipped.
+- Release planning, version bumps and publication are coordinated by the
+  maintainer. Only @pboachie creates release tags and publishes releases.
 - Keep a pull request to one logical change, and link the issue it addresses.
 - Follow the existing style; `cargo fmt` and clippy must be clean.
 - Intermediate representation changes must be additive.

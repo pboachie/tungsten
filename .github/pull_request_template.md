@@ -8,17 +8,12 @@
 
 ## Release
 
-Release target: X.Y.Z
-
-<!-- Read .github/release-plan.json on the remote default branch. Replace X.Y.Z
-with the approved target and apply exactly one matching release:X.Y.Z label.
-Follow .github/RELEASES.md; do not derive it from a branch's package version.
-For a target change, link the coordinator's decision in the tracking PR. -->
+<!-- Optional: suggest a release target if you have a preference. The maintainer
+assigns and updates release labels; contributors do not need label permissions.
+Leave this section empty if you have no preference. -->
 
 ## Checklist
 
-- [ ] Live release plan checked; exactly one `release:X.Y.Z` label matches the target above
-- [ ] Version bumps or frozen-scope changes, if any, are coordinated in the release tracking PR
 - [ ] `cargo fmt --all --check` and `cargo clippy --workspace --all-targets -- -D warnings` pass
 - [ ] `python3 .github/scripts/repository_guard.py --repo . --range origin/main HEAD` passes
 - [ ] No tests, test data, `[dev-dependencies]` or doctests added (tests are maintained in the private repository)
