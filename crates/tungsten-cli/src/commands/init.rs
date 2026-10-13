@@ -139,8 +139,7 @@ pub(crate) fn run(args: &InitArgs) -> Report {
         &spec_ref,
         spec.is_some(),
         &info,
-        &args.targets,
-        args.typescript_runtime.as_deref(),
+        args,
     );
     if tungsten_config::parse_str("tungsten.yml", &manifest)
         .0
@@ -374,9 +373,10 @@ fn tungsten_yml(
     spec_ref: &str,
     spec_found: bool,
     info: &SpecInfo,
-    selected: &[String],
-    runtime: Option<&Path>,
+    args: &InitArgs,
 ) -> String {
+    let selected = &args.targets;
+    let runtime = args.typescript_runtime.as_deref();
     let mut out = format!(
         "# yaml-language-server: $schema={TUNGSTEN_SCHEMA_URL}\n\
          # Shape manifest: what the generated SDKs look like. Written by `tungsten init`;\n\
@@ -439,15 +439,19 @@ fn tungsten_yml(
             );
         } else if target == "rust" && has_cli {
             let _ = writeln!(out, "  rust: {{ out: generated/rust, cli: true }}");
-        } else if target == "webmcp"
-            && let Some(runtime) = runtime
-        {
-            let path = std::path::absolute(runtime).unwrap_or_else(|_| runtime.to_path_buf());
-            let _ = writeln!(
-                out,
-                "  webmcp: {{ out: generated/webmcp, sdk_path: ../typescript, sdk_runtime_path: {} }}",
-                yaml_scalar(&path.to_string_lossy().replace('\\', "/"))
-            );
+        } else if target == "webmcp" && (runtime.is_some() || args.webmcp_runtime.is_some()) {
+            let mut options =
+                serde_json::json!({"out":"generated/webmcp", "sdk_path":"../typescript"});
+            for (key, path) in [
+                ("sdk_runtime_path", runtime),
+                ("runtime_path", args.webmcp_runtime.as_deref()),
+            ] {
+                if let Some(path) = path {
+                    let path = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+                    options[key] = serde_json::json!(path.to_string_lossy().replace('\\', "/"));
+                }
+            }
+            let _ = writeln!(out, "  webmcp: {options}");
         } else if matches!(target, "mcp" | "webmcp") && has_typescript {
             let _ = writeln!(
                 out,

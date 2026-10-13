@@ -348,6 +348,9 @@ pub enum SchemaName {
 
 #[derive(Debug, Clone, Args)]
 pub(crate) struct InitArgs {
+    /// Advanced: use an explicitly supplied local WebMCP runtime package.
+    #[arg(long, conflicts_with = "resume")]
+    pub webmcp_runtime: Option<PathBuf>,
     /// Advanced input detection override for saved requests.
     #[arg(long, default_value = "auto", value_parser = ["auto", "curl", "http"])]
     pub input_format: String,
