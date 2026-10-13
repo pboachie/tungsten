@@ -11,6 +11,9 @@ changes.
 
 ### Added
 
+- Import supported Postman Collection v2.1 requests through the offline contract
+  engine, preserving explicit authentication and reporting unsupported behavior.
+
 - Add a bounded offline HTTP evidence engine with deterministic OpenAPI inference,
   provenance, and persistent reviewed overrides.
 
