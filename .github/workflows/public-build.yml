@@ -1,0 +1,73 @@
+# Public source only. Private suites and tungsten-ops/ci remain independent
+# requirements; these package checks never report or replace that status.
+name: public-build
+
+on:
+  push:
+    branches: ["**", "!gh-pages"]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-build-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  npm:
+    name: public npm package build
+    # Standard public runners only; do not run if copied to a private repo.
+    if: github.repository == 'pboachie/tungsten' && github.event.repository.private == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Match the PR head consumed by private exact-source validation,
+          # not GitHub's synthetic merge commit. Forks receive no secrets.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify source identity
+        env:
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - name: Build, pack and validate installed public runtimes
+        run: |
+          node .github/scripts/check-runtime-artifacts.mjs "$RUNNER_TEMP/npm-dist"
+          cd "$RUNNER_TEMP/npm-dist"
+          sha256sum --check SHA256SUMS
+      # Archives stay on this ephemeral runner. No upload, publication,
+      # cross-workflow artifact consumption or private-source checkout.
+
+  python:
+    name: public Python package build
+    if: github.repository == 'pboachie/tungsten' && github.event.repository.private == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify source identity
+        env:
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+      - name: Build and check the public sdist and wheel
+        working-directory: runtimes/python
+        run: |
+          python -m pip install --disable-pip-version-check build==1.6.1 twine==7.0.0
+          python -m build --outdir "$RUNNER_TEMP/python-dist"
+          python -m twine check "$RUNNER_TEMP/python-dist/"*
