@@ -11,6 +11,9 @@ changes.
 
 ### Added
 
+- Bounded offline Swagger 2 conversion through the OpenAPI loader, preserving
+  local definitions, parameter serialization, media types and authentication.
+
 - TypeScript SDK targets can declare npm dependencies for preserved custom
   extensions; package archives include custom source and license notices.
 - The `ascii_token_128` caller-owned idempotency format accepts 1–128 ASCII
