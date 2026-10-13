@@ -5,7 +5,7 @@ package io.github.pboachie.tungsten.runtime;
 public enum RedirectPolicy {
     /** Follow at most five same-origin redirects on reads. */
     SAME_ORIGIN_READ,
-    /** Reject every 3xx response without following or retrying it. */
+    /** Follow no redirect; a 3xx the operation does not declare fails without a retry. */
     NONE;
 
     static RedirectPolicy parse(Object value) {
