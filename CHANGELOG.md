@@ -20,6 +20,8 @@ changes.
   confirmation until explicitly reviewed per operation.
 - Import supported Postman Collection v2.1 requests through the offline contract
   engine, preserving explicit authentication and reporting unsupported behavior.
+- Parse a bounded saved cURL and HTTP-file subset as offline contract evidence,
+  with explicit route templates and no shell execution or implicit file reads.
 
 - Add a bounded offline HTTP evidence engine with deterministic OpenAPI inference,
   provenance, and persistent reviewed overrides.
