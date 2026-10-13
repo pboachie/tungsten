@@ -118,8 +118,20 @@ ir_struct! {
 }
 
 ir_struct! {
+    /// Review provenance is independent from inferred HTTP safety and exposure.
+    /// `safety` on the enclosing agent is the effective execution tier.
+    pub struct ImportPolicy {
+        pub inferred_safety: Safety,
+        pub reviewed: bool,
+        pub source: String,
+    }
+}
+
+ir_struct! {
     pub struct OperationAgentMeta {
         pub safety: Safety,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub import_policy: Option<ImportPolicy>,
         #[serde(default)]
         pub idempotency: IdempotencyPolicy,
         pub preview: PreviewMode,
@@ -187,6 +199,7 @@ impl Default for OperationAgentMeta {
     fn default() -> Self {
         Self {
             safety: Safety::Mutating,
+            import_policy: None,
             idempotency: IdempotencyPolicy::default(),
             preview: PreviewMode::Local,
             confirmation: None,

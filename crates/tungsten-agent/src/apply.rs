@@ -130,9 +130,11 @@ pub(crate) fn run(ir: &mut Ir, cfg: &AgentConfig, r: &mut Reporter<'_>) {
             let id = op.id.0.as_str();
             let tool = tools.get(id).and_then(|(_, t)| t.safety);
             let ext = exts.get(id).and_then(|e| e.safety);
-            let s = tool
+            let declared = tool
                 .or(ext)
                 .unwrap_or_else(|| method_default(cfg, op.method));
+            let s = import_policy(op, tools.get(id).map(|(_, t)| *t))
+                .map_or(declared, |(safety, _)| safety);
             safety.insert(id.to_string(), s);
         }
         let codes = ir
@@ -327,9 +329,16 @@ fn operation(
 ) -> Computed {
     let id = op.id.0.as_str();
     let safety = cx.safety.get(id).copied().unwrap_or(Safety::Mutating);
+    let imported = import_policy(
+        op,
+        layers
+            .iter()
+            .find_map(|layer| matches!(layer.origin, Origin::Manifest(_)).then_some(layer.entry)),
+    );
     let mut marks = vec![];
     let mut meta = OperationAgentMeta {
         safety,
+        import_policy: imported.as_ref().map(|(_, policy)| policy.clone()),
         idempotency: idempotency(cx.cfg, op, safety, layers),
         preview: preview(cx, op, safety, layers, r),
         ..OperationAgentMeta::default()
@@ -391,6 +400,17 @@ fn operation(
     meta.sensitive_response_fields = response_fields;
     meta.hidden = first(layers, |e| e.hidden.as_ref()).is_some_and(|(h, _)| *h);
     meta.compact_doc = prune::compact(op.doc.as_ref(), &prune_options(cx.cfg));
+    if meta.import_policy.as_ref().is_some_and(|p| !p.reviewed) {
+        // Samples do not prove replay safety. Never infer an idempotency
+        // contract or perform a remote preview from observed requests.
+        meta.idempotency = IdempotencyPolicy::default();
+        meta.preview = IrPreview::Local;
+        meta.verify = None;
+        meta.confirmation = Some(Confirmation {
+            summary_fields: vec![],
+            message: Some("Imported operation is unreviewed; effects are unknown.".into()),
+        });
+    }
     let status = first(layers, |e| e.gate.as_ref())
         .and_then(|(g, origin)| errors::gate_status(cx, op, g, origin, r));
     Computed {
@@ -750,4 +770,35 @@ fn mark_sensitive(types: &mut TypeTable, id: &TypeId, field: &str) {
             f.sensitive = true;
         }
     }
+}
+
+/// Review is opt-in and operation-scoped; global defaults cannot grant it.
+fn import_policy(
+    op: &Operation,
+    tool: Option<&ToolConfig>,
+) -> Option<(Safety, tungsten_ir::ImportPolicy)> {
+    if !op.extensions.contains_key("x-tungsten-imported") {
+        return None;
+    }
+    let manifest = tool.and_then(|t| t.imported_reviewed_safety);
+    let extension = op
+        .extensions
+        .get("x-tungsten-reviewed-safety")
+        .and_then(|v| serde_json::from_value::<Safety>(v.clone()).ok());
+    let reviewed = manifest.or(extension);
+    Some((
+        reviewed.unwrap_or(Safety::Irreversible),
+        tungsten_ir::ImportPolicy {
+            inferred_safety: OperationAgentMeta::default_for(op.method).safety,
+            reviewed: reviewed.is_some(),
+            source: if manifest.is_some() {
+                "agent_manifest"
+            } else if extension.is_some() {
+                "reviewed_override"
+            } else {
+                "import_default"
+            }
+            .into(),
+        },
+    ))
 }

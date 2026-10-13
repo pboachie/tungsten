@@ -30,6 +30,7 @@ const KNOWN: &[&str] = &[
 /// The operation's extensions as a tools entry (operation = its id).
 pub(crate) fn parse(op: &Operation, r: &mut Reporter<'_>) -> ToolConfig {
     let mut entry = ToolConfig {
+        imported_reviewed_safety: None,
         operation: op.id.0.clone(),
         safety: None,
         idempotency: None,

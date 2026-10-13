@@ -11,6 +11,9 @@ changes.
 
 ### Added
 
+- Imported operations retain review provenance and require argument-bound
+  confirmation until explicitly reviewed per operation.
+
 - TypeScript SDK targets can declare npm dependencies for preserved custom
   extensions; package archives include custom source and license notices.
 - The `ascii_token_128` caller-owned idempotency format accepts 1–128 ASCII
