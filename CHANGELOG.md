@@ -22,6 +22,8 @@ changes.
   bound Java transport queues with backpressure and cancellation cleanup.
 - Check locked dependency names, sources, hashes and current advisories in CI
   and release preparation; disable npm install hooks in release builds.
+- Hash-lock Python release tooling and disable build isolation during package
+  creation to prevent unpinned build-tool resolution.
 
 ### Added
 

@@ -87,7 +87,7 @@ jobs:
           python-version: "3.12"
       # Keep this inside the existing required cargo-deny job, so an audit
       # failure cannot be ignored as an optional status check.
-      - name: Check all committed Cargo, npm and uv locks without installing packages
+      - name: Check all committed dependency and release-tool locks without installing packages
         run: python3 .github/scripts/dependency_audit.py
       - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
         with:
