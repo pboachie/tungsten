@@ -18,7 +18,8 @@ changes.
   `maxResponseBytes`), and apply WebMCP result byte limits before HTTP body
   materialization. Oversized responses return the SDK's `RESPONSE_TOO_LARGE`
   diagnostic; inconsistent MCP manifest/SDK safety tiers fail before dispatch.
-- Require canonical decimal expiry in Ruby confirmation tokens.
+- Require canonical decimal expiry in Java and Ruby confirmation tokens, and
+  bound Java transport queues with backpressure and cancellation cleanup.
 - Check locked dependency names, sources, hashes and current advisories in CI
   and release preparation; disable npm install hooks in release builds.
 
