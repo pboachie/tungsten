@@ -56,11 +56,15 @@ changes.
 - Propagate Rust emitter graph facts with worklists and coalesce concurrent MCP
   query embeddings. Complete the README's generated Python SDK installation steps.
 - Release a Python sync client's native transport thread, event loop and connection
-  pool when the client is garbage collected without `close()`, and run polling
-  waits on the caller's thread so expiring polls no longer hold worker permits.
-- File idempotency stores (TypeScript, Python, Go, Rust) wait up to 2 s for another
-  process's `<path>.lock` lease, break a lease older than 30 s left by a crashed
-  writer, and keep a reserved key when removing the lease fails.
+  pool when the client is garbage collected without `close()`, run polling waits
+  on the caller's thread so expiring polls no longer hold worker permits, and never
+  block the transport's loop thread on itself when a stream is finalized there.
+- File idempotency stores (TypeScript, Python, Go, Rust) record the owner of their
+  `<path>.lock` lease (host, pid, token), wait up to 2 s for another writer, reclaim
+  a lease only from an owner whose process provably ended, and re-check ownership
+  before committing, so a writer whose lease was taken over never overwrites a key.
+  Reservations are serialized per store file within a process, and a reserved key
+  is kept when removing the lease fails.
 
 
 ### Added
