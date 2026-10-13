@@ -12,6 +12,7 @@ changes.
 ### Fixed
 
 - Keep Postman path parameters explicit and restrict URL variables to origins.
+- Bound aggregate Swagger reference and media-schema expansion during conversion.
 
 ### Added
 
