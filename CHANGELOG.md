@@ -1,9 +1,5 @@
 # Changelog
 
-## Unreleased
-
-- Add a bounded offline HTTP evidence engine with deterministic OpenAPI inference, provenance, and persistent reviewed overrides.
-
 All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
@@ -21,6 +17,8 @@ changes.
   local definitions, parameter serialization, media types and authentication.
 - Imported operations retain review provenance and require argument-bound
   confirmation until explicitly reviewed per operation.
+- Add a bounded offline HTTP evidence engine with deterministic OpenAPI inference,
+  provenance, and persistent reviewed overrides.
 
 - TypeScript SDK targets can declare npm dependencies for preserved custom
   extensions; package archives include custom source and license notices.
