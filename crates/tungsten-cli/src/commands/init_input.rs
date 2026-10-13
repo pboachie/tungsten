@@ -126,7 +126,7 @@ pub(super) fn prepare(args: &mut InitArgs) -> Result<(), String> {
 
 /// Detect a Swagger document and persist its bounded conversion for the ordinary
 /// compiler. OpenAPI input is left in place so relative references retain meaning.
-pub(super) fn import(args: &mut InitArgs) -> Result<(), String> {
+pub(super) fn import(args: &mut InitArgs) -> Result<Vec<String>, String> {
     let source = args.from.clone().or_else(|| {
         [
             "openapi.json",
@@ -139,7 +139,9 @@ pub(super) fn import(args: &mut InitArgs) -> Result<(), String> {
         .map(|name| args.dir.join(name))
         .find(|path| path.is_file())
     });
-    let Some(source) = source else { return Ok(()) };
+    let Some(source) = source else {
+        return Ok(vec![]);
+    };
     let mut bytes = Vec::new();
     std::fs::File::open(&source)
         .map_err(|_| "cannot open input file")?
@@ -156,7 +158,22 @@ pub(super) fn import(args: &mut InitArgs) -> Result<(), String> {
     let root = tungsten_config::parse_yaml("input", text)
         .0
         .map_err(|_| "input must be valid JSON or YAML")?;
-    let mut converted = if root.get("endpoint_manifest").is_some() {
+    let mut import_report = None;
+    let mut converted = if root.get("item").is_some() && root.get("info").is_some() {
+        let limits = Limits::default();
+        let imported = tungsten_contract::postman::import_collection(
+            &bytes,
+            &tungsten_contract::postman::PostmanOptions::default(),
+            &limits,
+        )
+        .map_err(|error| error.to_string())?;
+        let output = imported
+            .infer(&ReviewedOverrides::default(), &limits)
+            .map_err(|error| error.to_string())?;
+        import_report =
+            Some(serde_json::json!({"source": imported.report, "contract": output.report}));
+        output.openapi
+    } else if root.get("endpoint_manifest").is_some() {
         let canonical =
             std::fs::canonicalize(&source).map_err(|_| "cannot resolve endpoint manifest")?;
         let allowed = canonical
@@ -173,7 +190,7 @@ pub(super) fn import(args: &mut InitArgs) -> Result<(), String> {
         tungsten_openapi::swagger::convert(&root)
             .map_err(|error| format!("Swagger conversion failed: {}", error.message))?
     } else {
-        return Ok(());
+        return Ok(vec![]);
     };
     if let Some(paths) = converted
         .get_mut("paths")
@@ -198,7 +215,12 @@ pub(super) fn import(args: &mut InitArgs) -> Result<(), String> {
             }
         }
     }
-    for name in ["tungsten.yml", "agent.yml", "imported.openapi.json"] {
+    for name in [
+        "tungsten.yml",
+        "agent.yml",
+        "imported.openapi.json",
+        "import-report.json",
+    ] {
         if std::fs::symlink_metadata(args.dir.join(name)).is_ok() {
             return Err("input conversion requires a new project; resume the existing converted configuration".into());
         }
@@ -216,6 +238,23 @@ pub(super) fn import(args: &mut InitArgs) -> Result<(), String> {
             .as_bytes(),
     )
     .map_err(|_| "cannot write converted input; inspect partial files before retrying")?;
+    let mut files = vec!["imported.openapi.json".to_owned()];
+    if let Some(report) = import_report {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(args.dir.join("import-report.json"))
+            .map_err(
+                |_| "cannot create import report; inspect partial setup files before retrying",
+            )?;
+        file.write_all(
+            serde_json::to_string_pretty(&report)
+                .map_err(|_| "cannot encode import report")?
+                .as_bytes(),
+        )
+        .map_err(|_| "cannot write import report")?;
+        files.push("import-report.json".to_owned());
+    }
     args.from = Some(destination);
-    Ok(())
+    Ok(files)
 }

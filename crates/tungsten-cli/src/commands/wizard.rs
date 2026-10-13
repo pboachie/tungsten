@@ -58,15 +58,19 @@ pub(crate) fn run(args: &InitArgs, json: bool, env: &CliEnv) -> Report {
             "correct the no-schema input; existing files are never overwritten",
         );
     }
-    if !selected.resume
-        && selected.method.is_none()
-        && let Err(error) = super::init_input::import(&mut selected)
-    {
-        return refused(
-            &error,
-            "correct the input or resume the existing project; no imported commands are executed",
-        );
-    }
+    let imported_files = if !selected.resume && selected.method.is_none() {
+        match super::init_input::import(&mut selected) {
+            Ok(files) => files,
+            Err(error) => {
+                return refused(
+                    &error,
+                    "correct the input or resume the existing project; no imported commands are executed",
+                );
+            }
+        }
+    } else {
+        vec![]
+    };
     let mut report = if selected.resume {
         for name in ["tungsten.yml", "agent.yml"] {
             let path = selected.dir.join(name);
@@ -138,6 +142,22 @@ pub(crate) fn run(args: &InitArgs, json: bool, env: &CliEnv) -> Report {
                 path: selected.dir.join(name).display().to_string(),
                 action: InitAction::Created,
             });
+        }
+    }
+    if report.exit == exit::OK
+        && let Some(CommandResult::Init(result)) = &mut report.result
+    {
+        for name in &imported_files {
+            result.files.push(InitFile {
+                path: selected.dir.join(name).display().to_string(),
+                action: InitAction::Created,
+            });
+        }
+        if imported_files
+            .iter()
+            .any(|name| name == "import-report.json")
+        {
+            report.human.push_str("Import report saved: review omitted scripts, authentication and missing origin configuration in import-report.json.\n");
         }
     }
     if report.exit != exit::OK || !selected.generate {
@@ -285,7 +305,7 @@ fn walkthrough(args: &mut InitArgs) -> io::Result<bool> {
                 .map(|p| p.display().to_string())
                 .unwrap_or_default();
             let Some(source) = answer(
-                "OpenAPI file (blank auto-detects), none for no schema, or back",
+                "API input file (OpenAPI, Swagger, Postman or endpoint manifest); none for no schema; back",
                 &default,
             )?
             else {
