@@ -32,6 +32,7 @@ tungsten-emit-mcp = { path = "crates/tungsten-emit-mcp" }
 tungsten-emit-webmcp = { path = "crates/tungsten-emit-webmcp" }
 tungsten-emit-py = { path = "crates/tungsten-emit-py" }
 tungsten-emit-rs = { path = "crates/tungsten-emit-rs" }
+tungsten-emit-java = { path = "crates/tungsten-emit-java" }
 tungsten-emit-ruby = { path = "crates/tungsten-emit-ruby" }
 tungsten-tokens = { path = "crates/tungsten-tokens" }
 tungsten-lsp = { path = "crates/tungsten-lsp" }
