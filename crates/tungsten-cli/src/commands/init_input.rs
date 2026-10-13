@@ -9,6 +9,28 @@ use tungsten_contract::{
     UnknownFact,
 };
 
+fn har_paths(args: &InitArgs) -> Result<std::collections::BTreeMap<String, String>, String> {
+    let Some(path) = &args.har_paths else {
+        return Ok(Default::default());
+    };
+    if !std::fs::metadata(path).is_ok_and(|metadata| metadata.is_file()) {
+        return Err("HAR path mapping must be a regular JSON file".into());
+    }
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)
+        .map_err(|_| "cannot open HAR path mapping")?
+        .take(1024 * 1024 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| "cannot read HAR path mapping")?;
+    if bytes.len() > 1024 * 1024 {
+        return Err("HAR path mapping exceeds 1 MiB; split the capture and mapping".into());
+    }
+    serde_json::from_slice(&bytes).map_err(|_| {
+        "HAR path mapping must be a JSON object of captured URL paths to reviewed template strings"
+            .into()
+    })
+}
+
 fn example(path: &Path) -> Result<Vec<MediaEvidence>, String> {
     let mut bytes = Vec::new();
     std::fs::File::open(path)
@@ -217,6 +239,7 @@ pub(super) fn import(args: &mut InitArgs) -> Result<Vec<String>, String> {
         let limits = Limits::default();
         let options = tungsten_contract::har::HarOptions {
             origin: args.har_origin.clone(),
+            path_templates: har_paths(args)?,
             include_prefixes: args.include_prefix.clone(),
             exclude_prefixes: args.exclude_prefix.clone(),
             redact_properties: args.redact_property.iter().cloned().collect(),
@@ -224,6 +247,11 @@ pub(super) fn import(args: &mut InitArgs) -> Result<Vec<String>, String> {
         };
         let imported = tungsten_contract::har::import_har(&bytes, &options, &limits)
             .map_err(|error| error.to_string())?;
+        if imported.report.observations.values().any(|notes| {
+            notes.contains(&tungsten_contract::har::CaptureNote::LiteralPathNeedsReview)
+        }) {
+            return Err("HAR paths need review before saving: pass --har-paths <JSON> mapping every imported URL path to a reviewed template; use an identical path only for a reviewed literal route".into());
+        }
         let output = imported
             .infer(&ReviewedOverrides::default(), &limits)
             .map_err(|error| error.to_string())?;
