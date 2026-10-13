@@ -400,6 +400,13 @@ fn operation(
     meta.sensitive_response_fields = response_fields;
     meta.hidden = first(layers, |e| e.hidden.as_ref()).is_some_and(|(h, _)| *h);
     meta.compact_doc = prune::compact(op.doc.as_ref(), &prune_options(cx.cfg));
+    if meta.import_policy.is_some()
+        && !layers.iter().any(|layer| {
+            matches!(layer.origin, Origin::Manifest(_)) && layer.entry.idempotency.is_some()
+        })
+    {
+        meta.idempotency = IdempotencyPolicy::default();
+    }
     if meta.import_policy.as_ref().is_some_and(|p| !p.reviewed) {
         // Samples do not prove replay safety. Never infer an idempotency
         // contract or perform a remote preview from observed requests.
@@ -785,13 +792,44 @@ fn import_policy(
         .extensions
         .get("x-tungsten-reviewed-safety")
         .and_then(|v| serde_json::from_value::<Safety>(v.clone()).ok());
-    let reviewed = manifest.or(extension);
+    let raw_origins = if manifest.is_some() {
+        tool.map(|t| t.imported_reviewed_origins.clone())
+            .unwrap_or_default()
+    } else {
+        op.extensions
+            .get("x-tungsten-reviewed-origins")
+            .and_then(|v| serde_json::from_value::<Vec<String>>(v.clone()).ok())
+            .unwrap_or_default()
+    };
+    let normalized: Option<Vec<String>> = raw_origins
+        .iter()
+        .map(|origin| {
+            let parsed = url::Url::parse(origin).ok()?;
+            (matches!(parsed.scheme(), "http" | "https")
+                && parsed.host_str().is_some()
+                && parsed.username().is_empty()
+                && parsed.password().is_none()
+                && matches!(parsed.path(), "" | "/")
+                && parsed.query().is_none()
+                && parsed.fragment().is_none())
+            .then(|| parsed.origin().ascii_serialization())
+        })
+        .collect();
+    let mut allowed_origins = normalized.unwrap_or_default();
+    allowed_origins.sort();
+    allowed_origins.dedup();
+    let reviewed = manifest
+        .or(extension)
+        .filter(|_| !allowed_origins.is_empty());
     Some((
         reviewed.unwrap_or(Safety::Irreversible),
         tungsten_ir::ImportPolicy {
+            allowed_origins,
             inferred_safety: OperationAgentMeta::default_for(op.method).safety,
             reviewed: reviewed.is_some(),
-            source: if manifest.is_some() {
+            source: if reviewed.is_none() {
+                "import_default"
+            } else if manifest.is_some() {
                 "agent_manifest"
             } else if extension.is_some() {
                 "reviewed_override"

@@ -808,6 +808,28 @@ class Engine:
                     ),
                 )
             )
+        policy = op["agent"].get("import_policy")
+        if isinstance(policy, dict) and policy.get("reviewed") is True:
+            target = url_override if url_override is not None else self._base_url()
+            origins = field(policy, "allowed_origins")
+            actual = origin_of(target) if isinstance(target, str) else None
+            allowed = (
+                actual is not None
+                and isinstance(target, str)
+                and not has_credentials(target)
+                and is_array(origins)
+                and any(isinstance(origin, str) and origin_of(origin) == actual for origin in origins)
+            )
+            if not allowed:
+                return _fail(
+                    diagnostic(
+                        op["id"],
+                        "VALIDATION_FAILED",
+                        failed_parameter="base_url",
+                        retryable="never",
+                        remediation="The target origin is outside this operation's saved review policy. Select a reviewed server or review a separate policy for this environment. Nothing was sent.",
+                    )
+                )
         self.register(op)
         op_id = op["id"]
         if not is_record(raw_args):

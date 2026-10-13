@@ -31,6 +31,7 @@ const KNOWN: &[&str] = &[
 pub(crate) fn parse(op: &Operation, r: &mut Reporter<'_>) -> ToolConfig {
     let mut entry = ToolConfig {
         imported_reviewed_safety: None,
+        imported_reviewed_origins: vec![],
         operation: op.id.0.clone(),
         safety: None,
         idempotency: None,

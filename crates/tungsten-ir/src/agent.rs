@@ -121,6 +121,8 @@ ir_struct! {
     /// Review provenance is independent from inferred HTTP safety and exposure.
     /// `safety` on the enclosing agent is the effective execution tier.
     pub struct ImportPolicy {
+        #[serde(default)]
+        pub allowed_origins: Vec<String>,
         pub inferred_safety: Safety,
         pub reviewed: bool,
         pub source: String,

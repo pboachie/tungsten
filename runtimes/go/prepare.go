@@ -458,6 +458,27 @@ func (c *ClientCore) prepare(ctx context.Context, op *OperationDescriptor, rawAr
 			expected("a valid operation descriptor").
 			remedy(fmt.Sprintf("The operation descriptor is invalid: %s. Regenerate the SDK or fix the descriptor; nothing was sent.", problem)).err()
 	}
+	if policy := op.Agent.ImportPolicy; policy != nil && policy.Reviewed {
+		target := c.baseURL
+		if urlOverride != "" {
+			target = urlOverride
+		}
+		parsed, err := url.Parse(target)
+		allowed := false
+		if err == nil && parsed.User == nil && (parsed.Scheme == "http" || parsed.Scheme == "https") && parsed.Host != "" {
+			for _, origin := range policy.AllowedOrigins {
+				scope, err := url.Parse(origin)
+				if err == nil && sameOrigin(parsed, scope) {
+					allowed = true
+					break
+				}
+			}
+		}
+		if !allowed {
+			return nil, newDiag(op.ID, ValidationFailed).param("base_url").retry(RetryNever).
+				remedy("The target origin is outside this operation's saved review policy. Select a reviewed server or review a separate policy for this environment. Nothing was sent.").err()
+		}
+	}
 	c.Register(op)
 	supplied, shown, ok := normalizeArgs(rawArgs)
 	if !ok {

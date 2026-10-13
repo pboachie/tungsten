@@ -692,6 +692,20 @@ fn agent_py(a: &OperationAgentMeta, sensitive_request: &[String]) -> Py {
             Py::strs(&a.sensitive_response_fields),
         ),
     ];
+    if let Some(policy) = &a.import_policy {
+        entries.push((
+            "import_policy",
+            Py::dict(vec![
+                (
+                    "inferred_safety",
+                    Py::str(safety_str(policy.inferred_safety)),
+                ),
+                ("reviewed", Py::bool(policy.reviewed)),
+                ("source", Py::str(&policy.source)),
+                ("allowed_origins", Py::strs(&policy.allowed_origins)),
+            ]),
+        ));
+    }
     if !sensitive_request.is_empty() {
         entries.push(("sensitive_request_fields", Py::strs(sensitive_request)));
     }

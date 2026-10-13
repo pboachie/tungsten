@@ -382,7 +382,15 @@ type ConfirmationMeta struct {
 }
 
 // AgentMeta is the agent metadata of an operation.
+type ImportPolicy struct {
+	InferredSafety Safety
+	Reviewed       bool
+	Source         string
+	AllowedOrigins []string
+}
+
 type AgentMeta struct {
+	ImportPolicy *ImportPolicy
 	Safety       Safety
 	Idempotency  IdempotencyMeta
 	Preview      PreviewMode

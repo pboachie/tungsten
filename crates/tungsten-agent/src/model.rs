@@ -328,6 +328,9 @@ pub struct ToolConfig {
     /// x-agent annotations cannot approve imported evidence for execution.
     #[serde(default)]
     pub imported_reviewed_safety: Option<Safety>,
+    /// Exact HTTP(S) origins covered by this operation review.
+    #[serde(default)]
+    pub imported_reviewed_origins: Vec<String>,
     /// Operation id (`public.submitAlphaMessage`, `workflow.action.send`)
     /// or `<namespace>.<resource path>.<method>`.
     pub operation: String,
