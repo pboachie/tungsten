@@ -307,6 +307,7 @@ pub(crate) fn model(
         agent.error_codes.insert(code.clone(), remediation(entry));
     }
     let d = &cfg.defaults;
+    agent.redirects = d.redirects;
     let base = RetryDefaults::default();
     let policy = |given: &Option<RetryPolicyConfig>, base: RetryPolicy| match given {
         None => base,

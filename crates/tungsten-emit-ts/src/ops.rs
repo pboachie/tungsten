@@ -1141,6 +1141,10 @@ fn api_js(plan: &Plan<'_>, opts: &Options) -> Js {
             ),
         ),
         (
+            "redirects",
+            Js::str(ir.agent.redirects.as_str()),
+        ),
+        (
             "retries",
             Js::obj(vec![
                 (

@@ -1185,6 +1185,10 @@ pub(crate) fn api_py(plan: &Plan<'_>, opts: &Options) -> Py {
             ),
         ),
         (
+            "redirects",
+            Py::str(ir.agent.redirects.as_str()),
+        ),
+        (
             "retries",
             Py::dict(vec![
                 (

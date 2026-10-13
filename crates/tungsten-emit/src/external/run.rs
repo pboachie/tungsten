@@ -167,6 +167,13 @@ pub fn run(
             return out;
         }
     };
+    if ir.agent.redirects == tungsten_ir::RedirectPolicy::None
+        && !response.capabilities.iter().any(|c| c == "redirects-none-v1")
+    {
+        out.diagnostics.push(Diagnostic::error("TG0804", format!("external emitter `{name}` did not acknowledge redirects-none-v1; no files were accepted"))
+            .with_help("update the emitter to enforce defaults.redirects: none and return the redirects-none-v1 capability"));
+        return out;
+    }
     for d in &response.diagnostics {
         out.diagnostics.push(wrap(name, d));
     }

@@ -140,6 +140,7 @@ type request struct {
 }
 
 type response struct {
+	Capabilities []string `json:"capabilities,omitempty"`
 	Protocol    int           `json:"protocol"`
 	Files       []emittedFile `json:"files"`
 	Diagnostics []diagnostic  `json:"diagnostics"`
@@ -147,7 +148,7 @@ type response struct {
 
 // emit turns a request into the response.
 func emit(req *request) response {
-	out := response{Protocol: protocol, Files: []emittedFile{}, Diagnostics: []diagnostic{}}
+	out := response{Capabilities: []string{"redirects-none-v1"}, Protocol: protocol, Files: []emittedFile{}, Diagnostics: []diagnostic{}}
 	opts, diags := parseOptions(req.Options, &req.IR)
 	out.Diagnostics = append(out.Diagnostics, diags...)
 	if len(diags) > 0 {
