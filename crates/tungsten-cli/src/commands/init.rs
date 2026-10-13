@@ -188,6 +188,7 @@ pub(crate) fn run(args: &InitArgs) -> Report {
         files,
         generation: None,
         local_example: None,
+        setup: None,
     };
     report.human = human(&result);
     report.result = Some(CommandResult::Init(result));
@@ -438,6 +439,15 @@ fn tungsten_yml(
             );
         } else if target == "rust" && has_cli {
             let _ = writeln!(out, "  rust: {{ out: generated/rust, cli: true }}");
+        } else if target == "webmcp"
+            && let Some(runtime) = runtime
+        {
+            let path = std::path::absolute(runtime).unwrap_or_else(|_| runtime.to_path_buf());
+            let _ = writeln!(
+                out,
+                "  webmcp: {{ out: generated/webmcp, sdk_path: ../typescript, sdk_runtime_path: {} }}",
+                yaml_scalar(&path.to_string_lossy().replace('\\', "/"))
+            );
         } else if matches!(target, "mcp" | "webmcp") && has_typescript {
             let _ = writeln!(
                 out,

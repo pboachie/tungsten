@@ -7,14 +7,17 @@ use std::time::{Duration, Instant};
 
 pub(super) fn preflight(args: &InitArgs) -> Result<(), &'static str> {
     if args.targets.is_empty()
-        || !args.targets.iter().any(|t| t == "typescript")
+        || !args
+            .targets
+            .iter()
+            .any(|t| matches!(t.as_str(), "typescript" | "mcp" | "webmcp"))
         || args
             .targets
             .iter()
-            .any(|t| !matches!(t.as_str(), "typescript" | "docs"))
+            .any(|t| !matches!(t.as_str(), "typescript" | "mcp" | "webmcp" | "docs"))
     {
         return Err(
-            "local example currently requires explicit typescript or typescript,docs outputs",
+            "local setup supports TypeScript, MCP, WebMCP and docs; Python/Rust need their documented toolchain setup",
         );
     }
     if ["tungsten.yml", "agent.yml", "generated"]
@@ -87,7 +90,29 @@ fn execute(program: &str, args: &[&str], dir: &Path, timeout: Duration) -> Resul
     }
 }
 
-pub(super) fn run(args: &InitArgs) -> Result<(), String> {
+pub(super) fn run(args: &InitArgs) -> (Vec<crate::output::InitSetupTarget>, Result<(), String>) {
+    let mut results = vec![crate::output::InitSetupTarget {
+        target: "typescript".into(),
+        status: "not_attempted".into(),
+    }];
+    for target in ["mcp", "webmcp", "docs"] {
+        if args.targets.iter().any(|t| t == target) {
+            results.push(crate::output::InitSetupTarget {
+                target: target.into(),
+                status: if target == "docs" {
+                    "generated"
+                } else {
+                    "not_attempted"
+                }
+                .into(),
+            });
+        }
+    }
+    let result = setup(args, &mut results);
+    (results, result)
+}
+
+fn setup(args: &InitArgs, results: &mut [crate::output::InitSetupTarget]) -> Result<(), String> {
     let compiled = crate::input::compile(&args.dir);
     let ir = compiled
         .ir
@@ -95,19 +120,24 @@ pub(super) fn run(args: &InitArgs) -> Result<(), String> {
         .ok_or("cannot compile project for the local example")?;
     let operation = ir.operations().into_iter().find(|op| op.method == tungsten_ir::HttpMethod::Get && op.body.is_none() && op.security.is_empty() && op.streaming.is_none() && matches!(op.status, tungsten_ir::OperationStatus::Implemented) && op.params.path.is_empty() && !op.params.query.iter().chain(&op.params.header).chain(&op.params.cookie).any(|p| p.required)).ok_or("local example needs an implemented, unauthenticated GET without required parameters or a body; use the advanced generated example for other APIs")?;
     let operation_id = operation.id.0.clone();
+    for result in results.iter_mut().filter(|r| r.target != "docs") {
+        let directory = args.dir.join("generated").join(&result.target);
+        result.status = "failed".into();
+        execute(
+            npm(),
+            &["install", "--ignore-scripts", "--no-audit", "--no-fund"],
+            &directory,
+            Duration::from_secs(180),
+        )?;
+        execute(
+            "node",
+            &["node_modules/typescript/bin/tsc", "-p", "tsconfig.json"],
+            &directory,
+            Duration::from_secs(60),
+        )?;
+        result.status = "built".into();
+    }
     let directory = args.dir.join("generated/typescript");
-    execute(
-        npm(),
-        &["install", "--ignore-scripts", "--no-audit", "--no-fund"],
-        &directory,
-        Duration::from_secs(180),
-    )?;
-    execute(
-        "node",
-        &["node_modules/typescript/bin/tsc", "-p", "tsconfig.json"],
-        &directory,
-        Duration::from_secs(60),
-    )?;
     let server = tungsten_mock::MockServer::start(ir, tungsten_mock::MockOptions::default())
         .map_err(|_| "cannot start the loopback mock")?;
     let base_url = server.base_url();

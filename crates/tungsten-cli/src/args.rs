@@ -356,7 +356,7 @@ pub(crate) struct InitArgs {
     #[arg(long, requires = "resume", value_delimiter = ',', value_parser = parse_init_target)]
     pub add_targets: Vec<String>,
     /// Acquire project npm dependencies, build TypeScript and call a loopback mock.
-    /// Requires Node >=22 and npm; supports new TypeScript/docs projects only.
+    /// Requires Node >=22 and npm; supports new TypeScript/MCP/WebMCP/docs projects.
     #[arg(long, requires = "generate", conflicts_with_all = ["resume", "force"])]
     pub local_example: bool,
     /// No-schema HTTP method; use a path template with --endpoint, never credentials.

@@ -156,11 +156,25 @@ pub(super) fn import(args: &mut InitArgs) -> Result<(), String> {
     let root = tungsten_config::parse_yaml("input", text)
         .0
         .map_err(|_| "input must be valid JSON or YAML")?;
-    if root.get("swagger").is_none() {
+    let mut converted = if root.get("endpoint_manifest").is_some() {
+        let canonical =
+            std::fs::canonicalize(&source).map_err(|_| "cannot resolve endpoint manifest")?;
+        let allowed = canonical
+            .parent()
+            .ok_or("endpoint manifest needs a parent directory")?
+            .to_path_buf();
+        tungsten_openapi::endpoint_manifest::load(
+            &canonical,
+            &[allowed],
+            &tungsten_openapi::LoadOptions::default(),
+        )
+        .map_err(|error| format!("endpoint manifest import failed: {}", error.message))?
+    } else if root.get("swagger").is_some() {
+        tungsten_openapi::swagger::convert(&root)
+            .map_err(|error| format!("Swagger conversion failed: {}", error.message))?
+    } else {
         return Ok(());
-    }
-    let mut converted = tungsten_openapi::swagger::convert(&root)
-        .map_err(|error| format!("Swagger conversion failed: {}", error.message))?;
+    };
     if let Some(paths) = converted
         .get_mut("paths")
         .and_then(serde_json::Value::as_object_mut)
@@ -186,7 +200,7 @@ pub(super) fn import(args: &mut InitArgs) -> Result<(), String> {
     }
     for name in ["tungsten.yml", "agent.yml", "imported.openapi.json"] {
         if std::fs::symlink_metadata(args.dir.join(name)).is_ok() {
-            return Err("Swagger import requires a new project; resume the existing converted configuration".into());
+            return Err("input conversion requires a new project; resume the existing converted configuration".into());
         }
     }
     std::fs::create_dir_all(&args.dir).map_err(|_| "cannot create project directory")?;

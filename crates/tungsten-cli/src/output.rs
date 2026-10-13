@@ -455,6 +455,17 @@ pub struct InitResult {
     /// Whether a generated TypeScript client completed a real loopback mock call.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub local_example: Option<bool>,
+    /// Separate build outcomes for every resolved output during local setup.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub setup: Option<Vec<InitSetupTarget>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct InitSetupTarget {
+    pub target: String,
+    /// built, generated (documentation), failed, or not_attempted.
+    pub status: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]

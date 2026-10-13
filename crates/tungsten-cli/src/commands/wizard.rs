@@ -123,6 +123,7 @@ pub(crate) fn run(args: &InitArgs, json: bool, env: &CliEnv) -> Report {
             },
             generation: None,
             local_example: None,
+            setup: None,
         }));
         r
     } else {
@@ -166,9 +167,18 @@ pub(crate) fn run(args: &InitArgs, json: bool, env: &CliEnv) -> Report {
         result.generation = Some(generation);
     }
     if report.exit == exit::OK && selected.local_example {
-        let success = super::init_setup::run(&selected);
+        let (setup, success) = super::init_setup::run(&selected);
+        for target in &setup {
+            report
+                .human
+                .push_str(&format!("setup {}: {}\n", target.target, target.status));
+        }
+        if selected.targets.iter().any(|target| target == "webmcp") {
+            report.human.push_str("Browser registration and disposal have not been exercised by this terminal setup.\n");
+        }
         if let Some(CommandResult::Init(result)) = &mut report.result {
             result.local_example = Some(success.is_ok());
+            result.setup = Some(setup);
         }
         match success {
             Ok(()) => report.human.push_str("Built TypeScript SDK and completed a generated client call against the local mock. The mock has stopped.\n"),
