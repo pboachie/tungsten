@@ -1,4 +1,4 @@
-# Public CI: repository rules, format, lint, build (Rust and Go) and dependency
+# Public CI: repository rules, format, lint, build (Rust, Go, Java and Ruby) and dependency
 # policy. The test suite lives in the private tungsten-ops repository; the last
 # job asks it to test this commit and it reports back as the commit status "tungsten-ops/ci".
 #
@@ -126,6 +126,61 @@ jobs:
         run: |
           go vet ./...
           go build -o /dev/null .
+
+  # The Java runtime (runtimes/java, Java 17 bytecode, no dependencies). Its
+  # tests, and the build of the SDKs tungsten-emit-java generates, run in
+  # tungsten-ops; the emitter crate is linted with the workspace above.
+  java:
+    name: java runtime build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: javac --release 17 -Xlint:all -Werror
+        working-directory: runtimes/java
+        run: |
+          find src/main/java -name '*.java' > "$RUNNER_TEMP/sources.txt"
+          javac --release 17 -Xlint:all -Werror -encoding UTF-8 -d "$RUNNER_TEMP/classes" "@$RUNNER_TEMP/sources.txt"
+      - name: mvn package
+        working-directory: runtimes/java
+        run: mvn -B -q package -DskipTests
+
+  # The Ruby runtime (runtimes/ruby, standard library only): every file
+  # passes `ruby -wc` without a warning and the gemspec builds; its tests,
+  # RuboCop and the gems the Ruby emitter generates run in tungsten-ops.
+  ruby:
+    name: ruby runtime check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ruby/setup-ruby@14594264cd68ce8a2345dd349bc3d138a4ef85c8 # v1.327.0
+        with:
+          ruby-version: "3.3"
+          bundler-cache: false
+      - name: ruby -wc
+        run: |
+          status=0
+          for f in $(find runtimes/ruby -name '*.rb' -o -name '*.gemspec' -o -name Gemfile | sort); do
+            result="$(ruby -wc "$f" 2>&1)" || true
+            if [ "$result" != "Syntax OK" ]; then echo "$f: $result"; status=1; fi
+          done
+          exit $status
+      - name: gem build
+        working-directory: runtimes/ruby
+        run: gem build tungsten-runtime.gemspec --output "$RUNNER_TEMP/tungsten-runtime.gem"
 
   guard:
     name: repository-guard

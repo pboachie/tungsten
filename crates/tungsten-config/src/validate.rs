@@ -18,9 +18,11 @@ pub const MANIFEST_VERSION: u32 = 1;
 /// Target names accepted under `targets`.
 pub const KNOWN_TARGETS: &[&str] = &[
     "docs",
+    "java",
     "mcp",
     "mock",
     "python",
+    "ruby",
     "rust",
     "typescript",
     "webmcp",
