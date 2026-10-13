@@ -1590,7 +1590,10 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     const requestId = requestIdOf(headers);
     const retryAfter = parseRetryAfter(headers["retry-after"], this.#now());
     const declared = matchResponse(op.responses, status);
-    const success = !((this.#redirectsDisabled || mutation) && status >= 300 && status <= 399) && ((status >= 200 && status <= 299) || (declared?.kind === "success" && status >= 100 && status <= 399));
+    // A status the descriptor declares (exactly or by class) is classified as declared. With
+    // redirects disabled, a 3xx it does not declare is a refused redirect, never a success.
+    const refusedRedirect = this.#redirectsDisabled && status >= 300 && status <= 399 && (declared === undefined || declared.status === "default");
+    const success = !refusedRedirect && ((status >= 200 && status <= 299) || (declared?.kind === "success" && status >= 100 && status <= 399));
     const hint = op.agent.verify ? `Call ${op.agent.verify.operation} to read the current state.` : null;
 
     if (success && outcome.stream !== undefined) {

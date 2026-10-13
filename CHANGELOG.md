@@ -27,6 +27,21 @@ changes.
   `route_templates` field.
 - `tungsten init` reports JSON setup input it cannot parse (invalid syntax or
   nesting deeper than 128 levels) instead of passing it on as OpenAPI.
+- A 3xx status an operation declares (exactly or by class) is its success in all
+  seven runtimes, also with `redirects: none`, so a mutation answered with a
+  declared `303 See Other` succeeds. Redirects are still never followed on
+  mutations, and with `redirects: none` a 3xx the operation does not declare (no
+  match, or only `default`) fails as `UNEXPECTED_RESPONSE` without being
+  followed. Java, Ruby and C# report that refusal with the redirect remediation the
+  other runtimes use.
+- Java: `ApiDescriptor` has the `redirects` record component; the eleven-argument
+  constructor is removed, so construct it with the canonical constructor.
+- Ruby: `ClientOptions` has the `redirects` member (first), which shifts positional
+  construction and `deconstruct`; pass options by keyword.
+- Rust: `CallOptions` has the public `max_pages` field (pages of one traversal;
+  None or zero: unbounded), and `ApiDescriptor` the `redirects` field. Build
+  `CallOptions` with `..CallOptions::default()` so later fields do not break
+  handwritten literals.
 
 ### Fixed
 
@@ -69,6 +84,17 @@ changes.
   explicit page limits across the four runtimes.
 - Propagate Rust emitter graph facts with worklists and coalesce concurrent MCP
   query embeddings. Complete the README's generated Python SDK installation steps.
+- Release a Python sync client's native transport thread, event loop and connection
+  pool when the client is garbage collected without `close()`, run polling waits
+  on the caller's thread so expiring polls no longer hold worker permits, and never
+  block the transport's loop thread on itself when a stream is finalized there.
+- File idempotency stores (TypeScript, Python, Go, Rust) record the owner of their
+  `<path>.lock` lease (host, pid, token) and wait up to 2 s for another writer before
+  refusing with the owner's process and host. Only its owner removes a lease, so a
+  lease left by a process that died is removed by hand (the refusal says so); a
+  writer re-checks ownership before committing, so it never overwrites a key once its
+  lease is gone. Reservations are serialized per store file within a process, and a
+  reserved key is kept when removing the lease fails.
 
 - Bound aggregate Swagger reference and media-schema expansion during conversion.
 - Require an explicit reviewed HAR path mapping before saving imported contracts.
