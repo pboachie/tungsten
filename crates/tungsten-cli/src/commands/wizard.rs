@@ -42,6 +42,12 @@ pub(crate) fn run(args: &InitArgs, json: bool, env: &CliEnv) -> Report {
             }
         }
     }
+    if let Err(message) = super::init_advanced::validate(&selected) {
+        return refused(
+            message,
+            "correct the advanced setting; no project changes made",
+        );
+    }
     if selected.local_example
         && let Err(message) = super::init_setup::preflight(&selected)
     {
@@ -163,6 +169,31 @@ pub(crate) fn run(args: &InitArgs, json: bool, env: &CliEnv) -> Report {
     if report.exit != exit::OK || !selected.generate {
         return report;
     }
+    if !selected.hide_operation.is_empty() || !selected.require_confirmation.is_empty() {
+        let compiled = crate::input::compile(&selected.dir);
+        if let Some(ir) = &compiled.ir {
+            let operations = ir.operations();
+            if selected.require_confirmation.iter().any(|reference| {
+                operations.iter().any(|op| {
+                    op.id.0 == *reference && op.agent.safety != tungsten_ir::Safety::Irreversible
+                })
+            }) {
+                report.exit = exit::REFUSED;
+                report.error = Some(CliError::new(ErrorKind::Refused, "saved operation review prevents the requested confirmation restriction").with_help("review this exact operation's existing safety settings in agent.yml or the input. Setup does not overwrite saved imported reviews; configuration is preserved and no outputs were generated."));
+                return report;
+            }
+            if selected
+                .hide_operation
+                .iter()
+                .chain(&selected.require_confirmation)
+                .any(|reference| !operations.iter().any(|op| op.id.0 == *reference))
+            {
+                report.exit = exit::REFUSED;
+                report.error = Some(CliError::new(ErrorKind::Refused, "an advanced operation reference does not match an exact compiled operation id").with_help("inspect `tungsten --json ir dump <project>`; correct agent.yml and resume generation. Configuration is preserved; outputs were not generated."));
+                return report;
+            }
+        }
+    }
     let generated = super::generate::run(
         &GenerateArgs {
             input: InputArgs {
@@ -172,7 +203,7 @@ pub(crate) fn run(args: &InitArgs, json: bool, env: &CliEnv) -> Report {
             dry_run: false,
             check: false,
             force: false,
-            strict: false,
+            strict: selected.strict,
         },
         env,
     );
@@ -417,6 +448,42 @@ fn walkthrough(args: &mut InitArgs) -> io::Result<bool> {
                     return Ok(false);
                 };
                 args.name = (!name.is_empty()).then_some(name);
+                let Some(server) = answer(
+                    "Default server URL for later live use (blank uses input; no credentials)",
+                    args.server_url.as_deref().unwrap_or(""),
+                )?
+                else {
+                    return Ok(false);
+                };
+                args.server_url = (!server.is_empty()).then_some(server);
+                let Some(strict) = answer(
+                    "Strict generation validation? yes / no",
+                    if args.strict { "yes" } else { "no" },
+                )?
+                else {
+                    return Ok(false);
+                };
+                args.strict = strict == "yes";
+                for (label, operations) in [
+                    (
+                        "Hide exact namespace.operationId from agents (comma-separated, optional)",
+                        &mut args.hide_operation,
+                    ),
+                    (
+                        "Require confirmation for exact namespace.operationId (comma-separated, optional)",
+                        &mut args.require_confirmation,
+                    ),
+                ] {
+                    let Some(value) = answer(label, &operations.join(","))? else {
+                        return Ok(false);
+                    };
+                    *operations = value
+                        .split(',')
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(str::to_owned)
+                        .collect();
+                }
                 let has_node = args
                     .targets
                     .iter()
@@ -425,6 +492,21 @@ fn walkthrough(args: &mut InitArgs) -> io::Result<bool> {
                     .targets
                     .iter()
                     .any(|t| matches!(t.as_str(), "rust" | "cli"));
+                if has_rust {
+                    let Some(profiles) = answer(
+                        "Optional CLI environment profiles NAME=URL (comma-separated, no credentials)",
+                        &args.cli_profile.join(","),
+                    )?
+                    else {
+                        return Ok(false);
+                    };
+                    args.cli_profile = profiles
+                        .split(',')
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(str::to_owned)
+                        .collect();
+                }
                 for (label, enabled, setting) in [
                     (
                         "TypeScript runtime path (blank uses registry)",
@@ -435,6 +517,11 @@ fn walkthrough(args: &mut InitArgs) -> io::Result<bool> {
                         "WebMCP runtime path (blank uses registry)",
                         args.targets.iter().any(|t| t == "webmcp"),
                         &mut args.webmcp_runtime,
+                    ),
+                    (
+                        "MCP runtime path (blank uses registry)",
+                        args.targets.iter().any(|t| t == "mcp"),
+                        &mut args.mcp_runtime,
                     ),
                     (
                         "Python runtime path (blank uses registry)",

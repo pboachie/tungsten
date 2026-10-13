@@ -50,6 +50,7 @@ tungsten-tokens.workspace = true
 tungsten-lsp.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+url.workspace = true
 schemars.workspace = true
 clap.workspace = true
 

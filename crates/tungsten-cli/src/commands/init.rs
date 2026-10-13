@@ -154,11 +154,23 @@ pub(crate) fn run(args: &InitArgs) -> Report {
             .with_help("this is a bug in tungsten; please report it with the spec"),
         );
     }
-    let agent = agent_yml(&namespace, &spec_ref, spec.is_some(), &info);
+    let mut agent = agent_yml(&namespace, &spec_ref, spec.is_some(), &info);
+    if !args.hide_operation.is_empty() || !args.require_confirmation.is_empty() {
+        agent = agent.replace(
+            "tools: []",
+            &format!("tools: {}", super::init_advanced::tools(args)),
+        );
+    }
 
     let mut files = vec![];
-    for (path, text) in [(&manifest_path, &manifest), (&agent_path, &agent)] {
-        let action = if entry(path).is_some() {
+    let profile_path = args.dir.join("tungsten-profiles.toml");
+    let profile_text = super::init_advanced::profiles(args);
+    let mut contents = vec![(&manifest_path, &manifest), (&agent_path, &agent)];
+    if let Some(text) = &profile_text {
+        contents.push((&profile_path, text));
+    }
+    for (path, text) in contents {
+        let action = if args.force && path != &profile_path && entry(path).is_some() {
             InitAction::Overwritten
         } else {
             InitAction::Created
@@ -399,7 +411,7 @@ fn tungsten_yml(
         yaml_scalar(namespace),
         yaml_scalar(spec_ref)
     );
-    if let Some(server) = &info.server {
+    if let Some(server) = args.server_url.as_ref().or(info.server.as_ref()) {
         let _ = write!(
             out,
             "\nservers:\n  default: {}\n  allow_override: true\n",
@@ -461,6 +473,12 @@ fn tungsten_yml(
                     serde_json::json!({"kit_path":path.to_string_lossy().replace('\\', "/")});
             }
             let _ = writeln!(out, "  rust: {options}");
+        } else if target == "mcp"
+            && let Some(runtime) = &args.mcp_runtime
+        {
+            let path = std::path::absolute(runtime).unwrap_or_else(|_| runtime.to_path_buf());
+            let options = serde_json::json!({"out":"generated/mcp", "sdk_path":"../typescript", "runtime_path":path.to_string_lossy().replace('\\', "/")});
+            let _ = writeln!(out, "  mcp: {options}");
         } else if target == "rust" && has_cli {
             let _ = writeln!(out, "  rust: {{ out: generated/rust, cli: true }}");
         } else if target == "webmcp" && (runtime.is_some() || args.webmcp_runtime.is_some()) {
