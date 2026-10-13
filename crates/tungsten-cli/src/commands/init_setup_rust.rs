@@ -6,10 +6,13 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 pub(super) fn preflight() -> Result<(), &'static str> {
-    if Command::new("cargo")
-        .arg("--version")
-        .output()
-        .is_ok_and(|o| o.status.success())
+    if super::init_setup::execute(
+        "cargo",
+        &["--version"],
+        Path::new("."),
+        Duration::from_secs(5),
+    )
+    .is_ok()
     {
         Ok(())
     } else {
