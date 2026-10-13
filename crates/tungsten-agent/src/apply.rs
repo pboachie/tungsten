@@ -130,11 +130,14 @@ pub(crate) fn run(ir: &mut Ir, cfg: &AgentConfig, r: &mut Reporter<'_>) {
             let id = op.id.0.as_str();
             let tool = tools.get(id).and_then(|(_, t)| t.safety);
             let ext = exts.get(id).and_then(|e| e.safety);
-            let declared = tool
-                .or(ext)
-                .unwrap_or_else(|| method_default(cfg, op.method));
-            let s = import_policy(op, tools.get(id).map(|(_, t)| *t))
-                .map_or(declared, |(safety, _)| safety);
+            let declared = tool.or(ext).or_else(|| method_configured(cfg, op.method));
+            let s = import_policy(op, tools.get(id).map(|(_, t)| *t)).map_or_else(
+                || declared.unwrap_or_else(|| OperationAgentMeta::default_for(op.method).safety),
+                // Saved review establishes a floor. A winning explicit policy
+                // may restrict it further; an inferred HTTP-method default
+                // must not undo a deliberate reviewed classification.
+                |(floor, _)| declared.map_or(floor, |safety| floor.max(safety)),
+            );
             safety.insert(id.to_string(), s);
         }
         let codes = ir
@@ -296,9 +299,9 @@ fn resolve_tools<'c>(
     out
 }
 
-fn method_default(cfg: &AgentConfig, method: HttpMethod) -> Safety {
+fn method_configured(cfg: &AgentConfig, method: HttpMethod) -> Option<Safety> {
     let s = &cfg.defaults.safety;
-    let declared = match method {
+    match method {
         HttpMethod::Get => s.get,
         HttpMethod::Put => s.put,
         HttpMethod::Post => s.post,
@@ -307,8 +310,7 @@ fn method_default(cfg: &AgentConfig, method: HttpMethod) -> Safety {
         HttpMethod::Head => s.head,
         HttpMethod::Patch => s.patch,
         HttpMethod::Trace => s.trace,
-    };
-    declared.unwrap_or_else(|| OperationAgentMeta::default_for(method).safety)
+    }
 }
 
 fn first<'l, 'c, T>(
