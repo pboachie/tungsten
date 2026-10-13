@@ -45,27 +45,23 @@ pub(super) fn preflight(args: &InitArgs) -> Result<(), &'static str> {
     {
         return Ok(());
     }
-    let version = Command::new("node")
-        .arg("--version")
-        .output()
-        .map_err(|_| "Node >=22 is required for local setup")?;
-    let major = String::from_utf8_lossy(&version.stdout)
-        .trim()
-        .trim_start_matches('v')
-        .split('.')
-        .next()
-        .and_then(|v| v.parse::<u32>().ok())
-        .unwrap_or(0);
-    if !version.status.success() || major < 22 {
-        return Err("Node >=22 is required for local setup");
-    }
-    let version = Command::new(npm())
-        .arg("--version")
-        .output()
-        .map_err(|_| "npm is required for local setup")?;
-    if !version.status.success() {
-        return Err("npm is required for local setup");
-    }
+    execute(
+        "node",
+        &[
+            "-e",
+            "process.exit(Number(process.versions.node.split('.')[0]) >= 22 ? 0 : 1)",
+        ],
+        Path::new("."),
+        Duration::from_secs(5),
+    )
+    .map_err(|_| "Node >=22 is required for local setup (toolchain check timed out or failed)")?;
+    execute(
+        npm(),
+        &["--version"],
+        Path::new("."),
+        Duration::from_secs(5),
+    )
+    .map_err(|_| "npm is required for local setup (toolchain check timed out or failed)")?;
     Ok(())
 }
 

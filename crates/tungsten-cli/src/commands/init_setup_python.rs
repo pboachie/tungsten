@@ -1,15 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! Build a generated Python package in its own virtual environment.
 use std::path::Path;
-use std::process::Command;
 use std::time::Duration;
 
 pub(super) fn interpreter() -> Result<&'static str, &'static str> {
     for program in ["python3", "python"] {
-        if Command::new(program)
-            .args(["-c", "import sys; sys.exit(sys.version_info < (3,12))"])
-            .output()
-            .is_ok_and(|o| o.status.success())
+        if super::init_setup::execute(
+            program,
+            &["-c", "import sys; sys.exit(sys.version_info < (3,12))"],
+            Path::new("."),
+            Duration::from_secs(5),
+        )
+        .is_ok()
         {
             return Ok(program);
         }
