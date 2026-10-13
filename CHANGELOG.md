@@ -51,7 +51,9 @@ changes.
   bound Java transport queues with backpressure and cancellation cleanup.
 - Check locked dependency names, sources, hashes and current advisories in CI
   and release preparation; disable npm install hooks in release builds.
+- Keep Postman path parameters explicit and restrict URL variables to origins.
 
+(Keep Postman path parameters explicit during import)
 
 ### Added
 

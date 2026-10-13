@@ -585,6 +585,36 @@ impl Context<'_> {
         let (raw_path, raw_query) = raw
             .split_once('?')
             .map_or((raw.as_str(), None), |(p, q)| (p, Some(q)));
+        // Path data becomes contract keys and provenance pointers. Unlike header,
+        // query and body samples, it is persisted verbatim, so captured variables
+        // must never be expanded there. Use explicit :parameter declarations.
+        let path_start = if raw_path.starts_with("{{") {
+            raw_path.find("}}").map(|end| end + 2)
+        } else {
+            raw_path.split_once("://").map(|(scheme, authority)| {
+                scheme.len() + 3 + authority.find('/').unwrap_or(authority.len())
+            })
+        }
+        .ok_or_else(|| {
+            error(
+                "PM005",
+                "Request URL requires an explicit HTTP(S) origin or origin-only variable.",
+            )
+        })?;
+        let literal_path = &raw_path[path_start..];
+        if literal_path.contains("{{") || literal_path.contains("}}") {
+            return Err(error(
+                "PM005",
+                "Path variables must use explicit :parameter declarations; captured variable values cannot become persisted routes.",
+            ));
+        }
+        let expected_path = url::Url::parse(&format!("https://import.invalid{literal_path}"))
+            .map_err(|_| {
+                error(
+                    "PM005",
+                    "Request path must be an explicit literal or parameter template.",
+                )
+            })?;
         let raw = if raw_path.starts_with("{{") {
             let raw = raw_path;
             let end = raw.find("}}").ok_or_else(|| {
@@ -621,10 +651,17 @@ impl Context<'_> {
             || !parsed.username().is_empty()
             || parsed.password().is_some()
             || parsed.fragment().is_some()
+            || parsed.query().is_some()
         {
             return Err(error(
                 "PM005",
                 "Use an HTTP(S) URL without inline credentials or fragment; configure auth through a supported helper.",
+            ));
+        }
+        if parsed.path() != expected_path.path() {
+            return Err(error(
+                "PM005",
+                "Origin variables must not introduce path data; declare the path separately with explicit :parameter declarations.",
             ));
         }
         let mut parameters = Vec::new();
