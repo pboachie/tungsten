@@ -53,8 +53,8 @@ func (s *MemoryIdempotencyStore) Put(scope, logicalID, key string) {
 // 0600. A file that cannot be parsed makes Get report nothing and Put write
 // nothing, and the runtime then refuses the call rather than issue a second
 // key for the same intent. Reserve also holds the cross-process lease
-// <path>.lock (see lease.go): it waits up to 2 s for another writer and
-// reclaims the lease only from an owner whose process provably ended.
+// <path>.lock (see lease.go): it waits up to 2 s for another writer, then
+// refuses; only its owner removes a lease.
 type FileIdempotencyStore struct {
 	path string
 	mu   sync.Mutex

@@ -60,11 +60,12 @@ changes.
   on the caller's thread so expiring polls no longer hold worker permits, and never
   block the transport's loop thread on itself when a stream is finalized there.
 - File idempotency stores (TypeScript, Python, Go, Rust) record the owner of their
-  `<path>.lock` lease (host, pid, token), wait up to 2 s for another writer, reclaim
-  a lease only from an owner whose process provably ended, and re-check ownership
-  before committing, so a writer whose lease was taken over never overwrites a key.
-  Reservations are serialized per store file within a process, and a reserved key
-  is kept when removing the lease fails.
+  `<path>.lock` lease (host, pid, token) and wait up to 2 s for another writer before
+  refusing with the owner's process and host. Only its owner removes a lease, so a
+  lease left by a process that died is removed by hand (the refusal says so); a
+  writer re-checks ownership before committing, so it never overwrites a key once its
+  lease is gone. Reservations are serialized per store file within a process, and a
+  reserved key is kept when removing the lease fails.
 
 
 ### Added

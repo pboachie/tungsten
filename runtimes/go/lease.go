@@ -15,11 +15,12 @@ import (
 // The cross-process lease of a FileIdempotencyStore (<path>.lock), the same
 // file in every runtime: created exclusively, it records its owner
 // {"version": 1, "host", "pid", "token"}. A busy lease is waited for up to
-// leaseWait. It is reclaimed only from an owner that is provably dead (same
-// host, another process, and that process no longer runs); any other owner
-// (alive, on another host, or unknown) makes Reserve refuse after the wait.
-// The holder re-checks its token just before it commits the store file, so a
-// writer whose lease was taken over never overwrites the new owner's key.
+// leaseWait, then Reserve refuses, naming the owner. Only its owner removes a
+// lease: no writer reclaims another's, because a reclaimer cannot remove a
+// lease and check whose it was in one step (a delayed reclaimer could remove
+// a newer live lease). A lease left by a process that died is removed by
+// hand. The holder re-checks its token just before it commits the store
+// file, so a writer whose lease was removed never overwrites a key.
 
 // leaseWait is how long Reserve waits for another writer's lease.
 const leaseWait = 2 * time.Second
@@ -40,24 +41,17 @@ func leaseHost() string {
 }
 
 // readLeaseOwner reads the owner of lease: nil when it cannot be read or
-// parsed (still being written, or not a lease), with fs.ErrNotExist when the
-// lease is gone.
-func readLeaseOwner(lease string) (*leaseOwner, error) {
+// parsed (still being written, or not a lease).
+func readLeaseOwner(lease string) *leaseOwner {
 	data, err := os.ReadFile(lease)
 	if err != nil {
-		return nil, err
+		return nil
 	}
 	var owner leaseOwner
-	if json.Unmarshal(data, &owner) != nil || owner.Version != 1 || owner.Host == "" || owner.PID <= 0 || owner.Token == "" {
-		return nil, nil
+	if json.Unmarshal(data, &owner) != nil || owner.Version != 1 || owner.PID <= 0 || owner.Token == "" {
+		return nil
 	}
-	return &owner, nil
-}
-
-// provablyDead reports whether the owner's process is known to have ended.
-func provablyDead(owner *leaseOwner) bool {
-	host := leaseHost()
-	return host != "" && owner.Host == host && owner.PID != os.Getpid() && processGone(owner.PID)
+	return &owner
 }
 
 // acquireLease takes the lease and returns its token.
@@ -88,57 +82,33 @@ func acquireLease(lease string) (string, error) {
 		if !errors.Is(err, fs.ErrExist) {
 			return "", err
 		}
-		owner, rerr := readLeaseOwner(lease)
-		retryNow := errors.Is(rerr, fs.ErrNotExist)
-		if owner != nil && provablyDead(owner) {
-			retryNow = reclaimLease(lease, owner, token)
-		}
 		left := time.Until(deadline)
 		if left <= 0 {
-			return "", leaseRefusal(lease, owner)
+			return "", leaseRefusal(lease, readLeaseOwner(lease))
 		}
-		if !retryNow {
-			time.Sleep(min(delay, left))
-			delay = min(delay*2, 100*time.Millisecond)
-		}
+		time.Sleep(min(delay, left))
+		delay = min(delay*2, 100*time.Millisecond)
 	}
-}
-
-// reclaimLease removes a dead owner's lease. It moves the lease aside first:
-// if what it moved is not the dead owner's (a live writer took the lease in
-// between), it puts it back. It reports whether to retry at once.
-func reclaimLease(lease string, dead *leaseOwner, token string) bool {
-	aside := lease + "." + token + ".stale"
-	if err := os.Rename(lease, aside); err != nil {
-		return errors.Is(err, fs.ErrNotExist)
-	}
-	defer func() { _ = os.Remove(aside) }()
-	moved, _ := readLeaseOwner(aside)
-	if moved != nil && moved.Token == dead.Token {
-		return true
-	}
-	_ = os.Link(aside, lease)
-	return false
 }
 
 func leaseRefusal(lease string, owner *leaseOwner) error {
 	if owner == nil {
 		return fmt.Errorf("the idempotency store is locked by another writer (%s); try again", lease)
 	}
-	return fmt.Errorf("the idempotency store is locked by another writer (%s, process %d on %s); try again, or remove the lease if that process no longer runs", lease, owner.PID, owner.Host)
+	return fmt.Errorf("the idempotency store is locked by another writer (%s, process %d on %q); try again, or remove the lease once that process no longer runs", lease, owner.PID, owner.Host)
 }
 
 // ownsLease reports whether lease still holds token.
 func ownsLease(lease, token string) bool {
-	owner, _ := readLeaseOwner(lease)
+	owner := readLeaseOwner(lease)
 	return owner != nil && owner.Token == token
 }
 
-// leaseFence fails when the lease was taken over: the key is then not stored.
+// leaseFence fails when the lease is no longer this writer's: the key is then not stored.
 func leaseFence(lease, token string) func() error {
 	return func() error {
 		if !ownsLease(lease, token) {
-			return fmt.Errorf("the idempotency store lease %s was taken over by another writer; the key was not stored", lease)
+			return fmt.Errorf("the idempotency store lease %s is no longer this writer's; the key was not stored", lease)
 		}
 		return nil
 	}

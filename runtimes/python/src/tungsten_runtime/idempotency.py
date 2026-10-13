@@ -97,8 +97,7 @@ class FileIdempotencyStore:
     be parsed makes ``get`` and ``put`` raise, and the runtime then refuses
     the call rather than issue a second key for the same intent. ``reserve``
     also holds the cross-process lease ``<path>.lock`` (``_lease``): it waits up
-    to 2 s for another writer and reclaims the lease only from an owner whose
-    process provably ended."""
+    to 2 s for another writer, then refuses; only its owner removes a lease."""
 
     __slots__ = ("_lock", "path")
 

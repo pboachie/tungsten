@@ -60,8 +60,8 @@ type StoreData = BTreeMap<String, BTreeMap<String, String>>;
 /// that exists but cannot be parsed makes `get` return `None` and `put`
 /// write nothing, and the runtime then refuses the call rather than issue a
 /// second key for the same intent. `reserve` also holds the cross-process
-/// lease `<path>.lock`: it waits up to 2 s for another writer and reclaims the
-/// lease only from an owner whose process provably ended.
+/// lease `<path>.lock`: it waits up to 2 s for another writer, then refuses;
+/// only its owner removes a lease.
 #[derive(Debug)]
 pub struct FileIdempotencyStore {
     path: PathBuf,

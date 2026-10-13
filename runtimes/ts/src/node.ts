@@ -6,7 +6,7 @@
  * this module.
  */
 import { randomBytes } from "node:crypto";
-import { link, mkdir, open, readFile, rename, rm } from "node:fs/promises";
+import { mkdir, open, readFile, rename, rm } from "node:fs/promises";
 import { hostname } from "node:os";
 import { dirname, resolve } from "node:path";
 
@@ -44,11 +44,12 @@ function sorted(keys: StoreFile["keys"]): StoreFile["keys"] {
  * The cross-process lease of a FileIdempotencyStore (`<path>.lock`), the same
  * file in every runtime: created exclusively, it records its owner
  * `{"version": 1, "host", "pid", "token"}`. A busy lease is waited for up to
- * LEASE_WAIT_MS. It is reclaimed only from an owner that is provably dead
- * (same host, another process, and that process no longer runs); any other
- * owner (alive, on another host, or unknown) makes `reserve` refuse after the
- * wait. The holder re-checks its token just before it commits the store file,
- * so a writer whose lease was taken over never overwrites the new owner's key.
+ * LEASE_WAIT_MS, then `reserve` refuses, naming the owner. Only its owner
+ * removes a lease: no writer reclaims another's, because a reclaimer cannot
+ * remove a lease and check whose it was in one step (a delayed reclaimer
+ * could remove a newer live lease). A lease left by a process that died is
+ * removed by hand. The holder re-checks its token just before it commits the
+ * store file, so a writer whose lease was removed never overwrites a key.
  */
 
 /** How long `reserve` waits for another writer's lease. */
@@ -63,37 +64,19 @@ interface LeaseOwner {
 const pause = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 const codeOf = (error: unknown): unknown => (error as { code?: unknown }).code;
 
-/** The owner of `lease`: null when it is gone, undefined when it cannot be
- * read or parsed (still being written, or not a lease). */
-async function readOwner(lease: string): Promise<LeaseOwner | null | undefined> {
-  let text: string;
-  try {
-    text = await readFile(lease, "utf8");
-  } catch (error) {
-    return codeOf(error) === "ENOENT" ? null : undefined;
-  }
+/** The owner of `lease`; undefined when it cannot be read or parsed (still
+ * being written, or not a lease). The host may be empty: it is only reported. */
+async function readOwner(lease: string): Promise<LeaseOwner | undefined> {
   let value: unknown;
   try {
-    value = JSON.parse(text);
+    value = JSON.parse(await readFile(lease, "utf8"));
   } catch {
     return undefined;
   }
   if (typeof value !== "object" || value === null) return undefined;
   const { version, host, pid, token } = value as Record<string, unknown>;
-  if (version !== 1 || typeof host !== "string" || !host || !Number.isSafeInteger(pid) || (pid as number) <= 0 || typeof token !== "string" || !token) return undefined;
+  if (version !== 1 || typeof host !== "string" || !Number.isSafeInteger(pid) || (pid as number) <= 0 || typeof token !== "string" || !token) return undefined;
   return { host, pid: pid as number, token };
-}
-
-/** Whether the owner's process is known to have ended. Windows is never
- * sure, so a lease there is never reclaimed. */
-function provablyDead(owner: LeaseOwner): boolean {
-  if (owner.host !== hostname() || owner.pid === process.pid || process.platform === "win32") return false;
-  try {
-    process.kill(owner.pid, 0);
-    return false;
-  } catch (error) {
-    return codeOf(error) === "ESRCH";
-  }
 }
 
 /** Takes the lease and returns its token. */
@@ -116,41 +99,17 @@ async function acquireLease(lease: string): Promise<string> {
     } catch (error) {
       if (codeOf(error) !== "EEXIST") throw error;
     }
-    const owner = await readOwner(lease);
-    let retryNow = owner === null;
-    if (owner && provablyDead(owner)) retryNow = await reclaimLease(lease, owner, token);
     const left = deadline - Date.now();
     if (left <= 0) {
+      const owner = await readOwner(lease);
       throw new Error(
         owner
-          ? `the idempotency store is locked by another writer (${lease}, process ${owner.pid} on ${owner.host}); try again, or remove the lease if that process no longer runs`
+          ? `the idempotency store is locked by another writer (${lease}, process ${owner.pid} on ${JSON.stringify(owner.host)}); try again, or remove the lease once that process no longer runs`
           : `the idempotency store is locked by another writer (${lease}); try again`,
       );
     }
-    if (!retryNow) {
-      await pause(Math.min(delay, left));
-      delay = Math.min(delay * 2, 100);
-    }
-  }
-}
-
-/** Removes a dead owner's lease. It moves the lease aside first: if what it
- * moved is not the dead owner's (a live writer took the lease in between), it
- * puts it back. Returns whether to retry at once. */
-async function reclaimLease(lease: string, dead: LeaseOwner, token: string): Promise<boolean> {
-  const aside = `${lease}.${token}.stale`;
-  try {
-    await rename(lease, aside);
-  } catch (error) {
-    return codeOf(error) === "ENOENT";
-  }
-  try {
-    const moved = await readOwner(aside);
-    if (moved && moved.token === dead.token) return true;
-    await link(aside, lease).catch(() => undefined);
-    return false;
-  } finally {
-    await rm(aside, { force: true }).catch(() => undefined);
+    await pause(Math.min(delay, left));
+    delay = Math.min(delay * 2, 100);
   }
 }
 
@@ -170,8 +129,8 @@ const fileQueues = new Map<string, Promise<unknown>>();
  * meant to be shown. A file that exists but cannot be parsed makes `get`
  * and `put` reject, and the runtime then refuses the call rather than
  * issue a second key for the same intent. `reserve` also holds the
- * cross-process lease `<path>.lock`: it waits up to 2 s for another writer
- * and reclaims the lease only from an owner whose process provably ended.
+ * cross-process lease `<path>.lock`: it waits up to 2 s for another writer,
+ * then refuses; only its owner removes a lease.
  */
 export class FileIdempotencyStore implements IdempotencyStore {
   readonly path: string;
@@ -217,7 +176,7 @@ export class FileIdempotencyStore implements IdempotencyStore {
         if (existing) return existing;
         await this.#write(scope, logicalId, candidate, async () => {
           if (!(await ownsLease(lease, token))) {
-            throw new Error(`the idempotency store lease ${lease} was taken over by another writer; the key was not stored`);
+            throw new Error(`the idempotency store lease ${lease} is no longer this writer's; the key was not stored`);
           }
         });
         return candidate;
