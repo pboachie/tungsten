@@ -639,6 +639,7 @@ impl LibraryText<'_> {
             out.push_str(&w.finish());
             out.push('\n');
         }
+        let scan = self.runtime.is_none();
         if scan && contains_word(&code, "Uint8List") {
             out.push_str(&directive(
                 "import",
@@ -656,7 +657,6 @@ impl LibraryText<'_> {
                 .map(|n| n.to_string())
                 .collect(),
         };
-        let scan = self.runtime.is_none();
         if !runtime.is_empty() {
             out.push_str(&directive(
                 "import",
