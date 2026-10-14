@@ -33,6 +33,7 @@ pub mod fs;
 pub mod options;
 mod resources;
 pub mod typeref;
+pub mod types;
 
 use tungsten_core::{Diagnostic, Diagnostics};
 use tungsten_emit::sdk::{
@@ -389,7 +390,8 @@ pub fn generate(ir: &Ir, opts: &Options) -> Vec<(String, String)> {
     let ctx = context(ir, &plan, &names, opts);
     // The F# sources of the SDK, one part per generator module, in any
     // order: [`compile_order`] places them.
-    let parts: Vec<Vec<(String, String)>> = vec![ctx.resource_files(), ctx.client_files()];
+    let parts: Vec<Vec<(String, String)>> =
+        vec![ctx.models(), ctx.resource_files(), ctx.client_files()];
     let sources: Vec<(String, String)> = parts.into_iter().flatten().collect();
     let paths: Vec<String> = sources.iter().map(|(p, _)| p.clone()).collect();
     let order = compile_order(&ctx, &paths);
