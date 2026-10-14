@@ -236,6 +236,11 @@ changes.
 - Guided Rust local setup allows its first `cargo build` up to 20 minutes
   (previously 10) so slow machines and cold caches finish the one-time build
   instead of being cut off with the project files preserved for a retry.
+- The MCP runtime's `tools/list` keeps marking keyed operations
+  (`caller_owned`, `auto`, `content_hash` idempotency policies) with
+  `idempotentHint` after its caution clamp, matching the generated manifest:
+  retrying them with the same key is a no-op. A manifest can still set the
+  hint to `false` for a specific tool.
 - Guided advanced server/validation controls, restrictive per-operation settings,
   credential-free CLI environment profiles and synthetic JSON request examples.
 - Bounded offline Swagger 2 conversion through the OpenAPI loader, preserving
