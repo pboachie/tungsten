@@ -521,7 +521,16 @@ type TierRetries struct {
 }
 
 // APIDescriptor describes the API.
+// RedirectPolicy controls read redirects. None always wins over client/API defaults.
+type RedirectPolicy string
+
+const (
+	RedirectSameOriginRead RedirectPolicy = "same_origin_read"
+	RedirectNone           RedirectPolicy = "none"
+)
+
 type APIDescriptor struct {
+	Redirects       RedirectPolicy
 	Name            string
 	Version         string
 	TungstenVersion string
@@ -679,6 +688,8 @@ const (
 
 // ClientOptions configures a client.
 type ClientOptions struct {
+	// Redirects may tighten the API policy. The zero value inherits it.
+	Redirects RedirectPolicy
 	// BaseURL defaults to the first server.
 	BaseURL string
 	Auth    AuthConfig

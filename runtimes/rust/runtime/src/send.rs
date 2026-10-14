@@ -27,7 +27,7 @@ use crate::transport::{AttemptOutcome, AttemptRequest, BodyFailure, attempt, par
 use crate::types::{
     CallOptions, Category, Diagnostic, Error, HttpMethod, Jitter, OperationDescriptor,
     ParamLocation, RequestContext, Response, ResponseContext, ResponseKind, ResponseMeta,
-    Retryable, Safety, ValidateResponses,
+    Retryable, Safety, StatusMatch, ValidateResponses,
 };
 use crate::util::{envelope_value, get_path, get_path_str, looks_sensitive, redact_paths};
 
@@ -179,7 +179,7 @@ impl ClientCore {
                 prepared.may_have_sent.store(true, Ordering::Relaxed);
             }
             let mut hops = 0;
-            while !mutation && hops < MAX_REDIRECTS {
+            while !self.inner.redirects_disabled && !mutation && hops < MAX_REDIRECTS {
                 let AttemptOutcome::Response {
                     status,
                     headers: answer,
@@ -415,6 +415,12 @@ impl ClientCore {
         let success = (200..=299).contains(&status)
             || (declared.is_some_and(|d| d.kind == ResponseKind::Success)
                 && (100..=399).contains(&status));
+        // A status the descriptor declares (exactly or by class) is classified as declared. With
+        // redirects disabled, a 3xx it does not declare is a refused redirect, never a success.
+        let refused_redirect = self.inner.redirects_disabled
+            && (300..=399).contains(&status)
+            && declared.is_none_or(|d| d.status == StatusMatch::Default);
+        let success = success && !refused_redirect;
         let hint = op
             .agent
             .verify
@@ -463,6 +469,10 @@ impl ClientCore {
                 let remediation = if mutation {
                     format!(
                         "The server answered with a redirect{to}. Redirects are never followed on mutations; check base_url (scheme, host, trailing slash). Whether the call took effect is unknown only if the server applied it before redirecting."
+                    )
+                } else if self.inner.redirects_disabled {
+                    format!(
+                        "The server answered with a redirect{to}. Redirects are disabled; check redirects and base_url."
                     )
                 } else {
                     format!(

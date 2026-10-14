@@ -348,6 +348,23 @@ pub enum SchemaName {
 
 #[derive(Debug, Clone, Args)]
 pub(crate) struct InitArgs {
+    /// Advanced: default server URL for later live use; no credentials/query/fragment.
+    #[arg(long, conflicts_with = "resume")]
+    pub server_url: Option<String>,
+    /// Advanced: generated Rust CLI environment profile NAME=URL; repeatable.
+    /// Writes tungsten-profiles.toml with no credentials.
+    #[arg(long, conflicts_with = "resume")]
+    pub cli_profile: Vec<String>,
+    /// Advanced: promote generation warnings to errors and withhold all outputs.
+    #[arg(long)]
+    pub strict: bool,
+    /// Hide an exact namespace.operationId from agent surfaces; repeatable.
+    #[arg(long, conflicts_with = "resume")]
+    pub hide_operation: Vec<String>,
+    /// Require argument-bound confirmation on an exact operation; repeatable.
+    /// Never counts as imported-operation review or grants live authority.
+    #[arg(long, conflicts_with = "resume")]
+    pub require_confirmation: Vec<String>,
     /// Advanced: local Python runtime checkout (used only with explicit setup consent).
     #[arg(long, conflicts_with = "resume")]
     pub python_runtime: Option<PathBuf>,
@@ -376,10 +393,15 @@ pub(crate) struct InitArgs {
     /// Advanced: use an explicitly supplied local WebMCP runtime package.
     #[arg(long, conflicts_with = "resume")]
     pub webmcp_runtime: Option<PathBuf>,
+    /// Advanced: use an explicitly supplied local MCP runtime package.
+    #[arg(long, conflicts_with = "resume")]
+    pub mcp_runtime: Option<PathBuf>,
     /// Advanced input detection override for saved requests.
     #[arg(long, default_value = "auto", value_parser = ["auto", "curl", "http"])]
     pub input_format: String,
     /// Trusted path template for each saved request, in input order; repeat as needed.
+    /// HAR input requires a template for every captured path; each path uses the most
+    /// literal matching template.
     #[arg(long, conflicts_with = "method")]
     pub route: Vec<String>,
     /// Shell quoting syntax of a saved cURL command; never executes a shell.
@@ -389,7 +411,8 @@ pub(crate) struct InitArgs {
     #[arg(long, conflicts_with = "resume")]
     pub typescript_runtime: Option<PathBuf>,
     /// Add outputs to an existing project while retaining all existing settings.
-    /// Saves the original manifest as tungsten.yml.init-backup before replacement.
+    /// Edits only the `targets` section and saves the original manifest as
+    /// tungsten.yml.init-backup (or the next free `.init-backup.N`) first.
     #[arg(long, requires = "resume", value_delimiter = ',', value_parser = parse_init_target)]
     pub add_targets: Vec<String>,
     /// Acquire project dependencies, build selected outputs and call a loopback mock.
@@ -470,12 +493,7 @@ pub(crate) struct DoctorArgs {
 }
 
 fn parse_init_target(s: &str) -> Result<String, String> {
-    let target = match s.trim() {
-        "ts" => "typescript",
-        "py" => "python",
-        "rs" => "rust",
-        name => name,
-    };
+    let target = crate::targets::canonical(s.trim());
     if target == "cli" || tungsten_config::KNOWN_TARGETS.contains(&target) {
         Ok(target.to_string())
     } else {

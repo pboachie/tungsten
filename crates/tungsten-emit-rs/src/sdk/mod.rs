@@ -232,6 +232,11 @@ fn generate(ir: &Ir, opts: &Options) -> Vec<(String, String)> {
 pub mod testing {
     use tungsten_ir::{Ir, Presence, TypeRef};
 
+    /// Render supplied support-template bytes through the production path.
+    pub fn render_support_template(header: &str, streams: bool, template: &str) -> String {
+        super::package::render_support_template(header, streams, template)
+    }
+
     /// One field of an operation's request struct.
     #[derive(Debug, Clone, PartialEq)]
     pub struct Arg {

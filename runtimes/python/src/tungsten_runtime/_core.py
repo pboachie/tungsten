@@ -332,6 +332,15 @@ class Engine:
     def __init__(self, api: object, options: object) -> None:
         self.api: object = api if is_record(api) else {}
         self.options: ClientOptions = options if isinstance(options, ClientOptions) else ClientOptions()
+        api_policy = field(self.api, "redirects")
+        if api_policy is UNSET:
+            api_policy = "same_origin_read"
+        if api_policy not in ("same_origin_read", "none"):
+            raise ValueError("API redirects must be same_origin_read or none")
+        policies = (api_policy, self.options.redirects)
+        if any(value not in (None, "same_origin_read", "none") for value in policies):
+            raise ValueError("redirects must be same_origin_read or none")
+        self._redirects_disabled = "none" in policies
         self.registry: dict[str, OperationDescriptor] = {}
         self.macros: dict[str, MacroDescriptor] = {}
         self._token_cache: dict[str, tuple[str, float]] = {}
@@ -1351,7 +1360,8 @@ class Engine:
             current_url, current_method, current_body = prepared.url, prepared.method, prepared.body
             hops = 0
             while (
-                not mutation
+                not self._redirects_disabled
+                and not mutation
                 and hops < _MAX_REDIRECTS
                 and isinstance(outcome, Answered)
                 and outcome.status in _REDIRECT_STATUSES
@@ -1632,6 +1642,14 @@ class Engine:
         success = 200 <= status <= 299 or (
             declared is not None and declared.get("kind") == "success" and 100 <= status <= 399
         )
+        # A status the descriptor declares (exactly or by class) is classified as declared. With
+        # redirects disabled, a 3xx it does not declare is a refused redirect, never a success.
+        refused_redirect = (
+            self._redirects_disabled
+            and 300 <= status <= 399
+            and (declared is None or declared.get("status") == "default")
+        )
+        success = success and not refused_redirect
         verify_target = str_field(field(op["agent"], "verify"), "operation")
         hint = f"Call {verify_target} to read the current state." if verify_target is not None else None
 
@@ -1683,6 +1701,8 @@ class Engine:
                     "base_url (scheme, host, trailing slash). Whether the call took effect is unknown only if the "
                     "server applied it before redirecting."
                     if mutation
+                    else f"The server answered with a redirect{to}. Redirects are disabled; check redirects and base_url."
+                    if self._redirects_disabled
                     else f"The server answered with a redirect{to} that leaves the API's origin (or too many "
                     "redirects). It is not followed, so credentials never leave the API's host; check base_url."
                 )

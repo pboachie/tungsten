@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! Postman v2.1 structural importer. Scripts and requests are never executed.
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::Serialize;
@@ -158,115 +159,99 @@ fn enabled(value: &Value) -> bool {
     value.get("disabled").and_then(Value::as_bool) != Some(true)
 }
 
-fn variables(
-    value: &Value,
-    inherited: &BTreeMap<String, String>,
-) -> Result<BTreeMap<String, String>, Diagnostic> {
-    let mut out = inherited.clone();
-    for variable in array(value, "variable")? {
-        if !enabled(variable) {
-            continue;
-        }
-        let key = text(variable, "key")?;
-        if let Some(value) = variable.get("value") {
-            let value = match value {
-                Value::String(v) => v.clone(),
-                Value::Bool(_) | Value::Number(_) => value.to_string(),
-                _ => {
-                    return Err(error(
-                        "PM005",
-                        "Collection variable values must be scalar strings, booleans or numbers.",
-                    ));
-                }
-            };
-            out.insert(key.into(), value);
-        }
-    }
-    Ok(out)
+/// Variables declared by one collection, folder or item, chained to the enclosing
+/// scopes. Values borrow from the parsed collection, so nesting never copies them.
+struct Scope<'a, 'p> {
+    values: BTreeMap<&'a str, Cow<'a, str>>,
+    parent: Option<&'p Scope<'a, 'p>>,
 }
 
-fn expand(
-    input: &str,
-    variables: &BTreeMap<String, String>,
-    limits: &Limits,
-) -> Result<String, Diagnostic> {
-    let mut value = input.to_owned();
-    for _ in 0..limits.max_depth {
-        let Some(start) = value.find("{{") else {
-            return Ok(value);
-        };
-        let end = value[start + 2..]
-            .find("}}")
-            .map(|n| start + 2 + n)
-            .ok_or_else(|| {
-                error(
-                    "PM005",
-                    "Malformed variable template; use a complete variable reference.",
-                )
-            })?;
-        let key = &value[start + 2..end];
-        if key.starts_with('$') {
+impl<'a, 'p> Scope<'a, 'p> {
+    fn new(value: &'a Value, parent: Option<&'p Scope<'a, 'p>>) -> Result<Self, Diagnostic> {
+        let mut values = BTreeMap::new();
+        for variable in array(value, "variable")? {
+            if !enabled(variable) {
+                continue;
+            }
+            let key = text(variable, "key")?;
+            if let Some(value) = variable.get("value") {
+                let value = match value {
+                    Value::String(v) => Cow::Borrowed(v.as_str()),
+                    Value::Bool(_) | Value::Number(_) => Cow::Owned(value.to_string()),
+                    _ => {
+                        return Err(error(
+                            "PM005",
+                            "Collection variable values must be scalar strings, booleans or numbers.",
+                        ));
+                    }
+                };
+                values.insert(key, value);
+            }
+        }
+        Ok(Self { values, parent })
+    }
+
+    fn get(&self, key: &str) -> Option<&str> {
+        let mut scope = Some(self);
+        while let Some(current) = scope {
+            if let Some(value) = current.values.get(key) {
+                return Some(value);
+            }
+            scope = current.parent;
+        }
+        None
+    }
+}
+
+/// Template URL path data. Path text becomes persisted contract keys, so a variable
+/// value is never substituted there: a whole `{{name}}` segment naming a declared
+/// path variable (`url.variable`) becomes the `:name` parameter, any other variable
+/// is rejected, and dynamic variables are rejected in every segment (PM004).
+fn template_path(path: &str, declared: &BTreeSet<&str>) -> Result<String, Diagnostic> {
+    let mut rest = path;
+    while let Some(start) = rest.find("{{") {
+        rest = &rest[start + 2..];
+        if rest.starts_with('$') {
             return Err(error(
                 "PM004",
                 "Dynamic variables are not executed; replace them with explicit examples or declared parameters.",
             ));
         }
-        let replacement = variables.get(key).ok_or_else(|| error("PM005","Unresolved variable affects request shape; provide an explicit environment override or replace it with a declared path parameter."))?;
-        if value.len().saturating_add(replacement.len()) > limits.max_bytes {
-            return Err(error(
-                "PM001",
-                "Variable expansion exceeds the byte budget; reduce the input.",
-            ));
-        }
-        value.replace_range(start..end + 2, replacement);
     }
-    Err(error(
-        "PM005",
-        "Variable expansion is cyclic or exceeds depth; provide a nonrecursive value.",
-    ))
+    path.split('/')
+        .map(|segment| {
+            let name = segment
+                .strip_prefix("{{")
+                .and_then(|s| s.strip_suffix("}}"))
+                .filter(|name| !name.contains(['{', '}']) && declared.contains(name));
+            if let Some(name) = name {
+                Ok(format!(":{name}"))
+            } else if segment.contains("{{") || segment.contains("}}") {
+                Err(error(
+                    "PM005",
+                    "Path variables must be :parameter segments or whole {{name}} segments declared in the URL's variable list; variable values are never copied into contract paths.",
+                ))
+            } else {
+                Ok(segment.to_owned())
+            }
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map(|segments| segments.join("/"))
 }
 
-fn auth(
-    value: Option<&Value>,
-    inherited: &Authentication,
-    variables: &BTreeMap<String, String>,
-    limits: &Limits,
-) -> Result<Authentication, Diagnostic> {
-    let Some(value) = value.filter(|v| !v.is_null()) else {
-        return Ok(inherited.clone());
-    };
-    Ok(match text(value, "type")? {
-        "noauth" => Authentication::Noauth,
-        "bearer" => Authentication::Bearer,
-        "basic" => Authentication::Basic,
-        "apikey" => {
-            let fields = array(value, "apikey")?;
-            let get = |key| {
-                fields
-                    .iter()
-                    .find(|f| f["key"] == key)
-                    .and_then(|f| f["value"].as_str())
-            };
-            let name = expand(get("key").ok_or_else(|| error("PM003","API key authentication needs an explicit key name and header/query location."))?,variables,limits)?;
-            let location = match get("in") {
-                Some("header") => ParameterLocation::Header,
-                Some("query") => ParameterLocation::Query,
-                _ => {
-                    return Err(error(
-                        "PM003",
-                        "API key authentication supports only explicit header or query locations.",
-                    ));
-                }
-            };
-            Authentication::ApiKey { name, location }
+/// Count JSON nodes without recursion.
+fn nodes(value: &Value) -> usize {
+    let mut pending = vec![value];
+    let mut count = 0usize;
+    while let Some(value) = pending.pop() {
+        count += 1;
+        match value {
+            Value::Array(values) => pending.extend(values),
+            Value::Object(values) => pending.extend(values.values()),
+            _ => {}
         }
-        _ => {
-            return Err(error(
-                "PM003",
-                "Unsupported authentication helper; use noauth, bearer, basic or header/query API key, or supply a reviewed OpenAPI security scheme.",
-            ));
-        }
-    })
+    }
+    count
 }
 
 fn events(value: &Value, report: &mut PostmanReport) -> Result<(), Diagnostic> {
@@ -321,17 +306,139 @@ fn unknown_shape() -> ShapeEvidence {
     }
 }
 
+fn budget_error() -> Diagnostic {
+    error(
+        "PM001",
+        "Variable expansion and parsed samples exceed the import-wide byte or node budget; reduce large or repeated variables and examples.",
+    )
+}
+
 struct Context<'a> {
     options: &'a PostmanOptions,
     limits: &'a Limits,
     output: PostmanImport,
+    /// Running totals across the whole import, checked on every expansion and parse.
+    expanded_bytes: usize,
+    sample_nodes: usize,
 }
 
 impl Context<'_> {
-    fn visit(
+    fn resolve<'s>(&'s self, scope: &'s Scope<'_, '_>, key: &str) -> Option<&'s str> {
+        self.options
+            .environment
+            .get(key)
+            .map(String::as_str)
+            .or_else(|| scope.get(key))
+    }
+
+    /// Expand variables, charging the result to one import-wide byte budget so a
+    /// large value referenced many times cannot amplify past `Limits::max_bytes`.
+    fn expand(&mut self, input: &str, scope: &Scope<'_, '_>) -> Result<String, Diagnostic> {
+        let limits = self.limits;
+        let mut value = input.to_owned();
+        for _ in 0..limits.max_depth {
+            let Some(start) = value.find("{{") else {
+                return self.charge_bytes(value);
+            };
+            let end = value[start + 2..]
+                .find("}}")
+                .map(|n| start + 2 + n)
+                .ok_or_else(|| {
+                    error(
+                        "PM005",
+                        "Malformed variable template; use a complete variable reference.",
+                    )
+                })?;
+            let key = &value[start + 2..end];
+            if key.starts_with('$') {
+                return Err(error(
+                    "PM004",
+                    "Dynamic variables are not executed; replace them with explicit examples or declared parameters.",
+                ));
+            }
+            let replacement = self.resolve(scope, key).ok_or_else(|| error("PM005","Unresolved variable affects request shape; provide an explicit environment override or replace it with a declared path parameter."))?;
+            if self
+                .expanded_bytes
+                .saturating_add(value.len())
+                .saturating_add(replacement.len())
+                > limits.max_bytes
+            {
+                return Err(budget_error());
+            }
+            let replacement = replacement.to_owned();
+            value.replace_range(start..end + 2, &replacement);
+        }
+        Err(error(
+            "PM005",
+            "Variable expansion is cyclic or exceeds depth; provide a nonrecursive value.",
+        ))
+    }
+
+    fn charge_bytes(&mut self, value: String) -> Result<String, Diagnostic> {
+        self.expanded_bytes = self.expanded_bytes.saturating_add(value.len());
+        if self.expanded_bytes > self.limits.max_bytes {
+            return Err(budget_error());
+        }
+        Ok(value)
+    }
+
+    /// Charge parsed sample nodes to the import-wide node budget.
+    fn sample(&mut self, value: Value) -> Result<ShapeEvidence, Diagnostic> {
+        self.sample_nodes = self.sample_nodes.saturating_add(nodes(&value));
+        if self.sample_nodes > self.limits.max_nodes {
+            return Err(budget_error());
+        }
+        Ok(shape(value))
+    }
+
+    fn auth(
         &mut self,
-        parent: &Value,
-        scope: &BTreeMap<String, String>,
+        value: Option<&Value>,
+        inherited: &Authentication,
+        scope: &Scope<'_, '_>,
+    ) -> Result<Authentication, Diagnostic> {
+        let Some(value) = value.filter(|v| !v.is_null()) else {
+            return Ok(inherited.clone());
+        };
+        Ok(match text(value, "type")? {
+            "noauth" => Authentication::Noauth,
+            "bearer" => Authentication::Bearer,
+            "basic" => Authentication::Basic,
+            "apikey" => {
+                let fields = array(value, "apikey")?;
+                let get = |key| {
+                    fields
+                        .iter()
+                        .find(|f| f["key"] == key)
+                        .and_then(|f| f["value"].as_str())
+                };
+                let name = get("key").ok_or_else(|| error("PM003","API key authentication needs an explicit key name and header/query location."))?;
+                let name = self.expand(name, scope)?;
+                let location = match get("in") {
+                    Some("header") => ParameterLocation::Header,
+                    Some("query") => ParameterLocation::Query,
+                    _ => {
+                        return Err(error(
+                            "PM003",
+                            "API key authentication supports only explicit header or query locations.",
+                        ));
+                    }
+                };
+                Authentication::ApiKey { name, location }
+            }
+            _ => {
+                return Err(error(
+                    "PM003",
+                    "Unsupported authentication helper; use noauth, bearer, basic or header/query API key, or supply a reviewed OpenAPI security scheme.",
+                ));
+            }
+        })
+    }
+
+    fn visit<'a>(
+        &mut self,
+        parent: &'a Value,
+        scope: Option<&Scope<'a, '_>>,
         inherited: &Authentication,
         pointer: &str,
         depth: usize,
@@ -343,10 +450,8 @@ impl Context<'_> {
             ));
         }
         events(parent, &mut self.output.report)?;
-        let scope = variables(parent, scope)?;
-        let mut effective = scope.clone();
-        effective.extend(self.options.environment.clone());
-        let inherited = auth(parent.get("auth"), inherited, &effective, self.limits)?;
+        let scope = Scope::new(parent, scope)?;
+        let inherited = self.auth(parent.get("auth"), inherited, &scope)?;
         for (index, item) in array(parent, "item")?.iter().enumerate() {
             if !enabled(item) {
                 self.output.report.disabled_items += 1;
@@ -360,7 +465,7 @@ impl Context<'_> {
                         "An item cannot be both a folder and a request.",
                     ));
                 }
-                self.visit(item, &scope, &inherited, &pointer, depth + 1)?;
+                self.visit(item, Some(&scope), &inherited, &pointer, depth + 1)?;
             } else {
                 self.request(item, &scope, &inherited, &pointer)
                     .map_err(|mut diagnostic| {
@@ -372,16 +477,15 @@ impl Context<'_> {
         Ok(())
     }
 
-    fn request(
+    fn request<'a>(
         &mut self,
-        item: &Value,
-        scope: &BTreeMap<String, String>,
+        item: &'a Value,
+        scope: &Scope<'a, '_>,
         inherited: &Authentication,
         pointer: &str,
     ) -> Result<(), Diagnostic> {
         events(item, &mut self.output.report)?;
-        let mut scope = variables(item, scope)?;
-        scope.extend(self.options.environment.clone());
+        let scope = Scope::new(item, Some(scope))?;
         let request = item.get("request").ok_or_else(|| {
             error(
                 "PM002",
@@ -398,7 +502,7 @@ impl Context<'_> {
                 "Proxy and client-certificate request semantics require an explicit reviewed client configuration.",
             ));
         }
-        let authentication = auth(request.get("auth"), inherited, &scope, self.limits)?;
+        let authentication = self.auth(request.get("auth"), inherited, &scope)?;
         let method = request
             .get("method")
             .and_then(Value::as_str)
@@ -463,7 +567,10 @@ impl Context<'_> {
             parameters.push(ParameterEvidence {
                 name,
                 location: ParameterLocation::Header,
-                shape: shape(json!(expand(&value, &scope, self.limits)?)),
+                shape: {
+                    let value = self.expand(&value, &scope)?;
+                    self.sample(json!(value))?
+                },
             });
         }
         if let Authentication::ApiKey {
@@ -494,11 +601,11 @@ impl Context<'_> {
                     "Only JSON request media are supported; supply a reviewed contract for other encodings.",
                 ));
             }
-            let raw = expand(text(value, "raw")?, &scope, self.limits)?;
+            let raw = self.expand(text(value, "raw")?, &scope)?;
             let parsed = serde_json::from_str(&raw).map_err(|_| error("PM006","Raw body is not valid JSON after variable resolution; provide explicit JSON examples."))?;
             body.push(MediaEvidence {
                 media_type: media.into(),
-                shape: shape(parsed),
+                shape: self.sample(parsed)?,
             });
         }
         let mut responses = Vec::new();
@@ -539,7 +646,7 @@ impl Context<'_> {
                 let sample = serde_json::from_str(raw).map_err(|_| error("PM006","Saved response body is not JSON; remove the unsupported example or provide a reviewed media schema."))?;
                 content.push(MediaEvidence {
                     media_type: media,
-                    shape: shape(sample),
+                    shape: self.sample(sample)?,
                 });
             }
             responses.push(ResponseEvidence { status, content });
@@ -563,9 +670,9 @@ impl Context<'_> {
     }
 
     fn url(
-        &self,
+        &mut self,
         value: &Value,
-        scope: &BTreeMap<String, String>,
+        scope: &Scope<'_, '_>,
         authentication: &Authentication,
     ) -> Result<(String, Vec<ParameterEvidence>, BTreeSet<String>), Diagnostic> {
         let mut origins = BTreeSet::new();
@@ -585,9 +692,8 @@ impl Context<'_> {
         let (raw_path, raw_query) = raw
             .split_once('?')
             .map_or((raw.as_str(), None), |(p, q)| (p, Some(q)));
-        // Path data becomes contract keys and provenance pointers. Unlike header,
-        // query and body samples, it is persisted verbatim, so captured variables
-        // must never be expanded there. Use explicit :parameter declarations.
+        // Only the origin may use variables. Path text is persisted as contract keys
+        // and provenance pointers, so it must be literal or an explicit :parameter.
         let path_start = if raw_path.starts_with("{{") {
             raw_path.find("}}").map(|end| end + 2)
         } else {
@@ -598,71 +704,71 @@ impl Context<'_> {
         .ok_or_else(|| {
             error(
                 "PM005",
-                "Request URL requires an explicit HTTP(S) origin or origin-only variable.",
+                "Request URL requires an explicit HTTP(S) origin or origin-only base URL variable.",
             )
         })?;
-        let literal_path = &raw_path[path_start..];
-        if literal_path.contains("{{") || literal_path.contains("}}") {
+        let literal = &raw_path[path_start..];
+        if !literal.is_empty() && !literal.starts_with('/') {
             return Err(error(
                 "PM005",
-                "Path variables must use explicit :parameter declarations; captured variable values cannot become persisted routes.",
+                "A base URL variable must occupy the entire origin before the path.",
             ));
         }
-        let expected_path = url::Url::parse(&format!("https://import.invalid{literal_path}"))
-            .map_err(|_| {
-                error(
-                    "PM005",
-                    "Request path must be an explicit literal or parameter template.",
-                )
-            })?;
-        let raw = if raw_path.starts_with("{{") {
-            let raw = raw_path;
-            let end = raw.find("}}").ok_or_else(|| {
-                error(
-                    "PM005",
-                    "Malformed origin variable; provide an origin-only base URL variable.",
-                )
-            })?;
-            let key = &raw[2..end];
-            if !raw[end + 2..].is_empty() && !raw[end + 2..].starts_with('/') {
-                return Err(error(
-                    "PM005",
-                    "An unresolved base URL variable must occupy the entire origin before the path.",
-                ));
+        // Path variables are declared by the structured URL's variable list; their
+        // values are never read, so they remain unknown parameter shapes.
+        let mut declared = BTreeSet::new();
+        for variable in array(value, "variable")? {
+            if enabled(variable) {
+                declared.insert(text(variable, "key")?);
             }
+        }
+        let templated = template_path(literal, &declared)?;
+        let expected = normalized_path(&templated)?;
+        let origin = &raw_path[..path_start];
+        let raw = if raw_path.starts_with("{{") {
+            let key = &raw_path[2..path_start - 2];
             if key.starts_with('$') {
                 return Err(error(
                     "PM004",
                     "Dynamic URL variables are not executed; configure an explicit origin.",
                 ));
             }
-            if !scope.contains_key(key) {
+            if self.resolve(scope, key).is_none() {
                 origins.insert(key.into());
-                format!("https://import.invalid{}", &raw[end + 2..])
+                format!("https://import.invalid{templated}")
             } else {
-                expand(raw, scope, self.limits)?
+                format!("{}{templated}", self.expand(origin, scope)?)
             }
         } else {
-            expand(raw_path, scope, self.limits)?
+            format!("{}{templated}", self.expand(origin, scope)?)
         };
         let parsed = url::Url::parse(&raw).map_err(|_| error("PM005","Request URL must be HTTP(S), with an explicit path and resolvable structural variables."))?;
         if !matches!(parsed.scheme(), "http" | "https")
             || parsed.host_str().is_none()
             || !parsed.username().is_empty()
             || parsed.password().is_some()
-            || parsed.fragment().is_some()
             || parsed.query().is_some()
+            || parsed.fragment().is_some()
         {
             return Err(error(
                 "PM005",
                 "Use an HTTP(S) URL without inline credentials or fragment; configure auth through a supported helper.",
             ));
         }
-        if parsed.path() != expected_path.path() {
+        if parsed.path() != expected {
             return Err(error(
                 "PM005",
-                "Origin variables must not introduce path data; declare the path separately with explicit :parameter declarations.",
+                "Base URL variables must hold an origin only; move any path prefix into the request path.",
             ));
+        }
+        if let Some(path) = value.get("path") {
+            let path = template_path(&components(Some(path), "/")?, &declared)?;
+            if normalized_path(&format!("/{}", path.trim_start_matches('/')))? != expected {
+                return Err(error(
+                    "PM005",
+                    "Structured and raw URL paths disagree; re-export a consistent URL before importing.",
+                ));
+            }
         }
         let mut parameters = Vec::new();
         let mut segments = Vec::new();
@@ -682,15 +788,6 @@ impl Context<'_> {
                 segments.push(format!("{{{name}}}"));
             } else {
                 segments.push(segment.into());
-            }
-        }
-        if let Some(path) = value.get("path") {
-            let path = format!("/{}", components(Some(path), "/")?.trim_start_matches('/'));
-            if path != parsed.path() {
-                return Err(error(
-                    "PM005",
-                    "Structured and raw URL paths disagree; re-export a consistent URL before importing.",
-                ));
             }
         }
         let mut keys = BTreeSet::new();
@@ -714,7 +811,10 @@ impl Context<'_> {
                 parameters.push(ParameterEvidence {
                     name,
                     location: ParameterLocation::Query,
-                    shape: shape(json!(expand(value, scope, self.limits)?)),
+                    shape: {
+                        let value = self.expand(value, scope)?;
+                        self.sample(json!(value))?
+                    },
                 });
             }
         } else {
@@ -734,12 +834,27 @@ impl Context<'_> {
                 parameters.push(ParameterEvidence {
                     name: name.into_owned(),
                     location: ParameterLocation::Query,
-                    shape: shape(json!(expand(&value, scope, self.limits)?)),
+                    shape: {
+                        let value = self.expand(&value, scope)?;
+                        self.sample(json!(value))?
+                    },
                 });
             }
         }
         Ok((segments.join("/"), parameters, origins))
     }
+}
+
+/// The path as `url` normalizes it, so raw and structured forms compare equally.
+fn normalized_path(path: &str) -> Result<String, Diagnostic> {
+    url::Url::parse(&format!("https://import.invalid{path}"))
+        .map(|url| url.path().to_owned())
+        .map_err(|_| {
+            error(
+                "PM005",
+                "Request path must be an explicit literal or :parameter template.",
+            )
+        })
 }
 
 fn components(value: Option<&Value>, separator: &str) -> Result<String, Diagnostic> {
@@ -860,8 +975,10 @@ pub fn import_collection(
             },
             report: PostmanReport::default(),
         },
+        expanded_bytes: 0,
+        sample_nodes: 0,
     };
-    context.visit(&root, &BTreeMap::new(), &Authentication::Unknown, "", 0)?;
+    context.visit(&root, None, &Authentication::Unknown, "", 0)?;
     // Reuse the engine's total bytes/nodes/samples/source/schema validation.
     crate::infer(
         &context.output.evidence,

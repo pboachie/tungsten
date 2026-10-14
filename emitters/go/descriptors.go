@@ -565,6 +565,7 @@ func (g *gen) apiLit() string {
 		b.WriteByte('\n')
 	}
 	line("&tungsten.APIDescriptor{")
+	line("Redirects: tungsten.RedirectPolicy(%s),", goString(ir.Agent.Redirects))
 	line("Name: %s,", goString(ir.API.Name.Wire))
 	line("Version: %s,", goString(g.opts.version))
 	line("TungstenVersion: %s,", goString(ir.Generator.TungstenVersion))

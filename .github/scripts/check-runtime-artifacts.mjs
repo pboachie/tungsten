@@ -95,7 +95,7 @@ try {
 
   // Parse the distributed JS, not source. Only the WebMCP root graph is
   // browser-safe; the explicitly separate runtime/node export is allowed.
-  const ts = createRequire(join(root, "runtimes/mcp/package.json"))("typescript");
+  const ts = createRequire(join(buildRoot, "mcp/package.json"))("typescript");
   const builtins = new Set(builtinModules.map(name => name.replace(/^node:/, "")));
   const visited = new Set();
   const walk = file => {

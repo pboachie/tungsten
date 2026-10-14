@@ -1,15 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! Build a generated Python package in its own virtual environment.
 use std::path::Path;
-use std::process::Command;
 use std::time::Duration;
 
 pub(super) fn interpreter() -> Result<&'static str, &'static str> {
     for program in ["python3", "python"] {
-        if Command::new(program)
-            .args(["-c", "import sys; sys.exit(sys.version_info < (3,12))"])
-            .output()
-            .is_ok_and(|o| o.status.success())
+        if super::init_setup::execute(
+            program,
+            &["-c", "import sys; sys.exit(sys.version_info < (3,12))"],
+            Path::new("."),
+            Duration::from_secs(5),
+        )
+        .is_ok()
         {
             return Ok(program);
         }
@@ -26,6 +28,9 @@ fn python(directory: &Path) -> std::path::PathBuf {
 }
 
 pub(super) fn build(directory: &Path, runtime: Option<&Path>) -> Result<(), String> {
+    let directory =
+        std::path::absolute(directory).map_err(|_| "cannot resolve Python project directory")?;
+    let directory = directory.as_path();
     use super::init_setup::execute;
     execute(
         interpreter()?,
@@ -102,6 +107,9 @@ pub(super) fn build(directory: &Path, runtime: Option<&Path>) -> Result<(), Stri
 }
 
 pub(super) fn run(directory: &Path, base_url: &str, operation_id: &str) -> Result<(), String> {
+    let directory =
+        std::path::absolute(directory).map_err(|_| "cannot resolve Python project directory")?;
+    let directory = directory.as_path();
     super::init_setup::execute(
         python(directory)
             .to_str()

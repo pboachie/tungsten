@@ -160,6 +160,7 @@ pub(crate) const DESCRIPTOR_RESERVED: &[&str] = &[
     "toSchemaLike",
     "rpc",
     "requireImportPolicyV1",
+    "requireRedirectPolicyV1",
 ];
 
 impl<'a> Plan<'a> {

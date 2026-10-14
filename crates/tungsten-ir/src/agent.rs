@@ -308,6 +308,26 @@ pub enum Jitter {
     Equal,
 }
 
+/// API redirect policy. Mutations and cross-origin redirects are never followed.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum RedirectPolicy {
+    #[default]
+    SameOriginRead,
+    None,
+}
+
+impl RedirectPolicy {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::SameOriginRead => "same_origin_read",
+            Self::None => "none",
+        }
+    }
+}
+
 ir_struct! {
     pub struct RetryPolicy {
         /// Attempts after the first.
@@ -431,6 +451,9 @@ impl Default for DisclosurePolicy {
 ir_struct! {
     #[derive(Default)]
     pub struct AgentModel {
+        /// `none` cannot be relaxed by runtime client options.
+        #[serde(default)]
+        pub redirects: RedirectPolicy,
         #[serde(default)]
         pub macros: Vec<Macro>,
         #[serde(default)]

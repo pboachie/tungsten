@@ -4,9 +4,23 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-pub(super) fn run(directory: &Path, base_url: &str, operation_id: &str) -> Result<(), String> {
+pub(super) fn run(
+    directory: &Path,
+    base_url: &str,
+    operation_id: &str,
+    method: &str,
+    arguments: &str,
+) -> Result<(), String> {
     let mut child = Command::new("node")
-        .args(["--input-type=module", "-e", CHECK, base_url, operation_id])
+        .args([
+            "--input-type=module",
+            "-e",
+            CHECK,
+            base_url,
+            operation_id,
+            method,
+            arguments,
+        ])
         .current_dir(directory)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -35,7 +49,7 @@ import {spawn} from 'node:child_process';
 import {readFileSync} from 'node:fs';
 import {pathToFileURL} from 'node:url';
 import {resolve} from 'node:path';
-const [baseUrl, operationId] = process.argv.slice(1);
+const [baseUrl, operationId, allowedMethod, encodedArgs] = process.argv.slice(1);
 const base = new URL(baseUrl);
 if (base.protocol !== 'http:' || !['127.0.0.1', '[::1]'].includes(base.hostname) || base.username || base.password) throw new Error('loopback mock required');
 const manifest = JSON.parse(readFileSync('manifest.json', 'utf8'));
@@ -51,11 +65,12 @@ const env = {[variable('BASE_URL_ENV')]: baseUrl, [variable('MODE_ENV')]: 'discr
 if (process.env.SystemRoot) env.SystemRoot = process.env.SystemRoot;
 const bootstrap = `
 const base = ${JSON.stringify(base.origin)};
+const allowedMethod = ${JSON.stringify(allowedMethod)};
 const original = globalThis.fetch;
 globalThis.fetch = (input, options) => {
  const url = new URL(typeof input === 'string' || input instanceof URL ? input : input.url);
  const method = options?.method ?? (typeof input === 'object' ? input.method : undefined) ?? 'GET';
- if (url.origin !== base || url.username || url.password || method.toUpperCase() !== 'GET') throw new Error('non-local GET blocked');
+ if (url.origin !== base || url.username || url.password || method.toUpperCase() !== allowedMethod) throw new Error('non-local request blocked');
  return original(input, {...options, redirect:'error'});
 };
 setTimeout(() => process.exit(1), 18000).unref();
@@ -98,9 +113,9 @@ try {
   cursor = listed.nextCursor; if (!cursor) break;
  }
  if (!found || cursor) throw new Error('MCP discovery incomplete');
- const args = {};
+ const args = JSON.parse(encodedArgs);
  if (tool.safety !== 'read_only') {
-  const preview = await request('tools/call', {name:'preview', arguments:{tool:tool.name, arguments:{}}});
+  const preview = await request('tools/call', {name:'preview', arguments:{tool:tool.name, arguments:args}});
   if (preview.isError) throw new Error('MCP preview failed');
   const token = preview.structuredContent?.confirmation_token;
   if (tool.reserved.confirmationToken) {

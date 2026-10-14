@@ -67,6 +67,7 @@ mod envelope;
 mod expr;
 mod helpers;
 mod idempotency;
+mod lease;
 mod macros;
 mod oauth;
 mod pages;

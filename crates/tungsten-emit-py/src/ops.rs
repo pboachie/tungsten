@@ -1184,6 +1184,7 @@ pub(crate) fn api_py(plan: &Plan<'_>, opts: &Options) -> Py {
                     .collect(),
             ),
         ),
+        ("redirects", Py::str(ir.agent.redirects.as_str())),
         (
             "retries",
             Py::dict(vec![
@@ -1257,6 +1258,9 @@ pub(crate) fn descriptors_file(
     if imported {
         imports.add("tungsten_runtime", "require_import_policy_v1");
     }
+    if plan.ir.agent.redirects == tungsten_ir::RedirectPolicy::None {
+        imports.add("tungsten_runtime", "require_redirect_policy_v1");
+    }
     // Every descriptor names `_internal.Request`.
     uses.internal |= !plan.ops.is_empty();
     uses.add_to(plan, &mut imports, ".", ".models");
@@ -1272,6 +1276,9 @@ pub(crate) fn descriptors_file(
     if imported {
         w.blank();
         w.line("require_import_policy_v1()");
+    }
+    if plan.ir.agent.redirects == tungsten_ir::RedirectPolicy::None {
+        w.line("require_redirect_policy_v1()");
     }
     let mut out = w.finish();
     let text = body.finish();
