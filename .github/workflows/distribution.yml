@@ -103,6 +103,8 @@ jobs:
     permissions:
       contents: write
       packages: write
+      id-token: write
+      attestations: write
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: pboachie/tungsten
@@ -115,6 +117,7 @@ jobs:
         with:
           name: distribution
       - name: Publish the container and package-manager manifests
+        id: publish
         run: |
           set -eu
           (cd distribution && sha256sum --check DISTRIBUTION_SHA256SUMS)
@@ -137,6 +140,21 @@ jobs:
           PY
           )
           if [ -n "$newest" ] && [ "$TAG" = "$newest" ]; then set -- "$@" --tag "$image:latest"; fi
-          docker buildx build --platform linux/amd64,linux/arm64 --file Dockerfile --label "org.opencontainers.image.source=https://github.com/pboachie/tungsten" --label "org.opencontainers.image.version=${TAG#v}" "$@" --push distribution/container
+          docker buildx build --platform linux/amd64,linux/arm64 --file Dockerfile --label "org.opencontainers.image.source=https://github.com/pboachie/tungsten" --label "org.opencontainers.image.version=${TAG#v}" "$@" --metadata-file "$RUNNER_TEMP/build-metadata.json" --push distribution/container
+          digest=$(python3 -c 'import json,os,re; d=json.load(open(os.environ["RUNNER_TEMP"]+"/build-metadata.json"))["containerimage.digest"]; assert re.fullmatch(r"sha256:[0-9a-f]{64}", d), "unexpected image digest"; print(d)')
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
           tar -czf winget-manifests.tar.gz -C distribution/winget manifests
           gh release upload "$TAG" distribution/tungsten.rb winget-manifests.tar.gz distribution/DISTRIBUTION_SHA256SUMS
+      - name: Attest the container image
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ghcr.io/pboachie/tungsten
+          subject-digest: ${{ steps.publish.outputs.digest }}
+          push-to-registry: true
+      - name: Attest the uploaded formula, manifests and checksums
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            distribution/tungsten.rb
+            winget-manifests.tar.gz
+            distribution/DISTRIBUTION_SHA256SUMS
