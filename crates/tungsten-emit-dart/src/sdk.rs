@@ -160,6 +160,18 @@ pub(crate) struct Arg {
     pub doc: String,
 }
 
+/// The representation of an argument of `presence`: the presence carries
+/// whether null is a value, so a nullable type is unwrapped once (a
+/// required nullable `String` is `String?`, an optional nullable one
+/// `Patch<String>`).
+fn arg_dt(dt: Dt, presence: Presence) -> Dt {
+    match (presence, dt) {
+        (Presence::Required, dt) => dt,
+        (_, Dt::Nullable(inner)) => *inner,
+        (_, dt) => dt,
+    }
+}
+
 impl Arg {
     /// Whether the key must be given.
     pub fn required(&self) -> bool {
@@ -223,7 +235,7 @@ pub(crate) fn op_args(g: &Gen<'_, '_>, o: usize) -> Vec<Arg> {
             Arg {
                 name: names.get(i).cloned().unwrap_or_else(|| a.key.clone()),
                 key: a.key.clone(),
-                dt,
+                dt: arg_dt(dt, a.presence),
                 presence: a.presence,
                 doc,
             }
@@ -259,7 +271,7 @@ pub(crate) fn macro_args(g: &Gen<'_, '_>, k: usize) -> Vec<Arg> {
             Arg {
                 name: names.get(i).cloned().unwrap_or_else(|| f.key.clone()),
                 key: f.key.clone(),
-                dt,
+                dt: arg_dt(dt, f.presence),
                 presence: f.presence,
                 doc,
             }
