@@ -456,6 +456,9 @@ func encodeBody(d *BodyDescriptor, v any, has bool, redact func(any) any) (encod
 					if ct == "" {
 						ct = "application/octet-stream"
 					}
+					if !validMediaType(ct) {
+						return encodedBody{}, &serializationError{parameter, "multipart file content types that are valid media types", v}
+					}
 					parts = append(parts, multipartPart{name: k, kind: partFile, data: bin.Data, filename: name, contentType: ct})
 				} else if _, isObj := x.(*Object); isObj {
 					parts = append(parts, multipartPart{name: k, kind: partJSON, text: JSONText(x)})
@@ -522,6 +525,20 @@ func validHeaderValue(value string) bool {
 		}
 	}
 	return true
+}
+
+// validMediaType: `type/subtype` (RFC 9110 tokens) optionally followed by
+// `;` parameters, all in visible ASCII, space and tab.
+func validMediaType(value string) bool {
+	head, _, _ := strings.Cut(value, ";")
+	for i := 0; i < len(value); i++ {
+		c := value[i]
+		if !(c == '\t' || (c >= 0x20 && c <= 0x7e)) {
+			return false
+		}
+	}
+	typ, sub, ok := strings.Cut(strings.TrimSpace(head), "/")
+	return ok && validHeaderName(typ) && validHeaderName(sub)
 }
 
 // headerValueBytes is the Latin-1 bytes of a valid header value.

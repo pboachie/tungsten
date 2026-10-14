@@ -442,6 +442,17 @@ pub fn encode_body(
                 let mut shown = Vec::new();
                 for item in list {
                     if let Some(binary) = binary_of(item) {
+                        if binary
+                            .content_type
+                            .as_deref()
+                            .is_some_and(|ct| !valid_media_type(ct))
+                        {
+                            return Err(SerializationError::new(
+                                parameter,
+                                "multipart file content types that are valid media types",
+                                value,
+                            ));
+                        }
                         shown.push(Value::String(binary_display(
                             binary.data.len(),
                             binary.content_type.as_deref().unwrap_or(""),
@@ -540,6 +551,20 @@ pub fn valid_header_value(value: &str) -> bool {
     value.chars().all(|c| {
         c == '\t' || ('\u{20}'..='\u{7e}').contains(&c) || ('\u{80}'..='\u{ff}').contains(&c)
     })
+}
+
+/// Whether `value` is `type/subtype` (RFC 9110 tokens) optionally followed by
+/// `;` parameters, all in visible ASCII, space and tab.
+pub fn valid_media_type(value: &str) -> bool {
+    if !value
+        .bytes()
+        .all(|b| b == b'\t' || (0x20..=0x7e).contains(&b))
+    {
+        return false;
+    }
+    let head = value.split(';').next().unwrap_or("").trim();
+    head.split_once('/')
+        .is_some_and(|(kind, sub)| valid_header_name(kind) && valid_header_name(sub))
 }
 
 /// The bytes of a header value that [`valid_header_value`] accepted.
