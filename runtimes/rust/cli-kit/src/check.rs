@@ -18,6 +18,7 @@ pub const RESERVED_FLAGS: &[&str] = &[
     "i-understand",
     "idempotency-key",
     "json",
+    "max-pages",
     "no-color",
     "profile",
     "timeout",

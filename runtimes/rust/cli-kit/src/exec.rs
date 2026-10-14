@@ -2,17 +2,22 @@
 //! Running a command: parse, resolve settings, build the client, call
 //! through [`Dispatch`], apply the confirmation flow and print.
 
+use std::ops::ControlFlow;
+
 use clap::ArgMatches;
 use serde_json::{Value, json};
 use tungsten_runtime::{
     CallOptions, Category, ClientOptions, ConfigError, Confirm, Diagnostic, Dispatch, Error,
-    PreviewResult, ResponseMeta, Retryable, Safety, Status, Trace, Verification,
+    MAX_PAGES_REACHED, Page, PreviewResult, ResponseMeta, Retryable, Safety, Status, Trace,
+    Verification,
 };
 
 use crate::config::{self, Flags, Found, Settings};
 use crate::ctx::{Ctx, Fail};
 use crate::exit;
-use crate::render::{error_human, human_value, json_doc, preview_human, preview_json};
+use crate::render::{
+    error_human, human_array_item, human_value, json_doc, preview_human, preview_json,
+};
 use crate::spec::CliFlag;
 use crate::tree::{self, Leaf, Tree};
 use crate::{builtin, check, dotted, explain, values};
@@ -104,6 +109,25 @@ fn fail(ctx: &mut Ctx<'_>, e: &Error) -> u8 {
         let line = error_human(&e.diagnostic, ctx.err_style);
         ctx.err(&line);
     }
+    fail_partial(ctx, e)
+}
+
+/// A failure after part of a streamed result is already on standard
+/// output: the diagnostic goes to standard error only (the envelope as
+/// compact JSON with `--json`), so standard output is never a second
+/// document.
+fn fail_streamed(ctx: &mut Ctx<'_>, e: &Error) -> u8 {
+    let line = if ctx.json {
+        let doc = serde_json::to_value(&*e.diagnostic).unwrap_or(Value::Null);
+        json_doc(&doc, false)
+    } else {
+        error_human(&e.diagnostic, ctx.err_style)
+    };
+    ctx.err(&line);
+    fail_partial(ctx, e)
+}
+
+fn fail_partial(ctx: &mut Ctx<'_>, e: &Error) -> u8 {
     if let Some(p) = &e.partial {
         let line = format!(
             "partial result of the failed call (store any secret in it now): {}",
@@ -179,6 +203,11 @@ fn success(ctx: &mut Ctx<'_>, done: Done<'_>, once: &[String], shown_once: bool)
         };
         ctx.err(&line);
     }
+    shown_once_note(ctx, once, shown_once);
+    exit::OK
+}
+
+fn shown_once_note(ctx: &mut Ctx<'_>, once: &[String], shown_once: bool) {
     if shown_once {
         let what = if once.is_empty() {
             "this response holds values".to_string()
@@ -191,6 +220,121 @@ fn success(ctx: &mut Ctx<'_>, done: Done<'_>, once: &[String], shown_once: bool)
         );
         ctx.err(&line);
     }
+}
+
+/// `--all`: the items of every page as one array, written page by page. The
+/// bytes are those of the array printed whole (compact or indented JSON
+/// with `--json`, the human form otherwise), but only one page is held at a
+/// time. A stop at `--max-pages` closes the array and notes on standard
+/// error that more pages exist; a failure before the first page is the
+/// ordinary failure output, and one after it ends the output unterminated
+/// with the diagnostic on standard error and the failure's exit code.
+struct ArrayOut<'c, 'a> {
+    ctx: &'c mut Ctx<'a>,
+    started: bool,
+    pages: u32,
+    capped: bool,
+    failed: Option<Error>,
+    max_pages: Option<usize>,
+}
+
+impl ArrayOut<'_, '_> {
+    fn indented(&self) -> bool {
+        !self.ctx.json || self.ctx.pretty
+    }
+
+    fn item_text(&self, item: &Value) -> String {
+        if !self.ctx.json {
+            human_array_item(item, self.ctx.out_style)
+        } else if self.ctx.pretty {
+            json_doc(item, true).replace('\n', "\n  ")
+        } else {
+            json_doc(item, false)
+        }
+    }
+
+    fn page(&mut self, result: tungsten_runtime::Result<Page<Value>>) -> ControlFlow<()> {
+        let page = match result {
+            Ok(r) => r.value,
+            Err(e) => {
+                if self.max_pages.is_some() && e.diagnostic.remediation == MAX_PAGES_REACHED {
+                    self.capped = true;
+                } else {
+                    self.failed = Some(e);
+                }
+                return ControlFlow::Break(());
+            }
+        };
+        self.pages += 1;
+        let mut text = String::new();
+        for item in &page.items {
+            text.push_str(match (self.started, self.indented()) {
+                (false, false) => "[",
+                (false, true) => "[\n  ",
+                (true, false) => ",",
+                (true, true) => ",\n  ",
+            });
+            self.started = true;
+            text.push_str(&self.item_text(item));
+        }
+        if !text.is_empty() {
+            self.ctx.out_part(&text);
+        }
+        ControlFlow::Continue(())
+    }
+}
+
+async fn print_all<D: Dispatch>(
+    ctx: &mut Ctx<'_>,
+    client: &D,
+    operation: &str,
+    args: Value,
+    opts: CallOptions,
+    note: (&[String], bool),
+) -> u8 {
+    let max_pages = opts.max_pages;
+    let mut out = ArrayOut {
+        ctx,
+        started: false,
+        pages: 0,
+        capped: false,
+        failed: None,
+        max_pages,
+    };
+    let mut sink = |r| out.page(r);
+    client.pages_each(operation, args, opts, &mut sink).await;
+    let ArrayOut {
+        ctx,
+        started,
+        pages,
+        capped,
+        failed,
+        ..
+    } = out;
+    if let Some(e) = failed {
+        return if started {
+            fail_streamed(ctx, &e)
+        } else {
+            fail(ctx, &e)
+        };
+    }
+    let close = match (started, !ctx.json || ctx.pretty) {
+        (false, _) => "[]",
+        (true, false) => "]",
+        (true, true) => "\n]",
+    };
+    ctx.out_part(&format!("{close}\n"));
+    if capped {
+        let limit = max_pages.unwrap_or_default();
+        let line = format!(
+            "{}: stopped after {pages} page{} (--max-pages {limit}); more pages are available. \
+             Raise --max-pages to fetch more.",
+            ctx.err_style.yellow("note"),
+            if pages == 1 { "" } else { "s" },
+        );
+        ctx.err(&line);
+    }
+    shown_once_note(ctx, note.0, note.1);
     exit::OK
 }
 
@@ -269,19 +413,7 @@ async fn execute<D: Dispatch>(ctx: &mut Ctx<'_>, client: &D, plan: Plan<'_>) -> 
         };
     }
     if all && let Target::Op(id) = target {
-        let mut items = Vec::new();
-        for page in client.pages(id, args, opts).await {
-            match page {
-                Ok(r) => items.extend(r.value.items),
-                Err(e) => return fail(ctx, &e),
-            }
-        }
-        let done = Done {
-            value: Some(Value::Array(items)),
-            meta: None,
-            verification: None,
-        };
-        return success(ctx, done, &once_fields, shown_once);
+        return print_all(ctx, client, id, args, opts, (&once_fields, shown_once)).await;
     }
     let outcome = match target {
         Target::Op(id) => client.invoke(id, args, opts).await,
@@ -363,6 +495,11 @@ fn call_options(m: &ArgMatches) -> Result<CallOptions, Fail> {
     Ok(CallOptions {
         idempotency_key: key.map(str::to_string),
         verify: flag(m, "verify"),
+        max_pages: m
+            .try_get_one::<u32>("max-pages")
+            .ok()
+            .flatten()
+            .map(|n| *n as usize),
         ..CallOptions::default()
     })
 }
