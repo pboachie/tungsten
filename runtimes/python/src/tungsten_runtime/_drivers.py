@@ -21,6 +21,7 @@ import socket
 import ssl
 import threading
 import time
+import weakref
 from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Iterator
 from concurrent.futures import CancelledError
 from dataclasses import dataclass, replace
@@ -98,6 +99,9 @@ class _NativeSyncTransport(httpx.BaseTransport):
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
         self._client: httpx.AsyncClient | None = None
+        # Stops the loop thread and closes the pool of a transport that is
+        # dropped (its client never closed); close() detaches it.
+        self._finalizer: weakref.finalize[..., Any] | None = None
         self._closed = False
         self._stopped = threading.Event()
         self._responses: set[httpx.Response] = set()
@@ -111,6 +115,9 @@ class _NativeSyncTransport(httpx.BaseTransport):
         if self._loop is None:
             loop = asyncio.new_event_loop()
             self._loop = loop
+            # The pool belongs to the loop; the finalizer references only
+            # the loop, its thread and the pool, never the transport.
+            self._client = async_http(None)
 
             def serve() -> None:
                 asyncio.set_event_loop(loop)
@@ -123,9 +130,16 @@ class _NativeSyncTransport(httpx.BaseTransport):
 
             self._thread = threading.Thread(target=serve, name="tungsten-http", daemon=True)
             self._thread.start()
+            self._finalizer = weakref.finalize(self, _abandon_loop, loop, self._thread, self._client)
         return self._loop
 
+    def _on_loop(self) -> bool:
+        return self._thread is not None and threading.current_thread() is self._thread
+
     def run[T](self, work: Coroutine[Any, Any, T]) -> T:
+        if self._on_loop():
+            work.close()
+            raise RuntimeError("a synchronous call cannot run on the transport's own loop thread")
         try:
             with self._lock:
                 pending = asyncio.run_coroutine_threadsafe(work, self._start())
@@ -135,6 +149,15 @@ class _NativeSyncTransport(httpx.BaseTransport):
         return pending.result()
 
     def cleanup(self, work: Coroutine[Any, Any, None]) -> None:
+        if self._on_loop():
+            # A response finalized on the loop thread (garbage collection can
+            # run there) cannot wait for the loop; shutdown joins its cleanup.
+            with self._lock:
+                if self._closed or self._loop is None:
+                    work.close()
+                else:
+                    self._loop.create_task(work)
+            return
         with self._lock:
             if self._closed:
                 work.close()
@@ -166,7 +189,7 @@ class _NativeSyncTransport(httpx.BaseTransport):
 
     async def _send(self, request: httpx.Request, deadline: float | None) -> httpx.Response:
         if self._client is None:
-            self._client = async_http(None)
+            raise RuntimeError("The transport is closed")
         # A fresh Request avoids consuming an outer sync-only request stream
         # on the async loop. Headers, URL and timeout extensions stay exact.
         inner = httpx.Request(
@@ -220,6 +243,8 @@ class _NativeSyncTransport(httpx.BaseTransport):
             first = not self._closed
             self._closed = True
             loop, thread = self._loop, self._thread
+            if self._finalizer is not None:
+                self._finalizer.detach()
         if not first:
             self._stopped.wait()
             return
@@ -232,6 +257,34 @@ class _NativeSyncTransport(httpx.BaseTransport):
                     thread.join()
         finally:
             self._stopped.set()
+
+
+def _abandon_loop(
+    loop: asyncio.AbstractEventLoop, thread: threading.Thread, client: httpx.AsyncClient
+) -> None:
+    """Release a dropped transport's loop thread: cancel its work, close the
+    pool, stop the loop (whose thread then closes it). Runs when the
+    transport is garbage collected without close(), or at interpreter exit;
+    it waits for the thread unless it runs on that thread itself."""
+
+    async def release() -> None:
+        current = asyncio.current_task()
+        tasks = [task for task in asyncio.all_tasks() if task is not current]
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await client.aclose()
+
+    def stop(_: object) -> None:
+        with contextlib.suppress(RuntimeError):
+            loop.call_soon_threadsafe(loop.stop)
+
+    try:
+        asyncio.run_coroutine_threadsafe(release(), loop).add_done_callback(stop)
+    except RuntimeError:
+        return  # The loop is already closed.
+    if threading.current_thread() is not thread:
+        thread.join(5)
 
 
 class _NativeSyncBody(httpx.SyncByteStream):
@@ -645,6 +698,16 @@ class SyncDriver:
             remaining = effect.deadline_ms / 1000 - time.monotonic()
             if remaining <= 0:
                 raise PollExpired()
+            if isinstance(effect.effect, Sleep):
+                # A wait needs no worker: it runs here for at most the time
+                # left, so an expiring poll never holds a worker permit.
+                delay = max(0.0, effect.effect.ms) / 1000
+                time.sleep(min(delay, remaining))
+                if delay >= remaining:
+                    raise PollExpired()
+                return None
+            # Workers run only what can block for an unbounded time: the
+            # attempt and the caller's callbacks (stores, hooks, token sources).
             if not self._poll_workers.acquire(timeout=remaining):
                 raise PollExpired()
             completed = threading.Event()
