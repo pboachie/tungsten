@@ -9,6 +9,20 @@ changes.
 
 ## [Unreleased]
 
+### Added
+
+- Generated Rust CLIs: `--max-pages <N>` (with `--all`) stops paging after N
+  pages and notes on standard error that more pages are available. There is no
+  default limit.
+
+### Changed
+
+- Generated Rust CLIs: `--all` writes its array page by page instead of
+  collecting every item first. The output is byte-for-byte the same on
+  success; a failure after the first page leaves the array unterminated and is
+  reported on standard error. `Dispatch` gains the provided method
+  `pages_each`, which generated clients implement lazily.
+
 ## [0.1.2]
 
 ### Breaking
