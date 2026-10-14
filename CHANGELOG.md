@@ -9,6 +9,10 @@ changes.
 
 ## [Unreleased]
 
+### Changed
+
+- Distribution verifies the build provenance attestation of every release asset it consumes before rebuilding the container image, Homebrew formula and winget manifests.
+
 ## [0.1.2]
 
 ### Breaking
