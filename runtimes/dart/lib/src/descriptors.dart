@@ -143,7 +143,7 @@ final class OperationDescriptor {
         doc['page_item'] is Map ? Schema(_map(doc['page_item']), defs) : null;
     final s = doc['stream'];
     stream = s is Map
-        ? _StreamSpec(
+        ? StreamDescriptor._(
             Schema(_map(_map(s)['event']), defs),
             _map(s)['done'] as String?,
             _map(s)['flag'] as String?,
@@ -205,14 +205,17 @@ final class OperationDescriptor {
   /// The validator of page items.
   late final Schema? pageItem;
 
-  late final _StreamSpec? stream;
+  /// The event stream of a streaming operation.
+  late final StreamDescriptor? stream;
 
   /// Whether the operation has an event stream.
   bool get hasStream => stream != null;
 
   /// The parameters the caller supplies as arguments.
-  List<ParamDescriptor> get argumentParams =>
-      [for (final p in params) if (p.isArgument) p];
+  List<ParamDescriptor> get argumentParams => [
+        for (final p in params)
+          if (p.isArgument) p
+      ];
 
   /// The safety tier.
   String get safety => agent['safety']! as String;
@@ -320,11 +323,18 @@ final class OperationDescriptor {
   }
 }
 
-final class _StreamSpec {
-  const _StreamSpec(this.event, this.done, this.flag);
+/// The event stream of an operation: the validator of each event's data,
+/// the data that ends the stream and the argument that asks for it.
+final class StreamDescriptor {
+  const StreamDescriptor._(this.event, this.done, this.flag);
 
+  /// The validator of each event's data.
   final Schema event;
+
+  /// The data that ends the stream (`[DONE]`), when there is one.
   final String? done;
+
+  /// The argument set to true to ask for the stream, when there is one.
   final String? flag;
 }
 

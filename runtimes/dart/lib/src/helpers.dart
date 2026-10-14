@@ -207,18 +207,6 @@ abstract final class _Helpers {
     return out.isNotEmpty;
   }
 
-  /// The placeholders of [args] in a preview URL as written instead of
-  /// percent-encoded.
-  static String unescapePlaceholders(String url, Object? args) {
-    final found = <String>[];
-    placeholdersIn(args, found);
-    var out = url;
-    for (final text in found.toSet()) {
-      out = out.replaceAll(_Serialize.encodeComponent(text), text);
-    }
-    return out;
-  }
-
   /// " (name value, ...)": the scalar, non-sensitive arguments a call was
   /// made with (at most four, by wire name).
   static String sentArguments(

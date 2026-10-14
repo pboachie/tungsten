@@ -36,7 +36,8 @@ final class _Encoded {
 enum _PartKind { text, json, file }
 
 final class _Part {
-  const _Part(this.name, this.kind, {this.text, this.data, this.filename, this.contentType});
+  const _Part(this.name, this.kind,
+      {this.text, this.data, this.filename, this.contentType});
 
   final String name;
   final _PartKind kind;
@@ -103,8 +104,9 @@ abstract final class _Serialize {
             (encodeComponent('${e.key}'), encodeComponent(scalar(e.value))),
       ];
 
-  static List<String> _flat(List<(String, String)> pairs) =>
-      [for (final (k, v) in pairs) ...[k, v]];
+  static List<String> _flat(List<(String, String)> pairs) => [
+        for (final (k, v) in pairs) ...[k, v]
+      ];
 
   /// One path parameter value, percent-encoded.
   static String pathParam(ParamDescriptor p, Object? value) {
@@ -200,7 +202,10 @@ abstract final class _Serialize {
   /// A header parameter (simple style, not encoded).
   static String headerParam(ParamDescriptor p, Object? value) {
     if (value is List) {
-      return [for (final v in value) if (v != null) scalar(v)].join(',');
+      return [
+        for (final v in value)
+          if (v != null) scalar(v)
+      ].join(',');
     }
     if (value is Map) {
       return [
@@ -217,7 +222,8 @@ abstract final class _Serialize {
   /// name=value of a cookie parameter.
   static String cookieParam(ParamDescriptor p, Object? value) {
     if (value is List) return '${p.wire}=${_encodedItems(value).join(',')}';
-    if (value is Map) return '${p.wire}=${_flat(_encodedPairs(value)).join(',')}';
+    if (value is Map)
+      return '${p.wire}=${_flat(_encodedPairs(value)).join(',')}';
     return '${p.wire}=${encodeComponent(scalar(value))}';
   }
 
@@ -382,7 +388,8 @@ abstract final class _Serialize {
     Object? Function(Object? display) redact,
   ) {
     if (value is! Map) {
-      return _SerializationError('body', 'an object of multipart fields', value);
+      return _SerializationError(
+          'body', 'an object of multipart fields', value);
     }
     final parts = <_Part>[];
     final display = <String, Object?>{};
@@ -390,7 +397,12 @@ abstract final class _Serialize {
       final k = '${e.key}';
       final item = e.value;
       if (item == null) continue;
-      final list = item is List ? [for (final x in item) if (x != null) x] : [item];
+      final list = item is List
+          ? [
+              for (final x in item)
+                if (x != null) x
+            ]
+          : [item];
       final shown = <Object?>[];
       for (final x in list) {
         final bin = Binary.tryFrom(x);
@@ -432,7 +444,8 @@ abstract final class _Serialize {
   /// The bytes of a multipart body and its content type.
   static (List<int>, String) multipartBody(List<_Part> parts) {
     final boundary = [
-      for (final b in _Util.randomBytes(16)) b.toRadixString(16).padLeft(2, '0'),
+      for (final b in _Util.randomBytes(16))
+        b.toRadixString(16).padLeft(2, '0'),
     ].join();
     final out = BytesBuilder(copy: false);
     String quote(String s) => s
@@ -471,7 +484,8 @@ abstract final class _Serialize {
   /// Visible ASCII, tab, space and Latin-1 characters.
   static bool validHeaderValue(String value) {
     for (final c in value.codeUnits) {
-      final ok = c == 0x09 || (c >= 0x20 && c <= 0x7e) || (c >= 0x80 && c <= 0xff);
+      final ok =
+          c == 0x09 || (c >= 0x20 && c <= 0x7e) || (c >= 0x80 && c <= 0xff);
       if (!ok) return false;
     }
     return true;
@@ -508,10 +522,14 @@ final class _HeaderBag {
   }
 
   Map<String, String> toMap(bool redact) => {
-        for (final e in entries) e.name: redact && e.secret ? redacted : e.value,
+        for (final e in entries)
+          e.name: redact && e.secret ? redacted : e.value,
       };
 
-  List<String> get secrets => [for (final e in entries) if (e.secret) e.value];
+  List<String> get secrets => [
+        for (final e in entries)
+          if (e.secret) e.value
+      ];
 }
 
 final class _HeaderEntry {

@@ -137,7 +137,9 @@ abstract final class Expr {
     if (expr is String) {
       if (!expr.startsWith(r'$')) return expr;
       final ref = pendingRef(expr, pending);
-      return ref != null ? placeholder(ref.$1, ref.$2) : resolveRef(expr, scope);
+      return ref != null
+          ? placeholder(ref.$1, ref.$2)
+          : resolveRef(expr, scope);
     }
     if (expr is List) {
       return [

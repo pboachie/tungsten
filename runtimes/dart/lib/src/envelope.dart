@@ -139,7 +139,9 @@ final class Diagnostic {
 
 /// The default `retryable` of a category.
 String defaultRetryable(String category) => switch (category) {
-      'RATE_LIMITED' || 'UPSTREAM_UNAVAILABLE' || 'TRANSPORT_FAILED' =>
+      'RATE_LIMITED' ||
+      'UPSTREAM_UNAVAILABLE' ||
+      'TRANSPORT_FAILED' =>
         'after_delay',
       'OUTCOME_UNKNOWN' => 'same_key_only',
       _ => 'never',
@@ -333,86 +335,6 @@ final class Verification {
         if (timedOut) 'timed_out': true,
         if (error != null) 'error': error!.toJson(),
       };
-}
-
-/// The result of a call: [Ok] with the typed value or [Err] with the
-/// envelope. Calls never throw for API or transport failures.
-sealed class Result<T> {
-  const Result();
-
-  /// Whether the call succeeded.
-  bool get isOk;
-
-  /// The value of an [Ok], else null.
-  T? get valueOrNull;
-
-  /// The envelope of an [Err], else null.
-  Diagnostic? get errorOrNull;
-}
-
-/// A successful call. [value] is the typed value (a model, a page, ...),
-/// [raw] the decoded wire value it came from (null for a success without a
-/// body), [meta] the HTTP answer, [verification] the verification result
-/// when the call asked for one.
-final class Ok<T> extends Result<T> {
-  /// A success.
-  const Ok(this.value, {required this.meta, this.raw, this.verification});
-
-  /// The typed value.
-  final T value;
-
-  /// The wire value it came from.
-  final Object? raw;
-
-  /// The HTTP answer.
-  final ResponseMeta meta;
-
-  /// The verification result of a call made with `verify: true`.
-  final Verification? verification;
-
-  @override
-  bool get isOk => true;
-
-  @override
-  T get valueOrNull => value;
-
-  @override
-  Diagnostic? get errorOrNull => null;
-
-  /// The same success with another value.
-  Ok<U> withValue<U>(U value) =>
-      Ok<U>(value, meta: meta, raw: raw, verification: verification);
-}
-
-/// A failed call: [error] is the envelope; [partial] what the failed call
-/// or macro already produced when its effect happened (a mutation's body
-/// that failed strict validation, a macro's completed step results by name),
-/// else [unset]. A partial can hold values the API shows only once: store
-/// them before acting on the error.
-final class Err<T> extends Result<T> {
-  /// A failure.
-  const Err(this.error, {this.partial = unset});
-
-  /// The envelope.
-  final Diagnostic error;
-
-  /// What the call already produced, or [unset].
-  final Object? partial;
-
-  /// Whether [partial] is set.
-  bool get hasPartial => !identical(partial, unset);
-
-  @override
-  bool get isOk => false;
-
-  @override
-  T? get valueOrNull => null;
-
-  @override
-  Diagnostic get errorOrNull => error;
-
-  /// The same failure as a result of another type.
-  Err<U> cast<U>() => Err<U>(error, partial: partial);
 }
 
 /// A request rendered without sending it; secrets show as `<redacted>`.
@@ -613,58 +535,4 @@ final class StreamEvent<T> {
 
   /// The reconnects made up to this event.
   final int reconnects;
-}
-
-/// An optional member that may be null, in three states: absent (not sent),
-/// null (sent as JSON null) or a value.
-final class Patch<T> {
-  /// Absent: the member is not sent.
-  const Patch.absent()
-      : _state = 0,
-        _value = null;
-
-  /// JSON null.
-  const Patch.nullValue()
-      : _state = 1,
-        _value = null;
-
-  /// A value.
-  const Patch.of(T value)
-      : _state = 2,
-        _value = value;
-
-  final int _state;
-  final T? _value;
-
-  /// Whether the member is sent (null or a value).
-  bool get isPresent => _state != 0;
-
-  /// Whether the member is JSON null.
-  bool get isNull => _state == 1;
-
-  /// Whether the member has a value.
-  bool get hasValue => _state == 2;
-
-  /// The value; throws [StateError] when there is none.
-  T get value {
-    if (_state != 2) throw StateError('the patch has no value');
-    return _value as T;
-  }
-
-  /// The value, or null when absent or null.
-  T? get valueOrNull => _value;
-
-  @override
-  bool operator ==(Object other) =>
-      other is Patch<T> && other._state == _state && other._value == _value;
-
-  @override
-  int get hashCode => Object.hash(_state, _value);
-
-  @override
-  String toString() => switch (_state) {
-        0 => 'Patch.absent()',
-        1 => 'Patch.nullValue()',
-        _ => 'Patch.of($_value)',
-      };
 }

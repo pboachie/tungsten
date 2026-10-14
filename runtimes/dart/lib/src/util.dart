@@ -76,7 +76,8 @@ abstract final class _Util {
   }
 
   static bool isIndex(Object? segment) =>
-      segment is int || (segment is String && RegExp(r'^\d+$').hasMatch(segment));
+      segment is int ||
+      (segment is String && RegExp(r'^\d+$').hasMatch(segment));
 
   /// The value at a path of segments (strings or ints), or [unset].
   static Object? getPath(Object? value, List<Object> segments) {
@@ -217,21 +218,6 @@ abstract final class _Util {
     );
   }
 
-  /// The Accept of a stream call: the caller's media ranges in order
-  /// without repeats, text/event-stream first when they do not name it.
-  static String mergeAccept(String value) {
-    final ranges = <String>[];
-    for (final part in value.split(',')) {
-      final r = part.trim();
-      if (r.isNotEmpty && !ranges.contains(r)) ranges.add(r);
-    }
-    final names = ranges.any(
-      (r) => r.split(';').first.trim().toLowerCase() == 'text/event-stream',
-    );
-    if (!names) ranges.insert(0, 'text/event-stream');
-    return ranges.join(', ');
-  }
-
   /// Whether a value nests deeper than [limit].
   static bool nestsDeeper(Object? value, int limit) {
     if (value is List) {
@@ -248,16 +234,6 @@ abstract final class _Util {
     if (value is! num) return fallback;
     if (value is double && (value.isNaN || value.isInfinite)) return fallback;
     return value.clamp(min, max);
-  }
-
-  /// A number as JSON writes it, integral doubles as ints.
-  static Object asNumber(num value) {
-    if (value is double &&
-        value == value.truncateToDouble() &&
-        value.abs() < maxSafeInteger) {
-      return value.toInt();
-    }
-    return value;
   }
 
   /// A string literal as JSON.stringify writes it.
@@ -277,8 +253,6 @@ abstract final class _Util {
     ];
     return ' with ${parts.join(', ')}';
   }
-
-  static String plural(int n, String one, String many) => n == 1 ? one : many;
 }
 
 /// Secret values to scrub from texts, in insertion order.

@@ -27,6 +27,17 @@ enum ValidateResponses {
   strict,
 }
 
+/// Which redirects a client follows. Mutations never follow one.
+enum RedirectPolicy {
+  /// Reads follow redirects that stay on the request's origin, by hand (at
+  /// most five), with the credentials re-applied (the default).
+  sameOriginRead,
+
+  /// No redirect is followed: a 3xx the operation does not declare fails
+  /// the call with UNEXPECTED_RESPONSE.
+  none,
+}
+
 /// The randomization of retry delays.
 enum Jitter {
   /// The full backoff ceiling.
@@ -74,8 +85,7 @@ sealed class Credential {
   const factory Credential.secret(String value) = _SecretCredential;
 
   /// The parts of a composite profile, by cookie name or config key.
-  const factory Credential.parts(Map<String, String> parts) =
-      _PartsCredential;
+  const factory Credential.parts(Map<String, String> parts) = _PartsCredential;
 
   /// OAuth2 client credentials for the scheme's token URL.
   const factory Credential.clientCredentials({
@@ -116,7 +126,8 @@ final class _PartsCredential extends Credential {
 }
 
 final class _ClientCredentials extends Credential {
-  const _ClientCredentials({required this.clientId, required this.clientSecret});
+  const _ClientCredentials(
+      {required this.clientId, required this.clientSecret});
 
   final String clientId;
   final String clientSecret;
@@ -214,8 +225,7 @@ final class Middleware {
   final void Function(RequestContext ctx)? onRequest;
 
   /// When an answer arrives.
-  final void Function(RequestContext ctx, ResponseContext response)?
-      onResponse;
+  final void Function(RequestContext ctx, ResponseContext response)? onResponse;
 
   /// Before a retry, with the failure that caused it.
   final void Function(RequestContext ctx, Diagnostic reason)? onRetry;
@@ -226,6 +236,7 @@ final class ClientOptions {
   /// Client options.
   const ClientOptions({
     this.baseUrl,
+    this.redirects,
     this.auth = const {},
     this.tokenStore,
     this.timeout,
@@ -248,6 +259,10 @@ final class ClientOptions {
 
   /// The API's base URL; defaults to its first server.
   final String? baseUrl;
+
+  /// Which redirects are followed; the API's own policy applies when null,
+  /// and either one set to [RedirectPolicy.none] disables them.
+  final RedirectPolicy? redirects;
 
   /// Credentials by auth scheme name.
   final Map<String, Credential> auth;
