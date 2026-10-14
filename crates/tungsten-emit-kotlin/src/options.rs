@@ -38,13 +38,15 @@ impl Options {
     /// The options of `cfg`, with a TG1030 warning for each invalid value.
     pub fn resolve(ir: &Ir, cfg: &TargetConfig) -> (Options, Diagnostics) {
         let mut diags = Diagnostics::new();
-        let mut read =
-            |key: &str, valid: &dyn Fn(&str) -> bool, expected: &str| -> Option<String> {
-                let v = cfg.options.get(key)?;
-                match v.as_str() {
-                    Some(s) if valid(s) => Some(s.to_string()),
-                    _ => {
-                        diags.push(
+        let mut read = |key: &str,
+                        valid: &dyn Fn(&str) -> bool,
+                        expected: &str|
+         -> Option<String> {
+            let v = cfg.options.get(key)?;
+            match v.as_str() {
+                Some(s) if valid(s) => Some(s.to_string()),
+                _ => {
+                    diags.push(
                             Diagnostic::warning(
                                 "TG1030",
                                 format!(
@@ -53,16 +55,24 @@ impl Options {
                             )
                             .with_help(format!("got {v}")),
                         );
-                        None
-                    }
+                    None
                 }
-            };
+            }
+        };
         let words = &ir.api.name.words;
         let api = default_segment(words);
-        let group = read("group", &is_package, "a Gradle group such as io.github.acme")
-            .unwrap_or_else(|| "com.example".to_string());
-        let artifact = read("artifact", &is_artifact, "an artifact name such as acme-sdk")
-            .unwrap_or_else(|| format!("{}-sdk", naming::to_case(words, Case::Kebab)));
+        let group = read(
+            "group",
+            &is_package,
+            "a Gradle group such as io.github.acme",
+        )
+        .unwrap_or_else(|| "com.example".to_string());
+        let artifact = read(
+            "artifact",
+            &is_artifact,
+            "an artifact name such as acme-sdk",
+        )
+        .unwrap_or_else(|| format!("{}-sdk", naming::to_case(words, Case::Kebab)));
         let package = read(
             "package",
             &is_package,
@@ -141,5 +151,8 @@ fn is_version(s: &str) -> bool {
 /// A path written into a Kotlin string literal of the build script: no
 /// quote, backslash, `$` (a string template) or control character.
 fn is_path(s: &str) -> bool {
-    !s.trim().is_empty() && !s.chars().any(|c| matches!(c, '"' | '\\' | '$') || c.is_control())
+    !s.trim().is_empty()
+        && !s
+            .chars()
+            .any(|c| matches!(c, '"' | '\\' | '$') || c.is_control())
 }

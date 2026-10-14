@@ -35,7 +35,9 @@ impl Ctx<'_> {
         }
         s.push_str("import org.jetbrains.kotlin.gradle.dsl.JvmTarget\n\n");
         s.push_str("plugins {\n");
-        s.push_str(&format!("    kotlin(\"jvm\") version \"{KOTLIN_PLUGIN}\"\n"));
+        s.push_str(&format!(
+            "    kotlin(\"jvm\") version \"{KOTLIN_PLUGIN}\"\n"
+        ));
         s.push_str("}\n\n");
         s.push_str(&format!("group = {}\n", lit(&o.group)));
         s.push_str(&format!("version = {}\n\n", lit(&o.version)));
@@ -113,7 +115,9 @@ impl Ctx<'_> {
         s.push_str(&format!("import {}.{client}\n", o.package));
         s.push_str("import io.github.pboachie.tungsten.runtime.*\n");
         s.push_str("import io.github.pboachie.tungsten.runtime.kotlin.*\n\n");
-        s.push_str(&format!("val client = {client}(\n    ClientOptions.builder()\n"));
+        s.push_str(&format!(
+            "val client = {client}(\n    ClientOptions.builder()\n"
+        ));
         if let Some(scheme) = self.ir.auth.first() {
             s.push_str(&format!(
                 "        .auth(\"{}\", AuthCredential.secret(System.getenv(\"API_TOKEN\")))\n",
@@ -124,7 +128,9 @@ impl Ctx<'_> {
         if let Some((accessor, member)) = self.first_call() {
             s.push_str(&format!("client.{accessor}.{member}()\n"));
             s.push_str("    .onError { System.err.println(it.toJson()) } // the error envelope\n");
-            s.push_str("    .fold({ value -> println(value) }, { error -> println(error.category()) })\n");
+            s.push_str(
+                "    .fold({ value -> println(value) }, { error -> println(error.category()) })\n",
+            );
         }
         s.push_str("```\n\n");
         s.push_str("Every call returns the runtime's `Result`: `Result.Ok` with the typed value and the response metadata, or `Result.Err` with the error envelope (`Diagnostic`: category, remediation, retryable, ...). Nothing throws for API or transport failures; `getOrThrow()`, `fold` and `onError` are the Kotlin layer's extensions.\n\n");

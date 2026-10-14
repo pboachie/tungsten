@@ -279,7 +279,11 @@ impl Component {
 
     /// The default value: every member starts unset.
     fn default(&self) -> &'static str {
-        if self.is_patch() { "Patch.Unset" } else { "null" }
+        if self.is_patch() {
+            "Patch.Unset"
+        } else {
+            "null"
+        }
     }
 
     fn decode(&self, obj: &str) -> String {
@@ -330,7 +334,12 @@ pub fn write_class(w: &mut Writer, name: &str, doc: &str, comps: &[Component], e
         if !c.doc.trim().is_empty() {
             p.push_str(&format!("/** {} */\n", kotlin::doc_text(&one_line(&c.doc))));
         }
-        p.push_str(&format!("val {}: {} = {},", c.name, c.kotlin_type(), c.default()));
+        p.push_str(&format!(
+            "val {}: {} = {},",
+            c.name,
+            c.kotlin_type(),
+            c.default()
+        ));
         params.push((c.name.clone(), p));
     }
     if let Extra::Kept(t) = extra {
@@ -343,27 +352,28 @@ pub fn write_class(w: &mut Writer, name: &str, doc: &str, comps: &[Component], e
         ));
     }
     if params.is_empty() {
-        w.block(
-            format!("class {name} : Json.Encodable {{"),
-            "}",
-            |w| {
-                w.line("override fun toJson(): JsonObject = JsonObject()");
-                w.blank();
-                w.line(format!("override fun equals(other: Any?): Boolean = other is {name}"));
-                w.blank();
-                w.line("override fun hashCode(): Int = 0");
-                w.blank();
-                w.line(format!("override fun toString(): String = {}", lit(&format!("{name}()"))));
-                w.blank();
-                w.block("companion object {", "}", |w| {
-                    kdoc_line(w, "Decodes the JSON value; any member is refused.");
-                    w.block(format!("fun fromJson(json: Any?): {name} {{"), "}", |w| {
-                        w.line("Codec.closed(Codec.obj(json), emptySet())");
-                        w.line(format!("return {name}()"));
-                    });
+        w.block(format!("class {name} : Json.Encodable {{"), "}", |w| {
+            w.line("override fun toJson(): JsonObject = JsonObject()");
+            w.blank();
+            w.line(format!(
+                "override fun equals(other: Any?): Boolean = other is {name}"
+            ));
+            w.blank();
+            w.line("override fun hashCode(): Int = 0");
+            w.blank();
+            w.line(format!(
+                "override fun toString(): String = {}",
+                lit(&format!("{name}()"))
+            ));
+            w.blank();
+            w.block("companion object {", "}", |w| {
+                kdoc_line(w, "Decodes the JSON value; any member is refused.");
+                w.block(format!("fun fromJson(json: Any?): {name} {{"), "}", |w| {
+                    w.line("Codec.closed(Codec.obj(json), emptySet())");
+                    w.line(format!("return {name}()"));
                 });
-            },
-        );
+            });
+        });
         return;
     }
     w.line(format!("data class {name}("));
@@ -404,7 +414,9 @@ pub fn write_class(w: &mut Writer, name: &str, doc: &str, comps: &[Component], e
                     .map(|c| format!("{} = {}", c.name, c.decode(OBJ)))
                     .collect();
                 match extra {
-                    Extra::Refused => w.line(format!("Codec.closed({OBJ}, KNOWN)")),
+                    Extra::Refused => {
+                        w.line(format!("Codec.closed({OBJ}, KNOWN)"));
+                    }
                     Extra::Kept(t) => args.push(format!(
                         "additionalProperties = Codec.extra({OBJ}, KNOWN, {})",
                         t.full_dec()
@@ -644,7 +656,10 @@ impl Ctx<'_> {
         w.line("override fun toJson(): Any = value");
         w.blank();
         w.block("companion object {", "}", |w| {
-            kdoc_line(w, "Decodes the JSON value; a value outside the enum is refused.");
+            kdoc_line(
+                w,
+                "Decodes the JSON value; a value outside the enum is refused.",
+            );
             w.block(format!("fun fromJson(json: Any?): {name} {{"), "}", |w| {
                 w.block("for (v in entries) {", "}", |w| {
                     w.block("if (Json.deepEqual(v.value, json)) {", "}", |w| {

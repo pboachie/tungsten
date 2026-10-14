@@ -33,12 +33,10 @@ pub struct OpInfo {
 impl OpInfo {
     /// The request parameter: with a default when no argument is required.
     fn request_param(&self) -> String {
-        let required = self.comps.iter().any(|c| {
-            matches!(
-                c.presence,
-                Presence::Required | Presence::RequiredNullable
-            )
-        });
+        let required = self
+            .comps
+            .iter()
+            .any(|c| matches!(c.presence, Presence::Required | Presence::RequiredNullable));
         if required {
             format!("request: {}", self.request)
         } else {
@@ -230,7 +228,10 @@ impl Ctx<'_> {
                 &mut w,
                 &format!("The {} resource{path}.", plan.path_words.join(" ")),
             );
-            w.line(format!("class {}(private val core: ClientCore) {{", rn.class));
+            w.line(format!(
+                "class {}(private val core: ClientCore) {{",
+                rn.class
+            ));
             w.indent();
             let mut first = true;
             for m in &rn.members {
@@ -549,7 +550,10 @@ impl Ctx<'_> {
         let schemes = self.code_schemes();
         if !schemes.is_empty() {
             w.blank();
-            kdoc_line(&mut w, "The authorization-code helpers of an OAuth2 scheme.");
+            kdoc_line(
+                &mut w,
+                "The authorization-code helpers of an OAuth2 scheme.",
+            );
             w.line("fun oauth(scheme: String): OAuthFlow = core.oauth(scheme)");
             if schemes.len() == 1 {
                 w.blank();
@@ -557,7 +561,10 @@ impl Ctx<'_> {
                     &mut w,
                     &format!("The authorization-code helpers of {}.", schemes[0]),
                 );
-                w.line(format!("fun oauth(): OAuthFlow = core.oauth({})", lit(&schemes[0])));
+                w.line(format!(
+                    "fun oauth(): OAuthFlow = core.oauth({})",
+                    lit(&schemes[0])
+                ));
             }
         }
         match &self.plan.client {
