@@ -13,6 +13,29 @@ changes.
 
 ### Breaking
 
+- MCP `run_script`: the Deno sandbox no longer gets `--allow-net`. Scripts
+  reach the API only through the session's client RPC. `denoArguments` and
+  `sandboxCommand` ignore `host`, now optional, and `run_script` no longer
+  needs or validates a `baseUrl`.
+- MCP servers bound upstream response bodies to 4 MiB by default (new
+  `maxResponseBytes` server option). Larger responses fail with
+  `RESPONSE_TOO_LARGE` before they are materialized.
+- WebMCP `maxResultBytes` now always bounds the upstream HTTP body before
+  parsing, not only with `binaryResults` or `streamCollection`. An oversized
+  response reports `RESPONSE_TOO_LARGE` instead of `RESULT_TOO_LARGE`.
+- MCP sessions refuse a tool, sending nothing (`UNEXPECTED_RESPONSE`), when the
+  manifest safety tier differs from the SDK operation's tier or from a macro's
+  strictest declared or step tier. Regenerate the manifest and SDK together.
+  Manifest annotations can make hints more cautious than the tier, never less.
+- MCP HTTP servers answer 503 `Server closing` once `close()` starts, wait for
+  sessions still initializing, and count those sessions against `maxSessions`.
+- The Java transport buffers at most 64 response chunks per body and applies
+  backpressure to the socket reader. Closing a body discards buffered chunks.
+- CI and release preparation fail when a committed lockfile gains a package
+  name missing from `.github/dependency-policy.json` or when OSV reports an
+  advisory. Release npm installs run with `--ignore-scripts`, and Python
+  packages build with hash-locked tools and `--no-isolation`.
+
 - Postman import never copies variable values into contract paths. A
   `{{name}}` path segment is accepted only as a whole segment naming a variable
   declared in the request URL's `variable` list, and becomes the `{name}` path
@@ -57,6 +80,28 @@ changes.
   None or zero: unbounded), and `ApiDescriptor` the `redirects` field. Build
   `CallOptions` with `..CallOptions::default()` so later fields do not break
   handwritten literals.
+- Postman import never copies variable values into contract paths. A
+  `{{name}}` path segment is accepted only as a whole segment naming a variable
+  declared in the request URL's `variable` list, and becomes the `{name}` path
+  parameter; any other path variable is refused (PM005, use `:name`). Base URL
+  variables must hold an origin only; a value with a path prefix is refused
+  (PM005). Dynamic variables such as `{{$guid}}` are refused in every path
+  segment (PM004), including after an unresolved base URL variable.
+- `tungsten init` from a HAR capture requires a reviewed path for every
+  imported path before saving: a `--route` template (literal paths too, for
+  example `--route /health`) or a `--har-paths` JSON mapping of captured paths
+  to templates, which the interactive setup also asks for; a
+  captured path without one, a `--route` that matches no imported entry, or two
+  equally specific matching templates are refused. `HarOptions` gains a
+  `route_templates` field.
+- `tungsten init` reports JSON setup input it cannot parse (invalid syntax or
+  nesting deeper than 128 levels) instead of passing it on as OpenAPI.
+
+### Fixed
+
+- Wait for the MCP sandbox child to close before removing its temporary files,
+  including failed starts and terminated scripts on Windows.
+
 - MCP `run_script`: the Deno sandbox no longer gets `--allow-net`. Scripts
   reach the API only through the session's client RPC. `denoArguments` and
   `sandboxCommand` ignore `host`, now optional, and `run_script` no longer
@@ -110,8 +155,6 @@ changes.
 - Detect deeply nested JSON setup inputs with a JSON parser instead of
   misreading Postman or Swagger files as OpenAPI.
 
-- Make generated Rust CLIs packageable with a versioned SDK dependency and share
-  the generated workspace's Rust 1.88 minimum.
 - Make generated Rust CLIs and SDKs packageable: the SDK dependency and local
   `runtime_path`/`cli.kit_path` dependencies carry a version requirement, and the
   generated workspace shares the Rust 1.88 minimum.
@@ -169,21 +212,21 @@ changes.
   `maxResponseBytes`), and apply WebMCP result byte limits before HTTP body
   materialization. Oversized responses return the SDK's `RESPONSE_TOO_LARGE`
   diagnostic; inconsistent MCP manifest/SDK safety tiers fail before dispatch.
-- Require canonical decimal expiry in Java and Ruby confirmation tokens, and
-  bound Java transport queues with backpressure and cancellation cleanup.
+- Require canonical decimal expiry in C#, Java and Ruby confirmation tokens.
+- Bound Java transport queues with backpressure and cancellation cleanup.
 - Check locked dependency names, sources, hashes and current advisories in CI
   and release preparation; disable npm install hooks in release builds.
+- Hash-lock Python release tooling and disable build isolation during package
+  creation to prevent unpinned build-tool resolution.
 - Keep Postman path parameters explicit and restrict URL variables to origins.
-
-(Keep Postman path parameters explicit during import)
-
 
 ### Added
 
 - Add `defaults.redirects: none` and client redirect options across all seven SDK
   runtimes. Either setting disables every 3xx redirect without retries; the default
   remains same-origin reads only. Regenerate Rust SDKs; handwritten `ApiDescriptor`
-  literals must add `redirects: RedirectPolicy::SameOriginRead` (or `None`).
+  literals must add `redirects: RedirectPolicy::SameOriginRead` (or
+  `redirects: RedirectPolicy::None`).
 
 - Guided `init`: a bare `tungsten init` on a terminal starts it (`--interactive`
   asks for it; `--no-interactive`, `--json` or any other `init` option keeps the

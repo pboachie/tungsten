@@ -44,8 +44,8 @@ We will credit you in the advisory unless you prefer to stay anonymous.
 
 Run `python3 .github/scripts/dependency_audit.py` before merging dependency
 changes. It checks every committed Cargo, npm and uv lockfile and the Python
-release-tool lock against the
-package-name baseline in `.github/dependency-policy.json`, approved registry
+release-tool lock against the package-name baseline in
+`.github/dependency-policy.json`, approved registry
 origins and artifact hashes, then queries OSV for the locked versions without
 installing packages. Network failures fail the check. `--offline` checks only
 local policy and must not be reported as a vulnerability scan.
