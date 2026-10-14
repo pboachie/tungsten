@@ -501,6 +501,30 @@ pub mod codes {
             "TG1025",
             "discriminated union variant without a tag value: the csharp target tries variants in order",
         ),
+        (
+            "TG1030",
+            "invalid kotlin target option; the default is used",
+        ),
+        (
+            "TG1031",
+            "schema has no Kotlin type in the kotlin target; the runtime's JSON value is used",
+        ),
+        (
+            "TG1032",
+            "macro is not in the canonical form; the kotlin target leaves it out",
+        ),
+        (
+            "TG1033",
+            "OpenID Connect scheme is sent as a bearer token by the kotlin target",
+        ),
+        (
+            "TG1034",
+            "different success bodies by status: the kotlin typed result is the JSON value",
+        ),
+        (
+            "TG1035",
+            "discriminated union variant without a tag value: the kotlin target tries variants in order",
+        ),
         ("TG1060", "invalid Ruby target option; default used"),
         (
             "TG1061",
