@@ -64,6 +64,7 @@ pub(crate) fn op_doc(plan: &Plan<'_>, info: &OpInfo<'_>, shape: &OpShape<'_>) ->
         safety_str(a.safety)
     ));
     match a.safety {
+        Safety::Irreversible if a.import_policy.as_ref().is_some_and(|p| !p.reviewed) => parts.push("Unreviewed imported operation: effects are unknown. Call `.preview()` first and pass its argument-bound `confirmation_token` as `{ confirm }`.".into()),
         Safety::Destructive => parts.push(
             "Requires confirmation: pass `{ confirm: true }`, or the `confirmation_token` of `.preview()` as `confirm`.".into(),
         ),

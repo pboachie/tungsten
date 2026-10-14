@@ -69,13 +69,20 @@ function readTool(raw: unknown, position: number, warnings: string[]): CatalogTo
   if (!isRecord(raw.inputSchema) || raw.inputSchema.type !== "object") return skip(`${name}: inputSchema is not an object schema`);
   const safety: Safety = typeof raw.safety === "string" && SAFETIES.has(raw.safety) ? (raw.safety as Safety) : "irreversible";
   if (safety !== raw.safety) warnings.push(`manifest tool ${name}: unknown safety tier, treated as irreversible`);
+  const idempotency = typeof raw.idempotency === "string" ? raw.idempotency : "none";
+  // Keyed policies retry as no-ops with the same key, so they are idempotent
+  // exactly like the tool-catalog compiler that writes the manifest: it marks
+  // read-only tools and caller_owned/auto/content_hash policies.
+  const takesKey = idempotency === "caller_owned" || idempotency === "auto" || idempotency === "content_hash";
   const derived = annotationsFor(safety);
   const a = isRecord(raw.annotations) ? raw.annotations : {};
   const flag = (key: keyof Omit<ToolAnnotations, "title">): boolean => (typeof a[key] === "boolean" ? (a[key] as boolean) : derived[key]);
+  // A manifest may make hints more cautious, never less cautious than its
+  // safety tier. The session also checks that tier against the SDK target.
   const annotations: ToolAnnotations = {
-    readOnlyHint: flag("readOnlyHint"),
-    destructiveHint: flag("destructiveHint"),
-    idempotentHint: flag("idempotentHint"),
+    readOnlyHint: derived.readOnlyHint && flag("readOnlyHint"),
+    destructiveHint: derived.destructiveHint || flag("destructiveHint"),
+    idempotentHint: (derived.idempotentHint || takesKey) && flag("idempotentHint"),
     openWorldHint: flag("openWorldHint"),
   };
   if (typeof a.title === "string" && a.title !== "") annotations.title = a.title;
@@ -90,7 +97,7 @@ function readTool(raw: unknown, position: number, warnings: string[]): CatalogTo
     outputSchema: isRecord(raw.outputSchema) ? raw.outputSchema : null,
     annotations,
     safety,
-    idempotency: typeof raw.idempotency === "string" ? raw.idempotency : "none",
+    idempotency,
     reserved: { idempotencyKey: stringOrNull(reserved.idempotencyKey), confirmationToken: stringOrNull(reserved.confirmationToken) },
     cluster: stringOrNull(raw.cluster),
     sensitiveResponseFields: Array.isArray(raw.sensitiveResponseFields)

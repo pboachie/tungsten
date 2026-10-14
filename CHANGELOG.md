@@ -9,7 +9,258 @@ changes.
 
 ## [Unreleased]
 
+## [0.1.2]
+
+### Breaking
+
+- MCP `run_script`: the Deno sandbox no longer gets `--allow-net`. Scripts
+  reach the API only through the session's client RPC. `denoArguments` and
+  `sandboxCommand` ignore `host`, now optional, and `run_script` no longer
+  needs or validates a `baseUrl`.
+- MCP servers bound upstream response bodies to 4 MiB by default (new
+  `maxResponseBytes` server option). Larger responses fail with
+  `RESPONSE_TOO_LARGE` before they are materialized.
+- WebMCP `maxResultBytes` now always bounds the upstream HTTP body before
+  parsing, not only with `binaryResults` or `streamCollection`. An oversized
+  response reports `RESPONSE_TOO_LARGE` instead of `RESULT_TOO_LARGE`.
+- MCP sessions refuse a tool, sending nothing (`UNEXPECTED_RESPONSE`), when the
+  manifest safety tier differs from the SDK operation's tier or from a macro's
+  strictest declared or step tier. Regenerate the manifest and SDK together.
+  Manifest annotations can make hints more cautious than the tier, never less.
+- MCP HTTP servers answer 503 `Server closing` once `close()` starts, wait for
+  sessions still initializing, and count those sessions against `maxSessions`.
+- The Java transport buffers at most 64 response chunks per body and applies
+  backpressure to the socket reader. Closing a body discards buffered chunks.
+- CI and release preparation fail when a committed lockfile gains a package
+  name missing from `.github/dependency-policy.json` or when OSV reports an
+  advisory. Release npm installs run with `--ignore-scripts`, and Python
+  packages build with hash-locked tools and `--no-isolation`.
+
+- Postman import never copies variable values into contract paths. A
+  `{{name}}` path segment is accepted only as a whole segment naming a variable
+  declared in the request URL's `variable` list, and becomes the `{name}` path
+  parameter; any other path variable is refused (PM005, use `:name`). Base URL
+  variables must hold an origin only; a value with a path prefix is refused
+  (PM005). Dynamic variables such as `{{$guid}}` are refused in every path
+  segment (PM004), including after an unresolved base URL variable.
+- `tungsten init` from a HAR capture requires a reviewed path for every
+  imported path before saving: a `--route` template (literal paths too, for
+  example `--route /health`) or a `--har-paths` JSON mapping of captured paths
+  to templates, which the interactive setup also asks for; a
+  captured path without one, a `--route` that matches no imported entry, or two
+  equally specific matching templates are refused. `HarOptions` gains a
+  `route_templates` field.
+- `tungsten init` reports JSON setup input it cannot parse (invalid syntax or
+  nesting deeper than 128 levels) instead of passing it on as OpenAPI.
+- `install.sh --init` and `install.ps1 -Init` print the PATH note before setup
+  and no longer report setup as an install failure (exit 1): a cancelled or
+  refused setup exits 4 and a failed setup exits 5, with the binary installed.
+- `tungsten init --resume --add-targets` keeps every backup: the first is
+  `tungsten.yml.init-backup`, later ones `tungsten.yml.init-backup.N`; the JSON
+  result names the one written. A flow-style `targets:` mapping is rewritten in
+  block style, with a warning when comments inside it were dropped.
+- Rust emitter API: `tungsten_emit_rs::Dep::Path` is now
+  `Dep::Path { path, version }`; generated `runtime_path` and `cli.kit_path`
+  dependencies carry the `runtime` or `cli.kit` requirement (default `0.1`).
+- The `ghcr.io/pboachie/tungsten:latest` container tag moves only when the
+  distributed tag is itself the newest published stable release (not a draft,
+  not flagged prerelease).
+- A 3xx status an operation declares (exactly or by class) is its success in all
+  seven runtimes, also with `redirects: none`, so a mutation answered with a
+  declared `303 See Other` succeeds. Redirects are still never followed on
+  mutations, and with `redirects: none` a 3xx the operation does not declare (no
+  match, or only `default`) fails as `UNEXPECTED_RESPONSE` without being
+  followed. Java, Ruby and C# report that refusal with the redirect remediation the
+  other runtimes use.
+- Java: `ApiDescriptor` has the `redirects` record component; the eleven-argument
+  constructor is removed, so construct it with the canonical constructor.
+- Ruby: `ClientOptions` has the `redirects` member (first), which shifts positional
+  construction and `deconstruct`; pass options by keyword.
+- Rust: `CallOptions` has the public `max_pages` field (pages of one traversal;
+  None or zero: unbounded), and `ApiDescriptor` the `redirects` field. Build
+  `CallOptions` with `..CallOptions::default()` so later fields do not break
+  handwritten literals.
+- Postman import never copies variable values into contract paths. A
+  `{{name}}` path segment is accepted only as a whole segment naming a variable
+  declared in the request URL's `variable` list, and becomes the `{name}` path
+  parameter; any other path variable is refused (PM005, use `:name`). Base URL
+  variables must hold an origin only; a value with a path prefix is refused
+  (PM005). Dynamic variables such as `{{$guid}}` are refused in every path
+  segment (PM004), including after an unresolved base URL variable.
+- `tungsten init` from a HAR capture requires a reviewed path for every
+  imported path before saving: a `--route` template (literal paths too, for
+  example `--route /health`) or a `--har-paths` JSON mapping of captured paths
+  to templates, which the interactive setup also asks for; a
+  captured path without one, a `--route` that matches no imported entry, or two
+  equally specific matching templates are refused. `HarOptions` gains a
+  `route_templates` field.
+- `tungsten init` reports JSON setup input it cannot parse (invalid syntax or
+  nesting deeper than 128 levels) instead of passing it on as OpenAPI.
+
+### Fixed
+
+- Wait for the MCP sandbox child to close before removing its temporary files,
+  including failed starts and terminated scripts on Windows.
+
+- MCP `run_script`: the Deno sandbox no longer gets `--allow-net`. Scripts
+  reach the API only through the session's client RPC. `denoArguments` and
+  `sandboxCommand` ignore `host`, now optional, and `run_script` no longer
+  needs or validates a `baseUrl`.
+- MCP servers bound upstream response bodies to 4 MiB by default (new
+  `maxResponseBytes` server option). Larger responses fail with
+  `RESPONSE_TOO_LARGE` before they are materialized.
+- WebMCP `maxResultBytes` now always bounds the upstream HTTP body before
+  parsing, not only with `binaryResults` or `streamCollection`. An oversized
+  response reports `RESPONSE_TOO_LARGE` instead of `RESULT_TOO_LARGE`.
+- MCP sessions refuse a tool, sending nothing (`UNEXPECTED_RESPONSE`), when the
+  manifest safety tier differs from the SDK operation's tier or from a macro's
+  strictest declared or step tier. Regenerate the manifest and SDK together.
+  Manifest annotations can make hints more cautious than the tier, never less.
+- MCP HTTP servers answer 503 `Server closing` once `close()` starts, wait for
+  sessions still initializing, and count those sessions against `maxSessions`.
+- The Java transport buffers at most 64 response chunks per body and applies
+  backpressure to the socket reader. Closing a body discards buffered chunks.
+- CI and release preparation fail when a committed lockfile gains a package
+  name missing from `.github/dependency-policy.json` or when OSV reports an
+  advisory. Release npm installs run with `--ignore-scripts`, and Python
+  packages build with hash-locked tools and `--no-isolation`.
+
+### Security
+
+- Reserve MCP session capacity during asynchronous initialization, validate
+  manifest safety against executable descriptors, and keep Deno scripts on
+  the client RPC channel without direct network permission.
+- Bound upstream MCP response bodies to 4 MiB by default (configurable through
+  `maxResponseBytes`), and apply WebMCP result byte limits before HTTP body
+  materialization. Oversized responses return the SDK's `RESPONSE_TOO_LARGE`
+  diagnostic; inconsistent MCP manifest/SDK safety tiers fail before dispatch.
+- Bound Java transport queues with backpressure and cancellation cleanup.
+- Check locked dependency names, sources, hashes and current advisories in CI
+  and release preparation; disable npm install hooks in release builds.
+- Hash-lock Python release tooling and disable build isolation during package
+  creation to prevent unpinned build-tool resolution.
+
+### Fixed
+
+- Bound Postman variable expansion and parsed examples by one import-wide byte
+  and node budget (PM001), so a large variable referenced many times cannot
+  amplify memory use.
+- Compare structured and raw Postman URL paths after the same normalization.
+- Record imported schema provenance in time linear in the merged schema and
+  samples.
+- Filter HAR entries by origin and prefix before validating their URLs, and
+  count non-HTTP(S) entries such as WebSocket or extension requests as filtered.
+- Accept JSON `Content-Type` parameters such as `charset` in saved cURL and HTTP
+  requests.
+- Detect deeply nested JSON setup inputs with a JSON parser instead of
+  misreading Postman or Swagger files as OpenAPI.
+
+- Make generated Rust CLIs and SDKs packageable: the SDK dependency and local
+  `runtime_path`/`cli.kit_path` dependencies carry a version requirement, and the
+  generated workspace shares the Rust 1.88 minimum.
+- `init --resume --add-targets` edits only the `targets` section of tungsten.yml
+  (comments and the schema header stay), links new MCP/WebMCP outputs to the
+  TypeScript SDK's local runtime, and can run repeatedly (numbered backups, no
+  leftover pending file). Going back in the guided setup no longer keeps the
+  abandoned project's answers.
+
+- Warn when conditional JSON Schema constraints are ignored; strict check and
+  generation reject them before writing output. Conditional validation is not
+  implemented in generated clients.
+- Enforce Python native HTTP attempt deadlines across response headers and body,
+  joining cancellation and response cleanup; custom transports remain cooperative.
+- Normalize embedded Rust support templates so LF and CRLF checkouts generate
+  identical support files.
+
+- Preserve explicit confirmation restrictions on imported operations even when
+  an earlier scoped review classified the operation as read-only.
+- Reject noncanonical confirmation tokens and prototype-derived MCP arguments.
+  Confirmation previews bind immutable Blob/File contents and metadata.
+- Reserve automatic idempotency keys atomically across clients sharing a store;
+  bound Python/Rust asynchronous file-store work and stop dispatch after cancellation.
+- Parse fragmented event streams with linear scanning, consistent trailing-CR
+  limits and safe oversized retry hints across TypeScript, Python, Rust and Go.
+- Apply positive polling deadlines across authentication, transport, retries and
+  sleeps; isolate OAuth refresh by scheme with cancellable waiters in Go and Rust.
+- Resolve pagination links against the final response URL, preserve nested page
+  item types, reject cursor and URL cycles before repeated dispatch, and support
+  explicit page limits across the four runtimes.
+- Propagate Rust emitter graph facts with worklists and coalesce concurrent MCP
+  query embeddings. Complete the README's generated Python SDK installation steps.
+- Release a Python sync client's native transport thread, event loop and connection
+  pool when the client is garbage collected without `close()`, run polling waits
+  on the caller's thread so expiring polls no longer hold worker permits, and never
+  block the transport's loop thread on itself when a stream is finalized there.
+- File idempotency stores (TypeScript, Python, Go, Rust) record the owner of their
+  `<path>.lock` lease (host, pid, token) and wait up to 2 s for another writer before
+  refusing with the owner's process and host. Only its owner removes a lease, so a
+  lease left by a process that died is removed by hand (the refusal says so); a
+  writer re-checks ownership before committing, so it never overwrites a key once its
+  lease is gone. Reservations are serialized per store file within a process, and a
+  reserved key is kept when removing the lease fails.
+
+- Bound aggregate Swagger reference and media-schema expansion during conversion.
+- Require an explicit reviewed HAR path mapping before saving imported contracts.
+- Pin the container's zlib package to its patched Alpine release.
+
+### Security
+
+- Reserve MCP session capacity during asynchronous initialization, validate
+  manifest safety against executable descriptors, and keep Deno scripts on
+  the client RPC channel without direct network permission.
+- Bound upstream MCP response bodies to 4 MiB by default (configurable through
+  `maxResponseBytes`), and apply WebMCP result byte limits before HTTP body
+  materialization. Oversized responses return the SDK's `RESPONSE_TOO_LARGE`
+  diagnostic; inconsistent MCP manifest/SDK safety tiers fail before dispatch.
+- Require canonical decimal expiry in C#, Java and Ruby confirmation tokens.
+- Bound Java transport queues with backpressure and cancellation cleanup.
+- Check locked dependency names, sources, hashes and current advisories in CI
+  and release preparation; disable npm install hooks in release builds.
+- Hash-lock Python release tooling and disable build isolation during package
+  creation to prevent unpinned build-tool resolution.
+- Keep Postman path parameters explicit and restrict URL variables to origins.
+
 ### Added
+
+- Add `defaults.redirects: none` and client redirect options across all seven SDK
+  runtimes. Either setting disables every 3xx redirect without retries; the default
+  remains same-origin reads only. Regenerate Rust SDKs; handwritten `ApiDescriptor`
+  literals must add `redirects: RedirectPolicy::SameOriginRead` (or
+  `redirects: RedirectPolicy::None`).
+
+- Guided `init`: a bare `tungsten init` on a terminal starts it (`--interactive`
+  asks for it; `--no-interactive`, `--json` or any other `init` option keeps the
+  scripted path), with multi-output selection, consent before
+  writes, explicit non-interactive generation, additive output edits with backups,
+  no-schema inference and scoped TypeScript/Python/Rust client and MCP mock checks.
+- Guided Rust local setup allows its first `cargo build` up to 20 minutes
+  (previously 10) so slow machines and cold caches finish the one-time build
+  instead of being cut off with the project files preserved for a retry.
+- The MCP runtime's `tools/list` keeps marking keyed operations
+  (`caller_owned`, `auto`, `content_hash` idempotency policies) with
+  `idempotentHint` after its caution clamp, matching the generated manifest:
+  retrying them with the same key is a no-op. A manifest can still set the
+  hint to `false` for a specific tool.
+- Guided advanced server/validation controls, restrictive per-operation settings,
+  credential-free CLI environment profiles and synthetic JSON request examples.
+- Bounded offline Swagger 2 conversion through the OpenAPI loader, preserving
+  local definitions, parameter serialization, media types and authentication.
+- Imported operations retain review provenance and require argument-bound
+  confirmation until explicitly reviewed per operation and exact server origin.
+  Scoped reviews require a runtime with import-policy support. Regenerate Rust
+  SDKs when upgrading; handwritten `AgentMeta` literals must add
+  `import_policy: None` or an explicit policy.
+- Import supported Postman Collection v2.1 requests through the offline contract
+  engine, preserving explicit authentication and reporting unsupported behavior.
+- Parse a bounded saved cURL and HTTP-file subset as offline contract evidence,
+  with explicit route templates and no shell execution or implicit file reads.
+- Import bounded HAR captures offline with explicit origin selection, reviewed
+  path templates, configurable structural redaction, and omission reports.
+
+- Add a bounded offline HTTP evidence engine with deterministic OpenAPI inference,
+  provenance, and persistent reviewed overrides.
+- Versioned endpoint manifests can combine declared JSON Schema models with
+  explicit HTTP routing and auth references using bounded offline model reads.
 
 - TypeScript SDK targets can declare npm dependencies for preserved custom
   extensions; package archives include custom source and license notices.
@@ -106,7 +357,7 @@ changes.
   previews, confirmation tokens, auth handling and resumable event streams
   as the other runtimes.
 
-## [0.1.0] - Unreleased
+## [0.1.0] - 2026-10-11
 
 First release. The compiler, the three SDK runtimes (`@elysra/tungsten-runtime`,
 `tungsten-runtime` on PyPI and `tungsten-runtime` on crates.io), the MCP
@@ -173,5 +424,6 @@ runtime (`@elysra/tungsten-mcp`) and the installers ship together at 0.1.0.
 - The compiler warns when a `gates` entry in `agent.yml` matches no
   operation.
 
-[Unreleased]: https://github.com/pboachie/tungsten/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/pboachie/tungsten/commits/main
+[Unreleased]: https://github.com/pboachie/tungsten/compare/v0.1.1...HEAD
+[0.1.2]: https://github.com/pboachie/tungsten/compare/v0.1.1...HEAD
+[0.1.0]: https://github.com/pboachie/tungsten/releases/tag/v0.1.0

@@ -533,6 +533,9 @@ public interface IIdempotencyStore
 /// <summary>Configures a client.</summary>
 public sealed record ClientOptions
 {
+    /// <summary>Restricts redirects to same_origin_read or none; none always wins and requires the default HTTP client.</summary>
+    public string? Redirects { get; init; }
+
     /// <summary>Default timeout of one attempt.</summary>
     public static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(30);
     public const int DefaultMaxEventBytes = 1024 * 1024;

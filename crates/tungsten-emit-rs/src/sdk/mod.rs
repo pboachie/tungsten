@@ -57,6 +57,7 @@ pub(crate) fn supports(ir: &Ir) -> Diagnostics {
     let shapes: Vec<ops::OpShape<'_>> = plan.ops.iter().map(|o| ops::op_shape(&plan, o)).collect();
     let mut diags = macros::plan_macros(&plan, &shapes).1;
     diags.extend(ops::auth_notes(ir));
+    diags.extend(tungsten_emit::args::pagination_notes(ir));
     diags.extend(fallback_notes(&plan, &shapes));
     diags
 }
@@ -230,6 +231,11 @@ fn generate(ir: &Ir, opts: &Options) -> Vec<(String, String)> {
 #[cfg(feature = "testing")]
 pub mod testing {
     use tungsten_ir::{Ir, Presence, TypeRef};
+
+    /// Render supplied support-template bytes through the production path.
+    pub fn render_support_template(header: &str, streams: bool, template: &str) -> String {
+        super::package::render_support_template(header, streams, template)
+    }
 
     /// One field of an operation's request struct.
     #[derive(Debug, Clone, PartialEq)]
