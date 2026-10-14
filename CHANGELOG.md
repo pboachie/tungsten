@@ -9,6 +9,14 @@ changes.
 
 ## [Unreleased]
 
+### Changed
+
+- The release workflow's PyPI publication job is enabled through trusted
+  publishing (repository variable `PYPI_PUBLISH`, `pypi` environment, no
+  stored token) and now refuses to upload a `tungsten-runtime` sdist or wheel
+  whose version does not equal the release tag, mirroring the npm publication
+  preflight.
+
 ## [0.1.2]
 
 ### Breaking
