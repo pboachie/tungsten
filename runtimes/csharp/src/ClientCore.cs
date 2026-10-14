@@ -50,6 +50,7 @@ public sealed partial class ClientCore
     private readonly Func<long>? nowFn;
     private readonly Func<double>? randomFn;
     private readonly ITokenStore tokenStore;
+    private readonly RuntimeIdentity identity = RuntimeIdentity.CSharp;
 
     private readonly ConcurrentDictionary<string, OperationDescriptor> registry = new(StringComparer.Ordinal);
     private readonly object usedTokensLock = new();
@@ -112,8 +113,21 @@ public sealed partial class ClientCore
     {
     }
 
+    /// <summary>
+    /// A client of a descriptor document for an SDK in another .NET language built on this runtime
+    /// (F#), which identifies itself with <paramref name="identity"/> on the wire.
+    /// </summary>
+    public ClientCore(SdkDescriptors descriptors, ClientOptions? options, RuntimeIdentity identity)
+        : this(descriptors.Api, options, descriptors.Operations.Values)
+    {
+        this.identity = identity ?? throw new ClientConfigException("the runtime identity is missing");
+    }
+
     /// <summary>The API descriptor.</summary>
     public ApiDescriptor Api => api;
+
+    /// <summary>Who this client says it is in <c>User-Agent</c> and <c>X-Tungsten-Runtime</c>.</summary>
+    public RuntimeIdentity Identity => identity;
 
     internal ITokenStore TokenStore => tokenStore;
 

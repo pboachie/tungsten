@@ -407,6 +407,18 @@ public sealed record Polled
     public bool TimedOut { get; init; }
 }
 
+/// <summary>
+/// Who the runtime says it is: the <c>(language)</c> token of <c>User-Agent</c> and the
+/// <c>tungsten-&lt;runtime&gt;/&lt;version&gt;</c> of <c>X-Tungsten-Runtime</c>. An SDK in another .NET
+/// language built on this runtime (F#) passes its own identity to <see cref="ClientCore"/>; the
+/// prose of envelopes keeps this runtime's spellings.
+/// </summary>
+public sealed record RuntimeIdentity(string Language, string Runtime, string Version)
+{
+    /// <summary>The C# runtime's identity: <c>(csharp)</c>, <c>tungsten-cs/</c><see cref="ClientCore.Version"/>.</summary>
+    public static RuntimeIdentity CSharp { get; } = new("csharp", "cs", ClientCore.Version);
+}
+
 // ------------------------------------------------------------------ options
 
 /// <summary>
