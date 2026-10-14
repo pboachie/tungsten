@@ -71,7 +71,7 @@ pub fn enc(ft: &Ft) -> String {
         Fk::Bytes => "Codec.encBytes".into(),
         Fk::Binary => "Codec.encBinary".into(),
         Fk::Any => "Codec.encAny".into(),
-        Fk::Named(name) => format!("(fun (v: {name}) -> v.ToJson())"),
+        Fk::Named(name) => format!("(fun (v: {name}) -> (v.ToJson(): JsonNode))"),
         Fk::List(item) => format!("(Codec.encList {})", enc(item)),
         Fk::Map(value) => format!("(Codec.encMap {})", enc(value)),
     }
