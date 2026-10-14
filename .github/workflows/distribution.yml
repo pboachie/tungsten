@@ -1,4 +1,5 @@
-# Distribution uses immutable, checksummed release assets. No registry token
+# Distribution uses checksummed release assets whose build provenance
+# attestation is verified first. No registry token
 # enters the container context. Homebrew/winget index submission is separate.
 name: distribution
 on:
@@ -52,6 +53,22 @@ jobs:
           git show "$commit:Cargo.toml" > release-manifest.toml
           python3 -c 'import os,tomllib; assert tomllib.load(open("release-manifest.toml","rb"))["workspace"]["package"]["version"] == os.environ["TAG"][1:], "tag/manifest mismatch"'
           gh release download "$TAG" --dir release-bundle
+          # Every asset distribution.py consumes (the files listed in SHA256SUMS,
+          # and SHA256SUMS itself) must carry a build provenance attestation
+          # signed by release.yml; a checksum from the same release is not enough.
+          python3 - <<'PY' > release-assets.txt
+          import re
+          names = ["SHA256SUMS"]
+          for line in open("release-bundle/SHA256SUMS").read().splitlines():
+              match = re.fullmatch(r"[0-9a-fA-F]{64}\s+\*?([^/\\]+)", line)
+              assert match and match.group(1) not in (".", ".."), "invalid checksum entry"
+              names.append(match.group(1))
+          assert len(names) > 1, "no release assets listed"
+          print("\n".join(dict.fromkeys(names)))
+          PY
+          while IFS= read -r asset; do
+            gh attestation verify "release-bundle/$asset" --repo pboachie/tungsten --signer-workflow pboachie/tungsten/.github/workflows/release.yml
+          done < release-assets.txt
           python3 .github/scripts/distribution.py --bundle release-bundle --output distribution --tag "$TAG"
           python3 -m pip install --disable-pip-version-check jsonschema==4.25.1
           python3 .github/scripts/validate-winget.py distribution/winget
