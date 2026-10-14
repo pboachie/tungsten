@@ -115,8 +115,9 @@ pub(crate) struct Library {
     pub exports: Option<Vec<String>>,
 }
 
-/// The public names of `tungsten_runtime` and the names generated
-/// libraries import: no model may take one, so files that import the
+/// The public names of `tungsten_runtime` (with `EventStream` of its
+/// streams), the names generated libraries import and the wire library's:
+/// no model may take one, so files that import the
 /// runtime and the models (and users who import both packages) never see
 /// two declarations of a name.
 const TAKEN_TYPES: &[&str] = &[
@@ -131,9 +132,12 @@ const TAKEN_TYPES: &[&str] = &[
     "Decoder",
     "Diagnostic",
     "Dispatch",
+    "DispatchEntry",
+    "Dispatcher",
     "Encoder",
     "Err",
     "EventStream",
+    "Expr",
     "FormatException",
     "IdempotencyStore",
     "Issue",
@@ -144,13 +148,22 @@ const TAKEN_TYPES: &[&str] = &[
     "MacroDescriptor",
     "MacroStepPreview",
     "MemoryIdempotencyStore",
+    "MemoryTokenStore",
     "Middleware",
+    "Models",
+    "OAuthFlow",
     "Ok",
     "OperationDescriptor",
     "Page",
     "ParamDescriptor",
     "Patch",
+    "PatchAbsent",
+    "PatchNull",
+    "PatchValue",
+    "Pkce",
+    "PollResult",
     "PreviewResult",
+    "RedirectPolicy",
     "RenderedRequest",
     "RequestContext",
     "ResponseContext",
@@ -160,7 +173,12 @@ const TAKEN_TYPES: &[&str] = &[
     "RetryOptions",
     "Schema",
     "SdkDescriptors",
+    "StoredToken",
+    "StreamDescriptor",
     "StreamEvent",
+    "TokenInfo",
+    "TokenStore",
+    "Typed",
     "Uint8List",
     "Unset",
     "ValidateResponses",
