@@ -34,8 +34,7 @@
 //! `lib/src/descriptors.dart`, with the notes TG1072 to TG1075) comes from
 //! the `sdk` module: [`generate`] adds the [`Library`] values it returns to
 //! the model libraries before the entry library is written, so the entry
-//! library exports them too. Until that module exists those files are not
-//! emitted.
+//! library exports them too.
 //!
 //! Output is deterministic: names come from the [`Namer`], every
 //! collection is iterated in plan or sorted order, files carry the
@@ -50,6 +49,7 @@ mod dart;
 mod models;
 pub mod options;
 mod package;
+mod sdk;
 
 use std::collections::BTreeMap;
 
@@ -74,7 +74,9 @@ impl Emitter for DartEmitter {
 
     fn supports(&self, ir: &Ir) -> Diagnostics {
         let (plan, _) = SdkPlan::new(ir);
-        notes(&plan)
+        let mut diags = notes(&plan);
+        diags.extend(sdk::notes(&plan));
+        diags
     }
 
     fn emit(&self, ir: &Ir, cfg: &TargetConfig, out: &mut FileSet) -> Diagnostics {
@@ -93,7 +95,8 @@ impl Emitter for DartEmitter {
 pub fn generate(ir: &Ir, opts: &Options) -> Vec<(String, String)> {
     let (plan, _) = SdkPlan::new(ir);
     let g = Gen::new(&plan, opts);
-    let libraries = models::libraries(&g);
+    let mut libraries = models::libraries(&g);
+    libraries.extend(sdk::libraries(&g));
     let mut files = package::files(&g, &libraries);
     files.extend(
         libraries
