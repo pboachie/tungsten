@@ -118,8 +118,22 @@ ir_struct! {
 }
 
 ir_struct! {
+    /// Review provenance is independent from inferred HTTP safety and exposure.
+    /// `safety` on the enclosing agent is the effective execution tier.
+    pub struct ImportPolicy {
+        #[serde(default)]
+        pub allowed_origins: Vec<String>,
+        pub inferred_safety: Safety,
+        pub reviewed: bool,
+        pub source: String,
+    }
+}
+
+ir_struct! {
     pub struct OperationAgentMeta {
         pub safety: Safety,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub import_policy: Option<ImportPolicy>,
         #[serde(default)]
         pub idempotency: IdempotencyPolicy,
         pub preview: PreviewMode,
@@ -187,6 +201,7 @@ impl Default for OperationAgentMeta {
     fn default() -> Self {
         Self {
             safety: Safety::Mutating,
+            import_policy: None,
             idempotency: IdempotencyPolicy::default(),
             preview: PreviewMode::Local,
             confirmation: None,
@@ -291,6 +306,26 @@ pub enum Jitter {
     None,
     Full,
     Equal,
+}
+
+/// API redirect policy. Mutations and cross-origin redirects are never followed.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum RedirectPolicy {
+    #[default]
+    SameOriginRead,
+    None,
+}
+
+impl RedirectPolicy {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::SameOriginRead => "same_origin_read",
+            Self::None => "none",
+        }
+    }
 }
 
 ir_struct! {
@@ -416,6 +451,9 @@ impl Default for DisclosurePolicy {
 ir_struct! {
     #[derive(Default)]
     pub struct AgentModel {
+        /// `none` cannot be relaxed by runtime client options.
+        #[serde(default)]
+        pub redirects: RedirectPolicy,
         #[serde(default)]
         pub macros: Vec<Macro>,
         #[serde(default)]

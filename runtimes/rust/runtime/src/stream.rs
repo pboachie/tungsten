@@ -47,7 +47,7 @@ const DEFAULT_RECONNECT_MS: u64 = 250;
 /// What sending a request gave: a decoded response, or an event stream whose
 /// body has not been read.
 pub(crate) enum Sent {
-    Response(Response<Option<Value>>),
+    Response(Response<Option<Value>>, String),
     Stream(StreamStart),
 }
 
@@ -692,7 +692,7 @@ impl ClientCore {
             .await?;
         let start = match self.send_with(&prepared, &opts, true).await? {
             Sent::Stream(start) => start,
-            Sent::Response(response) => {
+            Sent::Response(response, _) => {
                 let content_type = response.meta.headers.get("content-type").cloned();
                 let after = if is_mutation(op) {
                     " The call took effect; do not repeat it."

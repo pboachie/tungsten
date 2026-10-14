@@ -186,6 +186,10 @@ export interface ServerOptions {
    * are cut (arrays to their first items, then long strings) with a note.
    * Default 50000. */
   maxResultChars?: number;
+  /** Cap on bytes read from each upstream non-streaming API response before
+   * parsing, independent of result display truncation. Default 4194304 (4 MiB).
+   * Must be a positive safe integer. */
+  maxResponseBytes?: number;
   /** Cap, in bytes of JSON, on the events one streamed tool call collects;
    * past it the call fails with an `UNEXPECTED_RESPONSE` envelope and the
    * events so far as `partial`. Default 4194304 (4 MiB). */

@@ -6,6 +6,12 @@
 
 -
 
+## Release
+
+<!-- Optional: suggest a release target if you have a preference. The maintainer
+assigns and updates release labels; contributors do not need label permissions.
+Leave this section empty if you have no preference. -->
+
 ## Checklist
 
 - [ ] `cargo fmt --all --check` and `cargo clippy --workspace --all-targets -- -D warnings` pass

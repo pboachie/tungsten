@@ -361,16 +361,7 @@ pub(crate) fn op_shape<'a>(plan: &Plan<'a>, info: &OpInfo<'a>) -> OpShape<'a> {
 /// The item type of a page: the items of the array at `items_field` of the
 /// success body (the body itself when the field is empty).
 fn items_ref<'p>(plan: &'p Plan<'_>, body: &'p TypeRef, items_field: &str) -> Option<&'p TypeRef> {
-    let list = if items_field.is_empty() {
-        body
-    } else {
-        let (fields, _) = record_of(plan, body)?;
-        &fields.iter().find(|f| f.wire_name == items_field)?.ty
-    };
-    match resolve(plan, list)? {
-        Shape::Array { items, .. } => Some(items),
-        _ => None,
-    }
+    tungsten_emit::args::page_items_ref(plan.ir, body, items_field)
 }
 
 pub(crate) fn method_str(m: HttpMethod) -> &'static str {
@@ -639,6 +630,20 @@ fn agent_js(a: &OperationAgentMeta, sensitive_request: &[String]) -> Js {
             Js::strs(&a.sensitive_response_fields),
         ),
     ];
+    if let Some(policy) = &a.import_policy {
+        entries.push((
+            "importPolicy",
+            Js::obj(vec![
+                (
+                    "inferredSafety",
+                    Js::str(safety_str(policy.inferred_safety)),
+                ),
+                ("reviewed", Js::bool(policy.reviewed)),
+                ("source", Js::str(&policy.source)),
+                ("allowedOrigins", Js::strs(&policy.allowed_origins)),
+            ]),
+        ));
+    }
     if !sensitive_request.is_empty() {
         entries.push(("sensitiveRequestFields", Js::strs(sensitive_request)));
     }
@@ -1135,6 +1140,7 @@ fn api_js(plan: &Plan<'_>, opts: &Options) -> Js {
                     .collect(),
             ),
         ),
+        ("redirects", Js::str(ir.agent.redirects.as_str())),
         (
             "retries",
             Js::obj(vec![
@@ -1204,6 +1210,16 @@ pub(crate) fn descriptors_file(
     let mut imports = Imports::new();
     imports.add_type("@elysra/tungsten-runtime", "ApiDescriptor");
     imports.add_type("@elysra/tungsten-runtime", "OperationDescriptor");
+    let imported = plan
+        .ops
+        .iter()
+        .any(|info| info.op.agent.import_policy.is_some());
+    if imported {
+        imports.add("@elysra/tungsten-runtime", "requireImportPolicyV1");
+    }
+    if plan.ir.agent.redirects == tungsten_ir::RedirectPolicy::None {
+        imports.add("@elysra/tungsten-runtime", "requireRedirectPolicyV1");
+    }
     imports.add("zod", "z");
     imports.add("./internal.js", "toSchemaLike");
     if uses.integer {
@@ -1222,6 +1238,12 @@ pub(crate) fn descriptors_file(
     w.line("// Operation descriptors: what the runtime needs to call each operation.");
     w.blank();
     write_imports(&mut w, &imports);
+    if imported {
+        w.line("requireImportPolicyV1();");
+    }
+    if plan.ir.agent.redirects == tungsten_ir::RedirectPolicy::None {
+        w.line("requireRedirectPolicyV1();");
+    }
     for ns in &uses.namespaces {
         if let Some(m) = plan.model_ns(ns) {
             w.line(format!(
