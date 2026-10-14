@@ -33,6 +33,15 @@ multiple-versions = "warn"
 wildcards = "deny"
 # Workspace path dependencies carry no version requirement.
 allow-wildcard-paths = true
+# These duplicates are pinned by upstream majors: reqwest 0.12 requires
+# base64 ^0.22, and ring 0.17 (rustls's default provider) requires
+# getrandom ^0.2 and windows-sys ^0.52. Drop the skips when those majors
+# move on.
+skip = [
+    { crate = "base64@0.22.1", reason = "reqwest 0.12 requires base64 ^0.22" },
+    { crate = "getrandom@0.2.17", reason = "ring 0.17 requires getrandom ^0.2" },
+    { crate = "windows-sys@0.52.0", reason = "ring 0.17 requires windows-sys ^0.52" },
+]
 
 [sources]
 unknown-registry = "deny"
