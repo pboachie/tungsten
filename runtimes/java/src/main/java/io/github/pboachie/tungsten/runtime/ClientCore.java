@@ -1439,15 +1439,14 @@ public final class ClientCore {
         Map<String, String> hs = outcome.headers;
         onResponse(rctx, status, hs);
         String requestId = Classify.requestId(hs);
-        if (redirectsDisabled && status >= 300 && status <= 399) {
-            throw diag(op.id(), Category.UNEXPECTED_RESPONSE).status(status).retry(Retryable.NEVER)
-                    .remedy("Redirect policy is none; the 3xx response was not followed. Check the configured API URL.")
-                    .attempts(attempts).fail();
-        }
         Long retryAfter = Text.parseRetryAfter(hs.get("retry-after"), now());
         OperationDescriptor.Response declared = Classify.match(op.responses(), status);
-        boolean success = (status >= 200 && status <= 299)
-                || (declared != null && declared.kind().equals("success") && status >= 100 && status <= 399);
+        // A status the descriptor declares (exactly or by class) is classified as declared. With
+        // redirects disabled, a 3xx it does not declare is a refused redirect, never a success.
+        boolean refusedRedirect = redirectsDisabled && status >= 300 && status <= 399
+                && (declared == null || declared.statusKind().equals("default"));
+        boolean success = !refusedRedirect && ((status >= 200 && status <= 299)
+                || (declared != null && declared.kind().equals("success") && status >= 100 && status <= 399));
         String hint = op.agent().verify() != null ? "Call " + op.agent().verify().operation() + " to read the current state." : null;
         if (success && !outcome.bodyOk) {
             String failure = "timeout".equals(outcome.bodyFailure) ? "timeout" : "broken";
@@ -1472,6 +1471,9 @@ public final class ClientCore {
                     remediation = "The server answered with a redirect" + to + ". Redirects are never followed on mutations; check "
                             + identity.baseUrl() + " (scheme, host, trailing slash). Whether the call took effect is unknown only if the server applied it before redirecting.";
                     next = hint;
+                } else if (redirectsDisabled) {
+                    remediation = "The server answered with a redirect" + to + ". Redirects are disabled; check redirects and "
+                            + identity.baseUrl() + ".";
                 } else {
                     remediation = "The server answered with a redirect" + to
                             + " that leaves the API's origin (or too many redirects). It is not followed, so credentials never leave the API's host; check "

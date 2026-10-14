@@ -856,13 +856,12 @@ module Tungsten
         headers = outcome.headers
         hook(:on_response, rctx, ResponseContext.new(status: status, headers: headers))
         rid = Classify.request_id(headers)
-        if @redirects_disabled && status.between?(300, 399)
-          return Runtime.diag(op.id, "UNEXPECTED_RESPONSE").status(status).request_id(rid).retrying("never")
-                        .remedy("Redirect policy is none; the 3xx response was not followed. Check the configured API URL.").attempts(attempts).err
-        end
         retry_after = Transport.parse_retry_after(headers["retry-after"], now)
         declared = Classify.match_response(op.responses, status)
-        success = status.between?(200, 299) || (declared&.kind == "success" && status.between?(100, 399))
+        # A status the descriptor declares (exactly or by class) is classified as declared. With
+        # redirects disabled, a 3xx it does not declare is a refused redirect, never a success.
+        refused_redirect = @redirects_disabled && status.between?(300, 399) && (declared.nil? || declared.status == "default")
+        success = !refused_redirect && (status.between?(200, 299) || (declared&.kind == "success" && status.between?(100, 399)))
         verify_op = op.agent["verify"]
         hint = verify_op ? "Call #{verify_op['operation']} to read the current state." : nil
         if success && outcome.body.nil?
@@ -884,6 +883,8 @@ module Tungsten
               if mutation
                 "The server answered with a redirect#{to}. Redirects are never followed on mutations; check base_url (scheme, host, trailing slash). " \
                   "Whether the call took effect is unknown only if the server applied it before redirecting."
+              elsif @redirects_disabled
+                "The server answered with a redirect#{to}. Redirects are disabled; check redirects and base_url."
               else
                 "The server answered with a redirect#{to} that leaves the API's origin (or too many redirects). It is not followed, so credentials never leave the API's host; check base_url."
               end
