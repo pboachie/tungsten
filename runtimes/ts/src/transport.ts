@@ -14,6 +14,8 @@ export interface AttemptRequest {
   body: BodyInit | null;
   redirect: RequestRedirect;
   timeoutMs: number;
+  /** Absolute monotonic polling deadline, independent of timer callbacks. */
+  deadlineMs?: number | undefined;
   signal: AbortSignal | undefined;
   /** Hand a `text/event-stream` answer with a 2xx status back unread, as a
    * {@link StreamBody}; any other answer is read as usual. */
@@ -165,6 +167,8 @@ function isNotSent(error: unknown): boolean {
 /** Send once. Never throws. */
 export async function attempt(fetchImpl: typeof fetch, req: AttemptRequest): Promise<AttemptOutcome> {
   if (req.signal?.aborted) return { kind: "aborted", sent: false };
+  const remainingMs = req.deadlineMs === undefined ? req.timeoutMs : Math.min(req.timeoutMs, req.deadlineMs - performance.now());
+  if (remainingMs <= 0) return { kind: "not_sent", detail: "polling deadline expired before send" };
   const controller = new AbortController();
   let timedOut = false;
   const timer = setTimeout(
@@ -172,7 +176,7 @@ export async function attempt(fetchImpl: typeof fetch, req: AttemptRequest): Pro
       timedOut = true;
       controller.abort();
     },
-    Math.max(1, req.timeoutMs),
+    Math.max(1, remainingMs),
   );
   const onAbort = (): void => controller.abort();
   req.signal?.addEventListener("abort", onAbort, { once: true });
@@ -180,6 +184,9 @@ export async function attempt(fetchImpl: typeof fetch, req: AttemptRequest): Pro
   try {
     let response: Response;
     try {
+      if (req.deadlineMs !== undefined && performance.now() >= req.deadlineMs) {
+        return { kind: "not_sent", detail: "polling deadline expired before send" };
+      }
       response = await fetchImpl(req.url, {
         method: req.method,
         headers: req.headers,

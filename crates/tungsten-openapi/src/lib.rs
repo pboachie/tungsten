@@ -13,6 +13,7 @@
 //! once each) → reference graph and cycles. Every problem is a diagnostic;
 //! nothing here panics on bad input.
 
+pub mod endpoint_manifest;
 mod graph;
 mod jsonpath;
 mod load;

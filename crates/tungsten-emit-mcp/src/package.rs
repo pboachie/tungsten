@@ -19,7 +19,7 @@ use tungsten_ir::Ir;
 use crate::budget::{Budget, INDEX_BUDGET};
 use crate::env::{self, Credentials};
 use crate::manifest::{COUNTER_NAME, McpManifest, Mode, Reserved, ToolKind};
-use crate::options::{DEFAULT_RANGE, NODE_TYPES_VERSION, Options, TYPESCRIPT_VERSION};
+use crate::options::{NODE_TYPES_VERSION, Options, TYPESCRIPT_VERSION};
 
 /// JSON with two-space indent and a final newline.
 fn json_text(value: &Value) -> String {
@@ -39,7 +39,7 @@ pub(crate) fn package_json(ir: &Ir, opts: &Options) -> String {
         ("@elysra/tungsten-mcp".to_string(), opts.runtime.clone()),
         (
             "@elysra/tungsten-runtime".to_string(),
-            DEFAULT_RANGE.to_string(),
+            opts.sdk_runtime.clone(),
         ),
         (opts.sdk_package.clone(), opts.sdk.clone()),
     ];

@@ -75,6 +75,9 @@ fn entry(g: &Gen<'_, '_>) -> String {
             w,
             "The SDK descriptor document: every operation and macro the runtime calls.",
         );
+        if g.plan.ir.agent.redirects == tungsten_ir::RedirectPolicy::None {
+            w.line("::Tungsten::Runtime::ClientCore.require_redirect_policy_v1");
+        }
         w.line(format!(
             "DESCRIPTORS = ::Tungsten::Runtime::Descriptors.load(File.join(__dir__, {}, \"tungsten-descriptors.json\"))",
             str_lit(&lib)
@@ -480,6 +483,9 @@ fn client(g: &Gen<'_, '_>) -> String {
         );
         w.line("def initialize(options = nil, **keywords)");
         w.indent();
+        if g.plan.ir.agent.redirects == tungsten_ir::RedirectPolicy::None {
+            w.line("::Tungsten::Runtime::ClientCore.require_redirect_policy_v1");
+        }
         w.line("@core = ::Tungsten::Runtime::ClientCore.new(DESCRIPTORS, ::Tungsten::Runtime::ClientOptions.from(options, **keywords))");
         w.line("@macros = Macros.new(@core)");
         for (name, class) in &members {

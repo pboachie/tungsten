@@ -950,7 +950,7 @@ checksum = "06bdbd8cfc056b8d2e2e85f29b56a3bdbecb527cef81eb39e3e7b98af4652770"
 
 [[package]]
 name = "tungsten-agent"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "indexmap",
  "schemars",
@@ -959,11 +959,12 @@ dependencies = [
  "tungsten-config",
  "tungsten-core",
  "tungsten-ir",
+ "url",
 ]
 
 [[package]]
 name = "tungsten-build"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "indexmap",
  "petgraph",
@@ -978,7 +979,7 @@ dependencies = [
 
 [[package]]
 name = "tungsten-cli"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "clap",
  "schemars",
@@ -987,6 +988,7 @@ dependencies = [
  "tungsten-agent",
  "tungsten-build",
  "tungsten-config",
+ "tungsten-contract",
  "tungsten-core",
  "tungsten-emit",
  "tungsten-emit-csharp",
@@ -1003,11 +1005,12 @@ dependencies = [
  "tungsten-mock",
  "tungsten-openapi",
  "tungsten-tokens",
+ "url",
 ]
 
 [[package]]
 name = "tungsten-config"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "indexmap",
  "schemars",
@@ -1019,8 +1022,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "tungsten-contract"
+version = "0.1.2"
+dependencies = [
+ "blake3",
+ "serde",
+ "serde_json",
+ "url",
+]
+
+[[package]]
 name = "tungsten-core"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "blake3",
  "schemars",
@@ -1030,7 +1043,7 @@ dependencies = [
 
 [[package]]
 name = "tungsten-emit"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "schemars",
  "serde",
@@ -1043,7 +1056,7 @@ dependencies = [
 
 [[package]]
 name = "tungsten-emit-csharp"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "serde_json",
  "tungsten-core",
@@ -1053,7 +1066,7 @@ dependencies = [
 
 [[package]]
 name = "tungsten-emit-docs"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "serde_json",
  "tungsten-core",
@@ -1064,7 +1077,7 @@ dependencies = [
 
 [[package]]
 name = "tungsten-emit-java"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "serde_json",
  "tungsten-core",
@@ -1074,7 +1087,7 @@ dependencies = [
 
 [[package]]
 name = "tungsten-emit-mcp"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "serde",
  "serde_json",
@@ -1087,7 +1100,7 @@ dependencies = [
 
 [[package]]
 name = "tungsten-emit-py"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "serde_json",
  "tungsten-core",
@@ -1097,7 +1110,7 @@ dependencies = [
 
 [[package]]
 name = "tungsten-emit-rs"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "serde_json",
  "tungsten-core",
@@ -1107,7 +1120,7 @@ dependencies = [
 
 [[package]]
 name = "tungsten-emit-ruby"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "serde_json",
  "tungsten-core",
@@ -1117,7 +1130,7 @@ dependencies = [
 
 [[package]]
 name = "tungsten-emit-ts"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "petgraph",
  "serde_json",
@@ -1128,7 +1141,7 @@ dependencies = [
 
 [[package]]
 name = "tungsten-emit-webmcp"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "serde_json",
  "tungsten-core",
@@ -1139,7 +1152,7 @@ dependencies = [
 
 [[package]]
 name = "tungsten-ir"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "indexmap",
  "schemars",
@@ -1151,7 +1164,7 @@ dependencies = [
 
 [[package]]
 name = "tungsten-lsp"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "crossbeam-channel",
  "lsp-server",
@@ -1168,7 +1181,7 @@ dependencies = [
 
 [[package]]
 name = "tungsten-mock"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "bytes",
  "fancy-regex",
@@ -1183,10 +1196,13 @@ dependencies = [
 
 [[package]]
 name = "tungsten-openapi"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "petgraph",
+ "schemars",
+ "serde",
  "serde_json",
+ "serde_path_to_error",
  "tungsten-core",
  "url",
  "yaml-rust2",
@@ -1194,7 +1210,7 @@ dependencies = [
 
 [[package]]
 name = "tungsten-tokens"
-version = "0.1.1"
+version = "0.1.2"
 
 [[package]]
 name = "unicode-ident"

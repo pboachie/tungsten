@@ -153,7 +153,15 @@ pub(crate) struct Plan<'a> {
 
 /// Names `descriptors.ts` declares or imports besides the descriptor
 /// constants.
-pub(crate) const DESCRIPTOR_RESERVED: &[&str] = &["z", "api", "operations", "toSchemaLike", "rpc"];
+pub(crate) const DESCRIPTOR_RESERVED: &[&str] = &[
+    "z",
+    "api",
+    "operations",
+    "toSchemaLike",
+    "rpc",
+    "requireImportPolicyV1",
+    "requireRedirectPolicyV1",
+];
 
 impl<'a> Plan<'a> {
     pub(crate) fn new(ir: &'a Ir) -> Self {

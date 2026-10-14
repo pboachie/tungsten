@@ -1,6 +1,6 @@
 {
   "name": "@elysra/tungsten-webmcp",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Browser WebMCP adapter for tungsten-generated APIs.",
   "license": "Apache-2.0",
   "repository": { "type": "git", "url": "git+https://github.com/pboachie/tungsten.git", "directory": "runtimes/webmcp" },
