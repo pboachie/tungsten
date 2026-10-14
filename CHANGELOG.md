@@ -9,6 +9,10 @@ changes.
 
 ## [Unreleased]
 
+### Changed
+
+- Dependency audit: source-less `Cargo.lock` entries must be workspace members, and `[patch]`/`[replace]` tables in Cargo manifests are rejected.
+
 ## [0.1.2]
 
 ### Breaking
