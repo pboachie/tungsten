@@ -248,6 +248,20 @@ final class Text {
         return true;
     }
 
+    /** {@code type/subtype} tokens, optionally followed by {@code ;} parameters, in visible ASCII, space and tab. */
+    static boolean validMediaType(String value) {
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
+            if (!(c == '\t' || (c >= 0x20 && c <= 0x7e))) {
+                return false;
+            }
+        }
+        int semi = value.indexOf(';');
+        String head = (semi < 0 ? value : value.substring(0, semi)).strip();
+        int slash = head.indexOf('/');
+        return slash > 0 && validHeaderName(head.substring(0, slash)) && validHeaderName(head.substring(slash + 1));
+    }
+
     static boolean allDigits(String s) {
         return Json.isIndex(s);
     }

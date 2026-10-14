@@ -393,6 +393,9 @@ final class Serialize {
                     for (Object x : list) {
                         Binary bin = Binary.of(x);
                         if (bin != null) {
+                            if (bin.contentType() != null && !Text.validMediaType(bin.contentType())) {
+                                throw new Problem("body", "multipart file content types that are valid media types", v);
+                            }
                             shown.add(binaryDisplay(bin.length(), bin.contentType()));
                             parts.add(new Part(k, "file", null, bin.data(),
                                     bin.filename() != null ? bin.filename() : k,

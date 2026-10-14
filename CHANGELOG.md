@@ -9,6 +9,12 @@ changes.
 
 ## [Unreleased]
 
+### Fixed
+
+- Go, C#, Java, Python, Ruby and Rust runtimes: validate the media type of a
+  binary multipart part and refuse malformed values with `VALIDATION_FAILED`
+  before any bytes are written.
+
 ## [0.1.2]
 
 ### Breaking
