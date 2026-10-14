@@ -12,6 +12,7 @@ use tungsten_config::TungstenConfig;
 use tungsten_core::Diagnostic;
 use tungsten_emit::{Emitter, TargetConfig};
 use tungsten_emit_csharp::CSharpEmitter;
+use tungsten_emit_dart::DartEmitter;
 use tungsten_emit_docs::DocsEmitter;
 use tungsten_emit_java::JavaEmitter;
 use tungsten_emit_mcp::McpEmitter;
@@ -30,6 +31,7 @@ static PYTHON: PythonEmitter = PythonEmitter;
 static RUST: RustEmitter = RustEmitter;
 static JAVA: JavaEmitter = JavaEmitter;
 static CSHARP: CSharpEmitter = CSharpEmitter;
+static DART: DartEmitter = DartEmitter;
 static RUBY: RubyEmitter = RubyEmitter;
 
 /// The emitter for a target id, if this version has one.
@@ -43,6 +45,7 @@ pub fn emitter(id: &str) -> Option<&'static dyn Emitter> {
         "rust" => Some(&RUST),
         "java" => Some(&JAVA),
         "csharp" => Some(&CSHARP),
+        "dart" => Some(&DART),
         "ruby" => Some(&RUBY),
         _ => None,
     }

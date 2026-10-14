@@ -1005,6 +1005,51 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
          in order and decodes the first that accepts the value.",
         "Give every variant a `discriminator.mapping` entry or a `const` tag property.",
     ),
+    e(
+        "TG1070",
+        "An option of the `dart` target is not valid (a `package` that is not a pub package \
+         name or is a Dart keyword or `tungsten_runtime`, a `version` that is not a semantic \
+         version, a `runtime` that is not a pub version constraint, or an empty \
+         `runtime_path`), so its default is used.",
+        "Fix the option under `targets.dart` in tungsten.yml.",
+    ),
+    e(
+        "TG1071",
+        "A schema has no Dart type: an `allOf` that cannot be merged into one record (a member \
+         is not a record, has typed extra members, or two members share a wire name) or an \
+         enum that is not an enum of strings or of integers (mixed JSON types, numbers or \
+         booleans). The Dart SDK types it as its JSON value (`Object?`), which the runtime \
+         still validates against the schema.",
+        "Restructure the schema (records with distinct properties, an enum of strings or \
+         integers), or accept the JSON value.",
+    ),
+    e(
+        "TG1072",
+        "A macro of agent.yml is not in the canonical form the SDKs run (an unknown step kind \
+         or operation, a reference to no earlier step, an invalid `as`, `until` or budget). The \
+         Dart SDK leaves it out; the other operations are generated as usual.",
+        "Fix the macro in agent.yml; the message names the offending member.",
+    ),
+    e(
+        "TG1073",
+        "The API declares an OpenID Connect security scheme. The Dart SDK sends the configured \
+         credential as a bearer token and does not run discovery or obtain tokens itself.",
+        "Obtain the token yourself and pass it in `ClientOptions.auth` under the scheme's name.",
+    ),
+    e(
+        "TG1074",
+        "An operation answers different JSON bodies depending on the status. The Dart SDK's \
+         typed result for it is the JSON value (`Object?`); the runtime validates it against \
+         the body of the status that arrived.",
+        "Nothing to fix; read `meta.status` of the result to tell the bodies apart.",
+    ),
+    e(
+        "TG1075",
+        "A union has a discriminator, but one of its variants has no tag value or is not a \
+         named type, so the Dart SDK cannot pick the variant by the tag. It tries the variants \
+         in order and decodes the first that accepts the value.",
+        "Give every variant a `discriminator.mapping` entry or a `const` tag property.",
+    ),
 ];
 
 /// The extended explanation of a code, if one exists.
