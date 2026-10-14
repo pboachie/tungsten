@@ -7,8 +7,8 @@
 //! | `crate` | `<api>-sdk` | SDK crate name (letters, digits, `-`, `_`; starts with a letter). |
 //! | `version` | `0.1.0` | Version of both crates (semver). |
 //! | `runtime` | [`DEFAULT_RUNTIME_REQ`] | Version requirement of `tungsten-runtime`. |
-//! | `runtime_path` | none | A local `tungsten-runtime` crate, as a path dependency. |
-//! | `cli` | enabled | `false` skips the CLI crate; an object sets `bin` (default `<api>`), `crate` (default `<api>-cli`), `kit` (requirement of `tungsten-cli-kit`, default [`DEFAULT_RUNTIME_REQ`]) and `kit_path` (a local `tungsten-cli-kit` crate). |
+//! | `runtime_path` | none | A local `tungsten-runtime` crate, as a path dependency that keeps the `runtime` requirement (so the crate stays packageable). |
+//! | `cli` | enabled | `false` skips the CLI crate; an object sets `bin` (default `<api>`), `crate` (default `<api>-cli`), `kit` (requirement of `tungsten-cli-kit`, default [`DEFAULT_RUNTIME_REQ`]) and `kit_path` (a local `tungsten-cli-kit` crate, with the `kit` requirement). |
 
 use serde_json::Value;
 use tungsten_core::{Diagnostic, Diagnostics};
@@ -19,13 +19,22 @@ use tungsten_ir::naming::{self, Case};
 /// Default version requirement of `tungsten-runtime` and `tungsten-cli-kit`.
 pub const DEFAULT_RUNTIME_REQ: &str = "0.1";
 
+/// The oldest compiler supported by generated SDK and CLI code (let chains).
+pub(crate) const RUST_VERSION: &str = "1.88";
+
 /// Where a dependency comes from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Dep {
     /// A version requirement (`0.1`).
     Version(String),
-    /// A local path.
-    Path(String),
+    /// A local path, with the version requirement that `cargo package` and
+    /// `cargo publish` use in its place.
+    Path {
+        /// The crate directory, relative to the generated crate.
+        path: String,
+        /// The version requirement (`0.1`).
+        version: String,
+    },
 }
 
 /// The CLI crate's options; `None` in [`Options::cli`] when disabled.
@@ -100,10 +109,7 @@ impl Options {
             &is_req,
             "a version requirement such as 0.1",
         );
-        let runtime = match runtime_path {
-            Some(p) => Dep::Path(p),
-            None => Dep::Version(runtime_req.unwrap_or_else(|| DEFAULT_RUNTIME_REQ.into())),
-        };
+        let runtime = dependency(runtime_path, runtime_req);
         let cli = match o.get("cli") {
             Some(Value::Bool(false)) => None,
             Some(c @ Value::Object(_)) => {
@@ -131,10 +137,7 @@ impl Options {
                     &is_req,
                     "a version requirement such as 0.1",
                 );
-                let kit = match kit_path {
-                    Some(p) => Dep::Path(p),
-                    None => Dep::Version(kit_req.unwrap_or_else(|| DEFAULT_RUNTIME_REQ.into())),
-                };
+                let kit = dependency(kit_path, kit_req);
                 Some(CliOptions { bin, package, kit })
             }
             Some(other) if !matches!(other, Value::Bool(true)) => {
@@ -158,6 +161,16 @@ impl Options {
             },
             diags,
         )
+    }
+}
+
+/// A path dependency when `path` is set, keeping the configured (or
+/// default) requirement either way.
+fn dependency(path: Option<String>, req: Option<String>) -> Dep {
+    let version = req.unwrap_or_else(|| DEFAULT_RUNTIME_REQ.into());
+    match path {
+        Some(path) => Dep::Path { path, version },
+        None => Dep::Version(version),
     }
 }
 

@@ -220,7 +220,7 @@ export async function registerTungstenWebMcp(options: RegisterTungstenWebMcpOpti
         opts.signal = callController.signal;
         // Bound actual HTTP bytes before binary/JSON materialization. The SDK
         // applies this to fallback non-SSE responses as well.
-        if (options.binaryResults || options.streamCollection) opts.maxResponseBytes = !preview && op && options.binaryResults && op.responses.some((response) => response.kind === "success" && binaryMediaType(response.mediaType)) ? options.binaryResults.maxBytes : maxBytes;
+        opts.maxResponseBytes = !preview && op && options.binaryResults && op.responses.some((response) => response.kind === "success" && binaryMediaType(response.mediaType)) ? options.binaryResults.maxBytes : maxBytes;
         try {
           if (!preview && op?.stream && options.streamCollection) {
             const result = await collectStream(options.core.stream(op, args, opts), options.streamCollection, entry.target, safety, callController.signal, json, maxBytes);

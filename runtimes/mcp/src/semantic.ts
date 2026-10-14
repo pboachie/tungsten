@@ -295,21 +295,34 @@ export function buildSemantic(config: EmbeddingsOptions | undefined, catalog: Ca
   if (typeof embedder === "string") return off(embedder);
   const embed = embedder;
   const cache = new Map<string, Float32Array>();
+  const inFlight = new Map<string, Promise<Float32Array>>();
   const embedQuery = async (query: string): Promise<Float32Array> => {
     const cached = cache.get(query);
     if (cached) return cached;
-    let raw: ArrayLike<number>;
+    const pending = inFlight.get(query);
+    if (pending) return pending;
+    // Defer provider invocation until the promise is registered, even for a
+    // synchronous custom callback. Only vectors are shared; ranks stay local.
+    const request = Promise.resolve().then(async () => {
+      let raw: ArrayLike<number>;
+      try {
+        raw = await embed(query);
+      } catch (error) {
+        throw error instanceof Error ? error : new Error(String(error));
+      }
+      if (raw.length !== index.dimensions) throw new Error(`the query embedding has ${raw.length} values, the index has ${index.dimensions}`);
+      for (let i = 0; i < raw.length; i++) if (!Number.isFinite(raw[i])) throw new Error("the query embedding holds a value that is not a finite number");
+      const vector = normalize(raw);
+      if (cache.size >= CACHE_SIZE) cache.delete(cache.keys().next().value as string);
+      cache.set(query, vector);
+      return vector;
+    });
+    inFlight.set(query, request);
     try {
-      raw = await embed(query);
-    } catch (error) {
-      throw error instanceof Error ? error : new Error(String(error));
+      return await request;
+    } finally {
+      inFlight.delete(query);
     }
-    if (raw.length !== index.dimensions) throw new Error(`the query embedding has ${raw.length} values, the index has ${index.dimensions}`);
-    for (let i = 0; i < raw.length; i++) if (!Number.isFinite(raw[i])) throw new Error("the query embedding holds a value that is not a finite number");
-    const vector = normalize(raw);
-    if (cache.size >= CACHE_SIZE) cache.delete(cache.keys().next().value as string);
-    cache.set(query, vector);
-    return vector;
   };
   return {
     unavailable: null,

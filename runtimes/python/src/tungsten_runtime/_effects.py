@@ -33,6 +33,7 @@ class AttemptRequest:
     #: With ``stream``: the silence, in milliseconds, after which a read of
     #: the body times out. Default ``timeout_ms``.
     idle_ms: float | None = None
+    deadline_ms: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -175,7 +176,40 @@ class StreamFailed:
 
 type ReadOutcome = Chunk | StreamEnded | StreamFailed
 
-type Effect = Send | Sleep | StoreGet | StorePut | Observe | Invoke | Shared | Emit | ReadChunk | CloseStream
+
+@dataclass(frozen=True, slots=True)
+class StoreReserve:
+    store: object
+    scope: str
+    logical_id: str
+    key: str
+
+
+class PollExpired(Exception):
+    """The absolute polling deadline elapsed."""
+
+
+@dataclass(frozen=True, slots=True)
+class Bounded:
+    effect: object
+    deadline_ms: float
+
+
+type Effect = (
+    Bounded
+    | Send
+    | Sleep
+    | StoreGet
+    | StorePut
+    | StoreReserve
+    | Observe
+    | Invoke
+    | Shared
+    | Emit
+    | ReadChunk
+    | CloseStream
+)
+
 
 type Flow[T] = Generator[Effect, object, T]
 
@@ -224,3 +258,7 @@ def shared(key: str, flow: Callable[[], Flow[str]]) -> Flow[str]:
 
 def emit(item: object) -> Flow[None]:
     yield Emit(item)
+
+
+def store_reserve(store: object, scope: str, logical_id: str, key: str) -> Flow[object]:
+    return (yield StoreReserve(store, scope, logical_id, key))

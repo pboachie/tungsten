@@ -22,6 +22,7 @@ mod overlay;
 mod parse;
 mod refs;
 mod spans;
+pub mod swagger;
 mod version;
 mod walk;
 mod yaml;
@@ -58,7 +59,7 @@ pub struct LoadOptions {
     pub max_bytes: usize,
     /// Maximum nesting depth (TG0105).
     pub max_depth: usize,
-    /// Accept Swagger 2.0 by converting it (not implemented in 0.1; TG0103).
+    /// Accept the offline Swagger 2.0 subset through deterministic conversion.
     pub convert_swagger2: bool,
 }
 

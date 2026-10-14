@@ -543,18 +543,7 @@ fn optional_slot(ty: String, presence: Presence) -> Slot {
 /// The item type of a page: the items of the array at `items_field` of the
 /// success body (the body itself when the field is empty).
 fn items_ref<'p>(plan: &'p Plan<'_>, body: &'p TypeRef, items_field: &str) -> Option<&'p TypeRef> {
-    let list = if items_field.is_empty() {
-        body
-    } else {
-        let Some(Shape::Record { fields, .. }) = plan.resolve(body) else {
-            return None;
-        };
-        &fields.iter().find(|f| f.wire_name == items_field)?.ty
-    };
-    match plan.resolve(list)? {
-        Shape::Array { items, .. } => Some(items),
-        _ => None,
-    }
+    tungsten_emit::args::page_items_ref(plan.ir, body, items_field)
 }
 
 // ------------------------------------------------------- request structs
@@ -1142,6 +1131,23 @@ fn agent_rs(a: &OperationAgentMeta, sensitive_request: &[String], lets: &mut Let
     Rx::record(
         "AgentMeta",
         vec![
+            (
+                "import_policy",
+                a.import_policy.as_ref().map_or_else(Rx::none, |policy| {
+                    Rx::some(Rx::record(
+                        "ImportPolicy",
+                        vec![
+                            (
+                                "inferred_safety",
+                                Rx::atom(safety_rs(policy.inferred_safety)),
+                            ),
+                            ("reviewed", Rx::boolean(policy.reviewed)),
+                            ("source", Rx::string(&policy.source)),
+                            ("allowed_origins", Rx::strings(&policy.allowed_origins)),
+                        ],
+                    ))
+                }),
+            ),
             ("safety", Rx::atom(safety_rs(a.safety))),
             (
                 "idempotency",
@@ -1724,6 +1730,15 @@ fn api_rx(plan: &Plan<'_>, version: &str, lets: &mut Lets) -> Rx {
     Rx::record(
         "ApiDescriptor",
         vec![
+            (
+                "redirects",
+                Rx::atom(match ir.agent.redirects {
+                    tungsten_ir::RedirectPolicy::None => "tungsten_runtime::RedirectPolicy::None",
+                    tungsten_ir::RedirectPolicy::SameOriginRead => {
+                        "tungsten_runtime::RedirectPolicy::SameOriginRead"
+                    }
+                }),
+            ),
             ("name", Rx::string(&ir.api.name.wire)),
             ("version", Rx::string(version)),
             (

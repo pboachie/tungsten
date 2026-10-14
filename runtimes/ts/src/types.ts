@@ -203,6 +203,7 @@ export interface VerifyDescriptor {
 }
 
 export interface AgentMeta {
+  importPolicy?: { inferredSafety: Safety; reviewed: boolean; source: string; allowedOrigins: string[] };
   safety: Safety;
   idempotency: { policy: IdempotencyKind; header: string | null; format: string | null; persistRequired: boolean; note: string | null };
   preview:
@@ -312,7 +313,11 @@ export type AuthSchemeDescriptor =
       >;
     };
 
+/** `none` wins over both manifest and client defaults. */
+export type RedirectPolicy = "same_origin_read" | "none";
+
 export interface ApiDescriptor {
+  redirects?: RedirectPolicy;
   /** Machine name (`zrotext`). */
   name: string;
   /** SDK package version. */
@@ -346,6 +351,8 @@ export interface ApiDescriptor {
 export type AuthConfig = Record<string, string | Record<string, string>>;
 
 export interface IdempotencyStore {
+  /** Atomically return the existing key or persist candidate. */
+  reserve?(scope: string, logicalId: string, candidate: string): Promise<string>;
   get(scope: string, logicalId: string): Promise<string | undefined>;
   put(scope: string, logicalId: string, key: string): Promise<void>;
 }
@@ -378,6 +385,8 @@ export interface RetryOptions {
 }
 
 export interface ClientOptions {
+  /** May tighten the API default; cannot re-enable an API configured with none. */
+  redirects?: RedirectPolicy;
   /** Defaults to the first server. */
   baseUrl?: string;
   auth?: AuthConfig;
@@ -434,6 +443,8 @@ export interface ClientOptions {
 }
 
 export interface CallOptions {
+  /** Maximum successful pages per traversal; omitted or zero means unbounded. */
+  maxPages?: number;
   /** Required for `caller_owned` operations with `persistRequired`. */
   idempotencyKey?: string;
   /** Token from `preview()`; required for `irreversible`, and for

@@ -4,9 +4,11 @@ package tungsten
 
 import (
 	"bytes"
+	"context"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -50,7 +52,9 @@ func (s *MemoryIdempotencyStore) Put(scope, logicalID, key string) {
 // atomic (a temporary file, then a rename); the file is created with mode
 // 0600. A file that cannot be parsed makes Get report nothing and Put write
 // nothing, and the runtime then refuses the call rather than issue a second
-// key for the same intent.
+// key for the same intent. Reserve also holds the cross-process lease
+// <path>.lock (see lease.go): it waits up to 2 s for another writer, then
+// refuses; only its owner removes a lease.
 type FileIdempotencyStore struct {
 	path string
 	mu   sync.Mutex
@@ -83,6 +87,12 @@ func (s *FileIdempotencyStore) read() (map[string]map[string]string, bool) {
 }
 
 func (s *FileIdempotencyStore) write(data map[string]map[string]string) error {
+	return s.writeFenced(data, nil)
+}
+
+// writeFenced writes data; fence, when set, runs just before the rename that
+// commits the file, and its error abandons the write.
+func (s *FileIdempotencyStore) writeFenced(data map[string]map[string]string, fence func() error) error {
 	keys := NewObject()
 	scopes := make([]string, 0, len(data))
 	for scope := range data {
@@ -128,6 +138,9 @@ func (s *FileIdempotencyStore) write(data map[string]map[string]string) error {
 	}
 	if cerr := f.Close(); err == nil {
 		err = cerr
+	}
+	if err == nil && fence != nil {
+		err = fence()
 	}
 	if err == nil {
 		err = os.Rename(tmp, s.path)
@@ -269,4 +282,129 @@ func keyHeader(op *OperationDescriptor) string {
 		}
 	}
 	return "Idempotency-Key"
+}
+
+// AtomicIdempotencyStore persists candidate only if there is no existing key.
+// Custom cross-process stores should implement this transactional extension.
+type AtomicIdempotencyStore interface {
+	Reserve(scope, logicalID, candidate string) (string, error)
+}
+
+var legacyReservationMu sync.Mutex
+
+// fileReservationLocks serializes the reservations of one store file within
+// the process (by absolute path); the lease serializes them across processes.
+var fileReservationLocks sync.Map
+
+func fileReservationLock(path string) *sync.Mutex {
+	if abs, err := filepath.Abs(path); err == nil {
+		path = abs
+	}
+	mu, _ := fileReservationLocks.LoadOrStore(path, &sync.Mutex{})
+	return mu.(*sync.Mutex)
+}
+
+func reserveKey(store IdempotencyStore, scope, id, candidate string) (string, error) {
+	if atomic, ok := store.(AtomicIdempotencyStore); ok {
+		return atomic.Reserve(scope, id, candidate)
+	}
+	legacyReservationMu.Lock()
+	defer legacyReservationMu.Unlock()
+	if old, ok := store.Get(scope, id); ok && old != "" {
+		return old, nil
+	}
+	store.Put(scope, id, candidate)
+	if old, ok := store.Get(scope, id); !ok || old != candidate {
+		return "", fmt.Errorf("the key could not be stored")
+	}
+	return candidate, nil
+}
+func (s *MemoryIdempotencyStore) Reserve(scope, id, candidate string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	slot := [2]string{scope, id}
+	if old := s.keys[slot]; old != "" {
+		return old, nil
+	}
+	s.keys[slot] = candidate
+	return candidate, nil
+}
+func (s *FileIdempotencyStore) Reserve(scope, id, candidate string) (string, error) {
+	fileMu := fileReservationLock(s.path)
+	fileMu.Lock()
+	defer fileMu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := os.MkdirAll(filepath.Dir(s.path), 0700); err != nil {
+		return "", err
+	}
+	lease := s.path + ".lock"
+	token, err := acquireLease(lease)
+	if err != nil {
+		return "", err
+	}
+	// The outcome is decided; a failed release never fails the reservation.
+	defer releaseLease(lease, token)
+	data, ok := s.read()
+	if !ok {
+		return "", fmt.Errorf("invalid idempotency store")
+	}
+	if old := data[scope][id]; old != "" {
+		return old, nil
+	}
+	if data[scope] == nil {
+		data[scope] = map[string]string{}
+	}
+	data[scope][id] = candidate
+	if err := s.writeFenced(data, leaseFence(lease, token)); err != nil {
+		return "", err
+	}
+	return candidate, nil
+}
+
+// A permit is retained until persistence completes, including after caller
+// cancellation. Waiting callers never enqueue an unbounded number of workers.
+var reservationWorkers = make(chan struct{}, 16)
+
+type reservationResult struct {
+	key string
+	err error
+}
+
+func reserveKeyContext(ctx context.Context, store IdempotencyStore, scope, id, candidate string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	select {
+	case reservationWorkers <- struct{}{}:
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+	if err := ctx.Err(); err != nil {
+		<-reservationWorkers
+		return "", err
+	}
+	finished := make(chan reservationResult, 1)
+	go func() {
+		defer func() { <-reservationWorkers }()
+		result := reservationResult{}
+		func() {
+			defer func() {
+				if recover() != nil {
+					result.err = errors.New("idempotency store worker panicked")
+				}
+			}()
+			result.key, result.err = reserveKey(store, scope, id, candidate)
+		}()
+		finished <- result
+	}()
+	select {
+	case result := <-finished:
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		return result.key, result.err
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
 }
