@@ -271,7 +271,10 @@ func (c *ClientCore) classifyResponse(cctx *callContext, p *prepared, outcome at
 	retryAfterValue, hasRetryAfter := headers["retry-after"]
 	retryAfter := parseRetryAfter(retryAfterValue, hasRetryAfter, c.now())
 	declared := matchResponse(op.Responses, status)
-	success := !((c.redirectsDisabled || mutation) && status >= 300 && status <= 399) && ((status >= 200 && status <= 299) || (declared != nil && declared.Kind == KindSuccess && status >= 100 && status <= 399))
+	// A status the descriptor declares (exactly or by class) is classified as declared. With
+	// redirects disabled, a 3xx it does not declare is a refused redirect, never a success.
+	refusedRedirect := c.redirectsDisabled && status >= 300 && status <= 399 && (declared == nil || declared.Status.Kind == "default")
+	success := !refusedRedirect && ((status >= 200 && status <= 299) || (declared != nil && declared.Kind == KindSuccess && status >= 100 && status <= 399))
 	var hint *string
 	if v := op.Agent.Verify; v != nil {
 		hint = strPtr(fmt.Sprintf("Call %s to read the current state.", v.Operation))

@@ -400,6 +400,8 @@ pub(crate) struct InitArgs {
     #[arg(long, default_value = "auto", value_parser = ["auto", "curl", "http"])]
     pub input_format: String,
     /// Trusted path template for each saved request, in input order; repeat as needed.
+    /// HAR input requires a template for every captured path; each path uses the most
+    /// literal matching template.
     #[arg(long, conflicts_with = "method")]
     pub route: Vec<String>,
     /// Shell quoting syntax of a saved cURL command; never executes a shell.
@@ -409,7 +411,8 @@ pub(crate) struct InitArgs {
     #[arg(long, conflicts_with = "resume")]
     pub typescript_runtime: Option<PathBuf>,
     /// Add outputs to an existing project while retaining all existing settings.
-    /// Saves the original manifest as tungsten.yml.init-backup before replacement.
+    /// Edits only the `targets` section and saves the original manifest as
+    /// tungsten.yml.init-backup (or the next free `.init-backup.N`) first.
     #[arg(long, requires = "resume", value_delimiter = ',', value_parser = parse_init_target)]
     pub add_targets: Vec<String>,
     /// Acquire project dependencies, build selected outputs and call a loopback mock.

@@ -43,8 +43,9 @@ We will credit you in the advisory unless you prefer to stay anonymous.
 ## Dependency controls
 
 Run `python3 .github/scripts/dependency_audit.py` before merging dependency
-changes. It checks every committed Cargo, npm and uv lockfile against the
-package-name baseline in `.github/dependency-policy.json`, approved registry
+changes. It checks every committed Cargo, npm and uv lockfile and the Python
+release-tool lock against the package-name baseline in
+`.github/dependency-policy.json`, approved registry
 origins and artifact hashes, then queries OSV for the locked versions without
 installing packages. Network failures fail the check. `--offline` checks only
 local policy and must not be reported as a vulnerability scan.
@@ -61,7 +62,9 @@ during builds and must be treated as dependency code.
 
 These checks cover the committed dependency resolution, not arbitrary future
 consumer resolutions, language toolchains, native system libraries or unknown
-vulnerabilities. They do not audit the build-isolated Python packaging tools.
+vulnerabilities. Python release tools are installed from the hash-locked
+`.github/packaging-requirements.lock`; release builds disable build isolation
+so the build frontend cannot resolve additional unreviewed tools.
 Generated SDK dependency changes also require emitter and runtime review.
 
 ## Scope
