@@ -218,16 +218,25 @@ struct RecordParts<'a> {
 impl Ctx<'_> {
     /// Every model file: (path, text), in compile order.
     pub fn models(&self) -> Vec<(String, String)> {
+        let mut seen: Vec<String> = vec![];
         self.model_groups()
             .into_iter()
             .map(|g| {
-                let text = self.group_file(&g);
+                let reopen = seen.contains(&g.namespace);
+                if !reopen {
+                    seen.push(g.namespace.clone());
+                }
+                let text = self.group_file(&g, reopen);
                 (g.path, text)
             })
             .collect()
     }
 
-    fn group_file(&self, g: &ModelGroup) -> String {
+    /// The file of a model group. `reopen`: an earlier file declares models
+    /// in the same namespace, and opening it again after the runtime puts
+    /// them back in front of the runtime's own types of the same name (a
+    /// model `Category` and the runtime's `Category`).
+    fn group_file(&self, g: &ModelGroup, reopen: bool) -> String {
         let mut w = self.file_writer();
         w.line(format!("namespace {}", g.namespace));
         w.blank();
@@ -235,6 +244,9 @@ impl Ctx<'_> {
         w.line("open Tungsten.Runtime");
         // After Tungsten.Runtime: `Patch` and `Codec` are the F# layer's.
         w.line("open Tungsten.Runtime.FSharp");
+        if reopen {
+            w.line(format!("open {}", g.namespace));
+        }
         let mut first = true;
         for id in &g.types {
             let Some(t) = self.ir.types.get(id) else {
