@@ -34,6 +34,7 @@ module Tungsten
 
     # Client options (every keyword optional):
     #
+    # - `redirects`: `"same_origin_read"` or `"none"`; `"none"` in either the API or options wins;
     # - `base_url`: defaults to the API's first server;
     # - `auth`: credentials by auth scheme name: a String for bearer, API key
     #   and basic (`"user:password"`) schemes, a Hash for a composite profile
@@ -57,11 +58,11 @@ module Tungsten
     # - `confirmation_key`: signs confirmation tokens (random per client);
     # - `now` (epoch milliseconds) and `random` (in [0, 1)): callables for tests.
     ClientOptions = Data.define(
-      :base_url, :auth, :token_store, :timeout_ms, :retries, :idempotency_store, :middleware,
+      :redirects, :base_url, :auth, :token_store, :timeout_ms, :retries, :idempotency_store, :middleware,
       :validate_responses, :on_diagnostic, :headers, :max_event_bytes, :max_collect_bytes, :max_collect_ms,
       :max_reconnects, :reconnect_max_ms, :idle_timeout_ms, :confirmation_key, :now, :random
     ) do
-      def initialize(base_url: nil, auth: {}, token_store: nil, timeout_ms: nil, retries: nil, idempotency_store: nil,
+      def initialize(redirects: nil, base_url: nil, auth: {}, token_store: nil, timeout_ms: nil, retries: nil, idempotency_store: nil,
                      middleware: [], validate_responses: "warn", on_diagnostic: nil, headers: {}, max_event_bytes: nil,
                      max_collect_bytes: nil, max_collect_ms: nil, max_reconnects: nil, reconnect_max_ms: nil,
                      idle_timeout_ms: nil, confirmation_key: nil, now: nil, random: nil)

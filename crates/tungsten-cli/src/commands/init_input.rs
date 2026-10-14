@@ -9,6 +9,28 @@ use tungsten_contract::{
     UnknownFact,
 };
 
+fn har_paths(args: &InitArgs) -> Result<std::collections::BTreeMap<String, String>, String> {
+    let Some(path) = &args.har_paths else {
+        return Ok(Default::default());
+    };
+    if !std::fs::metadata(path).is_ok_and(|metadata| metadata.is_file()) {
+        return Err("HAR path mapping must be a regular JSON file".into());
+    }
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)
+        .map_err(|_| "cannot open HAR path mapping")?
+        .take(1024 * 1024 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| "cannot read HAR path mapping")?;
+    if bytes.len() > 1024 * 1024 {
+        return Err("HAR path mapping exceeds 1 MiB; split the capture and mapping".into());
+    }
+    serde_json::from_slice(&bytes).map_err(|_| {
+        "HAR path mapping must be a JSON object of captured URL paths to reviewed template strings"
+            .into()
+    })
+}
+
 fn example(path: &Path) -> Result<Vec<MediaEvidence>, String> {
     let mut bytes = Vec::new();
     std::fs::File::open(path)
@@ -143,6 +165,29 @@ pub(super) fn prepare(args: &mut InitArgs) -> Result<(), String> {
     Ok(())
 }
 
+/// Parse the input for format detection. JSON input is read with serde_json, whose
+/// recursion limit fails cleanly, so a deep Postman or Swagger document is never
+/// mistaken for OpenAPI because the YAML reader stopped early; its error is surfaced.
+fn detect_root(text: &str) -> Result<serde_json::Value, String> {
+    let body = text.trim_start_matches('\u{feff}').trim_start();
+    if body.starts_with('{') || body.starts_with('[') {
+        let error = match serde_json::from_str(body) {
+            Ok(value) => return Ok(value),
+            Err(error) => error,
+        };
+        // A YAML flow mapping that is not strict JSON is still accepted as YAML.
+        if let Ok(value) = tungsten_config::parse_yaml("input", text).0 {
+            return Ok(value);
+        }
+        return Err(format!(
+            "input looks like JSON but cannot be read (invalid syntax or nesting deeper than 128 levels): {error}"
+        ));
+    }
+    Ok(tungsten_config::parse_yaml("input", text)
+        .0
+        .unwrap_or(serde_json::Value::Null))
+}
+
 /// Detect a Swagger document and persist its bounded conversion for the ordinary
 /// compiler. OpenAPI input is left in place so relative references retain meaning.
 pub(super) fn import(args: &mut InitArgs) -> Result<Vec<String>, String> {
@@ -174,9 +219,7 @@ pub(super) fn import(args: &mut InitArgs) -> Result<Vec<String>, String> {
         );
     }
     let text = std::str::from_utf8(&bytes).map_err(|_| "input must be UTF-8 JSON or YAML")?;
-    let root = tungsten_config::parse_yaml("input", text)
-        .0
-        .unwrap_or(serde_json::Value::Null);
+    let root = detect_root(text)?;
     let is_curl = args.input_format == "curl"
         || (args.input_format == "auto"
             && (text.trim_start().starts_with("curl ")
@@ -220,13 +263,29 @@ pub(super) fn import(args: &mut InitArgs) -> Result<Vec<String>, String> {
         let limits = Limits::default();
         let options = tungsten_contract::har::HarOptions {
             origin: args.har_origin.clone(),
+            path_templates: har_paths(args)?,
             include_prefixes: args.include_prefix.clone(),
             exclude_prefixes: args.exclude_prefix.clone(),
             redact_properties: args.redact_property.iter().cloned().collect(),
+            route_templates: args.route.clone(),
             ..Default::default()
         };
         let imported = tungsten_contract::har::import_har(&bytes, &options, &limits)
             .map_err(|error| error.to_string())?;
+        // Captured paths may hold identifiers or secrets; never persist one unreviewed.
+        let literal = imported
+            .report
+            .observations
+            .values()
+            .filter(|notes| {
+                notes.contains(&tungsten_contract::har::CaptureNote::LiteralPathNeedsReview)
+            })
+            .count();
+        if literal > 0 {
+            return Err(format!(
+                "{literal} captured HAR path(s) need review before saving: pass --route templates (for example --route '/items/{{id}}', or --route /health for a literal route) or --har-paths <JSON> mapping each captured path to a reviewed template, or narrow the capture with --include-prefix/--exclude-prefix"
+            ));
+        }
         let output = imported
             .infer(&ReviewedOverrides::default(), &limits)
             .map_err(|error| error.to_string())?;

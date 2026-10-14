@@ -234,7 +234,7 @@ export function redactSensitiveKeys(value: unknown, depth = 0): unknown {
   if (isRecord(value) && !isBinary(value) && !(value instanceof Date)) {
     const out: Record<string, unknown> = {};
     for (const key of Object.keys(value)) {
-      out[key] = looksSensitive(key) ? REDACTED : redactSensitiveKeys(value[key], depth + 1);
+      Object.defineProperty(out, key, { value: looksSensitive(key) ? REDACTED : redactSensitiveKeys(value[key], depth + 1), enumerable: true, configurable: true, writable: true });
     }
     return out;
   }

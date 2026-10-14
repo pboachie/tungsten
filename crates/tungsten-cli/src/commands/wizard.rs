@@ -87,14 +87,19 @@ pub(crate) fn run(args: &InitArgs, json: bool, env: &CliEnv) -> Report {
                 );
             }
         }
-        if !selected.add_targets.is_empty()
-            && let Err(error) = super::init_edit::add_outputs(&selected)
-        {
-            return refused(
-                &error,
-                "inspect tungsten.yml.init-backup and tungsten.yml.init-pending before retrying",
-            );
-        }
+        let added = if selected.add_targets.is_empty() {
+            None
+        } else {
+            match super::init_edit::add_outputs(&selected) {
+                Ok(added) => Some(added),
+                Err(error) => {
+                    return refused(
+                        &error,
+                        "tungsten.yml is unchanged; correct the problem and retry",
+                    );
+                }
+            }
+        };
         // Existing reviewed values survive output additions; plain resume writes nothing.
         let manifest =
             std::fs::read_to_string(selected.dir.join("tungsten.yml")).unwrap_or_default();
@@ -113,28 +118,26 @@ pub(crate) fn run(args: &InitArgs, json: bool, env: &CliEnv) -> Report {
             namespace: first.map(|i| i.namespace.clone()).unwrap_or_default(),
             spec: first.map(|i| i.spec.clone()).unwrap_or_default(),
             spec_found: true,
-            files: if selected.add_targets.is_empty() {
-                vec![]
-            } else {
-                vec![
+            files: match &added {
+                None => vec![],
+                Some(added) => vec![
                     InitFile {
                         path: selected.dir.join("tungsten.yml").display().to_string(),
                         action: InitAction::Overwritten,
                     },
                     InitFile {
-                        path: selected
-                            .dir
-                            .join("tungsten.yml.init-backup")
-                            .display()
-                            .to_string(),
+                        path: added.backup.display().to_string(),
                         action: InitAction::Created,
                     },
-                ]
+                ],
             },
             generation: None,
             local_example: None,
             setup: None,
         }));
+        if let Some(warning) = added.and_then(|added| added.warning) {
+            r.human.push_str(&format!("warning: {warning}\n"));
+        }
         r
     } else {
         super::init::run(&selected)
@@ -274,7 +277,15 @@ fn walkthrough(args: &mut InitArgs) -> io::Result<bool> {
     eprintln!(
         "Tungsten setup. Type cancel at any prompt; back at input/summary returns to project selection."
     );
+    let invocation = args.clone();
     loop {
+        // Every pass starts from the invocation's values, so the answers of a
+        // pass left with `back` (method, endpoint, local setup, profiles,
+        // hidden operations, strict, ...) never carry into the next project.
+        // Only the last directory answer stays, as the prompt's default.
+        let dir = std::mem::take(&mut args.dir);
+        *args = invocation.clone();
+        args.dir = dir;
         let Some(dir) = answer("Project directory", &args.dir.display().to_string())? else {
             return Ok(false);
         };
@@ -412,6 +423,18 @@ fn walkthrough(args: &mut InitArgs) -> io::Result<bool> {
                         return Ok(false);
                     };
                     args.har_origin = (!origin.is_empty()).then_some(origin);
+                    let Some(paths) = answer(
+                        "Reviewed HAR path mapping JSON file (required before saving)",
+                        &args
+                            .har_paths
+                            .as_ref()
+                            .map(|path| path.display().to_string())
+                            .unwrap_or_default(),
+                    )?
+                    else {
+                        return Ok(false);
+                    };
+                    args.har_paths = (!paths.is_empty()).then(|| paths.into());
                 }
                 let request_file = source.extension().is_some_and(|extension| {
                     matches!(extension.to_str(), Some("http" | "rest" | "curl"))

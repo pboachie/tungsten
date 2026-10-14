@@ -44,6 +44,9 @@ pub struct AgentConfig {
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DefaultsConfig {
+    /// Redirect restriction: `none` wins over client options.
+    #[serde(default)]
+    pub redirects: tungsten_ir::RedirectPolicy,
     #[serde(default)]
     pub safety: SafetyByMethod,
     /// Policy of operations with side effects that declare none. A

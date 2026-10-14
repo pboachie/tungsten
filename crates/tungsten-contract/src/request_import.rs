@@ -392,7 +392,17 @@ fn request(
             ));
         }
         match lower.as_str() {
-            "content-type" => content_type = Some(value.trim().to_ascii_lowercase()),
+            // Media type parameters such as charset do not change the JSON shape.
+            "content-type" => {
+                content_type = Some(
+                    value
+                        .split(';')
+                        .next()
+                        .unwrap_or_default()
+                        .trim()
+                        .to_ascii_lowercase(),
+                )
+            }
             "host" | "content-length" | "transfer-encoding" => {
                 return Err(err("transport override headers are unsupported"));
             }

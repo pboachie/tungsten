@@ -16,6 +16,10 @@ pub struct HarOptions {
     pub exclude_prefixes: Vec<String>,
     /// Explicitly reviewed literal path -> path template mapping.
     pub path_templates: BTreeMap<String, String>,
+    /// Reviewed route templates such as `/items/{id}`. A literal path without an
+    /// explicit `path_templates` entry uses the most literal matching template; a
+    /// tie or a template that matches no imported entry is an error.
+    pub route_templates: Vec<String>,
     /// Additional case-insensitive names to omit; built-in credentials stay omitted.
     pub redact_headers: BTreeSet<String>,
     pub redact_query: BTreeSet<String>,
@@ -29,6 +33,7 @@ impl std::fmt::Debug for HarOptions {
         f.debug_struct("HarOptions")
             .field("origin_selected", &self.origin.is_some())
             .field("path_mapping_count", &self.path_templates.len())
+            .field("route_template_count", &self.route_templates.len())
             .finish_non_exhaustive()
     }
 }
@@ -288,7 +293,9 @@ fn bounded(value: &Value, limits: &Limits) -> Result<(), Diagnostic> {
     Ok(())
 }
 
-fn parse_url(entry: &Value) -> Result<url::Url, Diagnostic> {
+/// Parse an entry URL. Non-HTTP(S) entries (WebSocket, extension or data URLs that
+/// browsers record) are `None`: they are filtered, never an API candidate.
+fn parse_url(entry: &Value) -> Result<Option<url::Url>, Diagnostic> {
     let raw = entry
         .pointer("/request/url")
         .and_then(Value::as_str)
@@ -304,26 +311,78 @@ fn parse_url(entry: &Value) -> Result<url::Url, Diagnostic> {
             "HAR request URL is invalid; provide an absolute HTTP(S) URL.",
         )
     })?;
-    if !matches!(url.scheme(), "http" | "https")
-        || url.host_str().is_none()
-        || url.fragment().is_some()
-    {
+    Ok(matches!(url.scheme(), "http" | "https").then_some(url))
+}
+
+/// Validate a selected entry URL after origin and prefix filtering.
+fn selected_url(url: &url::Url) -> Result<(), Diagnostic> {
+    if url.host_str().is_none() || url.fragment().is_some() {
         return Err(error(
             "HR002",
             "HAR supports HTTP(S) requests without fragments; exclude unsupported entries.",
         ));
     }
-    Ok(url)
+    Ok(())
+}
+
+/// The most literal reviewed route template matching `path`, if any.
+fn route_template<'a>(path: &str, routes: &'a [String]) -> Result<Option<&'a String>, Diagnostic> {
+    let parts: Vec<_> = path.split('/').collect();
+    let mut best: Option<(usize, &String)> = None;
+    let mut tied = false;
+    for route in routes {
+        let segments: Vec<_> = route.split('/').collect();
+        if segments.len() != parts.len() {
+            continue;
+        }
+        let mut literal = 0;
+        let matches = parts.iter().zip(&segments).all(|(part, segment)| {
+            if segment.starts_with('{') && segment.ends_with('}') && segment.len() > 2 {
+                !part.is_empty()
+            } else {
+                literal += 1;
+                part == segment
+            }
+        });
+        if !matches {
+            continue;
+        }
+        match best {
+            Some((count, prior)) if count == literal && prior != route => tied = true,
+            Some((count, _)) if count >= literal => {}
+            _ => {
+                best = Some((literal, route));
+                tied = false;
+            }
+        }
+    }
+    if tied {
+        return Err(error(
+            "HR006",
+            "A captured path matches several equally specific route templates; make the reviewed routes unambiguous.",
+        ));
+    }
+    Ok(best.map(|(_, route)| route))
 }
 
 fn reviewed_path(
     path: &str,
     options: &HarOptions,
     notes: &mut BTreeSet<CaptureNote>,
+    used_routes: &mut BTreeSet<String>,
 ) -> Result<(String, Vec<ParameterEvidence>), Diagnostic> {
-    let Some(template) = options.path_templates.get(path) else {
-        notes.insert(CaptureNote::LiteralPathNeedsReview);
-        return Ok((path.into(), vec![]));
+    let template = match options.path_templates.get(path) {
+        Some(template) => template,
+        None => match route_template(path, &options.route_templates)? {
+            Some(template) => {
+                used_routes.insert(template.clone());
+                template
+            }
+            None => {
+                notes.insert(CaptureNote::LiteralPathNeedsReview);
+                return Ok((path.into(), vec![]));
+            }
+        },
     };
     let parts: Vec<_> = path.split('/').collect();
     let templates: Vec<_> = template.split('/').collect();
@@ -388,6 +447,7 @@ pub fn import_har(
         .collect::<Result<Vec<_>, _>>()?;
     let origins: BTreeSet<_> = urls
         .iter()
+        .flatten()
         .map(|url| url.origin().ascii_serialization())
         .collect();
     let selected = if let Some(origin) = &options.origin {
@@ -423,7 +483,12 @@ pub fn import_har(
             ..Default::default()
         },
     };
+    let mut used_routes = BTreeSet::new();
     for (entry, url) in entries.iter().zip(urls) {
+        let Some(url) = url else {
+            output.report.filtered_entries += 1;
+            continue;
+        };
         if url.origin().ascii_serialization() != selected
             || (!options.include_prefixes.is_empty()
                 && !options
@@ -438,6 +503,7 @@ pub fn import_har(
             output.report.filtered_entries += 1;
             continue;
         }
+        selected_url(&url)?;
         let request = entry
             .get("request")
             .ok_or_else(|| error("HR002", "HAR request is missing."))?;
@@ -453,7 +519,8 @@ pub fn import_har(
             .ok_or_else(|| error("HR002", "HAR request method is missing."))?
             .to_ascii_uppercase();
         let mut notes = BTreeSet::from([CaptureNote::PartialCapture]);
-        let (path, mut parameters) = reviewed_path(url.path(), options, &mut notes)?;
+        let (path, mut parameters) =
+            reviewed_path(url.path(), options, &mut notes, &mut used_routes)?;
         let id = stable_operation_id(&method, &path);
         let mut seen = BTreeSet::new();
         for header in items(request, "headers")? {
@@ -561,6 +628,16 @@ pub fn import_har(
             }],
             unknown: BTreeSet::from([UnknownFact::Completeness]),
         });
+    }
+    if options
+        .route_templates
+        .iter()
+        .any(|route| !used_routes.contains(route))
+    {
+        return Err(error(
+            "HR006",
+            "A reviewed route template matches no imported entry; check the template and the origin and prefix filters.",
+        ));
     }
     crate::infer(&output.evidence, &Default::default(), limits)?;
     Ok(output)

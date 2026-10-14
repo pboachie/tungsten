@@ -471,6 +471,9 @@ impl Ctx<'_> {
         );
         w.line("public final class Ops {");
         w.indent();
+        if self.ir.agent.redirects == tungsten_ir::RedirectPolicy::None {
+            w.line("static { io.github.pboachie.tungsten.runtime.ClientCore.requireRedirectPolicyV1(); }");
+        }
         w.line("/** The descriptor document, loaded once. */");
         w.line("public static final Descriptors DOCUMENT = Descriptors.load(Ops.class.getResourceAsStream(\"tungsten-descriptors.json\"));");
         for (i, p) in self.plan.operations.iter().enumerate() {
@@ -549,6 +552,9 @@ impl Ctx<'_> {
             format!("public {client}(ClientOptions options) {{"),
             "}",
             |w| {
+                if self.ir.agent.redirects == tungsten_ir::RedirectPolicy::None {
+                    w.line("ClientCore.requireRedirectPolicyV1();");
+                }
                 w.line("this.core = new ClientCore(Ops.DOCUMENT.api(), Ops.OPERATIONS, options);");
             },
         );

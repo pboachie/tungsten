@@ -377,6 +377,10 @@ pub(crate) struct InitArgs {
     /// Exact HTTP(S) origin to select from a multi-origin HAR (no credentials).
     #[arg(long, conflicts_with = "method")]
     pub har_origin: Option<String>,
+    /// Reviewed HAR paths: JSON object mapping each captured URL path to a template.
+    /// Required for every imported path before any converted output is saved.
+    #[arg(long, conflicts_with = "method", value_name = "JSON")]
+    pub har_paths: Option<PathBuf>,
     /// HAR path prefixes to include; repeatable, exclusions take precedence.
     #[arg(long)]
     pub include_prefix: Vec<String>,
@@ -396,6 +400,8 @@ pub(crate) struct InitArgs {
     #[arg(long, default_value = "auto", value_parser = ["auto", "curl", "http"])]
     pub input_format: String,
     /// Trusted path template for each saved request, in input order; repeat as needed.
+    /// HAR input requires a template for every captured path; each path uses the most
+    /// literal matching template.
     #[arg(long, conflicts_with = "method")]
     pub route: Vec<String>,
     /// Shell quoting syntax of a saved cURL command; never executes a shell.
@@ -405,7 +411,8 @@ pub(crate) struct InitArgs {
     #[arg(long, conflicts_with = "resume")]
     pub typescript_runtime: Option<PathBuf>,
     /// Add outputs to an existing project while retaining all existing settings.
-    /// Saves the original manifest as tungsten.yml.init-backup before replacement.
+    /// Edits only the `targets` section and saves the original manifest as
+    /// tungsten.yml.init-backup (or the next free `.init-backup.N`) first.
     #[arg(long, requires = "resume", value_delimiter = ',', value_parser = parse_init_target)]
     pub add_targets: Vec<String>,
     /// Acquire project dependencies, build selected outputs and call a loopback mock.
@@ -486,12 +493,7 @@ pub(crate) struct DoctorArgs {
 }
 
 fn parse_init_target(s: &str) -> Result<String, String> {
-    let target = match s.trim() {
-        "ts" => "typescript",
-        "py" => "python",
-        "rs" => "rust",
-        name => name,
-    };
+    let target = crate::targets::canonical(s.trim());
     if target == "cli" || tungsten_config::KNOWN_TARGETS.contains(&target) {
         Ok(target.to_string())
     } else {

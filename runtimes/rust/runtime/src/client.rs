@@ -69,6 +69,7 @@ pub(crate) struct CachedToken {
 }
 
 pub(crate) struct Inner {
+    pub redirects_disabled: bool,
     pub api: Arc<ApiDescriptor>,
     pub auth: AuthConfig,
     pub headers: BTreeMap<String, String>,
@@ -92,11 +93,12 @@ pub(crate) struct Inner {
     pub registry: Mutex<BTreeMap<String, Arc<OperationDescriptor>>>,
     /// Makes "find or create the key of a logical call" atomic, so concurrent
     /// identical calls share one key.
-    pub key_lock: Mutex<()>,
     /// Confirmation tokens already used to send, with the replay protection of
     /// their first use, until they expire.
     pub used_tokens: Mutex<HashMap<String, (Option<String>, u64)>>,
     pub oauth_tokens: tokio::sync::Mutex<HashMap<String, CachedToken>>,
+    pub oauth_refreshes:
+        tokio::sync::Mutex<HashMap<String, std::sync::Arc<tokio::sync::Mutex<()>>>>,
     /// The tokens of the `authorizationCode` schemes.
     pub token_store: Arc<dyn TokenStore>,
     /// The refresh gate of each `authorizationCode` scheme.
@@ -151,6 +153,13 @@ impl ClientCore {
                 }
             }
         }
+        let redirects_disabled = api.redirects == crate::types::RedirectPolicy::None
+            || options.redirects == Some(crate::types::RedirectPolicy::None);
+        if redirects_disabled && options.http_client.is_some() {
+            return Err(config_error(
+                "redirects=none requires the runtime-owned HTTP client; omit http_client because a supplied reqwest client has opaque redirect configuration",
+            ));
+        }
         let http = match options.http_client.clone() {
             Some(client) => client,
             None => reqwest::Client::builder()
@@ -174,6 +183,7 @@ impl ClientCore {
             .unwrap_or_else(|| Arc::new(MemoryTokenStore::new()));
         let core = ClientCore {
             inner: Arc::new(Inner {
+                redirects_disabled,
                 api: Arc::new(api),
                 auth: options.auth,
                 headers: options.headers,
@@ -197,9 +207,9 @@ impl ClientCore {
                 now: options.now,
                 random: options.random,
                 registry: Mutex::new(BTreeMap::new()),
-                key_lock: Mutex::new(()),
                 used_tokens: Mutex::new(HashMap::new()),
                 oauth_tokens: tokio::sync::Mutex::new(HashMap::new()),
+                oauth_refreshes: tokio::sync::Mutex::new(HashMap::new()),
                 token_store,
                 oauth_gates: Mutex::new(HashMap::new()),
             }),
@@ -312,6 +322,27 @@ impl ClientCore {
         url_override: Option<&str>,
         step: Option<&crate::prepare::MacroClaim>,
     ) -> Outcome {
+        self.call_with_tracked(
+            op,
+            args,
+            opts,
+            url_override,
+            step,
+            (&mut String::new(), None),
+        )
+        .await
+    }
+
+    pub(crate) async fn call_with_tracked(
+        &self,
+        op: &OperationDescriptor,
+        args: &Value,
+        opts: &CallOptions,
+        url_override: Option<&str>,
+        step: Option<&crate::prepare::MacroClaim>,
+        tracking: (&mut String, Option<&mut std::collections::HashSet<String>>),
+    ) -> Outcome {
+        let (request_url, page_urls) = tracking;
         let mut prepared = self
             .prepare(
                 op,
@@ -322,13 +353,19 @@ impl ClientCore {
                 step,
             )
             .await?;
-        let mut response = match self.send(&prepared, opts).await {
+        if let Some(page_urls) = page_urls
+            && !page_urls.insert(prepared.url.clone())
+        {
+            return Err(crate::types::Error::new(crate::envelope::Diag::new(op.id.clone(), crate::types::Category::UnexpectedResponse).remediation("Pagination detected a repeated effective page request URL after authentication. Fix the server's next-page Link before continuing; no repeated request was sent.").build()));
+        }
+        let mut response = match self.send_tracked(&prepared, opts, request_url).await {
             Err(rejected)
                 if rejected.diagnostic.http_status == Some(401) && prepared.oauth.is_some() =>
             {
                 // An authorization-code token the server no longer accepts:
                 // refresh it and send once more. Never a second time.
-                self.resend_rejected(&mut prepared, rejected, opts).await?
+                self.resend_rejected(&mut prepared, rejected, opts, request_url)
+                    .await?
             }
             sent => sent?,
         };
@@ -352,7 +389,9 @@ impl ClientCore {
         prepared: &mut crate::prepare::Prepared<'_>,
         rejected: crate::types::Error,
         opts: &CallOptions,
+        request_url: &mut String,
     ) -> std::result::Result<Response<Option<Value>>, crate::types::Error> {
+        self.check_send_deadline(prepared, rejected.diagnostic.trace.attempts, None)?;
         let Some(scheme) = prepared.oauth.take() else {
             return Err(rejected);
         };
@@ -364,14 +403,16 @@ impl ClientCore {
         else {
             return Err(rejected);
         };
-        let Some(token) = self.refresh_after_rejection(&scheme, &current).await else {
+        let refreshed = self.refresh_after_rejection(&scheme, &current).await;
+        self.check_send_deadline(prepared, rejected.diagnostic.trace.attempts, None)?;
+        let Some(token) = refreshed else {
             return Err(rejected);
         };
         prepared
             .headers
             .set("Authorization", format!("Bearer {token}"), true);
         prepared.secrets.insert(token);
-        self.send(prepared, opts).await
+        self.send_tracked(prepared, opts, request_url).await
     }
 
     /// Epoch milliseconds from the configured clock.

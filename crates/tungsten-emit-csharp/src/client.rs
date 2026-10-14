@@ -198,6 +198,9 @@ impl Ctx<'_> {
         w.line(format!("public {client}(ClientOptions? options = null)"));
         w.line("{");
         w.indent();
+        if self.ir.agent.redirects == tungsten_ir::RedirectPolicy::None {
+            w.line("ClientCore.RequireRedirectPolicyV1();");
+        }
         w.line("Core = new ClientCore(Ops.Document, options);");
         for (m, class) in &members {
             w.line(format!("{m} = new {class}(Core);"));

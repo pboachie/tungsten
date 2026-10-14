@@ -67,7 +67,7 @@ func tokenExpiry(token string) (int64, string, bool) {
 		}
 	}
 	n, err := strconv.ParseInt(expiry, 10, 64)
-	if err != nil {
+	if err != nil || strconv.FormatInt(n, 10) != expiry {
 		return 0, "", false
 	}
 	return n, signature, true

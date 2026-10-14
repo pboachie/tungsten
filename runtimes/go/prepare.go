@@ -395,6 +395,9 @@ func (c *ClientCore) confirmed(t confirmTarget, safety Safety, args any, opts Ca
 // use binds it to that call's replay protection, and a later use is
 // accepted only as a retry under the same protection.
 func (c *ClientCore) claimToken(id, token, bind string, hasBind bool, previewCall string) *Error {
+	if expiry, signature, ok := tokenExpiry(token); ok {
+		token = fmt.Sprintf("tgc1.%d.%s", expiry, signature)
+	}
 	now := c.now()
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -563,7 +566,7 @@ func (c *ClientCore) prepare(ctx context.Context, op *OperationDescriptor, rawAr
 		headers.set("Content-Type", encoded.contentType, false)
 	}
 	header := keyHeader(op)
-	key, hasIdem, err := c.idempotencyKey(op, args, opts, p, encoded)
+	key, hasIdem, err := c.idempotencyKey(ctx, op, args, opts, p, encoded)
 	if err != nil {
 		return nil, err
 	}
@@ -898,7 +901,7 @@ func (c *ClientCore) buildHeaders(op *OperationDescriptor, args *Object, opts Ca
 	}
 }
 
-func (c *ClientCore) idempotencyKey(op *OperationDescriptor, args *Object, opts CallOptions, p purpose, encoded encodedBody) (string, bool, *Error) {
+func (c *ClientCore) idempotencyKey(ctx context.Context, op *OperationDescriptor, args *Object, opts CallOptions, p purpose, encoded encodedBody) (string, bool, *Error) {
 	supplied, hasSupplied := opts.IdempotencyKey, opts.IdempotencyKey != ""
 	switch op.Agent.Idempotency.Policy {
 	case IdempotencyContentIdentity:
@@ -922,18 +925,16 @@ func (c *ClientCore) idempotencyKey(op *OperationDescriptor, args *Object, opts 
 				remedy(fmt.Sprintf("The idempotency store failed (%s), so the call was not sent rather than risk a second key for the same intent. Fix or replace ClientOptions.IdempotencyStore.", why)).err()
 		}
 		logical := sha256Hex([]byte(CanonicalJSON(args)))
-		c.keyMu.Lock()
-		defer c.keyMu.Unlock()
-		if existing, ok := c.store.Get(op.ID, logical); ok && existing != "" {
-			return existing, true, nil
-		}
-		key, ok := uuidV4()
+		candidate, ok := uuidV4()
 		if !ok {
 			return "", false, refuse("no source of randomness")
 		}
-		c.store.Put(op.ID, logical, key)
-		if stored, ok := c.store.Get(op.ID, logical); !ok || stored != key {
-			return "", false, refuse("the key could not be stored")
+		key, err := reserveKeyContext(ctx, c.store, op.ID, logical, candidate)
+		if err != nil {
+			return "", false, refuse(err.Error())
+		}
+		if key == "" {
+			return "", false, refuse("store returned an invalid key")
 		}
 		return key, true, nil
 	}

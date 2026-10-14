@@ -28,7 +28,8 @@ type sseEvent struct {
 }
 
 type sseParser struct {
-	buffer     string
+	buffer     strings.Builder
+	pendingCR  bool
 	started    bool
 	event      string
 	data       strings.Builder
@@ -52,52 +53,77 @@ func (p *sseParser) push(chunk string) []sseEvent {
 	if p.exceeded {
 		return nil
 	}
-	text := p.buffer + chunk
-	p.buffer = ""
-	if !p.started && text != "" {
+	if !p.started && chunk != "" {
 		p.started = true
-		text = strings.TrimPrefix(text, "\uFEFF")
+		chunk = strings.TrimPrefix(chunk, "\uFEFF")
 	}
 	var out []sseEvent
+	if p.pendingCR {
+		if chunk == "" {
+			return out
+		}
+		p.pendingCR = false
+		p.complete(&out)
+		chunk = strings.TrimPrefix(chunk, "\n")
+	}
 	start := 0
-	for i := 0; i < len(text); i++ {
-		c := text[i]
+	for i := 0; i < len(chunk) && !p.exceeded; i++ {
+		c := chunk[i]
 		if c != '\n' && c != '\r' {
 			continue
 		}
-		if c == '\r' && i+1 == len(text) {
-			p.buffer = text[start:]
+		p.buffer.WriteString(chunk[start:i])
+		if c == '\r' && i+1 == len(chunk) {
+			p.pendingCR = true
+			p.checkLimit(1)
 			return out
 		}
-		line := text[start:i]
-		if c == '\r' && text[i+1] == '\n' {
+		p.complete(&out)
+		if c == '\r' && chunk[i+1] == '\n' {
 			i++
 		}
 		start = i + 1
-		p.line(line, &out)
-		if p.exceeded {
-			return out
-		}
 	}
-	p.buffer = text[start:]
-	if p.eventBytes+len(p.buffer) > p.max {
-		p.exceeded = true
-		p.buffer = ""
+	if !p.exceeded && p.checkLimit(len(chunk)-start) {
+		p.buffer.WriteString(chunk[start:])
 	}
 	return out
 }
 
-// end: the stream ended; a held-back CR ends its line, the rest is
-// discarded.
+func (p *sseParser) checkLimit(extra int) bool {
+	if p.eventBytes > p.max || p.buffer.Len() > p.max-p.eventBytes || extra > p.max-p.eventBytes-p.buffer.Len() {
+		p.exceeded = true
+	}
+	if p.exceeded {
+		p.buffer.Reset()
+		p.data.Reset()
+		p.event = ""
+		p.id = ""
+		p.hasID = false
+		p.hasData = false
+	}
+	return !p.exceeded
+}
+
+func (p *sseParser) complete(out *[]sseEvent) {
+	line := p.buffer.String()
+	p.buffer.Reset()
+	p.line(line, out)
+	p.checkLimit(0)
+}
+
+// end: a held CR ends its line; any open event is discarded.
 func (p *sseParser) end() []sseEvent {
 	var out []sseEvent
-	if !p.exceeded && strings.HasSuffix(p.buffer, "\r") {
-		p.line(strings.TrimSuffix(p.buffer, "\r"), &out)
+	if !p.exceeded && p.pendingCR {
+		p.complete(&out)
 	}
-	p.buffer = ""
+	p.pendingCR = false
+	p.buffer.Reset()
 	p.event = ""
 	p.data.Reset()
 	p.hasData = false
+	p.eventBytes = 0
 	return out
 }
 
@@ -141,7 +167,11 @@ func (p *sseParser) line(line string, out *[]sseEvent) {
 		}
 	case "retry":
 		if allDigits(value) {
-			if ms, err := strconv.ParseInt(value, 10, 64); err == nil && ms <= 9007199254740991 {
+			digits := strings.TrimLeft(value, "0")
+			if digits == "" {
+				digits = "0"
+			}
+			if ms, err := strconv.ParseInt(digits, 10, 64); err == nil && ms <= 9007199254740991 {
 				p.retry, p.hasRetry = ms, true
 			}
 		}
