@@ -33,12 +33,10 @@ pub struct OpInfo {
 impl OpInfo {
     /// The request parameter: with a default when no argument is required.
     fn request_param(&self) -> String {
-        let required = self.comps.iter().any(|c| {
-            matches!(
-                c.presence,
-                Presence::Required | Presence::RequiredNullable
-            )
-        });
+        let required = self
+            .comps
+            .iter()
+            .any(|c| matches!(c.presence, Presence::Required | Presence::RequiredNullable));
         if required {
             format!("request: {}", self.request)
         } else {
@@ -230,7 +228,10 @@ impl Ctx<'_> {
                 &mut w,
                 &format!("The {} resource{path}.", plan.path_words.join(" ")),
             );
-            w.line(format!("class {}(private val core: ClientCore) {{", rn.class));
+            w.line(format!(
+                "class {}(private val core: ClientCore) {{",
+                rn.class
+            ));
             w.indent();
             let mut first = true;
             for m in &rn.members {
@@ -337,10 +338,17 @@ impl Ctx<'_> {
                 layer("Patch"),
                 format!("{}.Ops", self.opts.package),
             ];
+            // Models are imported by name, not with a star import: a
+            // default import (`kotlin.annotation.Target`, `java.lang.Error`)
+            // would win over a star-imported model of the same name.
+            let model_package = self.model_package(ns);
+            imports.extend(
+                self.model_names(ns)
+                    .into_iter()
+                    .filter(|m| !self.resources_taken.contains(m))
+                    .map(|m| format!("{model_package}.{m}")),
+            );
             imports = used_imports(imports, &body);
-            if !self.model_names(ns).is_empty() {
-                imports.push(format!("{}.*", self.model_package(ns)));
-            }
             let mut f = kotlin::file(self.ir, &package, &imports);
             f.line(body.trim_end());
             out.push((format!("{dir}/{}.kt", rn.class), f.finish()));
@@ -459,7 +467,13 @@ impl Ctx<'_> {
             &mut w,
             "The SDK descriptor document (the resource tungsten-descriptors.json) and every callable operation as data for the runtime.",
         );
+        let no_redirects = self.ir.agent.redirects == tungsten_ir::RedirectPolicy::None;
         w.block("object Ops {", "}", |w| {
+            if no_redirects {
+                kdoc_line(w, "The manifest forbids redirects: the runtime must enforce redirect policy v1.");
+                w.line("init { io.github.pboachie.tungsten.runtime.ClientCore.requireRedirectPolicyV1() }");
+                w.blank();
+            }
             kdoc_line(w, "The descriptor document, loaded once.");
             w.line("@JvmField");
             w.line("val DOCUMENT: Descriptors = Descriptors.load(Ops::class.java.getResourceAsStream(\"tungsten-descriptors.json\"))");
@@ -530,6 +544,12 @@ impl Ctx<'_> {
             "class {client}(options: ClientOptions = ClientOptions.builder().build()) {{"
         ));
         w.indent();
+        if no_redirects {
+            w.line("init {");
+            w.line("    ClientCore.requireRedirectPolicyV1()");
+            w.line("}");
+            w.blank();
+        }
         kdoc_line(
             &mut w,
             "The runtime client the SDK runs on (it reports the Kotlin runtime's identity).",
@@ -549,7 +569,10 @@ impl Ctx<'_> {
         let schemes = self.code_schemes();
         if !schemes.is_empty() {
             w.blank();
-            kdoc_line(&mut w, "The authorization-code helpers of an OAuth2 scheme.");
+            kdoc_line(
+                &mut w,
+                "The authorization-code helpers of an OAuth2 scheme.",
+            );
             w.line("fun oauth(scheme: String): OAuthFlow = core.oauth(scheme)");
             if schemes.len() == 1 {
                 w.blank();
@@ -557,7 +580,10 @@ impl Ctx<'_> {
                     &mut w,
                     &format!("The authorization-code helpers of {}.", schemes[0]),
                 );
-                w.line(format!("fun oauth(): OAuthFlow = core.oauth({})", lit(&schemes[0])));
+                w.line(format!(
+                    "fun oauth(): OAuthFlow = core.oauth({})",
+                    lit(&schemes[0])
+                ));
             }
         }
         match &self.plan.client {
