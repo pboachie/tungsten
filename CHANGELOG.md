@@ -15,6 +15,8 @@ changes.
 
 ### Added
 
+- Import bounded HAR captures offline with explicit origin selection, reviewed
+  path templates, configurable structural redaction, and omission reports.
 - Import supported Postman Collection v2.1 requests through the offline contract
   engine, preserving explicit authentication and reporting unsupported behavior.
 
