@@ -61,6 +61,18 @@ irm https://raw.githubusercontent.com/pboachie/tungsten/main/install.ps1 | iex  
 
 Pass `--version v0.1.2` to `install.sh` (or `-Version v0.1.2` to `install.ps1`) to pin a release, and `--dir` (`-InstallDir`) to choose the target directory.
 
+To run the guided `tungsten init` setup right after installing, pass `--init` to `install.sh` (`-Init` to `install.ps1`). It needs a terminal, and the installer prints the PATH note first. A cancelled setup leaves the installed binary in place and exits with status 4 (5 when setup fails); run `tungsten init` again when ready:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/pboachie/tungsten/main/install.sh | sh -s -- --init
+```
+
+The `irm … | iex` form cannot pass `-Init`. Run the downloaded script as a script block instead, or save it and run `.\install.ps1 -Init`:
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/pboachie/tungsten/main/install.ps1))) -Init
+```
+
 Or build from source, with Rust 1.95 or newer (the repository pins 1.97.0 in [`rust-toolchain.toml`](rust-toolchain.toml) for development):
 
 ```sh
