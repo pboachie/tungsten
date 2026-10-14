@@ -50,6 +50,7 @@ impl Emitter for TypeScriptEmitter {
         let plan = plan::Plan::new(ir);
         let mut diags = macros::plan_macros(&plan).1;
         diags.extend(ops::auth_notes(ir));
+        diags.extend(tungsten_emit::args::pagination_notes(ir));
         diags
     }
 

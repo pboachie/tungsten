@@ -137,6 +137,8 @@ pub struct SdkDescriptors {
 
 #[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
 pub struct ApiDescriptor {
+    /// Restrictive redirect default; `none` cannot be re-enabled by callers.
+    pub redirects: tungsten_ir::RedirectPolicy,
     /// Machine name (`zrotext`).
     pub name: String,
     /// SDK package version.
@@ -570,6 +572,7 @@ fn api(plan: &SdkPlan<'_>, options: &DocumentOptions) -> ApiDescriptor {
     let ir = plan.ir;
     let retries = &ir.agent.retries;
     ApiDescriptor {
+        redirects: ir.agent.redirects,
         name: ir.api.name.wire.clone(),
         version: options.version.clone(),
         tungsten_version: ir.generator.tungsten_version.clone(),

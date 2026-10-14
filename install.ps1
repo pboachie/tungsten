@@ -3,8 +3,13 @@ Installs the tungsten CLI from a GitHub Release on Windows (x86_64 or ARM64). No
 administrator rights are needed.
 
   irm https://raw.githubusercontent.com/pboachie/tungsten/main/install.ps1 | iex
-  .\install.ps1 [-Version v0.1.0] [-InstallDir DIR]
+  & ([scriptblock]::Create((irm https://raw.githubusercontent.com/pboachie/tungsten/main/install.ps1))) -Init
+  .\install.ps1 [-Version v0.1.0] [-InstallDir DIR] [-Init]
 
+  -Init          after installing, run the guided `tungsten init` setup; needs
+                 terminal input. The `irm ... | iex` form cannot pass parameters:
+                 use the scriptblock form above, or save the script and run
+                 .\install.ps1 -Init
   -Version       release tag (default: the latest release; TUNGSTEN_VERSION)
   -InstallDir    target directory (default: %LOCALAPPDATA%\Programs\tungsten\bin;
                  TUNGSTEN_INSTALL_DIR)
@@ -16,13 +21,21 @@ administrator rights are needed.
 The archive is checked against the release's SHA256SUMS before anything is
 installed, and against its build attestation when the GitHub CLI (gh) is
 available. The directory is not added to PATH; the script prints the command.
+
+Exit status (when run as a script file): 0 installed (and, with -Init, set up);
+1 nothing installed or the install failed; 4 installed, but the -Init setup was
+cancelled (or refused); 5 installed, but the -Init setup failed. The in-memory
+forms set $LASTEXITCODE instead of closing the session.
 #>
 [CmdletBinding()]
 param(
+    [switch]$Init,
     [string]$Version = $env:TUNGSTEN_VERSION,
     [string]$InstallDir = $env:TUNGSTEN_INSTALL_DIR,
     [string]$BaseUrl = $env:TUNGSTEN_RELEASE_BASE_URL
 )
+
+if ($Init -and [Console]::IsInputRedirected) { throw '-Init requires terminal input; install without -Init, then run tungsten init interactively' }
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
@@ -117,11 +130,29 @@ try {
     $staged = Join-Path $InstallDir '.tungsten.exe.new'
     Copy-Item -Path $exe -Destination $staged -Force
     Move-Item -Path $staged -Destination (Join-Path $InstallDir 'tungsten.exe') -Force
-    Write-Host "install.ps1: installed $(Join-Path $InstallDir 'tungsten.exe')"
+    $installed = Join-Path $InstallDir 'tungsten.exe'
+    Write-Host "install.ps1: installed $installed"
     $onPath = ($env:PATH -split ';') -contains $InstallDir
     if (-not $onPath) {
         Write-Host "install.ps1: note: $InstallDir is not on your PATH; add it for your user with:"
         Write-Host "  [Environment]::SetEnvironmentVariable('Path', `"$InstallDir;`" + [Environment]::GetEnvironmentVariable('Path','User'), 'User')"
+    }
+    if ($Init) {
+        & $installed init --interactive
+        $setup = $LASTEXITCODE
+        if ($setup -ne 0) {
+            if ($setup -eq 4) {
+                $code = 4
+                Write-Host "install.ps1: setup cancelled (or refused; see above): tungsten is installed; run $installed init when ready"
+            } else {
+                $code = 5
+                Write-Host "install.ps1: setup failed (tungsten init exited $setup): tungsten is installed; correct the problem and run $installed init again"
+            }
+            $global:LASTEXITCODE = $code
+            # A saved script reports the code; an in-memory scriptblock must not close the session.
+            if ($PSCommandPath) { exit $code }
+            return
+        }
     }
 } finally {
     Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue

@@ -25,7 +25,7 @@ import {
   requestIdOf,
   verifyCallable,
 } from "./classify.js";
-import { checkToken, CONFIRMATION_TTL_MS, issueToken } from "./confirm.js";
+import { argumentSnapshot, argsDigest, checkToken, CONFIRMATION_TTL_MS, issueToken } from "./confirm.js";
 import { diagnostic, scrubDiagnostic, scrubText } from "./envelope.js";
 import { OAuthFlow, OAuthSession } from "./oauth.js";
 import {
@@ -38,7 +38,7 @@ import {
   resolveRef,
   type Scope,
 } from "./expr.js";
-import { checkKeyFormat, hasReplayProtection, keyFormatDescription, keyHeader, MemoryIdempotencyStore } from "./idempotency.js";
+import { checkKeyFormat, hasReplayProtection, keyFormatDescription, keyHeader, MemoryIdempotencyStore, reserveKey } from "./idempotency.js";
 import {
   bodyValue,
   encodeBody,
@@ -113,6 +113,7 @@ const DEFAULT_VERIFY_BUDGET_MS = 30_000;
 const DEFAULT_MACRO_BUDGET_MS = 30_000;
 const MACRO_PAGE_LIMIT = 100;
 /** Same-origin redirects followed for one read attempt. */
+const pageRequestUrls = new WeakMap<object, string>();
 const MAX_REDIRECTS = 5;
 const REDIRECT_STATUSES: ReadonlySet<number> = new Set([301, 302, 303, 307, 308]);
 
@@ -128,7 +129,8 @@ const MACRO_CONFIRMED: unique symbol = Symbol("tungsten.macroConfirmed");
  * once a step's request passed pre-flight and is about to be sent, so a
  * step that fails pre-flight leaves the token unspent. */
 const MACRO_CLAIM: unique symbol = Symbol("tungsten.macroClaim");
-type StepOptions = CallOptions & { [MACRO_CONFIRMED]?: true; [MACRO_CLAIM]?: () => Failure | null };
+const POLL_DEADLINE: unique symbol = Symbol("tungsten.pollDeadline");
+type StepOptions = CallOptions & { [POLL_DEADLINE]?: number | undefined; [MACRO_CONFIRMED]?: true; [MACRO_CLAIM]?: () => Failure | null };
 
 const SAFETY_RANK: Readonly<Record<string, number>> = { read_only: 0, mutating: 1, destructive: 2, irreversible: 3 };
 
@@ -334,26 +336,11 @@ function valuesAt(value: unknown, segments: string[], out: string[], depth = 0):
   valuesAt(value[head], rest, out, depth + 1);
 }
 
-/** A copy of the args without `undefined` members at any depth: an
- * optional argument set to `undefined` (`{cursor: maybe}`) is absent, as
- * TypeScript callers without `exactOptionalPropertyTypes` expect. Only
- * plain objects and arrays are copied; dates, bytes and blobs are kept. */
-function withoutUndefined(value: unknown, depth = 0): unknown {
-  if (depth > 64) return value;
-  if (Array.isArray(value)) return value.map((item) => withoutUndefined(item, depth + 1));
-  if (!isRecord(value)) return value;
-  const proto: unknown = Object.getPrototypeOf(value);
-  if (proto !== Object.prototype && proto !== null) return value;
-  const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(value)) if (v !== undefined) out[k] = withoutUndefined(v, depth + 1);
-  return out;
-}
-
 /** `args` plus each parameter's value under its wire name, so references
  * written against the API (agent.yml `{device_id}`, `$args.endpoint_id`)
  * find arguments whose generated name differs (`deviceId`). */
 function withWireNames(op: OperationDescriptor, args: Record<string, unknown>): Record<string, unknown> {
-  const out: Record<string, unknown> = { ...args };
+  const out: Record<string, unknown> = Object.assign(Object.create(null), args);
   for (const p of Array.isArray(op.params) ? op.params : []) {
     if (!isRecord(p) || typeof p.name !== "string" || typeof p.wire !== "string") continue;
     if (args[p.name] !== undefined && !Object.prototype.hasOwnProperty.call(out, p.wire)) out[p.wire] = args[p.name];
@@ -477,9 +464,23 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
    * of their first use, until they expire. */
   readonly #usedTokens = new Map<string, { bind: string | null; expiry: number }>();
 
+  readonly #redirectsDisabled: boolean;
+  readonly #redirectPolicyInvalid: boolean;
+
   constructor(api: ApiDescriptor, options: ClientOptions = {}) {
     this.api = isRecord(api) ? api : ({} as ApiDescriptor);
     this.options = isRecord(options) ? options : {};
+    let disabled = true;
+    let invalid = true;
+    try {
+      const policies = [this.api.redirects, this.options.redirects];
+      invalid = policies.some(value => value !== undefined && value !== "same_origin_read" && value !== "none");
+      disabled = invalid || policies.includes("none");
+    } catch {
+      // Hostile/unreadable settings are rejected by preflight without dispatch.
+    }
+    this.#redirectsDisabled = disabled;
+    this.#redirectPolicyInvalid = invalid;
     let store: IdempotencyStore | undefined;
     let key: Uint8Array | undefined;
     try {
@@ -664,6 +665,19 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     return bounded(opts.timeoutMs, bounded(this.options.timeoutMs, DEFAULT_TIMEOUT_MS, 1), 1);
   }
 
+  /** Timers cannot interrupt synchronous preflight or a chain of microtasks.
+   * Check the same absolute deadline at each boundary before effects. */
+  #beforeDispatch(op: OperationDescriptor, opts: CallOptions): Failure | null {
+    if (opts.signal?.aborted) return fail(diagnostic(op.id, "TRANSPORT_FAILED", {
+      retryable: "never", remediation: "The caller cancelled the call before it was sent.",
+    }));
+    const deadline = (opts as StepOptions)[POLL_DEADLINE];
+    if (deadline !== undefined && performance.now() >= deadline) return fail(diagnostic(op.id, "TRANSPORT_FAILED", {
+      retryable: "never", remediation: "The polling budget expired before the request was sent.",
+    }));
+    return null;
+  }
+
   #emit(d: Diagnostic): void {
     try {
       this.options.onDiagnostic?.(d);
@@ -676,9 +690,13 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     return Array.isArray(this.options.middleware) ? this.options.middleware.filter(isRecord) : [];
   }
 
-  async #call<T>(op: OperationDescriptor, args: Record<string, unknown>, opts: CallOptions, urlOverride: string | null): Promise<Result<T>> {
+  async #call<T>(op: OperationDescriptor, args: Record<string, unknown>, opts: CallOptions, urlOverride: string | null, pageUrls?: Set<string>): Promise<Result<T>> {
     const prepared = await this.#prepare(op, args, opts, "call", urlOverride);
     if (!prepared.ok) return prepared;
+    if (pageUrls) {
+      if (pageUrls.has(prepared.value.url)) return fail(diagnostic(op.id, "UNEXPECTED_RESPONSE", { remediation: "Pagination detected a repeated effective page request URL after authentication. Fix the server's next-page Link before continuing; no repeated request was sent." }));
+      pageUrls.add(prepared.value.url);
+    }
     let result = await this.#send<T>(prepared.value, opts);
     if (!result.ok && result.error.http_status === 401 && prepared.value.oauth !== null) {
       // An authorization-code token the server no longer accepts: refresh
@@ -695,6 +713,8 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
    * the refreshed token is put on the same request, which is sent once more;
    * `rejected` stands when nothing could be refreshed. */
   async #retryRejected<T>(prepared: Prepared, rejected: Failure, opts: CallOptions): Promise<Result<T>> {
+    const interrupted = this.#beforeDispatch(prepared.op, opts);
+    if (interrupted) return interrupted;
     const scheme = prepared.oauth;
     const current = prepared.headers.get("Authorization");
     if (scheme === null || current === undefined || !current.startsWith("Bearer ")) return rejected;
@@ -845,6 +865,9 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
   #claimToken(id: string, token: string, bind: string | null, previewCall: string): Failure | null {
     const now = this.#now();
     for (const [used, entry] of this.#usedTokens) if (entry.expiry <= now) this.#usedTokens.delete(used);
+    // Verification accepts one spelling; canonical identity is also the cache key.
+    const parts = token.split(".");
+    token = `tgc1.${Number(parts[1])}.${parts[2]}`;
     const previous = this.#usedTokens.get(token);
     if (previous) {
       if (previous.bind !== null && previous.bind === bind) return null;
@@ -874,6 +897,12 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     purpose: Purpose,
     urlOverride: string | null,
   ): Promise<Step<Prepared>> {
+    if (this.#redirectPolicyInvalid) {
+      return fail(diagnostic(safeId(op), "VALIDATION_FAILED", {
+        failed_parameter: "redirects",
+        remediation: "redirects must be same_origin_read or none; nothing was sent.",
+      }));
+    }
     if (opts.maxResponseBytes !== undefined && (!Number.isSafeInteger(opts.maxResponseBytes) || opts.maxResponseBytes < 1)) {
       return fail(diagnostic(safeId(op), "VALIDATION_FAILED", {
         failed_parameter: "maxResponseBytes",
@@ -911,7 +940,9 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     } catch {
       return this.#validation(op, [], "<cyclic value>", "a JSON-like value without cycles", "Pass arguments without circular references.");
     }
-    const args = withoutUndefined(rawArgs) as Record<string, unknown>;
+    const args = argumentSnapshot(rawArgs) as Record<string, unknown>;
+    const interrupted = this.#beforeDispatch(op, opts);
+    if (interrupted) return interrupted;
     const invalid = this.#validateArgs(op, args, purpose === "macro_preview") ?? this.#checkKey(op, opts, purpose);
     if (invalid) return invalid;
     if (purpose === "call") {
@@ -920,6 +951,8 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     }
 
     const method = op.method;
+    const beforeAuth = this.#beforeDispatch(op, opts);
+    if (beforeAuth) return beforeAuth;
     const auth = await resolveAuth(this.api, op, isRecord(this.options.auth) ? this.options.auth : {}, method, this.#tokenSource);
     if (!auth.ok) return fail(diagnostic(op.id, "AUTH_FAILED", { remediation: auth.remediation }));
     const secrets = new Set(auth.secrets.filter((s) => s !== ""));
@@ -956,6 +989,8 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     const observedBody = observableBody(op.body?.encoding ?? "json", encoded);
 
     const header = keyHeader(op);
+    const beforeKey = this.#beforeDispatch(op, opts);
+    if (beforeKey) return beforeKey;
     const key = await this.#idempotencyKey(op, args, opts, purpose, encoded.hashMaterial);
     if (!key.ok) return key;
     if (key.value !== null) {
@@ -984,6 +1019,8 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
         );
       }
     }
+    const beforeClaim = this.#beforeDispatch(op, opts);
+    if (beforeClaim) return beforeClaim;
     const claimMacro = (opts as StepOptions)[MACRO_CLAIM];
     if (purpose === "call" && typeof claimMacro === "function") {
       const spent = claimMacro();
@@ -1204,12 +1241,10 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
       case "auto": {
         if (supplied !== null) return { ok: true, value: supplied };
         if (purpose !== "call") return { ok: true, value: null };
-        const logicalId = await sha256Hex(canonicalJson(args));
+        const logicalId = await argsDigest(args);
         try {
-          const existing = await this.#store.get(op.id, logicalId);
-          if (typeof existing === "string" && existing !== "") return { ok: true, value: existing };
-          const key = crypto.randomUUID();
-          await this.#store.put(op.id, logicalId, key);
+          const key = await reserveKey(this.#store, op.id, logicalId, crypto.randomUUID());
+          if (typeof key !== "string" || key === "") throw new Error("store returned an invalid key");
           return { ok: true, value: key };
         } catch (error) {
           return fail(
@@ -1276,7 +1311,10 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     const check = mutation && !protectedReplay ? this.#outcomeCheck(op, prepared.args) : null;
     const timeoutMs = this.#timeout(opts);
     let attempts = 0;
+    let previousMutationFailure: Failure | undefined;
     for (;;) {
+      const beforeAttempt = this.#beforeDispatch(op, opts);
+      if (beforeAttempt) return previousMutationFailure ?? beforeAttempt;
       attempts += 1;
       const ctx: RequestContext = {
         operation: op,
@@ -1287,6 +1325,8 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
         body: prepared.observedBody,
       };
       const headers = await this.#beforeRequest(ctx, prepared);
+      const interrupted = this.#beforeDispatch(op, opts);
+      if (interrupted) return previousMutationFailure ?? interrupted;
       // Redirects are never followed by fetch: it would forward custom
       // credential headers (API keys, CSRF headers) to another origin. A
       // read follows same-origin redirects here; a mutation follows none.
@@ -1301,9 +1341,10 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
         stream,
         idleMs,
         maxResponseBytes: opts.maxResponseBytes,
+        deadlineMs: (opts as StepOptions)[POLL_DEADLINE],
       });
       let current = { url: prepared.url, method: prepared.method, body: prepared.body };
-      for (let hops = 0; !mutation && hops < MAX_REDIRECTS && outcome.kind === "response" && REDIRECT_STATUSES.has(outcome.status); hops += 1) {
+      for (let hops = 0; !this.#redirectsDisabled && !mutation && hops < MAX_REDIRECTS && outcome.kind === "response" && REDIRECT_STATUSES.has(outcome.status); hops += 1) {
         const next = this.#redirectTarget(prepared, current.url, outcome.headers.location);
         if (next === null) break;
         const rewrite = outcome.status !== 307 && outcome.status !== 308 && current.method !== "GET" && current.method !== "HEAD";
@@ -1312,6 +1353,8 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
         ctx.method = current.method;
         const hopHeaders = { ...headers };
         if (rewrite) for (const name of Object.keys(hopHeaders)) if (name.toLowerCase() === "content-type") delete hopHeaders[name];
+        const beforeRedirect = this.#beforeDispatch(op, opts);
+        if (beforeRedirect) return beforeRedirect;
         outcome = await attempt(this.#fetch(), {
           url: current.url,
           method: current.method,
@@ -1323,15 +1366,21 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
           stream,
           idleMs,
           maxResponseBytes: opts.maxResponseBytes,
+          deadlineMs: (opts as StepOptions)[POLL_DEADLINE],
         });
       }
       const callCtx: CallContext = { api: this.api, op, key: prepared.key, keyHeader: prepared.keyHeader, attempts, check };
       const result = await this.#classify<T>(callCtx, prepared, outcome, ctx, timeoutMs);
-      if (result.ok) return result;
+      if (result.ok) { pageRequestUrls.set(result.meta, current.url); return result; }
       const error = scrubDiagnostic(result.error, prepared.secrets);
       const done = (): Failure => (result.partial === undefined ? fail(error) : { ok: false, error, partial: result.partial });
-      const cancelled = opts.signal?.aborted === true;
-      if (cancelled || attempts > retries.max || !RETRY_CATEGORIES.has(error.category)) return done();
+      // An interruption before a retry cannot undo an earlier mutation's
+      // possible effect. Later definite failures do not resolve that uncertainty.
+      if (mutation && (previousMutationFailure?.error.category !== "OUTCOME_UNKNOWN" || error.category === "OUTCOME_UNKNOWN")) {
+        previousMutationFailure = done();
+      }
+      if (previousMutationFailure && this.#beforeDispatch(op, opts)) return previousMutationFailure;
+      if (opts.signal?.aborted === true || attempts > retries.max || !RETRY_CATEGORIES.has(error.category)) return done();
       if (error.retryable === "never" || error.retryable === "after_remediation") return done();
       if (mutation && !protectedReplay) return done();
       let delay: number;
@@ -1350,7 +1399,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
           // Observers never change the call.
         }
       }
-      if (!(await sleep(delay, opts.signal))) return done();
+      if (!(await sleep(delay, opts.signal))) return previousMutationFailure ?? done();
     }
   }
 
@@ -1413,7 +1462,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
         if (read.path !== path) continue;
         const required = argParams(read).filter((p) => p.required);
         if (!required.every((p) => p.in === "path" && known.has(p.wire))) continue;
-        const readArgs: Record<string, unknown> = {};
+        const readArgs: Record<string, unknown> = Object.create(null);
         for (const p of argParams(read)) if (p.in === "path" && known.has(p.wire)) readArgs[p.wire] = known.get(p.wire);
         return { id: read.id, args: readArgs };
       }
@@ -1541,7 +1590,10 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     const requestId = requestIdOf(headers);
     const retryAfter = parseRetryAfter(headers["retry-after"], this.#now());
     const declared = matchResponse(op.responses, status);
-    const success = (status >= 200 && status <= 299) || (declared?.kind === "success" && status >= 100 && status <= 399);
+    // A status the descriptor declares (exactly or by class) is classified as declared. With
+    // redirects disabled, a 3xx it does not declare is a refused redirect, never a success.
+    const refusedRedirect = this.#redirectsDisabled && status >= 300 && status <= 399 && (declared === undefined || declared.status === "default");
+    const success = !refusedRedirect && ((status >= 200 && status <= 299) || (declared?.kind === "success" && status >= 100 && status <= 399));
     const hint = op.agent.verify ? `Call ${op.agent.verify.operation} to read the current state.` : null;
 
     if (success && outcome.stream !== undefined) {
@@ -1588,7 +1640,9 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
             request_id: requestId,
             remediation: mutation
               ? `The server answered with a redirect${to}. Redirects are never followed on mutations; check baseUrl (scheme, host, trailing slash). Whether the call took effect is unknown only if the server applied it before redirecting.`
-              : `The server answered with a redirect${to} that leaves the API's origin (or too many redirects). It is not followed, so credentials never leave the API's host; check baseUrl.`,
+              : this.#redirectsDisabled
+                ? `The server answered with a redirect${to}. Redirects are disabled; check redirects and baseUrl.`
+                : `The server answered with a redirect${to} that leaves the API's origin (or too many redirects). It is not followed, so credentials never leave the API's host; check baseUrl.`,
             next_action: mutation ? hint : null,
             trace: { attempts },
           }),
@@ -1653,6 +1707,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
   // -------------------------------------------------------------- preview
 
   async #preview(op: OperationDescriptor, args: Record<string, unknown>, opts: CallOptions): Promise<Result<PreviewResult>> {
+    args = argumentSnapshot(args) as Record<string, unknown>;
     const prepared = await this.#prepare(op, args, opts, "preview", null);
     if (!prepared.ok) return prepared;
     const p = prepared.value;
@@ -1715,13 +1770,22 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     const pagination = isRecord(op) && isRecord(op.pagination) ? op.pagination : null;
     let current: Record<string, unknown> = isRecord(args) ? { ...args } : args;
     let override: string | null = null;
-    let previousCursor: unknown = undefined;
+    const seen = new Set<string>();
+    const requestUrls = pagination?.style === "link_header" ? new Set<string>() : undefined;
+    const maxPages = typeof opts.maxPages === "number" && Number.isSafeInteger(opts.maxPages) && opts.maxPages > 0 ? opts.maxPages : undefined;
+    let count = 0;
+    if (pagination?.style === "cursor") {
+      const initial = current[this.#argName(op, pagination.requestParam)];
+      if (initial !== undefined && initial !== null && initial !== "") seen.add(canonicalJson(initial));
+    }
     for (;;) {
-      const result = await this.#call<unknown>(op, current, opts, override);
+      const result = await this.#call<unknown>(op, current, opts, override, requestUrls);
       if (!result.ok) {
         yield result;
         return;
       }
+      const effectiveUrl = pageRequestUrls.get(result.meta);
+      if (requestUrls && effectiveUrl) requestUrls.add(effectiveUrl);
       const body = result.value;
       const itemsField = pagination ? pagination.itemsField : "";
       const found = itemsField ? getPath(body, itemsField) : body;
@@ -1735,9 +1799,8 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
               cursor = getPath(items[items.length - 1], pagination.cursorItemField);
             }
             const more = pagination.hasMoreField ? getPath(body, pagination.hasMoreField) : undefined;
-            next = more === false || cursor === undefined || cursor === null || cursor === "" || canonicalJson(cursor) === canonicalJson(previousCursor) ? null : cursor;
+            next = more === false || cursor === undefined || cursor === null || cursor === "" ? null : cursor;
             if (next !== null) {
-              previousCursor = next;
               current = { ...current, [this.#argName(op, pagination.requestParam)]: next };
             }
             break;
@@ -1763,7 +1826,8 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
           case "link_header": {
             const link = nextLink(result.meta.headers.link);
             if (link !== null) {
-              const base = override ?? (typeof this.options.baseUrl === "string" ? this.options.baseUrl : (this.api.servers?.[0] ?? ""));
+              const base = pageRequestUrls.get(result.meta) ?? override ?? "";
+              seen.add(new URL(base).toString());
               let resolved: URL;
               try {
                 resolved = new URL(link, base);
@@ -1789,6 +1853,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
                 );
                 return;
               }
+              resolved.hash = "";
               next = resolved.toString();
               override = next as string;
             }
@@ -1796,7 +1861,19 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
           }
         }
       }
-      yield { ok: true, value: { items, body, next }, meta: result.meta };
+      count += 1;
+      let stop: string | null = null;
+      if (next !== null) {
+        const key = pagination?.style === "link_header" ? String(next) : canonicalJson(next);
+        if (seen.has(key)) stop = "Pagination detected a repeated cursor or page URL. Fix the server's next-page value before continuing.";
+        else if (maxPages !== undefined && count >= maxPages) stop = "Pagination reached maxPages before another request. Increase maxPages to continue.";
+        else seen.add(key);
+      }
+      yield { ok: true, value: { items, body, next: stop ? null : next }, meta: result.meta };
+      if (stop) {
+        yield fail(diagnostic(op.id, "UNEXPECTED_RESPONSE", { http_status: result.meta.status, request_id: result.meta.requestId, remediation: stop, trace: { attempts: result.meta.attempts } }));
+        return;
+      }
       if (next === null) return;
     }
   }
@@ -2065,13 +2142,52 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
   ): Promise<Result<T> & { timedOut?: boolean }> {
     const interval = bounded(intervalMs, DEFAULT_POLL_INTERVAL_MS, 0);
     const budget = bounded(budgetMs, 0, 0);
-    const started = Date.now();
-    for (;;) {
-      const result = await this.#call<T>(op, args, { ...opts, verify: false }, null);
-      if (!result.ok) return result;
-      if (evaluatePredicate(until, result.value)) return { ...result, timedOut: false };
-      if (Date.now() - started + interval > budget) return { ...result, timedOut: true };
-      if (!(await sleep(interval, opts.signal))) return { ...result, timedOut: true };
+    const started = performance.now();
+    const controller = new AbortController();
+    let interrupt: (() => void) | undefined;
+    const abort = () => { controller.abort(); interrupt?.(); };
+    opts.signal?.addEventListener("abort", abort, { once: true });
+    if (opts.signal?.aborted) abort();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const expired = new Promise<Result<T>>((resolve) => {
+      interrupt = () => resolve(fail(diagnostic(op.id, isMutation(op) ? "OUTCOME_UNKNOWN" : "TRANSPORT_FAILED", {
+        retryable: "never", remediation: "The caller cancelled the poll.",
+      })));
+      if (opts.signal?.aborted) interrupt();
+      if (budget > 0) timer = setTimeout(() => {
+        controller.abort();
+        resolve(fail(diagnostic(op.id, isMutation(op) ? "OUTCOME_UNKNOWN" : "TRANSPORT_FAILED", {
+          retryable: "never", remediation: "The polling budget expired during the call.",
+        })));
+      }, budget);
+    });
+    let last: Result<T> | undefined;
+    try {
+      for (;;) {
+        const once: StepOptions = { ...opts, signal: controller.signal, verify: false,
+          [POLL_DEADLINE]: budget > 0 ? started + budget : undefined };
+        const call = this.#call<T>(op, args, once, null);
+        const result = await Promise.race([call, expired]);
+        if (!result.ok) {
+          if (budget > 0 && performance.now() - started >= budget && last?.ok && !isMutation(op)) return { ...last, timedOut: true };
+          return result;
+        }
+        last = result;
+        const elapsed = performance.now() - started;
+        if (budget > 0 && elapsed >= budget) return { ...result, timedOut: true };
+        if (evaluatePredicate(until, result.value)) return { ...result, timedOut: false };
+        if (budget === 0 || elapsed + interval > budget) return { ...result, timedOut: true };
+        if (!(await sleep(interval, controller.signal))) {
+          if (opts.signal?.aborted) return fail(diagnostic(op.id, "TRANSPORT_FAILED", {
+            retryable: "never", remediation: "The caller cancelled the poll between observations.",
+          }));
+          return { ...result, timedOut: true };
+        }
+        if (budget > 0 && performance.now() - started >= budget) return { ...result, timedOut: true };
+      }
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+      opts.signal?.removeEventListener("abort", abort);
     }
   }
 
@@ -2086,7 +2202,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     const scope = { response: value, args: withWireNames(op, args) };
     const evaluated = evaluateExpr(hook.args ?? {}, scope);
     if (!isRecord(evaluated)) return unchecked;
-    const mapped: Record<string, unknown> = {};
+    const mapped: Record<string, unknown> = Object.create(null);
     for (const [key, arg] of Object.entries(evaluated)) mapped[this.#argName(target, key)] = arg;
     // A reference that does not resolve never matches (it is not dropped,
     // which would make the predicate hold vacuously).
@@ -2119,12 +2235,12 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     if (!isRecord(input)) {
       return fail(diagnostic(name, "VALIDATION_FAILED", { failed_parameter: "input", expected: "an object", remediation: `Pass the input of ${name} as one object.` }));
     }
-    const effective: Record<string, unknown> = { ...input };
+    const effective: Record<string, unknown> = Object.assign(Object.create(null), argumentSnapshot(input));
     const add = isRecord(macro.input) && isRecord(macro.input.add) ? macro.input.add : {};
     for (const [key, schema] of Object.entries(add)) {
       if (effective[key] === undefined && isRecord(schema) && schema.default !== undefined) effective[key] = schema.default;
     }
-    return { ok: true, value: effective };
+    return { ok: true, value: argumentSnapshot(effective) as Record<string, unknown> };
   }
 
   /** The macro's steps resolved against the registry, and its effective
@@ -2174,7 +2290,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     const { confirm: _confirm, verify: _verify, ...rest } = opts;
     // A dry evaluation: the input is known, earlier steps' results are
     // placeholders (`<from step NAME: path>`).
-    const scope: Record<string, unknown> = { input: effective.value };
+    const scope: Record<string, unknown> = Object.assign(Object.create(null), { input: effective.value });
     const pending = new Set<string>();
     const previews: MacroStepPreview[] = [];
     const effects: string[] = [];
@@ -2288,7 +2404,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
       claimed = true;
       return this.#claimToken(name, token, bind, "the macro's preview(...)");
     };
-    const scope: Record<string, unknown> = { input: effective.value };
+    const scope: Record<string, unknown> = Object.assign(Object.create(null), { input: effective.value });
     const completed: string[] = [];
     /** Results of completed steps by `as` name: returned as `partial` when a later step fails. */
     const produced: Record<string, unknown> = {};

@@ -64,6 +64,7 @@ Adjust paths to your generated outputs. `createCore` creates a separate client f
 - Generated metadata carries operation safety, idempotency and confirmation requirements. A preview is not execution; execution still needs the required argument-bound confirmation token.
 - HTTP exposure and API authorization belong to your application. Put non-local HTTP listeners behind appropriate access control.
 - `run_script` is disabled by default. Enabling it requires an explicit sandbox configuration; Deno execution also requires a Deno executable. The WASM engine runs in the server process with configured bounds.
+- Deno limits wall time and V8 heap on all platforms; its additional process data limit is enforced on Linux. On Windows and macOS, `memoryMb` does not bound memory outside the V8 heap, including `ArrayBuffer` backing stores.
 
 ## Related packages and documentation
 

@@ -23,6 +23,7 @@ import time
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
+from dataclasses import field as dataclass_field
 from typing import Any, Final, Literal, cast
 from urllib.parse import urljoin, urlsplit
 
@@ -48,10 +49,12 @@ from ._confirm import CONFIRMATION_TTL_MS, check_token, issue_token, token_expir
 from ._effects import (
     Answered,
     AttemptRequest,
+    Bounded,
     Chunk,
     Flow,
     Lost,
     NotSent,
+    PollExpired,
     StreamEnded,
     StreamFailed,
     Streaming,
@@ -63,8 +66,7 @@ from ._effects import (
     send,
     shared,
     sleep,
-    store_get,
-    store_put,
+    store_reserve,
 )
 from ._envelope import diagnostic, scrub_diagnostic, scrub_text, with_fields
 from ._expr import (
@@ -268,6 +270,7 @@ class Answer:
 
     result: Ok[Any] | Err
     raw: object = UNSET
+    request_url: str | None = dataclass_field(default=None, repr=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -329,6 +332,15 @@ class Engine:
     def __init__(self, api: object, options: object) -> None:
         self.api: object = api if is_record(api) else {}
         self.options: ClientOptions = options if isinstance(options, ClientOptions) else ClientOptions()
+        api_policy = field(self.api, "redirects")
+        if api_policy is UNSET:
+            api_policy = "same_origin_read"
+        if api_policy not in ("same_origin_read", "none"):
+            raise ValueError("API redirects must be same_origin_read or none")
+        policies = (api_policy, self.options.redirects)
+        if any(value not in (None, "same_origin_read", "none") for value in policies):
+            raise ValueError("redirects must be same_origin_read or none")
+        self._redirects_disabled = "none" in policies
         self.registry: dict[str, OperationDescriptor] = {}
         self.macros: dict[str, MacroDescriptor] = {}
         self._token_cache: dict[str, tuple[str, float]] = {}
@@ -505,10 +517,23 @@ class Engine:
         opts: Mapping[str, object],
         url_override: str | None,
         step: StepControl | None,
+        page_urls: set[str] | None = None,
     ) -> Flow[Answer]:
         prepared = yield from self._prepare(op, args, opts, "call", url_override, step)
         if isinstance(prepared, Err):
             return Answer(prepared)
+        if page_urls is not None:
+            if prepared.url in page_urls:
+                return Answer(
+                    _fail(
+                        diagnostic(
+                            op["id"],
+                            "UNEXPECTED_RESPONSE",
+                            remediation="Pagination detected a repeated effective page request URL after authentication. Fix the server's next-page Link before continuing; no repeated request was sent.",
+                        )
+                    )
+                )
+            page_urls.add(prepared.url)
         answer = yield from self._send(prepared, opts)
         if (
             prepared.oauth is not None
@@ -524,7 +549,7 @@ class Engine:
             and is_record(field(op["agent"], "verify"))
         ):
             verification = yield from self._verify(op, prepared.args, answer.raw, opts)
-            return Answer(replace(answer.result, verification=verification), answer.raw)
+            return replace(answer, result=replace(answer.result, verification=verification))
         return answer
 
     def _retry_rejected(
@@ -749,6 +774,8 @@ class Engine:
         first use binds it to that call's replay protection, and a later use
         is accepted only as a retry under the same protection. A call without
         protection can use a token once."""
+        parts = token.split(".")
+        token = f"tgc1.{int(parts[1])}.{parts[2]}"
         now = self.now()
         with self._tokens_lock:
             for used, (_, expiry) in list(self._used_tokens.items()):
@@ -1229,11 +1256,9 @@ class Engine:
             return None
         logical_id = sha256_hex(canonical_json(args))
         try:
-            existing = yield from store_get(self.store, op["id"], logical_id)
-            if isinstance(existing, str) and existing != "":
-                return existing
-            key = str(uuid.uuid4())
-            yield from store_put(self.store, op["id"], logical_id, key)
+            key = yield from store_reserve(self.store, op["id"], logical_id, str(uuid.uuid4()))
+            if not isinstance(key, str) or not key:
+                raise ValueError("store returned an invalid key")
             return key
         except Exception as error:
             return _fail(
@@ -1335,7 +1360,8 @@ class Engine:
             current_url, current_method, current_body = prepared.url, prepared.method, prepared.body
             hops = 0
             while (
-                not mutation
+                not self._redirects_disabled
+                and not mutation
                 and hops < _MAX_REDIRECTS
                 and isinstance(outcome, Answered)
                 and outcome.status in _REDIRECT_STATUSES
@@ -1362,7 +1388,7 @@ class Engine:
             answer = yield from self._classify(call_ctx, prepared, outcome, ctx, timeout_ms)
             result = answer.result
             if isinstance(result, Ok):
-                return answer
+                return replace(answer, request_url=current_url)
             error = scrub_diagnostic(result.error, prepared.secrets)
             done = Answer(_fail(error, result.partial), answer.raw)
             if attempts > retries.max or error["category"] not in _RETRY_CATEGORIES:
@@ -1616,6 +1642,14 @@ class Engine:
         success = 200 <= status <= 299 or (
             declared is not None and declared.get("kind") == "success" and 100 <= status <= 399
         )
+        # A status the descriptor declares (exactly or by class) is classified as declared. With
+        # redirects disabled, a 3xx it does not declare is a refused redirect, never a success.
+        refused_redirect = (
+            self._redirects_disabled
+            and 300 <= status <= 399
+            and (declared is None or declared.get("status") == "default")
+        )
+        success = success and not refused_redirect
         verify_target = str_field(field(op["agent"], "verify"), "operation")
         hint = f"Call {verify_target} to read the current state." if verify_target is not None else None
 
@@ -1667,6 +1701,8 @@ class Engine:
                     "base_url (scheme, host, trailing slash). Whether the call took effect is unknown only if the "
                     "server applied it before redirecting."
                     if mutation
+                    else f"The server answered with a redirect{to}. Redirects are disabled; check redirects and base_url."
+                    if self._redirects_disabled
                     else f"The server answered with a redirect{to} that leaves the API's origin (or too many "
                     "redirects). It is not followed, so credentials never leave the API's host; check base_url."
                 )
@@ -1860,13 +1896,29 @@ class Engine:
         pagination = field(op, "pagination")
         current: dict[str, object] | None = dict(args) if is_record(args) else None
         override: str | None = None
-        previous_cursor: object = UNSET
+        seen: set[str] = set()
+        request_urls: set[str] | None = set() if field(pagination, "style") == "link_header" else None
+        count = 0
+        max_pages = opts.get("max_pages")
+        budget = (
+            max_pages
+            if isinstance(max_pages, int) and not isinstance(max_pages, bool) and max_pages > 0
+            else None
+        )
+        if field(pagination, "style") == "cursor" and current is not None:
+            initial = current.get(arg_name(op, str_field(pagination, "request_param") or ""))
+            if initial is not None and initial != "":
+                seen.add(canonical_json(initial))
         while True:
-            answer = yield from self._call(op, current if current is not None else args, opts, override, step)
+            answer = yield from self._call(
+                op, current if current is not None else args, opts, override, step, request_urls
+            )
             result = answer.result
             if isinstance(result, Err):
                 yield from sink(PageAnswer(result, []))
                 return
+            if request_urls is not None and answer.request_url is not None:
+                request_urls.add(answer.request_url)
             body = answer.raw
             items_field = str_field(pagination, "items_field") or ""
             found = get_path(body, items_field) if items_field else body
@@ -1881,17 +1933,10 @@ class Engine:
                     cursor = get_path(items[-1], item_field)
                 more_field = str_field(pagination, "has_more_field")
                 more = get_path(body, more_field) if more_field else UNSET
-                if (
-                    more is False
-                    or cursor is UNSET
-                    or cursor is None
-                    or cursor == ""
-                    or _same(cursor, previous_cursor)
-                ):
+                if more is False or cursor is UNSET or cursor is None or cursor == "":
                     next_value = None
                 else:
                     next_value = cursor
-                    previous_cursor = cursor
                     current = {**current, arg_name(op, str_field(pagination, "request_param") or ""): cursor}
             elif style == "offset" and current is not None:
                 offset_key = arg_name(op, str_field(pagination, "offset_param") or "")
@@ -1912,10 +1957,11 @@ class Engine:
             elif style == "link_header":
                 link = next_link(result.meta.headers.get("link"))
                 if link is not None:
-                    base = override if override is not None else self._base_url() or ""
+                    base = answer.request_url or override or ""
+                    seen.add(base)
                     origin = origin_of(base)
                     try:
-                        resolved = urljoin(base, link)
+                        resolved = urljoin(base, link).split("#", 1)[0]
                     except ValueError:
                         resolved = ""
                     if origin is None or origin_of(resolved) != origin:
@@ -1951,12 +1997,45 @@ class Engine:
                         return
                     next_value = resolved
                     override = resolved
+            count += 1
+            stop = None
+            if next_value is not None:
+                key = str(next_value) if style == "link_header" else canonical_json(next_value)
+                if key in seen:
+                    stop = "Pagination detected a repeated cursor or page URL. Fix the server's next-page value before continuing."
+                elif budget is not None and count >= budget:
+                    stop = (
+                        "Pagination reached max_pages before another request. Increase max_pages to continue."
+                    )
+                else:
+                    seen.add(key)
             page_result = Ok(
-                value=Page(items=self._page_items(op, items), body=result.value, next=next_value),
+                value=Page(
+                    items=self._page_items(op, items), body=result.value, next=None if stop else next_value
+                ),
                 meta=result.meta,
             )
             more = yield from sink(PageAnswer(page_result, items))
-            if next_value is None or not more:
+            if not more:
+                return
+            if stop:
+                yield from sink(
+                    PageAnswer(
+                        _fail(
+                            diagnostic(
+                                op["id"],
+                                "UNEXPECTED_RESPONSE",
+                                http_status=result.meta.status,
+                                request_id=result.meta.request_id,
+                                remediation=stop,
+                                attempts=result.meta.attempts,
+                            )
+                        ),
+                        [],
+                    )
+                )
+                return
+            if next_value is None:
                 return
 
     def _page_items(self, op: OperationDescriptor, items: list[object]) -> list[object]:
@@ -2328,16 +2407,74 @@ class Engine:
         budget = bounded(budget_ms, 0, 0)
         started = _monotonic_ms()
         once = {**opts, "verify": False}
+        deadline = started + budget
+        last: Answer | None = None
         while True:
-            answer = yield from self._call(op, args, once, None, step)
+            flow = self._call(op, args, once, None, step)
+            if budget <= 0:
+                answer = yield from flow
+            else:
+                sent: object = None
+                thrown: Exception | None = None
+                try:
+                    while True:
+                        try:
+                            effect = flow.throw(thrown) if thrown is not None else flow.send(sent)
+                        except StopIteration as finished:
+                            answer = cast(Answer, finished.value)
+                            break
+                        try:
+                            sent = yield Bounded(effect, deadline)
+                            thrown = None
+                        except PollExpired:
+                            raise
+                        except Exception as error:
+                            sent, thrown = None, error
+                except PollExpired:
+                    flow.close()
+                    if last is not None and not is_mutation(op):
+                        return Answer(replace(last.result, timed_out=True), last.raw)
+                    return Answer(
+                        _fail(
+                            diagnostic(
+                                op["id"],
+                                "OUTCOME_UNKNOWN" if is_mutation(op) else "TRANSPORT_FAILED",
+                                retryable="never",
+                                remediation="The polling budget expired during the call.",
+                            )
+                        ),
+                        UNSET,
+                    )
+                finally:
+                    flow.close()
             result = answer.result
             if isinstance(result, Err):
+                if budget > 0 and _monotonic_ms() >= deadline and last is not None and not is_mutation(op):
+                    return Answer(replace(last.result, timed_out=True), last.raw)
+                if budget > 0 and _monotonic_ms() >= deadline and not is_mutation(op):
+                    return Answer(
+                        _fail(
+                            diagnostic(
+                                op["id"],
+                                "TRANSPORT_FAILED",
+                                retryable="never",
+                                remediation="The polling budget expired before any observation completed.",
+                            )
+                        ),
+                        UNSET,
+                    )
                 return answer
+            elapsed = _monotonic_ms() - started
+            if budget > 0 and elapsed >= budget:
+                return Answer(replace(result, timed_out=True), answer.raw)
             if evaluate_predicate(until, answer.raw):
                 return Answer(replace(result, timed_out=False), answer.raw)
-            if _monotonic_ms() - started + interval > budget:
+            if budget == 0 or elapsed + interval > budget:
                 return Answer(replace(result, timed_out=True), answer.raw)
+            last = answer
             yield from sleep(interval)
+            if budget > 0 and _monotonic_ms() >= deadline:
+                return Answer(replace(result, timed_out=True), answer.raw)
 
     def _verify(
         self, op: OperationDescriptor, args: Mapping[str, object], value: object, opts: Mapping[str, object]
@@ -2829,13 +2966,6 @@ class _Collector:
         self.meta = page.result.meta
         self.pages += 1
         return self.pages < self.limit
-
-
-def _same(a: object, b: object) -> bool:
-    try:
-        return canonical_json(a) == canonical_json(b)
-    except (TypeError, RecursionError):
-        return False
 
 
 def _valid_url(url: str) -> bool:

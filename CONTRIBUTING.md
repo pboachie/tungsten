@@ -75,6 +75,12 @@ maintainer will add it.
 
 ## Pull requests
 
+- Submit your PR without needing to choose a release or apply labels. A
+  maintainer assigns its intended release using a `release:X.Y.Z` label and
+  updates that label if plans change. You may suggest a target in the PR
+  description; the label is a plan, not a promise that the change has shipped.
+- Release planning, version bumps and publication are coordinated by the
+  maintainer. Only @pboachie creates release tags and publishes releases.
 - Keep a pull request to one logical change, and link the issue it addresses.
 - Follow the existing style; `cargo fmt` and clippy must be clean.
 - Intermediate representation changes must be additive.

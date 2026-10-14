@@ -673,6 +673,8 @@ pub struct TierRetries {
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ApiDescriptor {
+    /// Restrictive redirect default; None cannot be relaxed by client options.
+    pub redirects: RedirectPolicy,
     /// Machine name (`zrotext`).
     pub name: String,
     /// SDK package version.
@@ -721,6 +723,24 @@ pub type AuthConfig = BTreeMap<String, Credential>;
 pub trait IdempotencyStore: Send + Sync + fmt::Debug {
     fn get(&self, scope: &str, logical_id: &str) -> Option<String>;
     fn put(&self, scope: &str, logical_id: &str, key: &str);
+    /// Override with a transaction when storage is shared across processes.
+    fn reserve(
+        &self,
+        scope: &str,
+        logical_id: &str,
+        candidate: &str,
+    ) -> std::result::Result<String, String> {
+        static LEGACY: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _guard = crate::idempotency::lock(&LEGACY);
+        if let Some(key) = self.get(scope, logical_id).filter(|k| !k.is_empty()) {
+            return Ok(key);
+        }
+        self.put(scope, logical_id, candidate);
+        if self.get(scope, logical_id).as_deref() != Some(candidate) {
+            return Err("the key could not be stored".into());
+        }
+        Ok(candidate.to_owned())
+    }
 }
 
 /// What middleware sees of one attempt. Secrets are redacted: secret
@@ -792,6 +812,8 @@ pub type DiagnosticSink = Arc<dyn Fn(&Diagnostic) + Send + Sync>;
 
 #[derive(Clone)]
 pub struct ClientOptions {
+    /// May tighten the API default; None policy always wins.
+    pub redirects: Option<RedirectPolicy>,
     /// Defaults to the first server.
     pub base_url: Option<String>,
     pub auth: AuthConfig,
@@ -850,6 +872,8 @@ pub struct ClientOptions {
     /// not follow redirects (`reqwest::redirect::Policy::none()`): the runtime
     /// follows same-origin redirects of reads itself and never on mutations,
     /// and a client that follows them would forward credentials.
+    /// Rejected when either redirect policy is `None`: omit this option to use
+    /// the runtime-owned client, whose redirect configuration is enforceable.
     pub http_client: Option<reqwest::Client>,
     /// Clock in epoch milliseconds (token expiry, Retry-After dates).
     pub now: Option<Arc<dyn Fn() -> u64 + Send + Sync>>,
@@ -860,6 +884,7 @@ pub struct ClientOptions {
 impl Default for ClientOptions {
     fn default() -> Self {
         ClientOptions {
+            redirects: None,
             base_url: None,
             auth: AuthConfig::new(),
             token_store: None,
@@ -914,8 +939,13 @@ impl fmt::Debug for Confirm {
     }
 }
 
+/// Per-call options. Build them with `..CallOptions::default()` (or
+/// `..Default::default()`) after the fields you set, so fields added in later
+/// releases (such as `max_pages`) do not break the construction.
 #[derive(Clone)]
 pub struct CallOptions {
+    /// Maximum successful pages per traversal; None or zero means unbounded.
+    pub max_pages: Option<usize>,
     /// Required for `caller_owned` operations with `persist_required`.
     pub idempotency_key: Option<String>,
     /// A token authorizes one intent: the first call that sends spends it,
@@ -943,6 +973,7 @@ impl fmt::Debug for CallOptions {
             )
             .field("confirm", &self.confirm)
             .field("allow_confirm_true", &self.allow_confirm_true)
+            .field("max_pages", &self.max_pages)
             .field("timeout", &self.timeout)
             .field("verify", &self.verify)
             .field("headers", &self.headers.keys().collect::<Vec<_>>())
@@ -953,6 +984,7 @@ impl fmt::Debug for CallOptions {
 impl Default for CallOptions {
     fn default() -> Self {
         CallOptions {
+            max_pages: None,
             idempotency_key: None,
             confirm: None,
             allow_confirm_true: true,
@@ -1076,4 +1108,12 @@ pub struct MacroDescriptor {
     pub shown_once: bool,
     /// Disclosure cluster (agent.yml `disclosure.clusters`).
     pub cluster: Option<String>,
+}
+
+/// Mutations and cross-origin redirects are never followed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RedirectPolicy {
+    #[default]
+    SameOriginRead,
+    None,
 }

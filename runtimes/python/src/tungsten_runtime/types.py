@@ -523,7 +523,11 @@ class ApiRetries(TypedDict):
     mutating: RetryPolicy
 
 
+RedirectPolicy = Literal["same_origin_read", "none"]
+
+
 class ApiDescriptor(TypedDict):
+    redirects: NotRequired[RedirectPolicy]
     name: str
     version: str
     tungsten_version: str
@@ -631,6 +635,12 @@ class ClientOptions:
     #: Holds the tokens of ``authorizationCode`` schemes (``TokenStore``, or
     #: ``AsyncTokenStore`` with ``AsyncClientCore``). Default: in memory.
     token_store: object = None
+    #: Per native HTTP attempt: covers response headers and the complete ordinary
+    #: body, not the overall call including retries. Cancellation joins transport
+    #: cleanup before releasing capacity. After successful streaming headers, use
+    #: idle_timeout_ms. Custom transports must cooperate: uninterruptible callbacks
+    #: retain capacity until completion and late results are rejected, without a
+    #: hard settlement guarantee. OS resolver cancellation is platform-dependent.
     timeout_ms: int = 30_000
     #: Overrides the API's per-tier retry defaults (``ApiDescriptor.retries``)
     #: for every tier: a ``RetryPolicy`` mapping field by field, a
@@ -671,9 +681,13 @@ class ClientOptions:
     #: ``timeout_ms``, which ends the stream without a reconnect. While the
     #: response headers are awaited the idle timeout applies too.
     idle_timeout_ms: int | None = None
+    #: May tighten the API default; an API configured with none cannot be relaxed.
+    redirects: RedirectPolicy | None = None
 
 
 class CallOptions(TypedDict, total=False):
+    #: Maximum successful pages; omitted or zero means unbounded.
+    max_pages: int
     idempotency_key: str
     #: Token from ``preview()``; required for irreversible, and for destructive unless ``True``.
     confirm: str | Literal[True]
@@ -812,6 +826,7 @@ __all__ = [
     "PreviewLocal",
     "PreviewNone",
     "PreviewResult",
+    "RedirectPolicy",
     "RemediationEntry",
     "RenderedRequest",
     "RequestContext",

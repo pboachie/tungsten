@@ -47,6 +47,17 @@ public sealed partial class ClientCore
     private readonly Action<Diagnostic>? onDiagnostic;
     private readonly byte[] confirmationKey;
     private readonly HttpClient http;
+    private readonly bool redirectsDisabled;
+
+    /// <summary>Generated clients require this capability when redirects are forbidden.</summary>
+    public static void RequireRedirectPolicyV1() { }
+
+    private static bool RedirectsNone(string? value)
+    {
+        if (value is null or "same_origin_read") return false;
+        if (value == "none") return true;
+        throw new ClientConfigException("redirects must be same_origin_read or none");
+    }
     private readonly Func<long>? nowFn;
     private readonly Func<double>? randomFn;
     private readonly ITokenStore tokenStore;
@@ -68,6 +79,13 @@ public sealed partial class ClientCore
     {
         options ??= new ClientOptions();
         this.api = api ?? throw new ClientConfigException("the API descriptor is missing");
+        var apiNone = RedirectsNone(api.Redirects);
+        var clientNone = RedirectsNone(options.Redirects);
+        redirectsDisabled = apiNone || clientNone;
+        if (redirectsDisabled && options.HttpClient is not null)
+        {
+            throw new ClientConfigException("redirects none requires the default HTTP client; a supplied HttpClient may follow redirects internally");
+        }
         var b = options.BaseUrl;
         if (string.IsNullOrEmpty(b) && api.Servers.Count > 0)
         {

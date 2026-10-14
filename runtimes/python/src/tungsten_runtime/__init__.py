@@ -58,6 +58,7 @@ __all__ = [
     "generate_pkce",
     "pkce_challenge",
     "require_import_policy_v1",
+    "require_redirect_policy_v1",
     "unwrap",
 ]
 __all__ += types.__all__
@@ -65,3 +66,7 @@ __all__ += types.__all__
 
 def require_import_policy_v1() -> None:
     """Capability handshake: older runtimes cannot load imported descriptors."""
+
+
+def require_redirect_policy_v1() -> None:
+    """Capability handshake for generated SDKs requiring disabled redirects."""

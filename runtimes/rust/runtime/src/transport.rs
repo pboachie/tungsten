@@ -201,9 +201,15 @@ fn multipart_form(parts: &[MultipartPart]) -> reqwest::multipart::Form {
 /// Send once. Never fails: every outcome is an [`AttemptOutcome`].
 pub async fn attempt(client: &reqwest::Client, req: &AttemptRequest<'_>) -> AttemptOutcome {
     let now = Instant::now();
-    let deadline = now
+    let mut deadline = now
         .checked_add(req.timeout)
         .unwrap_or_else(|| now + Duration::from_secs(86_400 * 365));
+    if let Some(poll_deadline) = crate::verify::poll_deadline() {
+        if std::time::Instant::now() >= poll_deadline {
+            return AttemptOutcome::NotSent("polling deadline expired before send".to_owned());
+        }
+        deadline = deadline.min(Instant::from_std(poll_deadline));
+    }
     let Ok(method) = reqwest::Method::from_bytes(req.method.as_str().as_bytes()) else {
         return AttemptOutcome::NotSent("INVALID_METHOD".to_owned());
     };
@@ -232,6 +238,9 @@ pub async fn attempt(client: &reqwest::Client, req: &AttemptRequest<'_>) -> Atte
         Payload::Bytes(bytes) => builder.body(bytes.clone()),
         Payload::Multipart(parts) => builder.multipart(multipart_form(parts)),
     };
+    if Instant::now() >= deadline {
+        return AttemptOutcome::NotSent("request deadline expired before send".to_owned());
+    }
     let response = match timeout_at(deadline, builder.send()).await {
         Err(_) => return AttemptOutcome::Timeout,
         Ok(Err(error)) => return failure(&error),

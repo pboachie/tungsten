@@ -4,7 +4,7 @@ members = ["crates/*"]
 exclude = ["runtimes", "examples"]
 
 [workspace.package]
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 rust-version = "1.95"
 license = "AGPL-3.0-only"
@@ -17,6 +17,7 @@ categories = ["development-tools", "command-line-utilities"]
 publish = false
 
 [workspace.dependencies]
+tungsten-contract = { path = "crates/tungsten-contract" }
 tungsten-core = { path = "crates/tungsten-core" }
 tungsten-config = { path = "crates/tungsten-config" }
 tungsten-openapi = { path = "crates/tungsten-openapi" }

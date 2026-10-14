@@ -140,7 +140,7 @@ export function bodyValue(op: OperationDescriptor, args: Record<string, unknown>
   const body = op.body;
   if (body) {
     if (body.shape.kind === "merged") {
-      const picked: Record<string, unknown> = {};
+      const picked: Record<string, unknown> = Object.create(null);
       for (const field of body.shape.fields) {
         if (args[field] !== undefined) picked[field] = args[field];
       }
@@ -152,7 +152,7 @@ export function bodyValue(op: OperationDescriptor, args: Record<string, unknown>
   if (op.rpc) {
     let params = value;
     if (!body) {
-      const rest: Record<string, unknown> = {};
+      const rest: Record<string, unknown> = Object.create(null);
       for (const [k, v] of Object.entries(args)) {
         if (!paramNames.has(k) && v !== undefined) rest[k] = v;
       }
@@ -235,7 +235,7 @@ export async function encodeBody(
     case "multipart": {
       if (!isRecord(value)) throw new SerializationError(parameter, "an object of multipart fields", value);
       const form = new FormData();
-      const display: Record<string, unknown> = {};
+      const display: Record<string, unknown> = Object.create(null);
       for (const [k, v] of entries(value)) {
         const items = Array.isArray(v) ? v.filter(present) : [v];
         const shown: unknown[] = [];
@@ -320,7 +320,9 @@ export class HeaderBag {
   /** Plain record; secret values replaced by `<redacted>` when `redact`. */
   toRecord(redact: boolean): Record<string, string> {
     const out: Record<string, string> = {};
-    for (const { name, value, secret } of this.#entries.values()) out[name] = redact && secret ? REDACTED : value;
+    for (const { name, value, secret } of this.#entries.values()) {
+      Object.defineProperty(out, name, { value: redact && secret ? REDACTED : value, enumerable: true, configurable: true, writable: true });
+    }
     return out;
   }
 

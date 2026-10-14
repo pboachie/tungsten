@@ -50,6 +50,8 @@ def check_token(key: bytes, token: str, subject: str, args: object, now: float) 
     if match is None:
         return "malformed"
     expiry = int(match.group(1))
+    if str(expiry) != match.group(1):
+        return "malformed"
     expected = _signature(key, subject, args, expiry)
     if not hmac.compare_digest(expected, match.group(2)):
         return "mismatch"
@@ -57,5 +59,7 @@ def check_token(key: bytes, token: str, subject: str, args: object, now: float) 
 
 
 def token_expiry(token: str) -> int | None:
-    match = re.match(r"tgc1\.([0-9]{1,16})\.", token)
-    return int(match.group(1)) if match is not None else None
+    match = _TOKEN.fullmatch(token)
+    if match is None or str(int(match.group(1))) != match.group(1):
+        return None
+    return int(match.group(1))
