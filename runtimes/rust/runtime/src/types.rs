@@ -939,6 +939,9 @@ impl fmt::Debug for Confirm {
     }
 }
 
+/// Per-call options. Build them with `..CallOptions::default()` (or
+/// `..Default::default()`) after the fields you set, so fields added in later
+/// releases (such as `max_pages`) do not break the construction.
 #[derive(Clone)]
 pub struct CallOptions {
     /// Maximum successful pages per traversal; None or zero means unbounded.

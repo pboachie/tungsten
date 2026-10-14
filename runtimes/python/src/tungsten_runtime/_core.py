@@ -1642,7 +1642,14 @@ class Engine:
         success = 200 <= status <= 299 or (
             declared is not None and declared.get("kind") == "success" and 100 <= status <= 399
         )
-        success = success and not ((self._redirects_disabled or mutation) and 300 <= status <= 399)
+        # A status the descriptor declares (exactly or by class) is classified as declared. With
+        # redirects disabled, a 3xx it does not declare is a refused redirect, never a success.
+        refused_redirect = (
+            self._redirects_disabled
+            and 300 <= status <= 399
+            and (declared is None or declared.get("status") == "default")
+        )
+        success = success and not refused_redirect
         verify_target = str_field(field(op["agent"], "verify"), "operation")
         hint = f"Call {verify_target} to read the current state." if verify_target is not None else None
 

@@ -27,7 +27,7 @@ use crate::transport::{AttemptOutcome, AttemptRequest, BodyFailure, attempt, par
 use crate::types::{
     CallOptions, Category, Diagnostic, Error, HttpMethod, Jitter, OperationDescriptor,
     ParamLocation, RequestContext, Response, ResponseContext, ResponseKind, ResponseMeta,
-    Retryable, Safety, ValidateResponses,
+    Retryable, Safety, StatusMatch, ValidateResponses,
 };
 use crate::util::{envelope_value, get_path, get_path_str, looks_sensitive, redact_paths};
 
@@ -415,8 +415,12 @@ impl ClientCore {
         let success = (200..=299).contains(&status)
             || (declared.is_some_and(|d| d.kind == ResponseKind::Success)
                 && (100..=399).contains(&status));
-        let success = success
-            && !((self.inner.redirects_disabled || mutation) && (300..=399).contains(&status));
+        // A status the descriptor declares (exactly or by class) is classified as declared. With
+        // redirects disabled, a 3xx it does not declare is a refused redirect, never a success.
+        let refused_redirect = self.inner.redirects_disabled
+            && (300..=399).contains(&status)
+            && declared.is_none_or(|d| d.status == StatusMatch::Default);
+        let success = success && !refused_redirect;
         let hint = op
             .agent
             .verify
