@@ -9,19 +9,17 @@ changes.
 
 ## [Unreleased]
 
-### Added
-
-- Generated Rust CLIs: `--max-pages <N>` (with `--all`) stops paging after N
-  pages and notes on standard error that more pages are available. There is no
-  default limit.
-
 ### Changed
 
-- Generated Rust CLIs: `--all` writes its array page by page instead of
-  collecting every item first. The output is byte-for-byte the same on
-  success; a failure after the first page leaves the array unterminated and is
-  reported on standard error. `Dispatch` gains the provided method
-  `pages_each`, which generated clients implement lazily.
+- The release workflow's PyPI publication job is enabled through trusted
+  publishing (repository variable `PYPI_PUBLISH`, `pypi` environment, no
+  stored token) and now refuses to upload a `tungsten-runtime` sdist or wheel
+  whose version does not equal the release tag, mirroring the npm publication
+  preflight.
+- The published `ghcr.io/pboachie/tungsten` container image carries
+  `org.opencontainers.image` title and description labels, so the GitHub
+  package page shows the package description instead of "No description
+  provided".
 
 ## [0.1.2]
 
