@@ -61,7 +61,11 @@ fn toml_str(s: &str) -> String {
 fn dep(name: &str, dep: &Dep) -> String {
     match dep {
         Dep::Version(v) => format!("{name} = {}\n", toml_str(v)),
-        Dep::Path(p) => format!("{name} = {{ path = {} }}\n", toml_str(p)),
+        Dep::Path { path, version } => format!(
+            "{name} = {{ path = {}, version = {} }}\n",
+            toml_str(path),
+            toml_str(version)
+        ),
     }
 }
 
