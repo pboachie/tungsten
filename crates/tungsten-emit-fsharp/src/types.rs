@@ -261,7 +261,7 @@ impl Ctx<'_> {
 
     /// The name of a model, as declared.
     fn type_name(&self, id: &TypeId) -> String {
-        self.names.types.get(id).cloned().unwrap_or_default()
+        self.model_name(id)
     }
 
     /// One model of a group: `type` for the first, `and` for the others.
