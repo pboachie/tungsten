@@ -962,6 +962,53 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
         "Give every variant a named schema and a discriminator mapping value.",
     ),
     e(
+        "TG1030",
+        "An option of the `kotlin` target in tungsten.yml is not valid: `group` and `package` \
+         must be dotted package names usable in Kotlin and Java (no keywords), `artifact` an \
+         artifact name, `version` and `runtime` versions such as 1.2.3, `runtime_path` and \
+         `java_runtime_path` non-empty paths. The generator uses the option's default instead.",
+        "Fix the option under `targets.kotlin` in tungsten.yml, or remove it to keep the default.",
+    ),
+    e(
+        "TG1031",
+        "The Kotlin SDK has no native type for this schema (an allOf whose members cannot be \
+         merged into one data class, or an enum whose values mix JSON types), so the typed \
+         value is the Java runtime's JSON value (`Any?`: JsonObject, List, String, Long, \
+         Double, Boolean or null). The runtime still validates it against the schema.",
+        "Merge the allOf members into one object, or give the enum values a single type, if a \
+         typed Kotlin model is wanted.",
+    ),
+    e(
+        "TG1032",
+        "A macro of the agent manifest is not in the canonical form the SDK runtimes run \
+         (steps over callable operations, references to $input or earlier steps, a known step \
+         kind), so the Kotlin SDK does not include it; the TypeScript SDK reports the same \
+         macro as TG0710.",
+        "Fix the macro in agent.yml at the pointer the diagnostic names.",
+    ),
+    e(
+        "TG1033",
+        "The Kotlin SDK runs on the Java runtime, which sends an OpenID Connect scheme as a \
+         bearer token. It does not run discovery or obtain tokens itself.",
+        "Configure the scheme with `AuthCredential.secret(token)` holding an access token you \
+         obtained from the provider.",
+    ),
+    e(
+        "TG1034",
+        "The operation answers different JSON bodies depending on the exact status, so the \
+         typed function's result is the runtime's JSON value; the result's metadata carries \
+         the status that tells them apart.",
+        "Read `meta().status()` of the result and decode the body with the matching model's \
+         `fromJson`.",
+    ),
+    e(
+        "TG1035",
+        "The union declares a discriminator, but at least one variant has no tag value or is \
+         not a named type, so the Kotlin SDK cannot pick the variant by its tag: it decodes \
+         the variants in the plan's order and takes the first that fits.",
+        "Give every variant a named schema and a discriminator mapping value.",
+    ),
+    e(
         "TG1060",
         "An option of the `ruby` target is not valid (a `gem` that is not a lowercase gem name, \
          a `module` that is not a Ruby constant path or names a core class or the runtime's \
