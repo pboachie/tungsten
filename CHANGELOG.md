@@ -9,6 +9,12 @@ changes.
 
 ## [Unreleased]
 
+### Fixed
+
+- C# emitter: documentation comments treat every C# line terminator (lone CR,
+  U+0085, U+2028, U+2029) as a line break, so descriptions stay inside the
+  comment.
+
 ## [0.1.2]
 
 ### Breaking
