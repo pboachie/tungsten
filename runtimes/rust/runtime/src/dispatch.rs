@@ -3,6 +3,7 @@
 //! wrappers use.
 
 use std::future::Future;
+use std::ops::ControlFlow;
 
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -57,6 +58,28 @@ pub trait Dispatch: Send + Sync {
         args: Value,
         opts: CallOptions,
     ) -> impl Future<Output = Vec<Result<Page<Value>>>> + Send;
+
+    /// Like [`Dispatch::pages`], but hands each page to `sink` as soon as it
+    /// arrives and stops fetching when `sink` returns
+    /// [`ControlFlow::Break`], so a caller can print or drop a page before
+    /// the next request and never holds more than one page. The default
+    /// collects through [`Dispatch::pages`] first; a generated client
+    /// overrides it to iterate lazily.
+    fn pages_each<'a>(
+        &'a self,
+        operation: &'a str,
+        args: Value,
+        opts: CallOptions,
+        sink: &'a mut (dyn FnMut(Result<Page<Value>>) -> ControlFlow<()> + Send),
+    ) -> impl Future<Output = ()> + Send + 'a {
+        async move {
+            for page in self.pages(operation, args, opts).await {
+                if sink(page).is_break() {
+                    break;
+                }
+            }
+        }
+    }
 
     /// Collect the events of an operation's event stream, each as its decoded
     /// JSON value, through the typed `<method>_stream`. The final error, if

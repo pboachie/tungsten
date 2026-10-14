@@ -62,8 +62,8 @@ Adjust paths to your generated outputs. `createCore` creates a separate client f
 
 - Discrete mode exposes individual tools. Progressive mode exposes discovery tools such as `search_tools`, `describe_tool`, `invoke` and `preview`, keeping the initial tool listing small.
 - Generated metadata carries operation safety, idempotency and confirmation requirements. A preview is not execution; execution still needs the required argument-bound confirmation token.
-- HTTP exposure and API authorization belong to your application. Put non-local HTTP listeners behind appropriate access control.
-- `run_script` is disabled by default. Enabling it requires an explicit sandbox configuration; Deno execution also requires a Deno executable. The WASM engine runs in the server process with configured bounds.
+- HTTP exposure and API authorization belong to your application. Put non-local HTTP listeners behind appropriate access control. Streamable HTTP can require a bearer token: pass `bearerToken` (compared in constant time) and/or an `authorize(req)` callback in the `connectHttp` options, or start a generated server with `--http <port> --token-env <NAME>` to read the token from the environment variable `NAME` (the token is never accepted as an argument). Unauthenticated requests get `401` with `WWW-Authenticate: Bearer` before any session is created or looked up. Binding a non-loopback host with neither authentication nor `allowedHosts` emits a startup warning.
+- `run_script` is disabled by default. Enabling it requires an explicit sandbox configuration; Deno execution also requires a Deno executable. The WASM engine runs in a worker thread of the server process with configured bounds. `sandbox.maxConcurrent` (`perSession`, default 4; `global`, default 16) caps scripts running at once.
 - Deno limits wall time and V8 heap on all platforms; its additional process data limit is enforced on Linux. On Windows and macOS, `memoryMb` does not bound memory outside the V8 heap, including `ArrayBuffer` backing stores.
 
 ## Related packages and documentation

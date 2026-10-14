@@ -624,10 +624,11 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  # Off until the PyPI project has a trusted publisher for this workflow and
-  # environment, and the repository variable PYPI_PUBLISH is set to "true".
+  # The PyPI trusted publisher for tungsten-runtime must name release.yml and
+  # the pypi environment before the repository variable PYPI_PUBLISH is set
+  # to "true". No stored token is used.
   pypi-publish:
-    name: PyPI publish (trusted publishing, gated off)
+    name: PyPI publish (trusted publishing)
     needs: [prepare, pypi-build, github-release]
     if: needs.prepare.outputs.release == 'true' && vars.PYPI_PUBLISH == 'true'
     runs-on: ubuntu-latest
@@ -641,6 +642,35 @@ jobs:
         with:
           name: python-dist
           path: dist
+      - name: Validate the built version before any registry write
+        env:
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          set -eu
+          python3 - "${RELEASE_TAG#v}" <<'PY'
+          import pathlib, sys, tarfile, zipfile
+          version = sys.argv[1]
+          dist = pathlib.Path("dist")
+          files = sorted(p.name for p in dist.iterdir())
+          wheels = [n for n in files if n.endswith(".whl")]
+          sdists = [n for n in files if n.endswith(".tar.gz")]
+          if len(files) != 2 or len(wheels) != 1 or len(sdists) != 1:
+              raise SystemExit(f"expected exactly one sdist and one wheel in dist/, got: {files}")
+          versions = set()
+          for name in files:
+              if name.endswith(".whl"):
+                  with zipfile.ZipFile(dist / name) as wheel:
+                      metadata = next(m for m in wheel.namelist() if m.endswith(".dist-info/METADATA"))
+                      text = wheel.read(metadata).decode()
+              else:
+                  with tarfile.open(dist / name) as sdist:
+                      member = next(m for m in sdist.getmembers() if m.name.endswith("/PKG-INFO") and m.isfile())
+                      text = sdist.extractfile(member).read().decode()
+              versions.add(next(line.split(": ", 1)[1].strip() for line in text.splitlines() if line.startswith("Version:")))
+          if versions != {version}:
+              raise SystemExit(f"built package version(s) {sorted(versions)} do not match the release tag {version}; refusing to publish a different version")
+          print(f"validated {files} for {version}")
+          PY
       - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
         with:
           packages-dir: dist

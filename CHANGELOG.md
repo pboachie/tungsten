@@ -9,10 +9,16 @@ changes.
 
 ## [Unreleased]
 
-## [0.1.3]
-
 ### Added
 
+- Generated Rust CLIs: `--max-pages <N>` (with `--all`) stops paging after N
+  pages and notes on standard error that more pages are available. There is no
+  default limit.
+- Build provenance attestations for the container image, the Homebrew formula, the winget manifests and `DISTRIBUTION_SHA256SUMS`, with install notes on verifying them.
+- MCP Streamable HTTP: optional `bearerToken` and `authorize(req)` options (and
+  `--token-env <NAME>` on generated servers) to require authentication; a
+  startup warning when binding a non-loopback host with no authentication and
+  no `allowedHosts`.
 - A Kotlin target (`kotlin`, short form `kt`, `tungsten-emit-kotlin`): a
   Kotlin/JVM SDK over the Java runtime and the new Kotlin layer
   `runtimes/kotlin` (`io.github.pboachie.tungsten:tungsten-runtime-kotlin`,
@@ -30,6 +36,47 @@ changes.
   the Java target's gaps.
 - `ClientOptions.identity()` and `withIdentity(...)` in the Java runtime
   (additive), so a layer on top of it reports its own runtime identity.
+
+### Changed
+
+- The release workflow's PyPI publication job is enabled through trusted
+  publishing (repository variable `PYPI_PUBLISH`, `pypi` environment, no
+  stored token) and now refuses to upload a `tungsten-runtime` sdist or wheel
+  whose version does not equal the release tag, mirroring the npm publication
+  preflight.
+- The published `ghcr.io/pboachie/tungsten` container image carries
+  `org.opencontainers.image` title and description labels, so the GitHub
+  package page shows the package description instead of "No description
+  provided".
+- Generated Rust CLIs: `--all` writes its array page by page instead of
+  collecting every item first. The output is byte-for-byte the same on
+  success; a failure after the first page leaves the array unterminated and is
+  reported on standard error. `Dispatch` gains the provided method
+  `pages_each`, which generated clients implement lazily.
+- MCP `run_script`: the WASM engine now runs its isolate in a worker thread
+  that is terminated at the deadline, so a long computation no longer occupies
+  the server's event loop. Results, errors and limits are unchanged.
+- MCP `run_script`: new `sandbox.maxConcurrent` option (`perSession`, default
+  4; `global`, default 16). Calls over a limit are refused with a
+  `VALIDATION_FAILED` "busy" envelope.
+- MCP HTTP: a warning is logged when `sandbox.engine: "auto"` falls back to the
+  WASM engine because deno was not found.
+- Distribution verifies the build provenance attestation of every release asset it consumes before rebuilding the container image, Homebrew formula and winget manifests.
+- Dependency audit: source-less `Cargo.lock` entries must be workspace members, and `[patch]`/`[replace]` tables in Cargo manifests are rejected.
+
+### Fixed
+
+- Python and Java runtimes bound schema `pattern` matching: strings over 64 KiB
+  skip the pattern check, and Java abandons a match after 1 s, treating it as
+  not checked.
+- C# emitter: documentation comments treat every C# line terminator (lone CR,
+  U+0085, U+2028, U+2029) as a line break, so descriptions stay inside the
+  comment.
+- Go, C#, Java, Python, Ruby and Rust runtimes: validate the media type of a
+  binary multipart part and refuse malformed values with `VALIDATION_FAILED`
+  before any bytes are written.
+- TypeScript runtime: header values are validated before the request body is
+  built, and multipart part media types are checked as `type/subtype[;params]`.
 
 ## [0.1.2]
 

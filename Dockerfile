@@ -6,7 +6,9 @@ ARG TARGETARCH
 COPY --chmod=755 linux-${TARGETARCH}/tungsten /usr/local/bin/tungsten
 COPY LICENSE /usr/share/licenses/tungsten/LICENSE
 COPY --chown=65532:65532 workspace /work
-LABEL org.opencontainers.image.source="https://github.com/pboachie/tungsten" \
+LABEL org.opencontainers.image.title="tungsten" \
+      org.opencontainers.image.description="SDK generator and MCP compiler" \
+      org.opencontainers.image.source="https://github.com/pboachie/tungsten" \
       org.opencontainers.image.licenses="AGPL-3.0-only"
 USER 65532:65532
 WORKDIR /work

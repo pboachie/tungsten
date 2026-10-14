@@ -15,7 +15,7 @@ import { buildCatalog, listTools, type Mode } from "./catalog.js";
 import { serveHttp } from "./http.js";
 import { progressSink } from "./progress.js";
 import { isRecord } from "./render.js";
-import { resolveDeno, SANDBOX_DEFAULTS, selectEngine } from "./sandbox.js";
+import { CONCURRENCY_DEFAULTS, ConcurrencyLimiter, isAutoEngine, resolveDeno, SANDBOX_DEFAULTS, selectEngine } from "./sandbox.js";
 import { buildSemantic } from "./semantic.js";
 import { Session, type SandboxConfig } from "./session.js";
 import type { HttpEndpoint, HttpOptions, ServerOptions } from "./types.js";
@@ -59,8 +59,12 @@ function sandboxConfig(options: ServerOptions, warnings: string[]): SandboxConfi
     warnings.push(`sandbox.enabled is true but ${path} was not found: run_script is not offered`);
     return null;
   }
+  const limits = isRecord(sandbox.maxConcurrent) ? sandbox.maxConcurrent : {};
   return {
     engine,
+    fellBack: engine === "wasm" && isAutoEngine(sandbox.engine),
+    maxConcurrent: Math.floor(positive(limits.perSession, CONCURRENCY_DEFAULTS.perSession)),
+    limiter: new ConcurrencyLimiter(Math.floor(positive(limits.global, CONCURRENCY_DEFAULTS.global))),
     deno: deno ?? "",
     timeoutMs: positive(sandbox.timeoutMs, SANDBOX_DEFAULTS.timeoutMs),
     memoryMb: positive(sandbox.memoryMb, SANDBOX_DEFAULTS.memoryMb),
@@ -132,6 +136,11 @@ export function createTungstenMcpServer(options: ServerOptions): TungstenMcpServ
       await start(new StdioServerTransport());
     },
     async connectHttp(httpOptions = {}) {
+      if (sandbox?.fellBack) {
+        const note = "sandbox.engine is auto and deno was not found: run_script uses the wasm engine (in a worker thread) for every HTTP session; install deno or set sandbox.engine explicitly";
+        warnings.push(note);
+        process.emitWarning(note, { code: "TUNGSTEN_SANDBOX_FALLBACK" });
+      }
       const endpoint = await serveHttp(httpOptions, { open: (transport) => start(transport as Transport) });
       endpoints.add(endpoint);
       return endpoint;

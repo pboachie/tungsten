@@ -971,6 +971,8 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
 
     const headers = new HeaderBag();
     this.#buildHeaders(op, args, opts, auth.plan, headers);
+    const earlyHeaderFailure = this.#checkHeaders(op, headers, auth.plan);
+    if (earlyHeaderFailure) return earlyHeaderFailure;
 
     let encoded;
     try {
@@ -1002,23 +1004,8 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     for (const h of auth.plan.headers) headers.set(h.name, h.value, h.secret);
     if (purpose === "server_preview" && op.agent.preview.mode === "header") headers.set(op.agent.preview.header, op.agent.preview.value);
 
-    const record = headers.toRecord(false);
-    for (const [name, value] of Object.entries(record)) {
-      if (!validHeaderName(name) || !validHeaderValue(value)) {
-        const fromAuth = auth.plan.headers.some((h) => h.name.toLowerCase() === name.toLowerCase());
-        if (fromAuth) {
-          return fail(diagnostic(op.id, "AUTH_FAILED", { remediation: `The credential for header ${name} contains characters not allowed in an HTTP header; check ClientOptions.auth.` }));
-        }
-        const param = op.params.find((p) => p.wire.toLowerCase() === name.toLowerCase());
-        return this.#validation(
-          op,
-          param ? [param.name] : [],
-          headers.isSecret(name) ? REDACTED : value,
-          "a header value of visible ASCII characters (no line breaks)",
-          `Header ${name} cannot carry this value; remove line breaks and non-Latin-1 characters.`,
-        );
-      }
-    }
+    const headerFailure = this.#checkHeaders(op, headers, auth.plan);
+    if (headerFailure) return headerFailure;
     const beforeClaim = this.#beforeDispatch(op, opts);
     if (beforeClaim) return beforeClaim;
     const claimMacro = (opts as StepOptions)[MACRO_CLAIM];
@@ -1170,6 +1157,30 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     const scopeFailure = this.#importScope(op, url);
     if (scopeFailure) return scopeFailure;
     return { ok: true, value: { url, display } };
+  }
+
+  /** Refuse header names and values that an HTTP header cannot carry (line
+   * breaks, NUL, other control characters), redacting secret values. Runs
+   * before the body is encoded and again once every header is set. */
+  #checkHeaders(op: OperationDescriptor, headers: HeaderBag, authPlan: AuthPlan) {
+    const record = headers.toRecord(false);
+    for (const [name, value] of Object.entries(record)) {
+      if (!validHeaderName(name) || !validHeaderValue(value)) {
+        const fromAuth = authPlan.headers.some((h) => h.name.toLowerCase() === name.toLowerCase());
+        if (fromAuth) {
+          return fail(diagnostic(op.id, "AUTH_FAILED", { remediation: `The credential for header ${name} contains characters not allowed in an HTTP header; check ClientOptions.auth.` }));
+        }
+        const param = op.params.find((p) => p.wire.toLowerCase() === name.toLowerCase());
+        return this.#validation(
+          op,
+          param ? [param.name] : [],
+          headers.isSecret(name) ? REDACTED : value,
+          "a header value of visible ASCII characters (no line breaks)",
+          `Header ${name} cannot carry this value; remove line breaks and non-Latin-1 characters.`,
+        );
+      }
+    }
+    return null;
   }
 
   #buildHeaders(
