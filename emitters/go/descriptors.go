@@ -248,6 +248,13 @@ func (g *gen) agentLit(p *opPlan) string {
 	a := &p.op.Agent
 	var parts []string
 	parts = append(parts, "Safety: "+rt(safeties, a.Safety, "Mutating"))
+	if policy := a.ImportPolicy; policy != nil {
+		reviewed := "false"
+		if policy.Reviewed {
+			reviewed = "true"
+		}
+		parts = append(parts, "ImportPolicy: &tungsten.ImportPolicy{InferredSafety: "+rt(safeties, policy.InferredSafety, "Mutating")+", Reviewed: "+reviewed+", Source: "+goString(policy.Source)+", AllowedOrigins: "+stringList(policy.AllowedOrigins)+"}")
+	}
 	idem := []string{"Policy: " + rt(policies, a.Idempotency.Policy, "IdempotencyNone")}
 	if a.Idempotency.Header != "" {
 		idem = append(idem, "Header: "+goString(a.Idempotency.Header))
@@ -558,6 +565,7 @@ func (g *gen) apiLit() string {
 		b.WriteByte('\n')
 	}
 	line("&tungsten.APIDescriptor{")
+	line("Redirects: tungsten.RedirectPolicy(%s),", goString(ir.Agent.Redirects))
 	line("Name: %s,", goString(ir.API.Name.Wire))
 	line("Version: %s,", goString(g.opts.version))
 	line("TungstenVersion: %s,", goString(ir.Generator.TungstenVersion))

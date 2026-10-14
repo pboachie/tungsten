@@ -26,7 +26,7 @@ use tungsten_emit::{CommentStyle, FileSet, TargetConfig, header};
 use tungsten_ir::naming::{self, Case, Role, Target};
 use tungsten_ir::{AuthScheme, Ident, Ir};
 
-use crate::options::{Dep, Options};
+use crate::options::{Dep, Options, RUST_VERSION};
 
 pub(crate) fn supports(ir: &Ir) -> Diagnostics {
     model::build(ir).1
@@ -61,7 +61,11 @@ fn toml_str(s: &str) -> String {
 fn dep(name: &str, dep: &Dep) -> String {
     match dep {
         Dep::Version(v) => format!("{name} = {}\n", toml_str(v)),
-        Dep::Path(p) => format!("{name} = {{ path = {} }}\n", toml_str(p)),
+        Dep::Path { path, version } => format!(
+            "{name} = {{ path = {}, version = {} }}\n",
+            toml_str(path),
+            toml_str(version)
+        ),
     }
 }
 
@@ -69,7 +73,9 @@ fn cargo_toml(ir: &Ir, opts: &Options, bin: &str, package: &str, kit: &Dep, stam
     let mut s = format!("{stamp}\n\n[package]\n");
     s.push_str(&format!("name = {}\n", toml_str(package)));
     s.push_str(&format!("version = {}\n", toml_str(&opts.version)));
-    s.push_str("edition = \"2024\"\nrust-version = \"1.85\"\n");
+    s.push_str(&format!(
+        "edition = \"2024\"\nrust-version = \"{RUST_VERSION}\"\n"
+    ));
     s.push_str(&format!(
         "description = {}\n",
         toml_str(&format!(
@@ -86,9 +92,11 @@ fn cargo_toml(ir: &Ir, opts: &Options, bin: &str, package: &str, kit: &Dep, stam
     s.push_str("tokio = { version = \"1\", features = [\"macros\", \"rt-multi-thread\"] }\n");
     s.push_str(&dep("tungsten-cli-kit", kit));
     s.push_str(&dep("tungsten-runtime", &opts.runtime));
-    s.push_str(&dep(
-        &opts.package,
-        &Dep::Path(format!("../{}", opts.package)),
+    s.push_str(&format!(
+        "{} = {{ path = {}, version = {} }}\n",
+        opts.package,
+        toml_str(&format!("../{}", opts.package)),
+        toml_str(&opts.version),
     ));
     s
 }

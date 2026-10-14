@@ -154,7 +154,8 @@ public static class ConfirmationTokens
         {
             return false;
         }
-        if (!long.TryParse(e, NumberStyles.None, CultureInfo.InvariantCulture, out expiry))
+        if (!long.TryParse(e, NumberStyles.None, CultureInfo.InvariantCulture, out expiry) ||
+            expiry.ToString(CultureInfo.InvariantCulture) != e)
         {
             return false;
         }

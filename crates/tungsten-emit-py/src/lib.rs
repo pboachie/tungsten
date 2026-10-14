@@ -75,6 +75,7 @@ impl Emitter for PythonEmitter {
             plan.ops.iter().map(|o| ops::op_shape(&plan, o)).collect();
         let mut diags = macros::plan_macros(&plan, &shapes).1;
         diags.extend(ops::auth_notes(ir));
+        diags.extend(tungsten_emit::args::pagination_notes(ir));
         diags.extend(inline_record_notes(ir));
         diags
     }

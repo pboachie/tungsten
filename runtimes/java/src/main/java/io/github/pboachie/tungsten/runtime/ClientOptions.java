@@ -42,6 +42,7 @@ public final class ClientOptions {
         STRICT
     }
 
+    final RedirectPolicy redirects;
     final String baseUrl;
     final Map<String, AuthCredential> auth;
     final TokenStore tokenStore;
@@ -65,6 +66,7 @@ public final class ClientOptions {
     final RuntimeIdentity identity;
 
     private ClientOptions(Builder b) {
+        redirects = b.redirects;
         baseUrl = b.baseUrl;
         auth = Collections.unmodifiableMap(new LinkedHashMap<>(b.auth));
         tokenStore = b.tokenStore != null ? b.tokenStore : new TokenStore.Memory();
@@ -103,6 +105,7 @@ public final class ClientOptions {
 
     /** Builds {@link ClientOptions}. */
     public static final class Builder {
+        private RedirectPolicy redirects;
         private String baseUrl;
         private final Map<String, AuthCredential> auth = new LinkedHashMap<>();
         private TokenStore tokenStore;
@@ -126,6 +129,12 @@ public final class ClientOptions {
         private RuntimeIdentity identity;
 
         private Builder() {}
+
+        /** Restricts redirects; NONE cannot be relaxed by the generated API policy. */
+        public Builder redirects(RedirectPolicy value) {
+            redirects = value;
+            return this;
+        }
 
         /** The base URL; the API's first server by default. */
         public Builder baseUrl(String value) {

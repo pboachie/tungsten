@@ -70,7 +70,7 @@ public sealed partial class ClientCore
             var entries = p.Headers.Entries.ToList();
             var idle = stream ? idleTimeout : null;
             var outcome = await Transport.AttemptAsync(http, new AttemptRequest { Url = target, Method = method, Headers = entries, Body = body, Timeout = attemptTimeout, Stream = stream, Idle = idle }, ct).ConfigureAwait(false);
-            for (int hops = 0; !mutation && hops < MaxRedirects; hops++)
+            for (int hops = 0; !redirectsDisabled && !mutation && hops < MaxRedirects; hops++)
             {
                 if (outcome.Kind != OutcomeKind.Response || !IsRedirect(outcome.Status))
                 {
@@ -231,7 +231,10 @@ public sealed partial class ClientCore
         headersIn.TryGetValue("retry-after", out var retryAfterValue);
         var retryAfter = Transport.ParseRetryAfter(retryAfterValue, Now());
         var declared = Envelope.MatchResponse(op.Responses, status);
-        bool success = (status >= 200 && status <= 299) || (declared is not null && declared.Kind == "success" && status >= 100 && status <= 399);
+        // A status the descriptor declares (exactly or by class) is classified as declared. With
+        // redirects disabled, a 3xx it does not declare is a refused redirect, never a success.
+        bool refusedRedirect = redirectsDisabled && status >= 300 && status <= 399 && (declared is null || declared.StatusKind == "default");
+        bool success = !refusedRedirect && ((status >= 200 && status <= 299) || (declared is not null && declared.Kind == "success" && status >= 100 && status <= 399));
         string? hint = op.Agent.Verify is { } v ? $"Call {v.Operation} to read the current state." : null;
         if (success && !outcome.BodyOk)
         {
@@ -259,6 +262,10 @@ public sealed partial class ClientCore
                 {
                     remediation = $"The server answered with a redirect{to}. Redirects are never followed on mutations; check BaseUrl (scheme, host, trailing slash). Whether the call took effect is unknown only if the server applied it before redirecting.";
                     next = hint;
+                }
+                else if (redirectsDisabled)
+                {
+                    remediation = $"The server answered with a redirect{to}. Redirects are disabled; check Redirects and BaseUrl.";
                 }
                 else
                 {
