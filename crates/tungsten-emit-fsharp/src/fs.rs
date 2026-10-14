@@ -211,6 +211,26 @@ pub fn is_keyword(s: &str) -> bool {
     KEYWORDS.contains(&s)
 }
 
+/// `name` as an F# identifier where it is declared or used: in double
+/// backticks (``` ``type`` ```) when it is a keyword or not a plain
+/// identifier (ASCII letters, digits, `_` and `'`, not starting with a
+/// digit or `'`).
+pub fn ident(name: &str) -> String {
+    let plain = name
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '\'')
+        && name != "_";
+    if plain && !is_keyword(name) {
+        name.to_string()
+    } else {
+        format!("``{name}``")
+    }
+}
+
 /// Members every record and union has, which no generated field or case
 /// may take.
 pub const RECORD_MEMBERS: &[&str] = &[

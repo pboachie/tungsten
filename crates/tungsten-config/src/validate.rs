@@ -19,6 +19,7 @@ pub const MANIFEST_VERSION: u32 = 1;
 pub const KNOWN_TARGETS: &[&str] = &[
     "csharp",
     "docs",
+    "fsharp",
     "java",
     "mcp",
     "mock",
