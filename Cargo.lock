@@ -993,6 +993,7 @@ dependencies = [
  "tungsten-emit",
  "tungsten-emit-csharp",
  "tungsten-emit-docs",
+ "tungsten-emit-fsharp",
  "tungsten-emit-java",
  "tungsten-emit-mcp",
  "tungsten-emit-py",
