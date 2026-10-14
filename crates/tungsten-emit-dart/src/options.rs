@@ -108,15 +108,13 @@ impl Options {
     /// warning for each invalid value.
     pub fn resolve(ir: &Ir, cfg: &TargetConfig) -> (Options, Diagnostics) {
         let mut diags = Diagnostics::new();
-        let mut read = |key: &str,
-                        valid: &dyn Fn(&str) -> bool,
-                        expected: &str|
-         -> Option<String> {
-            let v = cfg.options.get(key)?;
-            match v.as_str() {
-                Some(s) if valid(s) => Some(s.to_string()),
-                _ => {
-                    diags.push(
+        let mut read =
+            |key: &str, valid: &dyn Fn(&str) -> bool, expected: &str| -> Option<String> {
+                let v = cfg.options.get(key)?;
+                match v.as_str() {
+                    Some(s) if valid(s) => Some(s.to_string()),
+                    _ => {
+                        diags.push(
                         Diagnostic::warning(
                             "TG1070",
                             format!(
@@ -125,10 +123,10 @@ impl Options {
                         )
                         .with_help(format!("got {v}")),
                     );
-                    None
+                        None
+                    }
                 }
-            }
-        };
+            };
         let package = read(
             "package",
             &is_package_name,

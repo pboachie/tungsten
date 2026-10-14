@@ -530,7 +530,7 @@ impl ModelFile<'_, '_, '_> {
         w.class_header(&format!("final class {name}"), "implements JsonEncodable");
         w.indent();
         // Constructor.
-        w.doc(&format!("A `{name}`."));
+        w.doc("Builds the value from its members.");
         let mut params: Vec<String> = comps
             .iter()
             .map(|c| match c.presence {
@@ -576,12 +576,20 @@ impl ModelFile<'_, '_, '_> {
         let mut args: Vec<Expr> = comps
             .iter()
             .map(|c| {
-                let helper = match c.presence {
+                let mut helper = match c.presence {
                     Presence::Required => "Wire.required",
                     Presence::RequiredNullable => "Wire.requiredNullable",
                     Presence::Optional => "Wire.optional",
                     Presence::OptionalNullable => "Wire.patch",
-                };
+                }
+                .to_string();
+                // `T?` of a nullable `T` is `T`: inference would drop the
+                // `?` from the decoder's type, so the type is explicit.
+                if c.dt.nullable()
+                    && matches!(c.presence, Presence::RequiredNullable | Presence::Optional)
+                {
+                    helper.push_str(&format!("<{}>", g.dart_type(&c.dt, from)));
+                }
                 Expr::named(
                     c.name.clone(),
                     Expr::call(
@@ -788,7 +796,7 @@ impl ModelFile<'_, '_, '_> {
             );
         }
         w.blank();
-        w.line(format!("const {name}(this.wire);"));
+        one_param_ctor(w, name, "this.wire");
         w.blank();
         w.doc("The value on the wire.");
         w.line(format!("final {base} wire;"));
@@ -796,15 +804,7 @@ impl ModelFile<'_, '_, '_> {
         w.doc(&format!(
             "The `{name}` whose wire value is the JSON value; throws a `FormatException` for any other value."
         ));
-        let flat = format!("static {name} fromJson(Object? json, [String path = r'$']) {{");
-        if w.fits(&flat) {
-            w.line(flat);
-        } else {
-            w.line(format!("static {name} fromJson("));
-            w.line("  Object? json, [");
-            w.line("  String path = r'$',");
-            w.line("]) {");
-        }
+        factory_header(w, name);
         w.indent();
         w.line("return Wire.enumValue(values, json, path);");
         w.dedent();
@@ -865,7 +865,7 @@ impl ModelFile<'_, '_, '_> {
         w.doc(doc);
         w.class_header(&format!("sealed class {name}"), "implements JsonEncodable");
         w.indent();
-        w.doc(&format!("A `{name}`."));
+        w.doc("For the variant classes.");
         w.line(format!("const {name}();"));
         w.blank();
         let how = match plan {
@@ -968,8 +968,8 @@ impl ModelFile<'_, '_, '_> {
             w.doc(&vdoc);
             w.class_header(&format!("final class {class}"), &format!("extends {name}"));
             w.indent();
-            w.doc(&format!("A `{name}` that is a `{ty}`."));
-            w.line(format!("const {class}(this.value);"));
+            w.doc(&format!("The variant holding a `{ty}`."));
+            one_param_ctor(w, class, "this.value");
             w.blank();
             w.doc("The variant's value.");
             field_line(w, &ty, "value");
@@ -1006,6 +1006,19 @@ fn factory_header(w: &mut Code, name: &str) {
         w.line("  Object? json, [");
         w.line("  String path = r'$',");
         w.line("]) {");
+    }
+}
+
+/// `const <name>(<param>);`, with the parameter on its own line and a
+/// trailing comma when it does not fit.
+fn one_param_ctor(w: &mut Code, name: &str, param: &str) {
+    let flat = format!("const {name}({param});");
+    if w.fits(&flat) {
+        w.line(flat);
+    } else {
+        w.line(format!("const {name}("));
+        w.line(format!("  {param},"));
+        w.line(");");
     }
 }
 
@@ -1164,7 +1177,9 @@ abstract final class Wire {
         return json is String;
       case 'integer':
         return json is int ||
-            (json is double && json.isFinite && json == json.truncateToDouble());
+            (json is double &&
+                json.isFinite &&
+                json == json.truncateToDouble());
       case 'number':
         return json is num;
       case 'boolean':
@@ -1269,7 +1284,8 @@ abstract final class Wire {
   ) {
     return {
       for (final e in o.entries)
-        if (!known.contains(e.key)) e.key: decoder(e.value, _member(path, e.key)),
+        if (!known.contains(e.key))
+          e.key: decoder(e.value, _member(path, e.key)),
     };
   }
 

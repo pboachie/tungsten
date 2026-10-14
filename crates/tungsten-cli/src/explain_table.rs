@@ -1017,10 +1017,11 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
         "TG1071",
         "A schema has no Dart type: an `allOf` that cannot be merged into one record (a member \
          is not a record, has typed extra members, or two members share a wire name) or an \
-         enum whose values mix JSON types. The Dart SDK types it as its JSON value \
-         (`Object?`), which the runtime still validates against the schema.",
-        "Restructure the schema (records with distinct properties, an enum of one JSON type), \
-         or accept the JSON value.",
+         enum that is not an enum of strings or of integers (mixed JSON types, numbers or \
+         booleans). The Dart SDK types it as its JSON value (`Object?`), which the runtime \
+         still validates against the schema.",
+        "Restructure the schema (records with distinct properties, an enum of strings or \
+         integers), or accept the JSON value.",
     ),
     e(
         "TG1072",

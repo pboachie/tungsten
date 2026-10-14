@@ -43,7 +43,8 @@
 //! `dart format` (short style, language 3.6) lays it out. Diagnostics:
 //! TG1070 (an invalid target option, from `emit`) and TG1071 (a schema
 //! without a Dart type: an `allOf` that cannot be merged or an enum that
-//! mixes JSON types is the JSON value `Object?`, from `supports`).
+//! is not of strings or integers is the JSON value `Object?`, from
+//! `supports`).
 
 mod dart;
 mod models;
@@ -257,7 +258,7 @@ fn notes(plan: &SdkPlan<'_>) -> Diagnostics {
             TypeKind::Enum(EnumPlan::Mixed { .. }) => diags.push(Diagnostic::warning(
                 "TG1071",
                 format!(
-                    "enum `{}` mixes JSON types and has no Dart type: the Dart SDK uses its JSON value (`Object?`)",
+                    "enum `{}` is not a string or integer enum and has no Dart type: the Dart SDK uses its JSON value (`Object?`)",
                     t.id.0
                 ),
             )),
