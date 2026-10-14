@@ -11,14 +11,15 @@ changes.
 
 ### Changed
 
-- MCP `run_script`: the WASM engine now runs its isolate in a worker thread
-  that is terminated at the deadline, so a long computation no longer occupies
-  the server's event loop. Results, errors and limits are unchanged.
-- MCP `run_script`: new `sandbox.maxConcurrent` option (`perSession`, default
-  4; `global`, default 16). Calls over a limit are refused with a
-  `VALIDATION_FAILED` "busy" envelope.
-- MCP HTTP: a warning is logged when `sandbox.engine: "auto"` falls back to the
-  WASM engine because deno was not found.
+- The release workflow's PyPI publication job is enabled through trusted
+  publishing (repository variable `PYPI_PUBLISH`, `pypi` environment, no
+  stored token) and now refuses to upload a `tungsten-runtime` sdist or wheel
+  whose version does not equal the release tag, mirroring the npm publication
+  preflight.
+- The published `ghcr.io/pboachie/tungsten` container image carries
+  `org.opencontainers.image` title and description labels, so the GitHub
+  package page shows the package description instead of "No description
+  provided".
 
 ## [0.1.2]
 
