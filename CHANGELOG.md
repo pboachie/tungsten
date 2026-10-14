@@ -11,7 +11,15 @@ changes.
 
 ### Changed
 
-- Dependency audit: source-less `Cargo.lock` entries must be workspace members, and `[patch]`/`[replace]` tables in Cargo manifests are rejected.
+- The release workflow's PyPI publication job is enabled through trusted
+  publishing (repository variable `PYPI_PUBLISH`, `pypi` environment, no
+  stored token) and now refuses to upload a `tungsten-runtime` sdist or wheel
+  whose version does not equal the release tag, mirroring the npm publication
+  preflight.
+- The published `ghcr.io/pboachie/tungsten` container image carries
+  `org.opencontainers.image` title and description labels, so the GitHub
+  package page shows the package description instead of "No description
+  provided".
 
 ## [0.1.2]
 
