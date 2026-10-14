@@ -9,6 +9,17 @@ changes.
 
 ## [Unreleased]
 
+### Changed
+
+- MCP `run_script`: the WASM engine now runs its isolate in a worker thread
+  that is terminated at the deadline, so a long computation no longer occupies
+  the server's event loop. Results, errors and limits are unchanged.
+- MCP `run_script`: new `sandbox.maxConcurrent` option (`perSession`, default
+  4; `global`, default 16). Calls over a limit are refused with a
+  `VALIDATION_FAILED` "busy" envelope.
+- MCP HTTP: a warning is logged when `sandbox.engine: "auto"` falls back to the
+  WASM engine because deno was not found.
+
 ## [0.1.2]
 
 ### Breaking
