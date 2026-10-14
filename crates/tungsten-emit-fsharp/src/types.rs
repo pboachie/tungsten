@@ -402,6 +402,22 @@ impl Ctx<'_> {
         ));
         w.indent();
         w.line("let o = Codec.object d node");
+        // A long list of members gets its own binding, one per line.
+        let known = if (closed || extra_ty.is_some()) && known.len() > 60 {
+            w.line("let known =");
+            w.indent();
+            w.line("[|");
+            w.indent();
+            for f in &parts.fields {
+                w.line(lit(&f.wire_name));
+            }
+            w.dedent();
+            w.line("|]");
+            w.dedent();
+            "known".to_string()
+        } else {
+            known
+        };
         if closed {
             w.line(format!("Codec.known d o {known}"));
         }
