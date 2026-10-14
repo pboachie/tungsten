@@ -137,7 +137,7 @@ impl Ctx<'_> {
         s.push_str("- Request classes are data classes with named, defaulted parameters: members that are null on the wire are `Patch<T>` (`Patch.Unset`, `Patch.Null`, `Patch.of(value)`), every other member is `T?`.\n");
         s.push_str("- Destructive and irreversible operations need `CallOptions.builder().confirm(...)`: a token from the operation's `preview...` function, or `Confirm.YES` for destructive ones.\n");
         s.push_str("- Mutations with a caller-owned idempotency key take `idempotencyKey(...)`; reuse it on every retry.\n");
-        s.push_str("- Paginated operations have a `...Pages` function (a `Sequence` of page results, fetched as it advances; `items()` flattens it), streaming ones a `...Stream` function (an `EventStream`: iterate it or call `events()`, or use `on`, `collect`, `reduce`, `first`; `cancel` and `close`, or `use { }`).\n");
+        s.push_str("- Paginated operations have a `...Pages` function (a `Sequence` of page results, fetched as it advances; `itemsOrThrow()` flattens it into the items), streaming ones a `...Stream` function (an `EventStream`: iterate it or call `events()`, or use `on`, `collect`, `reduce`, `first`; `cancel` and `close`, or `use { }`).\n");
         s.push_str(&format!(
             "- `client.dispatch()` runs operations by id with JSON arguments; `{}.Ops` holds the operation descriptors.\n\n",
             o.package
