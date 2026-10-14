@@ -76,6 +76,25 @@ pub mod __testing {
             .client_class
     }
 
+    /// (type id, fully qualified F# type) of every model of the SDK of
+    /// `ir` under the root namespace `namespace`, in IR order.
+    pub fn model_classes(ir: &Ir, namespace: &str) -> Vec<(String, String)> {
+        with_ctx(ir, namespace, |ctx| {
+            ir.types
+                .types
+                .iter()
+                .filter(|t| ctx.has_model(&t.id))
+                .map(|t| {
+                    let name = ctx.model_ref(&t.id, None);
+                    (
+                        t.id.0.clone(),
+                        name.trim_start_matches("global.").to_string(),
+                    )
+                })
+                .collect()
+        })
+    }
+
     /// Every model group of the SDK of `ir` under the root namespace
     /// `namespace`, in compile order: (file, F# namespace, type ids,
     /// recursive).
