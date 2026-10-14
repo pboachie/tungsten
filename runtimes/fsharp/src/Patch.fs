@@ -3,6 +3,10 @@ namespace Tungsten.Runtime.FSharp
 
 /// An optional member that may also be null: absent (not sent), an explicit null, or a value.
 /// It is the F# form of the .NET runtime's `Tungsten.Runtime.Patch<T>`.
+///
+/// Code that opens both namespaces opens `Tungsten.Runtime.FSharp` after `Tungsten.Runtime` and
+/// writes the cases as `Patch.Absent`, `Patch.Null` and `Patch.Value v` (with a type annotation
+/// where needed): a type-qualified `Patch<T>.Absent` resolves to the runtime's struct.
 [<RequireQualifiedAccess>]
 type Patch<'T> =
     /// The member is absent.
