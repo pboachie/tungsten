@@ -460,7 +460,13 @@ impl Ctx<'_> {
             &mut w,
             "The SDK descriptor document (the resource tungsten-descriptors.json) and every callable operation as data for the runtime.",
         );
+        let no_redirects = self.ir.agent.redirects == tungsten_ir::RedirectPolicy::None;
         w.block("object Ops {", "}", |w| {
+            if no_redirects {
+                kdoc_line(w, "The manifest forbids redirects: the runtime must enforce redirect policy v1.");
+                w.line("init { io.github.pboachie.tungsten.runtime.ClientCore.requireRedirectPolicyV1() }");
+                w.blank();
+            }
             kdoc_line(w, "The descriptor document, loaded once.");
             w.line("@JvmField");
             w.line("val DOCUMENT: Descriptors = Descriptors.load(Ops::class.java.getResourceAsStream(\"tungsten-descriptors.json\"))");
@@ -531,6 +537,12 @@ impl Ctx<'_> {
             "class {client}(options: ClientOptions = ClientOptions.builder().build()) {{"
         ));
         w.indent();
+        if no_redirects {
+            w.line("init {");
+            w.line("    ClientCore.requireRedirectPolicyV1()");
+            w.line("}");
+            w.blank();
+        }
         kdoc_line(
             &mut w,
             "The runtime client the SDK runs on (it reports the Kotlin runtime's identity).",
