@@ -187,7 +187,7 @@ const MANIFEST: Table = &[
     ),
     (
         "targets",
-        "What to generate. Known targets: `typescript`, `python`, `rust`, `ruby`, `mcp`, `webmcp`, `docs`, `mock`. Each needs its own `out` directory; directories must be distinct and not nested (TG0612).",
+        "What to generate. Known targets: `typescript`, `python`, `rust`, `ruby`, `dart`, `mcp`, `webmcp`, `docs`, `mock`. Each needs its own `out` directory; directories must be distinct and not nested (TG0612).",
     ),
     (
         "targets.*",

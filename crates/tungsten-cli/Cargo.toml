@@ -46,6 +46,7 @@ tungsten-emit-py.workspace = true
 tungsten-emit-rs.workspace = true
 tungsten-emit-java.workspace = true
 tungsten-emit-csharp.workspace = true
+tungsten-emit-dart.workspace = true
 tungsten-emit-ruby.workspace = true
 tungsten-mock.workspace = true
 tungsten-tokens.workspace = true

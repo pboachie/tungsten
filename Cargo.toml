@@ -34,6 +34,7 @@ tungsten-emit-py = { path = "crates/tungsten-emit-py" }
 tungsten-emit-rs = { path = "crates/tungsten-emit-rs" }
 tungsten-emit-java = { path = "crates/tungsten-emit-java" }
 tungsten-emit-csharp = { path = "crates/tungsten-emit-csharp" }
+tungsten-emit-dart = { path = "crates/tungsten-emit-dart" }
 tungsten-emit-ruby = { path = "crates/tungsten-emit-ruby" }
 tungsten-tokens = { path = "crates/tungsten-tokens" }
 tungsten-lsp = { path = "crates/tungsten-lsp" }
