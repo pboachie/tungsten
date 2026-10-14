@@ -338,10 +338,17 @@ impl Ctx<'_> {
                 layer("Patch"),
                 format!("{}.Ops", self.opts.package),
             ];
+            // Models are imported by name, not with a star import: a
+            // default import (`kotlin.annotation.Target`, `java.lang.Error`)
+            // would win over a star-imported model of the same name.
+            let model_package = self.model_package(ns);
+            imports.extend(
+                self.model_names(ns)
+                    .into_iter()
+                    .filter(|m| !self.resources_taken.contains(m))
+                    .map(|m| format!("{model_package}.{m}")),
+            );
             imports = used_imports(imports, &body);
-            if !self.model_names(ns).is_empty() {
-                imports.push(format!("{}.*", self.model_package(ns)));
-            }
             let mut f = kotlin::file(self.ir, &package, &imports);
             f.line(body.trim_end());
             out.push((format!("{dir}/{}.kt", rn.class), f.finish()));

@@ -168,8 +168,12 @@ const TAKEN_TYPES: &[&str] = &[
     "Verification",
 ];
 
-/// Member names every Kotlin data class (or object) already has.
-const OBJECT_MEMBERS: &[&str] = &["copy", "equals", "hashCode", "toString"];
+/// Member names every Kotlin data class (or object) already has, and the
+/// underscore-only names Kotlin reserves (an empty wire name renders as
+/// `__`).
+const OBJECT_MEMBERS: &[&str] = &[
+    "_", "__", "___", "____", "copy", "equals", "hashCode", "toString",
+];
 
 /// The namer options of the Kotlin target.
 pub fn namer_options() -> NamerOptions {
