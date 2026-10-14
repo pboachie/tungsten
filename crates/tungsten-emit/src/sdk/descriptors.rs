@@ -137,6 +137,8 @@ pub struct SdkDescriptors {
 
 #[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
 pub struct ApiDescriptor {
+    /// Restrictive redirect default; `none` cannot be re-enabled by callers.
+    pub redirects: tungsten_ir::RedirectPolicy,
     /// Machine name (`zrotext`).
     pub name: String,
     /// SDK package version.
@@ -401,6 +403,8 @@ pub enum OperationStatusDescriptor {
 #[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
 pub struct AgentDescriptor {
     pub safety: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub import_policy: Option<tungsten_ir::ImportPolicy>,
     pub idempotency: IdempotencyDescriptor,
     pub preview: PreviewDescriptor,
     pub confirmation: Option<ConfirmationDescriptor>,
@@ -568,6 +572,7 @@ fn api(plan: &SdkPlan<'_>, options: &DocumentOptions) -> ApiDescriptor {
     let ir = plan.ir;
     let retries = &ir.agent.retries;
     ApiDescriptor {
+        redirects: ir.agent.redirects,
         name: ir.api.name.wire.clone(),
         version: options.version.clone(),
         tungsten_version: ir.generator.tungsten_version.clone(),
@@ -1036,6 +1041,7 @@ fn agent(a: &OperationAgentMeta, sensitive_request: Vec<String>) -> AgentDescrip
     let idem = &a.idempotency;
     AgentDescriptor {
         safety: safety_str(a.safety).to_string(),
+        import_policy: a.import_policy.clone(),
         idempotency: IdempotencyDescriptor {
             policy: idempotency_str(idem.policy).to_string(),
             header: idem.header.clone(),

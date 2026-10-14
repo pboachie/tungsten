@@ -134,15 +134,33 @@ type pollSpec struct {
 
 func (c *ClientCore) pollWith(ctx context.Context, op *OperationDescriptor, args any, spec pollSpec, opts CallOptions, claim *macroClaim) (*Response[Polled], *Error) {
 	started := time.Now()
+	if spec.budget > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithDeadline(ctx, started.Add(spec.budget))
+		defer cancel()
+	}
 	once := opts
 	once.Verify = false
+	var last *Response[Polled]
 	for {
+		if last != nil && spec.budget > 0 && time.Since(started) >= spec.budget {
+			last.Value.TimedOut = true
+			return last, nil
+		}
 		response, err := c.callWith(ctx, op, args, once, "", claim)
 		if err != nil {
+			if last != nil && spec.budget > 0 && time.Since(started) >= spec.budget && !isMutation(op) {
+				last.Value.TimedOut = true
+				return last, nil
+			}
+			if spec.budget > 0 && time.Since(started) >= spec.budget && !isMutation(op) {
+				return nil, newDiag(op.ID, TransportFailed).retry(RetryNever).remedy("The polling budget expired before any observation completed.").err()
+			}
 			return nil, err
 		}
+		last = &Response[Polled]{Value: Polled{Body: response.Value, HasBody: response.HasValue}, HasValue: true, Meta: response.Meta}
 		done := EvaluatePredicate(spec.until, response.Value, response.HasValue)
-		outOfTime := !done && time.Since(started)+spec.interval > spec.budget
+		outOfTime := (spec.budget > 0 && time.Since(started) >= spec.budget) || (!done && (spec.budget == 0 || time.Since(started)+spec.interval > spec.budget))
 		if done || outOfTime {
 			return &Response[Polled]{
 				Value:    Polled{Body: response.Value, HasBody: response.HasValue, TimedOut: outOfTime},
@@ -154,6 +172,10 @@ func (c *ClientCore) pollWith(ctx context.Context, op *OperationDescriptor, args
 		select {
 		case <-ctx.Done():
 			timer.Stop()
+			if spec.budget > 0 && time.Since(started) >= spec.budget {
+				last.Value.TimedOut = true
+				return last, nil
+			}
 			return nil, newDiag(op.ID, TransportFailed).retry(RetryNever).
 				remedy("The poll was cancelled by the caller's context before its predicate held.").err()
 		case <-timer.C:

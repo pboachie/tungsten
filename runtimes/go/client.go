@@ -22,6 +22,7 @@ const Version = "0.1.0"
 // envelope. It is safe for concurrent use. API and transport failures are
 // returned as *Error values carrying the envelope.
 type ClientCore struct {
+	redirectsDisabled bool
 	api               *APIDescriptor
 	auth              AuthConfig
 	headers           map[string]string
@@ -49,9 +50,10 @@ type ClientCore struct {
 	usedTokens map[string]usedToken
 	oauthGates map[string]*gate
 	// keyMu makes "find or create the key of a logical call" atomic.
-	keyMu    sync.Mutex
-	ccMu     sync.Mutex
-	ccTokens map[string]cachedToken
+	keyMu     sync.Mutex
+	ccMu      sync.Mutex
+	ccTokens  map[string]cachedToken
+	ccFlights map[string]*ccFlight
 }
 
 type usedToken struct {
@@ -77,6 +79,11 @@ func NewClientCore(api *APIDescriptor, options ClientOptions) (*ClientCore, erro
 	if api == nil {
 		return nil, &ConfigError{Message: "the API descriptor is missing"}
 	}
+	for _, policy := range []RedirectPolicy{api.Redirects, options.Redirects} {
+		if policy != "" && policy != RedirectSameOriginRead && policy != RedirectNone {
+			return nil, &ConfigError{Message: "redirects must be same_origin_read or none"}
+		}
+	}
 	base := options.BaseURL
 	if base == "" && len(api.Servers) > 0 {
 		base = api.Servers[0]
@@ -93,6 +100,7 @@ func NewClientCore(api *APIDescriptor, options ClientOptions) (*ClientCore, erro
 		key = random
 	}
 	c := &ClientCore{
+		redirectsDisabled: api.Redirects == RedirectNone || options.Redirects == RedirectNone,
 		api:               api,
 		auth:              options.Auth,
 		headers:           options.Headers,
@@ -115,6 +123,7 @@ func NewClientCore(api *APIDescriptor, options ClientOptions) (*ClientCore, erro
 		usedTokens:        map[string]usedToken{},
 		oauthGates:        map[string]*gate{},
 		ccTokens:          map[string]cachedToken{},
+		ccFlights:         map[string]*ccFlight{},
 	}
 	if c.auth == nil {
 		c.auth = AuthConfig{}
@@ -150,6 +159,11 @@ func NewClientCore(api *APIDescriptor, options ClientOptions) (*ClientCore, erro
 	}
 	if c.http == nil {
 		c.http = newHTTPClient()
+	} else if c.redirectsDisabled {
+		// Preserve the caller's transport and settings without mutating its client.
+		copy := *c.http
+		copy.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
+		c.http = &copy
 	}
 	if c.tokenStore == nil {
 		c.tokenStore = NewMemoryTokenStore()
@@ -249,9 +263,19 @@ func (c *ClientCore) PreviewMacro(ctx context.Context, m *MacroDescriptor, input
 
 // callWith is the pipeline shared by calls, pages, polls and macro steps.
 func (c *ClientCore) callWith(ctx context.Context, op *OperationDescriptor, args any, opts CallOptions, urlOverride string, claim *macroClaim) (*Outcome, *Error) {
+	return c.callWithPages(ctx, op, args, opts, urlOverride, claim, nil)
+}
+
+func (c *ClientCore) callWithPages(ctx context.Context, op *OperationDescriptor, args any, opts CallOptions, urlOverride string, claim *macroClaim, pageURLs map[string]bool) (*Outcome, *Error) {
 	prepared, err := c.prepare(ctx, op, args, opts, purposeCall, urlOverride, claim)
 	if err != nil {
 		return nil, err
+	}
+	if pageURLs != nil {
+		if pageURLs[prepared.url] {
+			return nil, newDiag(op.ID, UnexpectedResponse).remedy("Pagination detected a repeated effective page request URL after authentication. Fix the server's next-page Link before continuing; no repeated request was sent.").err()
+		}
+		pageURLs[prepared.url] = true
 	}
 	response, err := c.send(ctx, prepared, opts)
 	if err != nil {

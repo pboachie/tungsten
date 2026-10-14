@@ -773,17 +773,6 @@ pub(crate) fn resolve<'r>(plan: &'r Plan<'_>, r: &'r TypeRef) -> Option<&'r Shap
     }
 }
 
-/// The record behind a reference (following one named type).
-pub(crate) fn record_of<'r>(
-    plan: &'r Plan<'_>,
-    r: &'r TypeRef,
-) -> Option<(&'r [Field], &'r Additional)> {
-    match resolve(plan, r)? {
-        Shape::Record { fields, additional } => Some((fields, additional)),
-        _ => None,
-    }
-}
-
 /// Facts about a shape that its Python type does not show.
 pub(crate) fn shape_notes(shape: &Shape) -> Vec<String> {
     let mut notes = vec![];
