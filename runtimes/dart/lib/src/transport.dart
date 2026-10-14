@@ -313,7 +313,10 @@ abstract final class _Transport {
     var second = 0.0;
     if (parts.length == 3) {
       final s = double.tryParse(parts[2]);
-      if (s == null || s < 0 || s >= 61 || !RegExp(r'^[0-9.]+$').hasMatch(parts[2])) {
+      if (s == null ||
+          s < 0 ||
+          s >= 61 ||
+          !RegExp(r'^[0-9.]+$').hasMatch(parts[2])) {
         return null;
       }
       second = s;
@@ -428,22 +431,5 @@ abstract final class _Transport {
     }
     final date = parseHttpDate(trimmed);
     return date == null ? null : math.max(date - nowMs, 0);
-  }
-
-  static final RegExp _linkPart = RegExp(r'^\s*<([^>]*)>(.*)$', dotAll: true);
-  static final RegExp _relNext = RegExp(
-    r'''(;\s*rel\s*=\s*"?([^";]*\s)?next(\s[^";]*)?"?\s*(;|$))''',
-    caseSensitive: false,
-  );
-
-  /// The next page URL of a Link header (rel="next"), or null.
-  static String? nextLink(String? header) {
-    if (header == null || header.isEmpty) return null;
-    for (final part in header.split(RegExp(r',(?=\s*<)'))) {
-      final m = _linkPart.firstMatch(part);
-      if (m == null) continue;
-      if (_relNext.hasMatch(m[2]!)) return m[1];
-    }
-    return null;
   }
 }

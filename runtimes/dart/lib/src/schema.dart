@@ -269,7 +269,8 @@ final class _Run {
   static int _uniquenessHash(Object? value) {
     if (value is num) return Object.hash('n', value.toDouble());
     if (value is Binary) return Object.hash('b', value.length);
-    if (value is List) return Object.hashAll(['a', ...value.map(_uniquenessHash)]);
+    if (value is List)
+      return Object.hashAll(['a', ...value.map(_uniquenessHash)]);
     if (value is Map) {
       var h = 0;
       for (final e in value.entries) {
@@ -326,7 +327,8 @@ final class _Run {
     final tag = schema['tag'];
     if (tag is String) {
       if (value is! Map) {
-        return _bad(path, 'expected an object, found ${Schema.describe(value)}');
+        return _bad(
+            path, 'expected an object, found ${Schema.describe(value)}');
       }
       final text = value[tag];
       if (text is! String) {
@@ -353,7 +355,8 @@ final class _Run {
     return value is num ? Json.numberText(value) : '$value';
   }
 
-  void _stringLimits(Map<String, Object?> schema, String text, List<Object> path) {
+  void _stringLimits(
+      Map<String, Object?> schema, String text, List<Object> path) {
     final n = text.length;
     final min = schema['min_length'];
     final max = schema['max_length'];
@@ -376,7 +379,8 @@ final class _Run {
     }
   }
 
-  void _numberLimits(Map<String, Object?> schema, num number, List<Object> path) {
+  void _numberLimits(
+      Map<String, Object?> schema, num number, List<Object> path) {
     final minimum = schema['minimum'];
     final maximum = schema['maximum'];
     final exMin = schema['exclusive_minimum'];

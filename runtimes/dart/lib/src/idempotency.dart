@@ -37,7 +37,8 @@ abstract final class _Keys {
   }
 
   /// What a policy's key format expects, in words.
-  static String formatDescription(Object? format) => switch (formatKind(format)) {
+  static String formatDescription(Object? format) =>
+      switch (formatKind(format)) {
         'uuid_v4' => 'UUIDv4 string',
         'uuid' => 'UUID string',
         'ascii_token_128' =>

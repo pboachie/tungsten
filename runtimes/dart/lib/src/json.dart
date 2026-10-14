@@ -70,7 +70,8 @@ final class Binary {
     }
     final name = value['filename'];
     final type = value['content_type'];
-    if ((name != null && name is! String) || (type != null && type is! String)) {
+    if ((name != null && name is! String) ||
+        (type != null && type is! String)) {
       return null;
     }
     try {
@@ -224,7 +225,8 @@ abstract final class Json {
     return out.toString();
   }
 
-  static void _write(StringBuffer out, Object? value, bool canonical, int depth) {
+  static void _write(
+      StringBuffer out, Object? value, bool canonical, int depth) {
     _checkDepth(depth);
     if (value == null) {
       out.write('null');
@@ -412,7 +414,10 @@ abstract final class Json {
     if (end > 0) {
       final last = text.codeUnitAt(end - 1);
       final next = text.codeUnitAt(end);
-      if (last >= 0xd800 && last <= 0xdbff && next >= 0xdc00 && next <= 0xdfff) {
+      if (last >= 0xd800 &&
+          last <= 0xdbff &&
+          next >= 0xdc00 &&
+          next <= 0xdfff) {
         end--;
       }
     }
