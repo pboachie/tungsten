@@ -233,6 +233,9 @@ changes.
   scripted path), with multi-output selection, consent before
   writes, explicit non-interactive generation, additive output edits with backups,
   no-schema inference and scoped TypeScript/Python/Rust client and MCP mock checks.
+- Guided Rust local setup allows its first `cargo build` up to 20 minutes
+  (previously 10) so slow machines and cold caches finish the one-time build
+  instead of being cut off with the project files preserved for a retry.
 - Guided advanced server/validation controls, restrictive per-operation settings,
   credential-free CLI environment profiles and synthetic JSON request examples.
 - Bounded offline Swagger 2 conversion through the OpenAPI loader, preserving

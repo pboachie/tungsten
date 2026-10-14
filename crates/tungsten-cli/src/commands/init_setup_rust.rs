@@ -25,7 +25,7 @@ pub(super) fn build(directory: &Path) -> Result<(), String> {
         "cargo",
         &["build", "--workspace", "--target-dir", "target"],
         directory,
-        Duration::from_secs(600),
+        Duration::from_secs(1200),
     )
 }
 
