@@ -9,11 +9,17 @@ changes.
 
 ## [Unreleased]
 
-### Fixed
+### Changed
 
-- Python and Java runtimes bound schema `pattern` matching: strings over 64 KiB
-  skip the pattern check, and Java abandons a match after 1 s, treating it as
-  not checked.
+- The release workflow's PyPI publication job is enabled through trusted
+  publishing (repository variable `PYPI_PUBLISH`, `pypi` environment, no
+  stored token) and now refuses to upload a `tungsten-runtime` sdist or wheel
+  whose version does not equal the release tag, mirroring the npm publication
+  preflight.
+- The published `ghcr.io/pboachie/tungsten` container image carries
+  `org.opencontainers.image` title and description labels, so the GitHub
+  package page shows the package description instead of "No description
+  provided".
 
 ## [0.1.2]
 
