@@ -26,6 +26,7 @@
     <Compile Include="src/Results.fs" />
     <Compile Include="src/Codec.fs" />
     <Compile Include="src/Tasks.fs" />
+    <Compile Include="src/Calls.fs" />
   </ItemGroup>
 
   <ItemGroup>
