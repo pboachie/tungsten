@@ -21,7 +21,11 @@ fn toml_str(s: &str) -> String {
 fn dep(dep: &Dep) -> String {
     match dep {
         Dep::Version(v) => toml_str(v),
-        Dep::Path(p) => format!("{{ path = {} }}", toml_str(p)),
+        Dep::Path { path, version } => format!(
+            "{{ path = {}, version = {} }}",
+            toml_str(path),
+            toml_str(version)
+        ),
     }
 }
 

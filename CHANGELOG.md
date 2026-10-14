@@ -9,6 +9,8 @@ changes.
 
 ## [Unreleased]
 
+## [0.1.2]
+
 ### Breaking
 
 - Postman import never copies variable values into contract paths. A
@@ -27,6 +29,19 @@ changes.
   `route_templates` field.
 - `tungsten init` reports JSON setup input it cannot parse (invalid syntax or
   nesting deeper than 128 levels) instead of passing it on as OpenAPI.
+- `install.sh --init` and `install.ps1 -Init` print the PATH note before setup
+  and no longer report setup as an install failure (exit 1): a cancelled or
+  refused setup exits 4 and a failed setup exits 5, with the binary installed.
+- `tungsten init --resume --add-targets` keeps every backup: the first is
+  `tungsten.yml.init-backup`, later ones `tungsten.yml.init-backup.N`; the JSON
+  result names the one written. A flow-style `targets:` mapping is rewritten in
+  block style, with a warning when comments inside it were dropped.
+- Rust emitter API: `tungsten_emit_rs::Dep::Path` is now
+  `Dep::Path { path, version }`; generated `runtime_path` and `cli.kit_path`
+  dependencies carry the `runtime` or `cli.kit` requirement (default `0.1`).
+- The `ghcr.io/pboachie/tungsten:latest` container tag moves only when the
+  distributed tag is itself the newest published stable release (not a draft,
+  not flagged prerelease).
 - A 3xx status an operation declares (exactly or by class) is its success in all
   seven runtimes, also with `redirects: none`, so a mutation answered with a
   declared `303 See Other` succeeds. Redirects are still never followed on
@@ -42,6 +57,43 @@ changes.
   None or zero: unbounded), and `ApiDescriptor` the `redirects` field. Build
   `CallOptions` with `..CallOptions::default()` so later fields do not break
   handwritten literals.
+- MCP `run_script`: the Deno sandbox no longer gets `--allow-net`. Scripts
+  reach the API only through the session's client RPC. `denoArguments` and
+  `sandboxCommand` ignore `host`, now optional, and `run_script` no longer
+  needs or validates a `baseUrl`.
+- MCP servers bound upstream response bodies to 4 MiB by default (new
+  `maxResponseBytes` server option). Larger responses fail with
+  `RESPONSE_TOO_LARGE` before they are materialized.
+- WebMCP `maxResultBytes` now always bounds the upstream HTTP body before
+  parsing, not only with `binaryResults` or `streamCollection`. An oversized
+  response reports `RESPONSE_TOO_LARGE` instead of `RESULT_TOO_LARGE`.
+- MCP sessions refuse a tool, sending nothing (`UNEXPECTED_RESPONSE`), when the
+  manifest safety tier differs from the SDK operation's tier or from a macro's
+  strictest declared or step tier. Regenerate the manifest and SDK together.
+  Manifest annotations can make hints more cautious than the tier, never less.
+- MCP HTTP servers answer 503 `Server closing` once `close()` starts, wait for
+  sessions still initializing, and count those sessions against `maxSessions`.
+- The Java transport buffers at most 64 response chunks per body and applies
+  backpressure to the socket reader. Closing a body discards buffered chunks.
+- CI and release preparation fail when a committed lockfile gains a package
+  name missing from `.github/dependency-policy.json` or when OSV reports an
+  advisory. Release npm installs run with `--ignore-scripts`, and Python
+  packages build with hash-locked tools and `--no-isolation`.
+
+### Security
+
+- Reserve MCP session capacity during asynchronous initialization, validate
+  manifest safety against executable descriptors, and keep Deno scripts on
+  the client RPC channel without direct network permission.
+- Bound upstream MCP response bodies to 4 MiB by default (configurable through
+  `maxResponseBytes`), and apply WebMCP result byte limits before HTTP body
+  materialization. Oversized responses return the SDK's `RESPONSE_TOO_LARGE`
+  diagnostic; inconsistent MCP manifest/SDK safety tiers fail before dispatch.
+- Bound Java transport queues with backpressure and cancellation cleanup.
+- Check locked dependency names, sources, hashes and current advisories in CI
+  and release preparation; disable npm install hooks in release builds.
+- Hash-lock Python release tooling and disable build isolation during package
+  creation to prevent unpinned build-tool resolution.
 
 ### Fixed
 
@@ -60,6 +112,14 @@ changes.
 
 - Make generated Rust CLIs packageable with a versioned SDK dependency and share
   the generated workspace's Rust 1.88 minimum.
+- Make generated Rust CLIs and SDKs packageable: the SDK dependency and local
+  `runtime_path`/`cli.kit_path` dependencies carry a version requirement, and the
+  generated workspace shares the Rust 1.88 minimum.
+- `init --resume --add-targets` edits only the `targets` section of tungsten.yml
+  (comments and the schema header stay), links new MCP/WebMCP outputs to the
+  TypeScript SDK's local runtime, and can run repeatedly (numbered backups, no
+  leftover pending file). Going back in the guided setup no longer keeps the
+  abandoned project's answers.
 
 - Warn when conditional JSON Schema constraints are ignored; strict check and
   generation reject them before writing output. Conditional validation is not
@@ -125,8 +185,10 @@ changes.
   remains same-origin reads only. Regenerate Rust SDKs; handwritten `ApiDescriptor`
   literals must add `redirects: RedirectPolicy::SameOriginRead` (or `None`).
 
-- Opt-in guided `init` with multi-output selection, consent before writes,
-  explicit non-interactive generation, additive output edits with backups,
+- Guided `init`: a bare `tungsten init` on a terminal starts it (`--interactive`
+  asks for it; `--no-interactive`, `--json` or any other `init` option keeps the
+  scripted path), with multi-output selection, consent before
+  writes, explicit non-interactive generation, additive output edits with backups,
   no-schema inference and scoped TypeScript/Python/Rust client and MCP mock checks.
 - Guided advanced server/validation controls, restrictive per-operation settings,
   credential-free CLI environment profiles and synthetic JSON request examples.
@@ -244,7 +306,7 @@ changes.
   previews, confirmation tokens, auth handling and resumable event streams
   as the other runtimes.
 
-## [0.1.0] - Unreleased
+## [0.1.0] - 2026-10-11
 
 First release. The compiler, the three SDK runtimes (`@elysra/tungsten-runtime`,
 `tungsten-runtime` on PyPI and `tungsten-runtime` on crates.io), the MCP
@@ -311,5 +373,6 @@ runtime (`@elysra/tungsten-mcp`) and the installers ship together at 0.1.0.
 - The compiler warns when a `gates` entry in `agent.yml` matches no
   operation.
 
-[Unreleased]: https://github.com/pboachie/tungsten/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/pboachie/tungsten/commits/main
+[Unreleased]: https://github.com/pboachie/tungsten/compare/v0.1.1...HEAD
+[0.1.2]: https://github.com/pboachie/tungsten/compare/v0.1.1...HEAD
+[0.1.0]: https://github.com/pboachie/tungsten/releases/tag/v0.1.0
