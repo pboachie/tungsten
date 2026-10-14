@@ -377,6 +377,10 @@ pub(crate) struct InitArgs {
     /// Exact HTTP(S) origin to select from a multi-origin HAR (no credentials).
     #[arg(long, conflicts_with = "method")]
     pub har_origin: Option<String>,
+    /// Reviewed HAR paths: JSON object mapping each captured URL path to a template.
+    /// Required for every imported path before any converted output is saved.
+    #[arg(long, conflicts_with = "method", value_name = "JSON")]
+    pub har_paths: Option<PathBuf>,
     /// HAR path prefixes to include; repeatable, exclusions take precedence.
     #[arg(long)]
     pub include_prefix: Vec<String>,
@@ -396,6 +400,8 @@ pub(crate) struct InitArgs {
     #[arg(long, default_value = "auto", value_parser = ["auto", "curl", "http"])]
     pub input_format: String,
     /// Trusted path template for each saved request, in input order; repeat as needed.
+    /// HAR input requires a template for every captured path; each path uses the most
+    /// literal matching template.
     #[arg(long, conflicts_with = "method")]
     pub route: Vec<String>,
     /// Shell quoting syntax of a saved cURL command; never executes a shell.

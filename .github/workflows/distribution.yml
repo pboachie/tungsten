@@ -60,6 +60,8 @@ jobs:
       - name: Build both container architectures and smoke test amd64
         run: |
           set -eu
+          # The pinned package upgrade runs target-architecture apk binaries.
+          docker run --privileged --rm tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0 --install arm64
           docker buildx create --use --name tungsten-distribution
           docker buildx build --platform linux/amd64,linux/arm64 --file Dockerfile --output type=oci,dest=tungsten-image.tar distribution/container
           docker build --platform linux/amd64 --build-arg TARGETARCH=amd64 --file Dockerfile --tag tungsten-distribution-test distribution/container
@@ -99,6 +101,8 @@ jobs:
         run: |
           set -eu
           (cd distribution && sha256sum --check DISTRIBUTION_SHA256SUMS)
+          # Enable the target-architecture package upgrade on this fresh runner.
+          docker run --privileged --rm tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0 --install arm64
           docker buildx create --use --name tungsten-distribution-publish
           printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
           image=ghcr.io/pboachie/tungsten

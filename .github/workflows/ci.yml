@@ -72,6 +72,22 @@ jobs:
         working-directory: runtimes/rust
         run: cargo build --locked --workspace
 
+  dependencies:
+    name: dependency sources and advisories
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+      - name: Check all committed Cargo, npm and uv locks without installing packages
+        run: python3 .github/scripts/dependency_audit.py
+
   deny:
     name: cargo-deny
     runs-on: ubuntu-latest
