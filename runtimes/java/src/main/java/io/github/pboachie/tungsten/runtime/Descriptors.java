@@ -272,7 +272,7 @@ public final class Descriptors {
                 Collections.unmodifiableList(nonJson),
                 Collections.unmodifiableMap(gates),
                 retry(obj(retries.get("read_only"))),
-                retry(obj(retries.get("mutating"))));
+                retry(obj(retries.get("mutating"))), RedirectPolicy.parse(o.get("redirects")));
     }
 
     private static OperationDescriptor operation(JsonObject o, Map<String, Schema> defs) {

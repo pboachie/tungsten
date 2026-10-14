@@ -44,6 +44,9 @@ pub struct AgentConfig {
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DefaultsConfig {
+    /// Redirect restriction: `none` wins over client options.
+    #[serde(default)]
+    pub redirects: tungsten_ir::RedirectPolicy,
     #[serde(default)]
     pub safety: SafetyByMethod,
     /// Policy of operations with side effects that declare none. A
@@ -324,6 +327,13 @@ pub struct DisclosureDefaultsConfig {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ToolConfig {
+    /// Explicit review of an imported operation. Ordinary safety defaults and
+    /// x-agent annotations cannot approve imported evidence for execution.
+    #[serde(default)]
+    pub imported_reviewed_safety: Option<Safety>,
+    /// Exact HTTP(S) origins covered by this operation review.
+    #[serde(default)]
+    pub imported_reviewed_origins: Vec<String>,
     /// Operation id (`public.submitAlphaMessage`, `workflow.action.send`)
     /// or `<namespace>.<resource path>.<method>`.
     pub operation: String,

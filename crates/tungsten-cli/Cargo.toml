@@ -31,6 +31,7 @@ testing = []
 
 [dependencies]
 tungsten-core.workspace = true
+tungsten-contract.workspace = true
 tungsten-config.workspace = true
 tungsten-openapi.workspace = true
 tungsten-ir.workspace = true
@@ -44,12 +45,14 @@ tungsten-emit-webmcp.workspace = true
 tungsten-emit-py.workspace = true
 tungsten-emit-rs.workspace = true
 tungsten-emit-java.workspace = true
+tungsten-emit-csharp.workspace = true
 tungsten-emit-ruby.workspace = true
 tungsten-mock.workspace = true
 tungsten-tokens.workspace = true
 tungsten-lsp.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+url.workspace = true
 schemars.workspace = true
 clap.workspace = true
 

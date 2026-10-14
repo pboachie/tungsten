@@ -5,7 +5,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use serde_json::{Map, Value};
 
@@ -33,6 +33,12 @@ impl MemoryIdempotencyStore {
 }
 
 impl IdempotencyStore for MemoryIdempotencyStore {
+    fn reserve(&self, scope: &str, logical_id: &str, candidate: &str) -> Result<String, String> {
+        Ok(lock(&self.keys)
+            .entry((scope.to_owned(), logical_id.to_owned()))
+            .or_insert_with(|| candidate.to_owned())
+            .clone())
+    }
     fn get(&self, scope: &str, logical_id: &str) -> Option<String> {
         lock(&self.keys)
             .get(&(scope.to_owned(), logical_id.to_owned()))
@@ -53,7 +59,9 @@ type StoreData = BTreeMap<String, BTreeMap<String, String>>;
 /// is created with mode 0600 because keys are never meant to be shown. A file
 /// that exists but cannot be parsed makes `get` return `None` and `put`
 /// write nothing, and the runtime then refuses the call rather than issue a
-/// second key for the same intent.
+/// second key for the same intent. `reserve` also holds the cross-process
+/// lease `<path>.lock`: it waits up to 2 s for another writer, then refuses;
+/// only its owner removes a lease.
 #[derive(Debug)]
 pub struct FileIdempotencyStore {
     path: PathBuf,
@@ -94,6 +102,16 @@ impl FileIdempotencyStore {
     }
 
     fn write(&self, data: &StoreData) -> std::io::Result<()> {
+        self.write_fenced(data, || Ok(()))
+    }
+
+    /// Writes `data`; `fence` runs just before the rename that commits the
+    /// file, and its error abandons the write.
+    fn write_fenced(
+        &self,
+        data: &StoreData,
+        fence: impl FnOnce() -> std::io::Result<()>,
+    ) -> std::io::Result<()> {
         let mut keys = Map::new();
         for (scope, entries) in data {
             let scoped: Map<String, Value> = entries
@@ -133,6 +151,7 @@ impl FileIdempotencyStore {
             let mut file = options.open(&temporary)?;
             file.write_all(text.as_bytes())?;
             file.sync_all()?;
+            fence()?;
             std::fs::rename(&temporary, &self.path)
         })();
         if written.is_err() {
@@ -142,7 +161,47 @@ impl FileIdempotencyStore {
     }
 }
 
+/// The in-process lock of one store file, by absolute path.
+fn file_lock(path: &Path) -> Arc<Mutex<()>> {
+    static FILES: Mutex<BTreeMap<PathBuf, Arc<Mutex<()>>>> = Mutex::new(BTreeMap::new());
+    let key = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+    lock(&FILES).entry(key).or_default().clone()
+}
+
 impl IdempotencyStore for FileIdempotencyStore {
+    fn reserve(&self, scope: &str, logical_id: &str, candidate: &str) -> Result<String, String> {
+        // Reservations of one file are serialized within the process; the
+        // lease serializes them across processes. Other files never wait.
+        let file = file_lock(&self.path);
+        let _file = lock(&file);
+        let _guard = lock(&self.lock);
+        let parent = self
+            .path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        let lease = PathBuf::from(format!("{}.lock", self.path.display()));
+        let token = crate::lease::acquire(&lease)?;
+        let result = (|| {
+            let mut data = self.read().ok_or("invalid idempotency store")?;
+            if let Some(key) = data
+                .get(scope)
+                .and_then(|m| m.get(logical_id))
+                .filter(|k| !k.is_empty())
+            {
+                return Ok(key.clone());
+            }
+            data.entry(scope.to_owned())
+                .or_default()
+                .insert(logical_id.to_owned(), candidate.to_owned());
+            self.write_fenced(&data, || crate::lease::fence(&lease, &token))
+                .map_err(|e| e.to_string())?;
+            Ok(candidate.to_owned())
+        })();
+        crate::lease::release(&lease, &token);
+        result
+    }
     fn get(&self, scope: &str, logical_id: &str) -> Option<String> {
         let _guard = lock(&self.lock);
         self.read()?.get(scope)?.get(logical_id).cloned()

@@ -18,6 +18,7 @@ import java.util.Map;
  * @param gates a gate's environment variable to its explanation
  * @param readOnlyRetries retry defaults of read-only operations
  * @param mutatingRetries retry defaults of the other tiers
+ * @param redirects the maximum redirect authority
  */
 public record ApiDescriptor(
         String name,
@@ -30,7 +31,8 @@ public record ApiDescriptor(
         List<NonJson> nonJson,
         Map<String, String> gates,
         RetryOptions readOnlyRetries,
-        RetryOptions mutatingRetries) {
+        RetryOptions mutatingRetries,
+        RedirectPolicy redirects) {
 
     /**
      * One auth scheme. OpenID Connect schemes are {@code http_bearer}.

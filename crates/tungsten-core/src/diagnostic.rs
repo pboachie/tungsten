@@ -477,6 +477,30 @@ pub mod codes {
             "TG1015",
             "discriminated union variant without a tag value: the java target tries variants in order",
         ),
+        (
+            "TG1020",
+            "invalid csharp target option; the default is used",
+        ),
+        (
+            "TG1021",
+            "schema has no C# type in the csharp target; the runtime's JsonNode is used",
+        ),
+        (
+            "TG1022",
+            "macro is not in the canonical form; the csharp target leaves it out",
+        ),
+        (
+            "TG1023",
+            "OpenID Connect scheme is sent as a bearer token by the csharp target",
+        ),
+        (
+            "TG1024",
+            "different success bodies by status: the csharp typed result is the JsonNode",
+        ),
+        (
+            "TG1025",
+            "discriminated union variant without a tag value: the csharp target tries variants in order",
+        ),
         ("TG1060", "invalid Ruby target option; default used"),
         (
             "TG1061",

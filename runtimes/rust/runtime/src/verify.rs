@@ -15,6 +15,29 @@ use crate::util::redact_paths;
 const DEFAULT_POLL_INTERVAL_MS: f64 = 1000.0;
 const DEFAULT_VERIFY_BUDGET_MS: f64 = 30_000.0;
 
+// A private future-scoped context, so public CallOptions struct literals stay
+// compatible. Borrowed preparation/transport futures share the deadline;
+// unrelated tasks and independently owned refreshes do not inherit it.
+tokio::task_local! {
+    static POLL_DEADLINE: Option<Instant>;
+}
+
+pub(crate) fn poll_deadline() -> Option<Instant> {
+    POLL_DEADLINE.try_with(|deadline| *deadline).ok().flatten()
+}
+
+pub(crate) fn check_poll_deadline(operation: &str) -> crate::prepare::Step<()> {
+    if poll_deadline().is_some_and(|deadline| Instant::now() >= deadline) {
+        return Err(crate::prepare::fail(
+            crate::envelope::Diag::new(operation, crate::types::Category::TransportFailed)
+                .retryable(crate::types::Retryable::Never)
+                .remediation("The polling budget expired before the request was sent.".to_owned())
+                .build(),
+        ));
+    }
+    Ok(())
+}
+
 /// Stands in for a verification reference that did not resolve; equal to
 /// nothing a response can hold.
 fn unresolved() -> Value {
@@ -81,10 +104,71 @@ impl ClientCore {
         let started = Instant::now();
         let mut once = opts.clone();
         once.verify = false;
+        let mut last: Option<Response<Polled>> = None;
         loop {
-            let response = self.call_with(op, args, &once, None, step).await?;
+            let call = self.call_with(op, args, &once, None, step);
+            let called = if budget.is_zero() {
+                call.await
+            } else {
+                match tokio::time::timeout(
+                    budget.saturating_sub(started.elapsed()),
+                    POLL_DEADLINE.scope(started.checked_add(budget), call),
+                )
+                .await
+                {
+                    Ok(result) => result,
+                    Err(_) => {
+                        if !crate::classify::is_mutation(op)
+                            && let Some(mut response) = last.take()
+                        {
+                            response.value.timed_out = true;
+                            return Ok(response);
+                        }
+                        return Err(crate::prepare::fail(
+                            crate::envelope::Diag::new(
+                                op.id.clone(),
+                                if crate::classify::is_mutation(op) {
+                                    crate::types::Category::OutcomeUnknown
+                                } else {
+                                    crate::types::Category::TransportFailed
+                                },
+                            )
+                            .remediation("The polling budget expired during the call.".to_owned())
+                            .build(),
+                        ));
+                    }
+                }
+            };
+            if called.is_err()
+                && !budget.is_zero()
+                && started.elapsed() >= budget
+                && !crate::classify::is_mutation(op)
+                && let Some(mut response) = last.take()
+            {
+                response.value.timed_out = true;
+                return Ok(response);
+            }
+            if called.is_err()
+                && !budget.is_zero()
+                && started.elapsed() >= budget
+                && !crate::classify::is_mutation(op)
+            {
+                return Err(crate::prepare::fail(
+                    crate::envelope::Diag::new(
+                        op.id.clone(),
+                        crate::types::Category::TransportFailed,
+                    )
+                    .remediation(
+                        "The polling budget expired before any observation completed.".to_owned(),
+                    )
+                    .build(),
+                ));
+            }
+            let response = called?;
             let done = evaluate_predicate(until, response.value.as_ref());
-            let out_of_time = !done && started.elapsed().saturating_add(interval) > budget;
+            let out_of_time = (!budget.is_zero() && started.elapsed() >= budget)
+                || (!done
+                    && (budget.is_zero() || started.elapsed().saturating_add(interval) > budget));
             if done || out_of_time {
                 return Ok(Response {
                     value: Polled {
@@ -95,7 +179,20 @@ impl ClientCore {
                     verification: None,
                 });
             }
+            last = Some(Response {
+                value: Polled {
+                    body: response.value,
+                    timed_out: false,
+                },
+                meta: response.meta,
+                verification: None,
+            });
             tokio::time::sleep(interval).await;
+            if !budget.is_zero() && started.elapsed() >= budget {
+                let mut response = last.take().expect("a completed observation");
+                response.value.timed_out = true;
+                return Ok(response);
+            }
         }
     }
 
