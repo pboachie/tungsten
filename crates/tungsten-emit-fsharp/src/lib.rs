@@ -220,10 +220,11 @@ impl Ctx<'_> {
                 let layer = layer.trim_end_matches('/');
                 let csharp = self.opts.csharp_dir().unwrap_or_default();
                 // The F# layer finds the .NET runtime next to itself unless
-                // told otherwise.
+                // told otherwise; the path is made absolute (relative to this
+                // project) because the layer's project resolves it.
                 let properties = match &self.opts.csharp_runtime_path {
                     Some(_) => format!(
-                        " AdditionalProperties=\"TungstenRuntime=$(MSBuildThisFileDirectory){csharp}/Tungsten.Runtime.csproj\""
+                        " AdditionalProperties=\"TungstenRuntime=$([MSBuild]::NormalizePath('$(MSBuildThisFileDirectory)', '{csharp}/Tungsten.Runtime.csproj'))\""
                     ),
                     None => String::new(),
                 };
