@@ -120,7 +120,7 @@ pub(crate) enum Command {
     /// Print a JSON Schema published by tungsten.
     Schema(SchemaArgs),
     /// Write tungsten.yml and agent.yml for a new project.
-    Init(InitArgs),
+    Init(Box<InitArgs>),
     /// Report installed tools and optionally check project prerequisites.
     Doctor(DoctorArgs),
     /// List the external emitters (`tungsten-emit-<name>`) that can be
@@ -346,8 +346,103 @@ pub enum SchemaName {
     ToolCatalog,
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Clone, Args)]
 pub(crate) struct InitArgs {
+    /// Advanced: default server URL for later live use; no credentials/query/fragment.
+    #[arg(long, conflicts_with = "resume")]
+    pub server_url: Option<String>,
+    /// Advanced: generated Rust CLI environment profile NAME=URL; repeatable.
+    /// Writes tungsten-profiles.toml with no credentials.
+    #[arg(long, conflicts_with = "resume")]
+    pub cli_profile: Vec<String>,
+    /// Advanced: promote generation warnings to errors and withhold all outputs.
+    #[arg(long)]
+    pub strict: bool,
+    /// Hide an exact namespace.operationId from agent surfaces; repeatable.
+    #[arg(long, conflicts_with = "resume")]
+    pub hide_operation: Vec<String>,
+    /// Require argument-bound confirmation on an exact operation; repeatable.
+    /// Never counts as imported-operation review or grants live authority.
+    #[arg(long, conflicts_with = "resume")]
+    pub require_confirmation: Vec<String>,
+    /// Advanced: local Python runtime checkout (used only with explicit setup consent).
+    #[arg(long, conflicts_with = "resume")]
+    pub python_runtime: Option<PathBuf>,
+    /// Advanced: local Rust runtime crate.
+    #[arg(long, conflicts_with = "resume")]
+    pub rust_runtime: Option<PathBuf>,
+    /// Advanced: local Rust CLI kit crate.
+    #[arg(long, conflicts_with = "resume")]
+    pub cli_kit_runtime: Option<PathBuf>,
+    /// Exact HTTP(S) origin to select from a multi-origin HAR (no credentials).
+    #[arg(long, conflicts_with = "method")]
+    pub har_origin: Option<String>,
+    /// Reviewed HAR paths: JSON object mapping each captured URL path to a template.
+    /// Required for every imported path before any converted output is saved.
+    #[arg(long, conflicts_with = "method", value_name = "JSON")]
+    pub har_paths: Option<PathBuf>,
+    /// HAR path prefixes to include; repeatable, exclusions take precedence.
+    #[arg(long)]
+    pub include_prefix: Vec<String>,
+    /// HAR path prefixes to exclude; repeatable.
+    #[arg(long)]
+    pub exclude_prefix: Vec<String>,
+    /// Additional HAR property names to redact from structural observations.
+    #[arg(long)]
+    pub redact_property: Vec<String>,
+    /// Advanced: use an explicitly supplied local WebMCP runtime package.
+    #[arg(long, conflicts_with = "resume")]
+    pub webmcp_runtime: Option<PathBuf>,
+    /// Advanced: use an explicitly supplied local MCP runtime package.
+    #[arg(long, conflicts_with = "resume")]
+    pub mcp_runtime: Option<PathBuf>,
+    /// Advanced input detection override for saved requests.
+    #[arg(long, default_value = "auto", value_parser = ["auto", "curl", "http"])]
+    pub input_format: String,
+    /// Trusted path template for each saved request, in input order; repeat as needed.
+    /// HAR input requires a template for every captured path; each path uses the most
+    /// literal matching template.
+    #[arg(long, conflicts_with = "method")]
+    pub route: Vec<String>,
+    /// Shell quoting syntax of a saved cURL command; never executes a shell.
+    #[arg(long, default_value = "posix", value_parser = ["posix", "cmd", "powershell"])]
+    pub shell_dialect: String,
+    /// Advanced: use an explicitly supplied local TypeScript runtime package.
+    #[arg(long, conflicts_with = "resume")]
+    pub typescript_runtime: Option<PathBuf>,
+    /// Add outputs to an existing project while retaining all existing settings.
+    /// Edits only the `targets` section and saves the original manifest as
+    /// tungsten.yml.init-backup (or the next free `.init-backup.N`) first.
+    #[arg(long, requires = "resume", value_delimiter = ',', value_parser = parse_init_target)]
+    pub add_targets: Vec<String>,
+    /// Acquire project dependencies, build selected outputs and call a loopback mock.
+    /// Requires the selected Node, Python or Rust toolchains; only new projects.
+    #[arg(long, requires = "generate", conflicts_with_all = ["resume", "force"])]
+    pub local_example: bool,
+    /// No-schema HTTP method; use a path template with --endpoint, never credentials.
+    #[arg(long, requires = "endpoint", conflicts_with_all = ["from", "resume"], value_parser = ["get", "post", "put", "patch", "delete", "head", "options"])]
+    pub method: Option<String>,
+    /// No-schema path template, for example /pets/{id}; not a live URL.
+    #[arg(long, requires = "method")]
+    pub endpoint: Option<String>,
+    /// JSON request example file; only its structure is persisted.
+    #[arg(long, requires = "method")]
+    pub request_example: Option<PathBuf>,
+    /// JSON response example file; only its structure is persisted (status 200).
+    #[arg(long, requires = "method")]
+    pub response_example: Option<PathBuf>,
+    /// Start the guided terminal setup (requires a terminal, incompatible with JSON).
+    #[arg(long, conflicts_with = "no_interactive")]
+    pub interactive: bool,
+    /// Never prompt, including when attached to a terminal.
+    #[arg(long)]
+    pub no_interactive: bool,
+    /// Generate configured outputs after initializing, without acquiring dependencies.
+    #[arg(long)]
+    pub generate: bool,
+    /// Generate from existing manifests without overwriting reviewed settings.
+    #[arg(long, requires = "generate", conflicts_with_all = ["force", "from", "targets", "name"])]
+    pub resume: bool,
     /// OpenAPI document to start from. Default: openapi.json, openapi.yaml
     /// or openapi.yml in the target directory.
     #[arg(long, value_name = "SPEC")]
@@ -398,13 +493,8 @@ pub(crate) struct DoctorArgs {
 }
 
 fn parse_init_target(s: &str) -> Result<String, String> {
-    let target = match s.trim() {
-        "ts" => "typescript",
-        "py" => "python",
-        "rs" => "rust",
-        name => name,
-    };
-    if tungsten_config::KNOWN_TARGETS.contains(&target) {
+    let target = crate::targets::canonical(s.trim());
+    if target == "cli" || tungsten_config::KNOWN_TARGETS.contains(&target) {
         Ok(target.to_string())
     } else {
         Err(format!(

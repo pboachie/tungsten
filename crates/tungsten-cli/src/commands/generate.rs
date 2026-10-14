@@ -112,6 +112,18 @@ impl Emitted {
     }
 }
 
+/// Runtime-policy capability must be demonstrated, not inferred from a target
+/// accepting the IR. External emitters have no policy capability handshake yet.
+fn unsupported_import_policy(ir: &Ir, name: &str) -> bool {
+    ir.operations()
+        .iter()
+        .any(|op| op.agent.import_policy.is_some())
+        && (!matches!(
+            name,
+            "typescript" | "python" | "rust" | "mcp" | "webmcp" | "docs"
+        ) || targets::emitter(name).is_none())
+}
+
 /// Run the emitter of target `name` over `ir` without touching the disk:
 /// the built-in one, or the external emitter its `tungsten.yml` entry
 /// declares.
@@ -130,6 +142,18 @@ pub(crate) fn emit_target_live(
     live: bool,
 ) -> Emitted {
     let cfg = targets::target_config_for(compiled.config.as_ref(), name, &project.base_dir, live);
+    if unsupported_import_policy(ir, name) {
+        let mut diagnostics = Diagnostics::new();
+        diagnostics.push(Diagnostic::error("TG0702", format!("target `{name}` does not declare enforced imported-operation policy support"))
+            .with_help("select a supported TypeScript, Python, Rust, MCP, WebMCP or docs target; imported-policy metadata must not be discarded"));
+        return Emitted {
+            cfg,
+            files: Some(FileSet::new()),
+            diagnostics,
+            tools: BTreeMap::new(),
+        };
+    }
+
     let Some(emitter) = targets::emitter(name) else {
         return match tungsten_config::external_target(&cfg.options) {
             Ok(Some(external)) => emit_external(ir, project, cfg, &external),
@@ -245,7 +269,7 @@ pub(crate) fn run_targets(
         })
         .collect();
     // A strict run writes every target or none.
-    let withhold = strict
+    let withhold = (strict || names.iter().any(|name| unsupported_import_policy(ir, name)))
         && matches!(mode, Mode::Write { .. })
         && emitted.iter().any(|(_, e)| e.files.is_some() && e.failed());
     for (name, e) in emitted.drain(..) {

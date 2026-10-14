@@ -14,6 +14,14 @@ import type { IdempotencyStore, OperationDescriptor } from "./types.js";
 export class MemoryIdempotencyStore implements IdempotencyStore {
   readonly #keys = new Map<string, string>();
 
+  async reserve(scope: string, logicalId: string, candidate: string): Promise<string> {
+    const slot = `${scope}\u0000${logicalId}`;
+    const existing = this.#keys.get(slot);
+    if (existing) return existing;
+    this.#keys.set(slot, candidate);
+    return candidate;
+  }
+
   async get(scope: string, logicalId: string): Promise<string | undefined> {
     return this.#keys.get(`${scope}\u0000${logicalId}`);
   }
@@ -83,4 +91,20 @@ export function keyHeader(op: OperationDescriptor): string {
 export function hasReplayProtection(op: OperationDescriptor, key: string | null): boolean {
   if (op.agent.idempotency.policy === "content_identity") return true;
   return key !== null;
+}
+
+// Legacy adapters serialize all get/put transactions in this module. Stores
+// shared with another process must implement reserve themselves.
+let legacyQueue: Promise<unknown> = Promise.resolve();
+export function reserveKey(store: IdempotencyStore, scope: string, id: string, candidate: string): Promise<string> {
+  if (store.reserve) return store.reserve(scope, id, candidate);
+  const result = legacyQueue.catch(() => undefined).then(async () => {
+    const old = await store.get(scope, id);
+    if (old) return old;
+    await store.put(scope, id, candidate);
+    if (await store.get(scope, id) !== candidate) throw new Error("the key could not be stored");
+    return candidate;
+  });
+  legacyQueue = result;
+  return result;
 }

@@ -105,7 +105,8 @@ export interface RegisterTungstenWebMcpOptions {
   /** Aborting unregisters this registration and cancels its active calls. */
   signal?: AbortSignal;
   /** UTF-8 JSON byte limit, at least 1024; default 1 MiB. No silent clipping.
-   * Also bounds input JSON; ClientCore retains its HTTP transport limits. */
+   * Also bounds input JSON and ordinary upstream HTTP response bodies before
+   * parsing; binaryResults.maxBytes overrides the latter for binary calls. */
   maxResultBytes?: number;
   /** Absent: streaming operations reject before sending requests. */
   streamCollection?: WebMcpStreamCollection;

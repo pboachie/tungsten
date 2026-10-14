@@ -203,7 +203,9 @@
 //! `program` when a program answered or injected.
 
 mod auth;
+mod examples;
 mod generate;
+pub use examples::RequestExamples;
 mod handler;
 mod model;
 mod params;

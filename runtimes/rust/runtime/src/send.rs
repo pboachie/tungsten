@@ -3,6 +3,7 @@
 //! result or an envelope, and OAuth2 client-credentials tokens.
 
 use std::collections::BTreeMap;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use serde_json::{Map, Value};
@@ -26,7 +27,7 @@ use crate::transport::{AttemptOutcome, AttemptRequest, BodyFailure, attempt, par
 use crate::types::{
     CallOptions, Category, Diagnostic, Error, HttpMethod, Jitter, OperationDescriptor,
     ParamLocation, RequestContext, Response, ResponseContext, ResponseKind, ResponseMeta,
-    Retryable, Safety, ValidateResponses,
+    Retryable, Safety, StatusMatch, ValidateResponses,
 };
 use crate::util::{envelope_value, get_path, get_path_str, looks_sensitive, redact_paths};
 
@@ -50,13 +51,55 @@ fn retryable_category(category: Category) -> bool {
 const EMPTY_PAYLOAD: &Payload = &Payload::Empty;
 
 impl ClientCore {
+    pub(crate) fn check_send_deadline(
+        &self,
+        prepared: &Prepared<'_>,
+        attempts: u32,
+        check: Option<&OutcomeCheck>,
+    ) -> Step<()> {
+        if let Err(expired) = crate::verify::check_poll_deadline(&prepared.op.id) {
+            if is_mutation(prepared.op) && prepared.may_have_sent.load(Ordering::Relaxed) {
+                let ctx = CallContext {
+                    api: &self.inner.api,
+                    op: prepared.op,
+                    key: prepared.key.as_deref(),
+                    key_header: &prepared.key_header,
+                    attempts,
+                    check,
+                };
+                return Err(fail(scrub_diagnostic(
+                    outcome_unknown(
+                        &ctx,
+                        "The polling budget expired after a request was possibly sent.",
+                        UnknownFields::default(),
+                    ),
+                    &prepared.secrets,
+                )));
+            }
+            return Err(expired);
+        }
+        Ok(())
+    }
+
     pub(crate) async fn send(
         &self,
         prepared: &Prepared<'_>,
         opts: &CallOptions,
     ) -> Step<Response<Option<Value>>> {
+        self.send_tracked(prepared, opts, &mut String::new()).await
+    }
+
+    pub(crate) async fn send_tracked(
+        &self,
+        prepared: &Prepared<'_>,
+        opts: &CallOptions,
+        request_url: &mut String,
+    ) -> Step<Response<Option<Value>>> {
         match self.send_with(prepared, opts, false).await? {
-            Sent::Response(response) => Ok(response),
+            Sent::Response(response, url) => {
+                *request_url = url;
+                Ok(response)
+            }
             Sent::Stream(_) => Err(fail(
                 Diag::new(prepared.op.id.clone(), Category::UnexpectedResponse)
                     .remediation(
@@ -94,6 +137,7 @@ impl ClientCore {
             .collect();
         let mut attempts: u32 = 0;
         loop {
+            self.check_send_deadline(prepared, attempts, check.as_ref())?;
             attempts += 1;
             let mut ctx = RequestContext {
                 operation: op.id.clone(),
@@ -109,6 +153,7 @@ impl ClientCore {
             for m in &self.inner.middleware {
                 m.on_request(&ctx);
             }
+            self.check_send_deadline(prepared, attempts, check.as_ref())?;
             // Redirects are never followed by the HTTP client: it would
             // forward custom credential headers (API keys, CSRF headers) to
             // another origin. A read follows same-origin redirects here; a
@@ -130,8 +175,11 @@ impl ClientCore {
                 },
             )
             .await;
+            if !matches!(outcome, AttemptOutcome::NotSent(_)) {
+                prepared.may_have_sent.store(true, Ordering::Relaxed);
+            }
             let mut hops = 0;
-            while !mutation && hops < MAX_REDIRECTS {
+            while !self.inner.redirects_disabled && !mutation && hops < MAX_REDIRECTS {
                 let AttemptOutcome::Response {
                     status,
                     headers: answer,
@@ -161,6 +209,7 @@ impl ClientCore {
                 }
                 ctx.url = shown;
                 ctx.method = method;
+                self.check_send_deadline(prepared, attempts, check.as_ref())?;
                 outcome = attempt(
                     &self.inner.http,
                     &AttemptRequest {
@@ -174,6 +223,9 @@ impl ClientCore {
                     },
                 )
                 .await;
+                if !matches!(outcome, AttemptOutcome::NotSent(_)) {
+                    prepared.may_have_sent.store(true, Ordering::Relaxed);
+                }
                 hops += 1;
             }
             let call_ctx = CallContext {
@@ -185,7 +237,12 @@ impl ClientCore {
                 check: check.as_ref(),
             };
             let error = match self.classify_response(&call_ctx, prepared, outcome, &ctx, timeout) {
-                Ok(sent) => return Ok(sent),
+                Ok(mut sent) => {
+                    if let Sent::Response(_, ref mut effective) = sent {
+                        *effective = url;
+                    }
+                    return Ok(sent);
+                }
                 Err(error) => error,
             };
             let Error {
@@ -228,6 +285,7 @@ impl ClientCore {
             for m in &self.inner.middleware {
                 m.on_retry(&ctx, &diagnostic);
             }
+            self.check_send_deadline(prepared, attempts, check.as_ref())?;
             tokio::time::sleep(crate::util::duration_from_ms(delay_ms)).await;
         }
     }
@@ -357,6 +415,12 @@ impl ClientCore {
         let success = (200..=299).contains(&status)
             || (declared.is_some_and(|d| d.kind == ResponseKind::Success)
                 && (100..=399).contains(&status));
+        // A status the descriptor declares (exactly or by class) is classified as declared. With
+        // redirects disabled, a 3xx it does not declare is a refused redirect, never a success.
+        let refused_redirect = self.inner.redirects_disabled
+            && (300..=399).contains(&status)
+            && declared.is_none_or(|d| d.status == StatusMatch::Default);
+        let success = success && !refused_redirect;
         let hint = op
             .agent
             .verify
@@ -405,6 +469,10 @@ impl ClientCore {
                 let remediation = if mutation {
                     format!(
                         "The server answered with a redirect{to}. Redirects are never followed on mutations; check base_url (scheme, host, trailing slash). Whether the call took effect is unknown only if the server applied it before redirecting."
+                    )
+                } else if self.inner.redirects_disabled {
+                    format!(
+                        "The server answered with a redirect{to}. Redirects are disabled; check redirects and base_url."
                     )
                 } else {
                     format!(
@@ -541,16 +609,19 @@ impl ClientCore {
             }
             self.emit(&scrubbed);
         }
-        Ok(Sent::Response(Response {
-            value: decoded.value,
-            meta: ResponseMeta {
-                status,
-                headers,
-                request_id,
-                attempts,
+        Ok(Sent::Response(
+            Response {
+                value: decoded.value,
+                meta: ResponseMeta {
+                    status,
+                    headers,
+                    request_id,
+                    attempts,
+                },
+                verification: None,
             },
-            verification: None,
-        }))
+            String::new(),
+        ))
     }
 
     /// How to find out whether `op` (a mutation without replay protection)
@@ -691,7 +762,14 @@ impl ClientCore {
 
     /// Fetch (and cache) an OAuth2 client-credentials token.
     async fn oauth_token(&self, client: OAuthClient<'_>) -> std::result::Result<String, String> {
-        let mut cache = self.inner.oauth_tokens.lock().await;
+        // Short map locks; only refreshes of this scheme wait for each other.
+        let gate = {
+            let mut gates = self.inner.oauth_refreshes.lock().await;
+            gates.entry(client.name.to_owned()).or_default().clone()
+        };
+        // Dropping a cancelled owner releases this gate; another waiter can retry.
+        let _refresh = gate.lock().await;
+        let cache = self.inner.oauth_tokens.lock().await;
         let real_now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX));
@@ -700,6 +778,7 @@ impl ClientCore {
         {
             return Ok(cached.token.clone());
         }
+        drop(cache);
         let name = client.name;
         let mut form = vec!["grant_type=client_credentials".to_owned()];
         if !client.scopes.is_empty() {
@@ -764,7 +843,7 @@ impl ClientCore {
             .and_then(Value::as_f64)
             .filter(|n| n.is_finite())
             .map_or(3_600_000, |n| (n * 1000.0).max(0.0) as u64);
-        cache.insert(
+        self.inner.oauth_tokens.lock().await.insert(
             name.to_owned(),
             CachedToken {
                 token: token.clone(),
