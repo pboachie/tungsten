@@ -9,6 +9,10 @@ changes.
 
 ## [Unreleased]
 
+### Added
+
+- Build provenance attestations for the container image, the Homebrew formula, the winget manifests and `DISTRIBUTION_SHA256SUMS`, with install notes on verifying them.
+
 ## [0.1.2]
 
 ### Breaking
