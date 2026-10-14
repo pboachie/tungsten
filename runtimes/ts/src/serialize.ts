@@ -242,6 +242,9 @@ export async function encodeBody(
         for (const item of items) {
           if (isBinary(item) || isNamedBinary(item)) {
             const { data, filename, contentType } = isNamedBinary(item) ? item : { data: item, filename: undefined, contentType: undefined };
+            if (contentType !== undefined && contentType !== "" && !validMediaType(contentType)) {
+              throw new SerializationError(`${parameter}.${k}`, "a media type such as type/subtype or type/subtype; charset=utf-8", "<invalid media type>");
+            }
             const blob = toBlob(data, contentType ?? "");
             const name = filename ?? (typeof File !== "undefined" && data instanceof File ? data.name : k);
             form.append(k, blob, name);
@@ -287,6 +290,17 @@ export async function encodeBody(
 /** Header names and values that `fetch` accepts, checked before sending. */
 const TOKEN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
 const HEADER_VALUE = /^[\t\x20-\x7e\x80-\xff]*$/;
+
+const MEDIA_TOKEN = "[!#$%&'*+\\-.^_`|~0-9A-Za-z]+";
+const MEDIA_TYPE = new RegExp(
+  `^${MEDIA_TOKEN}/${MEDIA_TOKEN}(?:[ \\t]*;[ \\t]*${MEDIA_TOKEN}=(?:${MEDIA_TOKEN}|"(?:[\\t\\x20\\x21\\x23-\\x5b\\x5d-\\x7e]|\\\\[\\t\\x20-\\x7e])*"))*$`,
+);
+
+/** Whether `value` is a media type of visible ASCII: `type/subtype` with
+ * optional `;name=value` parameters (no line breaks or control characters). */
+export function validMediaType(value: string): boolean {
+  return MEDIA_TYPE.test(value);
+}
 
 export function validHeaderName(name: string): boolean {
   return TOKEN.test(name);

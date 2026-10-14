@@ -9,6 +9,11 @@ changes.
 
 ## [Unreleased]
 
+### Fixed
+
+- TypeScript runtime: header values are validated before the request body is
+  built, and multipart part media types are checked as `type/subtype[;params]`.
+
 ## [0.1.2]
 
 ### Breaking
