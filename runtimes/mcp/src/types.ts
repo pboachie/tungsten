@@ -130,6 +130,10 @@ export interface SandboxOptions {
   memoryMb?: number;
   /** Tool calls one script may make. Default 50. */
   maxCalls?: number;
+  /** Scripts that may run at once. A `run_script` call over either limit is
+   * refused with a `VALIDATION_FAILED` "busy" envelope naming the limit.
+   * `perSession` defaults to 4, `global` (all sessions of the server) to 16. */
+  maxConcurrent?: { perSession?: number; global?: number };
 }
 
 /** Hybrid search over the compiler's embedding index (planning/02 D6 "As
