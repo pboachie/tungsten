@@ -227,6 +227,49 @@ pub(crate) fn dispatch_file(plan: &Plan<'_>, macros: &[MacroPlan<'_>], header: &
     code.dedent();
     code.line("}");
 
+    // pages_each
+    code.blank();
+    fn_sig(
+        &mut code,
+        4,
+        "async fn pages_each",
+        &[
+            "&self".into(),
+            "operation: &str".into(),
+            "args: Value".into(),
+            "opts: CallOptions".into(),
+            "sink: s::PageSink<'_>".into(),
+        ],
+        "",
+    );
+    code.indent();
+    if paged.is_empty() {
+        code.line("let _ = (args, opts);");
+        code.line("let _ = sink(Err(s::not_paginated(operation)));");
+    } else {
+        code.line("match operation {");
+        code.indent();
+        for &o in &paged {
+            await_arm(
+                &mut code,
+                &string_lit(&plan.ops[o].op.id.0),
+                format!(
+                    "each_pages_{}(self, args, opts, sink)",
+                    suffix(&plan.ops[o].builder)
+                ),
+            );
+        }
+        code.line("_ => {");
+        code.indent();
+        code.line("let _ = sink(Err(s::not_paginated(operation)));");
+        code.dedent();
+        code.line("}");
+        code.dedent();
+        code.line("}");
+    }
+    code.dedent();
+    code.line("}");
+
     // stream
     if !streamed.is_empty() {
         code.blank();
@@ -425,6 +468,38 @@ pub(crate) fn dispatch_file(plan: &Plan<'_>, macros: &[MacroPlan<'_>], header: &
             );
             put(&mut code, 4, "let pages = ", &call, ";");
             code.line("s::collect_typed(pages).await");
+            code.dedent();
+            code.line("}");
+        }
+        if names.pages.is_some() {
+            code.blank();
+            fn_sig(
+                &mut code,
+                0,
+                &format!("async fn each_pages_{name}"),
+                &[
+                    format!("client: &{client}"),
+                    "args: Value".into(),
+                    "opts: CallOptions".into(),
+                    "sink: s::PageSink<'_>".into(),
+                ],
+                "",
+            );
+            code.indent();
+            code.line(format!("let op = client.operation({konst});"));
+            code.line("let Some(request) = s::decode_args(&args) else {");
+            code.indent();
+            code.line("let pages = client.core.pages(op.clone(), args, opts);");
+            code.line("return s::each_raw(pages, sink).await;");
+            code.dedent();
+            code.line("};");
+            resource_lines(&mut code, &paths[o], "client");
+            let call = Rx::call(
+                format!("resource.{}", names.pages.as_deref().unwrap_or_default()),
+                vec![Rx::atom("request"), Rx::atom("&opts")],
+            );
+            put(&mut code, 4, "let pages = ", &call, ";");
+            code.line("s::each_typed(pages, sink).await");
             code.dedent();
             code.line("}");
         }

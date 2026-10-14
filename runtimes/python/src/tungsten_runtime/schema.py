@@ -29,6 +29,7 @@ import binascii
 import dataclasses
 import math
 import re
+import warnings
 from collections.abc import Callable, Mapping, Sequence
 from types import NoneType, UnionType
 from typing import (
@@ -652,6 +653,12 @@ _FORMATS: dict[str, re.Pattern[str]] = {
 }
 
 
+#: Longest string (in characters) a spec ``pattern`` is matched against. Python's
+#: ``re`` cannot be interrupted, so a longer value skips the pattern check (with
+#: a warning) rather than risking unbounded backtracking.
+MAX_PATTERN_SUBJECT = 64 * 1024
+
+
 def _compile_pattern(source: str) -> re.Pattern[str] | None:
     try:
         return re.compile(source)
@@ -728,6 +735,13 @@ class _CheckedNode(_Node):
                 return _fail(issues, path, *problem)
         if isinstance(subject, str):
             for source, compiled in self.patterns:
+                if compiled is not None and len(subject) > MAX_PATTERN_SUBJECT:
+                    warnings.warn(
+                        f"String longer than {MAX_PATTERN_SUBJECT} characters: pattern /{source[:80]}/ not checked",
+                        RuntimeWarning,
+                        stacklevel=2,
+                    )
+                    continue
                 if compiled is not None and compiled.search(subject) is None:
                     return _fail(
                         issues, path, f"String should match pattern /{source}/", "string_pattern_mismatch"

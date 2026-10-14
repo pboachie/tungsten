@@ -28,6 +28,32 @@ export { type SandboxCall, type SandboxEngine, type SandboxLateResult, type Sand
 
 export const SANDBOX_DEFAULTS = { timeoutMs: 30000, memoryMb: 128, maxCalls: 50 } as const;
 
+/** Scripts that may run at once, per session and in the whole server. */
+export const CONCURRENCY_DEFAULTS = { perSession: 4, global: 16 } as const;
+
+/** Counts the scripts running at once, in one session and in the whole server. */
+export class ConcurrencyLimiter {
+  #total = 0;
+  constructor(readonly global: number) {}
+  /** A slot for a script of a session counted by `session` (a one-field
+   * counter owned by the session); `busy` names the limit hit when none is free. */
+  acquire(session: { running: number; limit: number }): { release(): void } | { busy: "session" | "global" } {
+    if (session.running >= session.limit) return { busy: "session" };
+    if (this.#total >= this.global) return { busy: "global" };
+    session.running += 1;
+    this.#total += 1;
+    let released = false;
+    return {
+      release: () => {
+        if (released) return;
+        released = true;
+        session.running -= 1;
+        this.#total -= 1;
+      },
+    };
+  }
+}
+
 const MAX_STDERR_CHARS = 4000;
 /** Data (writable private memory) that deno needs besides the V8 heap: it
  * reserves its code range up front, so it does not start below ~560 MB. */
@@ -203,6 +229,11 @@ export function selectEngine(configured: unknown, denoFound: boolean): SandboxEn
   if (configured === "wasm") return "wasm";
   if (configured === "deno") return denoFound ? "deno" : "missing";
   return denoFound ? "deno" : "wasm";
+}
+
+/** Whether `configured` asks for the engine to be chosen (`auto`, missing or unknown). */
+export function isAutoEngine(configured: unknown): boolean {
+  return configured !== "off" && configured !== "wasm" && configured !== "deno";
 }
 
 export interface SandboxRun extends SandboxRunBase {

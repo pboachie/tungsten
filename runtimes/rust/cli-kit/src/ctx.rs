@@ -78,6 +78,13 @@ impl<'a> Ctx<'a> {
         let _ = writeln!(self.stdout, "{text}");
     }
 
+    /// Text on standard output with no line ending, flushed so that a
+    /// streamed result reaches the reader page by page.
+    pub(crate) fn out_part(&mut self, text: &str) {
+        let _ = self.stdout.write_all(text.as_bytes());
+        let _ = self.stdout.flush();
+    }
+
     pub(crate) fn err(&mut self, text: &str) {
         let _ = writeln!(self.stderr, "{text}");
     }
