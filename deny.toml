@@ -44,6 +44,14 @@ multiple-versions = "warn"
 wildcards = "deny"
 # Workspace path dependencies carry no version requirement.
 allow-wildcard-paths = true
+# These duplicates are pinned by upstream majors: petgraph 0.8 (the only
+# released 0.x line) requires hashbrown ^0.15 while indexmap and hashlink
+# resolve 0.17, and each hashbrown carries its own foldhash. Drop the skips
+# when a petgraph release allows hashbrown 0.17.
+skip = [
+    { crate = "hashbrown@0.15.5", reason = "petgraph 0.8 requires hashbrown ^0.15" },
+    { crate = "foldhash@0.1.5", reason = "the hasher of hashbrown 0.15" },
+]
 
 [sources]
 unknown-registry = "deny"
