@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use serde_json::{Map, Value, json};
 
@@ -442,79 +442,207 @@ impl Shapes {
                 .map(|(s, _, _)| s.clone())
                 .collect(),
         );
-        record_contributions(&schema, pointer, &[], &self.contributions, facts);
+        record_contributions(&schema, pointer, &self.contributions, facts);
         schema
     }
 }
 
-fn contributing_values<'a>(schema: &'a Value, path: &[String]) -> Vec<&'a Value> {
-    if path.is_empty() {
-        return vec![schema];
-    }
-    if path[0] == "anyOf" {
-        return contributing_values(schema, &path[path.len().min(2)..]);
-    }
-    if let Some(branches) = schema.get("anyOf").and_then(Value::as_array) {
-        return branches
-            .iter()
-            .flat_map(|s| contributing_values(s, path))
-            .collect();
-    }
-    let child = if let Some(array) = schema.as_array() {
-        path[0].parse::<usize>().ok().and_then(|i| array.get(i))
-    } else {
-        schema.get(&path[0])
-    };
-    child.map_or_else(Vec::new, |v| contributing_values(v, &path[1..]))
+/// A scalar schema value, hashed with exactly `serde_json::Value` equality: integers
+/// equal only integers of the same sign class, and floats compare numerically
+/// (`-0.0 == 0.0`; serde_json values are always finite).
+#[derive(PartialEq, Eq, Hash)]
+enum Leaf<'a> {
+    Null,
+    Bool(bool),
+    Unsigned(u64),
+    Signed(i64),
+    Float(u64),
+    String(&'a str),
 }
 
+fn leaf(value: &Value) -> Option<Leaf<'_>> {
+    Some(match value {
+        Value::Null => Leaf::Null,
+        Value::Bool(b) => Leaf::Bool(*b),
+        Value::Number(n) => match (n.as_u64(), n.as_i64(), n.as_f64()) {
+            (Some(u), _, _) => Leaf::Unsigned(u),
+            (None, Some(i), _) => Leaf::Signed(i),
+            (None, None, Some(f)) => Leaf::Float(if f == 0.0 { 0 } else { f.to_bits() }),
+            (None, None, None) => return None,
+        },
+        Value::String(s) => Leaf::String(s),
+        Value::Array(_) | Value::Object(_) => return None,
+    })
+}
+
+fn add_provenance(provenance: &mut FactProvenance, state: EvidenceState, source: &SourceLocation) {
+    provenance.states.insert(state);
+    if !provenance.sources.contains(source) {
+        provenance.sources.insert(source.clone());
+    }
+}
+
+fn empty_provenance() -> FactProvenance {
+    FactProvenance {
+        states: BTreeSet::new(),
+        sources: BTreeSet::new(),
+    }
+}
+
+/// Provenance available at one normalized merged path: a container merged node takes
+/// every contribution node there, a scalar merged node only the equal ones.
+struct Bucket<'a> {
+    any: FactProvenance,
+    leaves: HashMap<Leaf<'a>, FactProvenance>,
+}
+
+/// Where a node sits in a structural schema. `anyOf` is a keyword only on a schema
+/// node; inside `properties` the same text is an ordinary property name.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Position {
+    /// A schema object: its keys are keywords.
+    Schema,
+    /// The value of `properties`: its keys are property names, its values schemas.
+    Properties,
+    /// The value of `anyOf`: its elements are schemas.
+    Branches,
+    /// Any other keyword value (`type`, `required`, bounds, ...).
+    Value,
+}
+
+impl Position {
+    fn child(self, key: &str) -> Position {
+        match self {
+            Position::Schema => match key {
+                "properties" => Position::Properties,
+                "items" | "additionalProperties" => Position::Schema,
+                "anyOf" => Position::Branches,
+                _ => Position::Value,
+            },
+            Position::Properties | Position::Branches => Position::Schema,
+            Position::Value => Position::Value,
+        }
+    }
+}
+
+/// Contribution provenance keyed by normalized merged path, built in one walk of
+/// each contribution so every merged node resolves with one hash lookup.
+///
+/// A merged path is normalized by dropping each `anyOf` keyword step on a schema
+/// node together with the branch index after it. A contribution reaches a
+/// normalized path by stepping through object keys and array indices, flattening an
+/// `anyOf` keyword array on a schema node into its branches before taking the next
+/// step. Branches therefore share buckets; aggregating per bucket and leaf value
+/// keeps the merged walk linear even when thousands of branches land in one bucket.
+type ContributionIndex<'a> = HashMap<Vec<String>, Bucket<'a>>;
+
+fn index_contribution<'a>(
+    schema: &'a Value,
+    state: EvidenceState,
+    source: &SourceLocation,
+    index: &mut ContributionIndex<'a>,
+) {
+    let mut pending = vec![(schema, Position::Schema, Vec::new())];
+    while let Some((node, position, path)) = pending.pop() {
+        let mut branches = vec![node];
+        while let Some(branch) = branches.pop() {
+            if position == Position::Schema
+                && let Some(nested) = branch.get("anyOf").and_then(Value::as_array)
+            {
+                branches.extend(nested);
+                continue;
+            }
+            match branch {
+                Value::Object(map) => {
+                    for (key, child) in map {
+                        // A schema's own anyOf keyword is reached through its branches.
+                        if position == Position::Schema && key == "anyOf" {
+                            continue;
+                        }
+                        let mut child_path = path.clone();
+                        child_path.push(key.clone());
+                        pending.push((child, position.child(key), child_path));
+                    }
+                }
+                Value::Array(values) => {
+                    for (i, child) in values.iter().enumerate() {
+                        let key = i.to_string();
+                        let child_position = position.child(&key);
+                        let mut child_path = path.clone();
+                        child_path.push(key);
+                        pending.push((child, child_position, child_path));
+                    }
+                }
+                _ => {}
+            }
+        }
+        let bucket = index.entry(path).or_insert_with(|| Bucket {
+            any: empty_provenance(),
+            leaves: HashMap::new(),
+        });
+        add_provenance(&mut bucket.any, state, source);
+        if let Some(key) = leaf(node) {
+            add_provenance(
+                bucket.leaves.entry(key).or_insert_with(empty_provenance),
+                state,
+                source,
+            );
+        }
+    }
+}
+
+/// Record provenance for every node of the merged schema. Each contribution and the
+/// merged schema are walked once, so the cost is linear in their sizes.
 fn record_contributions(
     value: &Value,
     pointer: &str,
-    path: &[String],
     contributions: &[(Value, EvidenceState, SourceLocation)],
     facts: &mut BTreeMap<String, FactProvenance>,
 ) {
-    let mut provenance = FactProvenance {
-        states: BTreeSet::new(),
-        sources: BTreeSet::new(),
-    };
+    let mut index = ContributionIndex::new();
     for (schema, state, source) in contributions {
-        let candidates = contributing_values(schema, path);
-        if candidates
-            .iter()
-            .any(|v| value.is_object() || value.is_array() || *v == value)
-        {
-            provenance.states.insert(*state);
-            provenance.sources.insert(source.clone());
+        index_contribution(schema, *state, source, &mut index);
+    }
+    let mut pending = vec![(
+        value,
+        Position::Schema,
+        pointer.to_owned(),
+        Vec::<String>::new(),
+    )];
+    while let Some((value, position, pointer, normalized)) = pending.pop() {
+        let bucket = index.get(&normalized);
+        let found = match leaf(value) {
+            None => bucket.map(|bucket| &bucket.any),
+            Some(key) => bucket.and_then(|bucket| bucket.leaves.get(&key)),
+        };
+        let mut provenance = found.cloned().unwrap_or_else(empty_provenance);
+        if provenance.states.is_empty() {
+            provenance.states.insert(EvidenceState::Unknown);
         }
-    }
-    if provenance.states.is_empty() {
-        provenance.states.insert(EvidenceState::Unknown);
-    }
-    facts.insert(pointer.into(), provenance);
-    let children: Vec<_> = match value {
-        Value::Object(map) => map
-            .iter()
-            .map(|(key, value)| (key.clone(), value))
-            .collect(),
-        Value::Array(values) => values
-            .iter()
-            .enumerate()
-            .map(|(i, v)| (i.to_string(), v))
-            .collect(),
-        _ => vec![],
-    };
-    for (key, child) in children {
-        let mut child_path = path.to_vec();
-        child_path.push(key.clone());
-        record_contributions(
-            child,
-            &format!("{pointer}/{}", escape(&key)),
-            &child_path,
-            contributions,
-            facts,
-        );
+        let children: Vec<_> = match value {
+            Value::Object(map) => map
+                .iter()
+                .map(|(key, value)| (key.clone(), value))
+                .collect(),
+            Value::Array(values) => values
+                .iter()
+                .enumerate()
+                .map(|(i, v)| (i.to_string(), v))
+                .collect(),
+            _ => vec![],
+        };
+        for (key, child) in children {
+            let child_pointer = format!("{pointer}/{}", escape(&key));
+            let child_position = position.child(&key);
+            let mut child_normalized = normalized.clone();
+            // The anyOf keyword and its branch index do not change the schema position.
+            let keyword = position == Position::Schema && key == "anyOf";
+            if !keyword && position != Position::Branches {
+                child_normalized.push(key);
+            }
+            pending.push((child, child_position, child_pointer, child_normalized));
+        }
+        facts.insert(pointer, provenance);
     }
 }
 

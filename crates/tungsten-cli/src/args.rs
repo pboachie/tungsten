@@ -400,6 +400,8 @@ pub(crate) struct InitArgs {
     #[arg(long, default_value = "auto", value_parser = ["auto", "curl", "http"])]
     pub input_format: String,
     /// Trusted path template for each saved request, in input order; repeat as needed.
+    /// HAR input requires a template for every captured path; each path uses the most
+    /// literal matching template.
     #[arg(long, conflicts_with = "method")]
     pub route: Vec<String>,
     /// Shell quoting syntax of a saved cURL command; never executes a shell.
