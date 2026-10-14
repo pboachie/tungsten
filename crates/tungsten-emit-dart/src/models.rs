@@ -210,18 +210,14 @@ impl Gen<'_, '_> {
 
     /// An `Encoder<T>` (a `Object? Function(T value)`) for a
     /// representation; `None` when the Dart value is its JSON value.
-    pub fn encoder(&self, dt: &Dt, from: Option<&str>) -> Option<Expr> {
+    pub fn encoder(&self, dt: &Dt) -> Option<Expr> {
         match dt {
             Dt::Bytes { base64: true } => Some(Expr::raw("Wire.base64Text")),
             Dt::Class(_) => Some(Expr::raw("Wire.encodable")),
-            Dt::List(i) => self
-                .encoder(i, from)
-                .map(|e| Expr::call("Wire.listOut", vec![e])),
-            Dt::Map(i) => self
-                .encoder(i, from)
-                .map(|e| Expr::call("Wire.mapOut", vec![e])),
+            Dt::List(i) => self.encoder(i).map(|e| Expr::call("Wire.listOut", vec![e])),
+            Dt::Map(i) => self.encoder(i).map(|e| Expr::call("Wire.mapOut", vec![e])),
             Dt::Nullable(i) => self
-                .encoder(i, from)
+                .encoder(i)
                 .map(|e| Expr::call("Wire.nullableOut", vec![e])),
             _ => None,
         }
@@ -236,8 +232,8 @@ impl Gen<'_, '_> {
     }
 
     /// The expression that encodes `value` (a non-null Dart value of `dt`).
-    pub fn encode_value(&self, dt: &Dt, from: Option<&str>, value: &str) -> Expr {
-        match self.encoder(dt, from) {
+    pub fn encode_value(&self, dt: &Dt, value: &str) -> Expr {
+        match self.encoder(dt) {
             None => Expr::raw(value),
             Some(Expr::Raw(f)) if f == "Wire.encodable" => Expr::raw(format!("{value}.toJson()")),
             Some(e) => Expr::call("Wire.encode", vec![Expr::raw(value), e]),
@@ -677,7 +673,7 @@ impl ModelFile<'_, '_, '_> {
             w.line("return {");
             w.indent();
             if let Some(e) = extra {
-                match g.encoder(e, from) {
+                match g.encoder(e) {
                     None => w.line("...additionalProperties,"),
                     Some(enc) => w.expr(
                         "...",
@@ -693,10 +689,10 @@ impl ModelFile<'_, '_, '_> {
                 let key = format!("{}: ", str_lit(&c.wire));
                 match c.presence {
                     Presence::Required => {
-                        w.expr(&key, &g.encode_value(&c.dt, from, &c.name), ",");
+                        w.expr(&key, &g.encode_value(&c.dt, &c.name), ",");
                     }
                     Presence::RequiredNullable => {
-                        let value = match g.encoder(&c.dt, from) {
+                        let value = match g.encoder(&c.dt) {
                             None => Expr::raw(c.name.clone()),
                             Some(enc) if c.dt.nullable() => {
                                 Expr::call("Wire.encode", vec![Expr::raw(c.name.clone()), enc])
@@ -712,7 +708,7 @@ impl ModelFile<'_, '_, '_> {
                         w.expr(&key, &value, ",");
                     }
                     Presence::Optional => {
-                        if c.dt.nullable() && g.encoder(&c.dt, from).is_none() {
+                        if c.dt.nullable() && g.encoder(&c.dt).is_none() {
                             w.if_element(
                                 &format!("{} != null", c.name),
                                 &key,
@@ -723,13 +719,13 @@ impl ModelFile<'_, '_, '_> {
                             w.if_element(
                                 &format!("{} case final v$?", c.name),
                                 &key,
-                                &g.encode_value(&c.dt, from, "v$"),
+                                &g.encode_value(&c.dt, "v$"),
                                 ",",
                             );
                         }
                     }
                     Presence::OptionalNullable => {
-                        let value = match g.encoder(&c.dt, from) {
+                        let value = match g.encoder(&c.dt) {
                             None => Expr::raw(format!("{}.valueOrNull", c.name)),
                             Some(enc) => {
                                 Expr::call("Wire.encodePatch", vec![Expr::raw(c.name.clone()), enc])
@@ -978,12 +974,12 @@ impl ModelFile<'_, '_, '_> {
             w.line("Object? toJson() {");
             w.indent();
             let value = if payloads[i].nullable() {
-                match g.encoder(&payloads[i], from) {
+                match g.encoder(&payloads[i]) {
                     None => Expr::raw("value"),
                     Some(e) => Expr::call("Wire.encode", vec![Expr::raw("value"), e]),
                 }
             } else {
-                g.encode_value(&payloads[i], from, "value")
+                g.encode_value(&payloads[i], "value")
             };
             w.expr("return ", &value, ";");
             w.dedent();
