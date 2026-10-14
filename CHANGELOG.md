@@ -9,8 +9,23 @@ changes.
 
 ## [Unreleased]
 
+## [0.1.2]
+
 ### Breaking
 
+- `install.sh --init` and `install.ps1 -Init` print the PATH note before setup
+  and no longer report setup as an install failure (exit 1): a cancelled or
+  refused setup exits 4 and a failed setup exits 5, with the binary installed.
+- `tungsten init --resume --add-targets` keeps every backup: the first is
+  `tungsten.yml.init-backup`, later ones `tungsten.yml.init-backup.N`; the JSON
+  result names the one written. A flow-style `targets:` mapping is rewritten in
+  block style, with a warning when comments inside it were dropped.
+- Rust emitter API: `tungsten_emit_rs::Dep::Path` is now
+  `Dep::Path { path, version }`; generated `runtime_path` and `cli.kit_path`
+  dependencies carry the `runtime` or `cli.kit` requirement (default `0.1`).
+- The `ghcr.io/pboachie/tungsten:latest` container tag moves only when the
+  distributed tag is itself the newest published stable release (not a draft,
+  not flagged prerelease).
 - A 3xx status an operation declares (exactly or by class) is its success in all
   seven runtimes, also with `redirects: none`, so a mutation answered with a
   declared `303 See Other` succeeds. Redirects are still never followed on
@@ -29,8 +44,14 @@ changes.
 
 ### Fixed
 
-- Make generated Rust CLIs packageable with a versioned SDK dependency and share
-  the generated workspace's Rust 1.88 minimum.
+- Make generated Rust CLIs and SDKs packageable: the SDK dependency and local
+  `runtime_path`/`cli.kit_path` dependencies carry a version requirement, and the
+  generated workspace shares the Rust 1.88 minimum.
+- `init --resume --add-targets` edits only the `targets` section of tungsten.yml
+  (comments and the schema header stay), links new MCP/WebMCP outputs to the
+  TypeScript SDK's local runtime, and can run repeatedly (numbered backups, no
+  leftover pending file). Going back in the guided setup no longer keeps the
+  abandoned project's answers.
 
 - Warn when conditional JSON Schema constraints are ignored; strict check and
   generation reject them before writing output. Conditional validation is not
@@ -75,8 +96,10 @@ changes.
   remains same-origin reads only. Regenerate Rust SDKs; handwritten `ApiDescriptor`
   literals must add `redirects: RedirectPolicy::SameOriginRead` (or `None`).
 
-- Opt-in guided `init` with multi-output selection, consent before writes,
-  explicit non-interactive generation, additive output edits with backups,
+- Guided `init`: a bare `tungsten init` on a terminal starts it (`--interactive`
+  asks for it; `--no-interactive`, `--json` or any other `init` option keeps the
+  scripted path), with multi-output selection, consent before
+  writes, explicit non-interactive generation, additive output edits with backups,
   no-schema inference and scoped TypeScript/Python/Rust client and MCP mock checks.
 - Guided advanced server/validation controls, restrictive per-operation settings,
   credential-free CLI environment profiles and synthetic JSON request examples.
@@ -194,7 +217,7 @@ changes.
   previews, confirmation tokens, auth handling and resumable event streams
   as the other runtimes.
 
-## [0.1.0] - Unreleased
+## [0.1.0] - 2026-10-11
 
 First release. The compiler, the three SDK runtimes (`@elysra/tungsten-runtime`,
 `tungsten-runtime` on PyPI and `tungsten-runtime` on crates.io), the MCP
@@ -261,5 +284,6 @@ runtime (`@elysra/tungsten-mcp`) and the installers ship together at 0.1.0.
 - The compiler warns when a `gates` entry in `agent.yml` matches no
   operation.
 
-[Unreleased]: https://github.com/pboachie/tungsten/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/pboachie/tungsten/commits/main
+[Unreleased]: https://github.com/pboachie/tungsten/compare/v0.1.1...HEAD
+[0.1.2]: https://github.com/pboachie/tungsten/compare/v0.1.1...HEAD
+[0.1.0]: https://github.com/pboachie/tungsten/releases/tag/v0.1.0
