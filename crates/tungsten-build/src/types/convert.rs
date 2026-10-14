@@ -711,13 +711,13 @@ impl<'a> TypeBuilder<'a> {
             } else {
                 key.as_str()
             };
-            self.report(
-                Diagnostic::info(
-                    "TG0303",
-                    format!("`{shown}` is not modelled and was ignored"),
-                ),
-                &target.keyword(&key),
-            );
+            let message = format!("`{shown}` is not modelled and was ignored");
+            let diagnostic = if matches!(key.as_str(), "if" | "then" | "else") {
+                Diagnostic::warning("TG0303", message)
+            } else {
+                Diagnostic::info("TG0303", message)
+            };
+            self.report(diagnostic, &target.keyword(&key));
         }
     }
 }

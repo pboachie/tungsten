@@ -213,6 +213,19 @@ impl<'o> Loader<'o> {
                 &mut self.ws.diagnostics,
             );
         }
+        if root.get("swagger").is_some() && self.opts.convert_swagger2 {
+            match crate::swagger::convert(&root) {
+                Ok(converted) => root = converted,
+                Err(error) => {
+                    self.ws.diagnostics.push(
+                        Diagnostic::error("TG0111", error.message)
+                            .at(name, &error.pointer, spans.nearest(&error.pointer))
+                            .with_help("use supported Swagger 2 semantics or provide an OpenAPI 3 document"),
+                    );
+                    return None;
+                }
+            }
+        }
         let version = match version::detect(&root, name, &spans, self.opts) {
             Ok((v, warnings)) => {
                 for w in warnings {

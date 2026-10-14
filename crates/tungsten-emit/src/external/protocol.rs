@@ -144,6 +144,9 @@ pub struct EmitSurface {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[schemars(rename = "EmitResponse")]
 pub struct EmitResponse {
+    /// Explicit enforcement acknowledgements, e.g. `redirects-none-v1`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub capabilities: Vec<String>,
     /// The protocol version, 1.
     pub protocol: u32,
     #[serde(default)]

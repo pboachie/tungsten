@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Pagination: cursor, offset, page number and `Link` header styles.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use serde::de::DeserializeOwned;
@@ -22,7 +23,9 @@ use crate::util::{SecretSet, canonical_json, get_path_str};
 pub(crate) struct PageState {
     pub args: Value,
     pub override_url: Option<String>,
-    pub previous_cursor: Option<Value>,
+    pub seen: HashSet<String>,
+    pub request_urls: HashSet<String>,
+    pub count: usize,
     pub done: bool,
     /// An error to report after the page that precedes it.
     pub pending_error: Option<Error>,
@@ -33,7 +36,9 @@ impl PageState {
         PageState {
             args,
             override_url: None,
-            previous_cursor: None,
+            seen: HashSet::new(),
+            request_urls: HashSet::new(),
+            count: 0,
             done: false,
             pending_error: None,
         }
@@ -139,8 +144,39 @@ impl ClientCore {
         if st.done {
             return None;
         }
+        if opts.max_pages.is_some_and(|max| max > 0 && st.count >= max) {
+            st.done = true;
+            return Some(Err(Error::new(Diag::new(op.id.clone(), Category::UnexpectedResponse).remediation("Pagination reached max_pages before another request. Increase max_pages to continue.").build())));
+        }
+        if st.count == 0
+            && let Some(PaginationDescriptor::Cursor { request_param, .. }) = &op.pagination
+            && let Some(initial) = st
+                .args
+                .get(arg_name(op, request_param))
+                .filter(|v| !v.is_null() && v.as_str() != Some(""))
+        {
+            st.seen.insert(canonical_json(initial));
+        }
+        let mut request_url = String::new();
         let response = match self
-            .call_with(op, &st.args, opts, st.override_url.as_deref(), step)
+            .call_with_tracked(
+                op,
+                &st.args,
+                opts,
+                st.override_url.as_deref(),
+                step,
+                (
+                    &mut request_url,
+                    if matches!(
+                        &op.pagination,
+                        Some(PaginationDescriptor::LinkHeader { .. })
+                    ) {
+                        Some(&mut st.request_urls)
+                    } else {
+                        None
+                    },
+                ),
+            )
             .await
         {
             Ok(response) => response,
@@ -149,6 +185,12 @@ impl ClientCore {
                 return Some(Err(error));
             }
         };
+        if matches!(
+            &op.pagination,
+            Some(PaginationDescriptor::LinkHeader { .. })
+        ) {
+            st.request_urls.insert(request_url.clone());
+        }
         let body = response.value.clone().unwrap_or(Value::Null);
         let items_field = match &op.pagination {
             Some(
@@ -194,16 +236,8 @@ impl ClientCore {
                 let finished = has_more_field.as_deref().is_some_and(|field| {
                     get_path_str(Some(&body), field) == Some(&Value::Bool(false))
                 });
-                next = cursor
-                    .filter(|_| !finished)
-                    .filter(|c| {
-                        !st.previous_cursor
-                            .as_ref()
-                            .is_some_and(|p| canonical_json(p) == canonical_json(c))
-                    })
-                    .cloned();
+                next = cursor.filter(|_| !finished).cloned();
                 if let Some(cursor) = &next {
-                    st.previous_cursor = Some(cursor.clone());
                     Self::set_arg(&mut st.args, &arg_name(op, request_param), cursor.clone());
                 }
             }
@@ -252,15 +286,15 @@ impl ClientCore {
             Some(PaginationDescriptor::LinkHeader { .. }) => {
                 if let Some(link) = next_link(response.meta.headers.get("link").map(String::as_str))
                 {
-                    let base = st
-                        .override_url
-                        .clone()
-                        .or_else(|| self.inner.base_url.clone())
-                        .unwrap_or_default();
+                    let base = request_url;
+                    st.seen.insert(base.clone());
                     let origin = Url::parse(&base).ok();
                     let resolved = origin.as_ref().and_then(|b| b.join(&link).ok());
                     match (origin, resolved) {
-                        (Some(origin), Some(resolved)) if resolved.origin() == origin.origin() => {
+                        (Some(origin), Some(mut resolved))
+                            if resolved.origin() == origin.origin() =>
+                        {
+                            resolved.set_fragment(None);
                             let target = resolved.to_string();
                             st.override_url = Some(target.clone());
                             next = Some(Value::String(target));
@@ -279,6 +313,40 @@ impl ClientCore {
                 }
             }
             None => {}
+        }
+        st.count += 1;
+        if let Some(value) = &next {
+            let key = if matches!(
+                &op.pagination,
+                Some(PaginationDescriptor::LinkHeader { .. })
+            ) {
+                value.as_str().unwrap_or_default().to_owned()
+            } else {
+                canonical_json(value)
+            };
+            let stop = if st.seen.contains(&key) {
+                Some(
+                    "Pagination detected a repeated cursor or page URL. Fix the server's next-page value before continuing.",
+                )
+            } else if opts.max_pages.is_some_and(|max| max > 0 && st.count >= max) {
+                Some(
+                    "Pagination reached max_pages before another request. Increase max_pages to continue.",
+                )
+            } else {
+                st.seen.insert(key);
+                None
+            };
+            if let Some(reason) = stop {
+                next = None;
+                st.pending_error = Some(Error::new(
+                    Diag::new(op.id.clone(), Category::UnexpectedResponse)
+                        .http_status(Some(response.meta.status))
+                        .request_id(response.meta.request_id.clone())
+                        .remediation(reason)
+                        .attempts(response.meta.attempts)
+                        .build(),
+                ));
+            }
         }
         if let Some(error) = self.check_items(op, items_field, &items, &response) {
             st.done = true;

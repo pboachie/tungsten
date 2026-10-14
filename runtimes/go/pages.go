@@ -10,12 +10,13 @@ import (
 )
 
 type pageState struct {
-	args           any
-	overrideURL    string
-	previousCursor any
-	hasPrevious    bool
-	done           bool
-	pendingError   *Error
+	requestURLs  map[string]bool
+	args         any
+	overrideURL  string
+	seen         map[string]bool
+	count        int
+	done         bool
+	pendingError *Error
 }
 
 func newPageState(args any) *pageState {
@@ -28,7 +29,7 @@ func newPageState(args any) *pageState {
 	if o, ok := args.(*Object); ok {
 		args = o.Clone()
 	}
-	return &pageState{args: args}
+	return &pageState{args: args, seen: map[string]bool{}, requestURLs: map[string]bool{}}
 }
 
 // Pages iterates the pages of an operation, like bufio.Scanner:
@@ -117,10 +118,27 @@ func (c *ClientCore) pageStep(ctx context.Context, op *OperationDescriptor, st *
 	if st.done {
 		return nil, nil, false
 	}
-	response, err := c.callWith(ctx, op, st.args, opts, st.overrideURL, claim)
+
+	if opts.MaxPages > 0 && st.count >= opts.MaxPages {
+		st.done = true
+		return nil, newDiag(op.ID, UnexpectedResponse).remedy("Pagination reached MaxPages before another request. Increase MaxPages to continue.").err(), true
+	}
+	if st.count == 0 && op.Pagination != nil && op.Pagination.Style == "cursor" {
+		if initial, ok := argAt(st.args, argName(op, op.Pagination.RequestParam)); ok && initial != nil && CanonicalJSON(initial) != `""` {
+			st.seen[CanonicalJSON(initial)] = true
+		}
+	}
+	var requestURLs map[string]bool
+	if op.Pagination != nil && op.Pagination.Style == "link_header" {
+		requestURLs = st.requestURLs
+	}
+	response, err := c.callWithPages(ctx, op, st.args, opts, st.overrideURL, claim, requestURLs)
 	if err != nil {
 		st.done = true
 		return nil, err, true
+	}
+	if requestURLs != nil && response.Meta.requestURL != nil {
+		requestURLs[*response.Meta.requestURL] = true
 	}
 	body := response.Value
 	itemsField := ""
@@ -166,9 +184,8 @@ func (c *ClientCore) pageStep(ctx context.Context, op *OperationDescriptor, st *
 					}
 				}
 			}
-			if has && !finished && !(st.hasPrevious && CanonicalJSON(st.previousCursor) == CanonicalJSON(cursor)) {
+			if has && !finished {
 				next = cursor
-				st.previousCursor, st.hasPrevious = cursor, true
 				setArg(st.args, argName(op, pg.RequestParam), cursor)
 			}
 		case "offset":
@@ -197,14 +214,16 @@ func (c *ClientCore) pageStep(ctx context.Context, op *OperationDescriptor, st *
 			}
 		case "link_header":
 			if link, ok := nextLink(response.Meta.Headers["link"]); ok {
-				base := st.overrideURL
-				if base == "" {
-					base = c.baseURL
+				base := ""
+				if response.Meta.requestURL != nil {
+					base = *response.Meta.requestURL
 				}
+				st.seen[base] = true
 				origin, err1 := url.Parse(base)
 				ref, err2 := url.Parse(link)
 				if err1 == nil && err2 == nil && origin.Scheme != "" {
 					resolved := origin.ResolveReference(ref)
+					resolved.Fragment = ""
 					if sameOrigin(origin, resolved) {
 						target := resolved.String()
 						st.overrideURL = target
@@ -217,6 +236,25 @@ func (c *ClientCore) pageStep(ctx context.Context, op *OperationDescriptor, st *
 					remedy("The next-page Link header points to another origin; it is not followed so credentials never leave the API's host. Stop paginating here.").
 					attempts(response.Meta.Attempts).err()
 			}
+		}
+	}
+	st.count++
+	if next != nil && st.pendingError == nil {
+		key := CanonicalJSON(next)
+		if op.Pagination != nil && op.Pagination.Style == "link_header" {
+			key, _ = next.(string)
+		}
+		stop := ""
+		if st.seen[key] {
+			stop = "Pagination detected a repeated cursor or page URL. Fix the server's next-page value before continuing."
+		} else if opts.MaxPages > 0 && st.count >= opts.MaxPages {
+			stop = "Pagination reached MaxPages before another request. Increase MaxPages to continue."
+		} else {
+			st.seen[key] = true
+		}
+		if stop != "" {
+			next = nil
+			st.pendingError = newDiag(op.ID, UnexpectedResponse).status(response.Meta.Status).requestID(response.Meta.RequestID).remedy(stop).attempts(response.Meta.Attempts).err()
 		}
 	}
 	if err := c.checkItems(op, itemsField, items, response); err != nil {

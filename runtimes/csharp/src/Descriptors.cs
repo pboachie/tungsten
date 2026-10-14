@@ -262,6 +262,7 @@ public sealed record TierRetries(RetryOptions ReadOnly, RetryOptions Mutating);
 /// <summary>The API.</summary>
 public sealed record ApiDescriptor
 {
+    public string Redirects { get; init; } = "same_origin_read";
     public string Name { get; init; } = "api";
     public string Version { get; init; } = "0";
     public string TungstenVersion { get; init; } = "";
@@ -494,6 +495,7 @@ public sealed class SdkDescriptors
             Name = Str(o["name"]) ?? "api",
             Version = Str(o["version"]) ?? "0",
             TungstenVersion = Str(o["tungsten_version"]) ?? "",
+            Redirects = o["redirects"] is null ? "same_origin_read" : Str(o["redirects"]) ?? throw new ClientConfigException("redirects must be same_origin_read or none"),
             Servers = Strings(o["servers"]),
             Auth = auth,
             ErrorCodes = Remedies(o["error_codes"]),
