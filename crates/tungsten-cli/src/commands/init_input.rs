@@ -165,6 +165,29 @@ pub(super) fn prepare(args: &mut InitArgs) -> Result<(), String> {
     Ok(())
 }
 
+/// Parse the input for format detection. JSON input is read with serde_json, whose
+/// recursion limit fails cleanly, so a deep Postman or Swagger document is never
+/// mistaken for OpenAPI because the YAML reader stopped early; its error is surfaced.
+fn detect_root(text: &str) -> Result<serde_json::Value, String> {
+    let body = text.trim_start_matches('\u{feff}').trim_start();
+    if body.starts_with('{') || body.starts_with('[') {
+        let error = match serde_json::from_str(body) {
+            Ok(value) => return Ok(value),
+            Err(error) => error,
+        };
+        // A YAML flow mapping that is not strict JSON is still accepted as YAML.
+        if let Ok(value) = tungsten_config::parse_yaml("input", text).0 {
+            return Ok(value);
+        }
+        return Err(format!(
+            "input looks like JSON but cannot be read (invalid syntax or nesting deeper than 128 levels): {error}"
+        ));
+    }
+    Ok(tungsten_config::parse_yaml("input", text)
+        .0
+        .unwrap_or(serde_json::Value::Null))
+}
+
 /// Detect a Swagger document and persist its bounded conversion for the ordinary
 /// compiler. OpenAPI input is left in place so relative references retain meaning.
 pub(super) fn import(args: &mut InitArgs) -> Result<Vec<String>, String> {
@@ -196,16 +219,17 @@ pub(super) fn import(args: &mut InitArgs) -> Result<Vec<String>, String> {
         );
     }
     let text = std::str::from_utf8(&bytes).map_err(|_| "input must be UTF-8 JSON or YAML")?;
-    let root = tungsten_config::parse_yaml("input", text)
-        .0
-        .unwrap_or(serde_json::Value::Null);
+    let root = detect_root(text)?;
     let is_curl = args.input_format == "curl"
         || (args.input_format == "auto"
             && (text.trim_start().starts_with("curl ")
                 || text.trim_start().starts_with("curl.exe ")
                 || source.extension().is_some_and(|ext| ext == "curl")));
     let is_http = args.input_format == "http"
-        || (args.input_format == "auto" && source.extension().is_some_and(|ext| ext == "http"));
+        || (args.input_format == "auto"
+            && source
+                .extension()
+                .is_some_and(|ext| matches!(ext.to_str(), Some("http" | "rest"))));
     let mut import_report = None;
     let mut converted = if is_curl || is_http {
         let limits = Limits::default();
@@ -243,14 +267,24 @@ pub(super) fn import(args: &mut InitArgs) -> Result<Vec<String>, String> {
             include_prefixes: args.include_prefix.clone(),
             exclude_prefixes: args.exclude_prefix.clone(),
             redact_properties: args.redact_property.iter().cloned().collect(),
+            route_templates: args.route.clone(),
             ..Default::default()
         };
         let imported = tungsten_contract::har::import_har(&bytes, &options, &limits)
             .map_err(|error| error.to_string())?;
-        if imported.report.observations.values().any(|notes| {
-            notes.contains(&tungsten_contract::har::CaptureNote::LiteralPathNeedsReview)
-        }) {
-            return Err("HAR paths need review before saving: pass --har-paths <JSON> mapping every imported URL path to a reviewed template; use an identical path only for a reviewed literal route".into());
+        // Captured paths may hold identifiers or secrets; never persist one unreviewed.
+        let literal = imported
+            .report
+            .observations
+            .values()
+            .filter(|notes| {
+                notes.contains(&tungsten_contract::har::CaptureNote::LiteralPathNeedsReview)
+            })
+            .count();
+        if literal > 0 {
+            return Err(format!(
+                "{literal} captured HAR path(s) need review before saving: pass --route templates (for example --route '/items/{{id}}', or --route /health for a literal route) or --har-paths <JSON> mapping each captured path to a reviewed template, or narrow the capture with --include-prefix/--exclude-prefix"
+            ));
         }
         let output = imported
             .infer(&ReviewedOverrides::default(), &limits)
@@ -284,10 +318,21 @@ pub(super) fn import(args: &mut InitArgs) -> Result<Vec<String>, String> {
             &[allowed],
             &tungsten_openapi::LoadOptions::default(),
         )
-        .map_err(|error| format!("endpoint manifest import failed: {}", error.message))?
+        .map_err(|error| {
+            format!(
+                "endpoint manifest import failed: {}",
+                error.render_short(None)
+            )
+        })?
     } else if root.get("swagger").is_some() {
-        tungsten_openapi::swagger::convert(&root)
-            .map_err(|error| format!("Swagger conversion failed: {}", error.message))?
+        tungsten_openapi::swagger::convert(&root).map_err(|error| {
+            format!(
+                "Swagger conversion failed at {}#{}: {}",
+                source.display(),
+                error.pointer,
+                error.message
+            )
+        })?
     } else {
         return Ok(vec![]);
     };

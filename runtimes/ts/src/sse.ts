@@ -26,7 +26,7 @@ export function utf8Length(text: string): number {
     const c = text.charCodeAt(i);
     if (c < 0x80) bytes += 1;
     else if (c < 0x800) bytes += 2;
-    else if (c >= 0xd800 && c <= 0xdbff && i + 1 < text.length) {
+    else if (c >= 0xd800 && c <= 0xdbff && i + 1 < text.length && text.charCodeAt(i + 1) >= 0xdc00 && text.charCodeAt(i + 1) <= 0xdfff) {
       bytes += 4;
       i += 1;
     } else bytes += 3;
@@ -45,10 +45,11 @@ export interface SseEvent {
 }
 
 export class SseParser {
-  #buffer = "";
+  #buffer: string[] = [];
   #started = false;
+  #pendingCR = false;
   #event = "";
-  #data = "";
+  #data: string[] = [];
   #hasData = false;
   #id: string | null = null;
   #retry: number | null = null;
@@ -71,69 +72,91 @@ export class SseParser {
    * follows. */
   push(chunk: string): SseEvent[] {
     if (this.#exceeded) return [];
-    let text = this.#buffer + chunk;
-    this.#buffer = "";
-    let chunkBytes = utf8Length(chunk);
-    if (!this.#started && text.length > 0) {
+    if (!this.#started && chunk.length > 0) {
       this.#started = true;
-      if (text.charCodeAt(0) === 0xfeff) {
-        text = text.slice(1);
-        chunkBytes -= 3;
-      }
+      if (chunk.charCodeAt(0) === 0xfeff) chunk = chunk.slice(1);
     }
     const out: SseEvent[] = [];
+    if (this.#pendingCR) {
+      if (chunk.length === 0) return out;
+      this.#pendingCR = false;
+      this.#complete(out);
+      if (chunk.startsWith("\n")) chunk = chunk.slice(1);
+    }
     let start = 0;
-    let completed = false;
-    for (let i = 0; i < text.length; i += 1) {
-      const c = text.charCodeAt(i);
+    for (let i = 0; i < chunk.length && !this.#exceeded; i += 1) {
+      const c = chunk.charCodeAt(i);
       if (c !== 10 && c !== 13) continue;
-      if (c === 13 && i + 1 === text.length) {
-        this.#hold(text, start, completed, chunkBytes);
+      this.#append(chunk.slice(start, i));
+      if (c === 13 && i + 1 === chunk.length) {
+        this.#bufferBytes += 1;
+        this.#pendingCR = true;
+        this.#checkLimit();
         return out;
       }
-      const line = text.slice(start, i);
-      if (c === 13 && text.charCodeAt(i + 1) === 10) i += 1;
+      this.#complete(out);
+      if (c === 13 && chunk.charCodeAt(i + 1) === 10) i += 1;
       start = i + 1;
-      completed = true;
-      this.#line(line, out);
-      if (this.#exceeded) return out;
     }
-    this.#hold(text, start, completed, chunkBytes);
+    if (!this.#exceeded) {
+      this.#append(chunk.slice(start));
+      this.#checkLimit();
+    }
     return out;
   }
 
-  /** Keep the unfinished line `text[start..]`; its bytes are counted from
-   * the chunk alone unless a line ended in this push. Too much ends the parser. */
-  #hold(text: string, start: number, completed: boolean, chunkBytes: number): void {
-    this.#buffer = text.slice(start);
-    this.#bufferBytes = completed ? utf8Length(this.#buffer) : this.#bufferBytes + chunkBytes;
-    if (this.#eventBytes + this.#bufferBytes > this.#max) {
-      this.#exceeded = true;
-      this.#buffer = "";
+  // Fragments are scanned and counted once, then joined only at a line end.
+  #append(text: string): void {
+    if (!text) return;
+    const previous = this.#buffer.at(-1);
+    const last = previous?.charCodeAt(previous.length - 1) ?? 0;
+    const first = text.charCodeAt(0);
+    this.#bufferBytes += utf8Length(text);
+    if (last >= 0xd800 && last <= 0xdbff && first >= 0xdc00 && first <= 0xdfff) this.#bufferBytes -= 2;
+    this.#buffer.push(text);
+  }
+
+  #checkLimit(): void {
+    if (this.#eventBytes + this.#bufferBytes > this.#max) this.#exceeded = true;
+    if (this.#exceeded) {
+      this.#buffer = [];
       this.#bufferBytes = 0;
+      this.#data = [];
+      this.#event = "";
+      this.#id = null;
+      this.#hasData = false;
     }
   }
 
-  /** The stream ended: a CR held back ends its line. Whatever is still
-   * open is discarded. */
+  #complete(out: SseEvent[]): void {
+    const line = this.#buffer.join("");
+    this.#buffer = [];
+    this.#bufferBytes = 0;
+    this.#line(line, out);
+    this.#checkLimit();
+  }
+
+  /** A held CR ends its line; any open event is discarded. */
   end(): SseEvent[] {
     const out: SseEvent[] = [];
-    if (!this.#exceeded && this.#buffer.endsWith("\r")) this.#line(this.#buffer.slice(0, -1), out);
-    this.#buffer = "";
+    if (!this.#exceeded && this.#pendingCR) this.#complete(out);
+    this.#pendingCR = false;
+    this.#buffer = [];
     this.#bufferBytes = 0;
     this.#event = "";
-    this.#data = "";
+    this.#data = [];
     this.#hasData = false;
+    this.#eventBytes = 0;
     return out;
   }
 
   #line(line: string, out: SseEvent[]): void {
     if (line === "") {
       if (this.#hasData) {
-        out.push({ event: this.#event === "" ? "message" : this.#event, data: this.#data.slice(0, -1), id: this.#id, retry: this.#retry });
+        out.push({ event: this.#event === "" ? "message" : this.#event, data: this.#data.join("\n"), id: this.#id, retry: this.#retry });
       }
       this.#event = "";
-      this.#data = "";
+      this.#data = [];
       this.#hasData = false;
       this.#eventBytes = 0;
       return;
@@ -153,7 +176,7 @@ export class SseParser {
         this.#event = value;
         break;
       case "data":
-        this.#data += `${value}\n`;
+        this.#data.push(value);
         this.#hasData = true;
         break;
       case "id":

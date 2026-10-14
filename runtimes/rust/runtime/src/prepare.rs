@@ -61,6 +61,9 @@ pub(crate) struct MacroClaim {
 impl MacroClaim {
     pub fn claim(&self, core: &ClientCore) -> Option<Error> {
         let token = self.token.as_deref()?;
+        if let Err(expired) = crate::verify::check_poll_deadline(&self.name) {
+            return Some(expired);
+        }
         if self.claimed.swap(true, Ordering::SeqCst) {
             return None;
         }
@@ -103,6 +106,8 @@ pub(crate) struct Prepared<'a> {
     pub secrets: SecretSet,
     /// The authorization-code scheme whose stored token this request carries.
     pub oauth: Option<String>,
+    /// Persists across retries and a 401 refresh of this logical request.
+    pub may_have_sent: AtomicBool,
 }
 
 pub(crate) fn fail(diagnostic: crate::types::Diagnostic) -> Error {
@@ -501,7 +506,13 @@ impl ClientCore {
         bind: Option<String>,
         preview_call: &str,
     ) -> Option<Error> {
+        let identity = crate::confirm::token_expiry(token)
+            .map(|(expiry, signature)| format!("tgc1.{expiry}.{signature}"));
+        let token = identity.as_deref().unwrap_or(token);
         let now = self.now();
+        if let Err(expired) = crate::verify::check_poll_deadline(id) {
+            return Some(expired);
+        }
         let mut used = crate::idempotency::lock(&self.inner.used_tokens);
         used.retain(|_, (_, expiry)| *expiry > now);
         if let Some((previous, _)) = used.get(token) {
@@ -534,6 +545,9 @@ impl ClientCore {
             || now.saturating_add(CONFIRMATION_TTL_MS),
             |(expiry, _)| expiry,
         );
+        if let Err(expired) = crate::verify::check_poll_deadline(id) {
+            return Some(expired);
+        }
         used.insert(token.to_owned(), (bind, expiry));
         None
     }
@@ -599,6 +613,7 @@ impl ClientCore {
             ));
         }
         let args = self.validate_args(op, supplied, purpose == Purpose::MacroPreview)?;
+        crate::verify::check_poll_deadline(&op.id)?;
         self.check_key(op, opts.idempotency_key.as_deref(), purpose)?;
         if purpose == Purpose::Call && step.is_none() {
             self.confirmed(
@@ -614,6 +629,7 @@ impl ClientCore {
         }
 
         let method = op.method;
+        crate::verify::check_poll_deadline(&op.id)?;
         let plan = match resolve_auth(&self.inner.api, op, &self.inner.auth, method, self).await {
             AuthResolution::Ok {
                 plan,
@@ -696,8 +712,10 @@ impl ClientCore {
         }
 
         let header = key_header(op);
-        let key =
-            self.idempotency_key(op, &args, opts, purpose, encoded.hash_material.as_deref())?;
+        crate::verify::check_poll_deadline(&op.id)?;
+        let key = self
+            .idempotency_key(op, &args, opts, purpose, encoded.hash_material.as_deref())
+            .await?;
         if let Some(key) = &key {
             headers.set(&header, key.clone(), true);
             secrets.insert(key.clone());
@@ -755,6 +773,7 @@ impl ClientCore {
             }
         }
         if purpose == Purpose::Call {
+            crate::verify::check_poll_deadline(&op.id)?;
             if let Some(claim) = step {
                 if let Some(spent) = claim.claim(self) {
                     return Err(spent);
@@ -797,6 +816,7 @@ impl ClientCore {
             hidden_query,
             secrets,
             oauth,
+            may_have_sent: AtomicBool::new(false),
         })
     }
 
@@ -1105,7 +1125,7 @@ impl ClientCore {
         }
     }
 
-    fn idempotency_key(
+    async fn idempotency_key(
         &self,
         op: &OperationDescriptor,
         args: &Map<String, Value>,
@@ -1147,15 +1167,23 @@ impl ClientCore {
                     )
                 };
                 let logical = sha256_hex(canonical_json(&Value::Object(args.clone())).as_bytes());
-                let store = &self.inner.store;
-                let _atomic = crate::idempotency::lock(&self.inner.key_lock);
-                if let Some(existing) = store.get(&op.id, &logical).filter(|k| !k.is_empty()) {
-                    return Ok(Some(existing));
-                }
+                static CAPACITY: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
+                let permit = CAPACITY
+                    .acquire()
+                    .await
+                    .map_err(|_| refuse("storage workers are busy"))?;
+                let store = self.inner.store.clone();
+                let scope = op.id.clone();
                 let key = uuid_v4().ok_or_else(|| refuse("no source of randomness"))?;
-                store.put(&op.id, &logical, &key);
-                if store.get(&op.id, &logical).as_deref() != Some(key.as_str()) {
-                    return Err(refuse("the key could not be stored"));
+                let result = tokio::task::spawn_blocking(move || {
+                    let _permit = permit;
+                    store.reserve(&scope, &logical, &key)
+                })
+                .await
+                .map_err(|_| refuse("storage worker failed"))?;
+                let key = result.map_err(|why| refuse(&why))?;
+                if key.is_empty() {
+                    return Err(refuse("store returned an invalid key"));
                 }
                 Ok(Some(key))
             }

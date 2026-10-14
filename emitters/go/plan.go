@@ -3,6 +3,7 @@
 package main
 
 import (
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -414,9 +415,11 @@ func (g *gen) planSuccess(p *opPlan, hint []string) {
 	if op.Pagination != nil {
 		p.itemType = "json.RawMessage"
 		if len(tys) > 0 {
-			if items := g.itemsRef(tys[0].ref, op.Pagination.ItemsField); items != nil {
+			if items, known := g.itemsRef(tys[0].ref, op.Pagination.ItemsField); items != nil {
 				p.itemType = g.goTypeOf(items, append(append([]string(nil), hint...), "item"))
 				p.itemSchema = g.schemaRef(items, append(append([]string(nil), hint...), "item"))
+			} else if known {
+				g.diags = append(g.diags, diagnostic{Code: "GO006", Severity: "warning", Message: "pagination items path " + op.Pagination.ItemsField + " on " + op.ID + " does not resolve to an array in the success schema; correct the path to generate typed page items"})
 			}
 		}
 	}
@@ -434,28 +437,67 @@ func (g *gen) planSuccess(p *opPlan, hint []string) {
 
 // itemsRef is the item type of a page: the items of the array at
 // itemsField of the body (the body itself when the field is empty).
-func (g *gen) itemsRef(body *TypeRef, itemsField string) *TypeRef {
-	list := body
-	if itemsField != "" {
-		s := g.ir.Resolve(body)
-		if s == nil || s.Kind != "record" {
-			return nil
-		}
-		list = nil
-		for i := range s.Fields {
-			if s.Fields[i].WireName == itemsField {
-				list = &s.Fields[i].Ty
+var paginationIndex = regexp.MustCompile(`\[(\d+)\]`)
+
+func (g *gen) itemsRef(body *TypeRef, itemsField string) (*TypeRef, bool) {
+	resolve := func(t *TypeRef) *Shape {
+		for i := 0; i <= len(g.ir.Types.Types)+64; i++ {
+			if t == nil {
+				return nil
 			}
+			shape := g.ir.Resolve(t)
+			if shape == nil {
+				return nil
+			}
+			if shape.Kind != "nullable" {
+				return shape
+			}
+			t = shape.Inner
 		}
-		if list == nil {
-			return nil
-		}
-	}
-	s := g.ir.Resolve(list)
-	if s == nil || s.Kind != "array" || s.Items == nil {
 		return nil
 	}
-	return s.Items
+	current := body
+	for _, segment := range strings.Split(paginationIndex.ReplaceAllString(itemsField, ".$1"), ".") {
+		if segment == "" {
+			continue
+		}
+		shape := resolve(current)
+		if shape == nil {
+			return nil, true
+		}
+		switch shape.Kind {
+		case "any":
+			return nil, false
+		case "record":
+			current = nil
+			for i := range shape.Fields {
+				if shape.Fields[i].WireName == segment {
+					current = &shape.Fields[i].Ty
+					break
+				}
+			}
+			if current == nil {
+				return nil, true
+			}
+		case "array":
+			for _, c := range segment {
+				if c < '0' || c > '9' {
+					return nil, true
+				}
+			}
+			current = shape.Items
+		default:
+			return nil, true
+		}
+	}
+	shape := resolve(current)
+	if shape != nil && shape.Kind == "any" {
+		return nil, false
+	}
+	if shape == nil || shape.Kind != "array" {
+		return nil, true
+	}
+	return shape.Items, true
 }
 
 // sensitiveRequestFields are the dotted argument paths of sensitive body

@@ -335,10 +335,10 @@ pub struct ClientNamespace {
 }
 
 impl<'a> SdkPlan<'a> {
-    /// The plan of `ir`, and no diagnostics: problems a language reports
-    /// (macros not in the canonical form) are data of the plan
-    /// ([`Self::macro_issues`]), so each emitter words them under its own
-    /// code. The diagnostics are kept for additions.
+    /// The plan of `ir`, with diagnostics for invalid declared pagination
+    /// item paths. Language-specific problems (such as macros outside the
+    /// canonical form) stay in the plan ([`Self::macro_issues`]) so each
+    /// emitter can report them under its own code.
     pub fn new(ir: &'a Ir) -> (SdkPlan<'a>, Diagnostics) {
         let multi = ir.namespaces.len() > 1;
         let (types, namespaces) = plan_types(ir);
@@ -357,7 +357,8 @@ impl<'a> SdkPlan<'a> {
         let (macros, issues) = plan_macros(&plan);
         plan.macros = macros;
         plan.macro_issues = issues;
-        (plan, Diagnostics::new())
+        let diagnostics = args::pagination_notes(ir);
+        (plan, diagnostics)
     }
 
     /// Whether the API has more than one namespace.
@@ -973,18 +974,7 @@ fn page_param(layout: &ArgsLayout<'_>, style: &PaginationStyle, first: bool) -> 
 /// The item type of a page: the items of the array at `items_field` of the
 /// success body (the body itself when the field is empty).
 fn items_ref(ir: &Ir, body: &TypeRef, items_field: &str) -> Option<TypeRef> {
-    let list = if items_field.is_empty() {
-        body
-    } else {
-        let Some(Shape::Record { fields, .. }) = args::resolve(ir, body) else {
-            return None;
-        };
-        &fields.iter().find(|f| f.wire_name == items_field)?.ty
-    };
-    match args::resolve(ir, list)? {
-        Shape::Array { items, .. } => Some(items.clone()),
-        _ => None,
-    }
+    args::page_items_ref(ir, body, items_field).cloned()
 }
 
 /// One success body, as the success plan compares them.

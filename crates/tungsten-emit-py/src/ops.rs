@@ -27,7 +27,7 @@ use crate::plan::{OpInfo, Plan, field_names, no_leading_digit, unique};
 use crate::py::{
     Py, PyImports, after_imports, doc_summary, doc_text, docstring, paragraphs, two_blank,
 };
-use crate::types::{Cx, Flavor, PyTy, Uses, field_doc, record_of, resolve, shape_notes};
+use crate::types::{Cx, Flavor, PyTy, Uses, field_doc, resolve, shape_notes};
 
 /// The error categories of the runtime contract (`Category` in types.py).
 pub(crate) const CATEGORIES: &[&str] = &[
@@ -416,16 +416,7 @@ pub(crate) fn op_shape<'a>(plan: &Plan<'a>, info: &OpInfo<'a>) -> OpShape<'a> {
 /// The item type of a page: the items of the array at `items_field` of the
 /// success body (the body itself when the field is empty).
 fn items_ref<'p>(plan: &'p Plan<'_>, body: &'p TypeRef, items_field: &str) -> Option<&'p TypeRef> {
-    let list = if items_field.is_empty() {
-        body
-    } else {
-        let (fields, _) = record_of(plan, body)?;
-        &fields.iter().find(|f| f.wire_name == items_field)?.ty
-    };
-    match resolve(plan, list)? {
-        Shape::Array { items, .. } => Some(items),
-        _ => None,
-    }
+    tungsten_emit::args::page_items_ref(plan.ir, body, items_field)
 }
 
 pub(crate) fn method_str(m: HttpMethod) -> &'static str {
@@ -1193,6 +1184,7 @@ pub(crate) fn api_py(plan: &Plan<'_>, opts: &Options) -> Py {
                     .collect(),
             ),
         ),
+        ("redirects", Py::str(ir.agent.redirects.as_str())),
         (
             "retries",
             Py::dict(vec![
@@ -1266,6 +1258,9 @@ pub(crate) fn descriptors_file(
     if imported {
         imports.add("tungsten_runtime", "require_import_policy_v1");
     }
+    if plan.ir.agent.redirects == tungsten_ir::RedirectPolicy::None {
+        imports.add("tungsten_runtime", "require_redirect_policy_v1");
+    }
     // Every descriptor names `_internal.Request`.
     uses.internal |= !plan.ops.is_empty();
     uses.add_to(plan, &mut imports, ".", ".models");
@@ -1281,6 +1276,9 @@ pub(crate) fn descriptors_file(
     if imported {
         w.blank();
         w.line("require_import_policy_v1()");
+    }
+    if plan.ir.agent.redirects == tungsten_ir::RedirectPolicy::None {
+        w.line("require_redirect_policy_v1()");
     }
     let mut out = w.finish();
     let text = body.finish();

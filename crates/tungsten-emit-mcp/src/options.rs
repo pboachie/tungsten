@@ -9,6 +9,8 @@
 //! | `sdk_path` | depend on the SDK by path (`file:<path>`) instead of a range | |
 //! | `runtime` | `@elysra/tungsten-mcp` version range | `^0.1.0` |
 //! | `runtime_path` | depend on `@elysra/tungsten-mcp` by path | |
+//! | `sdk_runtime` | direct `@elysra/tungsten-runtime` version range | `^0.1.0` |
+//! | `sdk_runtime_path` | use the same local client runtime as the linked SDK | |
 //! | `search.embeddings` | the optional embedding index: `provider` (`command` or `http`), `command` or `url`, `model`, `dimensions`, `api_key_env`, `required`, `batch_size`, `timeout_ms` (TG0570 to TG0574; see `embeddings`) | off |
 //! | `sandbox` | enable the opt-in `run_script` sandbox (engine `auto`: deno when installed, else the WASM isolate; set `sandbox.engine` in `customize`) | `false` |
 //!
@@ -43,6 +45,8 @@ pub struct Options {
     pub sdk: String,
     /// Dependency specifier of `@elysra/tungsten-mcp`.
     pub runtime: String,
+    /// Direct dependency shared with the generated SDK and MCP runtime peer.
+    pub sdk_runtime: String,
     pub sandbox: bool,
     /// `search.embeddings`: the optional embedding index.
     pub embeddings: Option<crate::embeddings::Config>,
@@ -73,6 +77,21 @@ impl Options {
                 false
             }
         };
+        let mut read_runtime = |key: &str| {
+            cfg.options.get(key).and_then(|value| match value.as_str() {
+                Some(text) if !text.trim().is_empty() => Some(text.to_owned()),
+                _ => {
+                    diags.push(Diagnostic::warning("TG0720", format!("target option `mcp.{key}` must be a non-empty string; the default is used")));
+                    None
+                }
+            })
+        };
+        let sdk_runtime_range = read_runtime("sdk_runtime");
+        let sdk_runtime_path = read_runtime("sdk_runtime_path");
+        let sdk_runtime = sdk_runtime_path.map_or_else(
+            || sdk_runtime_range.unwrap_or_else(|| DEFAULT_RANGE.into()),
+            |path| format!("file:{path}"),
+        );
         let embeddings = match crate::embeddings::parse(&cfg.options) {
             Ok(config) => config,
             Err(diagnostic) => {
@@ -88,6 +107,7 @@ impl Options {
                 sdk_package: shared.sdk_package,
                 sdk: shared.sdk,
                 runtime: shared.runtime,
+                sdk_runtime,
                 sandbox,
                 embeddings,
             },

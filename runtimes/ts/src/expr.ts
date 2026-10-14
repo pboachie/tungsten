@@ -68,7 +68,7 @@ export function evaluateExpr(expr: unknown, scope: Scope, depth = 0): unknown {
     const out: Record<string, unknown> = {};
     for (const key of keys) {
       const value = evaluateExpr(expr[key], scope, depth + 1);
-      if (value !== undefined) out[key] = value;
+      if (value !== undefined) Object.defineProperty(out, key, { value, enumerable: true, configurable: true, writable: true });
     }
     return out;
   }
@@ -125,7 +125,7 @@ export function evaluateDry(expr: unknown, scope: Scope, pending: ReadonlySet<st
     const out: Record<string, unknown> = {};
     for (const key of keys) {
       const value = evaluateDry(expr[key], scope, pending, depth + 1);
-      if (value !== undefined) out[key] = value;
+      if (value !== undefined) Object.defineProperty(out, key, { value, enumerable: true, configurable: true, writable: true });
     }
     return out;
   }

@@ -87,14 +87,19 @@ pub(crate) fn run(args: &InitArgs, json: bool, env: &CliEnv) -> Report {
                 );
             }
         }
-        if !selected.add_targets.is_empty()
-            && let Err(error) = super::init_edit::add_outputs(&selected)
-        {
-            return refused(
-                &error,
-                "inspect tungsten.yml.init-backup and tungsten.yml.init-pending before retrying",
-            );
-        }
+        let added = if selected.add_targets.is_empty() {
+            None
+        } else {
+            match super::init_edit::add_outputs(&selected) {
+                Ok(added) => Some(added),
+                Err(error) => {
+                    return refused(
+                        &error,
+                        "tungsten.yml is unchanged; correct the problem and retry",
+                    );
+                }
+            }
+        };
         // Existing reviewed values survive output additions; plain resume writes nothing.
         let manifest =
             std::fs::read_to_string(selected.dir.join("tungsten.yml")).unwrap_or_default();
@@ -113,28 +118,26 @@ pub(crate) fn run(args: &InitArgs, json: bool, env: &CliEnv) -> Report {
             namespace: first.map(|i| i.namespace.clone()).unwrap_or_default(),
             spec: first.map(|i| i.spec.clone()).unwrap_or_default(),
             spec_found: true,
-            files: if selected.add_targets.is_empty() {
-                vec![]
-            } else {
-                vec![
+            files: match &added {
+                None => vec![],
+                Some(added) => vec![
                     InitFile {
                         path: selected.dir.join("tungsten.yml").display().to_string(),
                         action: InitAction::Overwritten,
                     },
                     InitFile {
-                        path: selected
-                            .dir
-                            .join("tungsten.yml.init-backup")
-                            .display()
-                            .to_string(),
+                        path: added.backup.display().to_string(),
                         action: InitAction::Created,
                     },
-                ]
+                ],
             },
             generation: None,
             local_example: None,
             setup: None,
         }));
+        if let Some(warning) = added.and_then(|added| added.warning) {
+            r.human.push_str(&format!("warning: {warning}\n"));
+        }
         r
     } else {
         super::init::run(&selected)
@@ -274,7 +277,15 @@ fn walkthrough(args: &mut InitArgs) -> io::Result<bool> {
     eprintln!(
         "Tungsten setup. Type cancel at any prompt; back at input/summary returns to project selection."
     );
+    let invocation = args.clone();
     loop {
+        // Every pass starts from the invocation's values, so the answers of a
+        // pass left with `back` (method, endpoint, local setup, profiles,
+        // hidden operations, strict, ...) never carry into the next project.
+        // Only the last directory answer stays, as the prompt's default.
+        let dir = std::mem::take(&mut args.dir);
+        *args = invocation.clone();
+        args.dir = dir;
         let Some(dir) = answer("Project directory", &args.dir.display().to_string())? else {
             return Ok(false);
         };
@@ -310,6 +321,18 @@ fn walkthrough(args: &mut InitArgs) -> io::Result<bool> {
             eprintln!(
                 "Outputs (comma-separated multi-select):\n  [ ] typescript - JavaScript/TypeScript SDK (Node/npm)\n  [ ] python - Python SDK\n  [ ] rust - Rust SDK and CLI (Cargo)\n  [ ] cli - command-line client (Rust SDK + Cargo)\n  [ ] mcp - local MCP server (Node/npm; adds TypeScript)\n  [ ] webmcp - browser adapter (Node/npm; adds TypeScript)\n  [ ] docs - documentation"
             );
+            for target in tungsten_config::KNOWN_TARGETS {
+                if crate::targets::emitter(target).is_some()
+                    && !matches!(
+                        *target,
+                        "typescript" | "python" | "rust" | "mcp" | "webmcp" | "docs"
+                    )
+                {
+                    eprintln!(
+                        "  [ ] {target} - SDK source generation only; declared OpenAPI, no imported contracts or local build/setup"
+                    );
+                }
+            }
             let defaults = if args.targets.is_empty() {
                 "typescript,docs".to_owned()
             } else {
@@ -324,7 +347,7 @@ fn walkthrough(args: &mut InitArgs) -> io::Result<bool> {
                 .collect();
             if targets
                 .iter()
-                .any(|s| s != "cli" && !tungsten_config::KNOWN_TARGETS.contains(&s.as_str()))
+                .any(|s| s != "cli" && crate::targets::emitter(s).is_none())
             {
                 eprintln!("Unknown output; choose from the displayed list.");
                 continue;
@@ -336,7 +359,7 @@ fn walkthrough(args: &mut InitArgs) -> io::Result<bool> {
                 .map(|p| p.display().to_string())
                 .unwrap_or_default();
             let Some(source) = answer(
-                "API input file (OpenAPI, Swagger, Postman, HAR, .curl, .http or endpoint manifest); none for no schema; back",
+                "API input file (OpenAPI, Swagger, Postman, HAR, .curl, .http/.rest or endpoint manifest); none for no schema; back",
                 &default,
             )?
             else {
@@ -413,9 +436,9 @@ fn walkthrough(args: &mut InitArgs) -> io::Result<bool> {
                     };
                     args.har_paths = (!paths.is_empty()).then(|| paths.into());
                 }
-                let request_file = source
-                    .extension()
-                    .is_some_and(|extension| matches!(extension.to_str(), Some("http" | "curl")));
+                let request_file = source.extension().is_some_and(|extension| {
+                    matches!(extension.to_str(), Some("http" | "rest" | "curl"))
+                });
                 if request_file || args.input_format != "auto" {
                     let Some(routes) = answer(
                         "Saved request route templates, in request order (comma-separated)",
@@ -569,7 +592,18 @@ fn walkthrough(args: &mut InitArgs) -> io::Result<bool> {
                     "Configuration precedence: input shapes, tungsten.yml target/server overrides, then agent.yml per-operation policy. Inspect the effective contract with tungsten --json ir dump. Imported operations retain preview confirmation until explicitly reviewed; no credentials are required for the mock."
                 );
             }
-            if args.targets.iter().any(|t| t != "docs") {
+            let setup_supported = args.targets.iter().all(|t| {
+                matches!(
+                    t.as_str(),
+                    "typescript" | "python" | "rust" | "cli" | "mcp" | "webmcp" | "docs"
+                )
+            });
+            if !setup_supported {
+                eprintln!(
+                    "This selection includes source-only SDK outputs. Generate and inspect those sources with their language toolchains; this combination has no automated local setup or successful first-call claim."
+                );
+                args.local_example = false;
+            } else if args.targets.iter().any(|t| t != "docs") {
                 eprintln!(
                     "Local setup prerequisites: Node >=22/npm for TypeScript/MCP/WebMCP; Python >=3.12/venv/pip for Python; Rust >=1.88/Cargo for Rust/CLI. Downloads dependencies into this project, builds selected outputs and calls only a temporary loopback mock. npm lifecycle scripts are disabled; Python uses wheel downloads and the package build backend; Cargo runs dependency build scripts. Explicit runtime paths must be trusted source."
                 );

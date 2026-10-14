@@ -2,9 +2,12 @@
 # Installs the tungsten CLI from a GitHub Release. POSIX sh, no sudo.
 #
 #   curl -fsSL https://raw.githubusercontent.com/pboachie/tungsten/main/install.sh | sh
-#   sh install.sh [--version v0.1.0] [--dir DIR]
+#   curl -fsSL https://raw.githubusercontent.com/pboachie/tungsten/main/install.sh | sh -s -- --init
+#   sh install.sh [--version v0.1.0] [--dir DIR] [--init]
 #
 # Options (flags win over the environment):
+#   --init                        after installing, run the guided `tungsten init` setup;
+#                                 needs a terminal (it reads answers from /dev/tty)
 #   --version, TUNGSTEN_VERSION   release tag to install (default: the latest release)
 #   --dir, TUNGSTEN_INSTALL_DIR   target directory (default: $HOME/.local/bin)
 #   TUNGSTEN_REPO                 owner/name of the repository (default: pboachie/tungsten)
@@ -17,6 +20,10 @@
 # The archive is checked against the release's SHA256SUMS before anything is
 # installed. When the GitHub CLI (gh) is available the archive's build
 # provenance attestation is verified too.
+#
+# Exit status: 0 installed (and, with --init, set up); 1 nothing installed or
+# the install failed; 4 installed, but the --init setup was cancelled (or
+# refused); 5 installed, but the --init setup failed.
 set -eu
 
 say() { printf '%s\n' "install.sh: $*" >&2; }
@@ -86,7 +93,7 @@ main() {
       --init) launch_init=1; shift ;;
       --version) [ "$#" -ge 2 ] || die "--version needs a value"; version=$2; shift 2 ;;
       --dir) [ "$#" -ge 2 ] || die "--dir needs a value"; dir=$2; shift 2 ;;
-      -h | --help) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; return 0 ;;
+      -h | --help) awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; return 0 ;;
       *) die "unknown option: $1" ;;
     esac
   done
@@ -142,13 +149,25 @@ main() {
   chmod 755 "$dir/.tungsten.$$"
   mv -f "$dir/.tungsten.$$" "$dir/tungsten"
   say "installed $dir/tungsten"
-  if [ "$launch_init" -eq 1 ]; then
-    "$dir/tungsten" init --interactive </dev/tty || die "setup did not finish; the installed binary can resume with init"
-  fi
   case ":$PATH:" in
     *":$dir:"*) ;;
     *) say "note: $dir is not on your PATH; add it, for example: export PATH=\"$dir:\$PATH\"" ;;
   esac
+  if [ "$launch_init" -eq 1 ]; then
+    setup=0
+    "$dir/tungsten" init --interactive </dev/tty || setup=$?
+    case "$setup" in
+      0) ;;
+      4)
+        say "setup cancelled (or refused; see above): tungsten is installed; run $dir/tungsten init when ready"
+        exit 4
+        ;;
+      *)
+        say "setup failed (tungsten init exited $setup): tungsten is installed; correct the problem and run $dir/tungsten init again"
+        exit 5
+        ;;
+    esac
+  fi
 }
 
 verify_attestation() {
