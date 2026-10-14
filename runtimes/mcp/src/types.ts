@@ -12,6 +12,8 @@
  * PHASE-3 CONTRACT: additive changes only, with both sides updated.
  */
 
+import type { IncomingMessage } from "node:http";
+
 import type { Safety } from "@elysra/tungsten-runtime";
 
 /** JSON Schema (draft 2020-12) as plain data. */
@@ -213,6 +215,13 @@ export interface HttpOptions {
   allowedHosts?: string[];
   /** Origin header values accepted besides loopback origins. */
   allowedOrigins?: string[];
+  /** Require `Authorization: Bearer <token>` on every request; others get
+   * 401 before any session is created or looked up. Compared in constant
+   * time. A non-empty string. */
+  bearerToken?: string;
+  /** Custom request check, run before any session handling. Return `false`
+   * (or throw) to answer 401. When `bearerToken` is also set, both must pass. */
+  authorize?: (req: IncomingMessage) => boolean | Promise<boolean>;
   /** Concurrent sessions; further initialize requests get 503. Default 64. */
   maxSessions?: number;
   /** Largest request body in bytes. Default 4 MiB. */

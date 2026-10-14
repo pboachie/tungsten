@@ -9,6 +9,13 @@ changes.
 
 ## [Unreleased]
 
+### Added
+
+- MCP Streamable HTTP: optional `bearerToken` and `authorize(req)` options (and
+  `--token-env <NAME>` on generated servers) to require authentication; a
+  startup warning when binding a non-loopback host with no authentication and
+  no `allowedHosts`.
+
 ## [0.1.2]
 
 ### Breaking
