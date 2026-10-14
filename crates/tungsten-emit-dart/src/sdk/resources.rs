@@ -35,9 +35,7 @@ pub(crate) fn doc_text(doc: Option<&Doc>) -> String {
 
 /// The library of every resource, in plan order.
 pub(crate) fn libraries(g: &Gen<'_, '_>) -> Vec<Library> {
-    (0..g.plan.resources.len())
-        .map(|r| library(g, r))
-        .collect()
+    (0..g.plan.resources.len()).map(|r| library(g, r)).collect()
 }
 
 /// The `late final` declaration of a member `name` of class `class`
@@ -75,7 +73,10 @@ fn library(g: &Gen<'_, '_>, r: usize) -> Library {
     let mut locals: Vec<String> = vec![];
     let doc = doc_text(plan.resource.doc.as_ref());
     if doc.is_empty() {
-        w.doc(&format!("Operations under `{}`.", plan.resource.path_prefix));
+        w.doc(&format!(
+            "Operations under `{}`.",
+            plan.resource.path_prefix
+        ));
     } else {
         w.doc(&doc);
     }
@@ -203,7 +204,12 @@ fn preview(g: &Gen<'_, '_>, w: &mut Code, o: usize, name: &str) {
     let args = op_args(g, o);
     let tail = "Renders the request without sending it; a mutating operation's result carries a confirmation token bound to these arguments, passed back as `CallOptions(confirm: Confirm.token(...))`.";
     w.doc(&op_doc(g, o, &args, tail));
-    method_head(w, g, &format!("Future<Result<PreviewResult>> {name}"), &args);
+    method_head(
+        w,
+        g,
+        &format!("Future<Result<PreviewResult>> {name}"),
+        &args,
+    );
     w.indent();
     args_map(w, &args);
     let core = core_of(&args);

@@ -11,7 +11,9 @@ use tungsten_emit::sdk::descriptors::safety_str;
 use crate::dart::{Code, Expr, str_lit};
 use crate::{Gen, Library};
 
-use super::{LibraryText, args_doc, args_map, macro_args, macros_class, method_head, unique, upper_first};
+use super::{
+    LibraryText, args_doc, args_map, macro_args, macros_class, method_head, unique, upper_first,
+};
 
 /// The preview method names of the macros, by macro index: `preview<Macro>`,
 /// unique among the macro members.

@@ -174,12 +174,16 @@ pub(crate) fn library(g: &Gen<'_, '_>) -> Library {
     let tables = tables(g);
     let mut w = Code::new();
     w.doc("Operations by id and macros by name with JSON arguments keyed by the arguments layout keys, through the typed methods of a client (the runtime's `Dispatcher`). Arguments that do not fit a typed method go to the core as they are, so pre-flight validation reports them.");
-    w.line(format!("final class {DISPATCH_CLASS} extends Dispatcher {{"));
+    w.line(format!(
+        "final class {DISPATCH_CLASS} extends Dispatcher {{"
+    ));
     w.indent();
     w.doc("The dispatcher of [client].");
     let used: Vec<&Table> = tables.iter().filter(|t| !t.entries.is_empty()).collect();
     if used.is_empty() {
-        w.line(format!("{DISPATCH_CLASS}({client} client) : super(client.core);"));
+        w.line(format!(
+            "{DISPATCH_CLASS}({client} client) : super(client.core);"
+        ));
     } else {
         w.line(format!("{DISPATCH_CLASS}({client} client)"));
         w.indent();

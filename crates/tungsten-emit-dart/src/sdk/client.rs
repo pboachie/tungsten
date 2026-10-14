@@ -123,7 +123,12 @@ pub(crate) fn library(g: &Gen<'_, '_>) -> Library {
     }
     w.blank();
     w.doc("Operations by id and macros by name with JSON arguments, through the typed methods (for tools and drivers that only know ids and JSON).");
-    late_member(&mut w, DISPATCH_CLASS, "dispatch", &format!("{DISPATCH_CLASS}(this)"));
+    late_member(
+        &mut w,
+        DISPATCH_CLASS,
+        "dispatch",
+        &format!("{DISPATCH_CLASS}(this)"),
+    );
     if has_code_flow(g) {
         w.blank();
         w.doc("The OAuth2 authorization-code helpers (PKCE, authorization URL, code exchange, refresh) of the scheme named [scheme].");

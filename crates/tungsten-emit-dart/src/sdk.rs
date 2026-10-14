@@ -388,9 +388,10 @@ pub(crate) fn method_head(w: &mut Code, g: &Gen<'_, '_>, head: &str, args: &[Arg
         let decl = format!("{},", param_decl(g, a));
         if w.fits(&decl) {
             w.line(decl);
-        } else if let Some((head, name)) = decl.rsplit_once(' ').filter(|_| {
-            !matches!(a.presence, Presence::OptionalNullable)
-        }) {
+        } else if let Some((head, name)) = decl
+            .rsplit_once(' ')
+            .filter(|_| !matches!(a.presence, Presence::OptionalNullable))
+        {
             // `dart format` puts the name under a type it cannot split.
             w.line(head);
             w.indent();
@@ -545,7 +546,8 @@ pub(crate) fn resource_file(class: &str) -> String {
     let chars: Vec<char> = class.chars().collect();
     for (i, c) in chars.iter().enumerate() {
         if c.is_ascii_uppercase() {
-            let prev_lower = i > 0 && (chars[i - 1].is_ascii_lowercase() || chars[i - 1].is_ascii_digit());
+            let prev_lower =
+                i > 0 && (chars[i - 1].is_ascii_lowercase() || chars[i - 1].is_ascii_digit());
             let next_lower = chars.get(i + 1).is_some_and(|n| n.is_ascii_lowercase());
             let prev_upper = i > 0 && chars[i - 1].is_ascii_uppercase();
             if i > 0 && (prev_lower || (prev_upper && next_lower)) {
