@@ -3,11 +3,17 @@
 /// .NET runtime's JSON tree into F# values (options, lists, maps, `Patch`) through its `Decoder`
 /// (strict for arguments, lenient for responses, with the path of a mismatch), and encoders
 /// back. No reflection.
+///
+/// The module is qualified-only (`Codec.string`, `Codec.list`, ...) so that its names never shadow
+/// FSharp.Core's functions in generated code.
+[<RequireQualifiedAccess>]
 module Tungsten.Runtime.FSharp.Codec
 
 open System
 open System.Text.Json.Nodes
 open Tungsten.Runtime
+// Opened after Tungsten.Runtime: `Patch` is the F# union, not the .NET runtime's struct.
+open Tungsten.Runtime.FSharp
 
 /// A decoder of one JSON value.
 type Dec<'T> = JsonNode -> Decoder -> 'T
@@ -70,16 +76,15 @@ let requiredNullable (d: Decoder) (o: JsonObject) (name: string) (dec: Dec<'T>) 
 
 /// An optional member: `None` when absent.
 let optional (d: Decoder) (o: JsonObject) (name: string) (dec: Dec<'T>) : 'T option =
-    match o.TryGetPropertyValue name with
-    | true, v -> Some(d.At(name, v, func dec))
-    | _ -> None
+    let mutable v: JsonNode = null
+    if o.TryGetPropertyValue(name, &v) then Some(d.At(name, v, func dec)) else None
 
 /// An optional member that may be null: absent, null or a value.
 let patch (d: Decoder) (o: JsonObject) (name: string) (dec: Dec<'T>) : Patch<'T> =
-    match o.TryGetPropertyValue name with
-    | true, v when Json.IsNull v -> Patch.Null
-    | true, v -> Patch.Value(d.At(name, v, func dec))
-    | _ -> Patch.Absent
+    let mutable v: JsonNode = null
+    if not (o.TryGetPropertyValue(name, &v)) then Patch.Absent
+    elif Json.IsNull v then Patch.Null
+    else Patch.Value(d.At(name, v, func dec))
 
 /// The members of an open record its type does not declare; `None` when there are none.
 let extra (d: Decoder) (o: JsonObject) (known: string[]) : JsonObject option = d.Extra(o, known) |> Option.ofObj

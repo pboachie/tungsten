@@ -22,6 +22,7 @@
   <ItemGroup>
     <Compile Include="src/Identity.fs" />
     <Compile Include="src/Patch.fs" />
+    <Compile Include="src/Interop.fs" />
     <Compile Include="src/Results.fs" />
     <Compile Include="src/Codec.fs" />
     <Compile Include="src/Tasks.fs" />
