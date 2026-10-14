@@ -9,12 +9,17 @@ changes.
 
 ## [Unreleased]
 
-### Added
+### Changed
 
-- MCP Streamable HTTP: optional `bearerToken` and `authorize(req)` options (and
-  `--token-env <NAME>` on generated servers) to require authentication; a
-  startup warning when binding a non-loopback host with no authentication and
-  no `allowedHosts`.
+- The release workflow's PyPI publication job is enabled through trusted
+  publishing (repository variable `PYPI_PUBLISH`, `pypi` environment, no
+  stored token) and now refuses to upload a `tungsten-runtime` sdist or wheel
+  whose version does not equal the release tag, mirroring the npm publication
+  preflight.
+- The published `ghcr.io/pboachie/tungsten` container image carries
+  `org.opencontainers.image` title and description labels, so the GitHub
+  package page shows the package description instead of "No description
+  provided".
 
 ## [0.1.2]
 
