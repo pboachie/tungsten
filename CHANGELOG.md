@@ -9,6 +9,28 @@ changes.
 
 ## [Unreleased]
 
+## [0.1.3]
+
+### Added
+
+- A Kotlin target (`kotlin`, short form `kt`, `tungsten-emit-kotlin`): a
+  Kotlin/JVM SDK over the Java runtime and the new Kotlin layer
+  `runtimes/kotlin` (`io.github.pboachie.tungsten:tungsten-runtime-kotlin`,
+  JVM target 17, kotlin-stdlib and the Java runtime only). Data classes with
+  named, defaulted parameters (`Patch<T>` where null is a value, `T?`
+  otherwise), enum classes with wire values, sealed interfaces for unions,
+  blocking typed functions returning the runtime's `Result`, previews, pages
+  as a `Sequence` of page results, event streams, macros and `Dispatch`; a
+  Gradle (Kotlin DSL) project per SDK that builds with `kotlinc -Werror`.
+  The Kotlin layer reports `(kotlin)` in `User-Agent` and `tungsten-kt/0.1.0`
+  in `X-Tungsten-Runtime` and adds `Result` extensions (`getOrThrow`, `fold`,
+  `onError`). Options `group`, `artifact`, `package`, `version`, `runtime`,
+  `runtime_path` and `java_runtime_path`; diagnostics TG1030 to TG1035.
+  First version: blocking API only (no coroutines or `Flow`), JVM only, and
+  the Java target's gaps.
+- `ClientOptions.identity()` and `withIdentity(...)` in the Java runtime
+  (additive), so a layer on top of it reports its own runtime identity.
+
 ## [0.1.2]
 
 ### Breaking
