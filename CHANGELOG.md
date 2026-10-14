@@ -9,6 +9,12 @@ changes.
 
 ## [Unreleased]
 
+### Fixed
+
+- Python and Java runtimes bound schema `pattern` matching: strings over 64 KiB
+  skip the pattern check, and Java abandons a match after 1 s, treating it as
+  not checked.
+
 ## [0.1.2]
 
 ### Breaking
