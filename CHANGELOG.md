@@ -11,6 +11,9 @@ changes.
 
 ### Added
 
+- CI builds the compiler and example emitter at their declared Rust minimum,
+  checks the runtime at its own minimum, and rejects locked dependencies or
+  README compiler prerequisites that exceed or disagree with those floors.
 - The container accepts patched zlib updates above its minimum required Alpine
   version and verifies the installed version; Dependabot checks the root image.
 - Installers detect whether `gh attestation` is available, explain checksum-only
