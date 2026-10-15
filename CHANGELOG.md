@@ -14,11 +14,15 @@ changes.
 - Complete the architecture overview with explicit alternative input routes, separate
   optional configuration and all current SDK, CLI, MCP, WebMCP and docs outputs; link
   the reviewed response-contract recipe from the quickstart and gallery.
-
+- Imported-input setup validates built-in target policy support before saving
+  converted documents or project manifests; unsupported selections return TG0705
+  with supported alternatives instead of leaving an unusable project behind.
 - A bounded Rust/Axum source-declaration API in `tungsten_contract::source_axum`,
   with literal route/type evidence, file/line coverage and explicit unresolved
   constructs. It parses supplied source text without loading modules or running
   applications, macros or build scripts, and preserves separately reviewed overrides.
+  Routing/handler binding shadows and conditional router contexts remain
+  unresolved coverage rather than claimed operations.
 - Durable Java, C# and Ruby idempotency stores share the version-1 owner lease
   format with TypeScript, Python, Go and Rust. Automatic keys use atomic
   reservations while existing get/put-only custom stores remain compatible.

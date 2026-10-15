@@ -20,14 +20,6 @@ fn import_policy_refused_targets(chosen: &[String]) -> Vec<String> {
         .collect()
 }
 
-fn import_policy_warning(refused: &[String]) -> String {
-    format!(
-        "imported operations carry runtime policy that {} cannot enforce yet; `tungsten generate` will refuse {} and still write the other targets. Choose typescript, python, rust, mcp, webmcp or docs for this input",
-        refused.join(", "),
-        if refused.len() == 1 { "it" } else { "them" },
-    )
-}
-
 pub(crate) fn run(args: &InitArgs, json: bool, env: &CliEnv) -> Report {
     let bare = args.method.is_none()
         && args.from.is_none()
@@ -116,8 +108,30 @@ pub(crate) fn run(args: &InitArgs, json: bool, env: &CliEnv) -> Report {
         }
     }
     let imported_files = if !selected.resume && selected.method.is_none() {
-        match super::init_input::import(&mut selected) {
-            Ok(files) => files,
+        match super::init_input::import(&selected) {
+            Ok(Some(prepared)) => {
+                let refused_targets = import_policy_refused_targets(&selected.targets);
+                if !refused_targets.is_empty() {
+                    let mut report = Report::new(CommandName::Init);
+                    report.exit = exit::REFUSED;
+                    for name in refused_targets {
+                        report
+                            .diagnostics
+                            .push(crate::targets::import_policy_refusal(&name));
+                    }
+                    return report;
+                }
+                match super::init_input::save_import(&mut selected, prepared) {
+                    Ok(files) => files,
+                    Err(error) => {
+                        return refused(
+                            &error,
+                            "inspect the project and retry in a fresh directory; existing files are never overwritten",
+                        );
+                    }
+                }
+            }
+            Ok(None) => vec![],
             Err(error) => {
                 return refused(
                     &error,
@@ -135,13 +149,6 @@ pub(crate) fn run(args: &InitArgs, json: bool, env: &CliEnv) -> Report {
     } else if let Some(source) = original_remote {
         selected.source_url = Some(source.to_string_lossy().into_owned());
     }
-    // An imported input carries operation policy that only some targets
-    // enforce; say so before anything is generated.
-    let refused_targets = if imported_files.is_empty() {
-        vec![]
-    } else {
-        import_policy_refused_targets(&selected.targets)
-    };
     let mut report = if selected.resume {
         for name in ["tungsten.yml", "agent.yml"] {
             let path = selected.dir.join(name);
@@ -207,12 +214,6 @@ pub(crate) fn run(args: &InitArgs, json: bool, env: &CliEnv) -> Report {
     } else {
         super::init::run(&selected)
     };
-    if !refused_targets.is_empty() {
-        report.diagnostics.push(tungsten_core::Diagnostic::warning(
-            "TG0705",
-            import_policy_warning(&refused_targets),
-        ));
-    }
     if report.exit == exit::OK
         && selected.method.is_some()
         && let Some(CommandResult::Init(result)) = &mut report.result
