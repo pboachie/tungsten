@@ -240,6 +240,12 @@ values as `JsonNode`, OpenID Connect as a bearer token, no CLI or MCP).
   builder chains; routers with 19 or more chained routes no longer fail the
   lexical expression budget. Chains are walked iteratively, and only chains over
   4096 links fail, with a dedicated diagnostic.
+- Interrupting a remote HTTP(S) or Git input fetch no longer wedges the
+  `.tungsten-inputs` cache. Pins, content and Git tree files are written to unique
+  scratch names and renamed into place; the next online run holds a per-source
+  `acquire.lock`, discards abandoned `*.pending` entries and restores truncated
+  content-addressed files. Cache write, cleanup and lock-contention errors now
+  name the affected path and how to recover.
 - Dart pagination detects repeated cursors and page URLs, including the caller's
   starting cursor and cycles across earlier pages. Fetched pages are delivered
   before an `UNEXPECTED_RESPONSE` diagnostic, repeated requests are refused, and

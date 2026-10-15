@@ -13,7 +13,9 @@ use serde::{Deserialize, Serialize};
 use tungsten_core::{Diagnostic, SourceId};
 use url::Url;
 
-use crate::acquire::{Options, content_hash, directory, hash, read, write_new};
+use crate::acquire::{
+    Options, SourceLock, content_hash, directory, hash, pending_path, read, write_atomic,
+};
 
 const MAX_FILES: usize = 512;
 const MAX_FILE: usize = 8 * 1024 * 1024;
@@ -553,9 +555,21 @@ pub fn acquire(text: &str, project: &Path, options: &Options) -> Result<PathBuf,
     } else if options.offline {
         return Err(cache_error());
     }
-    let repository = dir.join("fetch.pending");
+    // Held until the pin is committed; also clears scratch repositories and
+    // partial writes left by an interrupted run.
+    let _lock = SourceLock::acquire(&dir, "TG0133")?;
+    let repository = pending_path(&dir, "fetch");
     // Exclusive creation: never run Git through a pre-existing config or symlink.
-    std::fs::create_dir(&repository).map_err(|_| cache_error())?;
+    std::fs::create_dir(&repository).map_err(|_| {
+        error(
+            "TG0133",
+            &format!(
+                "cannot create the Git scratch repository: {}",
+                repository.display()
+            ),
+            "use a writable project directory, then retry",
+        )
+    })?;
     let hooks = repository.join("empty-hooks");
     std::fs::create_dir(&hooks).map_err(|_| cache_error())?;
     let git = Git {
@@ -687,13 +701,13 @@ pub fn acquire(text: &str, project: &Path, options: &Options) -> Result<PathBuf,
             parent.push(part.as_os_str());
             directory(&parent)?;
         }
+        // The tree is keyed by the verified commit, so a missing or truncated
+        // file (an interrupted write) is restored from the fetched blob.
         let destination = tree.join(path);
-        if std::fs::symlink_metadata(&destination).is_ok() {
-            if content_hash(&destination)? != hash(&bytes) {
-                return Err(cache_error());
-            }
-        } else {
-            write_new(&destination, &bytes)?;
+        if !std::fs::symlink_metadata(&destination).is_ok_and(|meta| meta.file_type().is_file())
+            || content_hash(&destination)? != hash(&bytes)
+        {
+            write_atomic(&dir, &destination, &bytes, "TG0133")?;
         }
         files.insert(path.to_owned(), hash(&bytes));
     }
@@ -711,11 +725,11 @@ pub fn acquire(text: &str, project: &Path, options: &Options) -> Result<PathBuf,
         files,
     };
     let verified = verify(&dir, &source, &pin)?;
-    let pending = dir.join("source.lock.pending");
-    write_new(
-        &pending,
+    write_atomic(
+        &dir,
+        &lock,
         &serde_json::to_vec_pretty(&pin).map_err(|_| cache_error())?,
+        "TG0133",
     )?;
-    std::fs::rename(pending, lock).map_err(|_| cache_error())?;
     Ok(verified)
 }

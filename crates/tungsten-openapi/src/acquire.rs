@@ -150,6 +150,147 @@ pub(crate) fn write_new(path: &Path, bytes: &[u8]) -> Result<(), Diagnostic> {
     file.sync_all().map_err(|_| cache_error())
 }
 
+fn path_error(code: &str, message: &str, path: &Path, help: &str) -> Diagnostic {
+    Diagnostic::error(code, format!("{message}: {}", path.display())).with_help(help)
+}
+
+/// Exclusive acquisition of one source cache directory. The advisory lock is
+/// released by the operating system when its owner exits, including on Ctrl-C,
+/// so a held lock always names a live fetch and a free one proves that every
+/// `*.pending` entry beside it is an abandoned partial write.
+pub(crate) struct SourceLock {
+    _file: std::fs::File,
+}
+
+impl SourceLock {
+    /// Take the lock on `dir/acquire.lock`, then discard stale partial writes.
+    pub(crate) fn acquire(dir: &Path, code: &str) -> Result<Self, Diagnostic> {
+        let path = dir.join("acquire.lock");
+        let unsafe_entry = || {
+            path_error(
+                code,
+                "input cache lock is not a regular file",
+                &path,
+                "remove this entry and retry; it is recreated as an empty regular file",
+            )
+        };
+        match std::fs::symlink_metadata(&path) {
+            Ok(meta) if !meta.file_type().is_file() => return Err(unsafe_entry()),
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return Err(unsafe_entry()),
+        }
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&path)
+            .map_err(|_| {
+                path_error(
+                    code,
+                    "cannot open the input cache lock",
+                    &path,
+                    "use a writable project directory, then retry",
+                )
+            })?;
+        match file.try_lock() {
+            Ok(()) => {}
+            Err(std::fs::TryLockError::WouldBlock) => {
+                return Err(path_error(
+                    code,
+                    "another tungsten process is fetching this input (lock held)",
+                    &path,
+                    "wait for the other run to finish, then retry; the lock is released automatically when that process exits",
+                ));
+            }
+            Err(std::fs::TryLockError::Error(_)) => {
+                return Err(path_error(
+                    code,
+                    "cannot lock the input cache",
+                    &path,
+                    "use a local project directory whose filesystem supports file locks, then retry",
+                ));
+            }
+        }
+        for entry in std::fs::read_dir(dir).map_err(|_| cache_error())? {
+            let entry = entry.map_err(|_| cache_error())?;
+            if !entry.file_name().to_string_lossy().ends_with(".pending") {
+                continue;
+            }
+            let stale = entry.path();
+            // Never follow a link: only the entry itself is removed.
+            let removed = match std::fs::symlink_metadata(&stale) {
+                Ok(meta) if meta.file_type().is_dir() => std::fs::remove_dir_all(&stale),
+                Ok(_) => std::fs::remove_file(&stale),
+                Err(e) => Err(e),
+            };
+            if let Err(e) = removed
+                && e.kind() != std::io::ErrorKind::NotFound
+            {
+                return Err(path_error(
+                    code,
+                    "cannot remove a partial download left by an interrupted fetch",
+                    &stale,
+                    "delete this entry manually (it is never used as input), then retry",
+                ));
+            }
+        }
+        Ok(Self { _file: file })
+    }
+}
+
+/// A fresh scratch path in `dir` that no earlier or concurrent run can own.
+pub(crate) fn pending_path(dir: &Path, stem: &str) -> PathBuf {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_nanos());
+    dir.join(format!(
+        "{stem}.{}-{nanos}-{}.pending",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ))
+}
+
+/// Write `bytes` to a unique scratch file in `scratch` and atomically rename it
+/// over `destination`, so an interrupted write never leaves a partial file
+/// under its final name. `scratch` must be on the destination's filesystem.
+pub(crate) fn write_atomic(
+    scratch: &Path,
+    destination: &Path,
+    bytes: &[u8],
+    code: &str,
+) -> Result<(), Diagnostic> {
+    if std::fs::symlink_metadata(destination).is_ok_and(|meta| meta.file_type().is_dir()) {
+        return Err(path_error(
+            code,
+            "input cache entry is a directory where a file is expected",
+            destination,
+            "remove this entry and retry the fetch",
+        ));
+    }
+    let temporary = pending_path(scratch, "write");
+    write_new(&temporary, bytes).map_err(|_| {
+        let _ = std::fs::remove_file(&temporary);
+        path_error(
+            code,
+            "cannot write the input cache",
+            &temporary,
+            "use a writable project directory with free space, then retry",
+        )
+    })?;
+    std::fs::rename(&temporary, destination).map_err(|_| {
+        let _ = std::fs::remove_file(&temporary);
+        path_error(
+            code,
+            "cannot replace input cache entry",
+            destination,
+            "check permissions on this path, remove it if it is not a regular file, then retry",
+        )
+    })
+}
+
 /// Fetch or reuse a pinned input. The per-source lock and immutable content live
 /// in `project/.tungsten-inputs/<sha256-of-url>/`. Retain this directory securely
 /// when offline reproducibility is required. Ordinary online loads verify
@@ -247,6 +388,9 @@ pub fn acquire(source: &str, project: &Path, options: &Options) -> Result<PathBu
         }
         return Ok(path);
     }
+    // Held until the pin is committed; also clears partial writes from a run
+    // that was interrupted before it could clean up.
+    let _lock = SourceLock::acquire(&dir, "TG0123")?;
     let agent = ureq::Agent::config_builder()
         .timeout_global(Some(Duration::from_secs(30)))
         .timeout_connect(Some(Duration::from_secs(10)))
@@ -298,13 +442,13 @@ pub fn acquire(source: &str, project: &Path, options: &Options) -> Result<PathBu
             "review the upstream change, then pass --refresh-inputs explicitly to accept it; use --offline to regenerate from the existing pin",
         ));
     }
+    // Content files are addressed by the SHA256 of these verified bytes, so a
+    // missing or truncated one (an interrupted write) is restored in place.
     let path = content_path(&sha256);
-    if std::fs::symlink_metadata(&path).is_ok() {
-        if read(&path, MAX_BYTES)? != bytes {
-            return Err(cache_error());
-        }
-    } else {
-        write_new(&path, &bytes)?;
+    if !std::fs::symlink_metadata(&path).is_ok_and(|meta| meta.file_type().is_file())
+        || read(&path, MAX_BYTES)? != bytes
+    {
+        write_atomic(&dir, &path, &bytes, "TG0123")?;
     }
     if pin.as_ref().is_none_or(|pin| pin.sha256 != sha256) {
         let pin = Pin {
@@ -312,12 +456,12 @@ pub fn acquire(source: &str, project: &Path, options: &Options) -> Result<PathBu
             url: url.into(),
             sha256,
         };
-        let temporary = dir.join("source.lock.pending");
-        write_new(
-            &temporary,
+        write_atomic(
+            &dir,
+            &lock,
             &serde_json::to_vec_pretty(&pin).map_err(|_| cache_error())?,
+            "TG0123",
         )?;
-        std::fs::rename(&temporary, &lock).map_err(|_| cache_error())?;
     }
     Ok(path)
 }
