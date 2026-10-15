@@ -11,6 +11,9 @@ changes.
 
 ### Added
 
+- Durable Java, C# and Ruby idempotency stores share the version-1 owner lease
+  format with TypeScript, Python, Go and Rust. Automatic keys use atomic
+  reservations while existing get/put-only custom stores remain compatible.
 - Python and Rust `max_response_bytes`, Go and C# `MaxResponseBytes`, Java
   `maxResponseBytes` and Ruby `max_response_bytes` now bound ordinary response
   bodies on opt-in, matching TypeScript. Client defaults and per-call overrides

@@ -1137,27 +1137,14 @@ public sealed partial class ClientCore
                     await keyLock.WaitAsync(ct).ConfigureAwait(false);
                     try
                     {
-                        string? existing;
                         try
                         {
-                            existing = store.Get(op.Id, logical);
-                        }
-                        catch (Exception)
-                        {
-                            throw Refuse("the key could not be read");
-                        }
-                        if (!string.IsNullOrEmpty(existing))
-                        {
-                            return existing;
-                        }
-                        var key = Util.UuidV4();
-                        try
-                        {
-                            store.Put(op.Id, logical, key);
-                            if (store.Get(op.Id, logical) != key)
+                            string key = IdempotencyReservation.Reserve(store, op.Id, logical, Util.UuidV4());
+                            if (string.IsNullOrEmpty(key))
                             {
-                                throw Refuse("the key could not be stored");
+                                throw Refuse("the store returned no key");
                             }
+                            return key;
                         }
                         catch (Failure)
                         {
@@ -1167,7 +1154,6 @@ public sealed partial class ClientCore
                         {
                             throw Refuse("the key could not be stored");
                         }
-                        return key;
                     }
                     finally
                     {

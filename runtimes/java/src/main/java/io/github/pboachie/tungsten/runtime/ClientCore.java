@@ -668,25 +668,14 @@ public final class ClientCore {
                 }
                 String logical = Text.sha256Hex(Text.utf8(Json.canonical(args)));
                 synchronized (keyLock) {
-                    String existing;
+                    String key;
                     try {
-                        existing = store.get(op.id(), logical);
+                        key = store.reserve(op.id(), logical, Text.uuidV4());
                     } catch (RuntimeException e) {
                         throw storeFailure(op, "the store threw " + e.getClass().getSimpleName());
                     }
-                    if (existing != null && !existing.isEmpty()) {
-                        return existing;
-                    }
-                    String key = Text.uuidV4();
-                    String stored;
-                    try {
-                        store.put(op.id(), logical, key);
-                        stored = store.get(op.id(), logical);
-                    } catch (RuntimeException e) {
-                        throw storeFailure(op, "the store threw " + e.getClass().getSimpleName());
-                    }
-                    if (!key.equals(stored)) {
-                        throw storeFailure(op, "the key could not be stored");
+                    if (key == null || key.isEmpty()) {
+                        throw storeFailure(op, "the store returned no key");
                     }
                     return key;
                 }

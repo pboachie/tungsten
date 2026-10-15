@@ -1,12 +1,19 @@
 # frozen_string_literal: true
 # SPDX-License-Identifier: Apache-2.0
 
+require "json"
+require "fileutils"
+require "monitor"
+require "securerandom"
+require "socket"
+
 module Tungsten
   module Runtime
     # Keeps the idempotency key of each logical call for the life of the
     # process, so a retry of the same intent reuses it. Any object with
     # `get(scope, logical_id)` and `put(scope, logical_id, key)` can replace
-    # it (ClientOptions `idempotency_store`).
+    # it (ClientOptions `idempotency_store`). Persistent custom stores may add
+    # `reserve(scope, logical_id, candidate)` to allocate keys atomically.
     class MemoryIdempotencyStore
       def initialize
         @keys = {}
@@ -18,6 +25,189 @@ module Tungsten
 
       def put(scope, logical_id, key)
         @lock.synchronize { @keys[[scope, logical_id]] = key }
+      end
+
+      def reserve(scope, logical_id, candidate)
+        @lock.synchronize do
+          existing = @keys[[scope, logical_id]]
+          return existing if existing.is_a?(String) && !existing.empty?
+
+          @keys[[scope, logical_id]] = candidate
+        end
+      end
+    end
+
+    # Shared version-1 JSON store, compatible with the TypeScript, Python, Go
+    # and Rust runtimes. Atomic reserve waits up to two seconds for <path>.lock;
+    # another writer's lease is never reclaimed, even if its PID is no longer
+    # alive. Remove abandoned leases by hand after checking their owner.
+    # Writes use an exclusive mode-0600 temporary file and atomic rename. An
+    # unreadable or malformed existing file raises instead of issuing a new key.
+    class FileIdempotencyStore
+      LEASE_WAIT = 2.0
+      @file_locks = {}
+      @file_locks_guard = Mutex.new
+
+      class << self
+        def file_lock(path)
+          @file_locks_guard.synchronize { @file_locks[path] ||= Mutex.new }
+        end
+      end
+
+      attr_reader :path
+
+      def initialize(path)
+        @path = File.expand_path(path.to_s).freeze
+        @lock = Monitor.new
+      end
+
+      def get(scope, logical_id)
+        @lock.synchronize { read_keys.dig(scope, logical_id) }
+      end
+
+      def put(scope, logical_id, key)
+        write(scope, logical_id, key)
+      end
+
+      # Atomically choose one candidate across clients and processes. get/put
+      # remain supported for legacy custom stores; persistent callers should
+      # use reserve when allocating an automatic key.
+      def reserve(scope, logical_id, candidate)
+        FileIdempotencyStore.file_lock(@path).synchronize do
+          @lock.synchronize do
+            FileUtils.mkdir_p(File.dirname(@path))
+            lease = "#{@path}.lock"
+            token = acquire_lease(lease)
+            begin
+              existing = get(scope, logical_id)
+              return existing if existing.is_a?(String) && !existing.empty?
+
+              write(scope, logical_id, candidate) do
+                unless owns_lease?(lease, token)
+                  raise IOError, "the idempotency store lease #{lease} is no longer this writer's; the key was not stored"
+                end
+              end
+              candidate
+            ensure
+              release_lease(lease, token)
+            end
+          end
+        end
+      end
+
+      private
+
+      def read_keys
+        begin
+          text = File.read(@path, encoding: Encoding::UTF_8)
+        rescue Errno::ENOENT
+          return {}
+        end
+        raise IOError, "the idempotency store file is not valid UTF-8" unless text.valid_encoding?
+
+        begin
+          data = JSON.parse(text)
+        rescue JSON::ParserError, EncodingError, ArgumentError
+          raise IOError, "the idempotency store file is not valid JSON", cause: nil
+        end
+        valid = data.is_a?(Hash) && data["version"] == 1 && data["keys"].is_a?(Hash) &&
+                data["keys"].all? do |scope, values|
+                  scope.is_a?(String) && values.is_a?(Hash) &&
+                    values.all? { |id, key| id.is_a?(String) && key.is_a?(String) }
+                end
+        raise IOError, "the idempotency store file has an unknown format" unless valid
+
+        data["keys"]
+      end
+
+      # A same-directory, exclusive temporary file commits only after its
+      # contents are flushed and the reservation's owner token is rechecked.
+      def write(scope, logical_id, key)
+        unless [scope, logical_id, key].all? { |value| value.is_a?(String) }
+          raise ArgumentError, "idempotency scope, logical id and key must be strings"
+        end
+        @lock.synchronize do
+          keys = read_keys
+          (keys[scope] ||= {})[logical_id] = key
+          ordered = keys.keys.sort.to_h do |name|
+            [name, keys[name].keys.sort.to_h { |id| [id, keys[name][id]] }]
+          end
+          text = "#{JSON.pretty_generate({ "version" => 1, "keys" => ordered })}\n"
+          FileUtils.mkdir_p(File.dirname(@path))
+          temporary = "#{@path}.#{SecureRandom.hex(6)}.tmp"
+          created = false
+          begin
+            File.open(temporary, File::WRONLY | File::CREAT | File::EXCL, 0o600) do |file|
+              created = true
+              file.write(text)
+              file.flush
+              file.fsync
+            end
+            yield if block_given?
+            File.rename(temporary, @path)
+          ensure
+            begin
+              File.unlink(temporary) if created
+            rescue SystemCallError
+              # A completed rename or failed cleanup does not change the outcome.
+            end
+          end
+        end
+      end
+
+      def read_owner(lease)
+        text = File.read(lease, encoding: Encoding::UTF_8)
+        return nil unless text.valid_encoding?
+
+        owner = JSON.parse(text)
+        return nil unless owner.is_a?(Hash) && owner["version"] == 1 &&
+                          owner["host"].is_a?(String) && owner["pid"].is_a?(Integer) &&
+                          owner["pid"].positive? && owner["pid"] <= 9_007_199_254_740_991 &&
+                          owner["token"].is_a?(String) && !owner["token"].empty?
+
+        owner
+      rescue SystemCallError, IOError, JSON::ParserError, EncodingError, ArgumentError
+        nil
+      end
+
+      def owns_lease?(lease, token) = read_owner(lease)&.fetch("token") == token
+
+      def acquire_lease(lease)
+        token = SecureRandom.hex(16)
+        host = begin
+          Socket.gethostname
+        rescue SocketError, SystemCallError
+          ""
+        end
+        mine = "#{JSON.generate({ "version" => 1, "host" => host, "pid" => Process.pid, "token" => token })}\n"
+        deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + LEASE_WAIT
+        delay = 0.005
+        loop do
+          begin
+            File.open(lease, File::WRONLY | File::CREAT | File::EXCL, 0o600) { |file| file.write(mine) }
+            return token
+          rescue Errno::EEXIST
+            # Never reclaim a live, dead or malformed lease from another writer.
+          rescue StandardError
+            release_lease(lease, token)
+            raise
+          end
+          left = deadline - Process.clock_gettime(Process::CLOCK_MONOTONIC)
+          if left <= 0
+            owner = read_owner(lease)
+            detail = owner ? ", process #{owner["pid"]} on #{JSON.generate(owner["host"])}" : ""
+            remedy = owner ? "; try again, or remove the lease once that process no longer runs" : "; try again"
+            raise IOError, "the idempotency store is locked by another writer (#{lease}#{detail})#{remedy}"
+          end
+          sleep([delay, left].min)
+          delay = [delay * 2, 0.1].min
+        end
+      end
+
+      def release_lease(lease, token)
+        File.unlink(lease) if owns_lease?(lease, token)
+      rescue SystemCallError, IOError
+        # The reservation outcome is already decided; only our token may release.
       end
     end
 

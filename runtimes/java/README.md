@@ -23,6 +23,36 @@ Calls return a typed result or a diagnostic envelope describing recovery;
 unknown outcomes never justify blindly repeating a mutation. The API remains
 responsible for authorization and server-side idempotency.
 
+
+## Durable automatic keys
+
+Select `FileIdempotencyStore` through the client's idempotency-store option to
+reuse keys after a restart and coordinate automatic key allocation across
+processes. The version-1 JSON file and `<path>.lock` owner lease interoperate
+with the TypeScript, Python, Go, Rust, Java, C# and Ruby stores.
+
+```java
+ClientOptions options = ClientOptions.builder()
+    .idempotencyStore(new FileIdempotencyStore("./state/idempotency.json"))
+    .build();
+```
+
+Automatic allocation calls `reserve(scope, logicalId, candidate)` to return an existing nonempty key or
+persist one candidate while holding the shared lease. Existing get/put-only
+custom stores remain compatible; a custom backend shared across processes must
+provide its own atomic reservation. Direct `put` calls do not take the
+cross-process lease and must not race with another writer.
+
+The file store uses a private temporary file and atomic same-directory rename.
+Files and leases are created with mode 0600 on Unix; protect the containing
+directory with appropriate ACLs on Windows. Corrupt or unreadable files fail
+closed. Lease acquisition waits up to two seconds. A lease is never reclaimed
+automatically, including when its recorded PID appears dead: remove an abandoned
+`<path>.lock` only after confirming its owner has stopped. A writer checks its
+token immediately before commit and removes only its own lease. Use a filesystem
+that supports exclusive creation and atomic rename; this is not a distributed
+transaction service. Losing this file can cause a new key for a previous intent.
+
 ## Limits
 
 Set `ClientOptions.Builder.maxResponseBytes` to opt into an ordinary-response byte cap;
@@ -35,8 +65,7 @@ A mutation may have taken effect: inspect API state before retrying. The cap
 does not limit a successful SSE stream; use its event and collection limits.
 
 The Java API is synchronous. There is no async API, proxy configuration or
-pluggable HTTP transport. Built-in idempotency stores are memory-only;
-provide an application implementation for durable coordination. Preview and
+pluggable HTTP transport. Preview and
 confirmation state are scoped to the client that created them.
 
 No runtime ships a file-backed OAuth token store. Provide an application-owned
