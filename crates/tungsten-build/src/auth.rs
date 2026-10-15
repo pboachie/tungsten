@@ -34,6 +34,7 @@ use tungsten_openapi::RefTarget;
 use crate::NamespaceInput;
 use crate::ctx::{Ctx, child, doc_of, pointer, str_of};
 use crate::operations::METHODS;
+use crate::pathitem::PathItem;
 
 /// Header names that carry an API key when the document declares no
 /// security scheme (lowercase).
@@ -469,14 +470,15 @@ fn infer_api_key(cx: &mut Ctx<'_>, namespace: usize, doc: usize) -> Option<Defin
     };
     let mut found: Option<(String, RefTarget)> = None;
     'scan: for path in map.keys() {
-        let Some((item_at, item)) = cx.deref_value(&child(&paths, path)) else {
+        let Some(entry) = PathItem::resolve(cx, &child(&paths, path)) else {
             continue;
         };
-        let owners = std::iter::once(item_at.clone()).chain(
+        let owners = entry.owners().into_iter().chain(
             METHODS
                 .iter()
-                .filter(|(word, _)| item.get(*word).is_some_and(Value::is_object))
-                .map(|(word, _)| child(&item_at, word)),
+                .filter_map(|(word, _)| entry.operation(word))
+                .filter(|(_, op)| op.is_object())
+                .map(|(at, _)| at),
         );
         for owner in owners {
             let list = child(&owner, "parameters");
