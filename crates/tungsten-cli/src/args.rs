@@ -71,6 +71,19 @@ pub(crate) struct Cli {
     /// Print exactly one JSON document on stdout.
     #[arg(long, global = true)]
     pub json: bool,
+    /// Never start the commands of `external` targets. Without it, an
+    /// `external` target's command runs on `generate` (any mode), `check
+    /// --ci`, `diff` and `report`, with your privileges and with whatever
+    /// the manifest says; pass it (or set TUNGSTEN_NO_EXTERNAL=1) when the
+    /// manifest is not trusted, for example on a pull request in CI. Such
+    /// targets are reported as skipped (TG0807).
+    #[arg(
+        long,
+        global = true,
+        env = "TUNGSTEN_NO_EXTERNAL",
+        value_parser = clap::builder::BoolishValueParser::new()
+    )]
+    pub no_external: bool,
     #[command(subcommand)]
     pub command: Command,
 }
@@ -183,7 +196,8 @@ pub(crate) struct CheckArgs {
     pub input: InputArgs,
     /// CI mode: never prompt, never color, and fail (TG0901) when the
     /// generated output of a target differs from what `generate` would
-    /// write.
+    /// write. This runs every configured target's emitter in memory,
+    /// including the commands of `external` targets (see --no-external).
     #[arg(long)]
     pub ci: bool,
     /// Treat warnings as errors.
@@ -229,6 +243,13 @@ pub(crate) struct ReportArgs {
     /// scripts).
     #[arg(long, value_name = "FILE")]
     pub html: Option<PathBuf>,
+    /// Also run the emitter of every target this version knows, not only
+    /// the configured ones, to fill the coverage table and the token
+    /// budgets of targets that are not enabled yet. Slow on a large API.
+    /// Without it those targets are listed as `not_configured`. Configured
+    /// `external` targets run either way (see --no-external).
+    #[arg(long)]
+    pub all_targets: bool,
 }
 
 #[derive(Debug, Args)]

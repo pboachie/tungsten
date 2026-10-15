@@ -805,6 +805,12 @@ pub enum CoverageStatus {
     NoEmitter,
     /// The emitter reported errors, or the project has errors.
     Failed,
+    /// Not listed under `targets` in tungsten.yml, so its emitter was not
+    /// run (`report --all-targets` runs it).
+    NotConfigured,
+    /// An `external` target whose command was not started
+    /// (`--no-external`, TG0807).
+    Skipped,
 }
 
 /// The safety metadata of one operation (the report's safety matrix).

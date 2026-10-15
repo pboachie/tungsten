@@ -11,6 +11,16 @@ changes.
 
 ### Added
 
+- `--no-external` (global; also `TUNGSTEN_NO_EXTERNAL=1`) skips every
+  `external` target instead of starting its command, with an informational
+  TG0807 notice, so CI can run `check --ci`, `report`, `diff` and `generate`
+  over a manifest it does not trust. Without it nothing changes. SECURITY.md,
+  the README, the `targets` description in the `tungsten.yml` schema and the
+  `check --ci` help now say that `external` commands run on every command that
+  emits in memory (`generate --dry-run` and `--check`, `check --ci`, `diff`,
+  `report`); the source comment that said otherwise is corrected.
+- `report --all-targets` runs the emitter of every known target, as `report`
+  used to.
 - Postman import omits unsupported requests and folders per item instead of
   failing the whole collection: non-raw or non-JSON bodies, non-JSON saved
   responses, unsupported auth helpers, pre-request scripts and unresolved or
@@ -73,6 +83,13 @@ values as `JsonNode`, OpenID Connect as a bearer token, no CLI or MCP).
 
 ### Changed
 
+- `tungsten report` runs only the emitters of the configured targets. The
+  other known targets stay in `coverage.targets` with the new status
+  `not_configured` (and, for an `external` target skipped by `--no-external`,
+  `skipped`) and their emitter is not run, so `report` on a large spec takes
+  about as long as `generate --dry-run` (the Stripe showcase spec took 3 min
+  18 s against 1.3 s for `check`). The token budgets of `docs` and `mcp` are
+  empty unless that target is configured or `--all-targets` is given.
 - `tungsten check` prints a warning or info code at most three times in the
   human output, then one line with the number left out, and its summary lists
   the count per code (`--all-warnings` prints everything; `--json` has always

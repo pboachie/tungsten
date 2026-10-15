@@ -447,6 +447,10 @@ pub mod codes {
             "external emitter returned a path outside the output directory",
         ),
         ("TG0806", "diagnostic reported by an external emitter"),
+        (
+            "TG0807",
+            "external target not run: external emitters are off (--no-external)",
+        ),
         ("TG0901", "generated output is stale relative to its inputs"),
         (
             "TG0902",
