@@ -684,6 +684,9 @@ class ClientOptions:
     #: May tighten the API default; an API configured with none cannot be relaxed.
     redirects: RedirectPolicy | None = None
 
+    #: Optional ordinary-response byte cap (positive safe integer). Unset: unbounded.
+    max_response_bytes: int | None = None
+
 
 class CallOptions(TypedDict, total=False):
     #: Maximum successful pages; omitted or zero means unbounded.
@@ -693,6 +696,7 @@ class CallOptions(TypedDict, total=False):
     confirm: str | Literal[True]
     allow_confirm_true: bool
     timeout_ms: int
+    max_response_bytes: int
     verify: bool
     headers: Mapping[str, str]
 

@@ -688,6 +688,8 @@ const (
 
 // ClientOptions configures a client.
 type ClientOptions struct {
+	// Optional ordinary-response byte cap; a positive safe integer. Nil is unbounded.
+	MaxResponseBytes *int64
 	// Redirects may tighten the API policy. The zero value inherits it.
 	Redirects RedirectPolicy
 	// BaseURL defaults to the first server.
@@ -779,6 +781,8 @@ func (c Confirm) String() string {
 
 // CallOptions configures one call.
 type CallOptions struct {
+	// Override the client ordinary-response byte cap.
+	MaxResponseBytes *int64
 	// MaxPages bounds a traversal; zero means unbounded.
 	MaxPages int
 	// IdempotencyKey is required for caller_owned operations with a

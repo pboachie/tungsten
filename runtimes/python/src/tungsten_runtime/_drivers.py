@@ -60,6 +60,15 @@ from ._effects import (
 )
 
 
+def _oversized_length(response: httpx.Response, maximum: int | None) -> bool:
+    value = response.headers.get("content-length")
+    if maximum is None or value is None or not value.isascii() or not value.isdigit():
+        return False
+    digits = value.lstrip("0") or "0"
+    bound = str(maximum)
+    return len(digits) > len(bound) or (len(digits) == len(bound) and digits > bound)
+
+
 def _no_cookies() -> CookieJar:
     """A jar that keeps nothing: ``Set-Cookie`` answers never reach later
     requests; cookies are only what the auth profile and the call say."""
@@ -790,18 +799,26 @@ class SyncDriver:
             return Streaming(response.status_code, _headers(response), SyncStream(response))
         try:
             chunks: list[bytes] = []
-            failure: Literal["timeout", "broken"] | None = None
+            failure: Literal["timeout", "broken", "oversized"] | None = None
             try:
-                for chunk in response.iter_bytes():
-                    chunks.append(chunk)
-                    if time.monotonic() > deadline:
-                        failure = "timeout"
-                        break
+                size = 0
+                if _oversized_length(response, req.max_response_bytes):
+                    failure = "oversized"
+                else:
+                    for chunk in response.iter_bytes():
+                        size += len(chunk)
+                        if req.max_response_bytes is not None and size > req.max_response_bytes:
+                            failure = "oversized"
+                            break
+                        chunks.append(chunk)
+                        if time.monotonic() > deadline:
+                            failure = "timeout"
+                            break
             except httpx.TimeoutException:
                 failure = "timeout"
             except Exception:
                 failure = "broken"
-            if time.monotonic() >= deadline:
+            if time.monotonic() >= deadline and failure != "oversized":
                 failure = "timeout"
             return Answered(
                 response.status_code, _headers(response), None if failure else b"".join(chunks), failure
@@ -1002,19 +1019,26 @@ class AsyncDriver:
             return Streaming(response.status_code, _headers(response), _AsyncStream(response))
         try:
             chunks: list[bytes] = []
-            failure: Literal["timeout", "broken"] | None = None
+            failure: Literal["timeout", "broken", "oversized"] | None = None
 
-            async def read_body() -> None:
+            async def read_body() -> Literal["oversized"] | None:
+                if _oversized_length(response, req.max_response_bytes):
+                    return "oversized"
+                size = 0
                 async for chunk in response.aiter_bytes():
+                    size += len(chunk)
+                    if req.max_response_bytes is not None and size > req.max_response_bytes:
+                        return "oversized"
                     chunks.append(chunk)
+                return None
 
             try:
-                await _before_deadline(read_body(), deadline)
+                failure = await _before_deadline(read_body(), deadline)
             except httpx.TimeoutException:
                 failure = "timeout"
             except Exception:
                 failure = "broken"
-            if time.monotonic() >= deadline:
+            if time.monotonic() >= deadline and failure != "oversized":
                 failure = "timeout"
             return Answered(
                 response.status_code, _headers(response), None if failure else b"".join(chunks), failure

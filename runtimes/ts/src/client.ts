@@ -566,7 +566,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
         caller?.removeEventListener("abort", forward);
       }
     };
-    return new EventStream<T>(items(this), () => controller.abort());
+    return new EventStream<T>(items(this), () => controller.abort(), safeId(op), !(isRecord(op) && isRecord(op.agent) && op.agent.safety === "read_only"));
   }
 
   /** Call a read operation until `until` holds on its body or the budget
@@ -698,7 +698,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
       pageUrls.add(prepared.value.url);
     }
     let result = await this.#send<T>(prepared.value, opts);
-    if (!result.ok && result.error.http_status === 401 && prepared.value.oauth !== null) {
+    if (!result.ok && result.error.http_status === 401 && result.error.code !== "RESPONSE_TOO_LARGE" && prepared.value.oauth !== null) {
       // An authorization-code token the server no longer accepts: refresh
       // it and send once more. Never a second time.
       result = await this.#retryRejected(prepared.value, result, opts);
@@ -903,7 +903,8 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
         remediation: "redirects must be same_origin_read or none; nothing was sent.",
       }));
     }
-    if (opts.maxResponseBytes !== undefined && (!Number.isSafeInteger(opts.maxResponseBytes) || opts.maxResponseBytes < 1)) {
+    const maximumResponseBytes = opts.maxResponseBytes ?? this.options.maxResponseBytes;
+    if (maximumResponseBytes !== undefined && (!Number.isSafeInteger(maximumResponseBytes) || maximumResponseBytes < 1)) {
       return fail(diagnostic(safeId(op), "VALIDATION_FAILED", {
         failed_parameter: "maxResponseBytes",
         remediation: "maxResponseBytes must be a positive safe integer; nothing was sent.",
@@ -1351,11 +1352,11 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
         signal: opts.signal,
         stream,
         idleMs,
-        maxResponseBytes: opts.maxResponseBytes,
+        maxResponseBytes: opts.maxResponseBytes ?? this.options.maxResponseBytes,
         deadlineMs: (opts as StepOptions)[POLL_DEADLINE],
       });
       let current = { url: prepared.url, method: prepared.method, body: prepared.body };
-      for (let hops = 0; !this.#redirectsDisabled && !mutation && hops < MAX_REDIRECTS && outcome.kind === "response" && REDIRECT_STATUSES.has(outcome.status); hops += 1) {
+      for (let hops = 0; !this.#redirectsDisabled && !mutation && hops < MAX_REDIRECTS && outcome.kind === "response" && outcome.bodyFailure !== "oversized" && REDIRECT_STATUSES.has(outcome.status); hops += 1) {
         const next = this.#redirectTarget(prepared, current.url, outcome.headers.location);
         if (next === null) break;
         const rewrite = outcome.status !== 307 && outcome.status !== 308 && current.method !== "GET" && current.method !== "HEAD";
@@ -1376,7 +1377,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
           signal: opts.signal,
           stream,
           idleMs,
-          maxResponseBytes: opts.maxResponseBytes,
+          maxResponseBytes: opts.maxResponseBytes ?? this.options.maxResponseBytes,
           deadlineMs: (opts as StepOptions)[POLL_DEADLINE],
         });
       }

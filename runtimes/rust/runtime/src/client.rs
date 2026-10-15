@@ -75,6 +75,7 @@ pub(crate) struct Inner {
     pub headers: BTreeMap<String, String>,
     pub base_url: Option<String>,
     pub timeout: Duration,
+    pub max_response_bytes: Option<u64>,
     pub max_event_bytes: usize,
     pub max_collect_bytes: usize,
     pub max_collect_time: Duration,
@@ -189,6 +190,7 @@ impl ClientCore {
                 headers: options.headers,
                 base_url,
                 timeout: options.timeout,
+                max_response_bytes: options.max_response_bytes,
                 max_event_bytes: options.max_event_bytes.max(1),
                 max_collect_bytes: options.max_collect_bytes.max(1),
                 max_collect_time: options.max_collect_time.max(Duration::from_millis(1)),
@@ -360,7 +362,9 @@ impl ClientCore {
         }
         let mut response = match self.send_tracked(&prepared, opts, request_url).await {
             Err(rejected)
-                if rejected.diagnostic.http_status == Some(401) && prepared.oauth.is_some() =>
+                if rejected.diagnostic.http_status == Some(401)
+                    && rejected.diagnostic.code.as_deref() != Some("RESPONSE_TOO_LARGE")
+                    && prepared.oauth.is_some() =>
             {
                 // An authorization-code token the server no longer accepts:
                 // refresh it and send once more. Never a second time.
