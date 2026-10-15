@@ -546,6 +546,27 @@ pub mod codes {
             "TG1065",
             "discriminated union variant without a tag value; the Ruby SDK tries the variants in order",
         ),
+        ("TG1070", "invalid dart target option; the default is used"),
+        (
+            "TG1071",
+            "schema has no Dart type in the dart target; the JSON value (Object?) is used",
+        ),
+        (
+            "TG1072",
+            "macro is not in the canonical form; the dart target leaves it out",
+        ),
+        (
+            "TG1073",
+            "OpenID Connect scheme is sent as a bearer token by the dart target",
+        ),
+        (
+            "TG1074",
+            "different success bodies by status: the dart typed result is the JSON value (Object?)",
+        ),
+        (
+            "TG1075",
+            "discriminated union variant without a tag value: the dart target tries variants in order",
+        ),
     ];
 
     pub fn describe(code: &str) -> Option<&'static str> {

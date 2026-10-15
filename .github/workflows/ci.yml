@@ -1,5 +1,5 @@
-# Public CI: repository rules, format, lint, build (Rust, Go, Java and Ruby) and dependency
-# policy. The test suite lives in the private tungsten-ops repository; the last
+# Public CI: repository rules, format, lint, build (Rust, Go, Java, C#, Ruby and Dart) and
+# dependency policy. The test suite lives in the private tungsten-ops repository; the last
 # job asks it to test this commit and it reports back as the commit status "tungsten-ops/ci".
 #
 # The job names "fmt, clippy, build", "cargo-deny" and "repository-guard" are
@@ -262,6 +262,33 @@ jobs:
       - name: gem build
         working-directory: runtimes/ruby
         run: gem build tungsten-runtime.gemspec --output "$RUNNER_TEMP/tungsten-runtime.gem"
+
+  # The Dart runtime (runtimes/dart, dart:io plus package:crypto): `dart pub
+  # get`, `dart format` without changes and `dart analyze --fatal-infos` with
+  # the committed analysis options; its tests and the packages the Dart
+  # emitter generates run in tungsten-ops.
+  dart:
+    name: dart runtime check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
+        with:
+          sdk: 3.13.5
+      - name: dart pub get
+        working-directory: runtimes/dart
+        run: dart pub get
+      - name: dart format
+        working-directory: runtimes/dart
+        run: dart format --output=none --set-exit-if-changed .
+      - name: dart analyze --fatal-infos
+        working-directory: runtimes/dart
+        run: dart analyze --fatal-infos
 
   guard:
     name: repository-guard

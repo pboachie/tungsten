@@ -236,6 +236,7 @@ fn target_keys(target: &str) -> &'static [&'static str] {
             "out",
         ],
         "ruby" => &["gem", "module", "version", "runtime", "runtime_path", "out"],
+        "dart" => &["package", "version", "runtime", "runtime_path", "out"],
         "mcp" => &["package", "runtime", "out"],
         "webmcp" => &[
             "package",

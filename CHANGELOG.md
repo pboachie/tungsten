@@ -11,6 +11,14 @@ changes.
 
 ### Added
 
+- A Dart SDK target, `dart`: a pub package with final model classes that
+  decode and encode themselves, sealed unions, `Future` methods returning
+  `Result<T>`, `Stream` pages and `EventStream<T>` streams, typed macros and
+  a `Dispatch` entry point, over the new `dart:io` runtime `tungsten_runtime`
+  (`runtimes/dart`, Dart 3.6 or later, `package:crypto` as its only
+  dependency). Options `package`, `version`, `runtime` and `runtime_path`;
+  diagnostics TG1070 to TG1079. The Dart runtime passes the L4 contract
+  suite in parity with TypeScript, with no skips.
 - Generated Rust CLIs: `--max-pages <N>` (with `--all`) stops paging after N
   pages and notes on standard error that more pages are available. There is no
   default limit.
