@@ -225,6 +225,15 @@ fn target_keys(target: &str) -> &'static [&'static str] {
             "runtime_path",
             "out",
         ],
+        "fsharp" => &[
+            "package_id",
+            "namespace",
+            "version",
+            "runtime",
+            "runtime_path",
+            "csharp_runtime_path",
+            "out",
+        ],
         "kotlin" => &[
             "group",
             "artifact",

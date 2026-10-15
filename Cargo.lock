@@ -994,6 +994,7 @@ dependencies = [
  "tungsten-emit-csharp",
  "tungsten-emit-dart",
  "tungsten-emit-docs",
+ "tungsten-emit-fsharp",
  "tungsten-emit-java",
  "tungsten-emit-kotlin",
  "tungsten-emit-mcp",
@@ -1085,6 +1086,16 @@ dependencies = [
  "tungsten-emit",
  "tungsten-ir",
  "tungsten-tokens",
+]
+
+[[package]]
+name = "tungsten-emit-fsharp"
+version = "0.1.2"
+dependencies = [
+ "serde_json",
+ "tungsten-core",
+ "tungsten-emit",
+ "tungsten-ir",
 ]
 
 [[package]]
