@@ -17,8 +17,8 @@ body:
   - type: textarea
     id: openapi
     attributes:
-      label: OpenAPI snippet
-      description: The smallest OpenAPI (or tungsten.yml) excerpt that reproduces the problem. Remove secrets and private hostnames.
+      label: API input snippet
+      description: The smallest input in a supported format (or tungsten.yml excerpt) that reproduces the problem. State the format and flags you used. Remove credentials, secrets and private hostnames.
       render: yaml
     validations:
       required: true

@@ -332,7 +332,9 @@ More examples: the [runnable example gallery](examples/README.md) covers first
 SDKs, supported input routes, local mocks, destructive confirmation and CI/surface
 review workflows. [Typed Python SSE](examples/typed-sse/README.md) shows how to
 declare or overlay an incomplete stream response and consume named events with
-sync/async cleanup. [Tungsten on six public APIs](examples/showcase/README.md)
+sync/async cleanup. [Response-contract quality](examples/response-contract-audit/README.md)
+shows the opt-in audit and reviewed schema overlays without inferring guaranteed
+types. [Tungsten on six public APIs](examples/showcase/README.md)
 uses the public OpenAPI descriptions of Stripe, GitHub, Twilio, OpenAI, Kubernetes
 and Discord to show diagnostics, MCP listing sizes and generated SDK code in
 TypeScript, Python and Rust, reproducible with one script. The
@@ -387,7 +389,7 @@ never bundle server credentials. See the [browser WebMCP guide](https://pboachie
 
 ## Architecture
 
-<p align="center"><img src="assets/architecture.svg" alt="Alternative inputs (OpenAPI 3.0/3.1, Swagger 2.0, Postman collections, saved cURL, HTTP request files, HAR captures, endpoint manifests), overlays and the tungsten.yml and agent.yml manifests go through import and the frontend into a typed IR, the agent compiler, and the emitters, which depend on the runtimes" width="900"></p>
+<p align="center"><img src="assets/architecture.svg" alt="Choose one API input: native OpenAPI, imported descriptions or an explicit manual endpoint. Project manifests and optional reviewed overlays are separate configuration. A shared frontend, typed IR and agent compiler feed ten SDK languages, a Rust CLI, MCP, browser WebMCP and agent documentation. Generated packages use matching runtimes; restrictions and availability are listed in the input and target matrices." width="1000"></p>
 
 1. The **frontend** reads OpenAPI 3.0 and 3.1, resolves references and applies overlays. The other supported inputs (Swagger 2.0, Postman, saved cURL, `.http`/`.rest`, HAR, endpoint manifests) are converted offline to a normalized OpenAPI document first; `init` writes it as `imported.openapi.json` and the frontend reads it like any OpenAPI document.
 2. The **IR** is a versioned JSON document (`tungsten ir dump`, schema via `tungsten schema ir`).
@@ -406,7 +408,7 @@ tungsten [--json] <command>
 | Command | Purpose |
 |---|---|
 | `init` | Write project manifests from any supported input ([Supported inputs](#supported-inputs)): `--from`, `--dir`, `--name`, `--targets`, `--force`; `--targets webmcp` includes a linked TypeScript SDK |
-| `check` | Validate the manifests and specs and report diagnostics (`--ci`, `--strict`); `--ci` runs the emitters in memory, external ones included (`--no-external` skips them) |
+| `check` | Validate the manifests and specs and report diagnostics (`--ci`, `--strict`); opt into response quality with `--audit-contracts` or audit-only enforcement with `--require-contracts`; `--ci` runs the emitters in memory, external ones included (`--no-external` skips them) |
 | `generate` | Generate every configured target (`--target`, `--dry-run`, `--check`, `--force`, `--strict`) |
 | `ir dump` | Write the IR as JSON (`--out`, `--compact`) |
 | `explain` | Explain a diagnostic code (`TG0201`), an operation or a type |
