@@ -1,0 +1,65 @@
+# Reviewed response contracts for the Runs API (examples/response-contract-audit).
+#
+# Maintained by hand: every schema below is an assertion about the local
+# illustrative server in demo.py. These are not AOBench response models.
+# tungsten never fills these in — the audit only finds the gaps. A schema
+# that misdescribes server behavior needs separate payload validation; the
+# generator cannot prove server truth. List this file under `overlays` in tungsten.yml;
+# the original openapi.yaml stays untouched.
+overlay: 1.0.0
+info:
+  title: Reviewed response contracts for the Runs API
+  version: 1.0.0
+actions:
+  # POST /v1/runs answers a Run when wait=true and a Job when wait=false.
+  # The boolean request parameter cannot select a schema, so the declared
+  # contract is their union for both waits — narrowing it by the request
+  # would guess what only the server knows. The union has no discriminator:
+  # the server sends no tag field, so none is invented; the generated SDK
+  # tells the variants apart by shape (a Run requires `result`, a Job
+  # requires `run_id`).
+  #
+  # Two actions, because overlay updates merge: replacing the weak
+  # annotation means removing it first, then adding the union. Merging
+  # `oneOf` into the schema would keep `type: object` beside it.
+  - target: $.paths['/v1/runs'].post.responses['200'].content['application/json'].schema
+    remove: true
+  - target: $.paths['/v1/runs'].post.responses['200'].content['application/json']
+    update:
+      schema:
+        oneOf:
+          - $ref: '#/components/schemas/Run'
+          - $ref: '#/components/schemas/Job'
+  # GET /v1/runs/{run_id} always answers a Run.
+  - target: $.paths['/v1/runs/{run_id}'].get.responses['200'].content['application/json']
+    update:
+      schema:
+        $ref: '#/components/schemas/Run'
+  # The named schemas the two actions above reference, reviewed against the
+  # local server example: a run has `id`, ends `completed` or `failed`, and
+  # carries its output in `result`; a job is identified by `id`, is
+  # `queued` or `running`, and names the run it will produce.
+  - target: $.components.schemas
+    update:
+      Run:
+        type: object
+        required: [id, status, result]
+        properties:
+          id:
+            type: string
+          status:
+            type: string
+            enum: [completed, failed]
+          result:
+            type: string
+      Job:
+        type: object
+        required: [id, status, run_id]
+        properties:
+          id:
+            type: string
+          status:
+            type: string
+            enum: [queued, running]
+          run_id:
+            type: string

@@ -11,6 +11,12 @@ changes.
 
 ### Added
 
+- Opt-in `check --audit-contracts` response quality diagnostics for missing JSON
+  schemas, unconstrained values and free-form objects, with scoped review notes
+  and `--require-contracts` enforcement (or existing `--strict` enforcement).
+  A runnable response-contract example
+  enriches an untouched specification with reviewed run/job union schemas through
+  standard OpenAPI overlays; generated response types and default checks are unchanged.
 - Imported specs (Postman, cURL, `.http`, HAR and endpoint manifests): a
   target that cannot enforce imported-operation policy (Java, C#, Kotlin, Ruby,
   Dart and the other SDK targets) now fails alone; without `--strict` the

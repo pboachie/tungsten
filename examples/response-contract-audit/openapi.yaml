@@ -1,0 +1,67 @@
+openapi: 3.1.0
+info:
+  title: Runs API
+  version: 0.1.0
+  description: |
+    A FastAPI-shaped API whose success bodies are underspecified: the one
+    shape a generator cannot recover a contract from. `POST /v1/runs`
+    answers a finished run when `wait=true` and an accepted job when
+    `wait=false`, but both share the generic annotation. This is the start
+    of the recipe in README.md; contracts.overlay.yaml enriches it.
+paths:
+  /v1/runs:
+    post:
+      operationId: createRun
+      summary: Start a run
+      description: >
+        Returns the finished Run when `wait=true`, the accepted Job when
+        `wait=false`. The returned shape depends on the server's work, not
+        on anything the request declares.
+      parameters:
+        - name: wait
+          in: query
+          description: Wait for the run to finish before answering.
+          schema:
+            type: boolean
+            default: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [input]
+              properties:
+                input:
+                  type: string
+      responses:
+        "200":
+          description: A Run (`wait=true`) or a Job (`wait=false`).
+          content:
+            application/json:
+              # The weak contract: a free-form object, generated as a plain
+              # mapping of any values.
+              schema:
+                type: object
+  /v1/runs/{run_id}:
+    get:
+      operationId: getRun
+      summary: Fetch a run
+      parameters:
+        - name: run_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The run.
+          content:
+            # A JSON media type with no schema at all: the response is
+            # typed as any JSON value.
+            application/json: {}
+# Empty on purpose: the overlay in contracts.overlay.yaml merges the
+# reviewed Run and Job definitions into this node. Without the node the
+# overlay action would match nothing (TG0206).
+components:
+  schemas: {}
