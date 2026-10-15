@@ -32,7 +32,10 @@ const TOOLS: [(&str, &str); 14] = [
     ("dotnet", "C# SDK (.NET 10 or later)"),
     ("ruby", "Ruby SDK (Ruby 3.3 or later)"),
     ("bundle", "Ruby SDK packaging (Bundler)"),
-    ("go", "Go SDK from the external go target (Go 1.22 or later)"),
+    (
+        "go",
+        "Go SDK from the external go target (Go 1.22 or later)",
+    ),
 ];
 /// How long a tool may take to print its version.
 const VERSION_TIMEOUT: Duration = Duration::from_secs(5);
@@ -51,7 +54,9 @@ pub(crate) fn run(args: &DoctorArgs, env: &CliEnv) -> Report {
             ToolReport {
                 name: name.to_string(),
                 found: exe.is_some(),
-                version: exe.as_deref().and_then(|exe| tool_version(exe, version_arg(name))),
+                version: exe
+                    .as_deref()
+                    .and_then(|exe| tool_version(exe, version_arg(name))),
                 purpose: purpose.to_string(),
             }
         })
@@ -96,7 +101,9 @@ pub(crate) fn run(args: &DoctorArgs, env: &CliEnv) -> Report {
             tools.push(ToolReport {
                 name: "npm".into(),
                 found: exe.is_some(),
-                version: exe.as_deref().and_then(|exe| tool_version(exe, "--version")),
+                version: exe
+                    .as_deref()
+                    .and_then(|exe| tool_version(exe, "--version")),
                 purpose: "JavaScript package installation".into(),
             });
         }
@@ -105,16 +112,21 @@ pub(crate) fn run(args: &DoctorArgs, env: &CliEnv) -> Report {
             tools.push(ToolReport {
                 name: "rustc".into(),
                 found: exe.is_some(),
-                version: exe.as_deref().and_then(|exe| tool_version(exe, "--version")),
+                version: exe
+                    .as_deref()
+                    .and_then(|exe| tool_version(exe, "--version")),
                 purpose: "Rust compiler".into(),
             });
         }
         // The Go target is an external emitter: it needs `tungsten-emit-go`
         // on PATH unless the manifest names an explicit command.
-        let go = config.targets.get("go").and_then(|options| {
-            tungsten_config::external_target(options).ok().flatten()
-        });
-        let go_emitter = go.as_ref().is_some_and(|external| external.command.is_none());
+        let go = config
+            .targets
+            .get("go")
+            .and_then(|options| tungsten_config::external_target(options).ok().flatten());
+        let go_emitter = go
+            .as_ref()
+            .is_some_and(|external| external.command.is_none());
         if go_emitter {
             tools.push(ToolReport {
                 name: "tungsten-emit-go".into(),
