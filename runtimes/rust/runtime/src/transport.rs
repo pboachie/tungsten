@@ -273,7 +273,10 @@ pub async fn attempt(client: &reqwest::Client, req: &AttemptRequest<'_>) -> Atte
             },
         };
     }
-    let over_length = req.max_response_bytes.is_some_and(|limit| {
+    let maximum = req
+        .max_response_bytes
+        .filter(|_| req.method != HttpMethod::Head && !matches!(status, 204 | 205 | 304));
+    let over_length = maximum.is_some_and(|limit| {
         headers.get("content-length").is_some_and(|value| {
             !value.is_empty()
                 && value.bytes().all(|b| b.is_ascii_digit())
@@ -286,7 +289,7 @@ pub async fn attempt(client: &reqwest::Client, req: &AttemptRequest<'_>) -> Atte
         let read = async {
             let mut bytes = Vec::new();
             while let Some(chunk) = response.chunk().await.map_err(|_| BodyFailure::Broken)? {
-                if req.max_response_bytes.is_some_and(|limit| {
+                if maximum.is_some_and(|limit| {
                     chunk.len() as u64 > limit.saturating_sub(bytes.len() as u64)
                 }) {
                     return Err(BodyFailure::Oversized);

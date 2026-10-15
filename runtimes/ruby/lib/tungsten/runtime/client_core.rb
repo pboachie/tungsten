@@ -207,7 +207,7 @@ module Tungsten
         end
 
         result = send_request(prepared, opts)
-        if result.is_a?(Err) && result.error.http_status == 401 && prepared.oauth && result.error.code != "RESPONSE_TOO_LARGE"
+        if result.is_a?(Err) && result.error.http_status == 401 && prepared.oauth && !(result.error.category == "UNEXPECTED_RESPONSE" && result.error.code == "RESPONSE_TOO_LARGE")
           result = resend_rejected(prepared, result, opts)
         end
         return result if result.is_a?(Err)

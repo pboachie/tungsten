@@ -11,6 +11,15 @@ changes.
 
 ### Added
 
+- Python and Rust `max_response_bytes`, Go and C# `MaxResponseBytes`, Java
+  `maxResponseBytes` and Ruby `max_response_bytes` now bound ordinary response
+  bodies on opt-in, matching TypeScript. Client defaults and per-call overrides
+  validate positive safe integers; header and counting reads close overflowed
+  bodies and report `UNEXPECTED_RESPONSE` / `RESPONSE_TOO_LARGE` without retry,
+  redirect following or OAuth replay. Mutation remediation preserves unknown
+  outcomes. Python and TypeScript `collect` helpers accept optional byte/time
+  budgets, retain admitted partials and preserve unbounded no-argument calls.
+
 - A runnable example gallery for first SDKs, supported input routes, destructive
   confirmation, local mock development, generated-file drift and API surface
   review. The catalog runner checks recipe documentation and builds generated

@@ -304,7 +304,7 @@ public final class ClientCore {
             response = send(p, opts);
         } catch (TungstenException e) {
             Integer status = e.diagnostic().httpStatus();
-            if (status == null || status != 401 || p.oauth == null || "RESPONSE_TOO_LARGE".equals(e.diagnostic().code())) {
+            if (status == null || status != 401 || p.oauth == null || (e.diagnostic().category() == Category.UNEXPECTED_RESPONSE && "RESPONSE_TOO_LARGE".equals(e.diagnostic().code()))) {
                 throw e;
             }
             response = resendRejected(p, e, opts);

@@ -502,7 +502,8 @@ class Engine:
         return bounded(_opt(opts, "timeout_ms"), bounded(self.options.timeout_ms, _DEFAULT_TIMEOUT_MS, 1), 1)
 
     def _max_response_bytes(self, opts: Mapping[str, object]) -> int | None:
-        return cast(int | None, opts.get("max_response_bytes", self.options.max_response_bytes))
+        value = opts.get("max_response_bytes")
+        return self.options.max_response_bytes if value is None else cast(int, value)
 
     def _middleware(self) -> list[object]:
         middleware: object = self.options.middleware
@@ -542,7 +543,10 @@ class Engine:
             prepared.oauth is not None
             and isinstance(answer.result, Err)
             and answer.result.error["http_status"] == 401
-            and answer.result.error["code"] != "RESPONSE_TOO_LARGE"
+            and not (
+                answer.result.error["category"] == "UNEXPECTED_RESPONSE"
+                and answer.result.error["code"] == "RESPONSE_TOO_LARGE"
+            )
         ):
             # An authorization-code token the server no longer accepts: refresh
             # it and send once more. Never a second time.

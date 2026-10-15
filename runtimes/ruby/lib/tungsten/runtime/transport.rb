@@ -209,7 +209,7 @@ module Tungsten
                              stream: EventBody.new(http, chunks, idle_s || timeout_s))
         end
         length = headers["content-length"]
-        if max_response_bytes && request.method != "HEAD" && ![204, 304].include?(status) &&
+        if max_response_bytes && request.method != "HEAD" && ![204, 205, 304].include?(status) &&
            length&.match?(/\A\d+\z/) && length.to_i > max_response_bytes
           close(http)
           return Outcome.new(kind: :response, status: status, headers: headers, body_failure: "oversized")

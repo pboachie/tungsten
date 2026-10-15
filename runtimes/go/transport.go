@@ -388,6 +388,9 @@ func attempt(ctx context.Context, client *http.Client, req attemptRequest) attem
 		return attemptOutcome{kind: outcomeStreaming, status: status, headers: headers,
 			stream: &eventBody{response: resp, cancel: cancel, idle: streamIdle(req)}}
 	}
+	if req.method == "HEAD" || status == 204 || status == 205 || status == 304 {
+		req.maxResponseBytes = nil
+	}
 	oversized := false
 	var reader io.Reader = resp.Body
 	if maximum := req.maxResponseBytes; maximum != nil {

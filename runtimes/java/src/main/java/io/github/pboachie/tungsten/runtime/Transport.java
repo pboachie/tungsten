@@ -634,7 +634,7 @@ final class Transport {
         out.kind = Kind.RESPONSE;
         Long cap = req.maxResponseBytes();
         String length = out.headers.get("content-length");
-        if (cap != null && length != null && !req.method().equals("HEAD") && out.status != 204 && out.status != 304) {
+        if (cap != null && length != null && !req.method().equals("HEAD") && out.status != 204 && out.status != 205 && out.status != 304) {
             try {
                 if (Long.parseLong(length.trim()) > cap) {
                     body.close();

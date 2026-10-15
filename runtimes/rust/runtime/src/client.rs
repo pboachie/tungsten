@@ -363,7 +363,9 @@ impl ClientCore {
         let mut response = match self.send_tracked(&prepared, opts, request_url).await {
             Err(rejected)
                 if rejected.diagnostic.http_status == Some(401)
-                    && rejected.diagnostic.code.as_deref() != Some("RESPONSE_TOO_LARGE")
+                    && !(rejected.diagnostic.category
+                        == crate::types::Category::UnexpectedResponse
+                        && rejected.diagnostic.code.as_deref() == Some("RESPONSE_TOO_LARGE"))
                     && prepared.oauth.is_some() =>
             {
                 // An authorization-code token the server no longer accepts:

@@ -661,6 +661,10 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     };
   }
 
+  #responseLimit(opts: CallOptions): number | undefined {
+    return opts.maxResponseBytes === undefined ? this.options.maxResponseBytes : opts.maxResponseBytes;
+  }
+
   #timeout(opts: CallOptions): number {
     return bounded(opts.timeoutMs, bounded(this.options.timeoutMs, DEFAULT_TIMEOUT_MS, 1), 1);
   }
@@ -698,7 +702,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
       pageUrls.add(prepared.value.url);
     }
     let result = await this.#send<T>(prepared.value, opts);
-    if (!result.ok && result.error.http_status === 401 && result.error.code !== "RESPONSE_TOO_LARGE" && prepared.value.oauth !== null) {
+    if (!result.ok && result.error.http_status === 401 && !(result.error.category === "UNEXPECTED_RESPONSE" && result.error.code === "RESPONSE_TOO_LARGE") && prepared.value.oauth !== null) {
       // An authorization-code token the server no longer accepts: refresh
       // it and send once more. Never a second time.
       result = await this.#retryRejected(prepared.value, result, opts);
@@ -903,7 +907,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
         remediation: "redirects must be same_origin_read or none; nothing was sent.",
       }));
     }
-    const maximumResponseBytes = opts.maxResponseBytes ?? this.options.maxResponseBytes;
+    const maximumResponseBytes = this.#responseLimit(opts);
     if (maximumResponseBytes !== undefined && (!Number.isSafeInteger(maximumResponseBytes) || maximumResponseBytes < 1)) {
       return fail(diagnostic(safeId(op), "VALIDATION_FAILED", {
         failed_parameter: "maxResponseBytes",
@@ -1352,7 +1356,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
         signal: opts.signal,
         stream,
         idleMs,
-        maxResponseBytes: opts.maxResponseBytes ?? this.options.maxResponseBytes,
+        maxResponseBytes: this.#responseLimit(opts),
         deadlineMs: (opts as StepOptions)[POLL_DEADLINE],
       });
       let current = { url: prepared.url, method: prepared.method, body: prepared.body };
@@ -1377,7 +1381,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
           signal: opts.signal,
           stream,
           idleMs,
-          maxResponseBytes: opts.maxResponseBytes ?? this.options.maxResponseBytes,
+          maxResponseBytes: this.#responseLimit(opts),
           deadlineMs: (opts as StepOptions)[POLL_DEADLINE],
         });
       }

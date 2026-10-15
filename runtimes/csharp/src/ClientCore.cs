@@ -301,7 +301,7 @@ public sealed partial class ClientCore
         {
             response = await SendAsync(p, opts, ct).ConfigureAwait(false);
         }
-        catch (Failure f) when (f.Error.Diagnostic.HttpStatus == 401 && p.OAuth is not null && f.Error.Diagnostic.Code != "RESPONSE_TOO_LARGE")
+        catch (Failure f) when (f.Error.Diagnostic.HttpStatus == 401 && p.OAuth is not null && !(f.Error.Diagnostic.Category == Category.UnexpectedResponse && f.Error.Diagnostic.Code == "RESPONSE_TOO_LARGE"))
         {
             response = await ResendRejectedAsync(p, f, opts, ct).ConfigureAwait(false);
         }

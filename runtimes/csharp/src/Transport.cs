@@ -518,7 +518,7 @@ internal static class Transport
         try
         {
             long? cap = req.MaxResponseBytes;
-            if (cap is long max && req.Method != "HEAD" && status != 204 && status != 304 && resp.Content.Headers.ContentLength is long declared && declared > max)
+            if (cap is long max && req.Method != "HEAD" && status != 204 && status != 205 && status != 304 && resp.Content.Headers.ContentLength is long declared && declared > max)
             {
                 attemptCts.Cancel();
                 outcome = outcome with { BodyFailure = "oversized" };

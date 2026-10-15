@@ -286,7 +286,7 @@ func (c *ClientCore) callWithPages(ctx context.Context, op *OperationDescriptor,
 	}
 	response, err := c.send(ctx, prepared, opts)
 	if err != nil {
-		if err.Diagnostic.HTTPStatus != nil && *err.Diagnostic.HTTPStatus == 401 && (err.Diagnostic.Code == nil || *err.Diagnostic.Code != "RESPONSE_TOO_LARGE") && prepared.oauth != "" {
+		if err.Diagnostic.HTTPStatus != nil && *err.Diagnostic.HTTPStatus == 401 && !(err.Diagnostic.Category == UnexpectedResponse && err.Diagnostic.Code != nil && *err.Diagnostic.Code == "RESPONSE_TOO_LARGE") && prepared.oauth != "" {
 			response, err = c.resendRejected(ctx, prepared, err, opts)
 		}
 		if err != nil {

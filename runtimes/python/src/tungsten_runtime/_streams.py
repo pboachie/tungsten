@@ -439,7 +439,7 @@ class AsyncEventStream(Generic[T]):
                     item = await asyncio.wait_for(anext(iterator), remaining)
                 except StopAsyncIteration:
                     return StreamResult(True, reconnects, value=values)
-                except TimeoutError:
+                except (TimeoutError, asyncio.TimeoutError):
                     break
                 if isinstance(item, Err):
                     return StreamResult(False, reconnects, error=item.error, partial=values)
