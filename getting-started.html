@@ -179,7 +179,7 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="getting-started"><a class="header" href="#getting-started">Getting started</a></h1>
-<p>tungsten compiles an OpenAPI 3.0 or 3.1 description into TypeScript, Python and Rust SDKs, a command-line client, an MCP server and LLM-oriented docs, all built for autonomous callers.</p>
+<p>tungsten is a deterministic compiler written in Rust. It reads one API description — an OpenAPI 3.0 or 3.1 document (JSON or YAML), a Swagger 2.0 document, a Postman Collection v2.1 file, a saved cURL command, an HTTP request file (<code>.http</code>/<code>.rest</code>), a HAR 1.2 capture or an endpoint manifest with JSON Schema 2020-12 models — plus two small manifests, builds one typed intermediate representation (IR), and emits TypeScript, Python, Rust, Go, Java, Kotlin, C#, F#, Dart and Ruby SDKs, a Rust command-line client, an MCP server, browser WebMCP tools and LLM-oriented docs. Documents are parsed locally; optional HTTP/Git acquisition pins the downloaded source for verified offline reuse. Every emitted client is built for an autonomous caller: failures are instructions, side effects are never duplicated, and irreversible calls need an explicit confirmation. See <a href="#supported-inputs">Supported inputs</a> for the exact alternatives, their limits and the review each requires.</p>
 <h2 id="why-tungsten"><a class="header" href="#why-tungsten">Why tungsten</a></h2>
 <p>Most SDK generators optimize for a person reading autocomplete. An agent has a finite context window, no memory between retries, and no sense of what is irreversible. tungsten changes the design goal of each stage:</p>
 <ul>
@@ -191,49 +191,177 @@
 <li><strong>MCP progressive disclosure.</strong> Past a tool-count threshold the server lists a few meta-tools (<code>search_tools</code>, <code>describe_tool</code>, <code>invoke</code>, <code>preview</code>, <code>list_clusters</code>) instead of every operation. In the maintainers' measurement on the ZROtext pilot (October 2026, BPE token counts), the progressive listing of its 41 tools costs 765 tokens, against 9,473 for the 14 tools of that project's hand-written MCP server.</li>
 <li><strong>Deterministic output.</strong> The same inputs produce byte-identical files. Generated files record the generator version and the digest of their inputs, and <code>tungsten generate --check</code> fails when output is stale.</li>
 </ul>
+<h2 id="supported-inputs"><a class="header" href="#supported-inputs">Supported inputs</a></h2>
+<p><code>init --from</code> also accepts HTTP(S) document URLs for these formats. OpenAPI
+URLs work directly as compiler paths or <code>inputs[].spec</code> in <code>tungsten.yml</code>.
+Other formats go through the same local importer and its required review flags:</p>
+<pre><code class="language-sh">tungsten init --from https://example.com/contracts/openapi.json --dir my-api
+tungsten generate my-api --offline
+tungsten check my-api --refresh-inputs
+</code></pre>
+<p>The first fetch records the source URL and SHA256 under
+<code>.tungsten-inputs/&lt;url-sha256&gt;/source.lock.json</code>, beside immutable downloaded
+content. Retain the complete source cache directory for offline use. Online commands verify upstream
+bytes against the pin and refuse changed content. <code>--refresh-inputs</code> explicitly
+accepts a new OpenAPI pin; converted imports instead require re-import into a
+fresh project and another operation review. Their <code>source_url</code> and
+<code>source_sha256</code> manifest fields preserve that provenance on every compilation.</p>
+<p>For authentication, repeat <code>--input-header 'Authorization: Bearer ...'</code>, or set
+<code>TUNGSTEN_INPUT_HEADERS</code> to newline-separated <code>Name: value</code> headers to keep
+secrets out of command history. Header values are excluded from pins and fetch
+diagnostics. URLs must have no credentials, query or fragment. Downloads are
+limited to 8 MiB and 30 seconds; redirects are refused. Remote references are
+still blocked, including relative references from a remote OpenAPI document.
+The cache contains original input bytes, so retain it with the same access
+controls as the source document and review it before sharing.</p>
+<p>Git inputs use <code>git+https://git.example.test/owner/repository@ref#path</code> in <code>init --from</code>,
+compiler paths or OpenAPI manifest inputs. A branch or tag resolves to exactly
+one commit, which is fetched shallowly into a disposable bare repository. No
+checkout, hooks, submodules or repository code runs. Git supplies private-source
+credentials through its configured helper or environment; <code>--input-header</code>
+applies only to HTTP document downloads. Local repositories for offline workflows
+and hermetic validation use <code>git+file:///absolute/repository@ref#path</code>.</p>
+<pre><code class="language-sh">tungsten init --from 'git+https://github.com/example/api@main#contracts/openapi.yaml' --dir my-api
+tungsten generate my-api --offline
+</code></pre>
+<p>The Git source lock under <code>.tungsten-inputs/git/</code> records the repository URL,
+requested ref, resolved commit, selected document and SHA256 of every materialized
+file. Ordinary runs retain that commit; <code>--refresh-inputs</code> is the explicit request
+to resolve a moving ref again. Converted imports retain their review provenance
+and require re-import into a fresh project to change source commits. Discovery
+recognizes all supported input formats and requires an explicit <code>#path</code> when
+multiple documents are found. Relative references retain the compiler's local
+input-root confinement. Acquisition is limited to 60 seconds, 512 files, 8 MiB per
+file and 64 MiB of materialized content and fetched Git object data. Narrow
+<code>#path</code> to bound discovery; the shallow fetch itself must still fit the object
+budget. Git redirects, symlinks, submodules and unsafe paths are refused.
+Retain the complete <code>.tungsten-inputs/git/</code> cache for offline use, including its
+locks and materialized files; offline reuse needs no Git executable. Every
+materialized file is verified, and unexpected cached files or directories are
+rejected. HTTP/Git pins verify source consistency, not the publisher's identity:
+review and protect the cache and lock files together.</p>
+<p><code>tungsten init</code> takes <strong>one</strong> input of any of the kinds below — OpenAPI OR Swagger OR Postman OR saved cURL OR HTTP request files OR HAR, with the endpoint-manifest and manual paths alongside them — not a bundle. Acquisition may download a document or fetch a Git commit; parsing never sends or replays the API requests described by that input, and no shell, script or capture is ever executed. Non-OpenAPI inputs are converted to a normalized OpenAPI document that <code>init</code> saves next to the manifests (<code>imported.openapi.json</code>, with an <code>import-report.json</code> where listed; the manual path writes <code>inferred.openapi.json</code> and <code>inference-report.json</code>), so the accepted input stays separate from the normalized artifact and the typed IR the compiler builds from it.</p>
+<div class="table-wrapper"><table><thead><tr><th>Input</th><th>You provide</th><th>Entry point and conversion</th><th>Limits and required review</th></tr></thead><tbody>
+<tr><td>OpenAPI 3.0 / 3.1</td><td>JSON or YAML document</td><td><code>tungsten init --from openapi.json</code> (default when unset: <code>openapi.json</code>, <code>openapi.yaml</code> or <code>openapi.yml</code> in the target directory). The document is kept in place, so relative references retain meaning, and goes through the native frontend: <code>$ref</code> resolution, overlays</td><td>The full frontend surface; overlays remain optional</td></tr>
+<tr><td>Swagger 2.0</td><td>JSON or YAML document</td><td><code>tungsten init --from swagger.json</code> (also a default name) or any path. Bounded offline conversion to OpenAPI, saved as <code>imported.openapi.json</code></td><td>Unsupported semantics fail explicitly instead of being guessed; conversion never resolves external references</td></tr>
+<tr><td>Postman Collection v2.1</td><td>JSON collection</td><td><code>tungsten init --from collection.json</code>. Structural import; omissions are listed in <code>import-report.json</code></td><td>Scripts and requests are never executed: script-dependent behavior, non-JSON bodies and saved responses and unsupported auth helpers are omitted per item, not interpreted — this is not a Postman runtime</td></tr>
+<tr><td>Saved cURL command</td><td>A saved command as text</td><td><code>tungsten init --from command.curl --route '/pets/{id}'</code> (auto-detected by a leading <code>curl</code>, a <code>.curl</code> extension, or <code>--input-format curl</code>). Parsed as data against POSIX, cmd or PowerShell quoting (<code>--shell-dialect</code>)</td><td>Exactly one explicit <code>--route</code> path template is required; the command is parsed, never executed</td></tr>
+<tr><td>HTTP request files</td><td><code>.http</code> or <code>.rest</code> file</td><td><code>tungsten init --from requests.http --route '/pets/{id}'</code> (extension-detected, or <code>--input-format http</code>)</td><td>An explicit <code>--route</code> template per request</td></tr>
+<tr><td>HAR 1.2</td><td>A capture file</td><td><code>tungsten init --from capture.har --har-origin https://api.example.com --har-paths paths.json</code>. Bounded offline observations of the recorded traffic</td><td>A multi-origin capture needs <code>--har-origin</code>; every captured path needs a reviewed template (<code>--route</code>, or a <code>--har-paths</code> JSON mapping) before anything is saved; <code>--include-prefix</code>/<code>--exclude-prefix</code> narrow the capture and <code>--redact-property</code> redacts property names. Captured traffic provides incomplete observations of past behavior, not the live API</td></tr>
+<tr><td>Endpoint manifest v1</td><td>JSON manifest with declared models</td><td><code>tungsten init --from endpoints.json</code>. Loaded by the endpoint-manifest frontend</td><td>Explicit HTTP routing metadata (base URL and endpoints) and JSON Schema 2020-12 models within the supported subset are required — not arbitrary standalone JSON-Schema-to-API inference</td></tr>
+<tr><td>Manual endpoint</td><td>No document</td><td><code>tungsten init --method get --endpoint /pets/{id}</code>, with optional <code>--request-example</code> and <code>--response-example</code> JSON files (only their structure is persisted; the response is recorded at status 200). Writes <code>inferred.openapi.json</code> and <code>inference-report.json</code></td><td>Explicit offline observations only; not schema-free API discovery</td></tr>
+</tbody></table>
+</div>
+<p>All conversion routes share these limits: setup inputs are bounded (8 MiB, with larger OpenAPI documents served by the explicit compiler flow below); every converted operation is marked as imported, and targets that cannot enforce imported-operation policy refuse it (TG0705 for built-in targets, TG0808 for external emitters that do not declare support) — <code>typescript</code>, <code>python</code>, <code>rust</code>, <code>mcp</code>, <code>webmcp</code> and <code>docs</code> are supported, the Java, Kotlin, C#, F#, Dart and Ruby targets and non-opted-in external emitters are not, and <code>init</code> refuses unsupported built-in selections before saving the converted input or project manifests. Imported observations are incomplete contracts: review the inferred response types, authentication, safety tiers and origins in <code>agent.yml</code> and mark reviewed operations before live use.</p>
+<p><code>init</code> is the only entry point for the alternative inputs. The other commands (<code>check</code>, <code>generate</code>, <code>mock</code>, <code>diff</code>, <code>report</code>) take an initialized project (a directory with <code>tungsten.yml</code>, or the manifest), or — for the native format only — a single OpenAPI document passed directly.</p>
 <h2 id="targets"><a class="header" href="#targets">Targets</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>Target</th><th>Emits</th><th>Minimum toolchain</th><th>Runtime and installation</th></tr></thead><tbody>
 <tr><td><code>typescript</code></td><td>Typed SDK, <code>Result</code> values, Zod validation</td><td>Node 22</td><td><code>@elysra/tungsten-runtime</code>: matching npm package or built source</td></tr>
-<tr><td><code>python</code></td><td>Sync and async SDK, Pydantic v2 models</td><td>Python 3.12</td><td>Install <code>tungsten-runtime</code> from matching the compiler source</td></tr>
-<tr><td><code>rust</code></td><td>Async SDK (serde, reqwest) and optional generated CLI</td><td>Rust 1.88</td><td>Source paths to the compiler and, for a CLI, the compiler</td></tr>
-<tr><td><code>go</code> (external)</td><td>Models, resources, typed client, pagination and stream helpers</td><td>Go 1.22</td><td>Build <code>tungsten-emit-go</code> from <code>emitters/go</code>; use <code>runtime_path</code> to matching the compiler source</td></tr>
-<tr><td><code>java</code></td><td>Java SDK</td><td>Java 17 and Maven</td><td>Use <code>runtime_path</code> to matching the compiler source</td></tr>
-<tr><td><code>csharp</code> (<code>cs</code>)</td><td>C# SDK</td><td>.NET 10</td><td>Use <code>runtime_path</code> to matching the compiler, referencing <code>Tungsten.Runtime.csproj</code></td></tr>
-<tr><td><code>ruby</code> (<code>rb</code>)</td><td>Ruby SDK</td><td>Ruby 3.3 and Bundler</td><td>Use <code>runtime_path</code> to matching the compiler source</td></tr>
+<tr><td><code>python</code></td><td>Sync and async SDK, Pydantic v2 or dataclass models</td><td>Python 3.12 by default; <a href="#python-interpreter-compatibility">opt-in 3.10/3.11</a></td><td>PyPI runtime for a matching published release, or matching <code>runtimes/python</code> source</td></tr>
+<tr><td><code>rust</code></td><td>Async SDK (serde, reqwest) and optional generated CLI</td><td>Rust 1.88</td><td>Matching source paths to <code>runtimes/rust/runtime</code> and, for a CLI, <code>runtimes/rust/cli-kit</code>; see <a href="https://github.com/pboachie/tungsten/blob/b7ad5e5a2388/runtimes/rust/README.md">installation</a></td></tr>
+<tr><td><code>go</code> (external)</td><td>Models, resources, typed client, pagination and stream helpers</td><td>Go 1.22</td><td>Build <code>tungsten-emit-go</code> from <code>emitters/go</code>; use <code>runtime_path</code> to matching <code>runtimes/go</code> source; see <a href="https://github.com/pboachie/tungsten/blob/b7ad5e5a2388/runtimes/go/README.md">module status</a></td></tr>
+<tr><td><code>java</code></td><td>Java SDK</td><td>Java 17 and Maven</td><td>Use <code>runtime_path</code> to matching <code>runtimes/java</code> source</td></tr>
+<tr><td><code>kotlin</code> (<code>kt</code>)</td><td>Kotlin/JVM SDK (data classes, sealed interfaces, blocking functions returning <code>Result</code>)</td><td>Java 17 and Gradle</td><td>Use <code>runtime_path</code> to matching <code>runtimes/kotlin</code>; it builds on the Java runtime in <code>runtimes/java</code> (<code>java_runtime_path</code>)</td></tr>
+<tr><td><code>csharp</code> (<code>cs</code>)</td><td>C# SDK</td><td>.NET 10</td><td>Use <code>runtime_path</code> to matching <code>runtimes/csharp</code>, referencing <code>Tungsten.Runtime.csproj</code></td></tr>
+<tr><td><code>fsharp</code> (<code>fs</code>)</td><td>F# SDK (records, discriminated unions, <code>Task</code> of <code>Result</code>)</td><td>.NET 10</td><td>Use <code>runtime_path</code> to matching <code>runtimes/fsharp</code>; it references the .NET runtime in <code>runtimes/csharp</code> (<code>csharp_runtime_path</code>)</td></tr>
+<tr><td><code>dart</code></td><td>Dart SDK (final model classes, sealed unions, <code>Future</code> methods returning <code>Result</code>, <code>Stream</code> pages)</td><td>Dart 3.6</td><td>Use <code>runtime_path</code> to matching <code>runtimes/dart</code> (<code>tungsten_runtime</code>, a <code>dart:io</code> package)</td></tr>
+<tr><td><code>ruby</code> (<code>rb</code>)</td><td>Ruby SDK</td><td>Ruby 3.3 and Bundler</td><td>Use <code>runtime_path</code> to matching <code>runtimes/ruby</code> source</td></tr>
 <tr><td><code>mcp</code></td><td>MCP server over stdio or Streamable HTTP, discrete or progressive</td><td>Node 22</td><td><code>@elysra/tungsten-mcp</code>: matching npm package or built source</td></tr>
 <tr><td><code>webmcp</code></td><td>Browser ESM package with tool manifest and registration helper</td><td>Node 22 to build; compatible browser to run</td><td><code>@elysra/tungsten-webmcp</code> and the generated TypeScript SDK</td></tr>
 <tr><td><code>docs</code></td><td><code>llms.txt</code>, <code>llms-full.txt</code>, <code>tools.json</code>, README</td><td>None beyond the compiler</td><td>No runtime dependency</td></tr>
 </tbody></table>
 </div>
-<p>These targets are implemented in source. Compiler and runtime packages have independent versions: use a runtime compatible with the generated package's dependency declaration, or the matching compiler source checkout. npm publication is separate from compiler availability. Python, Rust, Java, C# and Ruby registry publication is not part of the 0.1.2 installation guarantee; the default Go module version also lacks a published nested-module tag. Use the source routes above rather than assuming a package name or version in generated metadata proves registry availability. Target <code>runtime_path</code> values are relative to the generated output directory.</p>
+<p>These targets are implemented in source. Starting with the 0.1.3 source candidate,
+compiler and runtime package versions advance together with the release tag.
+Generated packages default to compatible 0.1.3 runtime floors; an explicit
+<code>runtime</code> setting remains yours to qualify. The earlier 0.1.2 release has
+independently versioned non-npm runtime sources. Use the matching source checkout
+when a registry artifact is unavailable: source version metadata does not prove publication. Rust, Java, Kotlin, C#, F#, Dart and Ruby registry
+publication is not part of the 0.1.2 installation guarantee. The candidate Go
+emitter defaults to the available <code>v0.1.3</code> module; see its
+<a href="https://github.com/pboachie/tungsten/blob/b7ad5e5a2388/runtimes/go/README.md">installation options</a> for matching-source use.
+Target <code>runtime_path</code> values are relative to the generated output directory.</p>
 <p>Targets and the mock server (<code>tungsten mock</code>) share one IR. Generated-package and contract checks exercise each language, but source availability and passing shared scenarios do not establish complete validation, protocol or distribution parity. Unsupported features can vary by target. Review all compiler diagnostics: <code>--strict</code> rejects warnings, including unsupported <code>if</code>/<code>then</code>/<code>else</code> constraints, but informational diagnostics can still describe other unsupported features. Local checks do not establish live API acceptance or registry installation readiness.</p>
 <h2 id="install"><a class="header" href="#install">Install</a></h2>
+<p>Install the compiler first. The <a href="#runtime-packages">npm and PyPI packages below</a>
+support generated output; they do not install the <code>tungsten</code> compiler command.
+The latest published compiler release is <a href="https://github.com/pboachie/tungsten/releases/tag/v0.1.2">v0.1.2</a>
+as of October 15, 2026. This branch describes the 0.1.3 source candidate, including
+HTTP/Git inputs and Python 3.10/3.11 compatibility, which require matching 0.1.3
+compiler and runtime source until that release's packages are published.</p>
 <p>Prebuilt binaries for Linux, macOS and Windows are attached to each <a href="https://github.com/pboachie/tungsten/releases">GitHub release</a>. The installer checks the archive against the release's <code>SHA256SUMS</code> before it installs anything:</p>
 <pre><code class="language-sh">curl -fsSL https://raw.githubusercontent.com/pboachie/tungsten/main/install.sh | sh   # Linux and macOS, into ~/.local/bin
 </code></pre>
 <pre><code class="language-powershell">irm https://raw.githubusercontent.com/pboachie/tungsten/main/install.ps1 | iex        # Windows
 </code></pre>
 <p>Pass <code>--version v0.1.2</code> to <code>install.sh</code> (or <code>-Version v0.1.2</code> to <code>install.ps1</code>) to pin a release, and <code>--dir</code> (<code>-InstallDir</code>) to choose the target directory.</p>
+<p>See <a href="https://github.com/pboachie/tungsten/blob/b7ad5e5a2388/install.sh"><code>install.sh --help</code></a> or <code>Get-Help ./install.ps1 -Full</code>
+(<a href="https://github.com/pboachie/tungsten/blob/b7ad5e5a2388/install.ps1">PowerShell script</a>) for environment variables and exit codes.
+Both installers check whether <code>gh attestation</code> is usable before verification.
+Without it they explain that only the checksum was verified; set
+<code>TUNGSTEN_REQUIRE_ATTESTATION=1</code> to require provenance verification. A failed
+verification always refuses installation and shows the verifier's error output.
+<code>TUNGSTEN_NO_ATTESTATION=1</code> explicitly disables the check and cannot be combined
+with required verification. Required verification also refuses custom mirrors.</p>
+<p>On Linux the <code>musl</code> archives (the installer default) are statically linked and
+avoid a glibc dependency. Prefer them on older distributions. The published
+<strong>v0.1.2</strong> <code>gnu</code> archives (<code>TUNGSTEN_LIBC=gnu</code>) require glibc <strong>2.34 on x86_64</strong>
+and <strong>2.39 on aarch64</strong>, as verified from their required symbol versions. Check
+your architecture and glibc version before selecting a stable GNU archive:
+<code>install.sh</code> currently checks only a 2.34 floor and does not enforce the stable
+aarch64 archive's higher requirement. The <strong>unreleased 0.1.3 candidate</strong> targets
+a common glibc 2.34 floor for both architectures; that target does not describe
+the published v0.1.2 binaries.</p>
+<p>Release archives, the Homebrew formula, the winget manifests and the <code>ghcr.io/pboachie/tungsten</code> container image carry build provenance attestations. To verify them with the GitHub CLI:</p>
+<pre><code class="language-sh">gh attestation verify oci://ghcr.io/pboachie/tungsten:0.1.2 --repo pboachie/tungsten
+gh attestation verify tungsten.rb --repo pboachie/tungsten
+</code></pre>
 <p>To run the guided <code>tungsten init</code> setup right after installing, pass <code>--init</code> to <code>install.sh</code> (<code>-Init</code> to <code>install.ps1</code>). It needs a terminal, and the installer prints the PATH note first. A cancelled setup leaves the installed binary in place and exits with status 4 (5 when setup fails); run <code>tungsten init</code> again when ready:</p>
 <pre><code class="language-sh">curl -fsSL https://raw.githubusercontent.com/pboachie/tungsten/main/install.sh | sh -s -- --init
 </code></pre>
 <p>The <code>irm … | iex</code> form cannot pass <code>-Init</code>. Run the downloaded script as a script block instead, or save it and run <code>.\install.ps1 -Init</code>:</p>
 <pre><code class="language-powershell">&amp; ([scriptblock]::Create((irm https://raw.githubusercontent.com/pboachie/tungsten/main/install.ps1))) -Init
 </code></pre>
-<p>Or build from source, with Rust 1.95 or newer (the repository pins 1.97.0 in <a href="https://github.com/pboachie/tungsten/blob/main/rust-toolchain.toml"><code>rust-toolchain.toml</code></a> for development):</p>
+<p>Or build from source, with Rust 1.95 or newer (the repository pins 1.97.0 in <a href="https://github.com/pboachie/tungsten/blob/b7ad5e5a2388/rust-toolchain.toml"><code>rust-toolchain.toml</code></a> for development):</p>
 <pre><code class="language-sh">git clone https://github.com/pboachie/tungsten
 cd tungsten
+git checkout release/0.1.3                 # 0.1.3 source candidate
 cargo install --path crates/tungsten-cli   # installs the `tungsten` binary
 tungsten doctor                            # reports optional tools (node, python3, uv, formatters)
 </code></pre>
 <p>Node, Python and the formatters are optional: a missing tool only disables the target or <code>--format</code> option that needs it.</p>
+<h3 id="runtime-packages"><a class="header" href="#runtime-packages">Runtime packages</a></h3>
+<p>For a published 0.1.2 compiler and generated client, choose the runtime for the
+output you use. These package versions were verified on October 15, 2026;
+Node 22+ is required for TypeScript/MCP, and the published Python runtime needs
+Python 3.12+. Run Python installation commands in an activated virtual environment.</p>
+<div class="table-wrapper"><table><thead><tr><th>Output</th><th>Runtime package</th><th>Install the published runtime</th></tr></thead><tbody>
+<tr><td>TypeScript SDK</td><td><a href="https://www.npmjs.com/package/@elysra/tungsten-runtime"><code>@elysra/tungsten-runtime</code></a></td><td><code>npm install @elysra/tungsten-runtime@0.1.2</code></td></tr>
+<tr><td>MCP server</td><td><a href="https://www.npmjs.com/package/@elysra/tungsten-mcp"><code>@elysra/tungsten-mcp</code></a></td><td><code>npm install @elysra/tungsten-mcp@0.1.2</code></td></tr>
+<tr><td>Browser WebMCP</td><td><a href="https://www.npmjs.com/package/@elysra/tungsten-webmcp"><code>@elysra/tungsten-webmcp</code></a></td><td><code>npm install @elysra/tungsten-webmcp@0.1.2</code></td></tr>
+<tr><td>Python SDK</td><td><a href="https://pypi.org/project/tungsten-runtime/"><code>tungsten-runtime</code></a></td><td><code>python -m pip install tungsten-runtime==0.1.2</code></td></tr>
+</tbody></table>
+</div>
+<p>Verify a TypeScript runtime installation with
+<code>node --input-type=module -e 'import("@elysra/tungsten-runtime").then(() =&gt; console.log("runtime ready"))'</code>,
+or Python with <code>python -c 'import tungsten_runtime; print("runtime ready")'</code>.
+Then install and build your generated package as its README describes. These
+runtime imports do not generate a client or call an API.</p>
+<p>The 0.1.3 compiler is an unreleased source candidate. Use matching runtime source
+as in the quickstart below; published 0.1.2 packages do not satisfy dependencies
+on 0.1.3 runtime capabilities. Rust registry installation is currently unavailable.
+The Go proxy carries a v0.1.3 runtime module, which does not establish a compiler
+release. See the <a href="https://github.com/pboachie/tungsten/blob/b7ad5e5a2388/runtimes/rust/README.md">Rust source installation</a> and
+<a href="https://github.com/pboachie/tungsten/blob/b7ad5e5a2388/runtimes/go/README.md">Go installation options</a>. Runtime libraries do not install
+the Tungsten compiler. The <a href="https://github.com/pboachie/tungsten/blob/b7ad5e5a2388/examples/README.md">runnable gallery</a>
+shows complete installation and first-use flows for each output.</p>
 <h2 id="quickstart"><a class="header" href="#quickstart">Quickstart</a></h2>
 <p>Install the compiler above first. This walkthrough uses Python 3.12 or newer and
 <a href="https://docs.astral.sh/uv/getting-started/installation/">uv</a>. TypeScript targets
 require Node 22 or newer. Installing the compiler does not install generated
 SDKs or their language runtimes.</p>
-<p>This walkthrough continues from the source installation above, using the same
-checkout for the v0.1.2 compiler and runtime. From that <code>tungsten</code> directory, set
+<p>This walkthrough continues from the 0.1.3 source installation above, using the same
+checkout for the compiler and runtime. From that <code>tungsten</code> directory, set
 its absolute path and create a separate project. If you installed a release
 binary, obtain its matching source archive from the release first:</p>
 <pre><code class="language-sh">export TUNGSTEN_SOURCE="$(pwd)"
@@ -243,6 +371,11 @@ cd ../petstore-demo
 <p>Use your own <code>openapi.json</code>, or create this complete tiny example:</p>
 <pre><code class="language-json">{"openapi":"3.1.0","info":{"title":"Acme Petstore","version":"1"},"paths":{"/pets":{"get":{"operationId":"listPets","responses":{"200":{"description":"Pets","content":{"application/json":{"schema":{"type":"array","items":{"type":"string"}}}}}}}}}}
 </code></pre>
+<p>The walkthrough uses an OpenAPI document, the native input. <code>init --from</code> also accepts Swagger 2.0, Postman collections, saved cURL commands, <code>.http</code>/<code>.rest</code> files, HAR captures and endpoint manifests — one of them, not a bundle — each with its own flags and review steps; see <a href="#supported-inputs">Supported inputs</a>.</p>
+<p>The <a href="https://pboachie.github.io/tungsten/importing.html">importing guide</a> gives
+per-format commands, diagnostic families, saved-command shell dialects, HAR path
+review and the supported JSON Schema subset. Imported operations stay unreviewed
+until you explicitly review their safety and allowed origins in <code>agent.yml</code>.</p>
 <p><code>init</code> writes <code>tungsten.yml</code> and <code>agent.yml</code> with <strong>TypeScript, Python and docs</strong>
 targets by default. Edit the existing <code>targets</code> block rather than appending a
 second one. For this example, replace its Python entry with:</p>
@@ -275,7 +408,7 @@ PYTHON
 resource and method names follow its title and operation IDs. Calls return a
 <code>Result</code>; API and transport errors carry a diagnostic envelope. When installing
 a generated TypeScript SDK, build its matching source runtime first with
-<code>npm ci &amp;&amp; npm run build</code> in the compiler, then install that directory and the
+<code>npm ci &amp;&amp; npm run build</code> in <code>runtimes/ts</code>, then install that directory and the
 SDK's dependencies in the generated package and run <code>npm run build</code>. The Python
 route above works without assuming runtime registry publication.</p>
 <p>Destructive operations use the preview flow. From the TypeScript SDK generated for the ZROtext pilot:</p>
@@ -302,20 +435,48 @@ the idle timeout after successful headers. Custom transports must cooperate;
 uninterruptible callbacks retain capacity until completion and late results are
 rejected, without a hard settlement deadline. OS resolver cancellation depends on
 the platform.</p>
-<p>More examples: <a href="https://github.com/pboachie/tungsten/blob/main/examples/showcase/README.md">tungsten on six public APIs</a> (the public OpenAPI descriptions of Stripe, GitHub, Twilio, OpenAI, Kubernetes and Discord): what <code>tungsten check</code> finds, MCP listing sizes, and generated SDK code in TypeScript, Python and Rust, reproducible with one script. <a href="https://github.com/pboachie/tungsten/blob/main/examples/external-emitter-markdown"><code>examples/external-emitter-markdown</code></a> shows how to write an external emitter.</p>
+<p>More examples: the <a href="https://github.com/pboachie/tungsten/blob/b7ad5e5a2388/examples/README.md">runnable example gallery</a> covers first
+SDKs, supported input routes, local mocks, destructive confirmation and CI/surface
+review workflows. <a href="https://github.com/pboachie/tungsten/blob/b7ad5e5a2388/examples/typed-sse/README.md">Typed Python SSE</a> shows how to
+declare or overlay an incomplete stream response and consume named events with
+sync/async cleanup. <a href="https://github.com/pboachie/tungsten/blob/b7ad5e5a2388/examples/response-contract-audit/README.md">Response-contract quality</a>
+shows the opt-in audit and reviewed schema overlays without inferring guaranteed
+types. <a href="https://github.com/pboachie/tungsten/blob/b7ad5e5a2388/examples/showcase/README.md">Tungsten on six public APIs</a>
+uses the public OpenAPI descriptions of Stripe, GitHub, Twilio, OpenAI, Kubernetes
+and Discord to show diagnostics, MCP listing sizes and generated SDK code in
+TypeScript, Python and Rust, reproducible with one script. The
+<a href="https://github.com/pboachie/tungsten/blob/b7ad5e5a2388/examples/external-emitter-markdown">external Markdown emitter</a> shows how to
+write an external emitter.</p>
+<p>An <code>external:</code> target in <code>tungsten.yml</code> names a command that tungsten starts as a process, unsandboxed and with your privileges. It runs on every command that produces output in memory, not only on a writing <code>generate</code>: <code>generate --dry-run</code> and <code>--check</code>, <code>check --ci</code>, <code>diff</code> and <code>report</code> run it too (plain <code>check</code> and <code>ir dump</code> do not). A CI job that runs <code>tungsten check --ci</code> on pull requests therefore executes whatever the pull request puts in <code>tungsten.yml</code>. Pass <code>--no-external</code> or set <code>TUNGSTEN_NO_EXTERNAL=1</code> to skip external targets (reported as TG0807) when the manifest is not trusted.</p>
+<h3 id="python-interpreter-compatibility"><a class="header" href="#python-interpreter-compatibility">Python interpreter compatibility</a></h3>
+<p>Python targets default to Python 3.12+. To generate a client for Python 3.10
+or 3.11, set a quoted <code>python_version</code> in <code>targets.python</code>:</p>
+<pre><code class="language-yaml">targets:
+  python:
+    python_version: "3.10"
+</code></pre>
+<p>Supported values are <code>"3.10"</code>, <code>"3.11"</code> and <code>"3.12"</code> (the default). Both
+Pydantic and <code>models: dataclasses</code> support these modes. Compatibility output
+uses <code>typing_extensions</code> aliases and retains forward references, validation
+and transport behavior. The matching runtime supports Python 3.10 and newer;
+compatibility clients require <code>tungsten-runtime&gt;=0.1.3,&lt;0.2.0</code>, including when
+an explicit runtime specifier is supplied. A <code>runtime_path</code> checkout must
+contain this compatibility support. Publishing the matching runtime remains
+part of the coordinated release.</p>
 <h2 id="architecture"><a class="header" href="#architecture">Architecture</a></h2>
+<p><img src="assets/architecture.svg" alt="Tungsten inputs, compiler, generated targets and runtimes" /></p>
 <ol>
-<li>The <strong>frontend</strong> reads OpenAPI 3.0 and 3.1, resolves references and applies overlays.</li>
+<li>The <strong>frontend</strong> reads OpenAPI 3.0 and 3.1, resolves references and applies overlays. The other supported inputs (Swagger 2.0, Postman, saved cURL, <code>.http</code>/<code>.rest</code>, HAR, endpoint manifests) are converted offline to a normalized OpenAPI document first; <code>init</code> writes it as <code>imported.openapi.json</code> and the frontend reads it like any OpenAPI document.</li>
 <li>The <strong>IR</strong> is a versioned JSON document (<code>tungsten ir dump</code>, schema via <code>tungsten schema ir</code>).</li>
 <li>The <strong>agent compiler</strong> merges <code>agent.yml</code> into it: safety tiers, idempotency, confirmation, remediation text, verification hooks, macros and the disclosure mode for MCP.</li>
-<li><strong>Emitters</strong> write each target from the IR. They are pure functions of their inputs.</li>
-<li><strong>Runtimes</strong> hold the behaviour shared by generated code: validation, auth, retries, idempotency stores, the envelope, previews, pagination and middleware.</li>
+<li><strong>Emitters</strong> (<code>crates/tungsten-emit-*</code>) write each target from the IR. They are pure functions of their inputs.</li>
+<li><strong>Runtimes</strong> (<code>runtimes/</code>) hold the behaviour shared by generated code: validation, auth, retries, idempotency stores, the envelope, previews, pagination and middleware.</li>
 </ol>
-<p>Repository layout: <code>crates/</code> is the compiler (AGPL-3.0-only); the compiler, the compiler, the compiler, the compiler, the compiler, the compiler, the compiler, the compiler and the compiler contain the libraries generated code depends on (Apache-2.0).</p>
+<p>Repository layout: <code>crates/</code> is the compiler (AGPL-3.0-only); <code>runtimes/ts</code>, <code>runtimes/mcp</code>, <code>runtimes/webmcp</code>, <code>runtimes/python</code>, <code>runtimes/rust</code>, <code>runtimes/go</code>, <code>runtimes/java</code>, <code>runtimes/kotlin</code>, <code>runtimes/csharp</code>, <code>runtimes/fsharp</code>, <code>runtimes/dart</code> and <code>runtimes/ruby</code> contain the libraries generated code depends on (Apache-2.0).</p>
 <h2 id="licensing"><a class="header" href="#licensing">Licensing</a></h2>
 <ul>
-<li>The compiler is licensed under <a href="https://github.com/pboachie/tungsten/blob/main/LICENSE">AGPL-3.0-only</a>.</li>
-<li>The runtime libraries that generated code depends on and the external Go emitter (<code>emitters/go</code>) are licensed under <a href="https://github.com/pboachie/tungsten/blob/main/runtimes/LICENSE">Apache-2.0</a>.</li>
+<li>The compiler (<code>crates/</code>) is licensed under <a href="https://github.com/pboachie/tungsten/blob/b7ad5e5a2388/LICENSE">AGPL-3.0-only</a>.</li>
+<li>The runtime libraries that generated code depends on (<code>runtimes/</code>) and the external Go emitter (<code>emitters/go</code>) are licensed under <a href="https://github.com/pboachie/tungsten/blob/b7ad5e5a2388/runtimes/LICENSE">Apache-2.0</a>.</li>
 <li>Output generated by tungsten is not a work covered by the AGPL and carries no licence from tungsten. The owner of the API description chooses the licence of the generated code.</li>
 </ul>
 

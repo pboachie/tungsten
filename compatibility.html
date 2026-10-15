@@ -196,7 +196,8 @@ Public source distributions do not include the private test corpus.</p>
 <tr><td>Request media: JSON / <code>+json</code>, form, multipart, text, bytes</td><td>Supported in the IR; target behavior is limited by runtime capabilities</td><td>media-type corpus assertions, multipart fixture</td><td>Wire encoding is selected per media type. This does not establish arbitrary per-property OpenAPI Encoding Object support or service interoperability for every emitted language.</td></tr>
 <tr><td><code>patternProperties</code>, conditional/dependent schemas, <code>unevaluated*</code>, tuple <code>prefixItems</code>, <code>$dynamicRef</code></td><td>Limited</td><td>TG0303; pattern-properties fixture</td><td>These keywords are reported and ignored. Remaining schema shape still builds; generated validation can be broader than the source.</td></tr>
 <tr><td>Anchor <code>$ref</code> fragments, remote <code>$ref</code> fetching</td><td>Rejected</td><td>TG0201 (anchor), TG0202 (remote); reference checks</td><td>Vendor remote descriptions locally and use JSON Pointer file references. <code>$id</code> URI scope resolution and dynamic anchors are not implemented.</td></tr>
-<tr><td>Swagger 2.0 / OpenAPI 3.2</td><td>Rejected</td><td>TG0103; version checks, <code>unsupported_external_document_versions_are_diagnosed_at_the_document_and_reference</code></td><td>Convert unsupported inputs to supported OpenAPI versions first.</td></tr>
+<tr><td>Swagger 2.0</td><td>Converted offline</td><td>TG0111 for unsupported constructs</td><td><code>tungsten init --from swagger.json</code> converts the supported subset to OpenAPI 3.0.3; external references and ambiguous or unsupported constructs fail. See <a href="importing.html">importing</a>.</td></tr>
+<tr><td>OpenAPI 3.2</td><td>Rejected</td><td>TG0103; version checks, <code>unsupported_external_document_versions_are_diagnosed_at_the_document_and_reference</code></td><td>Supply supported OpenAPI 3.0/3.1 input.</td></tr>
 </tbody></table>
 </div>
 <p>The Petstore interoperability fragment adapts the
@@ -221,7 +222,7 @@ behavior, pagination and endpoint coverage need separate integration checks.</p>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="project-setup.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="importing.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
@@ -235,7 +236,7 @@ behavior, pagination and endpoint coverage need separate integration checks.</p>
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="project-setup.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="importing.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <i class="fa fa-angle-left"></i>
                     </a>
 

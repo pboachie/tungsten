@@ -179,7 +179,7 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="cli-reference"><a class="header" href="#cli-reference">CLI reference</a></h1>
-<p>This page is generated from <code>tungsten --help</code>, command by command. Run <code>tungsten &lt;command&gt; --help</code> for the same text in your terminal.</p>
+<p>This page is generated from <code>tungsten --help</code>, command by command. Run <code>tungsten &lt;command&gt; --help</code> in your terminal. Generic Git URL examples on this page use the reserved example.com domain.</p>
 <h2 id="tungsten"><a class="header" href="#tungsten"><code>tungsten</code></a></h2>
 <pre><code class="language-text">Agent-native SDK generator and MCP/WebMCP compiler
 
@@ -202,8 +202,24 @@ Commands:
   help      Print this message or the help of the given subcommand(s)
 
 Options:
+      --offline
+          Reuse verified HTTP/Git input pins and cached files without network access
+
+      --refresh-inputs
+          Refresh an HTTP content pin or resolve a Git ref again after review. Converted imports require init into a fresh project to change sources
+
+      --input-header &lt;NAME: VALUE&gt;
+          Header for HTTP document downloads only (repeatable; not Git authentication). Environment values are newline-separated. Prefer the environment for secrets
+          
+          [env: TUNGSTEN_INPUT_HEADERS]
+
       --json
           Print exactly one JSON document on stdout
+
+      --no-external
+          Never start the commands of `external` targets. Without it, an `external` target's command runs on `generate` (any mode), `check --ci`, `diff` and `report`, with your privileges and with whatever the manifest says; pass it (or set TUNGSTEN_NO_EXTERNAL=1) when the manifest is not trusted, for example on a pull request in CI. Such targets are reported as skipped (TG0807)
+          
+          [env: TUNGSTEN_NO_EXTERNAL=]
 
   -h, --help
           Print help (see a summary with '-h')
@@ -250,13 +266,20 @@ Output:
 Usage: tungsten check [OPTIONS] [PATH]
 
 Arguments:
-  [PATH]  A directory with a tungsten.yml, a tungsten*.yml manifest, or a single OpenAPI document [default: .]
+  [PATH]  A directory with a tungsten.yml, a tungsten*.yml manifest, or a single OpenAPI document (local path, HTTP(S) URL or git+ URL) [default: .]
 
 Options:
-      --ci      CI mode: never prompt, never color, and fail (TG0901) when the generated output of a target differs from what `generate` would write
-      --json    Print exactly one JSON document on stdout
-      --strict  Treat warnings as errors
-  -h, --help    Print help
+      --ci                          CI mode: never prompt, never color, and fail (TG0901) when the generated output of a target differs from what `generate` would write. This runs every configured target's emitter in memory, including the commands of `external` targets (see --no-external)
+      --offline                     Reuse verified HTTP/Git input pins and cached files without network access
+      --refresh-inputs              Refresh an HTTP content pin or resolve a Git ref again after review. Converted imports require init into a fresh project to change sources
+      --strict                      Treat warnings as errors
+      --audit-contracts             Audit the success response contracts after compiling (opt-in): a JSON response without a schema (TG0930), a schema that constrains nothing (TG0305) and a free-form object response (TG0931) become warnings naming the operation, status and media type. Nothing is rejected and the default exit behavior is unchanged; combine with --strict to fail when the audit finds weak contracts. Typed maps, no-content responses and non-JSON media types are not findings; a schema (or media-type entry) with a nonempty string review note in `x-tungsten-reviewed-contract`, usually through an overlay, counts as reviewed. TG0932 reports an incomplete audit when budgets are hit
+      --input-header &lt;NAME: VALUE&gt;  Header for HTTP document downloads only (repeatable; not Git authentication). Environment values are newline-separated. Prefer the environment for secrets [env: TUNGSTEN_INPUT_HEADERS]
+      --json                        Print exactly one JSON document on stdout
+      --require-contracts           Run the response-contract audit and treat its findings as errors. Other warnings keep their usual severity (unlike --strict)
+      --all-warnings                Print every warning and info diagnostic in full. By default a code that repeats is shown a few times, then summarized with a count; `--json` always lists every diagnostic
+      --no-external                 Never start the commands of `external` targets. Without it, an `external` target's command runs on `generate` (any mode), `check --ci`, `diff` and `report`, with your privileges and with whatever the manifest says; pass it (or set TUNGSTEN_NO_EXTERNAL=1) when the manifest is not trusted, for example on a pull request in CI. Such targets are reported as skipped (TG0807) [env: TUNGSTEN_NO_EXTERNAL=]
+  -h, --help                        Print help
 </code></pre>
 <h3 id="tungsten-ir"><a class="header" href="#tungsten-ir"><code>tungsten ir</code></a></h3>
 <pre><code class="language-text">Intermediate representation commands
@@ -268,8 +291,12 @@ Commands:
   help  Print this message or the help of the given subcommand(s)
 
 Options:
-      --json  Print exactly one JSON document on stdout
-  -h, --help  Print help
+      --offline                     Reuse verified HTTP/Git input pins and cached files without network access
+      --refresh-inputs              Refresh an HTTP content pin or resolve a Git ref again after review. Converted imports require init into a fresh project to change sources
+      --input-header &lt;NAME: VALUE&gt;  Header for HTTP document downloads only (repeatable; not Git authentication). Environment values are newline-separated. Prefer the environment for secrets [env: TUNGSTEN_INPUT_HEADERS]
+      --json                        Print exactly one JSON document on stdout
+      --no-external                 Never start the commands of `external` targets. Without it, an `external` target's command runs on `generate` (any mode), `check --ci`, `diff` and `report`, with your privileges and with whatever the manifest says; pass it (or set TUNGSTEN_NO_EXTERNAL=1) when the manifest is not trusted, for example on a pull request in CI. Such targets are reported as skipped (TG0807) [env: TUNGSTEN_NO_EXTERNAL=]
+  -h, --help                        Print help
 </code></pre>
 <h4 id="tungsten-ir-dump"><a class="header" href="#tungsten-ir-dump"><code>tungsten ir dump</code></a></h4>
 <pre><code class="language-text">Write the IR as JSON
@@ -277,14 +304,18 @@ Options:
 Usage: tungsten ir dump [OPTIONS] [PATH]
 
 Arguments:
-  [PATH]  A directory with a tungsten.yml, a tungsten*.yml manifest, or a single OpenAPI document [default: .]
+  [PATH]  A directory with a tungsten.yml, a tungsten*.yml manifest, or a single OpenAPI document (local path, HTTP(S) URL or git+ URL) [default: .]
 
 Options:
-      --json        Print exactly one JSON document on stdout
-      --out &lt;FILE&gt;  Write the IR to this file instead of stdout
-      --compact     One line instead of indented JSON
-      --pretty      Indented JSON (the default)
-  -h, --help        Print help
+      --offline                     Reuse verified HTTP/Git input pins and cached files without network access
+      --out &lt;FILE&gt;                  Write the IR to this file instead of stdout
+      --compact                     One line instead of indented JSON
+      --refresh-inputs              Refresh an HTTP content pin or resolve a Git ref again after review. Converted imports require init into a fresh project to change sources
+      --input-header &lt;NAME: VALUE&gt;  Header for HTTP document downloads only (repeatable; not Git authentication). Environment values are newline-separated. Prefer the environment for secrets [env: TUNGSTEN_INPUT_HEADERS]
+      --pretty                      Indented JSON (the default)
+      --json                        Print exactly one JSON document on stdout
+      --no-external                 Never start the commands of `external` targets. Without it, an `external` target's command runs on `generate` (any mode), `check --ci`, `diff` and `report`, with your privileges and with whatever the manifest says; pass it (or set TUNGSTEN_NO_EXTERNAL=1) when the manifest is not trusted, for example on a pull request in CI. Such targets are reported as skipped (TG0807) [env: TUNGSTEN_NO_EXTERNAL=]
+  -h, --help                        Print help
 </code></pre>
 <h3 id="tungsten-explain"><a class="header" href="#tungsten-explain"><code>tungsten explain</code></a></h3>
 <pre><code class="language-text">Explain a diagnostic code, an operation or a type
@@ -295,9 +326,13 @@ Arguments:
   &lt;TARGET&gt;  A diagnostic code (TG0201), an operation id (public.listPets) or a type id (public.Pet). A bare operationId or type name is accepted when it is unambiguous
 
 Options:
-      --json            Print exactly one JSON document on stdout
-      --project &lt;PATH&gt;  Project used to resolve operation and type ids [default: .]
-  -h, --help            Print help
+      --offline                     Reuse verified HTTP/Git input pins and cached files without network access
+      --project &lt;PATH&gt;              Project used to resolve operation and type ids [default: .]
+      --refresh-inputs              Refresh an HTTP content pin or resolve a Git ref again after review. Converted imports require init into a fresh project to change sources
+      --input-header &lt;NAME: VALUE&gt;  Header for HTTP document downloads only (repeatable; not Git authentication). Environment values are newline-separated. Prefer the environment for secrets [env: TUNGSTEN_INPUT_HEADERS]
+      --json                        Print exactly one JSON document on stdout
+      --no-external                 Never start the commands of `external` targets. Without it, an `external` target's command runs on `generate` (any mode), `check --ci`, `diff` and `report`, with your privileges and with whatever the manifest says; pass it (or set TUNGSTEN_NO_EXTERNAL=1) when the manifest is not trusted, for example on a pull request in CI. Such targets are reported as skipped (TG0807) [env: TUNGSTEN_NO_EXTERNAL=]
+  -h, --help                        Print help
 </code></pre>
 <h3 id="tungsten-schema"><a class="header" href="#tungsten-schema"><code>tungsten schema</code></a></h3>
 <pre><code class="language-text">Print a JSON Schema published by tungsten
@@ -318,8 +353,24 @@ Arguments:
           - tool-catalog:     Transport-neutral tools and scoped groups
 
 Options:
+      --offline
+          Reuse verified HTTP/Git input pins and cached files without network access
+
+      --refresh-inputs
+          Refresh an HTTP content pin or resolve a Git ref again after review. Converted imports require init into a fresh project to change sources
+
+      --input-header &lt;NAME: VALUE&gt;
+          Header for HTTP document downloads only (repeatable; not Git authentication). Environment values are newline-separated. Prefer the environment for secrets
+          
+          [env: TUNGSTEN_INPUT_HEADERS]
+
       --json
           Print exactly one JSON document on stdout
+
+      --no-external
+          Never start the commands of `external` targets. Without it, an `external` target's command runs on `generate` (any mode), `check --ci`, `diff` and `report`, with your privileges and with whatever the manifest says; pass it (or set TUNGSTEN_NO_EXTERNAL=1) when the manifest is not trusted, for example on a pull request in CI. Such targets are reported as skipped (TG0807)
+          
+          [env: TUNGSTEN_NO_EXTERNAL=]
 
   -h, --help
           Print help (see a summary with '-h')
@@ -330,16 +381,24 @@ Options:
 Usage: tungsten init [OPTIONS]
 
 Options:
-      --json
-          Print exactly one JSON document on stdout
+      --offline
+          Reuse verified HTTP/Git input pins and cached files without network access
       --server-url &lt;SERVER_URL&gt;
           Advanced: default server URL for later live use; no credentials/query/fragment
       --cli-profile &lt;CLI_PROFILE&gt;
           Advanced: generated Rust CLI environment profile NAME=URL; repeatable. Writes tungsten-profiles.toml with no credentials
+      --refresh-inputs
+          Refresh an HTTP content pin or resolve a Git ref again after review. Converted imports require init into a fresh project to change sources
+      --input-header &lt;NAME: VALUE&gt;
+          Header for HTTP document downloads only (repeatable; not Git authentication). Environment values are newline-separated. Prefer the environment for secrets [env: TUNGSTEN_INPUT_HEADERS]
       --strict
           Advanced: promote generation warnings to errors and withhold all outputs
       --hide-operation &lt;HIDE_OPERATION&gt;
           Hide an exact namespace.operationId from agent surfaces; repeatable
+      --json
+          Print exactly one JSON document on stdout
+      --no-external
+          Never start the commands of `external` targets. Without it, an `external` target's command runs on `generate` (any mode), `check --ci`, `diff` and `report`, with your privileges and with whatever the manifest says; pass it (or set TUNGSTEN_NO_EXTERNAL=1) when the manifest is not trusted, for example on a pull request in CI. Such targets are reported as skipped (TG0807) [env: TUNGSTEN_NO_EXTERNAL=]
       --require-confirmation &lt;REQUIRE_CONFIRMATION&gt;
           Require argument-bound confirmation on an exact operation; repeatable. Never counts as imported-operation review or grants live authority
       --python-runtime &lt;PYTHON_RUNTIME&gt;
@@ -391,7 +450,7 @@ Options:
       --resume
           Generate from existing manifests without overwriting reviewed settings
       --from &lt;SPEC&gt;
-          OpenAPI document to start from. Default: openapi.json, openapi.yaml or openapi.yml in the target directory
+          API description to start from: an OpenAPI 3.0 or 3.1 document, a Swagger 2.0 document, a Postman Collection v2.1 JSON file, a saved cURL command, an HTTP request file (.http/.rest), a HAR 1.2 capture or an endpoint manifest. Saved requests and captures need explicit --route templates. Accepts a local path, HTTP(S) URL or git+https://example.com/repository@ref#path (also git+file://). Default: openapi.json, openapi.yaml, openapi.yml, swagger.json or swagger.yaml in the target directory
       --dir &lt;DIR&gt;
           Directory to write the manifests into (created if missing) [default: .]
       --name &lt;NAME&gt;
@@ -412,9 +471,13 @@ Arguments:
   [PATH]  Project directory or tungsten manifest to inspect without network access
 
 Options:
-      --json    Print exactly one JSON document on stdout
-      --strict  Fail when the project's required tools are missing or unsupported. Uses the current directory when PATH is omitted
-  -h, --help    Print help
+      --offline                     Reuse verified HTTP/Git input pins and cached files without network access
+      --strict                      Fail when the project's required tools are missing or unsupported. Uses the current directory when PATH is omitted
+      --refresh-inputs              Refresh an HTTP content pin or resolve a Git ref again after review. Converted imports require init into a fresh project to change sources
+      --input-header &lt;NAME: VALUE&gt;  Header for HTTP document downloads only (repeatable; not Git authentication). Environment values are newline-separated. Prefer the environment for secrets [env: TUNGSTEN_INPUT_HEADERS]
+      --json                        Print exactly one JSON document on stdout
+      --no-external                 Never start the commands of `external` targets. Without it, an `external` target's command runs on `generate` (any mode), `check --ci`, `diff` and `report`, with your privileges and with whatever the manifest says; pass it (or set TUNGSTEN_NO_EXTERNAL=1) when the manifest is not trusted, for example on a pull request in CI. Such targets are reported as skipped (TG0807) [env: TUNGSTEN_NO_EXTERNAL=]
+  -h, --help                        Print help
 </code></pre>
 <h3 id="tungsten-emitters"><a class="header" href="#tungsten-emitters"><code>tungsten emitters</code></a></h3>
 <pre><code class="language-text">List the external emitters (`tungsten-emit-&lt;name&gt;`) that can be run, with the protocol and version each reports
@@ -425,8 +488,12 @@ Arguments:
   [PATH]  A project (as for `check`) whose `external` targets are listed too
 
 Options:
-      --json  Print exactly one JSON document on stdout
-  -h, --help  Print help
+      --offline                     Reuse verified HTTP/Git input pins and cached files without network access
+      --refresh-inputs              Refresh an HTTP content pin or resolve a Git ref again after review. Converted imports require init into a fresh project to change sources
+      --input-header &lt;NAME: VALUE&gt;  Header for HTTP document downloads only (repeatable; not Git authentication). Environment values are newline-separated. Prefer the environment for secrets [env: TUNGSTEN_INPUT_HEADERS]
+      --json                        Print exactly one JSON document on stdout
+      --no-external                 Never start the commands of `external` targets. Without it, an `external` target's command runs on `generate` (any mode), `check --ci`, `diff` and `report`, with your privileges and with whatever the manifest says; pass it (or set TUNGSTEN_NO_EXTERNAL=1) when the manifest is not trusted, for example on a pull request in CI. Such targets are reported as skipped (TG0807) [env: TUNGSTEN_NO_EXTERNAL=]
+  -h, --help                        Print help
 </code></pre>
 <h3 id="tungsten-generate"><a class="header" href="#tungsten-generate"><code>tungsten generate</code></a></h3>
 <pre><code class="language-text">Generate every configured target (SDKs, docs) from the project
@@ -434,16 +501,20 @@ Options:
 Usage: tungsten generate [OPTIONS] [PATH]
 
 Arguments:
-  [PATH]  A directory with a tungsten.yml, a tungsten*.yml manifest, or a single OpenAPI document [default: .]
+  [PATH]  A directory with a tungsten.yml, a tungsten*.yml manifest, or a single OpenAPI document (local path, HTTP(S) URL or git+ URL) [default: .]
 
 Options:
-      --json              Print exactly one JSON document on stdout
-      --target &lt;TARGETS&gt;  Only these targets, comma-separated (`typescript,docs`; `ts`, `py`, `rs` and `rb` are accepted). Default: every target in tungsten.yml
-      --dry-run           Report what would be written or removed without touching the disk
-      --check             Compare the output directories with what would be generated; write nothing and exit 1 when they differ
-      --force             Write into a non-empty output directory that tungsten did not generate (one without .tungsten/manifest.json)
-      --strict            Treat warnings (the compiler's and the emitters') as errors: nothing is written when there are any, in any target
-  -h, --help              Print help
+      --offline                     Reuse verified HTTP/Git input pins and cached files without network access
+      --target &lt;TARGETS&gt;            Only these targets, comma-separated (`typescript,docs`; `ts`, `py`, `rs` and `rb` are accepted). Default: every target in tungsten.yml
+      --dry-run                     Report what would be written or removed without touching the disk
+      --refresh-inputs              Refresh an HTTP content pin or resolve a Git ref again after review. Converted imports require init into a fresh project to change sources
+      --check                       Compare the output directories with what would be generated; write nothing and exit 1 when they differ
+      --input-header &lt;NAME: VALUE&gt;  Header for HTTP document downloads only (repeatable; not Git authentication). Environment values are newline-separated. Prefer the environment for secrets [env: TUNGSTEN_INPUT_HEADERS]
+      --force                       Write into a non-empty output directory that tungsten did not generate (one without .tungsten/manifest.json)
+      --json                        Print exactly one JSON document on stdout
+      --no-external                 Never start the commands of `external` targets. Without it, an `external` target's command runs on `generate` (any mode), `check --ci`, `diff` and `report`, with your privileges and with whatever the manifest says; pass it (or set TUNGSTEN_NO_EXTERNAL=1) when the manifest is not trusted, for example on a pull request in CI. Such targets are reported as skipped (TG0807) [env: TUNGSTEN_NO_EXTERNAL=]
+      --strict                      Treat warnings (the compiler's and the emitters') as errors: nothing is written when there are any, in any target
+  -h, --help                        Print help
 </code></pre>
 <h3 id="tungsten-mock"><a class="header" href="#tungsten-mock"><code>tungsten mock</code></a></h3>
 <pre><code class="language-text">Serve a mock of the API from the compiled IR
@@ -451,15 +522,19 @@ Options:
 Usage: tungsten mock [OPTIONS] [PATH]
 
 Arguments:
-  [PATH]  A directory with a tungsten.yml, a tungsten*.yml manifest, or a single OpenAPI document [default: .]
+  [PATH]  A directory with a tungsten.yml, a tungsten*.yml manifest, or a single OpenAPI document (local path, HTTP(S) URL or git+ URL) [default: .]
 
 Options:
-      --json                          Print exactly one JSON document on stdout
+      --offline                       Reuse verified HTTP/Git input pins and cached files without network access
       --port &lt;PORT&gt;                   Port on 127.0.0.1 to listen on; 0 picks a free port [default: 0]
+      --refresh-inputs                Refresh an HTTP content pin or resolve a Git ref again after review. Converted imports require init into a fresh project to change sources
       --seed &lt;SEED&gt;                   Seed for generated response values; the same seed gives the same responses [default: 0]
       --gate &lt;ENV&gt;                    Treat this runtime gate (its environment variable, e.g. SEALED_WEBHOOK_DELIVERY_ENABLED) as on; repeat for several. Gates not listed keep their default
+      --input-header &lt;NAME: VALUE&gt;    Header for HTTP document downloads only (repeatable; not Git authentication). Environment values are newline-separated. Prefer the environment for secrets [env: TUNGSTEN_INPUT_HEADERS]
+      --json                          Print exactly one JSON document on stdout
       --max-recorded-calls &lt;N&gt;        Recorded calls kept for `/__tungsten/calls`; past it the oldest is dropped. 0 records nothing [default: 10000]
       --max-idempotent-responses &lt;N&gt;  Stored idempotent responses kept for replays; past it the oldest is dropped and a later request with its key is served as new. 0 stores nothing [default: 10000]
+      --no-external                   Never start the commands of `external` targets. Without it, an `external` target's command runs on `generate` (any mode), `check --ci`, `diff` and `report`, with your privileges and with whatever the manifest says; pass it (or set TUNGSTEN_NO_EXTERNAL=1) when the manifest is not trusted, for example on a pull request in CI. Such targets are reported as skipped (TG0807) [env: TUNGSTEN_NO_EXTERNAL=]
   -h, --help                          Print help
 </code></pre>
 <h3 id="tungsten-report"><a class="header" href="#tungsten-report"><code>tungsten report</code></a></h3>
@@ -468,12 +543,17 @@ Options:
 Usage: tungsten report [OPTIONS] [PATH]
 
 Arguments:
-  [PATH]  A directory with a tungsten.yml, a tungsten*.yml manifest, or a single OpenAPI document [default: .]
+  [PATH]  A directory with a tungsten.yml, a tungsten*.yml manifest, or a single OpenAPI document (local path, HTTP(S) URL or git+ URL) [default: .]
 
 Options:
-      --html &lt;FILE&gt;  Write the report as one static HTML file (no external assets, no scripts)
-      --json         Print exactly one JSON document on stdout
-  -h, --help         Print help
+      --html &lt;FILE&gt;                 Write the report as one static HTML file (no external assets, no scripts)
+      --offline                     Reuse verified HTTP/Git input pins and cached files without network access
+      --all-targets                 Also run the emitter of every target this version knows, not only the configured ones, to fill the coverage table and the token budgets of targets that are not enabled yet. Slow on a large API. Without it those targets are listed as `not_configured`. Configured `external` targets run either way (see --no-external)
+      --refresh-inputs              Refresh an HTTP content pin or resolve a Git ref again after review. Converted imports require init into a fresh project to change sources
+      --input-header &lt;NAME: VALUE&gt;  Header for HTTP document downloads only (repeatable; not Git authentication). Environment values are newline-separated. Prefer the environment for secrets [env: TUNGSTEN_INPUT_HEADERS]
+      --json                        Print exactly one JSON document on stdout
+      --no-external                 Never start the commands of `external` targets. Without it, an `external` target's command runs on `generate` (any mode), `check --ci`, `diff` and `report`, with your privileges and with whatever the manifest says; pass it (or set TUNGSTEN_NO_EXTERNAL=1) when the manifest is not trusted, for example on a pull request in CI. Such targets are reported as skipped (TG0807) [env: TUNGSTEN_NO_EXTERNAL=]
+  -h, --help                        Print help
 </code></pre>
 <h3 id="tungsten-diff"><a class="header" href="#tungsten-diff"><code>tungsten diff</code></a></h3>
 <pre><code class="language-text">Show what regeneration would add, change or remove in each target, and with --semver how the API surface changed
@@ -481,14 +561,18 @@ Options:
 Usage: tungsten diff [OPTIONS] [PATH]
 
 Arguments:
-  [PATH]  A directory with a tungsten.yml, a tungsten*.yml manifest, or a single OpenAPI document [default: .]
+  [PATH]  A directory with a tungsten.yml, a tungsten*.yml manifest, or a single OpenAPI document (local path, HTTP(S) URL or git+ URL) [default: .]
 
 Options:
-      --json              Print exactly one JSON document on stdout
-      --target &lt;TARGETS&gt;  Only these targets, comma-separated. Default: every target in tungsten.yml
-      --semver            Classify the API surface change since the last generation (from .tungsten/surface.json) as major, minor, patch or none
-      --migration         Include actionable migration guidance (implies --semver)
-  -h, --help              Print help
+      --offline                     Reuse verified HTTP/Git input pins and cached files without network access
+      --target &lt;TARGETS&gt;            Only these targets, comma-separated. Default: every target in tungsten.yml
+      --refresh-inputs              Refresh an HTTP content pin or resolve a Git ref again after review. Converted imports require init into a fresh project to change sources
+      --semver                      Classify the API surface change since the last generation (from .tungsten/surface.json) as major, minor, patch or none
+      --input-header &lt;NAME: VALUE&gt;  Header for HTTP document downloads only (repeatable; not Git authentication). Environment values are newline-separated. Prefer the environment for secrets [env: TUNGSTEN_INPUT_HEADERS]
+      --migration                   Include actionable migration guidance (implies --semver)
+      --json                        Print exactly one JSON document on stdout
+      --no-external                 Never start the commands of `external` targets. Without it, an `external` target's command runs on `generate` (any mode), `check --ci`, `diff` and `report`, with your privileges and with whatever the manifest says; pass it (or set TUNGSTEN_NO_EXTERNAL=1) when the manifest is not trusted, for example on a pull request in CI. Such targets are reported as skipped (TG0807) [env: TUNGSTEN_NO_EXTERNAL=]
+  -h, --help                        Print help
 </code></pre>
 <h3 id="tungsten-overlay"><a class="header" href="#tungsten-overlay"><code>tungsten overlay</code></a></h3>
 <pre><code class="language-text">OpenAPI Overlay authoring helpers
@@ -500,8 +584,12 @@ Commands:
   help     Print this message or the help of the given subcommand(s)
 
 Options:
-      --json  Print exactly one JSON document on stdout
-  -h, --help  Print help
+      --offline                     Reuse verified HTTP/Git input pins and cached files without network access
+      --refresh-inputs              Refresh an HTTP content pin or resolve a Git ref again after review. Converted imports require init into a fresh project to change sources
+      --input-header &lt;NAME: VALUE&gt;  Header for HTTP document downloads only (repeatable; not Git authentication). Environment values are newline-separated. Prefer the environment for secrets [env: TUNGSTEN_INPUT_HEADERS]
+      --json                        Print exactly one JSON document on stdout
+      --no-external                 Never start the commands of `external` targets. Without it, an `external` target's command runs on `generate` (any mode), `check --ci`, `diff` and `report`, with your privileges and with whatever the manifest says; pass it (or set TUNGSTEN_NO_EXTERNAL=1) when the manifest is not trusted, for example on a pull request in CI. Such targets are reported as skipped (TG0807) [env: TUNGSTEN_NO_EXTERNAL=]
+  -h, --help                        Print help
 </code></pre>
 <h4 id="tungsten-overlay-suggest"><a class="header" href="#tungsten-overlay-suggest"><code>tungsten overlay suggest</code></a></h4>
 <pre><code class="language-text">Suggest an Overlay 1.0 document whose actions fix diagnostics (a missing or repeated operationId) without changing the IR
@@ -509,15 +597,19 @@ Options:
 Usage: tungsten overlay suggest [OPTIONS] [PATH]
 
 Arguments:
-  [PATH]  A directory with a tungsten.yml, a tungsten*.yml manifest, or a single OpenAPI document [default: .]
+  [PATH]  A directory with a tungsten.yml, a tungsten*.yml manifest, or a single OpenAPI document (local path, HTTP(S) URL or git+ URL) [default: .]
 
 Options:
-      --json              Print exactly one JSON document on stdout
-      --write &lt;FILE&gt;      Write the overlay to this file instead of stdout
-      --force             Overwrite the --write file if it exists
-      --only &lt;CODES&gt;      Only suggest fixes for these diagnostic codes, comma-separated
-      --namespace &lt;NAME&gt;  The input (namespace) to suggest for. Needed when more than one input has suggestions: an overlay's targets only fit its own spec
-  -h, --help              Print help
+      --offline                     Reuse verified HTTP/Git input pins and cached files without network access
+      --write &lt;FILE&gt;                Write the overlay to this file instead of stdout
+      --force                       Overwrite the --write file if it exists
+      --refresh-inputs              Refresh an HTTP content pin or resolve a Git ref again after review. Converted imports require init into a fresh project to change sources
+      --input-header &lt;NAME: VALUE&gt;  Header for HTTP document downloads only (repeatable; not Git authentication). Environment values are newline-separated. Prefer the environment for secrets [env: TUNGSTEN_INPUT_HEADERS]
+      --only &lt;CODES&gt;                Only suggest fixes for these diagnostic codes, comma-separated
+      --json                        Print exactly one JSON document on stdout
+      --namespace &lt;NAME&gt;            The input (namespace) to suggest for. Needed when more than one input has suggestions: an overlay's targets only fit its own spec
+      --no-external                 Never start the commands of `external` targets. Without it, an `external` target's command runs on `generate` (any mode), `check --ci`, `diff` and `report`, with your privileges and with whatever the manifest says; pass it (or set TUNGSTEN_NO_EXTERNAL=1) when the manifest is not trusted, for example on a pull request in CI. Such targets are reported as skipped (TG0807) [env: TUNGSTEN_NO_EXTERNAL=]
+  -h, --help                        Print help
 </code></pre>
 <h3 id="tungsten-lsp"><a class="header" href="#tungsten-lsp"><code>tungsten lsp</code></a></h3>
 <pre><code class="language-text">Serve a Language Server Protocol server on stdin and stdout for tungsten.yml, agent.yml and overlays: diagnostics, completion, hover, go-to-definition and symbols. `--json` has no effect
@@ -525,9 +617,13 @@ Options:
 Usage: tungsten lsp [OPTIONS]
 
 Options:
-      --config &lt;PATH&gt;  The manifest to serve: a tungsten.yml, or a directory holding one. Default: the tungsten.yml of the editor's workspace folder
-      --json           Print exactly one JSON document on stdout
-  -h, --help           Print help
+      --config &lt;PATH&gt;               The manifest to serve: a tungsten.yml, or a directory holding one. Default: the tungsten.yml of the editor's workspace folder
+      --offline                     Reuse verified HTTP/Git input pins and cached files without network access
+      --refresh-inputs              Refresh an HTTP content pin or resolve a Git ref again after review. Converted imports require init into a fresh project to change sources
+      --input-header &lt;NAME: VALUE&gt;  Header for HTTP document downloads only (repeatable; not Git authentication). Environment values are newline-separated. Prefer the environment for secrets [env: TUNGSTEN_INPUT_HEADERS]
+      --json                        Print exactly one JSON document on stdout
+      --no-external                 Never start the commands of `external` targets. Without it, an `external` target's command runs on `generate` (any mode), `check --ci`, `diff` and `report`, with your privileges and with whatever the manifest says; pass it (or set TUNGSTEN_NO_EXTERNAL=1) when the manifest is not trusted, for example on a pull request in CI. Such targets are reported as skipped (TG0807) [env: TUNGSTEN_NO_EXTERNAL=]
+  -h, --help                        Print help
 </code></pre>
 
                     </main>

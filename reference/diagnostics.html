@@ -179,20 +179,129 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="diagnostic-codes"><a class="header" href="#diagnostic-codes">Diagnostic codes</a></h1>
-<p>Every diagnostic tungsten reports has a stable code, <code>TGnnnn</code>. The first two digits after <code>TG</code> name the area. <code>tungsten explain TGnnnn</code> prints the text below for one code. This page is generated from the compiler's registry.</p>
+<p>Compiler diagnostics use <code>TGnnnn</code>; Postman import uses <code>PMxxx</code>, HAR import uses <code>HRxxx</code>, structural contract inference uses <code>TCxxx</code>, and the Go emitter uses <code>GOxxx</code>. <code>tungsten explain &lt;code&gt;</code> explains one code. This page uses both shared compiler diagnostic registries; each subsystem has its own section. Importer prose uses 'input' for structural samples; <code>tungsten explain</code> retains the canonical wording.</p>
 <div class="table-wrapper"><table><thead><tr><th>Area</th><th>Codes</th></tr></thead><tbody>
-<tr><td>Parsing and input limits (TG01xx)</td><td><a href="#tg0101">TG0101</a>, <a href="#tg0102">TG0102</a>, <a href="#tg0103">TG0103</a>, <a href="#tg0104">TG0104</a>, <a href="#tg0105">TG0105</a>, <a href="#tg0110">TG0110</a>, <a href="#tg0111">TG0111</a>, <a href="#tg0112">TG0112</a></td></tr>
+<tr><td>Go emitter (GOxxx)</td><td><a href="#go001">GO001</a>, <a href="#go002">GO002</a>, <a href="#go003">GO003</a>, <a href="#go004">GO004</a>, <a href="#go005">GO005</a>, <a href="#go006">GO006</a></td></tr>
+<tr><td>HAR import (HRxxx)</td><td><a href="#hr001">HR001</a>, <a href="#hr002">HR002</a>, <a href="#hr003">HR003</a>, <a href="#hr006">HR006</a></td></tr>
+<tr><td>Postman import (PMxxx)</td><td><a href="#pm001">PM001</a>, <a href="#pm002">PM002</a>, <a href="#pm003">PM003</a>, <a href="#pm004">PM004</a>, <a href="#pm005">PM005</a>, <a href="#pm006">PM006</a>, <a href="#pm007">PM007</a>, <a href="#pm008">PM008</a></td></tr>
+<tr><td>Request-contract checks (TCxxx)</td><td><a href="#tc001">TC001</a>, <a href="#tc002">TC002</a>, <a href="#tc003">TC003</a>, <a href="#tc004">TC004</a>, <a href="#tc005">TC005</a>, <a href="#tc006">TC006</a>, <a href="#tc007">TC007</a></td></tr>
+<tr><td>Parsing and input limits (TG01xx)</td><td><a href="#tg0101">TG0101</a>, <a href="#tg0102">TG0102</a>, <a href="#tg0103">TG0103</a>, <a href="#tg0104">TG0104</a>, <a href="#tg0105">TG0105</a>, <a href="#tg0110">TG0110</a>, <a href="#tg0111">TG0111</a>, <a href="#tg0112">TG0112</a>, <a href="#tg0120">TG0120</a>, <a href="#tg0121">TG0121</a>, <a href="#tg0122">TG0122</a>, <a href="#tg0123">TG0123</a>, <a href="#tg0130">TG0130</a>, <a href="#tg0131">TG0131</a>, <a href="#tg0132">TG0132</a>, <a href="#tg0133">TG0133</a>, <a href="#tg0134">TG0134</a></td></tr>
 <tr><td>References and cycles (TG02xx)</td><td><a href="#tg0201">TG0201</a>, <a href="#tg0202">TG0202</a>, <a href="#tg0203">TG0203</a>, <a href="#tg0204">TG0204</a>, <a href="#tg0205">TG0205</a>, <a href="#tg0206">TG0206</a>, <a href="#tg0207">TG0207</a></td></tr>
 <tr><td>Type normalization (TG03xx)</td><td><a href="#tg0301">TG0301</a>, <a href="#tg0302">TG0302</a>, <a href="#tg0303">TG0303</a>, <a href="#tg0304">TG0304</a>, <a href="#tg0305">TG0305</a>, <a href="#tg0306">TG0306</a>, <a href="#tg0307">TG0307</a>, <a href="#tg0308">TG0308</a></td></tr>
 <tr><td>Naming (TG04xx)</td><td><a href="#tg0401">TG0401</a>, <a href="#tg0402">TG0402</a>, <a href="#tg0403">TG0403</a></td></tr>
-<tr><td>Operations, pagination and auth inference (TG05xx)</td><td><a href="#tg0501">TG0501</a>, <a href="#tg0502">TG0502</a>, <a href="#tg0503">TG0503</a>, <a href="#tg0504">TG0504</a>, <a href="#tg0505">TG0505</a>, <a href="#tg0506">TG0506</a>, <a href="#tg0507">TG0507</a>, <a href="#tg0508">TG0508</a>, <a href="#tg0509">TG0509</a>, <a href="#tg0530">TG0530</a>, <a href="#tg0531">TG0531</a>, <a href="#tg0570">TG0570</a>, <a href="#tg0571">TG0571</a>, <a href="#tg0572">TG0572</a>, <a href="#tg0573">TG0573</a>, <a href="#tg0574">TG0574</a></td></tr>
+<tr><td>Operations, pagination and auth inference (TG05xx)</td><td><a href="#tg0501">TG0501</a>, <a href="#tg0502">TG0502</a>, <a href="#tg0503">TG0503</a>, <a href="#tg0504">TG0504</a>, <a href="#tg0505">TG0505</a>, <a href="#tg0506">TG0506</a>, <a href="#tg0507">TG0507</a>, <a href="#tg0508">TG0508</a>, <a href="#tg0509">TG0509</a>, <a href="#tg0510">TG0510</a>, <a href="#tg0530">TG0530</a>, <a href="#tg0531">TG0531</a>, <a href="#tg0570">TG0570</a>, <a href="#tg0571">TG0571</a>, <a href="#tg0572">TG0572</a>, <a href="#tg0573">TG0573</a>, <a href="#tg0574">TG0574</a></td></tr>
 <tr><td>Manifests (TG06xx)</td><td><a href="#tg0601">TG0601</a>, <a href="#tg0602">TG0602</a>, <a href="#tg0603">TG0603</a>, <a href="#tg0604">TG0604</a>, <a href="#tg0605">TG0605</a>, <a href="#tg0606">TG0606</a>, <a href="#tg0607">TG0607</a>, <a href="#tg0608">TG0608</a>, <a href="#tg0609">TG0609</a>, <a href="#tg0610">TG0610</a>, <a href="#tg0611">TG0611</a>, <a href="#tg0612">TG0612</a>, <a href="#tg0613">TG0613</a>, <a href="#tg0614">TG0614</a></td></tr>
-<tr><td>Emitter limits (TG07xx)</td><td><a href="#tg0701">TG0701</a>, <a href="#tg0702">TG0702</a>, <a href="#tg0703">TG0703</a>, <a href="#tg0704">TG0704</a>, <a href="#tg0710">TG0710</a>, <a href="#tg0711">TG0711</a>, <a href="#tg0712">TG0712</a>, <a href="#tg0713">TG0713</a>, <a href="#tg0720">TG0720</a>, <a href="#tg0721">TG0721</a>, <a href="#tg0722">TG0722</a>, <a href="#tg0723">TG0723</a>, <a href="#tg0724">TG0724</a>, <a href="#tg0725">TG0725</a>, <a href="#tg0726">TG0726</a>, <a href="#tg0727">TG0727</a>, <a href="#tg0730">TG0730</a>, <a href="#tg0731">TG0731</a>, <a href="#tg0732">TG0732</a>, <a href="#tg0733">TG0733</a>, <a href="#tg0740">TG0740</a>, <a href="#tg0741">TG0741</a>, <a href="#tg0742">TG0742</a>, <a href="#tg0743">TG0743</a>, <a href="#tg0744">TG0744</a>, <a href="#tg0745">TG0745</a>, <a href="#tg0746">TG0746</a>, <a href="#tg0750">TG0750</a>, <a href="#tg0751">TG0751</a>, <a href="#tg0752">TG0752</a>, <a href="#tg0753">TG0753</a>, <a href="#tg0760">TG0760</a>, <a href="#tg0790">TG0790</a>, <a href="#tg0791">TG0791</a>, <a href="#tg0792">TG0792</a>, <a href="#tg0793">TG0793</a></td></tr>
-<tr><td>External emitters (TG08xx)</td><td><a href="#tg0801">TG0801</a>, <a href="#tg0802">TG0802</a>, <a href="#tg0803">TG0803</a>, <a href="#tg0804">TG0804</a>, <a href="#tg0805">TG0805</a>, <a href="#tg0806">TG0806</a></td></tr>
-<tr><td>Staleness and CI (TG09xx)</td><td><a href="#tg0901">TG0901</a>, <a href="#tg0902">TG0902</a>, <a href="#tg0920">TG0920</a>, <a href="#tg0921">TG0921</a></td></tr>
-<tr><td>SDK emitters: Java, C#, Kotlin, Swift, PHP, Ruby, Dart (TG10xx)</td><td><a href="#tg1010">TG1010</a>, <a href="#tg1011">TG1011</a>, <a href="#tg1012">TG1012</a>, <a href="#tg1013">TG1013</a>, <a href="#tg1014">TG1014</a>, <a href="#tg1015">TG1015</a>, <a href="#tg1020">TG1020</a>, <a href="#tg1021">TG1021</a>, <a href="#tg1022">TG1022</a>, <a href="#tg1023">TG1023</a>, <a href="#tg1024">TG1024</a>, <a href="#tg1025">TG1025</a>, <a href="#tg1060">TG1060</a>, <a href="#tg1061">TG1061</a>, <a href="#tg1062">TG1062</a>, <a href="#tg1063">TG1063</a>, <a href="#tg1064">TG1064</a>, <a href="#tg1065">TG1065</a></td></tr>
+<tr><td>Emitter limits (TG07xx)</td><td><a href="#tg0701">TG0701</a>, <a href="#tg0702">TG0702</a>, <a href="#tg0703">TG0703</a>, <a href="#tg0704">TG0704</a>, <a href="#tg0705">TG0705</a>, <a href="#tg0710">TG0710</a>, <a href="#tg0711">TG0711</a>, <a href="#tg0712">TG0712</a>, <a href="#tg0713">TG0713</a>, <a href="#tg0720">TG0720</a>, <a href="#tg0721">TG0721</a>, <a href="#tg0722">TG0722</a>, <a href="#tg0723">TG0723</a>, <a href="#tg0724">TG0724</a>, <a href="#tg0725">TG0725</a>, <a href="#tg0726">TG0726</a>, <a href="#tg0727">TG0727</a>, <a href="#tg0730">TG0730</a>, <a href="#tg0731">TG0731</a>, <a href="#tg0732">TG0732</a>, <a href="#tg0733">TG0733</a>, <a href="#tg0740">TG0740</a>, <a href="#tg0741">TG0741</a>, <a href="#tg0742">TG0742</a>, <a href="#tg0743">TG0743</a>, <a href="#tg0744">TG0744</a>, <a href="#tg0745">TG0745</a>, <a href="#tg0746">TG0746</a>, <a href="#tg0750">TG0750</a>, <a href="#tg0751">TG0751</a>, <a href="#tg0752">TG0752</a>, <a href="#tg0753">TG0753</a>, <a href="#tg0760">TG0760</a>, <a href="#tg0790">TG0790</a>, <a href="#tg0791">TG0791</a>, <a href="#tg0792">TG0792</a>, <a href="#tg0793">TG0793</a></td></tr>
+<tr><td>External emitters (TG08xx)</td><td><a href="#tg0801">TG0801</a>, <a href="#tg0802">TG0802</a>, <a href="#tg0803">TG0803</a>, <a href="#tg0804">TG0804</a>, <a href="#tg0805">TG0805</a>, <a href="#tg0806">TG0806</a>, <a href="#tg0807">TG0807</a>, <a href="#tg0808">TG0808</a></td></tr>
+<tr><td>Staleness and CI (TG09xx)</td><td><a href="#tg0901">TG0901</a>, <a href="#tg0902">TG0902</a>, <a href="#tg0920">TG0920</a>, <a href="#tg0921">TG0921</a>, <a href="#tg0930">TG0930</a>, <a href="#tg0931">TG0931</a>, <a href="#tg0932">TG0932</a></td></tr>
+<tr><td>SDK emitters: Java, C#, Kotlin, Swift, PHP, Ruby, Dart, F# (TG10xx)</td><td><a href="#tg1010">TG1010</a>, <a href="#tg1011">TG1011</a>, <a href="#tg1012">TG1012</a>, <a href="#tg1013">TG1013</a>, <a href="#tg1014">TG1014</a>, <a href="#tg1015">TG1015</a>, <a href="#tg1020">TG1020</a>, <a href="#tg1021">TG1021</a>, <a href="#tg1022">TG1022</a>, <a href="#tg1023">TG1023</a>, <a href="#tg1024">TG1024</a>, <a href="#tg1025">TG1025</a>, <a href="#tg1030">TG1030</a>, <a href="#tg1031">TG1031</a>, <a href="#tg1032">TG1032</a>, <a href="#tg1033">TG1033</a>, <a href="#tg1034">TG1034</a>, <a href="#tg1035">TG1035</a>, <a href="#tg1060">TG1060</a>, <a href="#tg1061">TG1061</a>, <a href="#tg1062">TG1062</a>, <a href="#tg1063">TG1063</a>, <a href="#tg1064">TG1064</a>, <a href="#tg1065">TG1065</a>, <a href="#tg1070">TG1070</a>, <a href="#tg1071">TG1071</a>, <a href="#tg1072">TG1072</a>, <a href="#tg1073">TG1073</a>, <a href="#tg1074">TG1074</a>, <a href="#tg1075">TG1075</a>, <a href="#tg1080">TG1080</a>, <a href="#tg1081">TG1081</a>, <a href="#tg1082">TG1082</a>, <a href="#tg1083">TG1083</a>, <a href="#tg1084">TG1084</a>, <a href="#tg1085">TG1085</a></td></tr>
+<tr><td>Request import: saved cURL and .http (TG12xx)</td><td><a href="#tg1201">TG1201</a></td></tr>
 </tbody></table>
 </div>
+<h2 id="go-emitter-goxxx"><a class="header" href="#go-emitter-goxxx">Go emitter (GOxxx)</a></h2>
+<h3 id="go001"><a class="header" href="#go001">GO001</a></h3>
+<p><strong>macro is not emitted by the Go SDK</strong></p>
+<p><em>Meaning.</em> A macro of agent.yml is not in the canonical form the SDKs run (an unknown step kind or operation, a reference to no earlier step, an invalid <code>as</code>, <code>until</code> or budget). The Go SDK leaves it out; the other operations are generated as usual. The Go emitter reports it through TG0806.</p>
+<p><em>Fix.</em> Fix the macro in agent.yml; the message names the offending member.</p>
+<h3 id="go002"><a class="header" href="#go002">GO002</a></h3>
+<p><strong>OpenID Connect scheme is sent as a bearer token by the Go SDK</strong></p>
+<p><em>Meaning.</em> The API declares an OpenID Connect security scheme. The Go SDK sends the configured credential as a bearer token and does not run discovery or obtain tokens itself.</p>
+<p><em>Fix.</em> Obtain the token yourself and pass it to the client under the scheme's name.</p>
+<h3 id="go003"><a class="header" href="#go003">GO003</a></h3>
+<p><strong>different success bodies by status: the Go typed result is json.RawMessage</strong></p>
+<p><em>Meaning.</em> An operation answers different JSON bodies depending on the status. The Go SDK's typed result for it is <code>json.RawMessage</code>; the decoded body also stays in <code>Response.Raw</code>.</p>
+<p><em>Fix.</em> Nothing to fix; decode the raw message according to the status that arrived.</p>
+<h3 id="go004"><a class="header" href="#go004">GO004</a></h3>
+<p><strong>invalid go target option</strong></p>
+<p><em>Meaning.</em> An option of the <code>go</code> target in tungsten.yml is unknown or has the wrong type, so the Go emitter refused the target and wrote nothing.</p>
+<p><em>Fix.</em> Fix or remove the option under <code>targets.go</code> in tungsten.yml; the message names it and the type it must have.</p>
+<h3 id="go005"><a class="header" href="#go005">GO005</a></h3>
+<p><strong>the generated Go source is invalid</strong></p>
+<p><em>Meaning.</em> The Go source the emitter generated does not parse, so nothing was written. This is a fault in the emitter or in a name taken from the API description.</p>
+<p><em>Fix.</em> Check the API description for names that cannot become Go identifiers and report the diagnostic with the offending schema if it persists.</p>
+<h3 id="go006"><a class="header" href="#go006">GO006</a></h3>
+<p><strong>pagination items path does not resolve to an array in the success schema</strong></p>
+<p><em>Meaning.</em> The pagination items path of an operation (from the spec or inferred) does not resolve to an array in the success schema, so the Go SDK cannot type the page items.</p>
+<p><em>Fix.</em> Correct the pagination items path of the operation to name an array field of the success response, or remove the pagination declaration.</p>
+<h2 id="har-import-hrxxx"><a class="header" href="#har-import-hrxxx">HAR import (HRxxx)</a></h2>
+<h3 id="hr001"><a class="header" href="#hr001">HR001</a></h3>
+<p><strong>HAR capture exceeds the byte, nesting or node limit</strong></p>
+<p><em>Meaning.</em> The HAR capture is larger than the import limits: its byte size, nesting depth or node count is over the budget. Nothing was imported.</p>
+<p><em>Fix.</em> Export a smaller capture, or narrow it with <code>--include-prefix</code> and <code>--exclude-prefix</code>.</p>
+<h3 id="hr002"><a class="header" href="#hr002">HR002</a></h3>
+<p><strong>HAR capture is malformed or unsupported</strong></p>
+<p><em>Meaning.</em> The input is not a HAR 1.2 capture tungsten can read: invalid JSON, a missing <code>log</code>, entries, request, method, header name or query parameter name, an unsupported HAR version, or a response without a completed HTTP status.</p>
+<p><em>Fix.</em> Export the capture again as HAR 1.2 and exclude failed or pending requests.</p>
+<h3 id="hr003"><a class="header" href="#hr003">HR003</a></h3>
+<p><strong>selected HAR origin is absent or noncanonical</strong></p>
+<p><em>Meaning.</em> The origin given with <code>--har-origin</code> is not one of the origins in the capture, or is not written in canonical form (scheme, host and port only).</p>
+<p><em>Fix.</em> Pass exactly one HTTP(S) origin that occurs in the capture, for example <code>https://api.example.com</code>.</p>
+<h3 id="hr006"><a class="header" href="#hr006">HR006</a></h3>
+<p><strong>reviewed HAR route templates are ambiguous or not whole-segment</strong></p>
+<p><em>Meaning.</em> Reviewed route templates (<code>--route</code> or <code>--har-paths</code>) are ambiguous or malformed: a captured path matches several equally specific templates, or a template replaces part of a segment instead of a whole parameter segment.</p>
+<p><em>Fix.</em> Make the templates unambiguous and let each replace whole segments only, such as <code>/items/{id}</code>; keep literal routing segments unchanged.</p>
+<h2 id="postman-import-pmxxx"><a class="header" href="#postman-import-pmxxx">Postman import (PMxxx)</a></h2>
+<h3 id="pm001"><a class="header" href="#pm001">PM001</a></h3>
+<p><strong>Postman collection exceeds an import budget or nesting limit</strong></p>
+<p><em>Meaning.</em> The Postman collection is over an import limit: variable expansion and parsed samples exceed the import-wide byte or node budget, or folders nest deeper than the limit.</p>
+<p><em>Fix.</em> Reduce large or repeated variables and examples, or flatten the folder nesting.</p>
+<h3 id="pm002"><a class="header" href="#pm002">PM002</a></h3>
+<p><strong>not a Postman Collection v2.1 item tree</strong></p>
+<p><em>Meaning.</em> The input is not a Postman Collection v2.1 item tree: the <code>item</code> array is missing or not an array.</p>
+<p><em>Fix.</em> Export the collection as Postman Collection v2.1 JSON and import that file.</p>
+<h3 id="pm003"><a class="header" href="#pm003">PM003</a></h3>
+<p><strong>Postman API key authentication lacks an explicit name or location</strong></p>
+<p><em>Meaning.</em> A request uses API key authentication without an explicit key name, or with a location other than header or query.</p>
+<p><em>Fix.</em> Give the API key an explicit name and set its location to header or query in the collection.</p>
+<h3 id="pm004"><a class="header" href="#pm004">PM004</a></h3>
+<p><strong>Postman dynamic variable cannot be resolved offline</strong></p>
+<p><em>Meaning.</em> A request uses a Postman dynamic variable (<code>{{$...}}</code>). tungsten never runs scripts or generates dynamic values, so the request shape cannot be known.</p>
+<p><em>Fix.</em> Replace the dynamic variable with an explicit example value or a declared parameter.</p>
+<h3 id="pm005"><a class="header" href="#pm005">PM005</a></h3>
+<p><strong>Postman request URL or variable cannot be resolved to a fixed shape</strong></p>
+<p><em>Meaning.</em> A request URL is not HTTP(S) with an explicit path, or a variable that decides the request shape (host, path or query) cannot be resolved from the collection.</p>
+<p><em>Fix.</em> Provide the variable in the collection or an environment override, or replace it with a declared path parameter; use an absolute HTTP(S) URL.</p>
+<h3 id="pm006"><a class="header" href="#pm006">PM006</a></h3>
+<p><strong>Postman body or response example is not JSON</strong></p>
+<p><em>Meaning.</em> A raw request body is not valid JSON after variable resolution, or a saved response body is not JSON, so no schema can be inferred from it.</p>
+<p><em>Fix.</em> Provide explicit JSON examples, remove the unsupported example, or supply a reviewed media schema.</p>
+<h3 id="pm007"><a class="header" href="#pm007">PM007</a></h3>
+<p><strong>duplicate Postman operations mix unknown and explicit authentication</strong></p>
+<p><em>Meaning.</em> Several requests describe the same operation, and some declare authentication while others leave it unknown.</p>
+<p><em>Fix.</em> Declare one consistent authentication policy for the duplicated requests.</p>
+<h3 id="pm008"><a class="header" href="#pm008">PM008</a></h3>
+<p><strong>every Postman request was omitted as unsupported</strong></p>
+<p><em>Meaning.</em> Every request in the Postman collection was omitted as unsupported, so nothing could be imported.</p>
+<p><em>Fix.</em> Remove or fix the unsupported constructs, or supply a reviewed contract.</p>
+<h2 id="request-contract-checks-tcxxx"><a class="header" href="#request-contract-checks-tcxxx">Request-contract checks (TCxxx)</a></h2>
+<h3 id="tc001"><a class="header" href="#tc001">TC001</a></h3>
+<p><strong>request input exceeds the byte limit</strong></p>
+<p><em>Meaning.</em> The structural request input is larger than the import byte limit.</p>
+<p><em>Fix.</em> Split the import into smaller captures or collections.</p>
+<h3 id="tc002"><a class="header" href="#tc002">TC002</a></h3>
+<p><strong>request input is not valid JSON</strong></p>
+<p><em>Meaning.</em> The structural request input is not valid JSON, or is nested too deeply.</p>
+<p><em>Fix.</em> Fix the JSON syntax and nesting of the input file.</p>
+<h3 id="tc003"><a class="header" href="#tc003">TC003</a></h3>
+<p><strong>request input or reviewed overrides are invalid</strong></p>
+<p><em>Meaning.</em> The input model or the reviewed overrides do not match the input schema.</p>
+<p><em>Fix.</em> Regenerate the input with tungsten, or correct the overrides to match the documented shape.</p>
+<h3 id="tc004"><a class="header" href="#tc004">TC004</a></h3>
+<p><strong>request input has an unsupported method or duplicate path placeholders</strong></p>
+<p><em>Meaning.</em> An operation in the input cannot become an OpenAPI operation: its HTTP method is not supported, or its path template repeats a placeholder name.</p>
+<p><em>Fix.</em> Use an OpenAPI HTTP method and make the path placeholder names unique.</p>
+<h3 id="tc005"><a class="header" href="#tc005">TC005</a></h3>
+<p><strong>input source id is not an opaque identifier</strong></p>
+<p><em>Meaning.</em> An input source id is not an opaque identifier; it looks like a file name or a URL.</p>
+<p><em>Fix.</em> Use an opaque alphanumeric source id, never a file name or URL.</p>
+<h3 id="tc006"><a class="header" href="#tc006">TC006</a></h3>
+<p><strong>unsupported schema keyword in structural input</strong></p>
+<p><em>Meaning.</em> A structural schema in the input uses a keyword the import does not support. References and value-bearing annotations are not imported.</p>
+<p><em>Fix.</em> Use structural fields only, or keep the declaration in the original OpenAPI document.</p>
+<h3 id="tc007"><a class="header" href="#tc007">TC007</a></h3>
+<p><strong>reviewed override uses an unstable parameter index pointer</strong></p>
+<p><em>Meaning.</em> A reviewed override points into a body schema or parameter with a numeric parameter index, which changes when parameters are added or reordered.</p>
+<p><em>Fix.</em> Use <code>/paths/</code> body schema pointers or stable <code>parameter_schema_pointer</code> keys.</p>
 <h2 id="parsing-and-input-limits-tg01xx"><a class="header" href="#parsing-and-input-limits-tg01xx">Parsing and input limits (TG01xx)</a></h2>
 <h3 id="tg0101"><a class="header" href="#tg0101">TG0101</a></h3>
 <p><strong>input file could not be read</strong></p>
@@ -226,6 +335,42 @@
 <p><strong>apiKey header scheme inferred from a credential header parameter</strong></p>
 <p><em>Meaning.</em> The document defines no security scheme and no <code>security</code>, but declares a header that carries an API key (<code>x-api-key</code>, <code>api-key</code> or <code>apikey</code>) as a parameter. tungsten inferred an <code>apiKey</code> header scheme named <code>apiKey</code> and required it by every operation, so the credential is configured once on the client and the header is no longer an argument of each call.</p>
 <p><em>Fix.</em> Define the scheme under <code>components/securitySchemes</code> and list it in <code>security</code> (an overlay can add both) to make the intent explicit and silence the diagnostic.</p>
+<h3 id="tg0120"><a class="header" href="#tg0120">TG0120</a></h3>
+<p><strong>invalid remote input URL or acquisition policy</strong></p>
+<p><em>Meaning.</em> A remote input URL contains credentials, a query or fragment, or its acquisition policy is invalid. Authentication belongs in headers, never source identifiers.</p>
+<p><em>Fix.</em> Supply an HTTP(S) document URL and --input-header or newline-separated TUNGSTEN_INPUT_HEADERS. Choose either --offline or --refresh-inputs.</p>
+<h3 id="tg0121"><a class="header" href="#tg0121">TG0121</a></h3>
+<p><strong>remote input fetch failed or exceeded its limits</strong></p>
+<p><em>Meaning.</em> Fetching an input failed, returned a non-success HTTP status, exceeded 8 MiB or did not finish within 30 seconds. Redirects are refused so credentials cannot cross origins.</p>
+<p><em>Fix.</em> Check network access, trusted TLS certificates and authentication. Pass the final document URL explicitly. Use --offline to reuse a verified pin.</p>
+<h3 id="tg0122"><a class="header" href="#tg0122">TG0122</a></h3>
+<p><strong>remote input SHA256 differs from its pin or conversion</strong></p>
+<p><em>Meaning.</em> Downloaded or cached bytes differ from their SHA256 pin, or a converted import no longer matches its original remote source.</p>
+<p><em>Fix.</em> Review upstream changes before --refresh-inputs. Converted inputs require re-import into a fresh project and renewed review. Use --offline for the existing pin; restore corrupted cache bytes from a trusted copy.</p>
+<h3 id="tg0123"><a class="header" href="#tg0123">TG0123</a></h3>
+<p><strong>remote input cache is missing, invalid or unsafe</strong></p>
+<p><em>Meaning.</em> The .tungsten-inputs cache has no usable pin, contains a symlink or invalid file, or cannot be written safely.</p>
+<p><em>Fix.</em> Fetch once online and retain both source.lock.json and its content file for offline use. Inspect permissions and unexpected cache entries before retrying.</p>
+<h3 id="tg0130"><a class="header" href="#tg0130">TG0130</a></h3>
+<p><strong>invalid Git input reference</strong></p>
+<p><em>Meaning.</em> The Git input reference has an unsupported transport, URL credentials, query, invalid ref or unsafe subpath. Git authentication stays in the credential helper or environment.</p>
+<p><em>Fix.</em> Use git+https://example.com/owner/repository@ref#path. Local hermetic inputs may use git+file:///absolute/repository@ref#path. Do not put secrets in the reference.</p>
+<h3 id="tg0131"><a class="header" href="#tg0131">TG0131</a></h3>
+<p><strong>Git acquisition or ref resolution failed</strong></p>
+<p><em>Meaning.</em> Git could not start, acquire the repository or resolve the ref to one commit. Raw Git stderr is discarded so credential helpers and servers cannot leak credentials into diagnostics.</p>
+<p><em>Fix.</em> Install Git, verify access and credentials, and use a full refs/heads/... or refs/tags/... name when branch/tag names conflict. Use --offline with a previously verified pin.</p>
+<h3 id="tg0132"><a class="header" href="#tg0132">TG0132</a></h3>
+<p><strong>Git input exceeds its acquisition safety budget</strong></p>
+<p><em>Meaning.</em> Git acquisition exceeded its time, file, byte or process-output budget, or encountered a symlink, submodule or unsafe repository path. Only regular files are materialized and nothing is checked out or executed.</p>
+<p><em>Fix.</em> Narrow #subpath to the contract directory, select a smaller repository, or acquire a single document over HTTP(S).</p>
+<h3 id="tg0133"><a class="header" href="#tg0133">TG0133</a></h3>
+<p><strong>Git input pin or cache is missing, invalid or unsafe</strong></p>
+<p><em>Meaning.</em> The Git source lock or its materialized files are missing, invalid, modified, symlinked or not writable. Every reused content file is SHA256-verified.</p>
+<p><em>Fix.</em> Restore the pinned cache from a trusted copy or re-import into a fresh project. Retain .tungsten-inputs with the same access controls as the original source for offline use.</p>
+<h3 id="tg0134"><a class="header" href="#tg0134">TG0134</a></h3>
+<p><strong>Git discovery requires exactly one input document</strong></p>
+<p><em>Meaning.</em> Discovery found zero or multiple supported documents under the selected repository subpath. Tungsten lists candidates and does not choose one implicitly.</p>
+<p><em>Fix.</em> Append #path to select exactly one OpenAPI, Swagger, Postman, HAR, saved request or JSON Schema endpoint manifest document.</p>
 <h2 id="references-and-cycles-tg02xx"><a class="header" href="#references-and-cycles-tg02xx">References and cycles (TG02xx)</a></h2>
 <h3 id="tg0201"><a class="header" href="#tg0201">TG0201</a></h3>
 <p><strong>unresolvable $ref</strong></p>
@@ -258,8 +403,8 @@
 <h2 id="type-normalization-tg03xx"><a class="header" href="#type-normalization-tg03xx">Type normalization (TG03xx)</a></h2>
 <h3 id="tg0301"><a class="header" href="#tg0301">TG0301</a></h3>
 <p><strong>untagged union: runtime will sniff candidates in order</strong></p>
-<p><em>Meaning.</em> A <code>oneOf</code> or <code>anyOf</code> has no discriminator, so a value's variant can only be found by trying the candidates in order at runtime. The order is deterministic (most constrained first), but sniffing is slower and can pick the wrong variant when candidates overlap.</p>
-<p><em>Fix.</em> Add a <code>discriminator</code> with a property every variant declares as a <code>const</code> or single enum value.</p>
+<p><em>Meaning.</em> A <code>oneOf</code> or <code>anyOf</code> has no discriminator, so a value's variant can only be found by trying the candidates in order at runtime. The order is deterministic (most constrained first), but sniffing is slower and can pick the wrong variant when candidates overlap. A union of exactly two candidates where one is a plain string, array or map (<code>X</code> or its id, <code>X</code> or a list of <code>X</code>) is reported as info instead of a warning: the two are told apart by JSON kind, so <code>--strict</code> does not fail on it.</p>
+<p><em>Fix.</em> Add a <code>discriminator</code> with a property every variant declares as a <code>const</code> or single enum value. <code>tungsten check</code> prints a repeated code a few times and then a count; <code>--all-warnings</code> prints all of them and <code>--json</code> always lists every one.</p>
 <h3 id="tg0302"><a class="header" href="#tg0302">TG0302</a></h3>
 <p><strong>allOf members conflict and could not be flattened</strong></p>
 <p><em>Meaning.</em> The members of an <code>allOf</code> declare the same property with incompatible types, or mix records with non-records, so they cannot be merged into one record. The type is kept as an intersection, which some targets express poorly.</p>
@@ -338,10 +483,14 @@
 <p><strong>unsupported security scheme ignored</strong></p>
 <p><em>Meaning.</em> A security scheme uses a type tungsten cannot generate authentication for (for example <code>mutualTLS</code> or an HTTP scheme other than <code>bearer</code> and <code>basic</code>), or lacks a field its type requires. Requirements naming it stay in the IR without a scheme.</p>
 <p><em>Fix.</em> Describe the credential with a supported scheme, or authenticate those operations through a custom transport.</p>
+<h3 id="tg0510"><a class="header" href="#tg0510">TG0510</a></h3>
+<p><strong>path item field defined both beside its $ref and in the target</strong></p>
+<p><em>Meaning.</em> A Path Item combines <code>$ref</code> with fields written beside it, and the referenced item defines the same field: an operation, <code>summary</code>, <code>description</code>, <code>servers</code>, or a parameter with the same <code>name</code> and <code>in</code>. Fields only one side defines are merged. OpenAPI leaves the conflicting ones undefined; tungsten lets the field beside the <code>$ref</code> win, and the message names both pointers.</p>
+<p><em>Fix.</em> Define the field on one side only, or drop it from the shared item.</p>
 <h3 id="tg0530"><a class="header" href="#tg0530">TG0530</a></h3>
 <p><strong>event stream declares no schema; events decoded as any JSON value</strong></p>
 <p><em>Meaning.</em> A success response declares the <code>text/event-stream</code> media type without a schema, so the SDK cannot type or check the events of the stream. Each event's <code>data</code> is still decoded as JSON and handed to the caller as an untyped value.</p>
-<p><em>Fix.</em> Declare the schema of one event under the media type (usually a <code>oneOf</code> tagged by a <code>type</code> property). Name a <code>data</code> value that ends the stream, if there is one, with <code>x-tungsten-stream-done</code>.</p>
+<p><em>Fix.</em> Declare the schema of one event under the media type. Use a discriminator only if it exists inside the JSON data; the SSE event name is separate. A raw data sentinel can be declared with <code>x-tungsten-stream-done</code>. See the typed Python SSE recipe at https://github.com/pboachie/tungsten/tree/release/0.1.3/examples/typed-sse.</p>
 <h3 id="tg0531"><a class="header" href="#tg0531">TG0531</a></h3>
 <p><strong>event stream declared for more than one success status; the first is streamed</strong></p>
 <p><em>Meaning.</em> More than one success status of an operation declares <code>text/event-stream</code>. The SDK streams the lowest status; the others are read as plain responses.</p>
@@ -440,6 +589,10 @@
 <p><strong>output path leaves the output directory or is reserved</strong></p>
 <p><em>Meaning.</em> A generated file would be written outside the target's output directory: a directory on its path is a symlink leading elsewhere, the file itself is a symlink, or the path is inside the reserved <code>.tungsten/</code> directory. Nothing was written.</p>
 <p><em>Fix.</em> Remove the symlink from the output directory. If the path is under <code>.tungsten/</code>, the emitter is at fault: report it.</p>
+<h3 id="tg0705"><a class="header" href="#tg0705">TG0705</a></h3>
+<p><strong>target does not declare enforced imported-operation policy support; not generated</strong></p>
+<p><em>Meaning.</em> The project was imported from a Postman collection or another source whose operations carry an enforced import policy (the runtime must apply it to every call), and a configured target cannot apply it. Only the typescript, python, rust, mcp, webmcp and docs targets declare that support, and an external emitter declares it with <code>import_policy</code> in its <code>--describe</code> response; generating any other target would discard the policy. During input conversion, init refuses unsupported built-in targets before saving the converted input or project manifests. During generation of an existing project, tungsten refuses that target alone; other targets are still written, unless <code>--strict</code> asks for all or none.</p>
+<p><em>Fix.</em> Generate only supported targets: remove the unsupported target from tungsten.yml, or add a supported one with <code>tungsten init --resume --add-targets typescript,python</code> (any of typescript, python, rust, mcp, webmcp, docs), then run <code>tungsten generate</code> again.</p>
 <h3 id="tg0710"><a class="header" href="#tg0710">TG0710</a></h3>
 <p><strong>macro not emitted by the TypeScript SDK (not in the canonical form)</strong></p>
 <p><em>Meaning.</em> A macro in the IR does not fit the canonical form the TypeScript SDK compiles: a step names an operation that is not callable, a reference names a later or unknown step, or an <code>{expr}</code> is not <code>&lt;ref&gt; in [..]</code>, <code>&lt;ref&gt; == x</code> or <code>&lt;ref&gt; != x</code>. The SDK is generated without that macro.</p>
@@ -593,6 +746,14 @@
 <p><strong>diagnostic reported by an external emitter</strong></p>
 <p><em>Meaning.</em> A diagnostic reported by an external emitter, kept with its severity. The message reads <code>external emitter &lt;name&gt;: &lt;code&gt;: &lt;text&gt;</code>, where <code>&lt;code&gt;</code> is the emitter's own code. An error fails the target; under <code>--strict</code> a warning does too.</p>
 <p><em>Fix.</em> Fix the cause the emitter describes; <code>tungsten explain</code> knows only tungsten's own codes, so look the emitter's code up in the emitter's documentation.</p>
+<h3 id="tg0807"><a class="header" href="#tg0807">TG0807</a></h3>
+<p><strong>external target not run: external emitters are off (--no-external)</strong></p>
+<p><em>Meaning.</em> A target in tungsten.yml declares <code>external</code>, and tungsten was told not to start external emitters (<code>--no-external</code> or <code>TUNGSTEN_NO_EXTERNAL=1</code>), so its command was not run and the target is skipped. Nothing is generated, compared or reported for it; the diagnostic is informational and does not fail the run.</p>
+<p><em>Fix.</em> This is the intended result for CI that validates a manifest it does not trust. Run without the option, on a manifest you trust, to emit or check the target.</p>
+<h3 id="tg0808"><a class="header" href="#tg0808">TG0808</a></h3>
+<p><strong>external emitter does not declare imported-operation policy enforcement</strong></p>
+<p><em>Meaning.</em> An external target was selected for a project with imported-operation policy, but its protocol-1 --describe response omitted <code>import_policy</code> or set it to false. The emitter is not run and no files are written for that target. Other supported targets are still processed. Built-in targets without this capability use TG0705.</p>
+<p><em>Fix.</em> Use an emitter that declares <code>import_policy: true</code> and enforces the imported metadata, or select a supported TypeScript, Python, Rust, MCP, WebMCP or docs target. Do not remove policy metadata merely to bypass this check. Protocol-1 emitters remain compatible with projects that have no imported-operation policy.</p>
 <h2 id="staleness-and-ci-tg09xx"><a class="header" href="#staleness-and-ci-tg09xx">Staleness and CI (TG09xx)</a></h2>
 <h3 id="tg0901"><a class="header" href="#tg0901">TG0901</a></h3>
 <p><strong>generated output is stale relative to its inputs</strong></p>
@@ -610,7 +771,19 @@
 <p><strong>overlay suggest: no overlay action can fix this diagnostic code</strong></p>
 <p><em>Meaning.</em> <code>tungsten overlay suggest</code> only writes actions whose fix the compiler has already decided: the id of an operation without operationId, and the unique id of an operation whose operationId is used more than once. Warnings of any other code, such as an inferred pagination (TG0501) or a renamed field or type (TG0401), need a decision or live in tungsten.yml; the count is reported once per code.</p>
 <p><em>Fix.</em> Use <code>tungsten explain</code> on the code for its usual fix, for example declare the pagination under <code>pagination</code> in tungsten.yml.</p>
-<h2 id="sdk-emitters-java-c-kotlin-swift-php-ruby-dart-tg10xx"><a class="header" href="#sdk-emitters-java-c-kotlin-swift-php-ruby-dart-tg10xx">SDK emitters: Java, C#, Kotlin, Swift, PHP, Ruby, Dart (TG10xx)</a></h2>
+<h3 id="tg0930"><a class="header" href="#tg0930">TG0930</a></h3>
+<p><strong>response-contract audit: a success response declares a JSON media type without a schema; the value is typed as any</strong></p>
+<p><em>Meaning.</em> <code>tungsten check --audit-contracts</code> found a success response whose JSON media type declares no <code>schema</code>, so any JSON value is accepted and the generated SDK types the value as any. The message names the operation, the status and the media type; the second location is the operation that answers it. Default runs are unchanged: the audit runs only with the flag or <code>--require-contracts</code>, which fails on audit findings alone. <code>--strict</code> fails on these and every other warning.</p>
+<p><em>Fix.</em> Declare a schema for the media type, in the spec or in a reviewed overlay listed under <code>overlays</code> in tungsten.yml, or acknowledge the gap with <code>x-tungsten-reviewed-contract</code> on the media-type entry when any value really is accepted.</p>
+<h3 id="tg0931"><a class="header" href="#tg0931">TG0931</a></h3>
+<p><strong>response-contract audit: a success response schema is a free-form object (no properties, unconstrained additionalProperties); typed as a mapping of any values</strong></p>
+<p><em>Meaning.</em> <code>tungsten check --audit-contracts</code> found a success response schema that is a free-form object: <code>type: object</code> with no properties and an open or unconstrained <code>additionalProperties</code>, so the generated type is a plain mapping of any values (a <code>dict[str, Any]</code>). A typed map, a record with properties, a response without a JSON body and a non-JSON media type are not findings; a schema marked <code>x-tungsten-reviewed-contract</code> counts as reviewed. See TG0930 for how the audit is run and enforced.</p>
+<p><em>Fix.</em> Declare the properties the server really answers with, named response models or their union, in the spec or a reviewed overlay, or acknowledge the free-form shape with <code>x-tungsten-reviewed-contract</code> when it is intentional.</p>
+<h3 id="tg0932"><a class="header" href="#tg0932">TG0932</a></h3>
+<p><strong>response-contract audit: traversal budget exhausted; audit is incomplete</strong></p>
+<p><em>Meaning.</em> The opt-in response-contract audit reached its schema traversal budget. Its findings are incomplete. This warning fails --require-contracts or --strict, so an incomplete audit cannot silently satisfy that quality gate.</p>
+<p><em>Fix.</em> Split the input into smaller projects and audit each one. Reuse named schemas for shared contracts. The audit follows references and nested shapes iteratively and reports each weak source node only once.</p>
+<h2 id="sdk-emitters-java-c-kotlin-swift-php-ruby-dart-f-tg10xx"><a class="header" href="#sdk-emitters-java-c-kotlin-swift-php-ruby-dart-f-tg10xx">SDK emitters: Java, C#, Kotlin, Swift, PHP, Ruby, Dart, F# (TG10xx)</a></h2>
 <h3 id="tg1010"><a class="header" href="#tg1010">TG1010</a></h3>
 <p><strong>invalid java target option; the default is used</strong></p>
 <p><em>Meaning.</em> An option of the <code>java</code> target in tungsten.yml is not valid: <code>group_id</code> and <code>package</code> must be dotted Java package names (no keywords), <code>artifact_id</code> a Maven artifactId, <code>version</code> and <code>runtime</code> versions such as 1.2.3, <code>runtime_path</code> a non-empty path. The generator uses the option's default instead.</p>
@@ -659,6 +832,30 @@
 <p><strong>discriminated union variant without a tag value: the csharp target tries variants in order</strong></p>
 <p><em>Meaning.</em> The union declares a discriminator, but at least one variant has no tag value or is not a named type, so the C# SDK cannot pick the variant by its tag: it decodes the variants in the plan's order and takes the first that fits.</p>
 <p><em>Fix.</em> Give every variant a named schema and a discriminator mapping value.</p>
+<h3 id="tg1030"><a class="header" href="#tg1030">TG1030</a></h3>
+<p><strong>invalid kotlin target option; the default is used</strong></p>
+<p><em>Meaning.</em> An option of the <code>kotlin</code> target in tungsten.yml is not valid: <code>group</code> and <code>package</code> must be dotted package names usable in Kotlin and Java (no keywords), <code>artifact</code> an artifact name, <code>version</code> and <code>runtime</code> versions such as 1.2.3, <code>runtime_path</code> and <code>java_runtime_path</code> non-empty paths. The generator uses the option's default instead.</p>
+<p><em>Fix.</em> Fix the option under <code>targets.kotlin</code> in tungsten.yml, or remove it to keep the default.</p>
+<h3 id="tg1031"><a class="header" href="#tg1031">TG1031</a></h3>
+<p><strong>schema has no Kotlin type in the kotlin target; the runtime's JSON value is used</strong></p>
+<p><em>Meaning.</em> The Kotlin SDK has no native type for this schema (an allOf whose members cannot be merged into one data class, or an enum whose values mix JSON types), so the typed value is the Java runtime's JSON value (<code>Any?</code>: JsonObject, List, String, Long, Double, Boolean or null). The runtime still validates it against the schema.</p>
+<p><em>Fix.</em> Merge the allOf members into one object, or give the enum values a single type, if a typed Kotlin model is wanted.</p>
+<h3 id="tg1032"><a class="header" href="#tg1032">TG1032</a></h3>
+<p><strong>macro is not in the canonical form; the kotlin target leaves it out</strong></p>
+<p><em>Meaning.</em> A macro of the agent manifest is not in the canonical form the SDK runtimes run (steps over callable operations, references to $input or earlier steps, a known step kind), so the Kotlin SDK does not include it; the TypeScript SDK reports the same macro as TG0710.</p>
+<p><em>Fix.</em> Fix the macro in agent.yml at the pointer the diagnostic names.</p>
+<h3 id="tg1033"><a class="header" href="#tg1033">TG1033</a></h3>
+<p><strong>OpenID Connect scheme is sent as a bearer token by the kotlin target</strong></p>
+<p><em>Meaning.</em> The Kotlin SDK runs on the Java runtime, which sends an OpenID Connect scheme as a bearer token. It does not run discovery or obtain tokens itself.</p>
+<p><em>Fix.</em> Configure the scheme with <code>AuthCredential.secret(token)</code> holding an access token you obtained from the provider.</p>
+<h3 id="tg1034"><a class="header" href="#tg1034">TG1034</a></h3>
+<p><strong>different success bodies by status: the kotlin typed result is the JSON value</strong></p>
+<p><em>Meaning.</em> The operation answers different JSON bodies depending on the exact status, so the typed function's result is the runtime's JSON value; the result's metadata carries the status that tells them apart.</p>
+<p><em>Fix.</em> Read <code>meta().status()</code> of the result and decode the body with the matching model's <code>fromJson</code>.</p>
+<h3 id="tg1035"><a class="header" href="#tg1035">TG1035</a></h3>
+<p><strong>discriminated union variant without a tag value: the kotlin target tries variants in order</strong></p>
+<p><em>Meaning.</em> The union declares a discriminator, but at least one variant has no tag value or is not a named type, so the Kotlin SDK cannot pick the variant by its tag: it decodes the variants in the plan's order and takes the first that fits.</p>
+<p><em>Fix.</em> Give every variant a named schema and a discriminator mapping value.</p>
 <h3 id="tg1060"><a class="header" href="#tg1060">TG1060</a></h3>
 <p><strong>invalid Ruby target option; default used</strong></p>
 <p><em>Meaning.</em> An option of the <code>ruby</code> target is not valid (a <code>gem</code> that is not a lowercase gem name, a <code>module</code> that is not a Ruby constant path or names a core class or the runtime's <code>Tungsten</code>, a <code>version</code> that is not a gem version, a <code>runtime</code> that is not a gem requirement, or an empty <code>runtime_path</code>), so its default is used.</p>
@@ -683,6 +880,59 @@
 <p><strong>discriminated union variant without a tag value; the Ruby SDK tries the variants in order</strong></p>
 <p><em>Meaning.</em> A union has a discriminator, but one of its variants has no tag value or is not a named type, so the Ruby SDK cannot pick the variant by the tag. It tries the variants in order and decodes the first that accepts the value.</p>
 <p><em>Fix.</em> Give every variant a <code>discriminator.mapping</code> entry or a <code>const</code> tag property.</p>
+<h3 id="tg1070"><a class="header" href="#tg1070">TG1070</a></h3>
+<p><strong>invalid dart target option; the default is used</strong></p>
+<p><em>Meaning.</em> An option of the <code>dart</code> target is not valid (a <code>package</code> that is not a pub package name or is a Dart keyword or <code>tungsten_runtime</code>, a <code>version</code> that is not a semantic version, a <code>runtime</code> that is not a pub version constraint, or an empty <code>runtime_path</code>), so its default is used.</p>
+<p><em>Fix.</em> Fix the option under <code>targets.dart</code> in tungsten.yml.</p>
+<h3 id="tg1071"><a class="header" href="#tg1071">TG1071</a></h3>
+<p><strong>schema has no Dart type in the dart target; the JSON value (Object?) is used</strong></p>
+<p><em>Meaning.</em> A schema has no Dart type: an <code>allOf</code> that cannot be merged into one record (a member is not a record, has typed extra members, or two members share a wire name) or an enum that is not an enum of strings or of integers (mixed JSON types, numbers or booleans). The Dart SDK types it as its JSON value (<code>Object?</code>), which the runtime still validates against the schema.</p>
+<p><em>Fix.</em> Restructure the schema (records with distinct properties, an enum of strings or integers), or accept the JSON value.</p>
+<h3 id="tg1072"><a class="header" href="#tg1072">TG1072</a></h3>
+<p><strong>macro is not in the canonical form; the dart target leaves it out</strong></p>
+<p><em>Meaning.</em> A macro of agent.yml is not in the canonical form the SDKs run (an unknown step kind or operation, a reference to no earlier step, an invalid <code>as</code>, <code>until</code> or budget). The Dart SDK leaves it out; the other operations are generated as usual.</p>
+<p><em>Fix.</em> Fix the macro in agent.yml; the message names the offending member.</p>
+<h3 id="tg1073"><a class="header" href="#tg1073">TG1073</a></h3>
+<p><strong>OpenID Connect scheme is sent as a bearer token by the dart target</strong></p>
+<p><em>Meaning.</em> The API declares an OpenID Connect security scheme. The Dart SDK sends the configured credential as a bearer token and does not run discovery or obtain tokens itself.</p>
+<p><em>Fix.</em> Obtain the token yourself and pass it in <code>ClientOptions.auth</code> under the scheme's name.</p>
+<h3 id="tg1074"><a class="header" href="#tg1074">TG1074</a></h3>
+<p><strong>different success bodies by status: the dart typed result is the JSON value (Object?)</strong></p>
+<p><em>Meaning.</em> An operation answers different JSON bodies depending on the status. The Dart SDK's typed result for it is the JSON value (<code>Object?</code>); the runtime validates it against the body of the status that arrived.</p>
+<p><em>Fix.</em> Nothing to fix; read <code>meta.status</code> of the result to tell the bodies apart.</p>
+<h3 id="tg1075"><a class="header" href="#tg1075">TG1075</a></h3>
+<p><strong>discriminated union variant without a tag value: the dart target tries variants in order</strong></p>
+<p><em>Meaning.</em> A union has a discriminator, but one of its variants has no tag value or is not a named type, so the Dart SDK cannot pick the variant by the tag. It tries the variants in order and decodes the first that accepts the value.</p>
+<p><em>Fix.</em> Give every variant a <code>discriminator.mapping</code> entry or a <code>const</code> tag property.</p>
+<h3 id="tg1080"><a class="header" href="#tg1080">TG1080</a></h3>
+<p><strong>invalid fsharp target option; the default is used</strong></p>
+<p><em>Meaning.</em> An option of the <code>fsharp</code> target in tungsten.yml is not valid: <code>package_id</code> must be a NuGet package id, <code>namespace</code> a dotted F# namespace (no F# or C# keywords), <code>version</code> and <code>runtime</code> versions such as 1.2.3, <code>runtime_path</code> and <code>csharp_runtime_path</code> non-empty paths. The generator uses the option's default instead.</p>
+<p><em>Fix.</em> Fix the option under <code>targets.fsharp</code> in tungsten.yml, or remove it to keep the default.</p>
+<h3 id="tg1081"><a class="header" href="#tg1081">TG1081</a></h3>
+<p><strong>schema has no F# type in the fsharp target; the runtime's JsonNode is used</strong></p>
+<p><em>Meaning.</em> The F# SDK has no native type for this schema (an allOf whose members cannot be merged into one record, or an enum whose values mix JSON types), so the typed value is the .NET runtime's <code>JsonNode</code>. The runtime still validates it against the schema.</p>
+<p><em>Fix.</em> Merge the allOf members into one object, or give the enum values a single type, if a typed F# model is wanted.</p>
+<h3 id="tg1082"><a class="header" href="#tg1082">TG1082</a></h3>
+<p><strong>macro is not in the canonical form; the fsharp target leaves it out</strong></p>
+<p><em>Meaning.</em> A macro of the agent manifest is not in the canonical form the SDK runtimes run (steps over callable operations, references to $input or earlier steps, a known step kind), so the F# SDK does not include it; the TypeScript SDK reports the same macro as TG0710.</p>
+<p><em>Fix.</em> Fix the macro in agent.yml at the pointer the diagnostic names.</p>
+<h3 id="tg1083"><a class="header" href="#tg1083">TG1083</a></h3>
+<p><strong>OpenID Connect scheme is sent as a bearer token by the fsharp target</strong></p>
+<p><em>Meaning.</em> The F# SDK runs on the .NET runtime, which sends an OpenID Connect scheme as a bearer token. It does not run discovery or obtain tokens itself.</p>
+<p><em>Fix.</em> Configure the scheme with <code>Credential.Secret(token)</code> holding an access token you obtained from the provider.</p>
+<h3 id="tg1084"><a class="header" href="#tg1084">TG1084</a></h3>
+<p><strong>different success bodies by status: the fsharp typed result is the JsonNode</strong></p>
+<p><em>Meaning.</em> The operation answers different JSON bodies depending on the exact status, so the typed method's result is the runtime's <code>JsonNode</code>; the result's <code>Meta.Status</code> tells them apart.</p>
+<p><em>Fix.</em> Read <code>Meta.Status</code> of the result and decode the body with the matching model's <code>fromJson</code>.</p>
+<h3 id="tg1085"><a class="header" href="#tg1085">TG1085</a></h3>
+<p><strong>discriminated union variant without a tag value: the fsharp target tries variants in order</strong></p>
+<p><em>Meaning.</em> The union declares a discriminator, but at least one variant has no tag value or is not a named type, so the F# SDK cannot pick the variant by its tag: it decodes the variants in the plan's order and takes the first that fits.</p>
+<p><em>Fix.</em> Give every variant a named schema and a discriminator mapping value.</p>
+<h2 id="request-import-saved-curl-and-http-tg12xx"><a class="header" href="#request-import-saved-curl-and-http-tg12xx">Request import: saved cURL and .http (TG12xx)</a></h2>
+<h3 id="tg1201"><a class="header" href="#tg1201">TG1201</a></h3>
+<p><strong>saved cURL or .http request could not be imported</strong></p>
+<p><em>Meaning.</em> A saved cURL command or <code>.http</code> request given to <code>tungsten init</code> cannot be imported. Requests are parsed as data and never executed, so anything that needs a shell, a file or an environment is refused: compound commands, expansions, unsupported flags, file bodies or headers, unbound <code>{{variables}}</code>, credentials in the URL, headers or query, a non-JSON body, an input over the size limit, or a missing or mismatched <code>--route</code> template. The message names the first problem.</p>
+<p><em>Fix.</em> Save exactly one request. For cURL use <code>curl</code> (or <code>curl.exe</code> in PowerShell) with --request, --header, --url and inline JSON data only, and pass the trusted path template with <code>--route</code>. Bind every <code>{{variable}}</code> of a <code>.http</code> file explicitly and describe authentication in an endpoint manifest instead of the request.</p>
 
                     </main>
 

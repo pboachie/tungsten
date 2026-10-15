@@ -179,7 +179,23 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="case-study-the-zrotext-pilot"><a class="header" href="#case-study-the-zrotext-pilot">Case study: the ZROtext pilot</a></h1>
-<p><a href="https://github.com/pboachie/zrotext">ZROtext</a> is an open-source Android SMS gateway with a Rust server. Its contract is three OpenAPI 3.1 documents (the public, sealed and workflow planes, 44 operations in all), and it ships hand-written clients, which makes it a useful baseline. It was the first real API tungsten was pointed at: the TypeScript, Python and Rust SDKs, the generated CLI and the MCP server were generated from those documents and two manifests, then every scenario was run against a live instance on loopback. Nothing in the pilot sends a real SMS. This page summarises what the run showed.</p>
+<p><a href="https://github.com/pboachie/zrotext">ZROtext</a> is an open-source Android SMS gateway with a Rust server. Its contract is three OpenAPI 3.1 documents (the public, sealed and workflow planes, 44 operations in all), and it ships hand-written clients, which makes it a useful baseline. It was the first real API tungsten was pointed at: the TypeScript, Python and Rust SDKs, the generated CLI and the MCP server were generated from those documents and two manifests, then every scenario was run against a live instance on loopback. Nothing in the pilot sends a real SMS. This page summarises what the run showed. The generator now also provides SDK guides for TypeScript, Python, Rust, Go, Java, Kotlin, C#, F#, Ruby and Dart; the historical pilot results below cover only the targets actually exercised in that run.</p>
+<h3 id="refreshed-live-rerun-2026-10-15"><a class="header" href="#refreshed-live-rerun-2026-10-15">Refreshed live rerun (2026-10-15)</a></h3>
+<p>This is source-path live acceptance for the refreshed pin. It does not
+establish package publication, production service or physical-device acceptance.</p>
+<h3 id="live-rerun-2026-10-15"><a class="header" href="#live-rerun-2026-10-15">Live rerun (2026-10-15)</a></h3>
+<p>The release-branch source SDKs passed all 27 live scenarios in TypeScript,
+Python sync, Python async, Rust, Go, Java, C# and Ruby: 216 scenario runs,
+114 steps and 80 server-observed requests per driver. No driver or scenario
+was skipped. The cross-runtime check matched all 27 scenarios in each of
+seven comparisons with TypeScript. The generated Rust CLI passed 20/20 checks.</p>
+<p>This run used an isolated PostgreSQL database and a native pinned server,
+synthetic accounts/devices, a loopback recording fault proxy and disabled
+external dispatch. It covers source builds of the SDKs and CLI against the
+currently approved upstream snapshot. The newer upstream snapshot still needs
+regeneration and regression qualification; this baseline does not establish
+acceptance against that snapshot, registry installation or a deployed service.
+The original historical results above retain their original scope.</p>
 <h3 id="headline"><a class="header" href="#headline">Headline</a></h3>
 <ul>
 <li>The generated TypeScript, Python (sync and async) and Rust SDKs pass all 26

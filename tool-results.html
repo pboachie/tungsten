@@ -187,6 +187,12 @@ cannot undo the call. Inspect API state before retrying consequential operations
 <p>Streaming and declared binary responses reject before HTTP by default. Secret
 response fields and values shown only once remain blocked with every result
 policy. Use trusted SDK application code for those outputs.</p>
+<p>Result size and upstream response size are separate limits. The MCP server's
+<a href="mcp.html#mcp-response-and-session-limits"><code>maxResponseBytes</code> body bound</a> defaults
+to 4 MiB before parsing and reports <code>RESPONSE_TOO_LARGE</code>; it is separate from
+post-call display truncation. The WebMCP non-SSE reader uses the bounds described
+below. Neither an oversized response nor a failed result rendering rolls back
+a completed mutation, so inspect API state before retrying.</p>
 <h2 id="bounded-sse-collection"><a class="header" href="#bounded-sse-collection">Bounded SSE collection</a></h2>
 <p>For an operation with an SDK stream descriptor, explicitly enable collection:</p>
 <pre><code class="language-ts">const registration = await registerTungstenWebMcp({

@@ -179,13 +179,13 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="tungsten"><a class="header" href="#tungsten">tungsten</a></h1>
-<p>tungsten compiles an OpenAPI 3.0 or 3.1 description into TypeScript, Python and Rust SDKs, a command-line client, an MCP server, browser WebMCP tools and LLM-oriented docs. Every client it emits is built for an autonomous caller: failures are instructions, side effects are never duplicated, and irreversible calls need an explicit confirmation.</p>
+<p>tungsten is a deterministic compiler written in Rust. It reads one API description — an OpenAPI 3.0 or 3.1 document (JSON or YAML), a Swagger 2.0 document, a Postman Collection v2.1 file, a saved cURL command, an HTTP request file (<code>.http</code>/<code>.rest</code>), a HAR 1.2 capture or an endpoint manifest with JSON Schema 2020-12 models — plus two small manifests, builds one typed intermediate representation (IR), and emits TypeScript, Python, Rust, Go, Java, Kotlin, C#, F#, Dart and Ruby SDKs, a Rust command-line client, an MCP server, browser WebMCP tools and LLM-oriented docs. Documents are parsed locally; optional HTTP/Git acquisition pins the downloaded source for verified offline reuse. Every emitted client is built for an autonomous caller: failures are instructions, side effects are never duplicated, and irreversible calls need an explicit confirmation. See <a href="getting-started.html#supported-inputs">Supported inputs</a> for the exact alternatives, their limits and the review each requires.</p>
 <p>This book is the user documentation. Start with <a href="getting-started.html">Getting started</a>, then read:</p>
 <ul>
 <li>the <a href="manifests.html">manifest reference</a> for <code>tungsten.yml</code> and <code>agent.yml</code>;</li>
 <li><a href="safety.html">safety and runtime behaviour</a> for the error envelope, retries, idempotency, previews and confirmation;</li>
 <li>the <a href="mcp.html">MCP server guide</a> and <a href="webmcp.html">browser WebMCP guide</a>;</li>
-<li>the SDK guides for <a href="sdk/typescript.html">TypeScript</a>, <a href="sdk/python.html">Python</a> and <a href="sdk/rust.html">Rust</a>;</li>
+<li>the <a href="sdk/index.html">SDK guides</a> for all ten languages and their runtime requirements;</li>
 <li>the <a href="reference/cli.html">CLI reference</a> and the <a href="reference/diagnostics.html">diagnostic codes</a>;</li>
 <li>a <a href="case-study.html">case study</a> of a real API and the <a href="downloads.html"><code>llms.txt</code> downloads</a> generated for it.</li>
 </ul>

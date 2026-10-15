@@ -179,7 +179,7 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="safety-and-runtime-behaviour"><a class="header" href="#safety-and-runtime-behaviour">Safety and runtime behaviour</a></h1>
-<p>The three runtimes (<code>@elysra/tungsten-runtime</code> for TypeScript, <code>tungsten-runtime</code> for Python and <code>tungsten-runtime</code> for Rust) implement identical semantics, checked by a shared contract suite. This page describes that behaviour.</p>
+<p>The TypeScript, Python, Rust, Go, Java, Kotlin, C#, F#, Ruby and Dart runtimes provide the safety envelope described here. Language-specific result and error shapes are shown in the <a href="sdk/index.html">SDK guides</a>; see <a href="runtime-distribution.html">runtime distribution</a> for installation and publication limits. Shared contract checks cover runtime behaviour; generation alone does not establish parity for every language and scenario.</p>
 <h2 id="diagnostic-error-envelope"><a class="header" href="#diagnostic-error-envelope">Diagnostic error envelope</a></h2>
 <p>Every failure the SDK returns, from pre-flight validation to transport
 failure to an HTTP error, is one shape:</p>
@@ -248,10 +248,16 @@ same as read-only, always with the identical key and identical body.</li>
 <li>Mutating without a key: never retried; a transport failure before the
 request was sent is <code>TRANSPORT_FAILED</code>; anything after is
 <code>OUTCOME_UNKNOWN</code>.</li>
-<li>Redirects are never followed on mutations. Reads follow same-origin
-redirects only (as built: at most five, auth query parameters
-re-applied); fetch is never asked to follow, since it would forward
-custom credential headers to another origin.</li>
+<li>Redirects are never followed on mutations. <code>defaults.redirects</code> is
+<code>same_origin_read</code> (the default) or <code>none</code>. Reads follow at most five
+same-origin redirects under the default; auth query parameters are re-applied.
+Either API/manifest or client <code>none</code> disables following; client options cannot
+relax the manifest. A declared exact/status-class 3xx success is returned
+without following, including on mutations. With effective <code>none</code>, an undeclared
+3xx (no match or only <code>default</code>) fails as <code>UNEXPECTED_RESPONSE</code>, without retry.
+Custom transports must honor the no-follow contract. Rust and C# require the
+runtime-owned HTTP client for <code>none</code>; omit a custom <code>http_client</code>/<code>HttpClient</code>.
+Regenerate clients and upgrade their runtimes together.</li>
 </ul>
 <h2 id="unknown-outcome"><a class="header" href="#unknown-outcome">Unknown outcome</a></h2>
 <p>Returned when the runtime cannot know whether the server applied a mutation:
@@ -356,6 +362,24 @@ repeated (only an <code>error</code> code such as <code>invalid_grant</code>).</
 <p>A success response without a body (204, or a success status declared
 without content) is <code>{ok: true, value: undefined}</code>; generated SDKs type
 such operations as <code>void</code>, or <code>T | undefined</code> when the body is optional.</p>
+<h2 id="mcp-response-and-session-limits"><a class="header" href="#mcp-response-and-session-limits">MCP response and session limits</a></h2>
+<p><code>ServerOptions.maxResponseBytes</code> bounds each upstream non-streaming API response
+before parsing (default 4 MiB; a positive safe integer). It is independent of
+<code>maxResultChars</code>, which limits the displayed tool result after the call. The
+reader checks declared Content-Length and bytes actually read, cancels an
+oversized body, and returns <code>UNEXPECTED_RESPONSE</code> with runtime code
+<code>RESPONSE_TOO_LARGE</code> and <code>retryable: never</code>. A mutation may already have taken
+effect: inspect API state before retrying. SSE has separate event and collection
+budgets; display truncation is not an upstream body bound.</p>
+<p>The manifest and SDK must agree on each operation's safety tier. A macro's tier
+must also include its strongest step. A missing descriptor, invalid tier or
+manifest/SDK mismatch refuses the call with <code>UNEXPECTED_RESPONSE</code> before HTTP;
+regenerate the manifest and SDK together instead of retrying the stale pair.</p>
+<p>Streamable HTTP shutdown closes admission before awaiting initializing sessions.
+Requests still reaching the listener while it is closing receive HTTP 503
+(<code>Server closing</code>); initialized and pending sessions are then closed and their
+connections released. A shutdown response does not prove an earlier mutation
+was cancelled or rolled back.</p>
 <h2 id="rules-fixed-by-the-contract-suite"><a class="header" href="#rules-fixed-by-the-contract-suite">Rules fixed by the contract suite</a></h2>
 <ul>
 <li>Retry tiers: <code>defaults.retries</code> reaches the SDK as

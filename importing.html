@@ -1,0 +1,385 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Importing API descriptions and saved requests - tungsten</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="Documentation for tungsten, the agent-native SDK generator and MCP compiler">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon.svg">
+        <link rel="shortcut icon" href="favicon.png">
+        <link rel="stylesheet" href="css/variables.css">
+        <link rel="stylesheet" href="css/general.css">
+        <link rel="stylesheet" href="css/chrome.css">
+        <link rel="stylesheet" href="css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="highlight-css" href="highlight.css">
+        <link rel="stylesheet" id="tomorrow-night-css" href="tomorrow-night.css">
+        <link rel="stylesheet" id="ayu-highlight-css" href="ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "";
+            const default_light_theme = "light";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "searchindex.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="toc.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+            </noscript>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">tungsten</h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/pboachie/tungsten" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <i class="fa fa-spinner fa-spin"></i>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="importing-api-descriptions-and-saved-requests"><a class="header" href="#importing-api-descriptions-and-saved-requests">Importing API descriptions and saved requests</a></h1>
+<p><code>tungsten init --from &lt;input&gt;</code> accepts one API description or saved-request input
+at a time. Local importing parses data offline: it sends no API request, replays
+no capture, and executes no shell command or collection script. Remote document
+acquisition is a separate, explicit step described below. Importing writes an initialized project for the ordinary
+<code>check</code>, <code>generate</code> and <code>mock</code> commands. The setup input limit is 8 MiB; use the
+explicit compiler flow for larger native OpenAPI documents.</p>
+<h2 id="remote-documents-and-pinned-git-inputs"><a class="header" href="#remote-documents-and-pinned-git-inputs">Remote documents and pinned Git inputs</a></h2>
+<p><code>--from</code> also accepts an HTTP(S) document URL or a
+<code>git+https://github.com/example/api@main#contracts/openapi.yaml</code> input. Acquisition downloads the
+selected source before the same format-specific import and review rules apply;
+it does not replay captured requests or execute repository code. Native OpenAPI
+URLs and Git inputs also work directly as compiler paths and manifest inputs.
+Converted formats still enter through <code>init</code>.</p>
+<p>The <a href="getting-started.html#supported-inputs">supported-input guide</a> provides complete
+commands, private-source authentication, cache retention, source pins,
+<code>--offline</code> and <code>--refresh-inputs</code> behavior, and acquisition limits. Retain the
+complete source cache for offline use. A converted import whose source changes
+must be re-imported into a fresh project and reviewed again. Remote references
+from an HTTP document remain blocked; Git references must stay inside the
+materialized repository tree. Neither route discovers an API from live traffic.</p>
+<h2 id="local-input-formats"><a class="header" href="#local-input-formats">Local input formats</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Input</th><th>Supported subset</th><th>Diagnostics</th><th>Example</th></tr></thead><tbody>
+<tr><td>OpenAPI 3.0 / 3.1</td><td>JSON or YAML with local JSON Pointer references; see <a href="compatibility.html">compatibility</a></td><td><code>TG01xx</code> parsing/version, <code>TG02xx</code> references, <code>TG03xx</code> schema approximations</td><td><code>tungsten init --from openapi.json --dir api-project</code></td></tr>
+<tr><td>Swagger 2.0</td><td>Bounded JSON/YAML conversion to OpenAPI 3.0.3; unsupported constructs fail</td><td><code>TG0111</code>, then native frontend diagnostics</td><td><code>tungsten init --from swagger.yaml --dir swagger-project</code></td></tr>
+<tr><td>Postman Collection v2.1</td><td>Nested folders, enabled HTTP requests, JSON bodies and saved JSON responses, supported auth helpers</td><td><code>PMxxx</code>; shared inference <code>TCxxx</code></td><td><code>tungsten init --from collection.json --dir postman-project</code></td></tr>
+<tr><td>Saved cURL</td><td>One invocation with a URL, supported method/header options and one inline JSON body</td><td><code>TG1201</code>; shared inference <code>TCxxx</code></td><td><code>tungsten init --from command.curl --route '/pets/{id}' --shell-dialect posix --dir curl-project</code></td></tr>
+<tr><td>HTTP request file</td><td><code>.http</code> / <code>.rest</code>, <code>###</code> separated requests, literal URLs/headers and optional JSON body</td><td><code>TG1201</code>; shared inference <code>TCxxx</code></td><td><code>tungsten init --from requests.http --route '/pets/{id}' --dir http-project</code></td></tr>
+<tr><td>HAR 1.2</td><td>Selected-origin HTTP observations, bounded JSON shapes and explicitly reviewed path templates</td><td><code>HRxxx</code>; shared inference <code>TCxxx</code></td><td><code>tungsten init --from capture.har --har-origin https://api.example.test --har-paths paths.json --dir har-project</code></td></tr>
+<tr><td>Endpoint manifest v1</td><td>Explicit routing/auth metadata plus the structural JSON Schema 2020-12 subset</td><td><code>TG0112</code>, then native frontend diagnostics</td><td><code>tungsten init --from endpoints.json --dir schema-project</code></td></tr>
+<tr><td>Manual endpoint</td><td>Explicit method/path and optional structural JSON samples</td><td><code>TCxxx</code> and CLI argument/input errors</td><td><code>tungsten init --method get --endpoint '/pets/{id}' --response-example pet.json --dir manual-project</code></td></tr>
+</tbody></table>
+</div>
+<p>Run <code>tungsten explain &lt;code&gt;</code> for a diagnostic, including <code>PM</code>, <code>HR</code> and <code>TC</code>
+codes. File access, missing route templates and other setup errors can also be
+reported directly by <code>init</code> before the importer produces a coded diagnostic.
+Commands here assume a shell that preserves single-quoted arguments; in Windows
+CMD, put path templates in double quotes instead. <code>--shell-dialect</code> describes
+the saved command's syntax, independently of the shell running tungsten.</p>
+<h2 id="review-before-live-use"><a class="header" href="#review-before-live-use">Review before live use</a></h2>
+<p><strong>Imported operations stay unreviewed.</strong> Conversion does not establish complete
+response types, authentication, authorization, required fields, safe retry rules
+or permission to call a live origin. Review the normalized contract and every
+import report, including omissions, before using the generated SDK.</p>
+<p>For each imported operation, separately review its safety tier and exact allowed
+origin in <code>agent.yml</code>, using <code>imported_reviewed_safety</code> and
+<code>imported_reviewed_origins</code> under its <code>tools</code> entry. Ordinary <code>safety</code> defaults,
+a route mapping, <code>--server-url</code> and confirmation flags do not count as import
+review. See the <a href="manifests.html">manifest reference</a> and <a href="safety.html">safety guide</a>.
+Use the operation ID in your generated manifest rather than copying an example ID.</p>
+<p>Imported-operation policy is supported by TypeScript, Python, Rust, MCP, WebMCP
+and docs targets. Java, Kotlin, C#, F#, Dart, Ruby and external emitters without
+an explicit import-policy capability are refused with <code>TG0705</code>; configuring a
+target does not bypass this gate. Build and inspect locally with a loopback mock
+before separately approving any live use.</p>
+<p>Except for native OpenAPI, conversion writes <code>imported.openapi.json</code> next to
+<code>tungsten.yml</code> and <code>agent.yml</code>; Postman, saved-request and HAR routes also write
+<code>import-report.json</code>. Manual setup writes <code>inferred.openapi.json</code> and
+<code>inference-report.json</code>. Keep original inputs separately. Use a fresh output
+directory for conversion; existing converted files are not silently overwritten.</p>
+<h2 id="postman-collections"><a class="header" href="#postman-collections">Postman collections</a></h2>
+<p>The importer supports Collection v2.1 JSON, nested folders, raw or structured
+URLs, explicit <code>:path</code> variables, unique query/header names, raw JSON request
+bodies and saved JSON responses for multiple statuses. Collection, folder and
+request auth helpers inherit; explicit <code>noauth</code> overrides inheritance. Supported
+helpers are basic, bearer and header/query API keys. Actual credentials belong
+in the generated client's runtime configuration.</p>
+<p>Collection/folder/request variables are expanded with bounded precedence;
+unresolved shape-affecting or dynamic variables cannot be guessed. The CLI uses
+the collection's literal variables and does not load a Postman environment file.
+Origin-only unresolved variables need explicit client configuration. Pre-request
+or unknown scripts, unsupported auth helpers, non-JSON bodies/responses and
+other unsupported request structures are omitted per item and listed in
+<code>import-report.json</code>. Test scripts are skipped and counted. If every request is
+omitted, import fails with <code>PM008</code>. Never interpret a successful partial import
+as coverage of the whole collection; fix omitted items or supply reviewed OpenAPI.</p>
+<h2 id="saved-curl-and-http-request-files"><a class="header" href="#saved-curl-and-http-request-files">Saved cURL and HTTP request files</a></h2>
+<p>Save a single cURL invocation as UTF-8 text, then import that file. Accepted
+options are <code>-X</code>/<code>--request</code>, <code>-H</code>/<code>--header</code>, <code>--url</code>, and one inline JSON body
+using <code>-d</code>, <code>--data</code>, <code>--data-raw</code>, <code>--data-binary</code> or <code>--json</code>. Data flags need an
+explicit JSON Content-Type; <code>--json</code> supplies it. The default method is POST with
+a body and GET otherwise. File uploads/references, config files, pipelines,
+redirections, compound commands and shell expansions are rejected.</p>
+<p>Choose <code>--shell-dialect posix</code>, <code>cmd</code> or <code>powershell</code> to match the saved text.
+POSIX accepts single/double quotes and backslash continuations; CMD accepts
+double quotes and caret continuations; PowerShell accepts its quoting and
+backtick continuations, using <code>curl.exe</code> explicitly. Variable, expression and
+command expansion are rejected. Quote POSIX wildcard, brace and tilde arguments;
+cURL URL brace lists and bracket ranges are unsupported even when quoted.
+This parser implements a bounded syntax subset, not a shell emulator.</p>
+<p>Each saved request needs an explicit <code>--route</code>, in input order. For a captured
+URL <code>https://api.example.test/pets/123</code>, use <code>--route '/pets/{id}'</code>; placeholders
+occupy complete segments and literal segments must match. A literal path such
+as <code>/health</code> also needs a route declaration. Detection is automatic for <code>.curl</code>,
+<code>.http</code> and <code>.rest</code>; <code>--input-format curl</code> or <code>--input-format http</code> overrides it.</p>
+<p>HTTP files accept <code>METHOD URL</code> (optionally <code>HTTP/1.1</code>), headers, a blank separator
+and an optional inline JSON body. Repeat <code>--route</code> once per <code>###</code> separated
+request. The CLI supplies no variable bindings: materialize <code>{{name}}</code> placeholders
+before importing. Inline variable declarations, scripts and file includes fail.
+Repeated query/header names, captured credentials and transport override headers
+need a reviewed endpoint manifest or OpenAPI document. Missing response samples
+remain unknown; importing a request does not discover a response schema.</p>
+<h2 id="har-captures-and-reviewed-paths"><a class="header" href="#har-captures-and-reviewed-paths">HAR captures and reviewed paths</a></h2>
+<p>Select an exact canonical origin with <code>--har-origin</code> when the capture contains
+more than one origin. Include/exclude filters use literal path prefixes and
+exclusions win. Every retained path must be reviewed <strong>before converted output
+is saved</strong>, including paths that contain no variable segment.</p>
+<p>For example, <code>paths.json</code> can contain:</p>
+<pre><code class="language-json">{"/pets/123": "/pets/{id}", "/health": "/health"}
+</code></pre>
+<p>Alternatively, repeat <code>--route '/pets/{id}' --route /health</code>; the most literal
+matching template wins. Ambiguous or malformed mappings fail with <code>HR006</code>.
+Number- or UUID-looking segments are never generalized automatically. Exclude
+unneeded paths with <code>--exclude-prefix</code>, narrow them with <code>--include-prefix</code>, and
+remove sensitive property names with repeatable <code>--redact-property</code> flags.</p>
+<p>Credential/cookie header and query values are omitted; JSON observations retain
+shapes rather than sample values. Retained literal paths and property names are
+structural output, so review them for personal or confidential data. Arbitrary
+sensitive data cannot be detected automatically. Auth stays unknown. Encoded,
+truncated, missing and non-JSON bodies remain unknown; responses and statuses in
+a capture do not prove completeness. Each imported operation stays a partial
+capture, even after its path has been reviewed.</p>
+<h2 id="swagger-20-conversion"><a class="header" href="#swagger-20-conversion">Swagger 2.0 conversion</a></h2>
+<p>The converter preserves local definitions and schema references, reusable local
+parameters/responses, body/form parameters, supported serialization, multipart
+uploads, basic/API-key/OAuth security, explicit servers and supported schema
+constraints. It writes OpenAPI 3.0.3 before ordinary normalization.</p>
+<p>External references, path-item references, chained parameter/response references,
+reference siblings, ambiguous media/transport choices and unsupported constructs
+fail with <code>TG0111</code> and an original-source pointer. Explicit consumes/produces is
+required when a payload schema needs a media type; a host requires schemes.
+Supply a reviewed OpenAPI document when conversion cannot preserve semantics.
+OpenAPI 3.2 remains unsupported. Conversion does not approve imported operations.</p>
+<h2 id="json-schema-models-and-endpoint-manifests"><a class="header" href="#json-schema-models-and-endpoint-manifests">JSON Schema models and endpoint manifests</a></h2>
+<p>A standalone JSON Schema model does not declare HTTP endpoints. Pair models
+with an endpoint manifest (<code>endpoint_manifest: 1</code>) declaring title/version,
+base URL, endpoint method/path/ID, parameters, media/status mappings and security.
+Models can be embedded or referenced from local JSON/YAML files. Parameters may
+be path, query or header; auth declarations support basic, bearer and API keys
+in header/query/cookie locations, with no credential values.</p>
+<p>The supported JSON Schema 2020-12 subset includes types/null, properties and
+requiredness, additional properties, items/prefixItems, <code>$defs</code> and static <code>$ref</code>,
+compositions, numeric/string/array/object constraints and readOnly/writeOnly.
+Other dialects, IDs/anchors, dynamic references, conditional/unevaluated keywords
+and literal-bearing annotations (<code>default</code>, <code>examples</code>, <code>enum</code>, <code>const</code>) fail
+with <code>TG0112</code> instead of being silently weakened. All references must stay inside
+the manifest's directory tree; network, absolute and percent-encoded references
+are rejected. Models are not rewritten and no application is executed.</p>
+<p>For one manually declared endpoint, <code>--method</code> and <code>--endpoint</code> are an
+alternative to <code>--from</code>. Optional <code>--request-example</code> / <code>--response-example</code>
+files contribute structure only; responses use status 200. Missing observations
+remain unknown, and this path carries the same imported-operation review rules.</p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="project-setup.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="compatibility.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="project-setup.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="compatibility.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr.min.js"></script>
+        <script src="mark.min.js"></script>
+        <script src="searcher.js"></script>
+
+        <script src="clipboard.min.js"></script>
+        <script src="highlight.js"></script>
+        <script src="book.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+
+    </div>
+    </body>
+</html>

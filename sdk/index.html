@@ -179,11 +179,18 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="sdk-guides"><a class="header" href="#sdk-guides">SDK guides</a></h1>
-<p>Each SDK target is a typed client plus a README that tungsten generates next to it. The three SDKs behave the same way (see <a href="../safety.html">safety and runtime behaviour</a>): calls return a result value instead of throwing for API or transport errors, arguments are validated before anything is sent, and destructive operations go through a preview.</p>
+<p>Each SDK target is a typed client plus a README that tungsten generates next to it. The SDKs provide a shared <a href="../safety.html">safety envelope</a>: arguments are validated before transport, failures carry diagnostic information, and destructive operations support previews and confirmation. Each language exposes its own result or error shape; Go, for example, returns typed errors. See <a href="../runtime-distribution.html">runtime distribution</a> before using an install snippet: generated package names are examples, and source availability does not establish registry publication.</p>
 <div class="table-wrapper"><table><thead><tr><th>Target</th><th>Guide</th><th>Runtime it depends on</th></tr></thead><tbody>
 <tr><td><code>typescript</code></td><td><a href="typescript.html">TypeScript SDK</a></td><td><code>@elysra/tungsten-runtime</code></td></tr>
 <tr><td><code>python</code></td><td><a href="python.html">Python SDK</a></td><td><code>tungsten-runtime</code> (PyPI)</td></tr>
 <tr><td><code>rust</code></td><td><a href="rust.html">Rust SDK and CLI</a></td><td><code>tungsten-runtime</code> and <code>tungsten-cli-kit</code> (crates)</td></tr>
+<tr><td><code>go</code></td><td><a href="go.html">Go SDK</a></td><td><code>github.com/pboachie/tungsten/runtimes/go</code></td></tr>
+<tr><td><code>java</code></td><td><a href="java.html">Java SDK</a></td><td><code>io.github.pboachie.tungsten:tungsten-runtime</code></td></tr>
+<tr><td><code>kotlin</code></td><td><a href="kotlin.html">Kotlin SDK</a></td><td><code>tungsten-runtime-kotlin</code> and the Java runtime</td></tr>
+<tr><td><code>csharp</code></td><td><a href="csharp.html">C# SDK</a></td><td><code>Tungsten.Runtime</code></td></tr>
+<tr><td><code>fsharp</code></td><td><a href="fsharp.html">F# SDK</a></td><td><code>Tungsten.Runtime.FSharp</code> and <code>Tungsten.Runtime</code></td></tr>
+<tr><td><code>ruby</code></td><td><a href="ruby.html">Ruby SDK</a></td><td><code>tungsten-runtime</code> (gem)</td></tr>
+<tr><td><code>dart</code></td><td><a href="dart.html">Dart SDK</a></td><td><code>tungsten_runtime</code> (<code>dart:io</code>; not web)</td></tr>
 <tr><td><code>docs</code></td><td><a href="docs.html">Docs target</a></td><td>none</td></tr>
 </tbody></table>
 </div>

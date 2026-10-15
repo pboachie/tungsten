@@ -292,9 +292,29 @@ rendering byte for byte for the gate cases in both modes.</li>
 <h2 id="the-script-sandbox"><a class="header" href="#the-script-sandbox">The script sandbox</a></h2>
 <p><code>run_script</code> executes agent-written TypeScript against the generated SDK.
 <code>node:vm</code> is not a security boundary, so the default implementation spawns a
-Deno subprocess with <code>--allow-net=&lt;api host&gt;</code> only, a wall-clock limit and a
-memory limit, and is disabled unless <code>deno</code> is on <code>PATH</code> and
-<code>mcp.sandbox.enabled: true</code>. A WASM-based isolate is a later option.</p>
+Deno subprocess with no network, filesystem, environment, subprocess or FFI
+permission, plus wall-clock and memory limits. Scripts reach the API only through
+the session's <code>client</code> RPC proxy over stdin/stdout, retaining the session's
+validation, auth, origin, confirmation and idempotency checks. The sandbox is
+disabled unless <code>mcp.sandbox.enabled: true</code>; engine selection is described below.</p>
+<h2 id="mcp-response-and-session-limits"><a class="header" href="#mcp-response-and-session-limits">MCP response and session limits</a></h2>
+<p><code>ServerOptions.maxResponseBytes</code> bounds each upstream non-streaming API response
+before parsing (default 4 MiB; a positive safe integer). It is independent of
+<code>maxResultChars</code>, which limits the displayed tool result after the call. The
+reader checks declared Content-Length and bytes actually read, cancels an
+oversized body, and returns <code>UNEXPECTED_RESPONSE</code> with runtime code
+<code>RESPONSE_TOO_LARGE</code> and <code>retryable: never</code>. A mutation may already have taken
+effect: inspect API state before retrying. SSE has separate event and collection
+budgets; display truncation is not an upstream body bound.</p>
+<p>The manifest and SDK must agree on each operation's safety tier. A macro's tier
+must also include its strongest step. A missing descriptor, invalid tier or
+manifest/SDK mismatch refuses the call with <code>UNEXPECTED_RESPONSE</code> before HTTP;
+regenerate the manifest and SDK together instead of retrying the stale pair.</p>
+<p>Streamable HTTP shutdown closes admission before awaiting initializing sessions.
+Requests still reaching the listener while it is closing receive HTTP 503
+(<code>Server closing</code>); initialized and pending sessions are then closed and their
+connections released. A shutdown response does not prove an earlier mutation
+was cancelled or rolled back.</p>
 <h2 id="a-generated-servers-readme"><a class="header" href="#a-generated-servers-readme">A generated server's README</a></h2>
 <p>This is the README that tungsten writes next to a generated server (here for a three-operation example API).</p>
 <h3 id="openapi-mcp"><a class="header" href="#openapi-mcp">openapi-mcp</a></h3>

@@ -411,6 +411,7 @@ defaults:
     patch: mutating
     delete: destructive
   idempotency: none
+  redirects: same_origin_read       # same_origin_read | none; client none also restricts
   preview: local
   unknown_outcome:
     on_timeout: unknown            # never "retry"
@@ -535,6 +536,28 @@ disclosure:
 <tr><td><code>irreversible</code></td><td>Cannot be undone (money, messages sent to people, permanent deletion)</td><td>requires <code>{confirm: {token}}</code> obtained from <code>preview()</code></td><td>requires <code>--yes --i-understand</code> and prints the summary</td><td><code>destructiveHint: true</code>; needs <code>confirmation_token</code>; the MCP server refuses unless the client supplies the token returned by <code>preview</code> in the same session</td></tr>
 </tbody></table>
 </div>
+<h3 id="redirects-and-imported-operation-review"><a class="header" href="#redirects-and-imported-operation-review">Redirects and imported-operation review</a></h3>
+<p><code>defaults.redirects</code> accepts <code>same_origin_read</code> (the default) or <code>none</code>.
+<code>same_origin_read</code> permits bounded same-origin read redirects only; mutations
+never follow redirects. Either the manifest policy or the SDK client's <code>none</code>
+disables following, and client options cannot relax the manifest. A declared
+exact/class 3xx success remains a success without following; with effective
+<code>none</code>, an undeclared 3xx (including a <code>default</code>-only match) is
+<code>UNEXPECTED_RESPONSE</code>, with no retry.</p>
+<p>Imported operations require separate review of safety and allowed origins:</p>
+<pre><code class="language-yaml">tools:
+  - operation: api.listItems
+    imported_reviewed_safety: read_only
+    imported_reviewed_origins: [https://api.example.test]
+</code></pre>
+<p>These fields form one per-operation review layer. Safety defaults and ordinary
+<code>x-agent-*</code> annotations do not approve imported operations. A manifest review
+wins over a separately supplied reviewed extension; origins are not borrowed
+from another layer. Origins must be exact HTTP(S) origins without credentials,
+paths, query or fragment. Missing, empty or invalid origins leave the operation
+unreviewed. Runtime preflight checks the selected base URL and pagination origin
+before auth or transport; a confirmation token cannot bypass that boundary.
+A safety review does not establish completeness or server idempotency.</p>
 <h3 id="idempotency-policies"><a class="header" href="#idempotency-policies">Idempotency policies</a></h3>
 <div class="table-wrapper"><table><thead><tr><th>Policy</th><th>Who generates the key</th><th>Persistence</th><th>Retry rule</th></tr></thead><tbody>
 <tr><td><code>none</code></td><td>nobody</td><td>–</td><td>mutation never auto-retried</td></tr>

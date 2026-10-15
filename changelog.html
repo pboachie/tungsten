@@ -184,8 +184,448 @@
 and this project will adhere to <a href="https://semver.org/spec/v2.0.0.html">Semantic Versioning</a>
 from its first stable release. Until 1.0, minor versions may contain breaking
 changes.</p>
-<h2 id="unreleased"><a class="header" href="#unreleased"><a href="https://github.com/pboachie/tungsten/compare/v0.1.1...HEAD">Unreleased</a></a></h2>
-<h2 id="012"><a class="header" href="#012"><a href="https://github.com/pboachie/tungsten/compare/v0.1.1...HEAD">0.1.2</a></a></h2>
+<h2 id="unreleased"><a class="header" href="#unreleased"><a href="https://github.com/pboachie/tungsten/compare/v0.1.2...HEAD">Unreleased</a></a></h2>
+<h3 id="added"><a class="header" href="#added">Added</a></h3>
+<ul>
+<li>
+<p>Enable registry packaging of the Apache-2.0 Rust runtime and CLI-kit with a
+versioned runtime dependency. Add opt-in crates.io trusted publishing to the
+existing release workflow; account ownership, first publication and publisher
+configuration remain maintainer release steps.</p>
+</li>
+<li>
+<p>Generated Go SDKs require the published <code>v0.1.3</code> runtime module through its
+the compiler nested-module tag, replacing the interim pseudo-version.
+Runtime version overrides and local source replacements remain supported.</p>
+</li>
+<li>
+<p>Complete the architecture overview with explicit alternative input routes, separate
+optional configuration and all current SDK, CLI, MCP, WebMCP and docs outputs; link
+the reviewed response-contract recipe from the quickstart and gallery. Kotlin
+and F# installation guidance now links the inherited durable idempotency stores.</p>
+</li>
+<li>
+<p>Imported-input setup validates built-in target policy support before saving
+converted documents or project manifests; unsupported selections return TG0705
+with supported alternatives instead of leaving an unusable project behind.</p>
+</li>
+<li>
+<p>A bounded Rust/Axum source-declaration API in <code>tungsten_contract::source_axum</code>,
+with literal route/type observations, file/line coverage and explicit unresolved
+constructs. It parses supplied source text without loading modules or running
+applications, macros or build scripts, and preserves separately reviewed overrides.
+Routing/handler binding shadows and conditional router contexts remain
+unresolved coverage rather than claimed operations.</p>
+</li>
+<li>
+<p>Ruby runtime gems declare their <code>base64</code> dependency so packaged SDKs load
+inside Bundler on Ruby 3.4+, with source and offline installation guidance.</p>
+</li>
+<li>
+<p>Durable Java, C# and Ruby idempotency stores share the version-1 owner lease
+format with TypeScript, Python, Go and Rust. Automatic keys use atomic
+reservations while existing get/put-only custom stores remain compatible.</p>
+</li>
+<li>
+<p>Python and Rust <code>max_response_bytes</code>, Go and C# <code>MaxResponseBytes</code>, Java
+<code>maxResponseBytes</code> and Ruby <code>max_response_bytes</code> now bound ordinary response
+bodies on opt-in, matching TypeScript. Client defaults and per-call overrides
+validate positive safe integers; header and counting reads close overflowed
+bodies and report <code>UNEXPECTED_RESPONSE</code> / <code>RESPONSE_TOO_LARGE</code> without retry,
+redirect following or OAuth replay. Mutation remediation preserves unknown
+outcomes. Python and TypeScript <code>collect</code> helpers accept optional byte/time
+budgets, retain admitted partials and preserve unbounded no-argument calls.</p>
+</li>
+<li>
+<p>Public installation examples distinguish published 0.1.2 runtimes from the
+0.1.3 source candidate, with Python compatibility prerequisites and HTTP/Git
+acquisition, cache verification and offline reuse explained in CLI help.</p>
+</li>
+<li>
+<p>Dedicated TG0808 diagnostics explain when an external emitter lacks imported-operation
+policy enforcement; protocol-1 emitters remain compatible with ordinary projects.</p>
+</li>
+<li>
+<p>Git input references (<code>git+https://...@ref#path</code>) with bounded shallow
+acquisition, deterministic document discovery, commit/content pins and verified
+offline reuse through the existing input and importer flows.</p>
+</li>
+<li>
+<p>A runnable example gallery for first SDKs, supported input routes, destructive
+confirmation, local mock development, generated-file drift and API surface
+review. The catalog runner checks recipe documentation and builds generated
+packages against matching runtime source in public CI.</p>
+</li>
+<li>
+<p>Prepare compiler/runtime source manifests and identity headers for 0.1.3 in
+lockstep. CI and release preparation check every runtime before building;
+generated SDK defaults require the 0.1.3 runtime capabilities, while explicit
+runtime overrides remain unchanged. Go uses a separately published nested-module tag.</p>
+</li>
+<li>
+<p>Runtime package installation and limits guidance, packaged README/LICENSE
+files, and consistent npm metadata checks.</p>
+</li>
+<li>
+<p>Opt-in <code>check --audit-contracts</code> response quality diagnostics for missing JSON
+schemas, unconstrained values and free-form objects, with scoped review notes
+and <code>--require-contracts</code> enforcement (or existing <code>--strict</code> enforcement).
+A runnable response-contract example
+enriches an untouched specification with reviewed run/job union schemas through
+standard OpenAPI overlays; generated response types and default checks are unchanged.</p>
+</li>
+<li>
+<p>CI builds the compiler and example emitter at their declared Rust minimum,
+checks the runtime at its own minimum, and rejects locked dependencies or
+README compiler prerequisites that exceed or disagree with those floors.</p>
+</li>
+<li>
+<p>The container accepts patched zlib updates above its minimum required Alpine
+version and verifies the installed version; Dependabot checks the root image.</p>
+</li>
+<li>
+<p>Installers detect whether <code>gh attestation</code> is available, explain checksum-only
+installation when it is absent, and show verification errors while refusing
+failed attestations. Both scripts honor required/disabled attestation settings
+and replace stale unpublished-release hints with the release listing.</p>
+</li>
+<li>
+<p>A runnable typed Python SSE recipe under <code>examples/typed-sse</code>, with an
+explicit FastAPI response declaration, a reviewed OpenAPI overlay, API-key
+authentication, sync/async consumers and explicit terminal-event cleanup.</p>
+</li>
+<li>
+<p>HTTP(S) input acquisition for <code>init --from</code>, compiler paths and manifest inputs,
+with bounded downloads, SHA256 source pins in <code>.tungsten-inputs</code>, explicit
+<code>--refresh-inputs</code>, verified <code>--offline</code> reuse and redacted <code>--input-header</code>
+authentication. Remote entries retain existing reference and import safety rules.</p>
+</li>
+<li>
+<p>Opt-in Python 3.10/3.11 SDK generation with <code>python_version</code>, matching
+package metadata and a Python 3.10-compatible runtime for both model modes.</p>
+</li>
+<li>
+<p>Link the importer guide from the quickstart, including per-format limits and imported-operation review.</p>
+</li>
+<li>
+<p>Imported specs (Postman, cURL, <code>.http</code>, HAR and endpoint manifests): a
+target that cannot enforce imported-operation policy (Java, C#, Kotlin, Ruby,
+Dart and the other SDK targets) now fails alone; without <code>--strict</code> the
+supported targets are still written, and the summary no longer blames
+<code>--strict</code>. <code>tungsten init</code> and the guided wizard warn up front, before
+anything is generated, when a chosen target will be refused for an imported
+input. The external emitter protocol gains an optional <code>import_policy</code> flag in
+the <code>--describe</code> response (and <code>specs/external-emitter.schema.json</code>), checked
+before dispatch, so an emitter such as <code>tungsten-emit-go</code> can opt in; an
+absent flag means no support, and existing protocol 1 emitters are unchanged.</p>
+</li>
+<li>
+<p><code>--no-external</code> (global; also <code>TUNGSTEN_NO_EXTERNAL=1</code>) skips every
+<code>external</code> target instead of starting its command, with an informational
+TG0807 notice, so CI can run <code>check --ci</code>, <code>report</code>, <code>diff</code> and <code>generate</code>
+over a manifest it does not trust. Without it nothing changes. SECURITY.md,
+the README, the <code>targets</code> description in the <code>tungsten.yml</code> schema and the
+<code>check --ci</code> help now say that <code>external</code> commands run on every command that
+emits in memory (<code>generate --dry-run</code> and <code>--check</code>, <code>check --ci</code>, <code>diff</code>,
+<code>report</code>); the source comment that said otherwise is corrected.</p>
+</li>
+<li>
+<p><code>report --all-targets</code> runs the emitter of every known target, as <code>report</code>
+used to.</p>
+</li>
+<li>
+<p>Postman import omits unsupported requests and folders per item instead of
+failing the whole collection: non-raw or non-JSON bodies, non-JSON saved
+responses, unsupported auth helpers, pre-request scripts and unresolved or
+dynamic variables. Each omission is listed under <code>omitted</code> (code, JSON
+pointer, reason) in <code>import-report.json</code>, and <code>init --from</code> prints the
+omitted count. A collection with no importable request fails with PM008;
+PM001 budgets and PM002 schema errors still fail the import.</p>
+</li>
+<li>
+<p>A Dart SDK target, <code>dart</code>: a pub package with final model classes that
+decode and encode themselves, sealed unions, <code>Future</code> methods returning
+<code>Result&lt;T&gt;</code>, <code>Stream</code> pages and <code>EventStream&lt;T&gt;</code> streams, typed macros and
+a <code>Dispatch</code> entry point, over the new <code>dart:io</code> runtime <code>tungsten_runtime</code>. Options <code>package</code>, <code>version</code>, <code>runtime</code> and <code>runtime_path</code>;
+diagnostics TG1070 to TG1079. The Dart runtime passes the L4 contract
+suite in parity with TypeScript, with no skips.</p>
+</li>
+<li>
+<p>Generated Rust CLIs: <code>--max-pages &lt;N&gt;</code> (with <code>--all</code>) stops paging after N
+pages and notes on standard error that more pages are available. There is no
+default limit.</p>
+</li>
+<li>
+<p>Build provenance attestations for the container image, the Homebrew formula, the winget manifests and <code>DISTRIBUTION_SHA256SUMS</code>, with install notes on verifying them.</p>
+</li>
+<li>
+<p>MCP Streamable HTTP: optional <code>bearerToken</code> and <code>authorize(req)</code> options (and
+<code>--token-env &lt;NAME&gt;</code> on generated servers) to require authentication; a
+startup warning when binding a non-loopback host with no authentication and
+no <code>allowedHosts</code>.</p>
+</li>
+<li>
+<p>A Kotlin target (<code>kotlin</code>, short form <code>kt</code>, <code>tungsten-emit-kotlin</code>): a
+Kotlin/JVM SDK over the Java runtime and the new Kotlin layer
+the compiler (<code>io.github.pboachie.tungsten:tungsten-runtime-kotlin</code>,
+JVM target 17, kotlin-stdlib and the Java runtime only). Data classes with
+named, defaulted parameters (<code>Patch&lt;T&gt;</code> where null is a value, <code>T?</code>
+otherwise), enum classes with wire values, sealed interfaces for unions,
+blocking typed functions returning the runtime's <code>Result</code>, previews, pages
+as a <code>Sequence</code> of page results, event streams, macros and <code>Dispatch</code>; a
+Gradle (Kotlin DSL) project per SDK that builds with <code>kotlinc -Werror</code>.
+The Kotlin layer reports <code>(kotlin)</code> in <code>User-Agent</code> and <code>tungsten-kt/0.1.0</code>
+in <code>X-Tungsten-Runtime</code> and adds <code>Result</code> extensions (<code>getOrThrow</code>, <code>fold</code>,
+<code>onError</code>). Options <code>group</code>, <code>artifact</code>, <code>package</code>, <code>version</code>, <code>runtime</code>,
+<code>runtime_path</code> and <code>java_runtime_path</code>; diagnostics TG1030 to TG1035.
+First version: blocking API only (no coroutines or <code>Flow</code>), JVM only, and
+the Java target's gaps.</p>
+</li>
+<li>
+<p><code>ClientOptions.identity()</code> and <code>withIdentity(...)</code> in the Java runtime
+(additive), so a layer on top of it reports its own runtime identity.</p>
+</li>
+<li>
+<p>F# SDK target <code>fsharp</code> (short form <code>fs</code>), a built-in emitter over the .NET
+runtime. It generates records, discriminated unions for enums and unions
+with strict and lenient generated JSON codecs, <code>Task&lt;Result&lt;'T, Diagnostic&gt;&gt;</code>
+methods for operations, previews, pages and streams, typed macros and a
+client, with an explicit compile order. Options: <code>package_id</code>, <code>namespace</code>,
+<code>version</code>, <code>runtime</code>, <code>runtime_path</code> and <code>csharp_runtime_path</code>.
+Diagnostics TG1080 to TG1085, each with <code>tungsten explain</code> text.</p>
+</li>
+<li>
+<p>the compiler (<code>Tungsten.Runtime.FSharp</code>, net10.0): the F# layer over
+the compiler with the F# identity, <code>Patch&lt;'T&gt;</code> as a union, Result and
+option interop, Task and async-sequence helpers and the JSON helpers of
+generated records. The public CI job <code>fsharp runtime build</code> builds it.</p>
+</li>
+<li>
+<p><code>Tungsten.Runtime</code>: <code>ClientCore</code> accepts a <code>RuntimeIdentity</code>, so a layer
+over the runtime can name its own language in <code>User-Agent</code> and
+<code>X-Tungsten-Runtime</code>. The C# identity is unchanged.</p>
+</li>
+</ul>
+<p>Known gaps of the F# target: Task API only; net10.0 only; no Fantomas
+formatting; Fable and JavaScript targets untested; plus the C# limits
+(in-memory idempotency store, .NET regex dialect, by-status and intersection
+values as <code>JsonNode</code>, OpenID Connect as a bearer token, no CLI or MCP).</p>
+<ul>
+<li>The release dependency audit supports reviewed, scoped and expiring advisory
+exceptions: entries in the <code>advisory_exceptions</code> list of
+<code>.github/dependency-policy.json</code> name an advisory id, the one locked package
+it applies to, the reason it was accepted and an <code>expires</code> date. The audit
+prints every exception in the release job log, suppresses only the matching
+advisory, and fails once an entry is past its expiry, so an exception is a
+time-limited review decision instead of a standing ignore. CONTRIBUTING and
+SECURITY.md now record that release tags are immutable — a failed release is
+fixed forward with a new version, never by moving a tag — and that a
+<code>workflow_dispatch</code> dry run (<code>dry_run: true</code>) of the release workflow, which
+runs the same audit, is required on the release commit before the tag is
+pushed.</li>
+</ul>
+<h3 id="changed"><a class="header" href="#changed">Changed</a></h3>
+<ul>
+<li>README, the architecture diagram and the <code>init</code> help present every
+supported input alternative instead of positioning tungsten as OpenAPI
+only: OpenAPI 3.0/3.1, Swagger 2.0, Postman Collection v2.1, saved cURL,
+<code>.http</code>/<code>.rest</code> files, HAR 1.2 and endpoint manifests, plus the manual
+method-and-endpoint path, shown as OR alternatives with each route's
+conversion path, limits and required review. The README gains a Supported
+inputs matrix; <code>assets/architecture.svg</code> and its accessible description
+show alternative inputs normalizing to OpenAPI before the frontend; the
+<code>init --from</code> help and the <code>tungsten-cli</code> crate description name the
+accepted inputs. <code>check</code>, <code>generate</code> and the other project commands still
+take an initialized project or a single OpenAPI document. (#173)</li>
+<li><code>tungsten report</code> runs only the emitters of the configured targets. The
+other known targets stay in <code>coverage.targets</code> with the new status
+<code>not_configured</code> (and, for an <code>external</code> target skipped by <code>--no-external</code>,
+<code>skipped</code>) and their emitter is not run, so <code>report</code> on a large spec takes
+about as long as <code>generate --dry-run</code> (the Stripe showcase spec took 3 min
+18 s against 1.3 s for <code>check</code>). The token budgets of <code>docs</code> and <code>mcp</code> are
+empty unless that target is configured or <code>--all-targets</code> is given.</li>
+<li><code>tungsten check</code> prints a warning or info code at most three times in the
+human output, then one line with the number left out, and its summary lists
+the count per code (<code>--all-warnings</code> prints everything; <code>--json</code> has always
+listed every diagnostic and gains an additive <code>by_code</code> array). TG0301 for
+an untagged union of exactly two candidates where one is a plain string,
+array or map is now info instead of a warning, so <code>--strict</code> no longer
+fails on those; other untagged unions still warn. (#111)</li>
+<li>Breaking (diagnostic code): <code>tungsten generate</code> now reports the refusal of a
+target that cannot apply an enforced imported-operation policy (for example
+<code>java</code> on a Postman-imported project) as the new error TG0705; it was
+reported as TG0702. TG0702 again means only "target has no emitter in this
+version; skipped". Tooling that matched TG0702 for this refusal must match
+TG0705; <code>tungsten explain TG0705</code> names the supported targets and the
+<code>tungsten init --resume --add-targets</code> path.</li>
+<li>The release workflow's PyPI publication job is enabled through trusted
+publishing (repository variable <code>PYPI_PUBLISH</code>, <code>pypi</code> environment, no
+stored token) and now refuses to upload a <code>tungsten-runtime</code> sdist or wheel
+whose version does not equal the release tag, mirroring the npm publication
+preflight.</li>
+<li>The published <code>ghcr.io/pboachie/tungsten</code> container image carries
+<code>org.opencontainers.image</code> title and description labels, so the GitHub
+package page shows the package description instead of "No description
+provided".</li>
+<li>Generated Rust CLIs: <code>--all</code> writes its array page by page instead of
+collecting every item first. The output is byte-for-byte the same on
+success; a failure after the first page leaves the array unterminated and is
+reported on standard error. <code>Dispatch</code> gains the provided method
+<code>pages_each</code>, which generated clients implement lazily.</li>
+<li>MCP <code>run_script</code>: the WASM engine now runs its isolate in a worker thread
+that is terminated at the deadline, so a long computation no longer occupies
+the server's event loop. Results, errors and limits are unchanged.</li>
+<li>MCP <code>run_script</code>: new <code>sandbox.maxConcurrent</code> option (<code>perSession</code>, default
+4; <code>global</code>, default 16). Calls over a limit are refused with a
+<code>VALIDATION_FAILED</code> "busy" envelope.</li>
+<li>MCP HTTP: a warning is logged when <code>sandbox.engine: "auto"</code> falls back to the
+WASM engine because deno was not found.</li>
+<li>Distribution verifies the build provenance attestation of every release asset it consumes before rebuilding the container image, Homebrew formula and winget manifests.</li>
+<li>Dependency audit: source-less <code>Cargo.lock</code> entries must be workspace members, and <code>[patch]</code>/<code>[replace]</code> tables in Cargo manifests are rejected.</li>
+</ul>
+<h3 id="fixed"><a class="header" href="#fixed">Fixed</a></h3>
+<ul>
+<li>
+<p>Release bundles include the Homebrew formula, winget archive and distribution
+checksums before publication, supporting GitHub immutable releases. Container
+distribution verifies the sealed assets and no longer uploads release assets.</p>
+</li>
+<li>
+<p>Python 3.11 SDKs import <code>Self</code> and <code>NotRequired</code> from the standard library,
+matching their generated lint target; Python 3.10 keeps the required backports.</p>
+</li>
+<li>
+<p>Dart pagination detects repeated cursors and page URLs, including the caller's
+starting cursor and cycles across earlier pages. Fetched pages are delivered
+before an <code>UNEXPECTED_RESPONSE</code> diagnostic, repeated requests are refused, and
+relative next-page links resolve against the effective URL after redirects.</p>
+</li>
+<li>
+<p>Release packaging: the aarch64 <code>gnu</code> Linux archive needed glibc 2.39 (it was
+built on <code>ubuntu-24.04-arm</code>) while the x86_64 archive needed 2.34, so the
+same <code>TUNGSTEN_LIBC=gnu</code> choice failed on Debian 12, Ubuntu 22.04, RHEL 9
+and Amazon Linux 2023 only on arm64. Both <code>gnu</code> targets now build on the
+Ubuntu 22.04 runners and share one documented floor, glibc 2.34. The release
+pipeline extracts the highest <code>GLIBC_</code> symbol version from every <code>gnu</code>
+binary and fails the job when it exceeds that floor, the release notes state
+the floor and that the <code>musl</code> archives are static, and <code>install.sh</code> checks
+<code>ldd</code> before installing a <code>gnu</code> archive and points older systems at the
+static musl default. The README install section documents all of this.</p>
+</li>
+<li>
+<p>Release workflow: the Woodpecker npm gate can no longer time out a real
+release run. The wait starts only after the npm artifacts it gates exist
+(the <code>Woodpecker npm release validation</code> job depends on <code>npm-artifacts</code>
+instead of racing the build jobs), its deadline is 45 minutes instead of 15
+(the v0.1.2 tag needed a manual re-run about 20 minutes after its first
+attempt died at 15; the value and its history are documented in
+<code>wait-woodpecker-release.mjs</code>, and the job timeout is 50 minutes),
+transient GitHub status or pipeline lookup failures are retried instead of
+failing the gate, and a timeout reports that only npm publication is blocked
+— the GitHub Release and attestations are unaffected — and to re-run the
+failed jobs. A <code>workflow_dispatch</code> dry run now exercises the same wait
+against the last released tag, so the gate is tested before a release
+relies on it, and the Woodpecker-side artifact validation step's own
+timeout is aligned with the GitHub-side 20-minute budget.</p>
+</li>
+<li>
+<p>MCP <code>run_script</code> on native Windows: the Deno child now receives <code>SystemRoot</code>,
+<code>SYSTEMDRIVE</code>, <code>TEMP</code>, <code>TMP</code>, <code>USERPROFILE</code>, <code>PATH</code> and <code>PATHEXT</code> (and nothing
+else from the parent), and Deno is located by file existence plus a <code>PATHEXT</code>
+extension instead of a POSIX <code>X_OK</code> check. Linux and macOS are unchanged.</p>
+</li>
+<li>
+<p>MCP: <code>--bearer-token-env &lt;NAME&gt;</code> is accepted as an alias of <code>--token-env</code>; the
+HTTP embeddings provider warns when <code>apiKeyEnv</code> is used with a plain <code>http://</code>
+non-loopback URL and reads at most 1 MiB of response (larger is an embedder
+failure, search falls back to BM25).</p>
+</li>
+<li>
+<p>Java runtime: a <code>StackOverflowError</code> raised by <code>java.util.regex</code> on a long
+subject (for example <code>^(a|a)+$</code> against 10,000 characters) is treated like a
+match timeout, so the pattern is reported as not checked and the error no
+longer escapes <code>accepts()</code>.</p>
+</li>
+<li>
+<p>Go emitter: the generated <code>go.mod</code> requires a runtime version that resolves
+for clean consumers. The default <code>runtime_version</code> is now the pseudo-version
+<code>v0.0.0-20261014151145-1a0ee4def654</code> of the v0.1.2 release commit, because
+the nested module has no <code>runtimes/go/v*</code> tag and <code>v0.1.0</code> did not resolve.</p>
+</li>
+<li>
+<p>Java, C# and Ruby runtimes: the server-sent events parser scans and counts
+each fragment once and joins a line only when it ends, so a long line
+delivered in small pieces costs linear instead of quadratic time (the
+TypeScript, Python, Rust and Go runtimes got this in 0.1.2).</p>
+</li>
+<li>
+<p>Java, C# and Ruby runtimes: pagination rejects cursor and page URL cycles
+as the other four runtimes do. A cursor or <code>Link</code> URL seen before (including
+the cursor the caller started with and an immediate repeat) delivers the
+pages fetched so far, then ends with <code>UNEXPECTED_RESPONSE</code>; before, a repeated
+cursor ended the traversal as a success and a longer loop ran on. A repeated
+request URL is refused before it is sent. Relative <code>Link</code> references now
+resolve against the URL that answered, after same-origin redirects, not the
+base URL. Callers whose server returned a repeated cursor now get this error
+instead of a silently truncated result.</p>
+</li>
+<li>
+<p><code>doctor</code> now lists <code>java</code>, <code>mvn</code>, <code>dotnet</code>, <code>ruby</code>, <code>bundle</code> and <code>go</code>, and
+<code>doctor --strict</code> fails when a configured <code>java</code>, <code>csharp</code>, <code>ruby</code> or
+external <code>go</code> target lacks its toolchain (Java 17, .NET 10, Ruby 3.3,
+Go 1.22) or, for an external <code>go</code> target without a command, when
+<code>tungsten-emit-go</code> is not on PATH.</p>
+</li>
+<li>
+<p>A Path Item <code>$ref</code> with fields written beside it no longer drops them:
+sibling operations, <code>parameters</code>, <code>summary</code>, <code>description</code> and <code>servers</code>
+are merged over the referenced item for OpenAPI 3.0 and 3.1 alike, so a
+spec that lost an operation silently now compiles it (additive to the
+generated API). A field defined on both sides is the new warning TG0510
+(the sibling wins; <code>tungsten explain TG0510</code>), which fails a run only under
+<code>--strict</code>.</p>
+</li>
+<li>
+<p><code>tungsten explain</code> now knows every code the importers and the Go emitter
+emit: PM001-PM007 (Postman), HR001-HR003 and HR006 (HAR), TC001-TC007
+(request-contract checks), GO001-GO006 (Go emitter) and TG1201 (saved cURL
+and <code>.http</code> input). <code>tungsten explain PM005</code> works outside a project, and
+<code>tungsten init</code> importer errors name the <code>tungsten explain &lt;code&gt;</code> command.</p>
+</li>
+<li>
+<p>Python and Java runtimes bound schema <code>pattern</code> matching: strings over 64 KiB
+skip the pattern check, and Java abandons a match after 1 s, treating it as
+not checked.</p>
+</li>
+<li>
+<p>C# emitter: documentation comments treat every C# line terminator (lone CR,
+U+0085, U+2028, U+2029) as a line break, so descriptions stay inside the
+comment.</p>
+</li>
+<li>
+<p>Go, C#, Java, Python, Ruby and Rust runtimes: validate the media type of a
+binary multipart part and refuse malformed values with <code>VALIDATION_FAILED</code>
+before any bytes are written.</p>
+</li>
+<li>
+<p>TypeScript runtime: header values are validated before the request body is
+built, and multipart part media types are checked as <code>type/subtype[;params]</code>.</p>
+</li>
+</ul>
+<h2 id="012---2026-10-14"><a class="header" href="#012---2026-10-14"><a href="https://github.com/pboachie/tungsten/compare/v0.1.1...v0.1.2">0.1.2</a> - 2026-10-14</a></h2>
+<p><strong>Migrating to 0.1.2:</strong> regenerate every generated SDK and its runtime
+together; an SDK generated by 0.1.2 expects the 0.1.2 runtime of the same
+language. Three generated sources changed shape, so hand-written code that
+constructs them must be updated:</p>
+<ul>
+<li>Java: <code>ApiDescriptor</code> gained the <code>redirects</code> record component and lost its
+eleven-argument constructor; construct it with the canonical constructor.</li>
+<li>Ruby: <code>ClientOptions</code> gained the <code>redirects</code> member (first), which shifts
+positional construction and <code>deconstruct</code>; pass options by keyword.</li>
+<li>Rust: <code>CallOptions</code> gained the public <code>max_pages</code> field and <code>ApiDescriptor</code>
+the <code>redirects</code> field; build <code>CallOptions</code> with <code>..CallOptions::default()</code>
+and add <code>redirects</code> to handwritten <code>ApiDescriptor</code> literals.</li>
+</ul>
 <h3 id="breaking"><a class="header" href="#breaking">Breaking</a></h3>
 <ul>
 <li>
@@ -290,89 +730,13 @@ None or zero: unbounded), and <code>ApiDescriptor</code> the <code>redirects</co
 <code>CallOptions</code> with <code>..CallOptions::default()</code> so later fields do not break
 handwritten literals.</p>
 </li>
-<li>
-<p>Postman import never copies variable values into contract paths. A
-<code>{{name}}</code> path segment is accepted only as a whole segment naming a variable
-declared in the request URL's <code>variable</code> list, and becomes the <code>{name}</code> path
-parameter; any other path variable is refused (PM005, use <code>:name</code>). Base URL
-variables must hold an origin only; a value with a path prefix is refused
-(PM005). Dynamic variables such as <code>{{$guid}}</code> are refused in every path
-segment (PM004), including after an unresolved base URL variable.</p>
-</li>
-<li>
-<p><code>tungsten init</code> from a HAR capture requires a reviewed path for every
-imported path before saving: a <code>--route</code> template (literal paths too, for
-example <code>--route /health</code>) or a <code>--har-paths</code> JSON mapping of captured paths
-to templates, which the interactive setup also asks for; a
-captured path without one, a <code>--route</code> that matches no imported entry, or two
-equally specific matching templates are refused. <code>HarOptions</code> gains a
-<code>route_templates</code> field.</p>
-</li>
-<li>
-<p><code>tungsten init</code> reports JSON setup input it cannot parse (invalid syntax or
-nesting deeper than 128 levels) instead of passing it on as OpenAPI.</p>
-</li>
 </ul>
-<h3 id="fixed"><a class="header" href="#fixed">Fixed</a></h3>
+<h3 id="fixed-1"><a class="header" href="#fixed-1">Fixed</a></h3>
 <ul>
 <li>
 <p>Wait for the MCP sandbox child to close before removing its temporary files,
 including failed starts and terminated scripts on Windows.</p>
 </li>
-<li>
-<p>MCP <code>run_script</code>: the Deno sandbox no longer gets <code>--allow-net</code>. Scripts
-reach the API only through the session's client RPC. <code>denoArguments</code> and
-<code>sandboxCommand</code> ignore <code>host</code>, now optional, and <code>run_script</code> no longer
-needs or validates a <code>baseUrl</code>.</p>
-</li>
-<li>
-<p>MCP servers bound upstream response bodies to 4 MiB by default (new
-<code>maxResponseBytes</code> server option). Larger responses fail with
-<code>RESPONSE_TOO_LARGE</code> before they are materialized.</p>
-</li>
-<li>
-<p>WebMCP <code>maxResultBytes</code> now always bounds the upstream HTTP body before
-parsing, not only with <code>binaryResults</code> or <code>streamCollection</code>. An oversized
-response reports <code>RESPONSE_TOO_LARGE</code> instead of <code>RESULT_TOO_LARGE</code>.</p>
-</li>
-<li>
-<p>MCP sessions refuse a tool, sending nothing (<code>UNEXPECTED_RESPONSE</code>), when the
-manifest safety tier differs from the SDK operation's tier or from a macro's
-strictest declared or step tier. Regenerate the manifest and SDK together.
-Manifest annotations can make hints more cautious than the tier, never less.</p>
-</li>
-<li>
-<p>MCP HTTP servers answer 503 <code>Server closing</code> once <code>close()</code> starts, wait for
-sessions still initializing, and count those sessions against <code>maxSessions</code>.</p>
-</li>
-<li>
-<p>The Java transport buffers at most 64 response chunks per body and applies
-backpressure to the socket reader. Closing a body discards buffered chunks.</p>
-</li>
-<li>
-<p>CI and release preparation fail when a committed lockfile gains a package
-name missing from <code>.github/dependency-policy.json</code> or when OSV reports an
-advisory. Release npm installs run with <code>--ignore-scripts</code>, and Python
-packages build with hash-locked tools and <code>--no-isolation</code>.</p>
-</li>
-</ul>
-<h3 id="security"><a class="header" href="#security">Security</a></h3>
-<ul>
-<li>Reserve MCP session capacity during asynchronous initialization, validate
-manifest safety against executable descriptors, and keep Deno scripts on
-the client RPC channel without direct network permission.</li>
-<li>Bound upstream MCP response bodies to 4 MiB by default (configurable through
-<code>maxResponseBytes</code>), and apply WebMCP result byte limits before HTTP body
-materialization. Oversized responses return the SDK's <code>RESPONSE_TOO_LARGE</code>
-diagnostic; inconsistent MCP manifest/SDK safety tiers fail before dispatch.</li>
-<li>Bound Java transport queues with backpressure and cancellation cleanup.</li>
-<li>Check locked dependency names, sources, hashes and current advisories in CI
-and release preparation; disable npm install hooks in release builds.</li>
-<li>Hash-lock Python release tooling and disable build isolation during package
-creation to prevent unpinned build-tool resolution.</li>
-</ul>
-<h3 id="fixed-1"><a class="header" href="#fixed-1">Fixed</a></h3>
-<ul>
 <li>
 <p>Bound Postman variable expansion and parsed examples by one import-wide byte
 and node budget (PM001), so a large variable referenced many times cannot
@@ -476,7 +840,7 @@ reserved key is kept when removing the lease fails.</p>
 <p>Pin the container's zlib package to its patched Alpine release.</p>
 </li>
 </ul>
-<h3 id="security-1"><a class="header" href="#security-1">Security</a></h3>
+<h3 id="security"><a class="header" href="#security">Security</a></h3>
 <ul>
 <li>Reserve MCP session capacity during asynchronous initialization, validate
 manifest safety against executable descriptors, and keep Deno scripts on
@@ -493,7 +857,7 @@ and release preparation; disable npm install hooks in release builds.</li>
 creation to prevent unpinned build-tool resolution.</li>
 <li>Keep Postman path parameters explicit and restrict URL variables to origins.</li>
 </ul>
-<h3 id="added"><a class="header" href="#added">Added</a></h3>
+<h3 id="added-1"><a class="header" href="#added-1">Added</a></h3>
 <ul>
 <li>
 <p>Add <code>defaults.redirects: none</code> and client redirect options across all seven SDK
@@ -541,8 +905,16 @@ SDKs when upgrading; handwritten <code>AgentMeta</code> literals must add
 engine, preserving explicit authentication and reporting unsupported behavior.</p>
 </li>
 <li>
+<p>Parse a bounded saved cURL and HTTP-file subset as offline contract observations,
+with explicit route templates and no shell execution or implicit file reads.</p>
+</li>
+<li>
 <p>Import bounded HAR captures offline with explicit origin selection, reviewed
 path templates, configurable structural redaction, and omission reports.</p>
+</li>
+<li>
+<p>Add a bounded offline HTTP contract engine with deterministic OpenAPI inference,
+provenance, and persistent reviewed overrides.</p>
 </li>
 <li>
 <p>Versioned endpoint manifests can combine declared JSON Schema models with
@@ -629,23 +1001,6 @@ delivered events; an idle timeout ends or reconnects a silent stream
 stall one for testing.</p>
 </li>
 <li>
-<p><code>tungsten lsp</code>: a Language Server Protocol server over stdio for
-<code>tungsten.yml</code>, <code>agent.yml</code> and overlay files. It reports the same
-diagnostics as <code>tungsten check</code> on the YAML lines they belong to, completes
-keys, values and operation ids, documents fields and operations on hover,
-jumps from an operation id to its place in the OpenAPI document and
-outlines the manifests. See the README for editor setup.</p>
-</li>
-<li>
-<p>External emitters: a target of <code>tungsten.yml</code> with <code>external: true</code> (or a
-command) is generated by a separate <code>tungsten-emit-&lt;name&gt;</code> executable that
-speaks a small JSON protocol (the IR on standard input, files and
-diagnostics on standard output). The compiler writes the files, so
-<code>generate --check</code>, the output manifest and the API surface diff work
-unchanged. New: <code>tungsten emitters</code>, <code>tungsten schema external-emitter</code>,
-diagnostics TG0801 to TG0806 and the example <code>examples/external-emitter-markdown</code>.</p>
-</li>
-<li>
 <p>Optional embedding index for the MCP server's <code>search_tools</code>, off by
 default and with no model shipped. <code>targets.mcp.search.embeddings</code> names a
 provider (a command speaking a small JSON protocol, or a plain <code>http://</code>
@@ -657,7 +1012,7 @@ the reason in the result when the query embedder fails. Diagnostics
 TG0570 to TG0574.</p>
 </li>
 </ul>
-<h3 id="changed"><a class="header" href="#changed">Changed</a></h3>
+<h3 id="changed-1"><a class="header" href="#changed-1">Changed</a></h3>
 <ul>
 <li>
 <p>Rust runtime: <code>StreamEvent</code> has a new public field <code>reconnects</code>; code that
@@ -675,11 +1030,15 @@ previews, confirmation tokens, auth handling and resumable event streams
 as the other runtimes.</p>
 </li>
 </ul>
+<h2 id="011---2026-10-11"><a class="header" href="#011---2026-10-11"><a href="https://github.com/pboachie/tungsten/compare/v0.1.0...v0.1.1">0.1.1</a> - 2026-10-11</a></h2>
+<p>Release engineering only: npm package READMEs for the published TypeScript
+packages and resolvable Woodpecker workflow status URLs. No compiler, runtime
+or generated-output changes, and nothing to migrate.</p>
 <h2 id="010---2026-10-11"><a class="header" href="#010---2026-10-11"><a href="https://github.com/pboachie/tungsten/releases/tag/v0.1.0">0.1.0</a> - 2026-10-11</a></h2>
 <p>First release. The compiler, the three SDK runtimes (<code>@elysra/tungsten-runtime</code>,
 <code>tungsten-runtime</code> on PyPI and <code>tungsten-runtime</code> on crates.io), the MCP
 runtime (<code>@elysra/tungsten-mcp</code>) and the installers ship together at 0.1.0.</p>
-<h3 id="added-1"><a class="header" href="#added-1">Added</a></h3>
+<h3 id="added-2"><a class="header" href="#added-2">Added</a></h3>
 <ul>
 <li>Compiler: OpenAPI 3.0 and 3.1 frontend, <code>tungsten.yml</code> and <code>agent.yml</code>
 manifests, a versioned intermediate representation (<code>tungsten ir dump</code>,
@@ -726,8 +1085,21 @@ refreshes it before it expires and once after a 401. Generated clients expose
 the helpers only when the specification declares an <code>authorizationCode</code> flow.</li>
 <li>Repository guard and community files (contributing guide, security policy,
 code of conduct, issue forms and pull request template).</li>
+<li><code>tungsten lsp</code>: a Language Server Protocol server over stdio for
+<code>tungsten.yml</code>, <code>agent.yml</code> and overlay files. It reports the same
+diagnostics as <code>tungsten check</code> on the YAML lines they belong to, completes
+keys, values and operation ids, documents fields and operations on hover,
+jumps from an operation id to its place in the OpenAPI document and
+outlines the manifests. See the README for editor setup.</li>
+<li>External emitters: a target of <code>tungsten.yml</code> with <code>external: true</code> (or a
+command) is generated by a separate <code>tungsten-emit-&lt;name&gt;</code> executable that
+speaks a small JSON protocol (the IR on standard input, files and
+diagnostics on standard output). The compiler writes the files, so
+<code>generate --check</code>, the output manifest and the API surface diff work
+unchanged. New: <code>tungsten emitters</code>, <code>tungsten schema external-emitter</code>,
+diagnostics TG0801 to TG0806 and the example <code>examples/external-emitter-markdown</code>.</li>
 </ul>
-<h3 id="changed-1"><a class="header" href="#changed-1">Changed</a></h3>
+<h3 id="changed-2"><a class="header" href="#changed-2">Changed</a></h3>
 <ul>
 <li><code>tungsten init</code> writes a default <code>targets</code> block.</li>
 <li>Documents that omit <code>info.version</code>, use query-style path keys, or leave out

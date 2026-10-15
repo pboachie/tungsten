@@ -186,16 +186,41 @@ generated code. The supported distribution units are:</p>
 <tr><td>MCP server</td><td><code>@elysra/tungsten-runtime</code>, <code>@elysra/tungsten-mcp</code></td><td>npm</td></tr>
 <tr><td>Browser WebMCP</td><td><code>@elysra/tungsten-runtime</code>, <code>@elysra/tungsten-webmcp</code>, generated TypeScript SDK</td><td>npm and your generated package</td></tr>
 <tr><td>Python SDK</td><td><code>tungsten-runtime</code></td><td>PyPI</td></tr>
-<tr><td>Rust SDK</td><td><code>tungsten-runtime</code></td><td>crates.io</td></tr>
-<tr><td>Rust CLI</td><td><code>tungsten-runtime</code>, <code>tungsten-cli-kit</code></td><td>crates.io</td></tr>
+<tr><td>Rust SDK</td><td><code>tungsten-runtime</code></td><td>Matching source; crates.io installation is unavailable</td></tr>
+<tr><td>Rust CLI</td><td><code>tungsten-runtime</code>, <code>tungsten-cli-kit</code></td><td>Matching runtime/CLI-kit source; crates.io installation is unavailable</td></tr>
+<tr><td>Go SDK</td><td><code>github.com/pboachie/tungsten/runtimes/go</code></td><td>Existing v0.1.3 module; use matching source for the unreleased compiler candidate</td></tr>
+<tr><td>Java SDK</td><td><code>io.github.pboachie.tungsten:tungsten-runtime</code></td><td>Source-only; use <code>runtime_path</code></td></tr>
+<tr><td>Kotlin SDK</td><td><code>io.github.pboachie.tungsten:tungsten-runtime-kotlin</code> and Java runtime</td><td>Source-only; use <code>runtime_path</code> and <code>java_runtime_path</code></td></tr>
+<tr><td>C# SDK</td><td><code>Tungsten.Runtime</code> (net10.0)</td><td>Source-only; use <code>runtime_path</code></td></tr>
+<tr><td>F# SDK</td><td><code>Tungsten.Runtime.FSharp</code> and <code>Tungsten.Runtime</code> (net10.0)</td><td>Source-only; use <code>runtime_path</code> and <code>csharp_runtime_path</code></td></tr>
+<tr><td>Ruby SDK</td><td><code>tungsten-runtime</code> gem (Ruby 3.3+)</td><td>Source-only; use <code>runtime_path</code></td></tr>
+<tr><td>Dart SDK</td><td><code>tungsten_runtime</code> (Dart 3.6+, <code>dart:io</code>)</td><td>Source-only; use <code>runtime_path</code>; browser builds are unsupported</td></tr>
 </tbody></table>
 </div>
 <p>These names describe the intended registry packages. A successful local build
-does not mean a version exists in a registry. npm and PyPI publication remain
-disabled until maintainers configure trusted publishers and enable the release
-switches. Rust manifests retain <code>publish = false</code>; Rust publication requires a
-separate reviewed change. Before relying on registry installation, check that
-the version required by your generated package is available.</p>
+does not mean a version exists in a registry. npm and PyPI publication require
+configured trusted publishers and explicit release switches; a workflow in the
+repository does not prove that either registry contains the requested version.
+Before relying on registry installation, check that the version required by
+your generated package is available.</p>
+<p>The latest stable compiler release is <strong>0.1.2</strong>. Its three npm runtimes and PyPI
+<code>tungsten-runtime</code> were verified at 0.1.2 on October 15, 2026. Compiler 0.1.3 is
+unreleased; use matching source dependencies for its candidate capabilities.
+The Go runtime is separately available as v0.1.3 through the public Go module
+proxy, which does not establish a stable 0.1.3 compiler release. The
+<a href="getting-started.html#runtime-packages">getting-started installation guide</a>
+separates those published runtime commands from the candidate source workflow.</p>
+<p>Neither Rust runtime package is available from crates.io in the October 15
+registry checks. Use the <code>v0.1.2</code> source checkout with the stable compiler, or
+the same reviewed candidate checkout with the unreleased compiler. Set the Rust
+target's <code>runtime_path</code> to <code>runtimes/rust/runtime</code>; a generated CLI also needs
+<code>cli.kit_path</code> pointing to <code>runtimes/rust/cli-kit</code> in that same checkout. Resolve
+<code>runtime_path</code> relative to the generated SDK crate directory and <code>cli.kit_path</code>
+relative to the generated CLI crate directory. Do not use
+<code>cargo add</code> registry commands until the required versions are published and
+verified separately.
+These libraries do not install the Tungsten compiler. Use the compiler's
+release binary/installer or its documented source installation separately.</p>
 <p>All runtime distributions use Apache-2.0 and include the actual license file.
 The generator's license is separate. npm packages ship compiled ESM, TypeScript
 declarations and explicit exports. <code>@elysra/tungsten-runtime/node</code> supplies Node
@@ -206,7 +231,33 @@ distribution.</p>
 <p>For local development before registry publication, build the runtimes and set
 the generator's supported runtime path options to your local checkout. A source
 path is a development dependency; package releases use registry version ranges.
-The release checks also install all npm tarballs together into an isolated
+Put <code>runtime_path</code> in the target's configuration, resolving it relative to its output
+directory. For example, a Java SDK emitted to <code>sdk/java</code> alongside a local
+<code>tungsten</code> checkout can use:</p>
+<pre><code class="language-yaml">targets:
+  java:
+    out: sdk/java
+    runtime_path: ../../../tungsten/runtimes/java
+</code></pre>
+<p>Use the corresponding <code>runtimes/&lt;language&gt;</code> directory for other source targets.
+Kotlin also needs the Java runtime path; F# also needs the C# runtime path.
+Keep those dependencies from the same reviewed source revision. The generated
+README may show registry-style coordinates or an example SDK install command;
+these identify the expected dependency, rather than promise a published package.</p>
+<p>The candidate Go emitter defaults to the existing runtime module <code>v0.1.3</code>,
+available through the nested-module tag <code>runtimes/go/v0.1.3</code>. A root compiler
+release tag does not replace this module-specific tag. For the unreleased
+compiler's source workflow, use <code>runtime_path</code> with the same reviewed checkout.
+To explicitly evaluate the existing candidate module in an isolated consumer:</p>
+<pre><code class="language-sh">go get github.com/pboachie/tungsten/runtimes/go@v0.1.3
+</code></pre>
+<p>The generated SDK already declares that dependency. A clean Go consumer
+resolved it through the public module proxy and checksum database without
+<code>runtime_path</code>, a <code>replace</code> directive or a sibling source checkout. Set
+<code>runtime_version</code> to select another compatible published version, or use
+<code>runtime_path</code> for a local development <code>replace</code>. This Go publication does not
+establish registry availability for other languages.</p>
+<p>The release checks also install all npm tarballs together into an isolated
 project, so the core peer is resolved from the packed artifact instead of a
 source link or an unpublished registry version.</p>
 <p>Maintainers can reproduce the npm distribution check with <code>make runtime-packages</code>
@@ -219,15 +270,25 @@ and <code>twine</code> tools, and Rust verification compiles temporary packaged 
 The script builds a wheel and sdist, checks metadata, licenses and typing files,
 installs the wheel in an isolated environment, and packages the Rust workspace
 in a temporary copy without changing its committed publication switch.</p>
+<p>The 0.1.3 source candidate coordinates compiler and runtime source versions for
+its planned release tag. Generated SDKs retain their own package versions, while their
+default runtime dependencies require the candidate's capabilities. Explicit
+runtime overrides remain yours to qualify. The Go module's independent nested
+tag is published and verified separately from the compiler release.
+The earlier 0.1.2 release had independently versioned non-npm runtime sources.
+Local archive checks validate each manifest, and tag-aware release checks
+enforce the coordinated candidate versions. Neither replaces a clean registry
+installation check or proves publication.</p>
 <p>The release workflow always checks npm packages, builds Python archives and
 rehearses Rust packaging. npm publishing uses the already validated archives,
 checks their checksums, and publishes the core runtime before its adapters.
 Only a real release with <code>NPM_PUBLISH=true</code> can publish npm packages, using
 GitHub's OIDC trusted publisher in environment <code>npm</code>. Missing registry publisher
 configuration fails the job; there is no stored-token fallback. Prereleases use
-the <code>next</code> npm dist-tag, and stable releases use <code>latest</code>. All archive versions
+the <code>next</code> npm dist-tag, and stable releases use <code>latest</code>. The npm archive versions
 must match the full release tag before the first upload; mismatched prerelease
-and stable package versions fail the publish step.</p>
+and stable package versions fail the publish step. Python publication separately
+requires <code>PYPI_PUBLISH=true</code> and matching wheel/sdist versions.</p>
 <p>See <a href="downloads.html">Downloads</a> for CLI installation and
 <a href="browser-integration.html">Browser integration</a> for browser setup and capability
 checks.</p>

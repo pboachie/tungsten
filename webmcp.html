@@ -213,8 +213,11 @@ TypeScript SDK first, then install and build the browser package:</p>
 <code>runtime_path</code>, <code>sdk_runtime</code> and <code>sdk_runtime_path</code>, plus <code>out</code>. Without
 overrides, the sibling TypeScript target supplies the SDK package and version.
 <code>runtime</code> selects the <code>@elysra/tungsten-webmcp</code> version range; <code>sdk_runtime</code> selects
-the browser package's direct <code>@elysra/tungsten-runtime</code> dependency (default <code>^0.1.0</code>).
-Published dependency defaults use version ranges.</p>
+the browser package's direct <code>@elysra/tungsten-runtime</code> dependency (default
+<code>^0.1.3</code> in the <strong>unreleased 0.1.3</strong> compiler candidate). Use matching local
+dependencies below for that source candidate; a version range alone does not
+establish registry availability. See <a href="runtime-distribution.html">Runtime distributions</a>
+for the verified stable package versions.</p>
 <p>For development from a compiler source checkout, build <code>runtimes/ts</code> and
 <code>runtimes/webmcp</code> first (<code>npm ci &amp;&amp; npm run build</code> in each, in that order).
 Then configure all local dependencies explicitly, replacing <code>/path/to/tungsten</code>
