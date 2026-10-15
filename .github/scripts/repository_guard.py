@@ -328,6 +328,8 @@ def content_violations(path: str, text: str, paths: set[str]) -> list[str]:
     found = []
     if path == CHANGELOG_PATH:
         found += changelog_violations(text)
+        if PRIVATE_REFERENCE.search(text):
+            found.append("private coordination reference in public changelog")
     suffix = PurePosixPath(path).suffix.lower()
     in_runtimes = path.startswith("runtimes/")
     if suffix == ".rs":
@@ -362,6 +364,13 @@ AI_NAME = re.compile(
 CO_AUTHOR = re.compile(r"^\s*co-authored-by\s*:(.*)$", re.IGNORECASE | re.MULTILINE)
 SESSION_TRAILER = re.compile(r"^\s*[A-Za-z][\w-]*-session(?:-id|-url)?\s*:", re.IGNORECASE | re.MULTILINE)
 GENERATED_FOOTER = re.compile(r"^.*\b(?:generated|written|created)\s+(?:with|by|using)\b(.*)$", re.IGNORECASE | re.MULTILINE)
+PRIVATE_REFERENCE = re.compile(
+    r"\btungsten-ops[/\\](?:issues|pull)[/\\]"
+    r"|\bplanning[/\\][0-9]{2}-"
+    r"|\brelease[/\\]plan\.json\b"
+    r"|\brunbooks[/\\]",
+    re.IGNORECASE,
+)
 
 
 def message_violations(message: str) -> list[str]:
@@ -372,6 +381,8 @@ def message_violations(message: str) -> list[str]:
         found.append("session-link trailer")
     if any(AI_NAME.search(rest) for rest in GENERATED_FOOTER.findall(message)):
         found.append("footer crediting an AI tool")
+    if PRIVATE_REFERENCE.search(message):
+        found.append("private coordination reference in public commit message")
     return found
 
 
