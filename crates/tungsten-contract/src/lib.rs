@@ -6,5 +6,6 @@ pub mod har;
 mod model;
 pub mod postman;
 pub mod request_import;
+pub mod source_axum;
 pub use engine::{infer, parameter_schema_pointer, parse_evidence, stable_operation_id};
 pub use model::*;

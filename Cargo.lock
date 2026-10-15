@@ -1166,8 +1166,10 @@ name = "tungsten-contract"
 version = "0.1.3"
 dependencies = [
  "blake3",
+ "proc-macro2",
  "serde",
  "serde_json",
+ "syn",
  "url",
 ]
 
