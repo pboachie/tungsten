@@ -469,8 +469,12 @@ pub(crate) struct InitArgs {
     /// Generate from existing manifests without overwriting reviewed settings.
     #[arg(long, requires = "generate", conflicts_with_all = ["force", "from", "targets", "name"])]
     pub resume: bool,
-    /// OpenAPI document to start from. Default: openapi.json, openapi.yaml
-    /// or openapi.yml in the target directory.
+    /// API description to start from: an OpenAPI 3.0 or 3.1 document, a
+    /// Swagger 2.0 document, a Postman Collection v2.1 JSON file, a saved
+    /// cURL command, an HTTP request file (.http/.rest), a HAR 1.2 capture
+    /// or an endpoint manifest. Saved requests and captures need explicit
+    /// --route templates. Default: openapi.json, openapi.yaml, openapi.yml,
+    /// swagger.json or swagger.yaml in the target directory.
     #[arg(long, value_name = "SPEC")]
     pub from: Option<PathBuf>,
     /// Directory to write the manifests into (created if missing).
