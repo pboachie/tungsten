@@ -101,9 +101,19 @@ fn spans(text: &str) -> Vec<String> {
             escaped + escaped_len(c) + 2
         };
         if width > limit && !cur.is_empty() {
+            // A run of digits stays in one piece: cut in the middle of a
+            // long number, the halves read as phone numbers to scanners.
+            let carry = if c.is_ascii_digit() {
+                let run = cur.chars().rev().take_while(char::is_ascii_digit).count();
+                if run < chars { run } else { 0 }
+            } else {
+                0
+            };
+            let tail = cur.split_off(cur.len() - carry);
             out.push(std::mem::take(&mut cur));
-            chars = 0;
-            escaped = 0;
+            cur = tail;
+            chars = carry;
+            escaped = carry;
             raw = true;
         }
         cur.push(c);
