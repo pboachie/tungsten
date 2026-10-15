@@ -55,6 +55,15 @@ transaction service. Losing this file can cause a new key for a previous intent.
 
 ## Limits
 
+Set `ClientOptions.Builder.maxResponseBytes` to opt into an ordinary-response byte cap;
+a call option with the same name overrides it. The value must be a positive
+safe integer (at most 9007199254740991); unset keeps the existing unbounded
+behavior. Content-Length is checked before reading, and actual bytes are
+counted even without that header. Overflow closes the body and returns
+`UNEXPECTED_RESPONSE` with code `RESPONSE_TOO_LARGE` and `retryable: never`.
+A mutation may have taken effect: inspect API state before retrying. The cap
+does not limit a successful SSE stream; use its event and collection limits.
+
 The Java API is synchronous. There is no async API, proxy configuration or
 pluggable HTTP transport. Preview and
 confirmation state are scoped to the client that created them.

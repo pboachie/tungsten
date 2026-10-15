@@ -501,6 +501,10 @@ class Engine:
     def _timeout(self, opts: Mapping[str, object]) -> float:
         return bounded(_opt(opts, "timeout_ms"), bounded(self.options.timeout_ms, _DEFAULT_TIMEOUT_MS, 1), 1)
 
+    def _max_response_bytes(self, opts: Mapping[str, object]) -> int | None:
+        value = opts.get("max_response_bytes")
+        return self.options.max_response_bytes if value is None else cast(int, value)
+
     def _middleware(self) -> list[object]:
         middleware: object = self.options.middleware
         return [m for m in middleware if m is not None] if is_array(middleware) else []
@@ -539,6 +543,10 @@ class Engine:
             prepared.oauth is not None
             and isinstance(answer.result, Err)
             and answer.result.error["http_status"] == 401
+            and not (
+                answer.result.error["category"] == "UNEXPECTED_RESPONSE"
+                and answer.result.error["code"] == "RESPONSE_TOO_LARGE"
+            )
         ):
             # An authorization-code token the server no longer accepts: refresh
             # it and send once more. Never a second time.
@@ -821,6 +829,18 @@ class Engine:
         url_override: str | None,
         step: StepControl | None,
     ) -> Flow[Prepared | Err]:
+        maximum = self._max_response_bytes(opts)
+        if maximum is not None and (
+            type(maximum) is not int or maximum < 1 or maximum > 9_007_199_254_740_991
+        ):
+            return _fail(
+                diagnostic(
+                    safe_id(op),
+                    "VALIDATION_FAILED",
+                    failed_parameter="max_response_bytes",
+                    remediation="max_response_bytes must be a positive safe integer; nothing was sent.",
+                )
+            )
         problem = descriptor_problem(op)
         if problem is not None:
             return _fail(
@@ -1354,7 +1374,14 @@ class Engine:
             # redirects here; a mutation follows none.
             outcome = yield from send(
                 AttemptRequest(
-                    prepared.url, prepared.method, headers, prepared.body, timeout_ms, stream, idle_ms
+                    prepared.url,
+                    prepared.method,
+                    headers,
+                    prepared.body,
+                    timeout_ms,
+                    stream,
+                    idle_ms,
+                    max_response_bytes=self._max_response_bytes(opts),
                 )
             )
             current_url, current_method, current_body = prepared.url, prepared.method, prepared.body
@@ -1364,6 +1391,7 @@ class Engine:
                 and not mutation
                 and hops < _MAX_REDIRECTS
                 and isinstance(outcome, Answered)
+                and outcome.body_failure != "oversized"
                 and outcome.status in _REDIRECT_STATUSES
             ):
                 target = self._redirect_target(prepared, current_url, outcome.headers.get("location"))
@@ -1380,7 +1408,14 @@ class Engine:
                 }
                 outcome = yield from send(
                     AttemptRequest(
-                        current_url, current_method, hop_headers, current_body, timeout_ms, stream, idle_ms
+                        current_url,
+                        current_method,
+                        hop_headers,
+                        current_body,
+                        timeout_ms,
+                        stream,
+                        idle_ms,
+                        max_response_bytes=self._max_response_bytes(opts),
                     )
                 )
                 hops += 1
@@ -1658,6 +1693,27 @@ class Engine:
                 status=status, headers=dict(headers), request_id=request_id, attempts=attempts
             )
             return Answer(Ok(value=outcome, meta=meta))
+        if outcome.body_failure == "oversized":
+            after = (
+                "The call may have taken effect; inspect API state before retrying."
+                if mutation
+                else "The read is incomplete."
+            )
+            return Answer(
+                _fail(
+                    diagnostic(
+                        op_id,
+                        "UNEXPECTED_RESPONSE",
+                        code="RESPONSE_TOO_LARGE",
+                        http_status=status,
+                        request_id=request_id,
+                        retryable="never",
+                        next_action=hint,
+                        remediation=f"Response exceeded maxResponseBytes and was abandoned. {after}",
+                        attempts=attempts,
+                    )
+                )
+            )
         if success and outcome.body is None:
             failure = outcome.body_failure or "broken"
             if not mutation:

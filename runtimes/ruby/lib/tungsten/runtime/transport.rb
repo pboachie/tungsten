@@ -111,7 +111,7 @@ module Tungsten
       # @param timeout_ms [Integer] the attempt's deadline
       # @param stream [Boolean] hand a 2xx text/event-stream answer back unread
       # @param idle_ms [Integer, nil] the silence a stream read waits for (default: timeout_ms)
-      def attempt(url:, method:, headers:, body:, timeout_ms:, stream: false, idle_ms: nil)
+      def attempt(url:, method:, headers:, body:, timeout_ms:, stream: false, idle_ms: nil, max_response_bytes: nil)
         http = nil
         handed_off = false
         Timeout.timeout(timeout_ms / 1000.0, DeadlineExceeded) do
@@ -135,7 +135,7 @@ module Tungsten
           request = build(uri, method, headers, body)
           return Outcome.new(kind: :not_sent, detail: request) if request.is_a?(String)
 
-          result = exchange(http, request, stream, left, idle_ms ? idle_ms / 1000.0 : nil, timeout_ms / 1000.0)
+          result = exchange(http, request, stream, left, idle_ms ? idle_ms / 1000.0 : nil, timeout_ms / 1000.0, max_response_bytes)
           handed_off = result.kind == :streaming
           result
         end
@@ -184,7 +184,7 @@ module Tungsten
         headers.fetch("content-type", "").split(";").first.to_s.strip.casecmp?("text/event-stream")
       end
 
-      def exchange(http, request, stream, left, idle_s, timeout_s)
+      def exchange(http, request, stream, left, idle_s, timeout_s, max_response_bytes = nil)
         chunks = Enumerator.new do |y|
           http.request(request) do |response|
             y << [:response, response]
@@ -208,6 +208,12 @@ module Tungsten
           return Outcome.new(kind: :streaming, status: status, headers: headers,
                              stream: EventBody.new(http, chunks, idle_s || timeout_s))
         end
+        length = headers["content-length"]
+        if max_response_bytes && request.method != "HEAD" && ![204, 205, 304].include?(status) &&
+           length&.match?(/\A\d+\z/) && length.to_i > max_response_bytes
+          close(http)
+          return Outcome.new(kind: :response, status: status, headers: headers, body_failure: "oversized")
+        end
         body = +"".b
         failure = nil
         loop do
@@ -220,7 +226,12 @@ module Tungsten
           item = chunks.next
           break unless item.first == :chunk
 
-          body << item[1].b
+          chunk = item[1].b
+          if max_response_bytes && body.bytesize + chunk.bytesize > max_response_bytes
+            failure = "oversized"
+            break
+          end
+          body << chunk
         rescue StopIteration
           break
         rescue Net::ReadTimeout, IO::TimeoutError, DeadlineExceeded

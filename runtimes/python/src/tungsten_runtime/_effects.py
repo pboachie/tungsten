@@ -36,6 +36,7 @@ class AttemptRequest:
     #: the body times out. Default ``timeout_ms``.
     idle_ms: float | None = None
     deadline_ms: float | None = None
+    max_response_bytes: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,7 +47,7 @@ class Answered:
     headers: Mapping[str, str]
     body: bytes | None
     #: Why the body could not be read: the deadline or a broken connection.
-    body_failure: Literal["timeout", "broken"] | None
+    body_failure: Literal["timeout", "broken", "oversized"] | None
 
 
 @dataclass(frozen=True, slots=True)

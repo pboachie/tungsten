@@ -55,6 +55,7 @@ public final class ClientOptions {
     final Consumer<Diagnostic> onDiagnostic;
     final Map<String, String> headers;
     final int maxEventBytes;
+    final Long maxResponseBytes;
     final int maxCollectBytes;
     final Duration maxCollectTime;
     final int maxReconnects;
@@ -79,6 +80,7 @@ public final class ClientOptions {
         onDiagnostic = b.onDiagnostic;
         headers = Collections.unmodifiableMap(new LinkedHashMap<>(b.headers));
         maxEventBytes = b.maxEventBytes > 0 ? b.maxEventBytes : DEFAULT_MAX_EVENT_BYTES;
+        maxResponseBytes = b.maxResponseBytes;
         maxCollectBytes = b.maxCollectBytes > 0 ? b.maxCollectBytes : DEFAULT_MAX_COLLECT_BYTES;
         maxCollectTime = positive(b.maxCollectTime, DEFAULT_MAX_COLLECT_TIME);
         maxReconnects = b.maxReconnects == null ? DEFAULT_MAX_RECONNECTS : Math.min(Math.max(b.maxReconnects, 0), 1000);
@@ -108,6 +110,7 @@ public final class ClientOptions {
         onDiagnostic = o.onDiagnostic;
         headers = o.headers;
         maxEventBytes = o.maxEventBytes;
+        maxResponseBytes = o.maxResponseBytes;
         maxCollectBytes = o.maxCollectBytes;
         maxCollectTime = o.maxCollectTime;
         maxReconnects = o.maxReconnects;
@@ -157,6 +160,7 @@ public final class ClientOptions {
         private Consumer<Diagnostic> onDiagnostic;
         private final Map<String, String> headers = new LinkedHashMap<>();
         private int maxEventBytes;
+        private Long maxResponseBytes;
         private int maxCollectBytes;
         private Duration maxCollectTime;
         private Integer maxReconnects;
@@ -243,6 +247,17 @@ public final class ClientOptions {
         /** The largest server-sent event a stream accepts, in UTF-8 bytes (1 MiB by default). */
         public Builder maxEventBytes(int value) {
             maxEventBytes = value;
+            return this;
+        }
+
+        /** Maximum ordinary response bytes; unset means unbounded. Must be a positive safe integer. */
+        public Builder maxResponseBytes(long value) {
+            return maxResponseBytes(Long.valueOf(value));
+        }
+
+        /** Maximum ordinary response bytes, or null to leave it unbounded. */
+        public Builder maxResponseBytes(Long value) {
+            maxResponseBytes = value;
             return this;
         }
 

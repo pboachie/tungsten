@@ -452,6 +452,11 @@ func (c *ClientCore) prepare(ctx context.Context, op *OperationDescriptor, rawAr
 			expected("a valid operation descriptor").
 			remedy("The operation descriptor is invalid: the descriptor is missing. Regenerate the SDK or fix the descriptor; nothing was sent.").err()
 	}
+	if maximum := c.responseLimit(opts); maximum != nil && (*maximum < 1 || *maximum > 9007199254740991) {
+		return nil, newDiag(op.ID, ValidationFailed).param("max_response_bytes").
+			remedy("max_response_bytes must be a positive safe integer; nothing was sent.").err()
+	}
+
 	if problem := descriptorProblem(op); problem != "" {
 		id := op.ID
 		if id == "" {

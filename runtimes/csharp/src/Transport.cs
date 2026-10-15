@@ -52,6 +52,7 @@ internal sealed record AttemptRequest
     public bool Stream { get; init; }
     /// <summary>With Stream: the silence after which a read of the body times out; null means Timeout.</summary>
     public TimeSpan? Idle { get; init; }
+    public long? MaxResponseBytes { get; init; }
 }
 
 internal enum BodyRead
@@ -516,8 +517,34 @@ internal static class Transport
         var outcome = new AttemptOutcome { Kind = OutcomeKind.Response, Status = status, Headers = headers };
         try
         {
-            var data = await resp.Content.ReadAsByteArrayAsync(attemptCts.Token).ConfigureAwait(false);
-            outcome = outcome with { Body = data, BodyOk = true };
+            long? cap = req.MaxResponseBytes;
+            if (cap is long max && req.Method != "HEAD" && status != 204 && status != 205 && status != 304 && resp.Content.Headers.ContentLength is long declared && declared > max)
+            {
+                attemptCts.Cancel();
+                outcome = outcome with { BodyFailure = "oversized" };
+            }
+            else
+            {
+                using var input = await resp.Content.ReadAsStreamAsync(attemptCts.Token).ConfigureAwait(false);
+                using var data = new MemoryStream();
+                byte[] chunk = new byte[32 * 1024];
+                while (true)
+                {
+                    int count = await input.ReadAsync(chunk.AsMemory(), attemptCts.Token).ConfigureAwait(false);
+                    if (count == 0)
+                    {
+                        outcome = outcome with { Body = data.ToArray(), BodyOk = true };
+                        break;
+                    }
+                    if (cap is long bound && data.Length + count > bound)
+                    {
+                        attemptCts.Cancel();
+                        outcome = outcome with { BodyFailure = "oversized" };
+                        break;
+                    }
+                    data.Write(chunk, 0, count);
+                }
+            }
         }
         catch (Exception)
         {

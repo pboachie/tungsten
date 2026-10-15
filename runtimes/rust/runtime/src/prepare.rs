@@ -561,6 +561,20 @@ impl ClientCore {
         url_override: Option<&str>,
         step: Option<&MacroClaim>,
     ) -> Step<Prepared<'a>> {
+        if opts
+            .max_response_bytes
+            .or(self.inner.max_response_bytes)
+            .is_some_and(|limit| limit == 0 || limit > 9_007_199_254_740_991)
+        {
+            return Err(fail(
+                Diag::new(op.id.clone(), Category::ValidationFailed)
+                    .failed_parameter("max_response_bytes")
+                    .remediation(
+                        "max_response_bytes must be a positive safe integer; nothing was sent.",
+                    )
+                    .build(),
+            ));
+        }
         if let Some(problem) = descriptor_problem(op) {
             let id = if op.id.is_empty() {
                 "<unknown operation>"

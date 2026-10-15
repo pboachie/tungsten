@@ -59,11 +59,11 @@ module Tungsten
     # - `now` (epoch milliseconds) and `random` (in [0, 1)): callables for tests.
     ClientOptions = Data.define(
       :redirects, :base_url, :auth, :token_store, :timeout_ms, :retries, :idempotency_store, :middleware,
-      :validate_responses, :on_diagnostic, :headers, :max_event_bytes, :max_collect_bytes, :max_collect_ms,
+      :validate_responses, :on_diagnostic, :headers, :max_event_bytes, :max_response_bytes, :max_collect_bytes, :max_collect_ms,
       :max_reconnects, :reconnect_max_ms, :idle_timeout_ms, :confirmation_key, :now, :random
     ) do
       def initialize(redirects: nil, base_url: nil, auth: {}, token_store: nil, timeout_ms: nil, retries: nil, idempotency_store: nil,
-                     middleware: [], validate_responses: "warn", on_diagnostic: nil, headers: {}, max_event_bytes: nil,
+                     middleware: [], validate_responses: "warn", on_diagnostic: nil, headers: {}, max_event_bytes: nil, max_response_bytes: nil,
                      max_collect_bytes: nil, max_collect_ms: nil, max_reconnects: nil, reconnect_max_ms: nil,
                      idle_timeout_ms: nil, confirmation_key: nil, now: nil, random: nil)
         super
@@ -97,9 +97,9 @@ module Tungsten
     # - `timeout_ms`: the per-attempt timeout;
     # - `verify`: run the operation's verification hook after success;
     # - `headers`: sent with this call.
-    CallOptions = Data.define(:idempotency_key, :confirm, :refuse_confirm_yes, :timeout_ms, :verify, :headers) do
+    CallOptions = Data.define(:idempotency_key, :confirm, :refuse_confirm_yes, :timeout_ms, :verify, :headers, :max_response_bytes) do
       def initialize(idempotency_key: nil, confirm: nil, refuse_confirm_yes: false, timeout_ms: nil, verify: false,
-                     headers: {})
+                     headers: {}, max_response_bytes: nil)
         super
       end
 

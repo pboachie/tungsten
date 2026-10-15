@@ -60,7 +60,13 @@ final class Transport {
             Serialize.Payload body,
             Duration timeout,
             boolean stream,
-            Duration idle) {}
+            Duration idle,
+            Long maxResponseBytes) {
+        Request(String url, String method, List<Serialize.Header> headers, Serialize.Payload body,
+                Duration timeout, boolean stream, Duration idle) {
+            this(url, method, headers, body, timeout, stream, idle, null);
+        }
+    }
 
     /** What one attempt gave. */
     static final class Outcome {
@@ -626,6 +632,19 @@ final class Transport {
             return out;
         }
         out.kind = Kind.RESPONSE;
+        Long cap = req.maxResponseBytes();
+        String length = out.headers.get("content-length");
+        if (cap != null && length != null && !req.method().equals("HEAD") && out.status != 204 && out.status != 205 && out.status != 304) {
+            try {
+                if (Long.parseLong(length.trim()) > cap) {
+                    body.close();
+                    out.bodyFailure = "oversized";
+                    return out;
+                }
+            } catch (NumberFormatException ignored) {
+                // The counting read remains authoritative for invalid/missing lengths.
+            }
+        }
         ByteArrayOutputStream data = new ByteArrayOutputStream();
         while (true) {
             long left = deadline - System.nanoTime();
@@ -636,6 +655,11 @@ final class Transport {
             }
             Read r = body.read(Duration.ofNanos(left));
             if (r == Read.CHUNK) {
+                if (cap != null && (long) data.size() + body.chunk.length > cap) {
+                    body.close();
+                    out.bodyFailure = "oversized";
+                    return out;
+                }
                 data.writeBytes(body.chunk);
             } else if (r == Read.END) {
                 out.body = data.toByteArray();
