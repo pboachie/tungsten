@@ -51,4 +51,12 @@ for (const [path, pattern] of [
   ["runtimes/go/client.go", /const Version\s*=\s*"([^"]+)"/],
   ["runtimes/ruby/lib/tungsten/runtime/version.rb", /VERSION\s*=\s*"([^"]+)"/],
 ]) expect(path, capture(path, pattern));
+
+// The external Go emitter names its own version and, by default, requires the
+// Go runtime of the same release (published as the nested tag
+// runtimes/go/vX.Y.Z), so both must derive from one constant that matches.
+const goEmitter = read("emitters/go/main.go");
+expect("emitters/go/main.go releaseVersion", capture("emitters/go/main.go", /^const releaseVersion\s*=\s*"([^"]+)"/m));
+assert.match(goEmitter, /^\s*emitterVersion\s*=\s*releaseVersion\s*$/m, "emitters/go/main.go: emitterVersion must be releaseVersion");
+assert.match(goEmitter, /^const defaultRuntimeVersion\s*=\s*"v"\s*\+\s*releaseVersion\s*$/m, "emitters/go/main.go: defaultRuntimeVersion must be \"v\" + releaseVersion");
 console.log(`Release manifests and runtime identities match ${tag || `workspace ${version}`}`);

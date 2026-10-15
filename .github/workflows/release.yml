@@ -611,6 +611,20 @@ jobs:
         with:
           name: release-notes
           path: release-notes
+      # Generated Go SDKs require github.com/pboachie/tungsten/runtimes/go at
+      # the release version by default. The runtime is a nested module, so
+      # Go proxies resolve that version only from runtimes/go/<tag>; it must
+      # name the same commit as the release tag before anything is published.
+      - name: Require the nested Go runtime module tag on the release commit
+        run: |
+          nested="runtimes/go/$TAG"
+          sha="$(gh api "repos/$GH_REPO/commits/runtimes%2Fgo%2F$TAG" --jq .sha)" \
+            || { echo "missing tag $nested: push it on the release commit together with $TAG" >&2; exit 1; }
+          if [ "$sha" != "$GITHUB_SHA" ]; then
+            echo "$nested names $sha, the release tag $TAG names $GITHUB_SHA" >&2
+            exit 1
+          fi
+          echo "$nested -> $sha"
       - name: Create the release (never overwrites an existing one)
         env:
           GLIBC_FLOOR: "2.34"

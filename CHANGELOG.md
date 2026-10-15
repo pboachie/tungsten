@@ -281,9 +281,15 @@ values as `JsonNode`, OpenID Connect as a bearer token, no CLI or MCP).
   match timeout, so the pattern is reported as not checked and the error no
   longer escapes `accepts()`.
 - Go emitter: the generated `go.mod` requires a runtime version that resolves
-  for clean consumers. The default `runtime_version` is now the pseudo-version
-  `v0.0.0-20261014151145-1a0ee4def654` of the v0.1.2 release commit, because
-  the nested module has no `runtimes/go/v*` tag and `v0.1.0` did not resolve.
+  for clean consumers. The default `runtime_version` is now the Go runtime of
+  the same release (`v0.1.3` for this release), published as the nested-module
+  tag `runtimes/go/v0.1.3` on the release commit; before, it was `v0.1.0`,
+  which never resolved. The emitter's own version (in `--describe` and the
+  generated file headers) is the release version instead of `0.1.0`. Both come
+  from one constant that the release version check keeps equal to the
+  workspace version, and the release workflow refuses to publish unless
+  `runtimes/go/<tag>` names the release commit. Set `runtime_version` to pin
+  another runtime release or pseudo-version.
 - Java, C# and Ruby runtimes: the server-sent events parser scans and counts
   each fragment once and joins a line only when it ends, so a long line
   delivered in small pieces costs linear instead of quadratic time (the
