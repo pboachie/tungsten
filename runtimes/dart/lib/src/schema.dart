@@ -224,7 +224,7 @@ final class _Run {
         'expected an integer, found ${Schema.describe(value)}',
       );
     }
-    if (schema['bits'] == 32 && (value < -2147483648 || value > 2147483647)) {
+    if (schema['bits'] == 32 && (value < -0x80000000 || value > 0x7fffffff)) {
       return _bad(path, 'expected a 32-bit integer');
     }
     _numberLimits(schema, value, path);
