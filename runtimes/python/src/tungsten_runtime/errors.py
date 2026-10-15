@@ -5,9 +5,11 @@ on ``Result.ok``."""
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TypeVar
 
 from .types import Diagnostic, Err, Ok
+
+T = TypeVar("T")
 
 
 class TungstenError(Exception):
@@ -22,7 +24,7 @@ class TungstenError(Exception):
         self.partial = partial
 
 
-def unwrap[T](result: Ok[T] | Err) -> T:
+def unwrap(result: Ok[T] | Err) -> T:
     """Return the value of a successful result or raise ``TungstenError``."""
     if isinstance(result, Err):
         raise TungstenError(result.error, result.partial)

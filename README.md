@@ -30,6 +30,33 @@ Most SDK generators optimize for a person reading autocomplete. An agent has a f
 
 ## Supported inputs
 
+`init --from` also accepts HTTP(S) document URLs for these formats. OpenAPI
+URLs work directly as compiler paths or `inputs[].spec` in `tungsten.yml`.
+Other formats go through the same local importer and its required review flags:
+
+```sh
+tungsten init --from https://example.com/contracts/openapi.json --dir my-api
+tungsten generate my-api --offline
+tungsten check my-api --refresh-inputs
+```
+
+The first fetch records the source URL and SHA256 under
+`.tungsten-inputs/<url-sha256>/source.lock.json`, beside immutable downloaded
+content. Retain both files for offline use. Online commands verify upstream
+bytes against the pin and refuse changed content. `--refresh-inputs` explicitly
+accepts a new OpenAPI pin; converted imports instead require re-import into a
+fresh project and another operation review. Their `source_url` and
+`source_sha256` manifest fields preserve that provenance on every compilation.
+
+For authentication, repeat `--input-header 'Authorization: Bearer ...'`, or set
+`TUNGSTEN_INPUT_HEADERS` to newline-separated `Name: value` headers to keep
+secrets out of command history. Header values are excluded from pins and fetch
+diagnostics. URLs must have no credentials, query or fragment. Downloads are
+limited to 8 MiB and 30 seconds; redirects are refused. Remote references are
+still blocked, including relative references from a remote OpenAPI document.
+The cache contains original input bytes, so retain it with the same access
+controls as the source document and review it before sharing.
+
 `tungsten init` takes **one** input of any of the kinds below — OpenAPI OR Swagger OR Postman OR saved cURL OR HTTP request files OR HAR, with the endpoint-manifest and manual paths alongside them — not a bundle. Every route is parsed offline: no request is sent or replayed, and no shell, script or capture is ever executed. Non-OpenAPI inputs are converted to a normalized OpenAPI document that `init` saves next to the manifests (`imported.openapi.json`, with an `import-report.json` where listed; the manual path writes `inferred.openapi.json` and `inference-report.json`), so the accepted input stays separate from the normalized artifact and the typed IR the compiler builds from it.
 
 | Input | You provide | Entry point and conversion | Limits and required review |
@@ -82,6 +109,15 @@ irm https://raw.githubusercontent.com/pboachie/tungsten/main/install.ps1 | iex  
 ```
 
 Pass `--version v0.1.2` to `install.sh` (or `-Version v0.1.2` to `install.ps1`) to pin a release, and `--dir` (`-InstallDir`) to choose the target directory.
+
+See [`install.sh --help`](install.sh) or `Get-Help ./install.ps1 -Full`
+([PowerShell script](install.ps1)) for environment variables and exit codes.
+Both installers check whether `gh attestation` is usable before verification.
+Without it they explain that only the checksum was verified; set
+`TUNGSTEN_REQUIRE_ATTESTATION=1` to require provenance verification. A failed
+verification always refuses installation and shows the verifier's error output.
+`TUNGSTEN_NO_ATTESTATION=1` explicitly disables the check and cannot be combined
+with required verification. Required verification also refuses custom mirrors.
 
 On Linux each release ships two archives per architecture. The `musl` archives (the installer default) are statically linked and run on any Linux. The `gnu` archives (`TUNGSTEN_LIBC=gnu`) are dynamically linked and need glibc 2.34 or newer — the same floor on x86_64 and aarch64 (Debian 12, Ubuntu 22.04, RHEL 9 and Amazon Linux 2023 all qualify; Ubuntu 20.04 and Debian 11 do not). `install.sh` checks the system's glibc before installing a `gnu` archive and points older systems at the static musl default.
 
@@ -140,6 +176,11 @@ Use your own `openapi.json`, or create this complete tiny example:
 ```
 
 The walkthrough uses an OpenAPI document, the native input. `init --from` also accepts Swagger 2.0, Postman collections, saved cURL commands, `.http`/`.rest` files, HAR captures and endpoint manifests — one of them, not a bundle — each with its own flags and review steps; see [Supported inputs](#supported-inputs).
+
+The [importing guide](https://pboachie.github.io/tungsten/importing.html) gives
+per-format commands, diagnostic families, saved-command shell dialects, HAR path
+review and the supported JSON Schema subset. Imported operations stay unreviewed
+until you explicitly review their safety and allowed origins in `agent.yml`.
 
 `init` writes `tungsten.yml` and `agent.yml` with **TypeScript, Python and docs**
 targets by default. Edit the existing `targets` block rather than appending a
@@ -215,7 +256,7 @@ uninterruptible callbacks retain capacity until completion and late results are
 rejected, without a hard settlement deadline. OS resolver cancellation depends on
 the platform.
 
-More examples: [tungsten on six public APIs](examples/showcase/README.md) (the public OpenAPI descriptions of Stripe, GitHub, Twilio, OpenAI, Kubernetes and Discord): what `tungsten check` finds, MCP listing sizes, and generated SDK code in TypeScript, Python and Rust, reproducible with one script. [`examples/external-emitter-markdown`](examples/external-emitter-markdown) shows how to write an external emitter.
+More examples: [typed Python SSE](examples/typed-sse/README.md) shows how to declare or overlay an incomplete stream response and consume named events with sync/async cleanup. [tungsten on six public APIs](examples/showcase/README.md) (the public OpenAPI descriptions of Stripe, GitHub, Twilio, OpenAI, Kubernetes and Discord): what `tungsten check` finds, MCP listing sizes, and generated SDK code in TypeScript, Python and Rust, reproducible with one script. [`examples/external-emitter-markdown`](examples/external-emitter-markdown) shows how to write an external emitter.
 
 An `external:` target in `tungsten.yml` names a command that tungsten starts as a process, unsandboxed and with your privileges. It runs on every command that produces output in memory, not only on a writing `generate`: `generate --dry-run` and `--check`, `check --ci`, `diff` and `report` run it too (plain `check` and `ir dump` do not). A CI job that runs `tungsten check --ci` on pull requests therefore executes whatever the pull request puts in `tungsten.yml`. Pass `--no-external` or set `TUNGSTEN_NO_EXTERNAL=1` to skip external targets (reported as TG0807) when the manifest is not trusted.
 
@@ -357,3 +398,23 @@ The test suite, conformance corpus and design documents live in a separate maint
 ## Contributing and security
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request, and open an issue to discuss a large change first. Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md); please do not file them as public issues.
+
+### Python interpreter compatibility
+
+Python targets default to Python 3.12+. To generate a client for Python 3.10
+or 3.11, set a quoted `python_version` in `targets.python`:
+
+```yaml
+targets:
+  python:
+    python_version: "3.10"
+```
+
+Supported values are `"3.10"`, `"3.11"` and `"3.12"` (the default). Both
+Pydantic and `models: dataclasses` support these modes. Compatibility output
+uses `typing_extensions` aliases and retains forward references, validation
+and transport behavior. The matching runtime supports Python 3.10 and newer;
+compatibility clients require `tungsten-runtime>=0.1.3,<0.2.0`, including when
+an explicit runtime specifier is supplied. A `runtime_path` checkout must
+contain this compatibility support. Publishing the matching runtime remains
+part of the coordinated release.

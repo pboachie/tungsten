@@ -39,6 +39,14 @@ unused-allowed-license = "allow"
 # Our own unpublished AGPL-3.0-only workspace crates.
 ignore = true
 
+# HTTPS input acquisition uses Mozilla certificate data from webpki-roots.
+# Its CDLA-Permissive-2.0 text permits redistribution with the agreement;
+# scope this reviewed data licence to this exact package version only.
+[[licenses.exceptions]]
+name = "webpki-roots"
+version = "=1.0.9"
+allow = ["CDLA-Permissive-2.0"]
+
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"

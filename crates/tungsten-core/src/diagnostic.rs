@@ -197,6 +197,13 @@ pub mod codes {
             "TG0112",
             "apiKey header scheme inferred from a credential header parameter",
         ),
+        ("TG0120", "invalid remote input URL or acquisition policy"),
+        ("TG0121", "remote input fetch failed or exceeded its limits"),
+        (
+            "TG0122",
+            "remote input SHA256 differs from its pin or conversion",
+        ),
+        ("TG0123", "remote input cache is missing, invalid or unsafe"),
         ("TG0201", "unresolvable $ref"),
         (
             "TG0202",
