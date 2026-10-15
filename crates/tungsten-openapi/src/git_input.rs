@@ -460,6 +460,7 @@ fn verify(dir: &Path, source: &Source, pin: &Pin) -> Result<PathBuf, Diagnostic>
     let tree = root.join(&pin.commit);
     directory(&root)?;
     directory(&tree)?;
+    let mut directories = BTreeSet::new();
     let mut total = 0;
     for (path, sha256) in &pin.files {
         if !safe_path(path)
@@ -477,6 +478,12 @@ fn verify(dir: &Path, source: &Source, pin: &Pin) -> Result<PathBuf, Diagnostic>
             .flat_map(Path::components)
         {
             parent.push(part.as_os_str());
+            directories.insert(
+                parent
+                    .strip_prefix(&tree)
+                    .map_err(|_| cache_error())?
+                    .to_path_buf(),
+            );
             if !std::fs::symlink_metadata(&parent).is_ok_and(|meta| meta.file_type().is_dir()) {
                 return Err(cache_error());
             }
@@ -486,6 +493,36 @@ fn verify(dir: &Path, source: &Source, pin: &Pin) -> Result<PathBuf, Diagnostic>
         if total as u64 > MAX_TREE || hash(&bytes) != *sha256 {
             return Err(cache_error());
         }
+    }
+    // A loader may follow any confined relative `$ref`. Verify the complete
+    // materialized read set, including extra entries, so an unlisted sibling
+    // cannot change offline compilation without changing the source pin.
+    let mut pending = vec![tree.clone()];
+    let mut seen = BTreeSet::new();
+    let mut nodes = 0usize;
+    while let Some(directory) = pending.pop() {
+        for entry in std::fs::read_dir(directory).map_err(|_| cache_error())? {
+            let entry = entry.map_err(|_| cache_error())?;
+            let path = entry.path();
+            let relative = path.strip_prefix(&tree).map_err(|_| cache_error())?;
+            let meta = std::fs::symlink_metadata(&path).map_err(|_| cache_error())?;
+            nodes += 1;
+            if nodes > directories.len() + pin.files.len() {
+                return Err(cache_error());
+            }
+            if meta.file_type().is_dir() && directories.contains(relative) {
+                pending.push(path);
+            } else if meta.file_type().is_file()
+                && pin.files.keys().any(|name| Path::new(name) == relative)
+            {
+                seen.insert(relative.to_path_buf());
+            } else {
+                return Err(cache_error());
+            }
+        }
+    }
+    if seen.len() != pin.files.len() {
+        return Err(cache_error());
     }
     Ok(tree.join(&pin.document))
 }
@@ -666,18 +703,19 @@ pub fn acquire(text: &str, project: &Path, options: &Options) -> Result<PathBuf,
     let document = candidates.remove(0);
     let pin = Pin {
         version: 1,
-        url: source.url,
-        reference: source.reference,
-        scope: source.scope,
+        url: source.url.clone(),
+        reference: source.reference.clone(),
+        scope: source.scope.clone(),
         commit: resolved,
         document: document.clone(),
         files,
     };
+    let verified = verify(&dir, &source, &pin)?;
     let pending = dir.join("source.lock.pending");
     write_new(
         &pending,
         &serde_json::to_vec_pretty(&pin).map_err(|_| cache_error())?,
     )?;
     std::fs::rename(pending, lock).map_err(|_| cache_error())?;
-    Ok(tree.join(document))
+    Ok(verified)
 }
