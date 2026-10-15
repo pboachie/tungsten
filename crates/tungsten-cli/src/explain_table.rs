@@ -280,6 +280,15 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
          through a custom transport.",
     ),
     e(
+        "TG0510",
+        "A Path Item combines `$ref` with fields written beside it, and the referenced item \
+         defines the same field: an operation, `summary`, `description`, `servers`, or a \
+         parameter with the same `name` and `in`. Fields only one side defines are merged. \
+         OpenAPI leaves the conflicting ones undefined; tungsten lets the field beside the \
+         `$ref` win, and the message names both pointers.",
+        "Define the field on one side only, or drop it from the shared item.",
+    ),
+    e(
         "TG0530",
         "A success response declares the `text/event-stream` media type without a schema, so \
          the SDK cannot type or check the events of the stream. Each event's `data` is still \
