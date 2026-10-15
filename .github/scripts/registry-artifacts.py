@@ -138,6 +138,24 @@ def check_metadata(data, version):
         ROOT / "runtimes/python/README.md"
     ):
         raise ValueError("Python archive description differs from the source README")
+    project = tomllib.loads(native.regular(ROOT / "runtimes/python/pyproject.toml").decode())["project"]
+    if sorted(requirement(value) for value in metadata.get_all("Requires-Dist", [])) != sorted(requirement(value) for value in project.get("dependencies", [])):
+        raise ValueError("Python archive dependencies differ from the source manifest")
+
+
+def requirement(value):
+    # The runtime uses named registry requirements with simple version ranges
+    # and one Python-version marker. Refuse new forms until explicitly reviewed.
+    match = re.fullmatch(r"([A-Za-z0-9][A-Za-z0-9_.-]*)([^;]*)(?:;\s*(.*))?", value.strip())
+    if not match:
+        raise ValueError("unsupported Python runtime dependency")
+    constraints = [part.strip() for part in match[2].split(",")]
+    if any(not re.fullmatch(r"(?:~=|==|!=|<=|>=|<|>)[0-9][0-9A-Za-z.*+!-]*", part) for part in constraints):
+        raise ValueError("expected a registry version range without direct URLs or extras")
+    marker = (match[3] or "").strip().replace('"', "'")
+    if marker and not re.fullmatch(r"python_version\s*(?:<|<=|==|>=|>)\s*'[0-9]+\.[0-9]+'", marker):
+        raise ValueError("unsupported Python dependency marker")
+    return (re.sub(r"[-_.]+", "-", match[1]).lower(), tuple(sorted(constraints)), re.sub(r"\s+", "", marker))
 
 
 def check_record(files, record):
