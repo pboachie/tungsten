@@ -28,7 +28,9 @@ responsible for authorization and server-side idempotency.
 
 This is a thin Kotlin layer over the Java runtime. Calls are synchronous;
 Java's lack of async calls, proxy configuration and pluggable transport also
-applies. Built-in idempotency stores are memory-only.
+applies. For durable automatic keys, configure Java's `FileIdempotencyStore`
+through the shared client options; see the
+[Java store and lease limits](../java/README.md#durable-automatic-keys).
 
 No runtime ships a file-backed OAuth token store. Provide an application-owned
 token-store implementation when tokens must survive process restarts; protect

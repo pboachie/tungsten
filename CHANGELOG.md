@@ -13,7 +13,8 @@ changes.
 
 - Complete the architecture overview with explicit alternative input routes, separate
   optional configuration and all current SDK, CLI, MCP, WebMCP and docs outputs; link
-  the reviewed response-contract recipe from the quickstart and gallery.
+  the reviewed response-contract recipe from the quickstart and gallery. Kotlin
+  and F# installation guidance now links the inherited durable idempotency stores.
 - Imported-input setup validates built-in target policy support before saving
   converted documents or project manifests; unsupported selections return TG0705
   with supported alternatives instead of leaving an unusable project behind.
