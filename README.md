@@ -128,17 +128,24 @@ Generated packages default to compatible 0.1.3 runtime floors; an explicit
 `runtime` setting remains yours to qualify. The earlier 0.1.2 release has
 independently versioned non-npm runtime sources. Use the matching source checkout
 when a registry artifact is unavailable: source version metadata is not evidence
-of publication. Rust, Java, Kotlin, C#, F#, Dart and Ruby registry
-publication is not part of the 0.1.2 installation guarantee. The candidate Go
-emitter defaults to the available `v0.1.3` module; see its
-[installation options](runtimes/go/README.md) for matching-source use.
-Target `runtime_path` values are relative to the generated output directory.
+of publication. Published 0.1.2 packages are available for npm, Python, Java,
+C# and Ruby; use the explicit [released-consumer overrides](#released-012-consumers)
+below. Rust still uses matching source. Go also has a
+[matching-source route](runtimes/go/README.md) for stable consumers. Its optional
+candidate `v0.1.3` module has a verified Apache-2.0 archive; the older stable-commit
+pseudo-version's archive notice differs, as explained in that guide.
+Target `runtime_path` values resolve from the generated package or crate
+directory; see the target's installation guidance.
+
+Kotlin, F# and Dart are 0.1.3 candidate targets. They require the candidate
+compiler and matching wrapper/core runtime sources; the released 0.1.2 compiler
+does not generate these targets.
 
 Targets and the mock server (`tungsten mock`) share one IR. Generated-package and contract checks exercise each language, but source availability and passing shared scenarios do not establish complete validation, protocol or distribution parity. Unsupported features can vary by target. Review all compiler diagnostics: `--strict` rejects warnings, including unsupported `if`/`then`/`else` constraints, but informational diagnostics can still describe other unsupported features. Local checks do not establish live API acceptance or registry installation readiness.
 
 ## Install
 
-Install the compiler first. The [npm and PyPI packages below](#runtime-packages)
+Install the compiler first. The [runtime packages below](#runtime-packages)
 support generated output; they do not install the `tungsten` compiler command.
 The latest published compiler release is [v0.1.2](https://github.com/pboachie/tungsten/releases/tag/v0.1.2)
 as of October 15, 2026. This branch describes the 0.1.3 source candidate, including
@@ -211,15 +218,19 @@ Node, Python and the formatters are optional: a missing tool only disables the t
 
 For a published 0.1.2 compiler and generated client, choose the runtime for the
 output you use. These package versions were verified on October 15, 2026;
-Node 22+ is required for TypeScript/MCP, and the published Python runtime needs
-Python 3.12+. Run Python installation commands in an activated virtual environment.
+Node 22+ is required for TypeScript/MCP, Python needs 3.12+, Java needs 17+,
+C# needs .NET 10, and Ruby needs 3.3+. Run Python installation commands in an
+activated virtual environment.
 
 | Output | Runtime package | Install the published runtime |
 |---|---|---|
-| TypeScript SDK | [`@elysra/tungsten-runtime`](https://www.npmjs.com/package/@elysra/tungsten-runtime) | `npm install @elysra/tungsten-runtime@0.1.2` |
-| MCP server | [`@elysra/tungsten-mcp`](https://www.npmjs.com/package/@elysra/tungsten-mcp) | `npm install @elysra/tungsten-mcp@0.1.2` |
-| Browser WebMCP | [`@elysra/tungsten-webmcp`](https://www.npmjs.com/package/@elysra/tungsten-webmcp) | `npm install @elysra/tungsten-webmcp@0.1.2` |
+| TypeScript SDK | [`@elysra/tungsten-runtime`](https://www.npmjs.com/package/@elysra/tungsten-runtime) | `npm install --save-exact @elysra/tungsten-runtime@0.1.2` |
+| MCP server | [`@elysra/tungsten-mcp`](https://www.npmjs.com/package/@elysra/tungsten-mcp) | `npm install --save-exact @elysra/tungsten-mcp@0.1.2` |
+| Browser WebMCP | [`@elysra/tungsten-webmcp`](https://www.npmjs.com/package/@elysra/tungsten-webmcp) | `npm install --save-exact @elysra/tungsten-webmcp@0.1.2` |
 | Python SDK | [`tungsten-runtime`](https://pypi.org/project/tungsten-runtime/) | `python -m pip install tungsten-runtime==0.1.2` |
+| Java SDK | [`io.github.pboachie.tungsten:tungsten-runtime`](https://central.sonatype.com/artifact/io.github.pboachie.tungsten/tungsten-runtime/0.1.2) | `mvn dependency:get -Dartifact=io.github.pboachie.tungsten:tungsten-runtime:0.1.2` |
+| C# SDK | [`Tungsten.Runtime`](https://www.nuget.org/packages/Tungsten.Runtime/0.1.2) | `dotnet add package Tungsten.Runtime --version 0.1.2` |
+| Ruby SDK | [`tungsten-runtime`](https://rubygems.org/gems/tungsten-runtime/versions/0.1.2) | `gem install tungsten-runtime --version 0.1.2` |
 
 Verify a TypeScript runtime installation with
 `node --input-type=module -e 'import("@elysra/tungsten-runtime").then(() => console.log("runtime ready"))'`,
@@ -230,11 +241,49 @@ runtime imports do not generate a client or call an API.
 The 0.1.3 compiler is an unreleased source candidate. Use matching runtime source
 as in the quickstart below; published 0.1.2 packages do not satisfy dependencies
 on 0.1.3 runtime capabilities. Rust registry installation is currently unavailable.
-The Go proxy carries a v0.1.3 runtime module, which does not establish a compiler
-release. See the [Rust source installation](runtimes/rust/README.md) and
+Go supports matching stable source; its qualified `v0.1.3` module is an optional
+candidate dependency, not a compiler release. See the [Rust source installation](runtimes/rust/README.md) and
 [Go installation options](runtimes/go/README.md). Runtime libraries do not install
 the Tungsten compiler. The [runnable gallery](examples/README.md)
 shows complete installation and first-use flows for each output.
+
+### Released 0.1.2 consumers
+
+Keep the compiler and generated clients on the released route when deploying
+before 0.1.3. Pin the installer to `v0.1.2` as above and confirm
+`tungsten --version` prints `tungsten 0.1.2`. Merge these exact runtime settings
+into the targets you use in `tungsten.yml`; your output paths, API package names
+and generated package versions remain your own:
+
+```yaml
+targets:
+  typescript: {out: generated/typescript, runtime: "0.1.2"}
+  python: {out: generated/python, runtime: "==0.1.2"}
+  java: {out: generated/java, runtime: "0.1.2"}
+  csharp: {out: generated/csharp, runtime: "0.1.2"}
+  ruby: {out: generated/ruby, runtime: "= 0.1.2"}
+  mcp: {out: generated/mcp, runtime: "0.1.2", sdk_runtime: "0.1.2", sdk_path: "../typescript"}
+  webmcp: {out: generated/webmcp, runtime: "0.1.2", sdk_runtime: "0.1.2", sdk_path: "../typescript"}
+```
+
+Run `tungsten generate .`, then follow each generated README to install and
+build it. Build the TypeScript SDK before the adapters that reference it.
+The released compiler's native runtime defaults predate the newly published
+0.1.2 packages, so keep the Java, C# and Ruby overrides explicit. Registry
+consumers use those packages without a runtime source checkout.
+
+The [stable Rust source recipe](runtimes/rust/README.md#released-012-sdk-and-cli)
+uses the unchanged `v0.1.2` checkout for both Rust crates while registry
+installation remains unavailable. This source route does not require a 0.1.3
+upgrade. The candidate compiler and its new features continue to require
+matching candidate runtime source; Python 3.10/3.11 output belongs to that
+candidate route. Generated SDK compatibility still needs qualification against
+your own API and deployment.
+
+For Go, build the external emitter from `v0.1.2` and set `runtime_path` to that
+checkout's `runtimes/go`; the [stable Go recipe](runtimes/go/README.md#released-012-compiler-and-emitter)
+retains its Apache source/license context and avoids the old pseudo-version
+ZIP's inherited repository-root notice.
 
 ## Quickstart
 

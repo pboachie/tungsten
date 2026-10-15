@@ -189,6 +189,10 @@ values as `JsonNode`, OpenID Connect as a bearer token, no CLI or MCP).
 
 ### Changed
 
+- Document released 0.1.2 compiler/runtime pins for npm, Python, Maven, NuGet
+  and RubyGems consumers, plus matching-source Rust SDK/CLI and Go installation,
+  independently from the unpublished 0.1.3 candidate.
+
 - README, the architecture diagram and the `init` help present every
   supported input alternative instead of positioning tungsten as OpenAPI
   only: OpenAPI 3.0/3.1, Swagger 2.0, Postman Collection v2.1, saved cURL,
