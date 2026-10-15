@@ -3,14 +3,16 @@
 //! loader policy: acquiring an entry never grants access to its neighbours.
 
 use std::cell::RefCell;
+use std::collections::BTreeSet;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use tungsten_core::Diagnostic;
-use url::Url;
+use url::{Host, Url};
 
 const MAX_BYTES: usize = 8 * 1024 * 1024;
 const LOCK_LIMIT: usize = 32 * 1024;
@@ -58,9 +60,54 @@ pub fn with_options<T>(options: Options, run: impl FnOnce() -> T) -> T {
 
 /// Recognize source URLs before a platform's path normalization can alter them.
 pub fn is_remote(source: &str) -> bool {
-    source.to_ascii_lowercase().starts_with("http://")
-        || source.to_ascii_lowercase().starts_with("https://")
-        || crate::git_input::is_source(source)
+    let scheme = |prefix: &str| {
+        source
+            .get(..prefix.len())
+            .is_some_and(|start| start.eq_ignore_ascii_case(prefix))
+    };
+    scheme("http://") || scheme("https://") || crate::git_input::is_source(source)
+}
+
+/// Whether the URL names this machine, where cleartext HTTP never leaves it.
+fn is_loopback(url: &Url) -> bool {
+    match url.host() {
+        Some(Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(Host::Ipv6(ip)) => {
+            ip.is_loopback() || ip.to_ipv4_mapped().is_some_and(|ip| ip.is_loopback())
+        }
+        Some(Host::Domain(name)) => {
+            let name = name.trim_end_matches('.');
+            name.eq_ignore_ascii_case("localhost")
+                || name
+                    .len()
+                    .checked_sub(".localhost".len())
+                    .and_then(|start| name.get(start..))
+                    .is_some_and(|end| end.eq_ignore_ascii_case(".localhost"))
+        }
+        None => false,
+    }
+}
+
+/// Input headers usually carry credentials. Over plain HTTP to another host
+/// they can be read or altered on the network, so warn (once per origin and
+/// process) without ever printing a header name or value. This stays a warning
+/// so existing plain-HTTP setups on trusted networks keep working.
+fn warn_cleartext_headers(url: &Url, count: usize) {
+    static WARNED: Mutex<BTreeSet<String>> = Mutex::new(BTreeSet::new());
+    if count == 0 || url.scheme() != "http" || is_loopback(url) {
+        return;
+    }
+    let origin = url.origin().ascii_serialization();
+    let first = WARNED
+        .lock()
+        .map(|mut warned| warned.insert(origin.clone()))
+        .unwrap_or(true);
+    if first {
+        eprintln!(
+            "warning: sending {count} --input-header/TUNGSTEN_INPUT_HEADERS value(s) to {origin} over unencrypted HTTP; \
+             anyone on the network path can read them. Use an https:// URL for authenticated inputs."
+        );
+    }
 }
 
 /// Display a source without reflecting forbidden URL credentials or queries.
@@ -399,6 +446,9 @@ pub fn acquire(source: &str, project: &Path, options: &Options) -> Result<PathBu
         .max_response_header_size(32 * 1024)
         .build()
         .new_agent();
+    // Redirects are disabled above, so headers never follow a Location to
+    // another origin; they reach only the URL named here.
+    warn_cleartext_headers(&url, headers.len());
     let mut request = agent.get(url.as_str());
     for (name, value) in headers {
         request = request.header(name, value);

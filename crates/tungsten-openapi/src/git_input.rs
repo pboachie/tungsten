@@ -3,7 +3,7 @@
 //! checkout, hooks, submodules, filters and repository code are never executed.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::Read;
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
@@ -21,6 +21,8 @@ const MAX_FILES: usize = 512;
 const MAX_FILE: usize = 8 * 1024 * 1024;
 const MAX_TREE: u64 = 64 * 1024 * 1024;
 const DEADLINE: Duration = Duration::from_secs(60);
+/// How often a running fetch re-measures its object store against `MAX_TREE`.
+const STORE_CHECK: Duration = Duration::from_millis(100);
 
 fn error(code: &str, message: &str, help: &str) -> Diagnostic {
     Diagnostic::error(code, message).with_help(help)
@@ -43,7 +45,9 @@ fn cache_error() -> Diagnostic {
 }
 
 pub fn is_source(source: &str) -> bool {
-    source.to_ascii_lowercase().starts_with("git+")
+    source
+        .get(..4)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("git+"))
 }
 
 #[derive(Debug)]
@@ -195,27 +199,53 @@ impl Drop for Git {
     }
 }
 
+/// Kill a Git process with the standard library, so no external `kill` or
+/// `taskkill` binary is needed. Git's helpers (remote transports, index-pack)
+/// talk to it over pipes and exit once those pipes close.
 fn stop(child: &mut Child) {
-    #[cfg(unix)]
-    {
-        let _ = Command::new("/bin/kill")
-            .args(["-KILL", "--", &format!("-{}", child.id())])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        let _ = Command::new("taskkill.exe")
-            .args(["/PID", &child.id().to_string(), "/T", "/F"])
-            .creation_flags(0x08000000)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-    }
     let _ = child.kill();
     let _ = child.wait();
+}
+
+fn budget_error() -> Diagnostic {
+    error(
+        "TG0132",
+        "Git acquisition exceeded its time or object-store budget",
+        "use a smaller repository, retry network access, or reuse a verified pin with --offline",
+    )
+}
+
+fn incomplete() -> Diagnostic {
+    error(
+        "TG0132",
+        "Git output was incomplete or too large",
+        "retry with a smaller repository or narrower #subpath",
+    )
+}
+
+/// Read one `git cat-file --batch` response: `<oid> blob <size>\n<bytes>\n`.
+/// Anything else (a missing object, another type, an oversized blob or a
+/// truncated stream) ends the batch.
+fn batch_blob(reader: &mut impl BufRead) -> Option<(String, Vec<u8>)> {
+    let mut header = Vec::new();
+    reader
+        .by_ref()
+        .take(256)
+        .read_until(b'\n', &mut header)
+        .ok()?;
+    let header = std::str::from_utf8(header.strip_suffix(b"\n")?).ok()?;
+    let mut fields = header.split(' ');
+    let (oid, kind, size) = (fields.next()?, fields.next()?, fields.next()?);
+    let size = size
+        .parse::<usize>()
+        .ok()
+        .filter(|size| *size <= MAX_FILE)?;
+    if fields.next().is_some() || kind != "blob" || !commit(oid) {
+        return None;
+    }
+    let mut bytes = vec![0; size + 1];
+    reader.read_exact(&mut bytes).ok()?;
+    (bytes.pop() == Some(b'\n')).then(|| (oid.to_owned(), bytes))
 }
 
 /// Bounded traversal of our disposable bare object store, including pack files
@@ -259,7 +289,7 @@ fn store_size(path: &Path) -> Result<u64, Diagnostic> {
 }
 
 impl Git {
-    fn run(&self, args: &[&str], limit: usize) -> Result<Vec<u8>, Diagnostic> {
+    fn spawn(&self, args: &[&str], stdin: bool) -> Result<Child, Diagnostic> {
         if self.started.elapsed() >= DEADLINE {
             return Err(error(
                 "TG0131",
@@ -295,71 +325,67 @@ impl Git {
             .arg(format!("core.hooksPath={}", self.hooks.display()))
             .args(args)
             .env("GIT_TERMINAL_PROMPT", "0")
-            .stdin(Stdio::null())
+            .stdin(if stdin { Stdio::piped() } else { Stdio::null() })
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
-        #[cfg(unix)]
-        {
-            use std::os::unix::process::CommandExt;
-            command.process_group(0);
-        }
+        // Git stays in the caller's process group, so an interrupt that ends
+        // tungsten also ends an in-flight fetch instead of orphaning it.
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
             command.creation_flags(0x08000000);
         }
-        let mut child = command.spawn().map_err(|_| {
+        command.spawn().map_err(|_| {
             error(
                 "TG0131",
                 "cannot start Git for input acquisition",
                 "install Git and check PATH; offline cache reuse does not require Git",
             )
-        })?;
-        let stdout = child.stdout.take().ok_or_else(cache_error)?;
-        let (sender, receiver) = mpsc::channel();
-        std::thread::spawn(move || {
-            let mut bytes = Vec::new();
-            let result = stdout.take(limit as u64 + 1).read_to_end(&mut bytes);
-            let _ = sender.send(if result.is_ok() && bytes.len() <= limit {
-                Some(bytes)
+        })
+    }
+
+    /// Block until `receiver` yields a value. The wait is bounded by the
+    /// acquisition deadline; only a fetch, whose object store can grow, also
+    /// wakes periodically to re-measure the store against its byte budget.
+    fn receive<T>(
+        &self,
+        child: &mut Child,
+        receiver: &mpsc::Receiver<T>,
+        watch_store: bool,
+    ) -> Result<T, Diagnostic> {
+        loop {
+            let Some(remaining) = DEADLINE
+                .checked_sub(self.started.elapsed())
+                .filter(|remaining| !remaining.is_zero())
+            else {
+                stop(child);
+                return Err(budget_error());
+            };
+            let wait = if watch_store {
+                remaining.min(STORE_CHECK)
             } else {
-                None
-            });
-        });
-        let mut output = None;
-        let status = loop {
-            if output.is_none()
-                && let Ok(result) = receiver.try_recv()
-            {
-                match result {
-                    Some(bytes) => output = Some(bytes),
-                    None => {
-                        stop(&mut child);
-                        return Err(error(
-                            "TG0132",
-                            "Git output exceeds its acquisition budget",
-                            "narrow #subpath or use a smaller repository",
-                        ));
+                remaining
+            };
+            match receiver.recv_timeout(wait) {
+                Ok(value) => return Ok(value),
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    if watch_store && store_size(&self.repository).is_err() {
+                        stop(child);
+                        return Err(budget_error());
                     }
                 }
-            }
-            if self.started.elapsed() >= DEADLINE || store_size(&self.repository).is_err() {
-                stop(&mut child);
-                return Err(error(
-                    "TG0132",
-                    "Git acquisition exceeded its time or object-store budget",
-                    "use a smaller repository, retry network access, or reuse a verified pin with --offline",
-                ));
-            }
-            match child.try_wait() {
-                Ok(Some(status)) => break status,
-                Ok(None) => std::thread::sleep(Duration::from_millis(20)),
-                Err(_) => {
-                    stop(&mut child);
-                    return Err(cache_error());
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    stop(child);
+                    return Err(incomplete());
                 }
             }
-        };
+        }
+    }
+
+    /// Reap a child whose output is complete. Its stdout has closed, so this is
+    /// a blocking wait for an exiting process rather than a polling loop.
+    fn finish(child: &mut Child) -> Result<(), Diagnostic> {
+        let status = child.wait().map_err(|_| cache_error())?;
         if !status.success() {
             return Err(error(
                 "TG0131",
@@ -367,18 +393,86 @@ impl Git {
                 "check the repository URL and ref, network access and Git credential helper; Git stderr and credentials are never included in diagnostics",
             ));
         }
-        let Some(bytes) =
-            output.or_else(|| receiver.recv_timeout(Duration::from_secs(1)).ok().flatten())
-        else {
+        Ok(())
+    }
+
+    fn run(&self, args: &[&str], limit: usize, watch_store: bool) -> Result<Vec<u8>, Diagnostic> {
+        let mut child = self.spawn(args, false)?;
+        let Some(stdout) = child.stdout.take() else {
+            stop(&mut child);
+            return Err(cache_error());
+        };
+        let (sender, receiver) = mpsc::channel();
+        std::thread::spawn(move || {
+            let mut bytes = Vec::new();
+            let result = stdout.take(limit as u64 + 1).read_to_end(&mut bytes);
+            let _ = sender.send((result.is_ok() && bytes.len() <= limit).then_some(bytes));
+        });
+        let Some(bytes) = self.receive(&mut child, &receiver, watch_store)? else {
             stop(&mut child);
             return Err(error(
                 "TG0132",
-                "Git output was incomplete or too large",
-                "retry with a smaller repository or narrower #subpath",
+                "Git output exceeds its acquisition budget",
+                "narrow #subpath or use a smaller repository",
             ));
         };
-        store_size(&self.repository)?;
+        Self::finish(&mut child)?;
+        if watch_store {
+            store_size(&self.repository)?;
+        }
         Ok(bytes)
+    }
+
+    /// Stream blobs through a single `git cat-file --batch` process instead of
+    /// one process per file. Requests are written one at a time and each reply
+    /// is consumed before the next request, so neither pipe can fill up while
+    /// the other side waits. `each` receives every blob in request order.
+    fn blobs(
+        &self,
+        repo: &str,
+        objects: &[(&str, u64)],
+        mut each: impl FnMut(usize, Vec<u8>) -> Result<(), Diagnostic>,
+    ) -> Result<(), Diagnostic> {
+        if objects.is_empty() {
+            return Ok(());
+        }
+        let mut child = self.spawn(&["--git-dir", repo, "cat-file", "--batch"], true)?;
+        let (Some(mut stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) else {
+            stop(&mut child);
+            return Err(cache_error());
+        };
+        let (sender, receiver) = mpsc::channel();
+        std::thread::spawn(move || {
+            let mut reader = BufReader::new(stdout);
+            loop {
+                let blob = batch_blob(&mut reader);
+                let last = blob.is_none();
+                if sender.send(blob).is_err() || last {
+                    break;
+                }
+            }
+        });
+        for (index, (oid, size)) in objects.iter().enumerate() {
+            if stdin.write_all(format!("{oid}\n").as_bytes()).is_err() {
+                stop(&mut child);
+                return Err(incomplete());
+            }
+            let Some((echoed, bytes)) = self.receive(&mut child, &receiver, false)? else {
+                stop(&mut child);
+                return Err(incomplete());
+            };
+            if echoed != *oid || bytes.len() as u64 != *size {
+                stop(&mut child);
+                return Err(cache_error());
+            }
+            if let Err(diagnostic) = each(index, bytes) {
+                stop(&mut child);
+                return Err(diagnostic);
+            }
+        }
+        // End of input: cat-file exits after answering every request.
+        drop(stdin);
+        Self::finish(&mut child)
     }
 
     fn resolve(&self, source: &Source) -> Result<String, Diagnostic> {
@@ -400,6 +494,7 @@ impl Git {
                 &exact_peeled,
             ],
             256 * 1024,
+            false,
         )?;
         let lines = std::str::from_utf8(&bytes).map_err(|_| cache_error())?;
         let refs = lines
@@ -463,6 +558,7 @@ fn verify(dir: &Path, source: &Source, pin: &Pin) -> Result<PathBuf, Diagnostic>
     directory(&root)?;
     directory(&tree)?;
     let mut directories = BTreeSet::new();
+    let listed = pin.files.keys().map(Path::new).collect::<BTreeSet<_>>();
     let mut total = 0;
     for (path, sha256) in &pin.files {
         if !safe_path(path)
@@ -514,9 +610,7 @@ fn verify(dir: &Path, source: &Source, pin: &Pin) -> Result<PathBuf, Diagnostic>
             }
             if meta.file_type().is_dir() && directories.contains(relative) {
                 pending.push(path);
-            } else if meta.file_type().is_file()
-                && pin.files.keys().any(|name| Path::new(name) == relative)
-            {
+            } else if meta.file_type().is_file() && listed.contains(relative) {
                 seen.insert(relative.to_path_buf());
             } else {
                 return Err(cache_error());
@@ -595,6 +689,7 @@ pub fn acquire(text: &str, project: &Path, options: &Options) -> Result<PathBuf,
             &repo,
         ],
         1024,
+        false,
     )?;
     git.run(
         &[
@@ -610,6 +705,7 @@ pub fn acquire(text: &str, project: &Path, options: &Options) -> Result<PathBuf,
             &resolved,
         ],
         1024,
+        true,
     )?;
     let actual = git.run(
         &[
@@ -620,6 +716,7 @@ pub fn acquire(text: &str, project: &Path, options: &Options) -> Result<PathBuf,
             "FETCH_HEAD^{commit}",
         ],
         1024,
+        false,
     )?;
     if std::str::from_utf8(&actual).map(str::trim).ok() != Some(resolved.as_str()) {
         return Err(cache_error());
@@ -643,13 +740,14 @@ pub fn acquire(text: &str, project: &Path, options: &Options) -> Result<PathBuf,
             scope,
         ],
         2 * 1024 * 1024,
+        false,
     )?;
     let tree_root = dir.join("files");
     directory(&tree_root)?;
     let tree = tree_root.join(&resolved);
     directory(&tree)?;
-    let mut files = BTreeMap::new();
-    let mut candidates = Vec::new();
+    // Validate the complete listing before reading any blob.
+    let mut entries = Vec::new();
     let mut total = 0u64;
     for line in listing
         .split(|byte| *byte == 0)
@@ -675,20 +773,23 @@ pub fn acquire(text: &str, project: &Path, options: &Options) -> Result<PathBuf,
         }
         let size = parts[3].parse::<u64>().map_err(|_| cache_error())?;
         total = total.checked_add(size).ok_or_else(cache_error)?;
-        if files.len() >= MAX_FILES || size > MAX_FILE as u64 || total > MAX_TREE {
+        if entries.len() >= MAX_FILES || size > MAX_FILE as u64 || total > MAX_TREE {
             return Err(error(
                 "TG0132",
                 "Git input exceeds 512 files, 8 MiB per file or 64 MiB total",
                 "narrow #subpath to the contract directory or acquire a single document over HTTP(S)",
             ));
         }
-        let bytes = git.run(
-            &["--git-dir", &repo, "cat-file", "blob", parts[2]],
-            MAX_FILE,
-        )?;
-        if bytes.len() as u64 != size {
-            return Err(cache_error());
-        }
+        entries.push((path, parts[2], size));
+    }
+    let objects = entries
+        .iter()
+        .map(|(_, oid, size)| (*oid, *size))
+        .collect::<Vec<_>>();
+    let mut files = BTreeMap::new();
+    let mut candidates = Vec::new();
+    git.blobs(&repo, &objects, |index, bytes| {
+        let path = entries[index].0;
         if candidate(path, &bytes) {
             candidates.push(path.to_owned());
         }
@@ -703,14 +804,16 @@ pub fn acquire(text: &str, project: &Path, options: &Options) -> Result<PathBuf,
         }
         // The tree is keyed by the verified commit, so a missing or truncated
         // file (an interrupted write) is restored from the fetched blob.
+        let digest = hash(&bytes);
         let destination = tree.join(path);
         if !std::fs::symlink_metadata(&destination).is_ok_and(|meta| meta.file_type().is_file())
-            || content_hash(&destination)? != hash(&bytes)
+            || content_hash(&destination)? != digest
         {
             write_atomic(&dir, &destination, &bytes, "TG0133")?;
         }
-        files.insert(path.to_owned(), hash(&bytes));
-    }
+        files.insert(path.to_owned(), digest);
+        Ok(())
+    })?;
     if candidates.len() != 1 {
         return Err(Diagnostic::error("TG0134",format!("Git input discovery found {} candidate documents: {}",candidates.len(),candidates.iter().take(16).cloned().collect::<Vec<_>>().join(", "))).with_help("choose exactly one supported document using #path, or narrow the repository subdirectory; nothing is guessed"));
     }

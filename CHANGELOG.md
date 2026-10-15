@@ -246,6 +246,15 @@ values as `JsonNode`, OpenID Connect as a bearer token, no CLI or MCP).
   `acquire.lock`, discards abandoned `*.pending` entries and restores truncated
   content-addressed files. Cache write, cleanup and lock-contention errors now
   name the affected path and how to recover.
+- Remote inputs: `--input-header`/`TUNGSTEN_INPUT_HEADERS` values sent to a
+  plain `http://` URL on a non-loopback host now print a warning (once per
+  origin, never echoing header names or values); use `https://` for
+  authenticated inputs. Redirects stay refused, so headers never cross origins.
+- Git inputs read every selected file through one `git cat-file --batch`
+  process and wait on Git without polling, so large subpaths acquire much
+  faster. Timeouts stop Git through the standard library instead of an
+  external `kill`/`taskkill` binary, and Git now shares tungsten's process
+  group so an interrupt also ends an in-flight fetch.
 - Dart pagination detects repeated cursors and page URLs, including the caller's
   starting cursor and cycles across earlier pages. Fetched pages are delivered
   before an `UNEXPECTED_RESPONSE` diagnostic, repeated requests are refused, and
