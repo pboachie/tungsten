@@ -88,6 +88,22 @@ maintainer will add it.
 - Behaviour of the TypeScript, Python and Rust runtimes must stay identical;
   a behavioural change in one is made in all three.
 
+### Releases and tags
+
+Before a release tag is pushed, the release workflow is run once on the exact
+release commit through `workflow_dispatch` with `dry_run: true` (the default).
+The dry run exercises the same pipeline as the release — the dependency
+advisory audit, the full build matrix, the SBOM and the crates.io, npm and
+PyPI publish dry runs — while publishing nothing, so advisory matches and
+packaging failures surface before an immutable tag exists. A release whose
+dry run has not passed on that commit is not tagged.
+
+Release tags are immutable. Once a `vX.Y.Z` tag has been pushed it is never
+moved, re-pointed, or deleted and re-created: build provenance attestations,
+the release job's `--verify-tag` check and everyone who fetched the first
+commit all key on that exact tag. A failed release is fixed forward with a
+new version and a new tag, never by moving the published one.
+
 ### Commit messages
 
 - Write a short imperative title and, if useful, a body explaining why.

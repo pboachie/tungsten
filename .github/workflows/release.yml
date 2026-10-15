@@ -3,7 +3,11 @@
 # Triggers: a pushed tag v* (a real release) and a manual run (a dry run unless
 # dry_run is switched off, and then only for a tag). A dry run builds and
 # packages everything and runs every publish check in dry-run mode, but writes
-# nothing: no GitHub Release, no attestation, no registry upload.
+# nothing: no GitHub Release, no attestation, no registry upload. It is a
+# required step before tagging: run it once via workflow_dispatch on the exact
+# release commit, because it runs the same dependency audit, build matrix and
+# publish dry runs as the tagged release, and a tag, once pushed, is immutable
+# and never moved to fix a failed run.
 #
 # What a real release produces (all attached to one GitHub Release):
 #   tungsten-<version>-<target>.{tar.gz,zip} for x86_64 and aarch64 Linux

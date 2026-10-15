@@ -91,6 +91,19 @@ formatting; Fable and JavaScript targets untested; plus the C# limits
 (in-memory idempotency store, .NET regex dialect, by-status and intersection
 values as `JsonNode`, OpenID Connect as a bearer token, no CLI or MCP).
 
+- The release dependency audit supports reviewed, scoped and expiring advisory
+  exceptions: entries in the `advisory_exceptions` list of
+  `.github/dependency-policy.json` name an advisory id, the one locked package
+  it applies to, the reason it was accepted and an `expires` date. The audit
+  prints every exception in the release job log, suppresses only the matching
+  advisory, and fails once an entry is past its expiry, so an exception is a
+  time-limited review decision instead of a standing ignore. CONTRIBUTING and
+  SECURITY.md now record that release tags are immutable — a failed release is
+  fixed forward with a new version, never by moving a tag — and that a
+  `workflow_dispatch` dry run (`dry_run: true`) of the release workflow, which
+  runs the same audit, is required on the release commit before the tag is
+  pushed.
+
 ### Changed
 
 - `tungsten report` runs only the emitters of the configured targets. The
