@@ -114,7 +114,7 @@ pub fn collapsed_line(code: &str, severity: Severity, more: usize, color: bool) 
     format!(
         "{}: and {} more like the above (`--all-warnings` prints them, `--json` lists every \
          diagnostic)",
-        p.paint(tint, &format!("{word}[{code}]")),
+        p.paint(tint, &format!("{word} {code}")),
         thousands(more)
     )
 }
@@ -124,7 +124,7 @@ pub fn thousands(n: usize) -> String {
     let digits = n.to_string();
     let mut out = String::new();
     for (i, c) in digits.chars().enumerate() {
-        if i > 0 && (digits.len() - i) % 3 == 0 {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
             out.push(',');
         }
         out.push(c);

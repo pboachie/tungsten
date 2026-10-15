@@ -592,17 +592,16 @@ fn kind_name(shape: &Shape, index: usize) -> Ident {
 /// `oneOf: [X, {type: string}]` and its array and map cousins.
 fn is_nullable_style(variants: &[Candidate]) -> bool {
     variants.len() == 2
-        && variants.iter().any(|v| {
-            matches!(
-                &v.ty,
-                TypeRef::Inline(
-                    Shape::Primitive {
-                        primitive: Primitive::String { .. },
-                        ..
-                    } | Shape::Array { .. }
-                        | Shape::Map { .. }
-                )
-            )
+        && variants.iter().any(|v| match &v.ty {
+            TypeRef::Inline(shape) => matches!(
+                &**shape,
+                Shape::Primitive {
+                    primitive: Primitive::String { .. },
+                    ..
+                } | Shape::Array { .. }
+                    | Shape::Map { .. }
+            ),
+            TypeRef::Named(_) => false,
         })
 }
 

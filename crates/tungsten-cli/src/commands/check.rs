@@ -215,7 +215,7 @@ fn human(path: &str, r: &CheckResult) -> String {
         let codes: Vec<String> = r
             .by_code
             .iter()
-            .map(|c| format!("{} {} x{}", c.code, severity_word(c), thousands(c.count)))
+            .map(|c| format!("{} {} ×{}", c.code, severity_word(c), thousands(c.count)))
             .collect();
         let _ = writeln!(out, "  {:<9}{}", "codes", codes.join(" · "));
     }
