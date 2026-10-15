@@ -83,6 +83,15 @@ irm https://raw.githubusercontent.com/pboachie/tungsten/main/install.ps1 | iex  
 
 Pass `--version v0.1.2` to `install.sh` (or `-Version v0.1.2` to `install.ps1`) to pin a release, and `--dir` (`-InstallDir`) to choose the target directory.
 
+See [`install.sh --help`](install.sh) or `Get-Help ./install.ps1 -Full`
+([PowerShell script](install.ps1)) for environment variables and exit codes.
+Both installers check whether `gh attestation` is usable before verification.
+Without it they explain that only the checksum was verified; set
+`TUNGSTEN_REQUIRE_ATTESTATION=1` to require provenance verification. A failed
+verification always refuses installation and shows the verifier's error output.
+`TUNGSTEN_NO_ATTESTATION=1` explicitly disables the check and cannot be combined
+with required verification. Required verification also refuses custom mirrors.
+
 On Linux each release ships two archives per architecture. The `musl` archives (the installer default) are statically linked and run on any Linux. The `gnu` archives (`TUNGSTEN_LIBC=gnu`) are dynamically linked and need glibc 2.34 or newer — the same floor on x86_64 and aarch64 (Debian 12, Ubuntu 22.04, RHEL 9 and Amazon Linux 2023 all qualify; Ubuntu 20.04 and Debian 11 do not). `install.sh` checks the system's glibc before installing a `gnu` archive and points older systems at the static musl default.
 
 Release archives, the Homebrew formula, the winget manifests and the `ghcr.io/pboachie/tungsten` container image carry build provenance attestations. To verify them with the GitHub CLI:

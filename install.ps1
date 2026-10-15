@@ -4,7 +4,7 @@ administrator rights are needed.
 
   irm https://raw.githubusercontent.com/pboachie/tungsten/main/install.ps1 | iex
   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/pboachie/tungsten/main/install.ps1))) -Init
-  .\install.ps1 [-Version v0.1.0] [-InstallDir DIR] [-Init]
+  .\install.ps1 [-Version v0.1.2] [-InstallDir DIR] [-Init]
 
   -Init          after installing, run the guided `tungsten init` setup; needs
                  terminal input. The `irm ... | iex` form cannot pass parameters:
@@ -17,6 +17,10 @@ administrator rights are needed.
                  (<base>/<tag>/<asset>), for mirrors and tests; needs -Version
                  (TUNGSTEN_RELEASE_BASE_URL)
   TUNGSTEN_REPO  owner/name of the repository (default: pboachie/tungsten)
+  TUNGSTEN_REQUIRE_ATTESTATION  1: fail unless gh verifies the build attestation
+  TUNGSTEN_NO_ATTESTATION       1: skip attestation (conflicts with REQUIRE=1)
+  TUNGSTEN_LIBC                 Linux install.sh only: musl (default) or gnu;
+                               not a Windows archive selector
 
 The archive is checked against the release's SHA256SUMS before anything is
 installed, and against its build attestation when the GitHub CLI (gh) is
@@ -42,6 +46,15 @@ $ProgressPreference = 'SilentlyContinue'
 
 function Fail([string]$Message) {
     throw "install.ps1: error: $Message"
+}
+
+function Invoke-GhAttestation([string[]]$Arguments, [string]$OutputFile, [string]$ErrorFile) {
+    # Windows PowerShell can otherwise turn native stderr into a terminating
+    # error before we inspect the exit status. Always decide from that status.
+    $ErrorActionPreference = 'Continue'
+    $PSNativeCommandUseErrorActionPreference = $false
+    & gh @Arguments 1> $OutputFile 2> $ErrorFile
+    return $LASTEXITCODE
 }
 
 $repo = if ($env:TUNGSTEN_REPO) { $env:TUNGSTEN_REPO } else { 'pboachie/tungsten' }
@@ -74,7 +87,7 @@ if (-not $BaseUrl) {
             $final = $response.BaseResponse.ResponseUri.AbsoluteUri
             if (-not $final) { $final = $response.BaseResponse.RequestMessage.RequestUri.AbsoluteUri }
         } catch {
-            Fail "no release found: $latest does not exist yet. Releases are not published until v0.1.0; build $build"
+            Fail "no latest release; see https://github.com/$repo/releases; build $build"
         }
         $Version = ($final -split '/')[-1]
     }
@@ -95,7 +108,7 @@ try {
     try {
         Invoke-WebRequest -Uri "$BaseUrl/$Version/SHA256SUMS" -OutFile $sums -UseBasicParsing
     } catch {
-        Fail "no release $Version found at $BaseUrl/$Version/ (no SHA256SUMS). Releases are not published until v0.1.0; build $build"
+        Fail "no release $Version (no SHA256SUMS); see https://github.com/$repo/releases; build $build"
     }
     $zip = Join-Path $work $asset
     try {
@@ -113,14 +126,37 @@ try {
     }
     Write-Host 'install.ps1: checksum ok'
 
-    if ($BaseUrl -ne "https://github.com/$repo/releases/download") {
+    $requireAttestation = $env:TUNGSTEN_REQUIRE_ATTESTATION -eq '1'
+    if ($env:TUNGSTEN_NO_ATTESTATION -eq '1') {
+        if ($requireAttestation) { Fail 'TUNGSTEN_NO_ATTESTATION=1 conflicts with TUNGSTEN_REQUIRE_ATTESTATION=1' }
+        Write-Host 'install.ps1: checksum verified; attestation not checked (TUNGSTEN_NO_ATTESTATION=1)'
+    } elseif ($BaseUrl -ne "https://github.com/$repo/releases/download") {
+        if ($requireAttestation) { Fail 'TUNGSTEN_REQUIRE_ATTESTATION=1 cannot verify a custom release location' }
         Write-Host 'install.ps1: custom release location: skipping the build attestation check'
-    } elseif (Get-Command gh -ErrorAction SilentlyContinue) {
-        & gh attestation verify $zip --repo $repo *> $null
-        if ($LASTEXITCODE -ne 0) { Fail "the build attestation of $asset could not be verified; nothing was installed" }
-        Write-Host 'install.ps1: build attestation verified'
     } else {
-        Write-Host 'install.ps1: gh is not installed: build attestation not checked (checksum only)'
+        $attestationOut = Join-Path $work 'attestation-out.log'
+        $attestationError = Join-Path $work 'attestation-error.log'
+        $reason = 'gh is not installed'
+        $usable = $false
+        if (Get-Command gh -ErrorAction SilentlyContinue) {
+            $usable = (Invoke-GhAttestation @('attestation', '--help') $attestationOut $attestationError) -eq 0
+            if (-not $usable) {
+                $reason = 'gh attestation is unavailable; update GitHub CLI (2.49 or newer)'
+                Get-Content -LiteralPath $attestationError -Tail 8 | ForEach-Object { Write-Host $_ }
+            }
+        }
+        if ($usable) {
+            $verifyCode = Invoke-GhAttestation @('attestation', 'verify', $zip, '--repo', $repo) $attestationOut $attestationError
+            if ($verifyCode -ne 0) {
+                Get-Content -LiteralPath $attestationError -Tail 8 | ForEach-Object { Write-Host $_ }
+                Fail "the build attestation of $asset could not be verified; nothing was installed"
+            }
+            Write-Host 'install.ps1: build attestation verified'
+        } elseif ($requireAttestation) {
+            Fail "TUNGSTEN_REQUIRE_ATTESTATION=1 but $reason"
+        } else {
+            Write-Host "install.ps1: checksum verified; attestation not checked ($reason)"
+        }
     }
 
     Expand-Archive -Path $zip -DestinationPath $work -Force

@@ -11,6 +11,10 @@ changes.
 
 ### Added
 
+- Installers detect whether `gh attestation` is available, explain checksum-only
+  installation when it is absent, and show verification errors while refusing
+  failed attestations. Both scripts honor required/disabled attestation settings
+  and replace stale unpublished-release hints with the release listing.
 - Imported specs (Postman, cURL, `.http`, HAR and endpoint manifests): a
   target that cannot enforce imported-operation policy (Java, C#, Kotlin, Ruby,
   Dart and the other SDK targets) now fails alone; without `--strict` the
