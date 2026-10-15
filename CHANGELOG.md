@@ -11,6 +11,9 @@ changes.
 
 ### Added
 
+- A runnable typed Python SSE recipe under `examples/typed-sse`, with an
+  explicit FastAPI response declaration, a reviewed OpenAPI overlay, API-key
+  authentication, sync/async consumers and explicit terminal-event cleanup.
 - Imported specs (Postman, cURL, `.http`, HAR and endpoint manifests): a
   target that cannot enforce imported-operation policy (Java, C#, Kotlin, Ruby,
   Dart and the other SDK targets) now fails alone; without `--strict` the

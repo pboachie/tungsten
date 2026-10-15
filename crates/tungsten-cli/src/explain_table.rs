@@ -455,9 +455,10 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
         "A success response declares the `text/event-stream` media type without a schema, so \
          the SDK cannot type or check the events of the stream. Each event's `data` is still \
          decoded as JSON and handed to the caller as an untyped value.",
-        "Declare the schema of one event under the media type (usually a `oneOf` tagged by a \
-         `type` property). Name a `data` value that ends the stream, if there is one, with \
-         `x-tungsten-stream-done`.",
+        "Declare the schema of one event under the media type. Use a discriminator only if \
+         it exists inside the JSON data; the SSE event name is separate. A raw data sentinel \
+         can be declared with `x-tungsten-stream-done`. See the typed Python SSE recipe at \
+         https://github.com/pboachie/tungsten/tree/release/0.1.3/examples/typed-sse.",
     ),
     e(
         "TG0531",
