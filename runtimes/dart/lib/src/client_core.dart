@@ -50,6 +50,7 @@ final class _Prepared {
   final List<String> hiddenQuery;
   final _Secrets secrets;
   String? oauth;
+  _PageState? pageState;
 }
 
 /// An event stream answer handed back unread by the sending loop.
@@ -471,9 +472,14 @@ final class ClientCore {
     Map<String, Object?> args,
     CallOptions opts,
     String? urlOverride,
-    _Claim? claim,
-  ) async {
+    _Claim? claim, [
+    _PageState? pageState,
+  ]) async {
     final p = await _prepare(op, args, opts, _Purpose.call, urlOverride, claim);
+    p.pageState = pageState;
+    if (pageState?.seenUrls.contains(_PageState.urlKey(p.url)) ?? false) {
+      return _PageState.repeated(op.id);
+    }
     var result = await _sendRequest(p, opts);
     if (result is Err<Object?> &&
         result.error.httpStatus == 401 &&
@@ -1409,6 +1415,7 @@ final class ClientCore {
             idleMs: stream ? idleTimeoutMs : null,
           );
       var outcome = await sendOnce();
+      final pageUrls = <String>{_PageState.urlKey(target)};
       // Redirects are followed by hand, and only for reads: a mutation
       // never follows one.
       if (!mutation && !_redirectsDisabled) {
@@ -1418,6 +1425,11 @@ final class ClientCore {
           }
           final next = _redirectTarget(p, target, outcome.headers['location']);
           if (next == null) break;
+          final key = _PageState.urlKey(next.$1);
+          if (p.pageState != null &&
+              (p.pageState!.seenUrls.contains(key) || !pageUrls.add(key))) {
+            return (_PageState.repeated<Object?>(op.id), null);
+          }
           target = next.$1;
           if (outcome.status != 307 &&
               outcome.status != 308 &&
@@ -1445,7 +1457,12 @@ final class ClientCore {
       final (result, streamed) =
           _classifyResponse(ctx, p, outcome, rctx, timeout);
       if (streamed != null) return (null, streamed);
-      if (result is Ok<Object?>) return (result, null);
+      if (result is Ok<Object?>) {
+        p.pageState
+          ?..effectiveUrl = target
+          ..seenUrls.addAll(pageUrls);
+        return (result, null);
+      }
       final failed = result! as Err<Object?>;
       final d = _Util.scrubDiagnostic(failed.error, p.secrets);
       final done = Err<Object?>(d, partial: failed.partial);

@@ -15,6 +15,8 @@ changes.
   with bounded downloads, SHA256 source pins in `.tungsten-inputs`, explicit
   `--refresh-inputs`, verified `--offline` reuse and redacted `--input-header`
   authentication. Remote entries retain existing reference and import safety rules.
+- Link the importer guide from the quickstart, including per-format limits and imported-operation review.
+
 - Imported specs (Postman, cURL, `.http`, HAR and endpoint manifests): a
   target that cannot enforce imported-operation policy (Java, C#, Kotlin, Ruby,
   Dart and the other SDK targets) now fails alone; without `--strict` the
@@ -102,8 +104,8 @@ values as `JsonNode`, OpenID Connect as a bearer token, no CLI or MCP).
   prints every exception in the release job log, suppresses only the matching
   advisory, and fails once an entry is past its expiry, so an exception is a
   time-limited review decision instead of a standing ignore. CONTRIBUTING and
-  SECURITY.md now record that release tags are immutable — a failed release is
-  fixed forward with a new version, never by moving a tag — and that a
+  SECURITY.md now record that release tags are immutable â€” a failed release is
+  fixed forward with a new version, never by moving a tag â€” and that a
   `workflow_dispatch` dry run (`dry_run: true`) of the release workflow, which
   runs the same audit, is required on the release commit before the tag is
   pushed.
@@ -169,6 +171,10 @@ values as `JsonNode`, OpenID Connect as a bearer token, no CLI or MCP).
 
 ### Fixed
 
+- Dart pagination detects repeated cursors and page URLs, including the caller's
+  starting cursor and cycles across earlier pages. Fetched pages are delivered
+  before an `UNEXPECTED_RESPONSE` diagnostic, repeated requests are refused, and
+  relative next-page links resolve against the effective URL after redirects.
 - Release packaging: the aarch64 `gnu` Linux archive needed glibc 2.39 (it was
   built on `ubuntu-24.04-arm`) while the x86_64 archive needed 2.34, so the
   same `TUNGSTEN_LIBC=gnu` choice failed on Debian 12, Ubuntu 22.04, RHEL 9
@@ -188,7 +194,7 @@ values as `JsonNode`, OpenID Connect as a bearer token, no CLI or MCP).
   `wait-woodpecker-release.mjs`, and the job timeout is 50 minutes),
   transient GitHub status or pipeline lookup failures are retried instead of
   failing the gate, and a timeout reports that only npm publication is blocked
-  — the GitHub Release and attestations are unaffected — and to re-run the
+  â€” the GitHub Release and attestations are unaffected â€” and to re-run the
   failed jobs. A `workflow_dispatch` dry run now exercises the same wait
   against the last released tag, so the gate is tested before a release
   relies on it, and the Woodpecker-side artifact validation step's own
@@ -462,7 +468,7 @@ constructs them must be updated:
 
 - TypeScript SDK targets can declare npm dependencies for preserved custom
   extensions; package archives include custom source and license notices.
-- The `ascii_token_128` caller-owned idempotency format accepts 1–128 ASCII
+- The `ascii_token_128` caller-owned idempotency format accepts 1â€“128 ASCII
   letters, digits, dots, underscores or hyphens in all four SDK runtimes.
 - Rust runtime HMAC-SHA256 computation and constant-time verification
   primitives for custom SDK extensions.

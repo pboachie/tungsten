@@ -168,6 +168,11 @@ Use your own `openapi.json`, or create this complete tiny example:
 
 The walkthrough uses an OpenAPI document, the native input. `init --from` also accepts Swagger 2.0, Postman collections, saved cURL commands, `.http`/`.rest` files, HAR captures and endpoint manifests — one of them, not a bundle — each with its own flags and review steps; see [Supported inputs](#supported-inputs).
 
+The [importing guide](https://pboachie.github.io/tungsten/importing.html) gives
+per-format commands, diagnostic families, saved-command shell dialects, HAR path
+review and the supported JSON Schema subset. Imported operations stay unreviewed
+until you explicitly review their safety and allowed origins in `agent.yml`.
+
 `init` writes `tungsten.yml` and `agent.yml` with **TypeScript, Python and docs**
 targets by default. Edit the existing `targets` block rather than appending a
 second one. For this example, replace its Python entry with:
