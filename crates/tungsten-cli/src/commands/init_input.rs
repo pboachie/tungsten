@@ -9,6 +9,11 @@ use tungsten_contract::{
     UnknownFact,
 };
 
+/// An importer diagnostic as a message that names `tungsten explain`.
+fn hinted(d: &tungsten_contract::Diagnostic) -> String {
+    format!("{d} (see `tungsten explain {}`)", d.code)
+}
+
 fn har_paths(args: &InitArgs) -> Result<std::collections::BTreeMap<String, String>, String> {
     let Some(path) = &args.har_paths else {
         return Ok(Default::default());
@@ -136,7 +141,7 @@ pub(super) fn prepare(args: &mut InitArgs) -> Result<(), String> {
         &ReviewedOverrides::default(),
         &Limits::default(),
     )
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| hinted(&e))?;
     std::fs::create_dir_all(&args.dir).map_err(|_| "cannot create project directory")?;
     // Exclusive opens refuse symlinks and races. On failure keep the created evidence
     // for inspection; never claim completed initialization or overwrite a conflict.
@@ -254,9 +259,9 @@ pub(super) fn import(args: &mut InitArgs) -> Result<Vec<String>, String> {
                 &limits,
             )
         }
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| hinted(&error))?;
         let output = tungsten_contract::infer(&evidence, &ReviewedOverrides::default(), &limits)
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| hinted(&error))?;
         import_report = Some(serde_json::json!({"contract": output.report}));
         output.openapi
     } else if root.get("log").is_some() {
@@ -271,7 +276,7 @@ pub(super) fn import(args: &mut InitArgs) -> Result<Vec<String>, String> {
             ..Default::default()
         };
         let imported = tungsten_contract::har::import_har(&bytes, &options, &limits)
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| hinted(&error))?;
         // Captured paths may hold identifiers or secrets; never persist one unreviewed.
         let literal = imported
             .report
@@ -288,7 +293,7 @@ pub(super) fn import(args: &mut InitArgs) -> Result<Vec<String>, String> {
         }
         let output = imported
             .infer(&ReviewedOverrides::default(), &limits)
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| hinted(&error))?;
         import_report =
             Some(serde_json::json!({"source": output.report, "contract": output.contract.report}));
         output.contract.openapi
@@ -299,10 +304,10 @@ pub(super) fn import(args: &mut InitArgs) -> Result<Vec<String>, String> {
             &tungsten_contract::postman::PostmanOptions::default(),
             &limits,
         )
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| hinted(&error))?;
         let output = imported
             .infer(&ReviewedOverrides::default(), &limits)
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| hinted(&error))?;
         import_report =
             Some(serde_json::json!({"source": imported.report, "contract": output.report}));
         output.openapi
