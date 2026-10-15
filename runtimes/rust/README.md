@@ -1,9 +1,16 @@
 # Tungsten Rust runtime packages
 
+## Registry status
+
+The 0.1.3 compiler is an unreleased source candidate. Registry installation of
+`tungsten-runtime` and `tungsten-cli-kit` is currently unavailable. Use matching
+runtime source for both stable 0.1.2 and the 0.1.3 source candidate.
+
 ## Install from source
 
-Requires Rust 1.88 or newer. Until a matching crates.io release is available,
-use a local dependency (adjust the checkout path):
+Requires Rust 1.88 or newer. Use the same source revision as your compiler and
+generated SDK: `v0.1.2` for stable 0.1.2, or the matching 0.1.3 candidate checkout.
+Configure a local dependency in the consuming Cargo project (adjust the path):
 
 ```toml
 [dependencies]
@@ -13,6 +20,9 @@ tungsten-runtime = { path = "../tungsten/runtimes/rust/runtime" }
 For generated SDKs, `targets.rust.runtime_path` accepts the same runtime crate
 path. The sibling `cli-kit` crate supplies the command engine for generated
 Rust CLIs. The async runtime uses Tokio and reqwest with rustls.
+For a local CLI-kit dependency, set `targets.rust.cli.kit_path` relative to the
+generated CLI crate's directory. Keep it and the runtime on the same revision.
+These runtime libraries do not install the Tungsten compiler.
 
 ## Shared contract
 
