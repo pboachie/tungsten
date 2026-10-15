@@ -8,6 +8,7 @@
 //! | `version` | `0.1.0` | Package version (PEP 440 release, optional pre/post/dev). |
 //! | `runtime` | [`DEFAULT_RUNTIME_SPEC`] | Version specifier of `tungsten-runtime`. |
 //! | `runtime_path` | none | A local `tungsten-runtime` checkout, as a uv path source. |
+//! | `python_version` | `3.12` | Minimum interpreter: `3.10`, `3.11`, or `3.12`. Older modes require runtime >=0.1.3. |
 //! | `models` | `pydantic` | `pydantic` (Pydantic v2 models), or `dataclasses`: stdlib dataclasses and `TypedDict` request shapes, validated by `tungsten_runtime.schema`, with no Pydantic dependency. |
 
 use tungsten_core::{Diagnostic, Diagnostics};
@@ -18,7 +19,7 @@ use tungsten_ir::naming::{self, Case};
 use crate::py::{is_identifier, is_keyword};
 
 /// Default `tungsten-runtime` version specifier.
-pub const DEFAULT_RUNTIME_SPEC: &str = ">=0.1.0,<0.2.0";
+pub const DEFAULT_RUNTIME_SPEC: &str = ">=0.1.3,<0.2.0";
 /// Pydantic range of generated packages: PEP 695 `type` aliases are
 /// supported since 2.10.
 pub const PYDANTIC_RANGE: &str = ">=2.10,<3";
@@ -57,6 +58,8 @@ pub struct Options {
     pub runtime: RuntimeDep,
     /// How models are written.
     pub models: Models,
+    /// Minimum interpreter version (`3.12` by default).
+    pub python_version: String,
 }
 
 /// Module names a generated package must not take: they would shadow its
@@ -122,11 +125,20 @@ impl Options {
             Some(m) if m == "dataclasses" => Models::Dataclasses,
             _ => Models::Pydantic,
         };
+        let python_version = read(
+            "python_version",
+            &|s| matches!(s, "3.10" | "3.11" | "3.12"),
+            "`3.10`, `3.11`, or `3.12`",
+        )
+        .unwrap_or_else(|| "3.12".to_string());
         let runtime = match runtime_path {
             Some(p) => RuntimeDep::Path(p),
-            None => {
-                RuntimeDep::Spec(runtime_spec.unwrap_or_else(|| DEFAULT_RUNTIME_SPEC.to_string()))
-            }
+            None => RuntimeDep::Spec(match runtime_spec {
+                Some(spec) if python_version != "3.12" => format!("{spec},>=0.1.3"),
+                Some(spec) => spec,
+                None if python_version != "3.12" => ">=0.1.3,<0.2.0".to_string(),
+                None => DEFAULT_RUNTIME_SPEC.to_string(),
+            }),
         };
         (
             Options {
@@ -135,6 +147,7 @@ impl Options {
                 version,
                 runtime,
                 models,
+                python_version,
             },
             diags,
         )

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! `tungsten check`: compile and report.
 
+use std::collections::BTreeSet;
 use std::fmt::Write as _;
 
 use tungsten_build::Compiled;
@@ -23,6 +24,33 @@ pub(crate) fn run(args: &CheckArgs, env: &CliEnv, no_external: bool) -> Report {
     // Whether the project compiles, before `--strict` turns warnings into
     // errors: the staleness comparison runs whenever the emitters can.
     let compiles = !has_errors(&diagnostics);
+    // `--audit-contracts`: the response-contract audit adds its findings as
+    // warnings (TG0930, TG0305, TG0931), before `--strict` promotes them
+    // with every other warning.
+    let mut audit_findings = 0;
+    let audit_contracts = args.audit_contracts || args.require_contracts;
+    let mut audit_start = diagnostics.len();
+    if audit_contracts && compiles {
+        let found = tungsten_build::contracts::audit(&compiled);
+        audit_findings = found.len();
+        // Prefer the contextual audit message over an existing converter
+        // warning at the same weak node (not two TG0305s for one schema).
+        let audited: BTreeSet<_> = found
+            .iter()
+            .filter_map(|d| {
+                d.labels
+                    .first()
+                    .map(|label| (d.code.as_str(), label.file.as_str(), label.pointer.as_str()))
+            })
+            .collect();
+        diagnostics.retain(|d| {
+            !d.labels.first().is_some_and(|label| {
+                audited.contains(&(d.code.as_str(), label.file.as_str(), label.pointer.as_str()))
+            })
+        });
+        audit_start = diagnostics.len();
+        diagnostics.extend(found.0);
+    }
     // A promoted warning stays collapsible: only real errors are always shown.
     let mut eligible: Vec<bool> = diagnostics
         .iter()
@@ -30,6 +58,8 @@ pub(crate) fn run(args: &CheckArgs, env: &CliEnv, no_external: bool) -> Report {
         .collect();
     let mut promoted = if args.strict {
         promote_warnings(&mut diagnostics)
+    } else if args.require_contracts {
+        promote_warnings(&mut diagnostics[audit_start..])
     } else {
         0
     };
@@ -70,6 +100,9 @@ pub(crate) fn run(args: &CheckArgs, env: &CliEnv, no_external: bool) -> Report {
         promoted,
         strict: args.strict,
         ci: args.ci,
+        audit_contracts,
+        require_contracts: args.require_contracts,
+        audit_findings,
         refs: ref_stats(&compiled.workspace.graph),
         stats: compiled.ir.as_ref().map(ir_stats),
         outputs,
@@ -82,7 +115,10 @@ pub(crate) fn run(args: &CheckArgs, env: &CliEnv, no_external: bool) -> Report {
     } else {
         exit::OK
     };
-    report.human = human(&args.input.path.display().to_string(), &result);
+    report.human = human(
+        &tungsten_openapi::acquire::display_source(&args.input.path.to_string_lossy()),
+        &result,
+    );
     report.diagnostics = diagnostics;
     if !args.all_warnings {
         report.collapse = Some(Collapse {
@@ -165,7 +201,12 @@ fn input_names(compiled: &Compiled) -> Vec<String> {
     compiled
         .config
         .as_ref()
-        .map(|c| c.inputs.iter().map(|i| i.spec.clone()).collect())
+        .map(|c| {
+            c.inputs
+                .iter()
+                .map(|i| tungsten_openapi::acquire::display_source(&i.spec))
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -192,6 +233,17 @@ fn human(path: &str, r: &CheckResult) -> String {
         None => "not built".to_string(),
     };
     let _ = writeln!(out, "  {:<9}{ir}", "ir");
+    if r.audit_contracts {
+        let line = if r.audit_findings > 0 {
+            format!(
+                "{}; --require-contracts or --strict fails on them",
+                plural(r.audit_findings, "finding", "findings")
+            )
+        } else {
+            "no weak response contracts".to_string()
+        };
+        let _ = writeln!(out, "  {:<9}{line}", "audit");
+    }
     if !r.outputs.is_empty() {
         let outputs: Vec<String> = r
             .outputs
@@ -208,7 +260,12 @@ fn human(path: &str, r: &CheckResult) -> String {
         plural(c.warnings, "warning", "warnings")
     );
     if r.promoted > 0 {
-        let _ = write!(line, " ({} promoted by --strict)", r.promoted);
+        let flag = if r.strict {
+            "--strict"
+        } else {
+            "--require-contracts"
+        };
+        let _ = write!(line, " ({} promoted by {flag})", r.promoted);
     }
     let _ = writeln!(out, "  {:<9}{line}", "result");
     if !r.by_code.is_empty() {

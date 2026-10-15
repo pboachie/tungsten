@@ -47,7 +47,7 @@ impl Options {
         let sdk_runtime_range = read_runtime("sdk_runtime");
         let sdk_runtime_path = read_runtime("sdk_runtime_path");
         let sdk_runtime = sdk_runtime_path.map_or_else(
-            || sdk_runtime_range.unwrap_or_else(|| "^0.1.0".into()),
+            || sdk_runtime_range.unwrap_or_else(|| "^0.1.3".into()),
             |path| format!("file:{path}"),
         );
         (

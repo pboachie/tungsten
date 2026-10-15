@@ -14,18 +14,22 @@ import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping
 from dataclasses import dataclass
 from queue import Empty, Full, Queue
-from typing import Any, cast
+from typing import Any, Generic, TypeVar, cast
 
 from ._envelope import diagnostic
 from ._json import canonical_json
 from .types import Diagnostic, Err, StreamEvent
+
+R = TypeVar("R", covariant=True)
+T = TypeVar("T")
+A = TypeVar("A")
 
 #: The key of ``on`` handlers that receives every event no other handler took.
 ANY_EVENT = "*"
 
 
 @dataclass(frozen=True, slots=True)
-class StreamResult[R]:
+class StreamResult(Generic[R]):
     """What a helper returns: ``value`` and the number of reconnects the
     stream made, or the failure that ended the stream with what was
     gathered before it as ``partial``. ``reconnects`` is that of the last
@@ -68,7 +72,7 @@ def _collection_limits(max_bytes: int | None, max_ms: int | None) -> tuple[int, 
     return (4 * 1024 * 1024 if max_bytes is None else max_bytes, 60_000 if max_ms is None else max_ms)
 
 
-class EventStream[T]:
+class EventStream(Generic[T]):
     """The events of a stream, for a synchronous client: iterate it for
     ``StreamEvent``s then at most one final ``Err``, or use a helper."""
 
@@ -153,7 +157,7 @@ class EventStream[T]:
             self.close()
         return StreamResult(True, reconnects, value=count)
 
-    def reduce[A](self, fold: Callable[[A, T, StreamEvent[T]], A], initial: A) -> StreamResult[A]:
+    def reduce(self, fold: Callable[[A, T, StreamEvent[T]], A], initial: A) -> StreamResult[A]:
         """Read the stream to its end and fold the events into one value
         (concatenating text deltas, say). ``partial`` of a failure is the
         value folded so far."""
@@ -280,7 +284,7 @@ class EventStream[T]:
         return StreamResult(True, reconnects)
 
 
-class AsyncEventStream[T]:
+class AsyncEventStream(Generic[T]):
     """The events of a stream, for an asynchronous client: ``async for`` over
     it, or ``await`` a helper."""
 
@@ -380,7 +384,7 @@ class AsyncEventStream[T]:
             await self.aclose()
         return StreamResult(True, reconnects, value=count)
 
-    async def reduce[A](self, fold: Callable[[A, T, StreamEvent[T]], A], initial: A) -> StreamResult[A]:
+    async def reduce(self, fold: Callable[[A, T, StreamEvent[T]], A], initial: A) -> StreamResult[A]:
         """See ``EventStream.reduce``."""
         accumulator = initial
         reconnects = 0

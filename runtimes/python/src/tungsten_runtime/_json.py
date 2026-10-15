@@ -115,7 +115,7 @@ def js_number(value: float) -> str:
 
 def iso_datetime(value: dt.datetime) -> str:
     """``Date.prototype.toISOString`` of a datetime (UTC, milliseconds)."""
-    utc = value.astimezone(dt.UTC) if value.tzinfo is not None else value
+    utc = value.astimezone(dt.timezone.utc) if value.tzinfo is not None else value
     return f"{utc.year:04d}-{utc.month:02d}-{utc.day:02d}T{utc.hour:02d}:{utc.minute:02d}:{utc.second:02d}.{utc.microsecond // 1000:03d}Z"
 
 

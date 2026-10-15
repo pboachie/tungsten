@@ -280,6 +280,7 @@ pub(crate) struct Plan<'a> {
     pub async_client_class: String,
     /// How models are written (`models` option).
     pub models_kind: Models,
+    pub python_compat: bool,
     /// Records some operation sends as a form or multipart body: their
     /// bytes fields take files in a request.
     pub file_records: BTreeSet<TypeId>,
@@ -315,6 +316,7 @@ impl<'a> Plan<'a> {
             client_class: String::new(),
             async_client_class: String::new(),
             models_kind: Models::Pydantic,
+            python_compat: false,
             file_records: file_records(ir),
         };
         plan.plan_resources(multi);
@@ -324,6 +326,11 @@ impl<'a> Plan<'a> {
     /// The plan for models written as `models`.
     pub(crate) fn with_models(mut self, models: Models) -> Self {
         self.models_kind = models;
+        self
+    }
+
+    pub(crate) fn with_python_compat(mut self, compat: bool) -> Self {
+        self.python_compat = compat;
         self
     }
 

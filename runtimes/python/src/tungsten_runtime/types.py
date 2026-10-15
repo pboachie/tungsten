@@ -23,9 +23,18 @@ updated.
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Literal, NotRequired, Protocol, TypedDict
+from typing import Any, Generic, Literal, Protocol, TypedDict, TypeVar
+
+if sys.version_info >= (3, 11):
+    from typing import NotRequired
+else:
+    from typing_extensions import NotRequired
+
+_T = TypeVar("_T")
+_T_co = TypeVar("_T_co", covariant=True)
 
 # ------------------------------------------------------------------ errors
 
@@ -99,7 +108,7 @@ class Verification:
 
 
 @dataclass(frozen=True, slots=True)
-class Ok[T]:
+class Ok(Generic[_T_co]):
     """A successful call. ``value`` is ``None`` for a bodiless success.
 
     ``value`` is the response validator's ``Valid.data`` when the operation
@@ -107,7 +116,7 @@ class Ok[T]:
     ``warn`` or ``strict`` and the body conforms; otherwise the decoded body
     (parsed JSON, text, or bytes)."""
 
-    value: T
+    value: _T_co
     meta: ResponseMeta
     verification: Verification | None = None
     ok: Literal[True] = True
@@ -160,7 +169,7 @@ def _shown(value: object, sensitive: Sequence[str]) -> str:
     return f"{type(value).__name__}({redacted!r})" if plain is not value else repr(redacted)
 
 
-type Result[T] = Ok[T] | Err
+Result = Ok[_T] | Err
 """Generated methods return ``Result[T]`` and never raise for API or
 transport errors. ``TungstenError`` and ``unwrap`` (runtime) give raising
 ergonomics. Branch with ``isinstance(result, Ok)`` or ``result.ok is True``
@@ -336,8 +345,8 @@ class Issue(TypedDict):
 
 
 @dataclass(frozen=True, slots=True)
-class Valid[T]:
-    data: T
+class Valid(Generic[_T_co]):
+    data: _T_co
     ok: Literal[True] = True
 
 
@@ -347,7 +356,7 @@ class Invalid:
     ok: Literal[False] = False
 
 
-class Validator[T](Protocol):
+class Validator(Protocol[_T_co]):
     """What the runtime needs from a schema; the emitter implements it with
     Pydantic v2 ``TypeAdapter``s or, for ``models: dataclasses``, with
     ``tungsten_runtime.schema``. For requests, ``Valid.data`` is the
@@ -361,7 +370,7 @@ class Validator[T](Protocol):
     ``body.<path>``. For responses, ``Valid.data`` is the typed value (a
     model instance) the caller receives."""
 
-    def validate(self, value: object) -> Valid[T] | Invalid: ...
+    def validate(self, value: object) -> Valid[_T_co] | Invalid: ...
 
 
 class SupportsRead(Protocol):
@@ -370,13 +379,11 @@ class SupportsRead(Protocol):
     def read(self, size: int = -1, /) -> bytes: ...
 
 
-type BinaryContent = bytes | bytearray | memoryview[int] | SupportsRead
+BinaryContent = bytes | bytearray | memoryview | SupportsRead
 """The content of a binary request value: bytes, or a binary file object the
 runtime reads."""
 
-type BinaryInput = (
-    BinaryContent | tuple[str | None, BinaryContent] | tuple[str | None, BinaryContent, str | None]
-)
+BinaryInput = BinaryContent | tuple[str | None, BinaryContent] | tuple[str | None, BinaryContent, str | None]
 """A binary request value (a whole binary body, or a file of a multipart
 body): bytes, a binary file object, or a ``(filename, content[,
 content_type])`` tuple. The runtime reads files into memory before sending."""
@@ -430,8 +437,8 @@ class OperationDescriptor(TypedDict):
     response: NotRequired[Validator[Any]]
     #: Paginated operations: the validator of one page item. ``pages()``
     #: yields each item as its ``Valid.data`` (with response validation on;
-    #: an item that does not match stays as decoded), so ``Page[T].items``
-    #: holds ``T`` without help from generated code.
+    #: an item that does not match stays as decoded), so ``Page[_T].items``
+    #: holds ``_T`` without help from generated code.
     page_item: NotRequired[Validator[Any]]
     summary: NotRequired[str | None]
     #: The operation's event stream (``ClientCore.stream``); absent when it has none.
@@ -733,24 +740,24 @@ class PreviewResult(TypedDict):
 
 
 @dataclass(frozen=True, slots=True)
-class Page[T]:
+class Page(Generic[_T]):
     """One page of a paginated operation. ``items`` are read from the page
     body at the pagination's ``items_field`` and validated with the
     operation's ``page_item`` validator (``OperationDescriptor``); ``body`` is
     the page's value as a call returns it; ``next`` is the next cursor, offset,
     page number or URL, None after the last page."""
 
-    items: list[T]
+    items: list[_T]
     body: Any
     next: Any
 
 
 @dataclass(frozen=True, slots=True)
-class StreamEvent[T]:
+class StreamEvent(Generic[_T_co]):
     """One event of a stream."""
 
     #: The event's ``data``, decoded from JSON (and validated).
-    value: T
+    value: _T_co
     #: The ``event`` field of the server-sent event, ``message`` when it has none.
     event: str
     #: The last event id the stream has set so far, or None.
@@ -761,7 +768,7 @@ class StreamEvent[T]:
     ok: Literal[True] = True
 
 
-type StreamItem[T] = StreamEvent[T] | Err
+StreamItem = StreamEvent[_T] | Err
 """What iterating a stream yields: events, then the end of the stream or one
 final ``Err`` (an error before the stream starts is the only item)."""
 

@@ -31,6 +31,8 @@ mod names;
 mod schema;
 mod union;
 
+pub(crate) use schema::{JsonType, declared_types, is_inert, is_structural};
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::Value;

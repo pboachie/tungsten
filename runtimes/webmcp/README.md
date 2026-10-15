@@ -62,6 +62,10 @@ For lower-level integration, `registerTungstenWebMcp` accepts a `ClientCore`, a 
 
 Use your application's browser session and API authorization. The API must enforce access controls; tool annotations do not grant access. Configure CORS and CSRF protections for your deployment, and keep server credentials out of frontend bundles. Keep the separate `@elysra/tungsten-runtime/node` export out of browser code.
 
+## Limits
+
+Browser support depends on the available WebMCP backend. No file-backed OAuth token store is provided; persist credentials only through application-owned browser authorization flows.
+
 ## Related packages and documentation
 
 - [@elysra/tungsten-runtime](https://www.npmjs.com/package/@elysra/tungsten-runtime): the generated SDK's transport and safety runtime.

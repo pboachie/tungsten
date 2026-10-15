@@ -18,6 +18,7 @@
 //! that depend on schema structure (pagination, rpc, error envelope) read
 //! the normalized documents, never type shapes.
 
+pub mod contracts;
 pub mod driver;
 pub mod suggest;
 pub mod types;

@@ -68,6 +68,23 @@ const LONG_HELP: &str = concat!(examples_text!(), exit_codes_text!());
     color = ColorChoice::Never
 )]
 pub(crate) struct Cli {
+    /// Reuse SHA256-verified remote inputs without network access.
+    #[arg(long, global = true, conflicts_with = "refresh_inputs")]
+    pub offline: bool,
+    /// Explicitly accept changed remote input bytes and replace their SHA256 pins.
+    #[arg(long, global = true)]
+    pub refresh_inputs: bool,
+    /// Header for remote input acquisition only (repeatable). Environment values
+    /// are newline-separated. Prefer the environment for secret header values.
+    #[arg(
+        long,
+        global = true,
+        env = "TUNGSTEN_INPUT_HEADERS",
+        hide_env_values = true,
+        value_delimiter = '\n',
+        value_name = "NAME: VALUE"
+    )]
+    pub input_header: Vec<String>,
     /// Print exactly one JSON document on stdout.
     #[arg(long, global = true)]
     pub json: bool,
@@ -203,6 +220,22 @@ pub(crate) struct CheckArgs {
     /// Treat warnings as errors.
     #[arg(long)]
     pub strict: bool,
+    /// Audit the success response contracts after compiling (opt-in): a
+    /// JSON response without a schema (TG0930), a schema that constrains
+    /// nothing (TG0305) and a free-form object response (TG0931) become
+    /// warnings naming the operation, status and media type. Nothing is
+    /// rejected and the default exit behavior is unchanged; combine with
+    /// --strict to fail when the audit finds weak contracts. Typed maps,
+    /// no-content responses and non-JSON media types are not findings; a
+    /// schema (or media-type entry) with a nonempty string review note in
+    /// `x-tungsten-reviewed-contract`, usually through an overlay, counts
+    /// as reviewed. TG0932 reports an incomplete audit when budgets are hit.
+    #[arg(long)]
+    pub audit_contracts: bool,
+    /// Run the response-contract audit and treat its findings as errors.
+    /// Other warnings keep their usual severity (unlike --strict).
+    #[arg(long)]
+    pub require_contracts: bool,
     /// Print every warning and info diagnostic in full. By default a code
     /// that repeats is shown a few times, then summarized with a count;
     /// `--json` always lists every diagnostic.
@@ -374,6 +407,11 @@ pub enum SchemaName {
 
 #[derive(Debug, Clone, Args)]
 pub(crate) struct InitArgs {
+    /// Acquisition provenance for a converted remote import, set internally.
+    #[arg(skip)]
+    pub source_url: Option<String>,
+    #[arg(skip)]
+    pub source_sha256: Option<String>,
     /// Advanced: default server URL for later live use; no credentials/query/fragment.
     #[arg(long, conflicts_with = "resume")]
     pub server_url: Option<String>,

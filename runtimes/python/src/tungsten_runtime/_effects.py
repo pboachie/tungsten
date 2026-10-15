@@ -13,9 +13,11 @@ from __future__ import annotations
 
 from collections.abc import Callable, Generator, Mapping
 from dataclasses import dataclass
-from typing import Literal, cast
+from typing import Literal, TypeVar, cast
 
 from .types import HttpMethod
+
+T = TypeVar("T")
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,7 +80,7 @@ class TimedOut:
     """No response within the attempt's deadline, after the request was (possibly) sent."""
 
 
-type AttemptOutcome = Answered | Streaming | NotSent | Lost | TimedOut
+AttemptOutcome = Answered | Streaming | NotSent | Lost | TimedOut
 
 
 @dataclass(frozen=True, slots=True)
@@ -175,7 +177,7 @@ class StreamFailed:
     kind: Literal["timeout", "lost"]
 
 
-type ReadOutcome = Chunk | StreamEnded | StreamFailed
+ReadOutcome = Chunk | StreamEnded | StreamFailed
 
 
 @dataclass(frozen=True, slots=True)
@@ -196,7 +198,7 @@ class Bounded:
     deadline_ms: float
 
 
-type Effect = (
+Effect = (
     Bounded
     | Send
     | Sleep
@@ -212,7 +214,7 @@ type Effect = (
 )
 
 
-type Flow[T] = Generator[Effect, object, T]
+Flow = Generator[Effect, object, T]
 
 
 def send(request: AttemptRequest) -> Flow[AttemptOutcome]:

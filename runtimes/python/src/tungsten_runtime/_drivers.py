@@ -19,6 +19,7 @@ import errno
 import inspect
 import socket
 import ssl
+import sys
 import threading
 import time
 import weakref
@@ -26,7 +27,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Itera
 from concurrent.futures import CancelledError
 from dataclasses import dataclass, replace
 from http.cookiejar import CookieJar, DefaultCookiePolicy
-from typing import Any, Literal, cast
+from typing import Any, Literal, TypeVar, cast
 
 import httpx
 
@@ -59,6 +60,14 @@ from ._effects import (
     TimedOut,
 )
 
+T = TypeVar("T")
+
+
+if sys.version_info >= (3, 11):
+    from asyncio import timeout as _timeout
+else:
+    from async_timeout import timeout as _timeout
+
 
 def _oversized_length(response: httpx.Response, maximum: int | None) -> bool:
     value = response.headers.get("content-length")
@@ -84,13 +93,13 @@ def sync_http(transport: object) -> httpx.Client:
     )
 
 
-async def _before_deadline[T](work: Awaitable[T], deadline: float | None) -> T:
+async def _before_deadline(work: Awaitable[T], deadline: float | None) -> T:
     if deadline is None:
         return await work
     try:
-        async with asyncio.timeout(max(0.0, deadline - time.monotonic())):
+        async with _timeout(max(0.0, deadline - time.monotonic())):
             return await work
-    except TimeoutError:
+    except (TimeoutError, asyncio.TimeoutError):
         raise httpx.ReadTimeout("The attempt deadline expired") from None
 
 
@@ -145,7 +154,7 @@ class _NativeSyncTransport(httpx.BaseTransport):
     def _on_loop(self) -> bool:
         return self._thread is not None and threading.current_thread() is self._thread
 
-    def run[T](self, work: Coroutine[Any, Any, T]) -> T:
+    def run(self, work: Coroutine[Any, Any, T]) -> T:
         if self._on_loop():
             work.close()
             raise RuntimeError("a synchronous call cannot run on the transport's own loop thread")
@@ -652,7 +661,7 @@ class SyncDriver:
             raise flight.error
         return flight.value
 
-    def run[T](self, flow: Flow[T]) -> T:
+    def run(self, flow: Flow[T]) -> T:
         """Run a flow that never emits to its result."""
         sent: object = None
         thrown: Exception | None = None
@@ -845,7 +854,7 @@ class AsyncDriver:
         #: flight (``ClientOptions.on_diagnostic``).
         self.on_cancelled = on_cancelled
 
-    async def run[T](self, flow: Flow[T]) -> T:
+    async def run(self, flow: Flow[T]) -> T:
         """Run a flow that never emits to its result."""
         sent: object = None
         thrown: Exception | None = None
@@ -924,7 +933,7 @@ class AsyncDriver:
             if remaining <= 0:
                 raise PollExpired()
             try:
-                async with asyncio.timeout(remaining):
+                async with _timeout(remaining):
                     inner = effect.effect
                     if isinstance(inner, Invoke | Observe):
                         try:
@@ -937,7 +946,7 @@ class AsyncDriver:
                                 return None
                             raise
                     return await self._perform(cast(Effect, inner))
-            except TimeoutError:
+            except (TimeoutError, asyncio.TimeoutError):
                 if isinstance(effect.effect, Send):
                     return TimedOut()
                 raise PollExpired() from None
