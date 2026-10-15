@@ -1,8 +1,6 @@
 # frozen_string_literal: true
 # SPDX-License-Identifier: Apache-2.0
 
-require "set"
-
 module Tungsten
   module Runtime
     class ClientCore

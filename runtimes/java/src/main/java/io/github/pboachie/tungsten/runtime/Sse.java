@@ -233,8 +233,16 @@ final class Sse {
                 }
                 break;
             case "retry":
-                if (Text.allDigits(value) && value.length() <= 16) {
-                    long ms = Long.parseLong(value);
+                if (Text.allDigits(value)) {
+                    int zeros = 0;
+                    while (zeros < value.length() - 1 && value.charAt(zeros) == '0') {
+                        zeros++;
+                    }
+                    String digits = value.substring(zeros);
+                    if (digits.length() > 16) {
+                        break;
+                    }
+                    long ms = Long.parseLong(digits);
                     if (ms <= 9007199254740991L) {
                         retry = ms;
                     }
