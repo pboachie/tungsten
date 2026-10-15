@@ -618,7 +618,10 @@ pub mod codes {
             "PM003",
             "Postman API key authentication lacks an explicit name or location",
         ),
-        ("PM004", "Postman dynamic variable cannot be resolved offline"),
+        (
+            "PM004",
+            "Postman dynamic variable cannot be resolved offline",
+        ),
         (
             "PM005",
             "Postman request URL or variable cannot be resolved to a fixed shape",
@@ -630,16 +633,16 @@ pub mod codes {
         ),
         ("TC001", "request evidence exceeds the byte limit"),
         ("TC002", "request evidence is not valid JSON"),
-        ("TC003", "request evidence or reviewed overrides are invalid"),
+        (
+            "TC003",
+            "request evidence or reviewed overrides are invalid",
+        ),
         (
             "TC004",
             "request evidence has an unsupported method or duplicate path placeholders",
         ),
         ("TC005", "evidence source id is not an opaque identifier"),
-        (
-            "TC006",
-            "unsupported schema keyword in structural evidence",
-        ),
+        ("TC006", "unsupported schema keyword in structural evidence"),
         (
             "TC007",
             "reviewed override uses an unstable parameter index pointer",
