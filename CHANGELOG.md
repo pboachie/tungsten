@@ -11,6 +11,13 @@ changes.
 
 ### Added
 
+- Postman import omits unsupported requests and folders per item instead of
+  failing the whole collection: non-raw or non-JSON bodies, non-JSON saved
+  responses, unsupported auth helpers, pre-request scripts and unresolved or
+  dynamic variables. Each omission is listed under `omitted` (code, JSON
+  pointer, reason) in `import-report.json`, and `init --from` prints the
+  omitted count. A collection with no importable request fails with PM008;
+  PM001 budgets and PM002 schema errors still fail the import.
 - A Dart SDK target, `dart`: a pub package with final model classes that
   decode and encode themselves, sealed unions, `Future` methods returning
   `Result<T>`, `Stream` pages and `EventStream<T>` streams, typed macros and
