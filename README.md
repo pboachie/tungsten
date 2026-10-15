@@ -57,6 +57,31 @@ still blocked, including relative references from a remote OpenAPI document.
 The cache contains original input bytes, so retain it with the same access
 controls as the source document and review it before sharing.
 
+Git inputs use `git+https://host/owner/repository@ref#path` in `init --from`,
+compiler paths or OpenAPI manifest inputs. A branch or tag resolves to exactly
+one commit, which is fetched shallowly into a disposable bare repository. No
+checkout, hooks, submodules or repository code runs. Git supplies private-source
+credentials through its configured helper or environment; `--input-header`
+applies only to HTTP document downloads. Local repositories for offline workflows
+and hermetic validation use `git+file:///absolute/repository@ref#path`.
+
+```sh
+tungsten init --from 'git+https://github.com/example/api@main#contracts/openapi.yaml' --dir my-api
+tungsten generate my-api --offline
+```
+
+The Git source lock under `.tungsten-inputs/git/` records the repository URL,
+requested ref, resolved commit, selected document and SHA256 of every materialized
+file. Ordinary runs retain that commit; `--refresh-inputs` is the explicit request
+to resolve a moving ref again. Converted imports retain their review provenance
+and require re-import into a fresh project to change source commits. Discovery
+recognizes all supported input formats and requires an explicit `#path` when
+multiple documents are found. Relative references retain the compiler's local
+input-root confinement. Acquisition is limited to 60 seconds, 512 files, 8 MiB per
+file and 64 MiB of materialized content and fetched Git object data. Narrow
+`#path` to bound discovery; the shallow fetch itself must still fit the object
+budget. Git redirects, symlinks, submodules and unsafe paths are refused.
+
 `tungsten init` takes **one** input of any of the kinds below — OpenAPI OR Swagger OR Postman OR saved cURL OR HTTP request files OR HAR, with the endpoint-manifest and manual paths alongside them — not a bundle. Every route is parsed offline: no request is sent or replayed, and no shell, script or capture is ever executed. Non-OpenAPI inputs are converted to a normalized OpenAPI document that `init` saves next to the manifests (`imported.openapi.json`, with an `import-report.json` where listed; the manual path writes `inferred.openapi.json` and `inference-report.json`), so the accepted input stays separate from the normalized artifact and the typed IR the compiler builds from it.
 
 | Input | You provide | Entry point and conversion | Limits and required review |
@@ -92,7 +117,16 @@ All conversion routes share these limits: setup inputs are bounded (8 MiB, with 
 | `webmcp` | Browser ESM package with tool manifest and registration helper | Node 22 to build; compatible browser to run | `@elysra/tungsten-webmcp` and the generated TypeScript SDK |
 | `docs` | `llms.txt`, `llms-full.txt`, `tools.json`, README | None beyond the compiler | No runtime dependency |
 
-These targets are implemented in source. Compiler and runtime packages have independent versions: use a runtime compatible with the generated package's dependency declaration, or the matching compiler source checkout. npm publication is separate from compiler availability. Python, Rust, Java, Kotlin, C#, F#, Dart and Ruby registry publication is not part of the 0.1.2 installation guarantee; the default Go module version also lacks a published nested-module tag. Use the source routes above rather than assuming a package name or version in generated metadata proves registry availability. Target `runtime_path` values are relative to the generated output directory.
+These targets are implemented in source. Starting with the 0.1.3 source candidate,
+compiler and runtime package versions advance together with the release tag.
+Generated packages default to compatible 0.1.3 runtime floors; an explicit
+`runtime` setting remains yours to qualify. The earlier 0.1.2 release has
+independently versioned non-npm runtime sources. Use the matching source checkout
+when a registry artifact is unavailable: source version metadata is not evidence
+of publication. Python, Rust, Java, Kotlin, C#, F#, Dart and Ruby registry
+publication is not part of the 0.1.2 installation guarantee; the default Go module
+still uses a resolvable pseudo-version until a nested-module tag is published.
+Target `runtime_path` values are relative to the generated output directory.
 
 Targets and the mock server (`tungsten mock`) share one IR. Generated-package and contract checks exercise each language, but source availability and passing shared scenarios do not establish complete validation, protocol or distribution parity. Unsupported features can vary by target. Review all compiler diagnostics: `--strict` rejects warnings, including unsupported `if`/`then`/`else` constraints, but informational diagnostics can still describe other unsupported features. Local checks do not establish live API acceptance or registry installation readiness.
 
@@ -256,7 +290,16 @@ uninterruptible callbacks retain capacity until completion and late results are
 rejected, without a hard settlement deadline. OS resolver cancellation depends on
 the platform.
 
-More examples: [typed Python SSE](examples/typed-sse/README.md) shows how to declare or overlay an incomplete stream response and consume named events with sync/async cleanup. [tungsten on six public APIs](examples/showcase/README.md) (the public OpenAPI descriptions of Stripe, GitHub, Twilio, OpenAI, Kubernetes and Discord): what `tungsten check` finds, MCP listing sizes, and generated SDK code in TypeScript, Python and Rust, reproducible with one script. [`examples/external-emitter-markdown`](examples/external-emitter-markdown) shows how to write an external emitter.
+More examples: the [runnable example gallery](examples/README.md) covers first
+SDKs, supported input routes, local mocks, destructive confirmation and CI/surface
+review workflows. [Typed Python SSE](examples/typed-sse/README.md) shows how to
+declare or overlay an incomplete stream response and consume named events with
+sync/async cleanup. [Tungsten on six public APIs](examples/showcase/README.md)
+uses the public OpenAPI descriptions of Stripe, GitHub, Twilio, OpenAI, Kubernetes
+and Discord to show diagnostics, MCP listing sizes and generated SDK code in
+TypeScript, Python and Rust, reproducible with one script. The
+[external Markdown emitter](examples/external-emitter-markdown) shows how to
+write an external emitter.
 
 An `external:` target in `tungsten.yml` names a command that tungsten starts as a process, unsandboxed and with your privileges. It runs on every command that produces output in memory, not only on a writing `generate`: `generate --dry-run` and `--check`, `check --ci`, `diff` and `report` run it too (plain `check` and `ir dump` do not). A CI job that runs `tungsten check --ci` on pull requests therefore executes whatever the pull request puts in `tungsten.yml`. Pass `--no-external` or set `TUNGSTEN_NO_EXTERNAL=1` to skip external targets (reported as TG0807) when the manifest is not trusted.
 

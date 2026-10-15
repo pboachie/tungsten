@@ -1,0 +1,44 @@
+{
+  "endpoint_manifest": 1,
+  "title": "Gallery Petstore",
+  "version": "1",
+  "base_url": "https://example.invalid",
+  "models": {
+    "Pet": {
+      "type": "object",
+      "required": [
+        "id",
+        "name"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "endpoints": [
+    {
+      "id": "listPets",
+      "method": "get",
+      "path": "/pets",
+      "responses": {
+        "200": {
+          "description": "Pets",
+          "content": {
+            "application/json": {
+              "type": "array",
+              "items": {
+                "$ref": "#/models/Pet"
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

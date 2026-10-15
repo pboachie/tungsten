@@ -11,6 +11,20 @@ changes.
 
 ### Added
 
+- Dedicated TG0808 diagnostics explain when an external emitter lacks imported-operation
+  policy enforcement; protocol-1 emitters remain compatible with ordinary projects.
+- Git input references (`git+https://...@ref#path`) with bounded shallow
+  acquisition, deterministic document discovery, commit/content pins and verified
+  offline reuse through the existing input and importer flows.
+- A runnable example gallery for first SDKs, supported input routes, destructive
+  confirmation, local mock development, generated-file drift and API surface
+  review. The catalog runner checks recipe documentation and builds generated
+  packages against matching runtime source in public CI.
+- Prepare compiler/runtime source manifests and identity headers for 0.1.3 in
+  lockstep. CI and release preparation check every runtime before building;
+  generated SDK defaults require the 0.1.3 runtime capabilities, while explicit
+  runtime overrides remain unchanged. The Go module default retains its
+  resolvable pseudo-version pending a separately published nested-module tag.
 - Runtime package installation and limits guidance, packaged README/LICENSE
   files, and consistent npm metadata checks.
 - Opt-in `check --audit-contracts` response quality diagnostics for missing JSON

@@ -1,0 +1,210 @@
+[
+  {
+    "name": "first-typescript",
+    "title": "First typescript SDK",
+    "description": "Generate and build a small typescript package from a local OpenAPI 3.1 contract.",
+    "mode": "target",
+    "prerequisites": "Node 22 or later with npm",
+    "outcome": "the generated TypeScript package builds and exports PetstoreClient",
+    "target": "typescript"
+  },
+  {
+    "name": "first-python",
+    "title": "First python SDK",
+    "description": "Generate and build a small python package from a local OpenAPI 3.1 contract.",
+    "mode": "target",
+    "prerequisites": "Python venv and pip",
+    "outcome": "the generated Python package installs and imports PetstoreClient",
+    "target": "python"
+  },
+  {
+    "name": "first-rust",
+    "title": "First rust SDK",
+    "description": "Generate and build a small rust package from a local OpenAPI 3.1 contract.",
+    "mode": "target",
+    "prerequisites": "the pinned Rust toolchain and Cargo",
+    "outcome": "the generated Rust SDK and CLI build, and the CLI prints help",
+    "target": "rust"
+  },
+  {
+    "name": "first-mcp",
+    "title": "First mcp SDK",
+    "description": "Generate and build a small mcp package from a local OpenAPI 3.1 contract.",
+    "mode": "target",
+    "prerequisites": "Node 22 or later with npm",
+    "outcome": "the generated TypeScript SDK and MCP server package build",
+    "target": "mcp"
+  },
+  {
+    "name": "first-webmcp",
+    "title": "First webmcp SDK",
+    "description": "Generate and build a small webmcp package from a local OpenAPI 3.1 contract.",
+    "mode": "target",
+    "prerequisites": "Node 22 or later with npm; a compatible browser is required for real browser registration",
+    "outcome": "the generated SDK and WebMCP browser package build; no browser acceptance is claimed",
+    "target": "webmcp"
+  },
+  {
+    "name": "first-docs",
+    "title": "First agent documentation",
+    "description": "Generate agent-facing documentation from a local OpenAPI 3.1 contract.",
+    "mode": "target",
+    "prerequisites": "no target-specific toolchain",
+    "outcome": "agent documentation is generated, including llms.txt and tools.json",
+    "target": "docs"
+  },
+  {
+    "name": "first-go",
+    "title": "First go SDK",
+    "description": "Generate and build a small go package from a local OpenAPI 3.1 contract.",
+    "mode": "target",
+    "prerequisites": "Go 1.22 or later",
+    "outcome": "the source-built external Go emitter generates an SDK that go build accepts",
+    "target": "go"
+  },
+  {
+    "name": "first-java",
+    "title": "First java SDK",
+    "description": "Generate and build a small java package from a local OpenAPI 3.1 contract.",
+    "mode": "target",
+    "prerequisites": "Java 17 or later and Maven",
+    "outcome": "Maven builds the generated SDK with the matching Java runtime sources",
+    "target": "java"
+  },
+  {
+    "name": "first-csharp",
+    "title": "First csharp SDK",
+    "description": "Generate and build a small csharp package from a local OpenAPI 3.1 contract.",
+    "mode": "target",
+    "prerequisites": ".NET 10 SDK",
+    "outcome": "dotnet builds the generated SDK against the matching C# runtime project",
+    "target": "csharp"
+  },
+  {
+    "name": "first-ruby",
+    "title": "First ruby SDK",
+    "description": "Generate and build a small ruby package from a local OpenAPI 3.1 contract.",
+    "mode": "target",
+    "prerequisites": "Ruby 3.3 or later and Bundler",
+    "outcome": "the generated gem installs local dependencies and loads petstore_sdk",
+    "target": "ruby"
+  },
+  {
+    "name": "input-openapi30",
+    "title": "Start with OpenAPI 3.0",
+    "description": "Initialize directly from a committed native OpenAPI document.",
+    "mode": "input",
+    "prerequisites": "no target-specific toolchain",
+    "outcome": "initialization keeps the original OpenAPI document and generates fresh agent documentation",
+    "input": "openapi.json"
+  },
+  {
+    "name": "input-openapi31",
+    "title": "Start with OpenAPI 3.1",
+    "description": "Initialize directly from a committed native OpenAPI document.",
+    "mode": "input",
+    "prerequisites": "no target-specific toolchain",
+    "outcome": "initialization keeps the original OpenAPI document and generates fresh agent documentation",
+    "input": "openapi.json"
+  },
+  {
+    "name": "input-postman",
+    "title": "Start with Postman",
+    "description": "Import a minimal Postman v2.1 collection offline; requests and scripts are not executed.",
+    "mode": "input",
+    "prerequisites": "no target-specific toolchain",
+    "outcome": "a normalized OpenAPI project and agent documentation are generated from the collection",
+    "input": "collection.json"
+  },
+  {
+    "name": "input-curl",
+    "title": "Start with saved cURL",
+    "description": "Parse a saved command as data with an explicitly reviewed route; never execute it.",
+    "mode": "input",
+    "prerequisites": "no target-specific toolchain",
+    "outcome": "the routed cURL observation becomes an OpenAPI project and fresh agent documentation",
+    "input": "request.curl",
+    "args": [
+      "--route",
+      "/pets"
+    ]
+  },
+  {
+    "name": "input-http",
+    "title": "Start with an HTTP request file",
+    "description": "Import a saved HTTP request with an explicit route template.",
+    "mode": "input",
+    "prerequisites": "no target-specific toolchain",
+    "outcome": "the routed HTTP request becomes an OpenAPI project and fresh agent documentation",
+    "input": "request.http",
+    "args": [
+      "--route",
+      "/pets"
+    ]
+  },
+  {
+    "name": "input-har",
+    "title": "Start with a HAR capture",
+    "description": "Import a minimal HAR 1.2 observation with its origin and path explicitly selected.",
+    "mode": "input",
+    "prerequisites": "no target-specific toolchain",
+    "outcome": "the reviewed capture becomes an OpenAPI project and fresh agent documentation",
+    "input": "capture.har",
+    "args": [
+      "--har-origin",
+      "https://example.invalid",
+      "--route",
+      "/pets"
+    ]
+  },
+  {
+    "name": "input-swagger",
+    "title": "Start with Swagger 2.0",
+    "description": "Convert a local Swagger document without fetching or guessing unsupported semantics.",
+    "mode": "input",
+    "prerequisites": "no target-specific toolchain",
+    "outcome": "the Swagger document becomes a normalized OpenAPI project and fresh agent documentation",
+    "input": "swagger.json"
+  },
+  {
+    "name": "input-json-schema",
+    "title": "Start with JSON Schema models",
+    "description": "Declare JSON Schema models together with explicit HTTP routing in an endpoint manifest.",
+    "mode": "input",
+    "prerequisites": "no target-specific toolchain; a bare schema alone cannot describe an HTTP API",
+    "outcome": "the routed declared models become OpenAPI and fresh agent documentation",
+    "input": "endpoints.json"
+  },
+  {
+    "name": "preview-confirmation",
+    "title": "Preview and confirm a destructive call",
+    "description": "Reject an unconfirmed deletion, preview its identical arguments, then execute with the returned token.",
+    "mode": "preview",
+    "prerequisites": "Python venv and pip",
+    "outcome": "a generated client calls the loopback mock, and exactly one DELETE reaches the server"
+  },
+  {
+    "name": "local-mock",
+    "title": "Develop against a local mock",
+    "description": "Run tungsten mock and call it through the generated Python client with strict response validation.",
+    "mode": "mock",
+    "prerequisites": "Python venv and pip",
+    "outcome": "the generated client receives a nonempty typed Pet list from a loopback mock"
+  },
+  {
+    "name": "ci-drift",
+    "title": "Detect stale generated files in CI",
+    "description": "Generate, change a copied contract, observe the no-diff gate fail, then regenerate and pass.",
+    "mode": "drift",
+    "prerequisites": "no target-specific toolchain",
+    "outcome": "generate --check fails with TG0901 after a contract change and succeeds after regeneration"
+  },
+  {
+    "name": "surface-diff",
+    "title": "Review semver and migration changes",
+    "description": "Compare a generated baseline with an additive operation using both diff review modes.",
+    "mode": "diff",
+    "prerequisites": "no target-specific toolchain",
+    "outcome": "diff --semver reports a minor change and diff --migration supplies an actionable migration"
+  }
+]

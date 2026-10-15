@@ -53,4 +53,4 @@ part 'src/typed.dart';
 part 'src/util.dart';
 
 /// The runtime's version, sent as `X-Tungsten-Runtime: tungsten-dart/<version>`.
-const String runtimeVersion = '0.1.0';
+const String runtimeVersion = '0.1.3';

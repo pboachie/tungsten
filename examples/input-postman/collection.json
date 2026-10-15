@@ -1,0 +1,28 @@
+{
+  "info": {
+    "name": "Gallery Petstore",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "List pets",
+      "request": {
+        "method": "GET",
+        "url": "https://example.invalid/pets"
+      },
+      "response": [
+        {
+          "name": "Pets",
+          "code": 200,
+          "header": [
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            }
+          ],
+          "body": "[{\"id\":\"pet-1\",\"name\":\"Fido\"}]"
+        }
+      ]
+    }
+  ]
+}
