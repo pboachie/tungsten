@@ -15,6 +15,10 @@ changes.
   optional configuration and all current SDK, CLI, MCP, WebMCP and docs outputs; link
   the reviewed response-contract recipe from the quickstart and gallery.
 
+- A bounded Rust/Axum source-declaration API in `tungsten_contract::source_axum`,
+  with literal route/type evidence, file/line coverage and explicit unresolved
+  constructs. It parses supplied source text without loading modules or running
+  applications, macros or build scripts, and preserves separately reviewed overrides.
 - Durable Java, C# and Ruby idempotency stores share the version-1 owner lease
   format with TypeScript, Python, Go and Rust. Automatic keys use atomic
   reservations while existing get/put-only custom stores remain compatible.
