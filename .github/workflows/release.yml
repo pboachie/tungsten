@@ -753,6 +753,11 @@ jobs:
         run: |
           version=$(python3 -c 'import pathlib,tomllib; print(tomllib.loads(pathlib.Path("Cargo.toml").read_text())["workspace"]["package"]["version"])')
           python3 .github/scripts/registry-artifacts.py --package rust --version "$version" --directory rust-dist --stage-from runtimes/rust/target/package/tmp-crate
+      - name: Rehearse the precredential Rust archive comparison
+        run: |
+          (cd runtimes/rust && cargo publish --workspace --dry-run --locked)
+          version=$(python3 -c 'import pathlib,tomllib; print(tomllib.loads(pathlib.Path("Cargo.toml").read_text())["workspace"]["package"]["version"])')
+          python3 .github/scripts/registry-artifacts.py --package rust --version "$version" --directory rust-dist --compare-build runtimes/rust/target/package/tmp-crate
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: rust-dist
