@@ -92,7 +92,16 @@ All conversion routes share these limits: setup inputs are bounded (8 MiB, with 
 | `webmcp` | Browser ESM package with tool manifest and registration helper | Node 22 to build; compatible browser to run | `@elysra/tungsten-webmcp` and the generated TypeScript SDK |
 | `docs` | `llms.txt`, `llms-full.txt`, `tools.json`, README | None beyond the compiler | No runtime dependency |
 
-These targets are implemented in source. Compiler and runtime packages have independent versions: use a runtime compatible with the generated package's dependency declaration, or the matching compiler source checkout. npm publication is separate from compiler availability. Python, Rust, Java, Kotlin, C#, F#, Dart and Ruby registry publication is not part of the 0.1.2 installation guarantee; the default Go module version also lacks a published nested-module tag. Use the source routes above rather than assuming a package name or version in generated metadata proves registry availability. Target `runtime_path` values are relative to the generated output directory.
+These targets are implemented in source. Starting with the 0.1.3 source candidate,
+compiler and runtime package versions advance together with the release tag.
+Generated packages default to compatible 0.1.3 runtime floors; an explicit
+`runtime` setting remains yours to qualify. The earlier 0.1.2 release has
+independently versioned non-npm runtime sources. Use the matching source checkout
+when a registry artifact is unavailable: source version metadata is not evidence
+of publication. Python, Rust, Java, Kotlin, C#, F#, Dart and Ruby registry
+publication is not part of the 0.1.2 installation guarantee; the default Go module
+still uses a resolvable pseudo-version until a nested-module tag is published.
+Target `runtime_path` values are relative to the generated output directory.
 
 Targets and the mock server (`tungsten mock`) share one IR. Generated-package and contract checks exercise each language, but source availability and passing shared scenarios do not establish complete validation, protocol or distribution parity. Unsupported features can vary by target. Review all compiler diagnostics: `--strict` rejects warnings, including unsupported `if`/`then`/`else` constraints, but informational diagnostics can still describe other unsupported features. Local checks do not establish live API acceptance or registry installation readiness.
 

@@ -19,7 +19,7 @@ use tungsten_ir::naming::{self, Case};
 use crate::py::{is_identifier, is_keyword};
 
 /// Default `tungsten-runtime` version specifier.
-pub const DEFAULT_RUNTIME_SPEC: &str = ">=0.1.0,<0.2.0";
+pub const DEFAULT_RUNTIME_SPEC: &str = ">=0.1.3,<0.2.0";
 /// Pydantic range of generated packages: PEP 695 `type` aliases are
 /// supported since 2.10.
 pub const PYDANTIC_RANGE: &str = ">=2.10,<3";
