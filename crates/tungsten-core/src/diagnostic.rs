@@ -656,10 +656,7 @@ pub mod codes {
             "PM007",
             "duplicate Postman operations mix unknown and explicit authentication",
         ),
-        (
-            "PM008",
-            "every Postman request was omitted as unsupported",
-        ),
+        ("PM008", "every Postman request was omitted as unsupported"),
         ("TC001", "request evidence exceeds the byte limit"),
         ("TC002", "request evidence is not valid JSON"),
         (
