@@ -829,6 +829,15 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
          codes, so look the emitter's code up in the emitter's documentation.",
     ),
     e(
+        "TG0807",
+        "A target in tungsten.yml declares `external`, and tungsten was told not to start \
+         external emitters (`--no-external` or `TUNGSTEN_NO_EXTERNAL=1`), so its command was \
+         not run and the target is skipped. Nothing is generated, compared or reported for it; \
+         the diagnostic is informational and does not fail the run.",
+        "This is the intended result for CI that validates a manifest it does not trust. Run \
+         without the option, on a manifest you trust, to emit or check the target.",
+    ),
+    e(
         "TG0901",
         "A target's output directory differs from what `tungsten generate` would write now: \
          a generated file is missing or has other content, a file of the previous \
