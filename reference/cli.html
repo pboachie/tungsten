@@ -330,13 +330,78 @@ Options:
 Usage: tungsten init [OPTIONS]
 
 Options:
-      --from &lt;SPEC&gt;        OpenAPI document to start from. Default: openapi.json, openapi.yaml or openapi.yml in the target directory
-      --json               Print exactly one JSON document on stdout
-      --dir &lt;DIR&gt;          Directory to write the manifests into (created if missing) [default: .]
-      --name &lt;NAME&gt;        API machine name: lowercase letters, digits and underscores, starting with a letter. Default: derived from the spec title
-      --targets &lt;TARGETS&gt;  Targets to configure, comma-separated or repeated (ts, py, rs aliases). Default: typescript,python,docs. WebMCP also configures TypeScript
-      --force              Overwrite existing tungsten.yml and agent.yml
-  -h, --help               Print help
+      --json
+          Print exactly one JSON document on stdout
+      --server-url &lt;SERVER_URL&gt;
+          Advanced: default server URL for later live use; no credentials/query/fragment
+      --cli-profile &lt;CLI_PROFILE&gt;
+          Advanced: generated Rust CLI environment profile NAME=URL; repeatable. Writes tungsten-profiles.toml with no credentials
+      --strict
+          Advanced: promote generation warnings to errors and withhold all outputs
+      --hide-operation &lt;HIDE_OPERATION&gt;
+          Hide an exact namespace.operationId from agent surfaces; repeatable
+      --require-confirmation &lt;REQUIRE_CONFIRMATION&gt;
+          Require argument-bound confirmation on an exact operation; repeatable. Never counts as imported-operation review or grants live authority
+      --python-runtime &lt;PYTHON_RUNTIME&gt;
+          Advanced: local Python runtime checkout (used only with explicit setup consent)
+      --rust-runtime &lt;RUST_RUNTIME&gt;
+          Advanced: local Rust runtime crate
+      --cli-kit-runtime &lt;CLI_KIT_RUNTIME&gt;
+          Advanced: local Rust CLI kit crate
+      --har-origin &lt;HAR_ORIGIN&gt;
+          Exact HTTP(S) origin to select from a multi-origin HAR (no credentials)
+      --har-paths &lt;JSON&gt;
+          Reviewed HAR paths: JSON object mapping each captured URL path to a template. Required for every imported path before any converted output is saved
+      --include-prefix &lt;INCLUDE_PREFIX&gt;
+          HAR path prefixes to include; repeatable, exclusions take precedence
+      --exclude-prefix &lt;EXCLUDE_PREFIX&gt;
+          HAR path prefixes to exclude; repeatable
+      --redact-property &lt;REDACT_PROPERTY&gt;
+          Additional HAR property names to redact from structural observations
+      --webmcp-runtime &lt;WEBMCP_RUNTIME&gt;
+          Advanced: use an explicitly supplied local WebMCP runtime package
+      --mcp-runtime &lt;MCP_RUNTIME&gt;
+          Advanced: use an explicitly supplied local MCP runtime package
+      --input-format &lt;INPUT_FORMAT&gt;
+          Advanced input detection override for saved requests [default: auto] [possible values: auto, curl, http]
+      --route &lt;ROUTE&gt;
+          Trusted path template for each saved request, in input order; repeat as needed. HAR input requires a template for every captured path; each path uses the most literal matching template
+      --shell-dialect &lt;SHELL_DIALECT&gt;
+          Shell quoting syntax of a saved cURL command; never executes a shell [default: posix] [possible values: posix, cmd, powershell]
+      --typescript-runtime &lt;TYPESCRIPT_RUNTIME&gt;
+          Advanced: use an explicitly supplied local TypeScript runtime package
+      --add-targets &lt;ADD_TARGETS&gt;
+          Add outputs to an existing project while retaining all existing settings. Edits only the `targets` section and saves the original manifest as tungsten.yml.init-backup (or the next free `.init-backup.N`) first
+      --local-example
+          Acquire project dependencies, build selected outputs and call a loopback mock. Requires the selected Node, Python or Rust toolchains; only new projects
+      --method &lt;METHOD&gt;
+          No-schema HTTP method; use a path template with --endpoint, never credentials [possible values: get, post, put, patch, delete, head, options]
+      --endpoint &lt;ENDPOINT&gt;
+          No-schema path template, for example /pets/{id}; not a live URL
+      --request-example &lt;REQUEST_EXAMPLE&gt;
+          JSON request example file; only its structure is persisted
+      --response-example &lt;RESPONSE_EXAMPLE&gt;
+          JSON response example file; only its structure is persisted (status 200)
+      --interactive
+          Start the guided terminal setup (requires a terminal, incompatible with JSON)
+      --no-interactive
+          Never prompt, including when attached to a terminal
+      --generate
+          Generate configured outputs after initializing, without acquiring dependencies
+      --resume
+          Generate from existing manifests without overwriting reviewed settings
+      --from &lt;SPEC&gt;
+          OpenAPI document to start from. Default: openapi.json, openapi.yaml or openapi.yml in the target directory
+      --dir &lt;DIR&gt;
+          Directory to write the manifests into (created if missing) [default: .]
+      --name &lt;NAME&gt;
+          API machine name: lowercase letters, digits and underscores, starting with a letter. Default: derived from the spec title
+      --targets &lt;TARGETS&gt;
+          Targets to configure, comma-separated or repeated (ts, py, rs aliases). Default: typescript,python,docs. WebMCP also configures TypeScript
+      --force
+          Overwrite existing tungsten.yml and agent.yml
+  -h, --help
+          Print help
 </code></pre>
 <h3 id="tungsten-doctor"><a class="header" href="#tungsten-doctor"><code>tungsten doctor</code></a></h3>
 <pre><code class="language-text">Report installed tools and optionally check project prerequisites
@@ -373,7 +438,7 @@ Arguments:
 
 Options:
       --json              Print exactly one JSON document on stdout
-      --target &lt;TARGETS&gt;  Only these targets, comma-separated (`typescript,docs`; `ts`, `py` and `rs` are accepted). Default: every target in tungsten.yml
+      --target &lt;TARGETS&gt;  Only these targets, comma-separated (`typescript,docs`; `ts`, `py`, `rs` and `rb` are accepted). Default: every target in tungsten.yml
       --dry-run           Report what would be written or removed without touching the disk
       --check             Compare the output directories with what would be generated; write nothing and exit 1 when they differ
       --force             Write into a non-empty output directory that tungsten did not generate (one without .tungsten/manifest.json)

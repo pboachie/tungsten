@@ -225,12 +225,27 @@ credential prompts; success does not verify package publication or registry acce
 <p>The browser adapter requires the <code>@elysra/tungsten-webmcp</code> and <code>@elysra/tungsten-runtime</code> packages.
 Their versions and any local development paths belong in the target options.
 See the <a href="webmcp.html">Browser WebMCP guide</a> for frontend registration and disposal.</p>
+<p>If hand-written TypeScript extensions under <code>src/custom</code> import npm packages,
+declare them in the manifest so regeneration keeps their dependencies:</p>
+<pre><code class="language-yaml">targets:
+  typescript:
+    package: "@my-api/sdk"
+    out: generated/typescript
+    dependencies:
+      "@hpke/core": "1.7.5"
+</code></pre>
+<p><code>dependencies</code> maps valid npm package names to non-empty version specifiers.
+Generation rejects invalid entries with TG0711. The emitter manages
+<code>@elysra/tungsten-runtime</code>, <code>zod</code>, and <code>typescript</code>, so these names cannot be
+added here; use <code>runtime</code> or <code>runtime_path</code> to configure the runtime dependency.
+Published TypeScript packages include preserved <code>src/custom</code> source and its
+license and provenance notices alongside compiled <code>dist</code> output.</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="platforms.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="package-managers.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
@@ -244,7 +259,7 @@ See the <a href="webmcp.html">Browser WebMCP guide</a> for frontend registration
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="platforms.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="package-managers.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <i class="fa fa-angle-left"></i>
                     </a>
 

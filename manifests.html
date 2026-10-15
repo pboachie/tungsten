@@ -429,7 +429,7 @@ defaults:
 tools:
   - operation: public.submitAlphaMessage
     safety: irreversible
-    idempotency: { policy: caller_owned, header: Idempotency-Key, format: uuid_v4, persist: required }
+    idempotency: { policy: caller_owned, header: Idempotency-Key, format: ascii_token_128, persist: required }
     confirmation:
       summary_fields: [recipient_e164, device_id, test_case_id, expires_at_ms]
       message: "This queues an SMS to {recipient_e164} from device {device_id}. Carrier charges may apply."
@@ -544,6 +544,7 @@ disclosure:
 <tr><td><code>content_identity</code></td><td>the body itself is the identity (binary envelopes)</td><td>n/a</td><td>resend identical bytes only</td></tr>
 </tbody></table>
 </div>
+<p>Caller-owned key formats are <code>uuid_v4</code>, <code>uuid</code>, <code>opaque</code> (1–255 printable non-space ASCII characters), and <code>ascii_token_128</code> (1–128 ASCII letters, digits, dots, underscores or hyphens). A policy format validates a supplied key without changing it.</p>
 <p>The blueprint's "auto-generate a key per call" is wrong for APIs like Acme
 where a key must survive the agent's own crash. <code>persist: required</code> exists for
 exactly that case and the generated docs say why.</p>

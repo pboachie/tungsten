@@ -190,6 +190,7 @@
 <tr><td>Emitter limits (TG07xx)</td><td><a href="#tg0701">TG0701</a>, <a href="#tg0702">TG0702</a>, <a href="#tg0703">TG0703</a>, <a href="#tg0704">TG0704</a>, <a href="#tg0710">TG0710</a>, <a href="#tg0711">TG0711</a>, <a href="#tg0712">TG0712</a>, <a href="#tg0713">TG0713</a>, <a href="#tg0720">TG0720</a>, <a href="#tg0721">TG0721</a>, <a href="#tg0722">TG0722</a>, <a href="#tg0723">TG0723</a>, <a href="#tg0724">TG0724</a>, <a href="#tg0725">TG0725</a>, <a href="#tg0726">TG0726</a>, <a href="#tg0727">TG0727</a>, <a href="#tg0730">TG0730</a>, <a href="#tg0731">TG0731</a>, <a href="#tg0732">TG0732</a>, <a href="#tg0733">TG0733</a>, <a href="#tg0740">TG0740</a>, <a href="#tg0741">TG0741</a>, <a href="#tg0742">TG0742</a>, <a href="#tg0743">TG0743</a>, <a href="#tg0744">TG0744</a>, <a href="#tg0745">TG0745</a>, <a href="#tg0746">TG0746</a>, <a href="#tg0750">TG0750</a>, <a href="#tg0751">TG0751</a>, <a href="#tg0752">TG0752</a>, <a href="#tg0753">TG0753</a>, <a href="#tg0760">TG0760</a>, <a href="#tg0790">TG0790</a>, <a href="#tg0791">TG0791</a>, <a href="#tg0792">TG0792</a>, <a href="#tg0793">TG0793</a></td></tr>
 <tr><td>External emitters (TG08xx)</td><td><a href="#tg0801">TG0801</a>, <a href="#tg0802">TG0802</a>, <a href="#tg0803">TG0803</a>, <a href="#tg0804">TG0804</a>, <a href="#tg0805">TG0805</a>, <a href="#tg0806">TG0806</a></td></tr>
 <tr><td>Staleness and CI (TG09xx)</td><td><a href="#tg0901">TG0901</a>, <a href="#tg0902">TG0902</a>, <a href="#tg0920">TG0920</a>, <a href="#tg0921">TG0921</a></td></tr>
+<tr><td>SDK emitters: Java, C#, Kotlin, Swift, PHP, Ruby, Dart (TG10xx)</td><td><a href="#tg1010">TG1010</a>, <a href="#tg1011">TG1011</a>, <a href="#tg1012">TG1012</a>, <a href="#tg1013">TG1013</a>, <a href="#tg1014">TG1014</a>, <a href="#tg1015">TG1015</a>, <a href="#tg1020">TG1020</a>, <a href="#tg1021">TG1021</a>, <a href="#tg1022">TG1022</a>, <a href="#tg1023">TG1023</a>, <a href="#tg1024">TG1024</a>, <a href="#tg1025">TG1025</a>, <a href="#tg1060">TG1060</a>, <a href="#tg1061">TG1061</a>, <a href="#tg1062">TG1062</a>, <a href="#tg1063">TG1063</a>, <a href="#tg1064">TG1064</a>, <a href="#tg1065">TG1065</a></td></tr>
 </tbody></table>
 </div>
 <h2 id="parsing-and-input-limits-tg01xx"><a class="header" href="#parsing-and-input-limits-tg01xx">Parsing and input limits (TG01xx)</a></h2>
@@ -444,9 +445,9 @@
 <p><em>Meaning.</em> A macro in the IR does not fit the canonical form the TypeScript SDK compiles: a step names an operation that is not callable, a reference names a later or unknown step, or an <code>{expr}</code> is not <code>&lt;ref&gt; in [..]</code>, <code>&lt;ref&gt; == x</code> or <code>&lt;ref&gt; != x</code>. The SDK is generated without that macro.</p>
 <p><em>Fix.</em> Fix the macro in agent.yml so every step calls a callable operation and every reference names <code>$input</code> or an earlier step's <code>as</code>.</p>
 <h3 id="tg0711"><a class="header" href="#tg0711">TG0711</a></h3>
-<p><strong>invalid TypeScript target option; default used</strong></p>
-<p><em>Meaning.</em> An option of the <code>typescript</code> target is not valid (for example a <code>package</code> that is not an npm package name or a <code>version</code> that is not a semantic version), so its default is used.</p>
-<p><em>Fix.</em> Fix the option under <code>targets.typescript</code> in tungsten.yml.</p>
+<p><strong>invalid TypeScript target option or custom dependency</strong></p>
+<p><em>Meaning.</em> An option of the <code>typescript</code> target is not valid (for example a <code>package</code> that is not an npm package name or a <code>version</code> that is not a semantic version). Invalid scalar options use their defaults. Invalid <code>dependencies</code> entries fail generation: package names must be valid npm names and version specifiers must be non-empty strings. Emitter-managed runtime, zod and typescript packages cannot be replaced.</p>
+<p><em>Fix.</em> Fix the option under <code>targets.typescript</code> in tungsten.yml. Configure the runtime with <code>runtime</code> or <code>runtime_path</code>; remove zod and typescript from <code>dependencies</code>.</p>
 <h3 id="tg0712"><a class="header" href="#tg0712">TG0712</a></h3>
 <p><strong>OpenID Connect scheme sent as a bearer token by the TypeScript SDK</strong></p>
 <p><em>Meaning.</em> The API declares an OpenID Connect security scheme. The TypeScript SDK sends the configured credential as a bearer token and does not run discovery or obtain tokens itself.</p>
@@ -609,6 +610,79 @@
 <p><strong>overlay suggest: no overlay action can fix this diagnostic code</strong></p>
 <p><em>Meaning.</em> <code>tungsten overlay suggest</code> only writes actions whose fix the compiler has already decided: the id of an operation without operationId, and the unique id of an operation whose operationId is used more than once. Warnings of any other code, such as an inferred pagination (TG0501) or a renamed field or type (TG0401), need a decision or live in tungsten.yml; the count is reported once per code.</p>
 <p><em>Fix.</em> Use <code>tungsten explain</code> on the code for its usual fix, for example declare the pagination under <code>pagination</code> in tungsten.yml.</p>
+<h2 id="sdk-emitters-java-c-kotlin-swift-php-ruby-dart-tg10xx"><a class="header" href="#sdk-emitters-java-c-kotlin-swift-php-ruby-dart-tg10xx">SDK emitters: Java, C#, Kotlin, Swift, PHP, Ruby, Dart (TG10xx)</a></h2>
+<h3 id="tg1010"><a class="header" href="#tg1010">TG1010</a></h3>
+<p><strong>invalid java target option; the default is used</strong></p>
+<p><em>Meaning.</em> An option of the <code>java</code> target in tungsten.yml is not valid: <code>group_id</code> and <code>package</code> must be dotted Java package names (no keywords), <code>artifact_id</code> a Maven artifactId, <code>version</code> and <code>runtime</code> versions such as 1.2.3, <code>runtime_path</code> a non-empty path. The generator uses the option's default instead.</p>
+<p><em>Fix.</em> Fix the option under <code>targets.java</code> in tungsten.yml, or remove it to keep the default.</p>
+<h3 id="tg1011"><a class="header" href="#tg1011">TG1011</a></h3>
+<p><strong>schema has no Java type in the java target; the runtime's JSON value is used</strong></p>
+<p><em>Meaning.</em> The Java SDK has no native type for this schema (an allOf whose members cannot be merged into one record, or an enum whose values mix JSON types), so the typed value is the runtime's JSON value (<code>Object</code>: JsonObject, List, String, Long, Double, Boolean or null). The runtime still validates it against the schema.</p>
+<p><em>Fix.</em> Merge the allOf members into one object, or give the enum values a single type, if a typed Java model is wanted.</p>
+<h3 id="tg1012"><a class="header" href="#tg1012">TG1012</a></h3>
+<p><strong>macro is not in the canonical form; the java target leaves it out</strong></p>
+<p><em>Meaning.</em> A macro of the agent manifest is not in the canonical form the SDK runtimes run (steps over callable operations, references to $input or earlier steps, a known step kind), so the Java SDK does not include it; the TypeScript SDK reports the same macro as TG0710.</p>
+<p><em>Fix.</em> Fix the macro in agent.yml at the pointer the diagnostic names.</p>
+<h3 id="tg1013"><a class="header" href="#tg1013">TG1013</a></h3>
+<p><strong>OpenID Connect scheme is sent as a bearer token by the java target</strong></p>
+<p><em>Meaning.</em> The Java runtime sends an OpenID Connect scheme as a bearer token. It does not run discovery or obtain tokens itself.</p>
+<p><em>Fix.</em> Configure the scheme with <code>AuthCredential.secret(token)</code> holding an access token you obtained from the provider.</p>
+<h3 id="tg1014"><a class="header" href="#tg1014">TG1014</a></h3>
+<p><strong>different success bodies by status: the java typed result is the JSON value</strong></p>
+<p><em>Meaning.</em> The operation answers different JSON bodies depending on the exact status, so the typed method's result is the runtime's JSON value; the result's metadata carries the status that tells them apart.</p>
+<p><em>Fix.</em> Read <code>meta().status()</code> of the result and decode the body with the matching model's <code>fromJson</code>.</p>
+<h3 id="tg1015"><a class="header" href="#tg1015">TG1015</a></h3>
+<p><strong>discriminated union variant without a tag value: the java target tries variants in order</strong></p>
+<p><em>Meaning.</em> The union declares a discriminator, but at least one variant has no tag value or is not a named type, so the Java SDK cannot pick the variant by its tag: it decodes the variants in the plan's order and takes the first that fits.</p>
+<p><em>Fix.</em> Give every variant a named schema and a discriminator mapping value.</p>
+<h3 id="tg1020"><a class="header" href="#tg1020">TG1020</a></h3>
+<p><strong>invalid csharp target option; the default is used</strong></p>
+<p><em>Meaning.</em> An option of the <code>csharp</code> target in tungsten.yml is not valid: <code>package_id</code> must be a NuGet package id, <code>namespace</code> a dotted C# namespace (no keywords), <code>version</code> and <code>runtime</code> versions such as 1.2.3, <code>runtime_path</code> a non-empty path. The generator uses the option's default instead.</p>
+<p><em>Fix.</em> Fix the option under <code>targets.csharp</code> in tungsten.yml, or remove it to keep the default.</p>
+<h3 id="tg1021"><a class="header" href="#tg1021">TG1021</a></h3>
+<p><strong>schema has no C# type in the csharp target; the runtime's JsonNode is used</strong></p>
+<p><em>Meaning.</em> The C# SDK has no native type for this schema (an allOf whose members cannot be merged into one record, or an enum whose values mix JSON types), so the typed value is the runtime's <code>JsonNode?</code>. The runtime still validates it against the schema.</p>
+<p><em>Fix.</em> Merge the allOf members into one object, or give the enum values a single type, if a typed C# model is wanted.</p>
+<h3 id="tg1022"><a class="header" href="#tg1022">TG1022</a></h3>
+<p><strong>macro is not in the canonical form; the csharp target leaves it out</strong></p>
+<p><em>Meaning.</em> A macro of the agent manifest is not in the canonical form the SDK runtimes run (steps over callable operations, references to $input or earlier steps, a known step kind), so the C# SDK does not include it; the TypeScript SDK reports the same macro as TG0710.</p>
+<p><em>Fix.</em> Fix the macro in agent.yml at the pointer the diagnostic names.</p>
+<h3 id="tg1023"><a class="header" href="#tg1023">TG1023</a></h3>
+<p><strong>OpenID Connect scheme is sent as a bearer token by the csharp target</strong></p>
+<p><em>Meaning.</em> The .NET runtime sends an OpenID Connect scheme as a bearer token. It does not run discovery or obtain tokens itself.</p>
+<p><em>Fix.</em> Configure the scheme with <code>Credential.Secret(token)</code> holding an access token you obtained from the provider.</p>
+<h3 id="tg1024"><a class="header" href="#tg1024">TG1024</a></h3>
+<p><strong>different success bodies by status: the csharp typed result is the JsonNode</strong></p>
+<p><em>Meaning.</em> The operation answers different JSON bodies depending on the exact status, so the typed method's result is the runtime's <code>JsonNode?</code>; the result's <code>Meta.Status</code> tells them apart.</p>
+<p><em>Fix.</em> Read <code>Meta.Status</code> of the result and decode the body with the matching model's <code>FromJson</code>.</p>
+<h3 id="tg1025"><a class="header" href="#tg1025">TG1025</a></h3>
+<p><strong>discriminated union variant without a tag value: the csharp target tries variants in order</strong></p>
+<p><em>Meaning.</em> The union declares a discriminator, but at least one variant has no tag value or is not a named type, so the C# SDK cannot pick the variant by its tag: it decodes the variants in the plan's order and takes the first that fits.</p>
+<p><em>Fix.</em> Give every variant a named schema and a discriminator mapping value.</p>
+<h3 id="tg1060"><a class="header" href="#tg1060">TG1060</a></h3>
+<p><strong>invalid Ruby target option; default used</strong></p>
+<p><em>Meaning.</em> An option of the <code>ruby</code> target is not valid (a <code>gem</code> that is not a lowercase gem name, a <code>module</code> that is not a Ruby constant path or names a core class or the runtime's <code>Tungsten</code>, a <code>version</code> that is not a gem version, a <code>runtime</code> that is not a gem requirement, or an empty <code>runtime_path</code>), so its default is used.</p>
+<p><em>Fix.</em> Fix the option under <code>targets.ruby</code> in tungsten.yml.</p>
+<h3 id="tg1061"><a class="header" href="#tg1061">TG1061</a></h3>
+<p><strong>allOf type that cannot be merged is a JSON value in the Ruby SDK</strong></p>
+<p><em>Meaning.</em> An <code>allOf</code> could not be merged into one record (a member is not a record, has typed extra members, or two members share a wire name). The Ruby SDK has no model for it: its typed value is the JSON value, which the runtime still validates against every member.</p>
+<p><em>Fix.</em> Restructure the schema so its members are records with distinct properties, or accept the JSON value.</p>
+<h3 id="tg1062"><a class="header" href="#tg1062">TG1062</a></h3>
+<p><strong>macro not in the canonical form; left out of the Ruby SDK</strong></p>
+<p><em>Meaning.</em> A macro of agent.yml is not in the canonical form the SDKs run (an unknown step kind or operation, a reference to no earlier step, an invalid <code>as</code>, <code>until</code> or budget). The Ruby SDK leaves it out; the other operations are generated as usual.</p>
+<p><em>Fix.</em> Fix the macro in agent.yml; the message names the offending member.</p>
+<h3 id="tg1063"><a class="header" href="#tg1063">TG1063</a></h3>
+<p><strong>OpenID Connect scheme sent as a bearer token by the Ruby SDK</strong></p>
+<p><em>Meaning.</em> The API declares an OpenID Connect security scheme. The Ruby SDK sends the configured credential as a bearer token and does not run discovery or obtain tokens itself.</p>
+<p><em>Fix.</em> Obtain the token yourself and pass it in <code>auth:</code> under the scheme's name.</p>
+<h3 id="tg1064"><a class="header" href="#tg1064">TG1064</a></h3>
+<p><strong>different success bodies by status; the Ruby SDK's typed result is the JSON value</strong></p>
+<p><em>Meaning.</em> An operation answers different JSON bodies depending on the status. The Ruby SDK's typed result for it is the decoded JSON value; the runtime validates it against the body of the status that arrived.</p>
+<p><em>Fix.</em> Nothing to fix; read <code>result.meta.status</code> to tell the bodies apart.</p>
+<h3 id="tg1065"><a class="header" href="#tg1065">TG1065</a></h3>
+<p><strong>discriminated union variant without a tag value; the Ruby SDK tries the variants in order</strong></p>
+<p><em>Meaning.</em> A union has a discriminator, but one of its variants has no tag value or is not a named type, so the Ruby SDK cannot pick the variant by the tag. It tries the variants in order and decodes the first that accepts the value.</p>
+<p><em>Fix.</em> Give every variant a <code>discriminator.mapping</code> entry or a <code>const</code> tag property.</p>
 
                     </main>
 

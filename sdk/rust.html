@@ -219,7 +219,7 @@ async fn main() -&gt; Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
 </span>use openapi_sdk::resources::pets::PetsCreateRequest;
 
 let opts = CallOptions {
-    idempotency_key: Some(key), // a UUIDv4 you persisted
+    idempotency_key: Some(key), // a caller-owned key you persisted
     ..Default::default()
 };
 let result = client.pets().create(PetsCreateRequest::default(), &amp;opts).await;

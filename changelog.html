@@ -184,9 +184,382 @@
 and this project will adhere to <a href="https://semver.org/spec/v2.0.0.html">Semantic Versioning</a>
 from its first stable release. Until 1.0, minor versions may contain breaking
 changes.</p>
-<h2 id="unreleased"><a class="header" href="#unreleased"><a href="https://github.com/pboachie/tungsten/compare/v0.1.0...HEAD">Unreleased</a></a></h2>
+<h2 id="unreleased"><a class="header" href="#unreleased"><a href="https://github.com/pboachie/tungsten/compare/v0.1.1...HEAD">Unreleased</a></a></h2>
+<h2 id="012"><a class="header" href="#012"><a href="https://github.com/pboachie/tungsten/compare/v0.1.1...HEAD">0.1.2</a></a></h2>
+<h3 id="breaking"><a class="header" href="#breaking">Breaking</a></h3>
+<ul>
+<li>
+<p>MCP <code>run_script</code>: the Deno sandbox no longer gets <code>--allow-net</code>. Scripts
+reach the API only through the session's client RPC. <code>denoArguments</code> and
+<code>sandboxCommand</code> ignore <code>host</code>, now optional, and <code>run_script</code> no longer
+needs or validates a <code>baseUrl</code>.</p>
+</li>
+<li>
+<p>MCP servers bound upstream response bodies to 4 MiB by default (new
+<code>maxResponseBytes</code> server option). Larger responses fail with
+<code>RESPONSE_TOO_LARGE</code> before they are materialized.</p>
+</li>
+<li>
+<p>WebMCP <code>maxResultBytes</code> now always bounds the upstream HTTP body before
+parsing, not only with <code>binaryResults</code> or <code>streamCollection</code>. An oversized
+response reports <code>RESPONSE_TOO_LARGE</code> instead of <code>RESULT_TOO_LARGE</code>.</p>
+</li>
+<li>
+<p>MCP sessions refuse a tool, sending nothing (<code>UNEXPECTED_RESPONSE</code>), when the
+manifest safety tier differs from the SDK operation's tier or from a macro's
+strictest declared or step tier. Regenerate the manifest and SDK together.
+Manifest annotations can make hints more cautious than the tier, never less.</p>
+</li>
+<li>
+<p>MCP HTTP servers answer 503 <code>Server closing</code> once <code>close()</code> starts, wait for
+sessions still initializing, and count those sessions against <code>maxSessions</code>.</p>
+</li>
+<li>
+<p>The Java transport buffers at most 64 response chunks per body and applies
+backpressure to the socket reader. Closing a body discards buffered chunks.</p>
+</li>
+<li>
+<p>CI and release preparation fail when a committed lockfile gains a package
+name missing from <code>.github/dependency-policy.json</code> or when OSV reports an
+advisory. Release npm installs run with <code>--ignore-scripts</code>, and Python
+packages build with hash-locked tools and <code>--no-isolation</code>.</p>
+</li>
+<li>
+<p>Postman import never copies variable values into contract paths. A
+<code>{{name}}</code> path segment is accepted only as a whole segment naming a variable
+declared in the request URL's <code>variable</code> list, and becomes the <code>{name}</code> path
+parameter; any other path variable is refused (PM005, use <code>:name</code>). Base URL
+variables must hold an origin only; a value with a path prefix is refused
+(PM005). Dynamic variables such as <code>{{$guid}}</code> are refused in every path
+segment (PM004), including after an unresolved base URL variable.</p>
+</li>
+<li>
+<p><code>tungsten init</code> from a HAR capture requires a reviewed path for every
+imported path before saving: a <code>--route</code> template (literal paths too, for
+example <code>--route /health</code>) or a <code>--har-paths</code> JSON mapping of captured paths
+to templates, which the interactive setup also asks for; a
+captured path without one, a <code>--route</code> that matches no imported entry, or two
+equally specific matching templates are refused. <code>HarOptions</code> gains a
+<code>route_templates</code> field.</p>
+</li>
+<li>
+<p><code>tungsten init</code> reports JSON setup input it cannot parse (invalid syntax or
+nesting deeper than 128 levels) instead of passing it on as OpenAPI.</p>
+</li>
+<li>
+<p><code>install.sh --init</code> and <code>install.ps1 -Init</code> print the PATH note before setup
+and no longer report setup as an install failure (exit 1): a cancelled or
+refused setup exits 4 and a failed setup exits 5, with the binary installed.</p>
+</li>
+<li>
+<p><code>tungsten init --resume --add-targets</code> keeps every backup: the first is
+<code>tungsten.yml.init-backup</code>, later ones <code>tungsten.yml.init-backup.N</code>; the JSON
+result names the one written. A flow-style <code>targets:</code> mapping is rewritten in
+block style, with a warning when comments inside it were dropped.</p>
+</li>
+<li>
+<p>Rust emitter API: <code>tungsten_emit_rs::Dep::Path</code> is now
+<code>Dep::Path { path, version }</code>; generated <code>runtime_path</code> and <code>cli.kit_path</code>
+dependencies carry the <code>runtime</code> or <code>cli.kit</code> requirement (default <code>0.1</code>).</p>
+</li>
+<li>
+<p>The <code>ghcr.io/pboachie/tungsten:latest</code> container tag moves only when the
+distributed tag is itself the newest published stable release (not a draft,
+not flagged prerelease).</p>
+</li>
+<li>
+<p>A 3xx status an operation declares (exactly or by class) is its success in all
+seven runtimes, also with <code>redirects: none</code>, so a mutation answered with a
+declared <code>303 See Other</code> succeeds. Redirects are still never followed on
+mutations, and with <code>redirects: none</code> a 3xx the operation does not declare (no
+match, or only <code>default</code>) fails as <code>UNEXPECTED_RESPONSE</code> without being
+followed. Java, Ruby and C# report that refusal with the redirect remediation the
+other runtimes use.</p>
+</li>
+<li>
+<p>Java: <code>ApiDescriptor</code> has the <code>redirects</code> record component; the eleven-argument
+constructor is removed, so construct it with the canonical constructor.</p>
+</li>
+<li>
+<p>Ruby: <code>ClientOptions</code> has the <code>redirects</code> member (first), which shifts positional
+construction and <code>deconstruct</code>; pass options by keyword.</p>
+</li>
+<li>
+<p>Rust: <code>CallOptions</code> has the public <code>max_pages</code> field (pages of one traversal;
+None or zero: unbounded), and <code>ApiDescriptor</code> the <code>redirects</code> field. Build
+<code>CallOptions</code> with <code>..CallOptions::default()</code> so later fields do not break
+handwritten literals.</p>
+</li>
+<li>
+<p>Postman import never copies variable values into contract paths. A
+<code>{{name}}</code> path segment is accepted only as a whole segment naming a variable
+declared in the request URL's <code>variable</code> list, and becomes the <code>{name}</code> path
+parameter; any other path variable is refused (PM005, use <code>:name</code>). Base URL
+variables must hold an origin only; a value with a path prefix is refused
+(PM005). Dynamic variables such as <code>{{$guid}}</code> are refused in every path
+segment (PM004), including after an unresolved base URL variable.</p>
+</li>
+<li>
+<p><code>tungsten init</code> from a HAR capture requires a reviewed path for every
+imported path before saving: a <code>--route</code> template (literal paths too, for
+example <code>--route /health</code>) or a <code>--har-paths</code> JSON mapping of captured paths
+to templates, which the interactive setup also asks for; a
+captured path without one, a <code>--route</code> that matches no imported entry, or two
+equally specific matching templates are refused. <code>HarOptions</code> gains a
+<code>route_templates</code> field.</p>
+</li>
+<li>
+<p><code>tungsten init</code> reports JSON setup input it cannot parse (invalid syntax or
+nesting deeper than 128 levels) instead of passing it on as OpenAPI.</p>
+</li>
+</ul>
+<h3 id="fixed"><a class="header" href="#fixed">Fixed</a></h3>
+<ul>
+<li>
+<p>Wait for the MCP sandbox child to close before removing its temporary files,
+including failed starts and terminated scripts on Windows.</p>
+</li>
+<li>
+<p>MCP <code>run_script</code>: the Deno sandbox no longer gets <code>--allow-net</code>. Scripts
+reach the API only through the session's client RPC. <code>denoArguments</code> and
+<code>sandboxCommand</code> ignore <code>host</code>, now optional, and <code>run_script</code> no longer
+needs or validates a <code>baseUrl</code>.</p>
+</li>
+<li>
+<p>MCP servers bound upstream response bodies to 4 MiB by default (new
+<code>maxResponseBytes</code> server option). Larger responses fail with
+<code>RESPONSE_TOO_LARGE</code> before they are materialized.</p>
+</li>
+<li>
+<p>WebMCP <code>maxResultBytes</code> now always bounds the upstream HTTP body before
+parsing, not only with <code>binaryResults</code> or <code>streamCollection</code>. An oversized
+response reports <code>RESPONSE_TOO_LARGE</code> instead of <code>RESULT_TOO_LARGE</code>.</p>
+</li>
+<li>
+<p>MCP sessions refuse a tool, sending nothing (<code>UNEXPECTED_RESPONSE</code>), when the
+manifest safety tier differs from the SDK operation's tier or from a macro's
+strictest declared or step tier. Regenerate the manifest and SDK together.
+Manifest annotations can make hints more cautious than the tier, never less.</p>
+</li>
+<li>
+<p>MCP HTTP servers answer 503 <code>Server closing</code> once <code>close()</code> starts, wait for
+sessions still initializing, and count those sessions against <code>maxSessions</code>.</p>
+</li>
+<li>
+<p>The Java transport buffers at most 64 response chunks per body and applies
+backpressure to the socket reader. Closing a body discards buffered chunks.</p>
+</li>
+<li>
+<p>CI and release preparation fail when a committed lockfile gains a package
+name missing from <code>.github/dependency-policy.json</code> or when OSV reports an
+advisory. Release npm installs run with <code>--ignore-scripts</code>, and Python
+packages build with hash-locked tools and <code>--no-isolation</code>.</p>
+</li>
+</ul>
+<h3 id="security"><a class="header" href="#security">Security</a></h3>
+<ul>
+<li>Reserve MCP session capacity during asynchronous initialization, validate
+manifest safety against executable descriptors, and keep Deno scripts on
+the client RPC channel without direct network permission.</li>
+<li>Bound upstream MCP response bodies to 4 MiB by default (configurable through
+<code>maxResponseBytes</code>), and apply WebMCP result byte limits before HTTP body
+materialization. Oversized responses return the SDK's <code>RESPONSE_TOO_LARGE</code>
+diagnostic; inconsistent MCP manifest/SDK safety tiers fail before dispatch.</li>
+<li>Bound Java transport queues with backpressure and cancellation cleanup.</li>
+<li>Check locked dependency names, sources, hashes and current advisories in CI
+and release preparation; disable npm install hooks in release builds.</li>
+<li>Hash-lock Python release tooling and disable build isolation during package
+creation to prevent unpinned build-tool resolution.</li>
+</ul>
+<h3 id="fixed-1"><a class="header" href="#fixed-1">Fixed</a></h3>
+<ul>
+<li>
+<p>Bound Postman variable expansion and parsed examples by one import-wide byte
+and node budget (PM001), so a large variable referenced many times cannot
+amplify memory use.</p>
+</li>
+<li>
+<p>Compare structured and raw Postman URL paths after the same normalization.</p>
+</li>
+<li>
+<p>Record imported schema provenance in time linear in the merged schema and
+samples.</p>
+</li>
+<li>
+<p>Filter HAR entries by origin and prefix before validating their URLs, and
+count non-HTTP(S) entries such as WebSocket or extension requests as filtered.</p>
+</li>
+<li>
+<p>Accept JSON <code>Content-Type</code> parameters such as <code>charset</code> in saved cURL and HTTP
+requests.</p>
+</li>
+<li>
+<p>Detect deeply nested JSON setup inputs with a JSON parser instead of
+misreading Postman or Swagger files as OpenAPI.</p>
+</li>
+<li>
+<p>Make generated Rust CLIs and SDKs packageable: the SDK dependency and local
+<code>runtime_path</code>/<code>cli.kit_path</code> dependencies carry a version requirement, and the
+generated workspace shares the Rust 1.88 minimum.</p>
+</li>
+<li>
+<p><code>init --resume --add-targets</code> edits only the <code>targets</code> section of tungsten.yml
+(comments and the schema header stay), links new MCP/WebMCP outputs to the
+TypeScript SDK's local runtime, and can run repeatedly (numbered backups, no
+leftover pending file). Going back in the guided setup no longer keeps the
+abandoned project's answers.</p>
+</li>
+<li>
+<p>Warn when conditional JSON Schema constraints are ignored; strict check and
+generation reject them before writing output. Conditional validation is not
+implemented in generated clients.</p>
+</li>
+<li>
+<p>Enforce Python native HTTP attempt deadlines across response headers and body,
+joining cancellation and response cleanup; custom transports remain cooperative.</p>
+</li>
+<li>
+<p>Normalize embedded Rust support templates so LF and CRLF checkouts generate
+identical support files.</p>
+</li>
+<li>
+<p>Preserve explicit confirmation restrictions on imported operations even when
+an earlier scoped review classified the operation as read-only.</p>
+</li>
+<li>
+<p>Reject noncanonical confirmation tokens and prototype-derived MCP arguments.
+Confirmation previews bind immutable Blob/File contents and metadata.</p>
+</li>
+<li>
+<p>Reserve automatic idempotency keys atomically across clients sharing a store;
+bound Python/Rust asynchronous file-store work and stop dispatch after cancellation.</p>
+</li>
+<li>
+<p>Parse fragmented event streams with linear scanning, consistent trailing-CR
+limits and safe oversized retry hints across TypeScript, Python, Rust and Go.</p>
+</li>
+<li>
+<p>Apply positive polling deadlines across authentication, transport, retries and
+sleeps; isolate OAuth refresh by scheme with cancellable waiters in Go and Rust.</p>
+</li>
+<li>
+<p>Resolve pagination links against the final response URL, preserve nested page
+item types, reject cursor and URL cycles before repeated dispatch, and support
+explicit page limits across the four runtimes.</p>
+</li>
+<li>
+<p>Propagate Rust emitter graph facts with worklists and coalesce concurrent MCP
+query embeddings. Complete the README's generated Python SDK installation steps.</p>
+</li>
+<li>
+<p>Release a Python sync client's native transport thread, event loop and connection
+pool when the client is garbage collected without <code>close()</code>, run polling waits
+on the caller's thread so expiring polls no longer hold worker permits, and never
+block the transport's loop thread on itself when a stream is finalized there.</p>
+</li>
+<li>
+<p>File idempotency stores (TypeScript, Python, Go, Rust) record the owner of their
+<code>&lt;path&gt;.lock</code> lease (host, pid, token) and wait up to 2 s for another writer before
+refusing with the owner's process and host. Only its owner removes a lease, so a
+lease left by a process that died is removed by hand (the refusal says so); a
+writer re-checks ownership before committing, so it never overwrites a key once its
+lease is gone. Reservations are serialized per store file within a process, and a
+reserved key is kept when removing the lease fails.</p>
+</li>
+<li>
+<p>Bound aggregate Swagger reference and media-schema expansion during conversion.</p>
+</li>
+<li>
+<p>Require an explicit reviewed HAR path mapping before saving imported contracts.</p>
+</li>
+<li>
+<p>Pin the container's zlib package to its patched Alpine release.</p>
+</li>
+</ul>
+<h3 id="security-1"><a class="header" href="#security-1">Security</a></h3>
+<ul>
+<li>Reserve MCP session capacity during asynchronous initialization, validate
+manifest safety against executable descriptors, and keep Deno scripts on
+the client RPC channel without direct network permission.</li>
+<li>Bound upstream MCP response bodies to 4 MiB by default (configurable through
+<code>maxResponseBytes</code>), and apply WebMCP result byte limits before HTTP body
+materialization. Oversized responses return the SDK's <code>RESPONSE_TOO_LARGE</code>
+diagnostic; inconsistent MCP manifest/SDK safety tiers fail before dispatch.</li>
+<li>Require canonical decimal expiry in C#, Java and Ruby confirmation tokens.</li>
+<li>Bound Java transport queues with backpressure and cancellation cleanup.</li>
+<li>Check locked dependency names, sources, hashes and current advisories in CI
+and release preparation; disable npm install hooks in release builds.</li>
+<li>Hash-lock Python release tooling and disable build isolation during package
+creation to prevent unpinned build-tool resolution.</li>
+<li>Keep Postman path parameters explicit and restrict URL variables to origins.</li>
+</ul>
 <h3 id="added"><a class="header" href="#added">Added</a></h3>
 <ul>
+<li>
+<p>Add <code>defaults.redirects: none</code> and client redirect options across all seven SDK
+runtimes. Either setting disables every 3xx redirect without retries; the default
+remains same-origin reads only. Regenerate Rust SDKs; handwritten <code>ApiDescriptor</code>
+literals must add <code>redirects: RedirectPolicy::SameOriginRead</code> (or
+<code>redirects: RedirectPolicy::None</code>).</p>
+</li>
+<li>
+<p>Guided <code>init</code>: a bare <code>tungsten init</code> on a terminal starts it (<code>--interactive</code>
+asks for it; <code>--no-interactive</code>, <code>--json</code> or any other <code>init</code> option keeps the
+scripted path), with multi-output selection, consent before
+writes, explicit non-interactive generation, additive output edits with backups,
+no-schema inference and scoped TypeScript/Python/Rust client and MCP mock checks.</p>
+</li>
+<li>
+<p>Guided Rust local setup allows its first <code>cargo build</code> up to 20 minutes
+(previously 10) so slow machines and cold caches finish the one-time build
+instead of being cut off with the project files preserved for a retry.</p>
+</li>
+<li>
+<p>The MCP runtime's <code>tools/list</code> keeps marking keyed operations
+(<code>caller_owned</code>, <code>auto</code>, <code>content_hash</code> idempotency policies) with
+<code>idempotentHint</code> after its caution clamp, matching the generated manifest:
+retrying them with the same key is a no-op. A manifest can still set the
+hint to <code>false</code> for a specific tool.</p>
+</li>
+<li>
+<p>Guided advanced server/validation controls, restrictive per-operation settings,
+credential-free CLI environment profiles and synthetic JSON request examples.</p>
+</li>
+<li>
+<p>Bounded offline Swagger 2 conversion through the OpenAPI loader, preserving
+local definitions, parameter serialization, media types and authentication.</p>
+</li>
+<li>
+<p>Imported operations retain review provenance and require argument-bound
+confirmation until explicitly reviewed per operation and exact server origin.
+Scoped reviews require a runtime with import-policy support. Regenerate Rust
+SDKs when upgrading; handwritten <code>AgentMeta</code> literals must add
+<code>import_policy: None</code> or an explicit policy.</p>
+</li>
+<li>
+<p>Import supported Postman Collection v2.1 requests through the offline contract
+engine, preserving explicit authentication and reporting unsupported behavior.</p>
+</li>
+<li>
+<p>Import bounded HAR captures offline with explicit origin selection, reviewed
+path templates, configurable structural redaction, and omission reports.</p>
+</li>
+<li>
+<p>Versioned endpoint manifests can combine declared JSON Schema models with
+explicit HTTP routing and auth references using bounded offline model reads.</p>
+</li>
+<li>
+<p>TypeScript SDK targets can declare npm dependencies for preserved custom
+extensions; package archives include custom source and license notices.</p>
+</li>
+<li>
+<p>The <code>ascii_token_128</code> caller-owned idempotency format accepts 1–128 ASCII
+letters, digits, dots, underscores or hyphens in all four SDK runtimes.</p>
+</li>
+<li>
+<p>Rust runtime HMAC-SHA256 computation and constant-time verification
+primitives for custom SDK extensions.</p>
+</li>
 <li>
 <p>Project setup with <code>init --targets</code> and a project-aware <code>doctor --strict</code>;
 browser targets automatically include their sibling TypeScript SDK.</p>
@@ -220,6 +593,22 @@ previews, cancellation and disposal. The runtime adapts the experimental
 <code>document.modelContext</code> API and the legacy <code>navigator.modelContext</code> shape;
 generated-package browser smoke passed in Chromium 154.0.8037.57 with
 <code>WebMCPTesting</code> enabled. Full cross-browser conformance remains a follow-up.</p>
+</li>
+<li>
+<p>A Java target (<code>java</code>, <code>tungsten-emit-java</code>) and the Java runtime
+the compiler (<code>io.github.pboachie.tungsten:tungsten-runtime</code>, Java 17,
+standard library only): records for models, sealed interfaces for unions,
+typed resource methods returning <code>Result</code>, pages, event streams, previews,
+macros and <code>Dispatch</code>; a Maven project per SDK. Diagnostics TG1010 to
+TG1015.</p>
+</li>
+<li>
+<p>A C# SDK target, <code>csharp</code> (short form <code>cs</code>): a net10.0 project with records,
+enums and unions that decode and encode themselves (no reflection, trimming
+and AOT safe), async methods returning <code>Result&lt;T&gt;</code>, <code>IAsyncEnumerable</code> pages
+and <code>EventStream&lt;T&gt;</code> streams, typed macros and an <code>IDispatch</code> entry point,
+over the new dependency-free .NET runtime <code>Tungsten.Runtime</code>. Options <code>package_id</code>, <code>namespace</code>, <code>version</code>,
+<code>runtime</code> and <code>runtime_path</code>; diagnostics TG1020 to TG1025.</p>
 </li>
 <li>
 <p>The language-neutral foundation of the coming Java, C#, Kotlin, Swift, PHP,
@@ -286,7 +675,7 @@ previews, confirmation tokens, auth handling and resumable event streams
 as the other runtimes.</p>
 </li>
 </ul>
-<h2 id="010---unreleased"><a class="header" href="#010---unreleased"><a href="https://github.com/pboachie/tungsten/commits/main">0.1.0</a> - Unreleased</a></h2>
+<h2 id="010---2026-10-11"><a class="header" href="#010---2026-10-11"><a href="https://github.com/pboachie/tungsten/releases/tag/v0.1.0">0.1.0</a> - 2026-10-11</a></h2>
 <p>First release. The compiler, the three SDK runtimes (<code>@elysra/tungsten-runtime</code>,
 <code>tungsten-runtime</code> on PyPI and <code>tungsten-runtime</code> on crates.io), the MCP
 runtime (<code>@elysra/tungsten-mcp</code>) and the installers ship together at 0.1.0.</p>
