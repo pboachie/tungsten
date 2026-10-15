@@ -18,6 +18,8 @@ changes.
   with literal route/type evidence, file/line coverage and explicit unresolved
   constructs. It parses supplied source text without loading modules or running
   applications, macros or build scripts, and preserves separately reviewed overrides.
+  Routing/handler binding shadows and conditional router contexts remain
+  unresolved coverage rather than claimed operations.
 - Durable Java, C# and Ruby idempotency stores share the version-1 owner lease
   format with TypeScript, Python, Go and Rust. Automatic keys use atomic
   reservations while existing get/put-only custom stores remain compatible.
