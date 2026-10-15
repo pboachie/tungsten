@@ -711,12 +711,17 @@ module Tungsten
 
           logical = Util.sha256_hex(Json.canonical(args))
           @key_lock.synchronize do
-            existing = @store.get(op.id, logical)
-            return existing if existing.is_a?(String) && !existing.empty?
+            if @store.respond_to?(:reserve)
+              key = @store.reserve(op.id, logical, Util.uuid_v4)
+              return key if key.is_a?(String) && !key.empty?
+            else
+              existing = @store.get(op.id, logical)
+              return existing if existing.is_a?(String) && !existing.empty?
 
-            key = Util.uuid_v4
-            @store.put(op.id, logical, key)
-            return key if @store.get(op.id, logical) == key
+              key = Util.uuid_v4
+              @store.put(op.id, logical, key)
+              return key if @store.get(op.id, logical) == key
+            end
 
             Runtime.diag(op.id, "TRANSPORT_FAILED").retrying("never")
                    .remedy("The idempotency store failed (the key could not be stored), so the call was not sent rather than risk a second key " \
