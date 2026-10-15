@@ -9,12 +9,16 @@ Requires Ruby 3.3 or newer. From the repository root:
 ```sh
 cd runtimes/ruby
 gem build tungsten-runtime.gemspec
-gem install --local ./tungsten-runtime-*.gem
+gem install ./tungsten-runtime-*.gem
 ```
 
 The generated gem depends on `tungsten-runtime`. Local installation is the
 source route until a matching RubyGems release is available.
 `require "tungsten/runtime"` loads the runtime.
+Installation also resolves the runtime's `base64` gem dependency. Ruby 3.4
+ships this library as a bundled gem, so Bundler needs the explicit dependency.
+For an offline install, stage a compatible `base64` gem alongside the runtime
+archive and install both with `gem install --local`.
 
 ## Shared contract
 

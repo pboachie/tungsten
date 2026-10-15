@@ -20,6 +20,8 @@ changes.
   applications, macros or build scripts, and preserves separately reviewed overrides.
   Routing/handler binding shadows and conditional router contexts remain
   unresolved coverage rather than claimed operations.
+- Ruby runtime gems declare their `base64` dependency so packaged SDKs load
+  inside Bundler on Ruby 3.4+, with source and offline installation guidance.
 - Durable Java, C# and Ruby idempotency stores share the version-1 owner lease
   format with TypeScript, Python, Go and Rust. Automatic keys use atomic
   reservations while existing get/put-only custom stores remain compatible.
