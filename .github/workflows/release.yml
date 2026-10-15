@@ -3,12 +3,19 @@
 # Triggers: a pushed tag v* (a real release) and a manual run (a dry run unless
 # dry_run is switched off, and then only for a tag). A dry run builds and
 # packages everything and runs every publish check in dry-run mode, but writes
-# nothing: no GitHub Release, no attestation, no registry upload.
+# nothing: no GitHub Release, no attestation, no registry upload. It is a
+# required step before tagging: run it once via workflow_dispatch on the exact
+# release commit, because it runs the same dependency audit, build matrix and
+# publish dry runs as the tagged release, and a tag, once pushed, is immutable
+# and never moved to fix a failed run.
 #
 # What a real release produces (all attached to one GitHub Release):
 #   tungsten-<version>-<target>.{tar.gz,zip} for x86_64 and aarch64 Linux
-#   (musl, static), x86_64 and aarch64 macOS and x86_64 Windows, SHA256SUMS,
-#   a CycloneDX SBOM and a build provenance attestation per archive.
+#   (musl, static; gnu, dynamically linked against glibc 2.34 — both arches
+#   are built on the Ubuntu 22.04 runners so they share that floor, which the
+#   check step below enforces on every gnu binary), x86_64 and aarch64 macOS
+#   and x86_64 Windows, SHA256SUMS, a CycloneDX SBOM and a build provenance
+#   attestation per archive.
 # Registry publishing stays off by default. npm and PyPI trusted publishing
 # require the NPM_PUBLISH and PYPI_PUBLISH repository switches respectively. The runbook is
 # runbooks/release.md in tungsten-ops.
@@ -281,7 +288,10 @@ jobs:
           - { target: x86_64-unknown-linux-musl, os: ubuntu-latest }
           - { target: aarch64-unknown-linux-musl, os: ubuntu-24.04-arm }
           - { target: x86_64-unknown-linux-gnu, os: ubuntu-22.04 }
-          - { target: aarch64-unknown-linux-gnu, os: ubuntu-24.04-arm }
+          # Both -gnu targets build against the same Ubuntu 22.04 glibc so
+          # x86_64 and aarch64 share one documented floor (GLIBC_2.34);
+          # aarch64 on ubuntu-24.04-arm needed GLIBC_2.39 instead (#123).
+          - { target: aarch64-unknown-linux-gnu, os: ubuntu-22.04-arm }
           - { target: x86_64-apple-darwin, os: macos-latest }
           - { target: aarch64-apple-darwin, os: macos-latest }
           - { target: x86_64-pc-windows-msvc, os: windows-latest }
@@ -314,6 +324,25 @@ jobs:
           esac
           export RUSTFLAGS="$flags"
           cargo build --locked --release --package tungsten-cli --bin tungsten --target "$TARGET"
+      - name: Enforce the documented glibc floor (linux-gnu)
+        # The -gnu archives promise glibc 2.34 or newer (the floor x86_64 and
+        # aarch64 share since both build on the Ubuntu 22.04 runners; the musl
+        # archives are static). The highest GLIBC_ symbol version recorded in
+        # the binary must not exceed that floor, so a toolchain bump cannot
+        # silently raise it again (#123).
+        if: contains(matrix.target, 'linux-gnu')
+        shell: bash
+        run: |
+          floor=2.34
+          binary="target/$TARGET/release/tungsten"
+          highest=$(objdump -T "$binary" | grep -o 'GLIBC_[0-9][0-9.]*' | sort -uV | tail -n 1)
+          [ -n "$highest" ] || { echo "no GLIBC_ symbol versions found in $binary; expected a glibc dynamic executable" >&2; exit 1; }
+          version=${highest#GLIBC_}
+          if [ "$(printf '%s\n' "$floor" "$version" | sort -V | tail -n 1)" != "$floor" ]; then
+            echo "$binary needs $highest, above the documented floor GLIBC_$floor" >&2
+            exit 1
+          fi
+          echo "$binary: highest glibc symbol version is $highest, within the documented floor GLIBC_$floor"
       # Every target executes its own binary before it ships. x86_64-apple-darwin
       # is cross-compiled on the arm64 runner and runs under Rosetta 2, so the
       # shipped x86_64 macOS binary is executed instead of skipped (issue #126).
@@ -535,10 +564,20 @@ jobs:
           name: release-bundle
           path: dist
       - name: Create the release (never overwrites an existing one)
+        env:
+          GLIBC_FLOOR: "2.34"
         run: |
           prerelease=""
           case "$TAG" in *-*) prerelease="--prerelease" ;; esac
-          gh release create "$TAG" dist/* --verify-tag --title "$TAG" --generate-notes $prerelease
+          # Generated notes are appended below this fixed install note.
+          notes=$(printf '%s\n' \
+            '## Install notes' \
+            '' \
+            "- The Linux gnu archives (*-unknown-linux-gnu) are dynamically linked and need glibc ${GLIBC_FLOOR} or newer, on x86_64 and aarch64 alike (Debian 12, Ubuntu 22.04, RHEL 9 and Amazon Linux 2023 all qualify)." \
+            '- The Linux musl archives (*-unknown-linux-musl) are statically linked and have no glibc requirement.' \
+            '- install.sh defaults to musl; set TUNGSTEN_LIBC=gnu only on systems with glibc '"${GLIBC_FLOOR}"' or newer.' \
+          )
+          gh release create "$TAG" dist/* --verify-tag --title "$TAG" --generate-notes --notes "$notes" $prerelease
 
   # Publish dry runs: they prove that packaging and registry checks pass; they
   # upload nothing. Actual publishing is switched on as described in the runbook.

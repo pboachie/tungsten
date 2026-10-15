@@ -67,6 +67,26 @@ vulnerabilities. Python release tools are installed from the hash-locked
 so the build frontend cannot resolve additional unreviewed tools.
 Generated SDK dependency changes also require emitter and runtime review.
 
+An advisory that is reviewed and accepted for a limited time is recorded as a
+scoped, expiring exception in the `advisory_exceptions` list of
+`.github/dependency-policy.json`. Each entry names exactly the advisory id
+(such as `RUSTSEC-2026-0346`) and the locked package it applies to, the reason
+it is acceptable, and an `expires` date (`YYYY-MM-DD`). The audit prints every
+entry in the job log, suppresses only the matching advisory for the named
+package, and fails once an entry is past its expiry: an exception is a
+time-limited review decision that is fixed forward, renewed or removed, not
+standing policy. There is no package-wide, undated or blanket ignore.
+
+## Release integrity
+
+Release tags are immutable. A `vX.Y.Z` tag that has been pushed is never
+moved, re-pointed, or deleted and re-created: build provenance attestations,
+the release job's `--verify-tag` check and everyone who fetched the first
+commit all key on that exact tag. A failed or incomplete release is fixed
+forward — diagnose it with a `workflow_dispatch` dry run of the release
+workflow, change the lockfile or code, bump the version and tag a new
+release — never by moving the published tag.
+
 ## Project manifests and external emitters
 
 A `tungsten.yml` is trusted input in one respect: a target with an `external`
