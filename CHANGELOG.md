@@ -74,6 +74,11 @@ changes.
 
 ### Fixed
 
+- `doctor` now lists `java`, `mvn`, `dotnet`, `ruby`, `bundle` and `go`, and
+  `doctor --strict` fails when a configured `java`, `csharp`, `ruby` or
+  external `go` target lacks its toolchain (Java 17, .NET 10, Ruby 3.3,
+  Go 1.22) or, for an external `go` target without a command, when
+  `tungsten-emit-go` is not on PATH.
 - Python and Java runtimes bound schema `pattern` matching: strings over 64 KiB
   skip the pattern check, and Java abandons a match after 1 s, treating it as
   not checked.
