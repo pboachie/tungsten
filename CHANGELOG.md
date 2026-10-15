@@ -13,6 +13,8 @@ changes.
 
 - Runtime package installation and limits guidance, packaged README/LICENSE
   files, and consistent npm metadata checks.
+- Opt-in Python 3.10/3.11 SDK generation with `python_version`, matching
+  package metadata and a Python 3.10-compatible runtime for both model modes.
 - Link the importer guide from the quickstart, including per-format limits and imported-operation review.
 
 - Imported specs (Postman, cURL, `.http`, HAR and endpoint manifests): a

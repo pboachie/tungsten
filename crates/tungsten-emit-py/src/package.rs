@@ -35,12 +35,18 @@ pub(crate) fn pyproject(plan: &Plan<'_>, opts: &Options, header: &str) -> String
             tungsten_ir::title_stem(&plan.ir.api.title)
         ))
     ));
-    out.push_str("readme = \"README.md\"\nrequires-python = \">=3.12\"\ndependencies = [\n");
+    out.push_str(&format!(
+        "readme = \"README.md\"\nrequires-python = \">={}\"\ndependencies = [\n",
+        opts.python_version
+    ));
     let mut deps = vec![runtime];
     if opts.models == Models::Pydantic {
         deps.push(format!("pydantic{PYDANTIC_RANGE}"));
     }
     deps.push(format!("httpx{HTTPX_RANGE}"));
+    if plan.python_compat {
+        deps.push("typing_extensions>=4.6".to_string());
+    }
     for dep in deps {
         out.push_str(&format!("  {},\n", toml_str(&dep)));
     }
@@ -56,7 +62,7 @@ pub(crate) fn pyproject(plan: &Plan<'_>, opts: &Options, header: &str) -> String
         ));
     }
     out.push_str(&format!(
-        "\n[tool.ruff]\nline-length = {LINE_LENGTH}\ntarget-version = \"py312\"\n\n[tool.ruff.lint]\nselect = [\"E\", \"F\", \"I\", \"B\", \"UP\", \"SIM\", \"RUF\"]\n# Descriptor data and docstrings are not wrapped; docstrings and literals\n# quote the API description's text, typographic characters included.\nignore = [\"E501\", \"RUF001\", \"RUF002\", \"RUF003\"]\n\n[tool.pyright]\ntypeCheckingMode = \"strict\"\npythonVersion = \"3.12\"\n"
+        "\n[tool.ruff]\nline-length = {LINE_LENGTH}\ntarget-version = \"py{}\"\n\n[tool.ruff.lint]\nselect = [\"E\", \"F\", \"I\", \"B\", \"UP\", \"SIM\", \"RUF\"]\n# Descriptor data and docstrings are not wrapped; docstrings and literals\n# quote the API description's text, typographic characters included.\nignore = [\"E501\", \"RUF001\", \"RUF002\", \"RUF003\"]\n\n[tool.pyright]\ntypeCheckingMode = \"strict\"\npythonVersion = \"{}\"\n", opts.python_version.replace('.', ""), opts.python_version
     ));
     out
 }
@@ -72,10 +78,20 @@ pub(crate) fn custom_template() -> String {
 }
 
 /// `<module>/_internal.py`: helpers the generated modules share.
-pub(crate) fn internal_file(header: &str, models: Models) -> String {
-    match models {
+pub(crate) fn internal_file(header: &str, models: Models, compat: bool) -> String {
+    let text = match models {
         Models::Pydantic => format!("{header}\n{INTERNAL}"),
         Models::Dataclasses => format!("{header}\n{INTERNAL_DATACLASSES}"),
+    };
+    if compat {
+        text.replace("type Bytes =", "Bytes =")
+            .replace("type Binary =", "Binary =")
+            .replace("type Float =", "Float =")
+            .replace("type Int =", "Int =")
+            .replace("type Int32 =", "Int32 =")
+            .replace("type Never =", "Never =")
+    } else {
+        text
     }
 }
 
@@ -846,8 +862,9 @@ pub(crate) fn readme(
     };
     out.push_str(&format!(
         "Every call returns a `Result` and never raises for API or transport errors. \
-         Arguments are validated before any request is sent. Python 3.12 or newer; \
-         {models_note}.\n\n"
+         Arguments are validated before any request is sent. Python {} or newer; \
+         {models_note}.\n\n",
+        opts.python_version
     ));
     out.push_str("## Install\n\n```sh\n");
     out.push_str(&format!("pip install {}\n```\n\n", opts.package));
