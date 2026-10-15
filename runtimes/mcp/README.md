@@ -67,6 +67,10 @@ Adjust paths to your generated outputs. `createCore` creates a separate client f
 - `run_script` is disabled by default. Enabling it requires an explicit sandbox configuration; Deno execution also requires a Deno executable. The WASM engine runs in a worker thread of the server process with configured bounds. `sandbox.maxConcurrent` (`perSession`, default 4; `global`, default 16) caps scripts running at once.
 - Deno limits wall time and V8 heap on all platforms; its additional process data limit is enforced on Linux. On Windows and macOS, `memoryMb` does not bound memory outside the V8 heap, including `ArrayBuffer` backing stores.
 
+## Limits
+
+MCP uses the TypeScript runtime and does not supply a file-backed OAuth token store. Deno `memoryMb` adds a process data bound only on Linux; other platforms bound V8 heap but not all process memory.
+
 ## Related packages and documentation
 
 - [@elysra/tungsten-runtime](https://www.npmjs.com/package/@elysra/tungsten-runtime): the generated SDK's transport and safety runtime.

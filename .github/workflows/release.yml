@@ -791,8 +791,6 @@ jobs:
           packaging_python="$RUNNER_TEMP/tungsten-packaging/bin/python"
           "$packaging_python" -m pip --isolated install --disable-pip-version-check --require-hashes --only-binary=:all: -r ../../.github/packaging-requirements.lock
           "$packaging_python" -m build --no-isolation
-          # Not --strict: the public repository carries no per-package README,
-          # so twine warns that there is no long description.
           "$packaging_python" -m twine check dist/*
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

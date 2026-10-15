@@ -65,8 +65,8 @@ data, `#[cfg(test)]` modules, `[dev-dependencies]`, doctests or documentation
 directories. A repository guard job in CI enforces this. Besides the community
 files at the root and in `.github/`, only images in `assets/` and code in
 `examples/` (with the `examples/README.md` gallery index and a `README.md` per
-example), and package READMEs in
-`runtimes/ts`, `runtimes/mcp` and `runtimes/webmcp` are accepted.
+example), and package READMEs directly in the runtime package directories
+(including `runtimes/rust/runtime` and `runtimes/rust/cli-kit`) are accepted.
 
 You do not need access to that suite. A maintainer runs it against your pull
 request, and its result appears on the pull request as the `tungsten-ops/ci`

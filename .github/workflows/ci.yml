@@ -32,6 +32,42 @@ env:
   CARGO_INCREMENTAL: "0"
 
 jobs:
+  msrv:
+    name: msrv
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Read and check declared floors
+        id: floors
+        run: python3 .github/scripts/check-msrv.py --toolchains >> "$GITHUB_OUTPUT"
+      - name: Install the declared minimum toolchains
+        env:
+          COMPILER_MSRV: ${{ steps.floors.outputs.compiler }}
+          RUNTIME_MSRV: ${{ steps.floors.outputs.runtime }}
+        run: |
+          rustup toolchain install "$COMPILER_MSRV" "$RUNTIME_MSRV" --profile minimal
+      - name: Reject dependencies above the declared floors
+        run: python3 .github/scripts/check-msrv.py
+      - name: Build the compiler and example at their declared minimum
+        env:
+          COMPILER_MSRV: ${{ steps.floors.outputs.compiler }}
+          EXAMPLE_MSRV: ${{ steps.floors.outputs.example }}
+        run: |
+          cargo +"$COMPILER_MSRV" build --locked --workspace
+          cargo +"$EXAMPLE_MSRV" build --locked --manifest-path examples/external-emitter-markdown/Cargo.toml
+      - name: Check the Rust runtimes at their declared minimum
+        env:
+          RUNTIME_MSRV: ${{ steps.floors.outputs.runtime }}
+        run: cargo +"$RUNTIME_MSRV" check --locked --workspace --manifest-path runtimes/rust/Cargo.toml
+
   check:
     name: fmt, clippy, build
     runs-on: ubuntu-latest
@@ -174,6 +210,8 @@ jobs:
       - name: mvn package
         working-directory: runtimes/java
         run: mvn -B -q package -DskipTests
+      - name: Verify packaged Java notices
+        run: python3 .github/scripts/check-archive-notices.py runtimes/java/target/tungsten-runtime-*.jar runtimes/java --prefix META-INF/
 
   # The Kotlin layer (runtimes/kotlin) compiled against the Java runtime's
   # classes with kotlinc -Werror; its tests, and the build of the SDKs the
@@ -233,6 +271,10 @@ jobs:
         run: dotnet format whitespace runtimes/csharp --folder --verify-no-changes
       - name: dotnet build -warnaserror
         run: dotnet build runtimes/csharp/Tungsten.Runtime.csproj -warnaserror --artifacts-path "$RUNNER_TEMP/csharp"
+      - name: Pack and verify runtime notices
+        run: |
+          dotnet pack runtimes/csharp/Tungsten.Runtime.csproj -c Release --artifacts-path "$RUNNER_TEMP/csharp" -o "$RUNNER_TEMP/csharp-packages"
+          python3 .github/scripts/check-archive-notices.py "$RUNNER_TEMP/csharp-packages/"*.nupkg runtimes/csharp
 
   # The F# layer over the .NET runtime (runtimes/fsharp, net10.0, FSharp.Core
   # pinned to the SDK's bundled version), built against runtimes/csharp; its
@@ -255,6 +297,10 @@ jobs:
           dotnet-version: 10.0.401
       - name: dotnet build -warnaserror
         run: dotnet build runtimes/fsharp/Tungsten.Runtime.FSharp.fsproj -warnaserror --artifacts-path "$RUNNER_TEMP/fsharp"
+      - name: Pack and verify runtime notices
+        run: |
+          dotnet pack runtimes/fsharp/Tungsten.Runtime.FSharp.fsproj -c Release --artifacts-path "$RUNNER_TEMP/fsharp" -o "$RUNNER_TEMP/fsharp-packages"
+          python3 .github/scripts/check-archive-notices.py "$RUNNER_TEMP/fsharp-packages/"*.nupkg runtimes/fsharp
 
   # The Ruby runtime (runtimes/ruby, standard library only): every file
   # passes `ruby -wc` without a warning and the gemspec builds; its tests,

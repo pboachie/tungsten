@@ -1084,6 +1084,41 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
          pagination under `pagination` in tungsten.yml.",
     ),
     e(
+        "TG0930",
+        "`tungsten check --audit-contracts` found a success response whose JSON media type \
+         declares no `schema`, so any JSON value is accepted and the generated SDK types \
+         the value as any. The message names the operation, the status and the media type; \
+         the second location is the operation that answers it. Default runs are unchanged: \
+         the audit runs only with the flag or `--require-contracts`, which fails on audit \
+         findings alone. `--strict` fails on these and every other warning.",
+        "Declare a schema for the media type, in the spec or in a reviewed overlay listed \
+         under `overlays` in tungsten.yml, or acknowledge the gap with \
+         `x-tungsten-reviewed-contract` on the media-type entry when any value really is \
+         accepted.",
+    ),
+    e(
+        "TG0931",
+        "`tungsten check --audit-contracts` found a success response schema that is a \
+         free-form object: `type: object` with no properties and an open or unconstrained \
+         `additionalProperties`, so the generated type is a plain mapping of any values (a \
+         `dict[str, Any]`). A typed map, a record with properties, a response without a \
+         JSON body and a non-JSON media type are not findings; a schema marked \
+         `x-tungsten-reviewed-contract` counts as reviewed. See TG0930 for how the audit \
+         is run and enforced.",
+        "Declare the properties the server really answers with, named response models or \
+         their union, in the spec or a reviewed overlay, or acknowledge the free-form \
+         shape with `x-tungsten-reviewed-contract` when it is intentional.",
+    ),
+    e(
+        "TG0932",
+        "The opt-in response-contract audit reached its schema traversal budget. Its \
+         findings are incomplete. This warning fails --require-contracts or --strict, so an \
+         incomplete audit cannot silently satisfy that quality gate.",
+        "Split the input into smaller projects and audit each one. Reuse named schemas \
+         for shared contracts. The audit follows references and nested shapes iteratively \
+         and reports each weak source node only once.",
+    ),
+    e(
         "TG1010",
         "An option of the `java` target in tungsten.yml is not valid: `group_id` and `package` \
          must be dotted Java package names (no keywords), `artifact_id` a Maven artifactId, \
