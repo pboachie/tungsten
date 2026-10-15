@@ -640,7 +640,7 @@ final class ClientCore {
             : 'unique key';
         throw _Stop(
           _diag(op.id, 'VALIDATION_FAILED')
-              .param('idempotency_key')
+              .param('idempotencyKey')
               .expected(_Keys.formatDescription(policy['format']))
               .remedy(
                 'Generate a random $fresh, persist it with the intent of this ${op.id} call, and pass it as idempotencyKey. '
@@ -664,7 +664,7 @@ final class ClientCore {
     if (expected == null) return;
     throw _Stop(
       _diag(op.id, 'VALIDATION_FAILED')
-          .param('idempotency_key')
+          .param('idempotencyKey')
           .received(_Util.envelopeValue(opts.idempotencyKey, false))
           .expected(expected)
           .remedy(

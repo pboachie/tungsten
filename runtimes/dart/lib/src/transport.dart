@@ -187,6 +187,11 @@ abstract final class _Transport {
         for (final (name, value) in headers) {
           request.headers.set(name, value, preserveHeaderCase: true);
         }
+        // Like a browser's fetch: any media type when the operation declares
+        // none (dart:io sends no Accept header of its own).
+        if (request.headers.value(HttpHeaders.acceptHeader) == null) {
+          request.headers.set(HttpHeaders.acceptHeader, '*/*');
+        }
         if (multipartType != null) {
           request.headers
               .set('Content-Type', multipartType, preserveHeaderCase: true);
