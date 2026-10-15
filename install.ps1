@@ -1,4 +1,8 @@
 <#
+.SYNOPSIS
+Install the Tungsten CLI from a GitHub Release.
+
+.DESCRIPTION
 Installs the tungsten CLI from a GitHub Release on Windows (x86_64 or ARM64). No
 administrator rights are needed.
 
