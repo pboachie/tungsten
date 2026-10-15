@@ -94,7 +94,7 @@ wheels = [
 
 [[package]]
 name = "tungsten-runtime"
-version = "0.1.0"
+version = "0.1.3"
 source = { editable = "." }
 dependencies = [
     { name = "async-timeout", marker = "python_full_version < '3.11'" },

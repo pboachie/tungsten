@@ -7,7 +7,7 @@ use tungsten_core::{Diagnostic, Diagnostics};
 use tungsten_ir::Ir;
 use tungsten_ir::naming::{self, Case};
 
-/// Default version range of runtimes and the SDK.
+/// Default version range of the generated SDK (independent of the runtime).
 pub const DEFAULT_RANGE: &str = "^0.1.0";
 /// TypeScript version pinned in the generated package.
 pub const TYPESCRIPT_VERSION: &str = "5.9.3";
@@ -116,7 +116,7 @@ impl Options {
         };
         let runtime = match runtime_path {
             Some(p) => format!("file:{p}"),
-            None => runtime_range.unwrap_or_else(|| DEFAULT_RANGE.to_string()),
+            None => runtime_range.unwrap_or_else(|| "^0.1.3".to_string()),
         };
         (
             Options {
