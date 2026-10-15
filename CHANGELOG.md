@@ -11,6 +11,9 @@ changes.
 
 ### Added
 
+- Git input references (`git+https://...@ref#path`) with bounded shallow
+  acquisition, deterministic document discovery, commit/content pins and verified
+  offline reuse through the existing input and importer flows.
 - HTTP(S) input acquisition for `init --from`, compiler paths and manifest inputs,
   with bounded downloads, SHA256 source pins in `.tungsten-inputs`, explicit
   `--refresh-inputs`, verified `--offline` reuse and redacted `--input-header`

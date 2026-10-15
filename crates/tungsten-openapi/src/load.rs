@@ -150,8 +150,30 @@ impl<'o> Loader<'o> {
     }
 
     fn load_entry(&mut self, entry: &LoadEntry) -> Option<DocId> {
+        let acquired;
+        let entry = if crate::git_input::is_source(&entry.display_name) {
+            let path = match crate::git_input::acquire(
+                &entry.display_name,
+                &self.opts.acquisition_root,
+                &self.opts.acquisition,
+            ) {
+                Ok(path) => path,
+                Err(diagnostic) => {
+                    self.ws.diagnostics.push(diagnostic);
+                    return None;
+                }
+            };
+            acquired = LoadEntry {
+                path,
+                display_name: entry.display_name.clone(),
+                overlays: entry.overlays.clone(),
+            };
+            &acquired
+        } else {
+            entry
+        };
         let name = entry.display_name.as_str();
-        if crate::acquire::is_remote(name) {
+        if crate::acquire::is_remote(name) && !crate::git_input::is_source(name) {
             let path = match crate::acquire::acquire(
                 name,
                 &self.opts.acquisition_root,

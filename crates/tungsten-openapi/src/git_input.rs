@@ -1,0 +1,683 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+//! Pinned Git entry acquisition. Git only writes a disposable bare repository;
+//! checkout, hooks, submodules, filters and repository code are never executed.
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::io::Read;
+use std::path::{Component, Path, PathBuf};
+use std::process::{Child, Command, Stdio};
+use std::sync::mpsc;
+use std::time::{Duration, Instant};
+
+use serde::{Deserialize, Serialize};
+use tungsten_core::{Diagnostic, SourceId};
+use url::Url;
+
+use crate::acquire::{Options, content_hash, directory, hash, read, write_new};
+
+const MAX_FILES: usize = 512;
+const MAX_FILE: usize = 8 * 1024 * 1024;
+const MAX_TREE: u64 = 64 * 1024 * 1024;
+const DEADLINE: Duration = Duration::from_secs(60);
+
+fn error(code: &str, message: &str, help: &str) -> Diagnostic {
+    Diagnostic::error(code, message).with_help(help)
+}
+
+fn invalid() -> Diagnostic {
+    error(
+        "TG0130",
+        "invalid Git input reference",
+        "use git+https://host/owner/repository@ref#path without credentials, query or unsafe path components; Git supplies authentication through its credential helper or environment",
+    )
+}
+
+fn cache_error() -> Diagnostic {
+    error(
+        "TG0133",
+        "Git input cache is missing, corrupt or unsafe",
+        "retain the pinned .tungsten-inputs directory for offline use; inspect cache permissions and unexpected entries before retrying",
+    )
+}
+
+pub fn is_source(source: &str) -> bool {
+    source.to_ascii_lowercase().starts_with("git+")
+}
+
+#[derive(Debug)]
+struct Source {
+    url: String,
+    reference: String,
+    scope: String,
+}
+
+fn safe_path(path: &str) -> bool {
+    !path.is_empty()
+        && path.len() <= 1024
+        && !path
+            .chars()
+            .any(|c| c.is_control() || matches!(c, '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|'))
+        && Path::new(path)
+            .components()
+            .all(|c| matches!(c, Component::Normal(_)))
+        && path.split('/').all(|part| {
+            !part.is_empty()
+                && part != "."
+                && part != ".."
+                && !part.eq_ignore_ascii_case(".git")
+                && !part.ends_with(['.', ' '])
+                && !matches!(
+                    part.split('.')
+                        .next()
+                        .unwrap_or("")
+                        .to_ascii_lowercase()
+                        .as_str(),
+                    "con"
+                        | "prn"
+                        | "aux"
+                        | "nul"
+                        | "com1"
+                        | "com2"
+                        | "com3"
+                        | "com4"
+                        | "com5"
+                        | "com6"
+                        | "com7"
+                        | "com8"
+                        | "com9"
+                        | "lpt1"
+                        | "lpt2"
+                        | "lpt3"
+                        | "lpt4"
+                        | "lpt5"
+                        | "lpt6"
+                        | "lpt7"
+                        | "lpt8"
+                        | "lpt9"
+                )
+        })
+}
+
+fn commit(value: &str) -> bool {
+    matches!(value.len(), 40 | 64)
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+}
+
+fn parse(source: &str) -> Result<Source, Diagnostic> {
+    if source.len() > 8192 || source.chars().any(|c| c.is_control() || c.is_whitespace()) {
+        return Err(invalid());
+    }
+    let source = source
+        .get(4..)
+        .filter(|_| is_source(source))
+        .ok_or_else(invalid)?;
+    let (address, scope) = source.split_once('#').unwrap_or((source, ""));
+    if !scope.is_empty() && !safe_path(scope) {
+        return Err(invalid());
+    }
+    let authority_end = address
+        .find("://")
+        .and_then(|at| address[at + 3..].find('/').map(|end| at + 3 + end))
+        .ok_or_else(invalid)?;
+    let (url, reference) = address[authority_end..]
+        .find('@')
+        .map(|at| {
+            (
+                &address[..authority_end + at],
+                &address[authority_end + at + 1..],
+            )
+        })
+        .unwrap_or((address, "HEAD"));
+    if reference.is_empty()
+        || reference.len() > 200
+        || reference.starts_with(['-', '/'])
+        || reference.ends_with(['/', '.'])
+        || reference.contains("..")
+        || reference.contains("//")
+        || !reference
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | '/'))
+    {
+        return Err(invalid());
+    }
+    let url = Url::parse(url).map_err(|_| invalid())?;
+    if !matches!(url.scheme(), "https" | "http" | "file")
+        || (url.scheme() != "file" && url.host_str().is_none())
+        || (url.scheme() == "file" && url.host_str().is_some_and(|host| host != "localhost"))
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(invalid());
+    }
+    Ok(Source {
+        url: url.into(),
+        reference: reference.to_owned(),
+        scope: scope.to_owned(),
+    })
+}
+
+pub(crate) fn display(source: &str) -> String {
+    if parse(source).is_ok() {
+        source.to_owned()
+    } else {
+        "<Git input>".to_owned()
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Pin {
+    version: u8,
+    url: String,
+    reference: String,
+    scope: String,
+    commit: String,
+    document: String,
+    files: BTreeMap<String, String>,
+}
+
+struct Git {
+    started: Instant,
+    repository: PathBuf,
+    hooks: PathBuf,
+}
+
+impl Drop for Git {
+    fn drop(&mut self) {
+        // Only this exclusively created, literal scratch directory is removed.
+        let _ = std::fs::remove_dir_all(&self.repository);
+    }
+}
+
+fn stop(child: &mut Child) {
+    #[cfg(unix)]
+    {
+        let _ = Command::new("/bin/kill")
+            .args(["-KILL", "--", &format!("-{}", child.id())])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let _ = Command::new("taskkill.exe")
+            .args(["/PID", &child.id().to_string(), "/T", "/F"])
+            .creation_flags(0x08000000)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+/// Bounded traversal of our disposable bare object store, including pack files
+/// while Git downloads them. A remote cannot bypass the byte budget with a pack.
+fn store_size(path: &Path) -> Result<u64, Diagnostic> {
+    let mut pending = vec![path.to_path_buf()];
+    let mut entries = 0;
+    let mut bytes = 0;
+    while let Some(dir) = pending.pop() {
+        let listing = match std::fs::read_dir(dir) {
+            Ok(listing) => listing,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(_) => return Err(cache_error()),
+        };
+        for entry in listing {
+            let entry = entry.map_err(|_| cache_error())?;
+            let meta = match std::fs::symlink_metadata(entry.path()) {
+                Ok(meta) => meta,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(_) => return Err(cache_error()),
+            };
+            entries += 1;
+            if entries > 4096 || (!meta.file_type().is_dir() && !meta.file_type().is_file()) {
+                return Err(cache_error());
+            }
+            if meta.is_dir() {
+                pending.push(entry.path());
+            } else {
+                bytes += meta.len();
+            }
+            if bytes > MAX_TREE {
+                return Err(error(
+                    "TG0132",
+                    "Git fetch exceeds the 64 MiB object-store limit",
+                    "use a smaller repository or acquire a single document over HTTP(S)",
+                ));
+            }
+        }
+    }
+    Ok(bytes)
+}
+
+impl Git {
+    fn run(&self, args: &[&str], limit: usize) -> Result<Vec<u8>, Diagnostic> {
+        if self.started.elapsed() >= DEADLINE {
+            return Err(error(
+                "TG0131",
+                "Git input acquisition exceeded its 60-second deadline",
+                "retry with a smaller repository or narrower #subpath, or reuse the verified pin with --offline",
+            ));
+        }
+        let mut command = Command::new("git");
+        command
+            .args([
+                "-c",
+                "protocol.allow=never",
+                "-c",
+                "protocol.https.allow=always",
+                "-c",
+                "protocol.http.allow=always",
+                "-c",
+                "protocol.file.allow=always",
+                "-c",
+                "http.followRedirects=false",
+                "-c",
+                "http.lowSpeedLimit=1",
+                "-c",
+                "http.lowSpeedTime=15",
+                "-c",
+                "fetch.fsckObjects=true",
+                "-c",
+                "transfer.fsckObjects=true",
+                "-c",
+                "gc.auto=0",
+                "-c",
+            ])
+            .arg(format!("core.hooksPath={}", self.hooks.display()))
+            .args(args)
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            command.process_group(0);
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            command.creation_flags(0x08000000);
+        }
+        let mut child = command.spawn().map_err(|_| {
+            error(
+                "TG0131",
+                "cannot start Git for input acquisition",
+                "install Git and check PATH; offline cache reuse does not require Git",
+            )
+        })?;
+        let stdout = child.stdout.take().ok_or_else(cache_error)?;
+        let (sender, receiver) = mpsc::channel();
+        std::thread::spawn(move || {
+            let mut bytes = Vec::new();
+            let result = stdout.take(limit as u64 + 1).read_to_end(&mut bytes);
+            let _ = sender.send(if result.is_ok() && bytes.len() <= limit {
+                Some(bytes)
+            } else {
+                None
+            });
+        });
+        let mut output = None;
+        let status = loop {
+            if output.is_none()
+                && let Ok(result) = receiver.try_recv()
+            {
+                match result {
+                    Some(bytes) => output = Some(bytes),
+                    None => {
+                        stop(&mut child);
+                        return Err(error(
+                            "TG0132",
+                            "Git output exceeds its acquisition budget",
+                            "narrow #subpath or use a smaller repository",
+                        ));
+                    }
+                }
+            }
+            if self.started.elapsed() >= DEADLINE || store_size(&self.repository).is_err() {
+                stop(&mut child);
+                return Err(error(
+                    "TG0132",
+                    "Git acquisition exceeded its time or object-store budget",
+                    "use a smaller repository, retry network access, or reuse a verified pin with --offline",
+                ));
+            }
+            match child.try_wait() {
+                Ok(Some(status)) => break status,
+                Ok(None) => std::thread::sleep(Duration::from_millis(20)),
+                Err(_) => {
+                    stop(&mut child);
+                    return Err(cache_error());
+                }
+            }
+        };
+        if !status.success() {
+            return Err(error(
+                "TG0131",
+                "Git input acquisition failed (repository, ref, network or authentication)",
+                "check the repository URL and ref, network access and Git credential helper; Git stderr and credentials are never included in diagnostics",
+            ));
+        }
+        let Some(bytes) =
+            output.or_else(|| receiver.recv_timeout(Duration::from_secs(1)).ok().flatten())
+        else {
+            stop(&mut child);
+            return Err(error(
+                "TG0132",
+                "Git output was incomplete or too large",
+                "retry with a smaller repository or narrower #subpath",
+            ));
+        };
+        store_size(&self.repository)?;
+        Ok(bytes)
+    }
+
+    fn resolve(&self, source: &Source) -> Result<String, Diagnostic> {
+        if commit(&source.reference) {
+            return Ok(source.reference.clone());
+        }
+        let head = format!("refs/heads/{}", source.reference);
+        let tag = format!("refs/tags/{}", source.reference);
+        let peeled = format!("{tag}^{{}}");
+        let exact_peeled = format!("{}^{{}}", source.reference);
+        let bytes = self.run(
+            &[
+                "ls-remote",
+                &source.url,
+                &source.reference,
+                &head,
+                &tag,
+                &peeled,
+                &exact_peeled,
+            ],
+            256 * 1024,
+        )?;
+        let lines = std::str::from_utf8(&bytes).map_err(|_| cache_error())?;
+        let refs = lines
+            .lines()
+            .filter_map(|line| line.split_once('\t'))
+            .filter(|(sha, _)| commit(sha))
+            .map(|(sha, name)| (name.to_owned(), sha.to_owned()))
+            .collect::<BTreeMap<_, _>>();
+        let found = [&source.reference, &head, &tag]
+            .into_iter()
+            .filter_map(|name| refs.get(&format!("{name}^{{}}")).or_else(|| refs.get(name)))
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        if found.len() != 1 {
+            return Err(error(
+                "TG0131",
+                "Git ref does not resolve to exactly one commit",
+                "use a full refs/heads/... or refs/tags/... name, or an explicit commit digest",
+            ));
+        }
+        Ok(found.into_iter().next().expect("one resolved commit"))
+    }
+}
+
+fn candidate(path: &str, bytes: &[u8]) -> bool {
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        return false;
+    };
+    if path.ends_with(".http")
+        || path.ends_with(".rest")
+        || text.trim_start().starts_with("curl ")
+        || text.trim_start().starts_with("curl.exe ")
+    {
+        return true;
+    }
+    let Ok(parsed) = crate::parse::parse(path, text, SourceId(0), 128) else {
+        return false;
+    };
+    let root = parsed.value;
+    root.get("openapi").is_some()
+        || root.get("swagger").is_some()
+        || root.get("endpoint_manifest").is_some()
+        || root.get("log").is_some()
+        || (root.get("item").is_some() && root.get("info").is_some())
+}
+
+fn verify(dir: &Path, source: &Source, pin: &Pin) -> Result<PathBuf, Diagnostic> {
+    if pin.version != 1
+        || pin.url != source.url
+        || pin.reference != source.reference
+        || pin.scope != source.scope
+        || !commit(&pin.commit)
+        || pin.files.is_empty()
+        || pin.files.len() > MAX_FILES
+        || !pin.files.contains_key(&pin.document)
+    {
+        return Err(cache_error());
+    }
+    let root = dir.join("files");
+    let tree = root.join(&pin.commit);
+    directory(&root)?;
+    directory(&tree)?;
+    let mut total = 0;
+    for (path, sha256) in &pin.files {
+        if !safe_path(path)
+            || sha256.len() != 64
+            || !sha256
+                .bytes()
+                .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+        {
+            return Err(cache_error());
+        }
+        let mut parent = tree.clone();
+        for part in Path::new(path)
+            .parent()
+            .into_iter()
+            .flat_map(Path::components)
+        {
+            parent.push(part.as_os_str());
+            if !std::fs::symlink_metadata(&parent).is_ok_and(|meta| meta.file_type().is_dir()) {
+                return Err(cache_error());
+            }
+        }
+        let bytes = read(&tree.join(path), MAX_FILE)?;
+        total += bytes.len();
+        if total as u64 > MAX_TREE || hash(&bytes) != *sha256 {
+            return Err(cache_error());
+        }
+    }
+    Ok(tree.join(&pin.document))
+}
+
+/// Reuse an existing commit pin, or explicitly resolve/fetch a new one. Online
+/// reuse deliberately retains the pinned commit until `--refresh-inputs`.
+pub fn acquire(text: &str, project: &Path, options: &Options) -> Result<PathBuf, Diagnostic> {
+    let source = parse(text)?;
+    if options.offline && options.refresh {
+        return Err(invalid());
+    }
+    std::fs::create_dir_all(project).map_err(|_| cache_error())?;
+    let root = project.join(".tungsten-inputs");
+    directory(&root)?;
+    let git_root = root.join("git");
+    directory(&git_root)?;
+    let key = format!("{}@{}#{}", source.url, source.reference, source.scope);
+    let dir = git_root.join(hash(key.as_bytes()));
+    directory(&dir)?;
+    let lock = dir.join("source.lock.json");
+    if std::fs::symlink_metadata(&lock).is_ok() {
+        let pin: Pin =
+            serde_json::from_slice(&read(&lock, 1024 * 1024)?).map_err(|_| cache_error())?;
+        let path = verify(&dir, &source, &pin)?;
+        if options.offline || !options.refresh {
+            return Ok(path);
+        }
+    } else if options.offline {
+        return Err(cache_error());
+    }
+    let repository = dir.join("fetch.pending");
+    // Exclusive creation: never run Git through a pre-existing config or symlink.
+    std::fs::create_dir(&repository).map_err(|_| cache_error())?;
+    let hooks = repository.join("empty-hooks");
+    std::fs::create_dir(&hooks).map_err(|_| cache_error())?;
+    let git = Git {
+        started: Instant::now(),
+        repository,
+        hooks,
+    };
+    let resolved = git.resolve(&source)?;
+    let repo = git.repository.to_string_lossy().into_owned();
+    let format = if resolved.len() == 64 {
+        "--object-format=sha256"
+    } else {
+        "--object-format=sha1"
+    };
+    git.run(
+        &[
+            "init",
+            "--bare",
+            "--quiet",
+            format,
+            "--template",
+            &git.hooks.to_string_lossy(),
+            &repo,
+        ],
+        1024,
+    )?;
+    git.run(
+        &[
+            "--git-dir",
+            &repo,
+            "fetch",
+            "--depth=1",
+            "--no-tags",
+            "--no-recurse-submodules",
+            "--no-auto-maintenance",
+            "--quiet",
+            &source.url,
+            &resolved,
+        ],
+        1024,
+    )?;
+    let actual = git.run(
+        &[
+            "--git-dir",
+            &repo,
+            "rev-parse",
+            "--verify",
+            "FETCH_HEAD^{commit}",
+        ],
+        1024,
+    )?;
+    if std::str::from_utf8(&actual).map(str::trim).ok() != Some(resolved.as_str()) {
+        return Err(cache_error());
+    }
+    let scope = if source.scope.is_empty() {
+        "."
+    } else {
+        &source.scope
+    };
+    let listing = git.run(
+        &[
+            "--git-dir",
+            &repo,
+            "ls-tree",
+            "-r",
+            "-l",
+            "-z",
+            "--full-tree",
+            &resolved,
+            "--",
+            scope,
+        ],
+        2 * 1024 * 1024,
+    )?;
+    let tree_root = dir.join("files");
+    directory(&tree_root)?;
+    let tree = tree_root.join(&resolved);
+    directory(&tree)?;
+    let mut files = BTreeMap::new();
+    let mut candidates = Vec::new();
+    let mut total = 0u64;
+    for line in listing
+        .split(|byte| *byte == 0)
+        .filter(|line| !line.is_empty())
+    {
+        let line = std::str::from_utf8(line).map_err(|_| cache_error())?;
+        let (metadata, path) = line.split_once('\t').ok_or_else(cache_error)?;
+        let parts = metadata.split_whitespace().collect::<Vec<_>>();
+        if parts.len() != 4
+            || !matches!(parts[0], "100644" | "100755")
+            || parts[1] != "blob"
+            || !commit(parts[2])
+            || !safe_path(path)
+            || (!source.scope.is_empty()
+                && path != source.scope
+                && !path.starts_with(&format!("{}/", source.scope)))
+        {
+            return Err(error(
+                "TG0132",
+                "Git input contains a symlink, submodule or unsafe path",
+                "choose a subpath containing ordinary input files only; links and submodules are never followed",
+            ));
+        }
+        let size = parts[3].parse::<u64>().map_err(|_| cache_error())?;
+        total = total.checked_add(size).ok_or_else(cache_error)?;
+        if files.len() >= MAX_FILES || size > MAX_FILE as u64 || total > MAX_TREE {
+            return Err(error(
+                "TG0132",
+                "Git input exceeds 512 files, 8 MiB per file or 64 MiB total",
+                "narrow #subpath to the contract directory or acquire a single document over HTTP(S)",
+            ));
+        }
+        let bytes = git.run(
+            &["--git-dir", &repo, "cat-file", "blob", parts[2]],
+            MAX_FILE,
+        )?;
+        if bytes.len() as u64 != size {
+            return Err(cache_error());
+        }
+        if candidate(path, &bytes) {
+            candidates.push(path.to_owned());
+        }
+        let mut parent = tree.clone();
+        for part in Path::new(path)
+            .parent()
+            .into_iter()
+            .flat_map(Path::components)
+        {
+            parent.push(part.as_os_str());
+            directory(&parent)?;
+        }
+        let destination = tree.join(path);
+        if std::fs::symlink_metadata(&destination).is_ok() {
+            if content_hash(&destination)? != hash(&bytes) {
+                return Err(cache_error());
+            }
+        } else {
+            write_new(&destination, &bytes)?;
+        }
+        files.insert(path.to_owned(), hash(&bytes));
+    }
+    if candidates.len() != 1 {
+        return Err(Diagnostic::error("TG0134",format!("Git input discovery found {} candidate documents: {}",candidates.len(),candidates.iter().take(16).cloned().collect::<Vec<_>>().join(", "))).with_help("choose exactly one supported document using #path, or narrow the repository subdirectory; nothing is guessed"));
+    }
+    let document = candidates.remove(0);
+    let pin = Pin {
+        version: 1,
+        url: source.url,
+        reference: source.reference,
+        scope: source.scope,
+        commit: resolved,
+        document: document.clone(),
+        files,
+    };
+    let pending = dir.join("source.lock.pending");
+    write_new(
+        &pending,
+        &serde_json::to_vec_pretty(&pin).map_err(|_| cache_error())?,
+    )?;
+    std::fs::rename(pending, lock).map_err(|_| cache_error())?;
+    Ok(tree.join(document))
+}

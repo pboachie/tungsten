@@ -204,6 +204,17 @@ pub mod codes {
             "remote input SHA256 differs from its pin or conversion",
         ),
         ("TG0123", "remote input cache is missing, invalid or unsafe"),
+        ("TG0130", "invalid Git input reference"),
+        ("TG0131", "Git acquisition or ref resolution failed"),
+        ("TG0132", "Git input exceeds its acquisition safety budget"),
+        (
+            "TG0133",
+            "Git input pin or cache is missing, invalid or unsafe",
+        ),
+        (
+            "TG0134",
+            "Git discovery requires exactly one input document",
+        ),
         ("TG0201", "unresolvable $ref"),
         (
             "TG0202",
