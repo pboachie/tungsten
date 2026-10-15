@@ -271,7 +271,9 @@
   ],
   "runtimes/python/uv.lock": [
     "anyio",
+    "async-timeout",
     "certifi",
+    "exceptiongroup",
     "h11",
     "httpcore",
     "httpx",

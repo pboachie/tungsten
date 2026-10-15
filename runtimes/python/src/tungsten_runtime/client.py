@@ -14,10 +14,16 @@ PHASE-4 CONTRACT: the signatures are shared with the Python emitter.
 
 from __future__ import annotations
 
+import sys
 import threading
 from collections.abc import AsyncIterator, Iterator, Mapping
 from types import TracebackType
-from typing import Any, Self, cast
+from typing import Any, cast
+
+if sys.version_info >= (3, 11):
+    from typing import Self
+else:
+    from typing_extensions import Self
 
 from ._core import Engine
 from ._drivers import AsyncDriver, SyncDriver, SyncStream, async_http, sync_http
