@@ -236,6 +236,9 @@ values as `JsonNode`, OpenID Connect as a bearer token, no CLI or MCP).
 
 ### Fixed
 
+- Python 3.11 SDKs import `Self` and `NotRequired` from the standard library,
+  matching their generated lint target; Python 3.10 keeps the required backports.
+
 - Dart pagination detects repeated cursors and page URLs, including the caller's
   starting cursor and cycles across earlier pages. Fetched pages are delivered
   before an `UNEXPECTED_RESPONSE` diagnostic, repeated requests are refused, and
