@@ -2,7 +2,7 @@
 
 <img src="assets/logo.svg" alt="tungsten" width="360">
 
-**Compile an OpenAPI description into SDKs, a CLI and an MCP server that AI agents can use safely.**
+**Compile an API description — OpenAPI OR Swagger OR Postman OR saved cURL OR HTTP request files OR HAR OR an endpoint manifest — into SDKs, a CLI and an MCP server that AI agents can use safely.**
 
 [![Woodpecker CI](https://badges.boachiefamily.net/api/badges/4/labeled.svg?label=Release%20CI)](https://ci.boachiefamily.net/repos/4) [![CI](https://github.com/pboachie/tungsten/actions/workflows/ci.yml/badge.svg)](https://github.com/pboachie/tungsten/actions/workflows/ci.yml)
 [![Docs](https://img.shields.io/badge/docs-pboachie.github.io-informational.svg)](https://pboachie.github.io/tungsten/)
@@ -12,7 +12,7 @@
 
 </div>
 
-tungsten is a deterministic compiler written in Rust. It reads OpenAPI 3.0 and 3.1 documents plus two small manifests, builds one typed intermediate representation (IR), and emits TypeScript, Python, Rust, Go, Java, Kotlin, C#, F#, Dart and Ruby SDKs, a Rust command-line client, an MCP server, browser WebMCP tools and LLM-oriented docs. Every emitted client is built for an autonomous caller: failures are instructions, side effects are never duplicated, and irreversible calls need an explicit confirmation.
+tungsten is a deterministic compiler written in Rust. It reads one API description — an OpenAPI 3.0 or 3.1 document (JSON or YAML), a Swagger 2.0 document, a Postman Collection v2.1 file, a saved cURL command, an HTTP request file (`.http`/`.rest`), a HAR 1.2 capture or an endpoint manifest with JSON Schema 2020-12 models, each parsed offline — plus two small manifests, builds one typed intermediate representation (IR), and emits TypeScript, Python, Rust, Go, Java, Kotlin, C#, F#, Dart and Ruby SDKs, a Rust command-line client, an MCP server, browser WebMCP tools and LLM-oriented docs. Every emitted client is built for an autonomous caller: failures are instructions, side effects are never duplicated, and irreversible calls need an explicit confirmation. See [Supported inputs](#supported-inputs) for the exact alternatives, their limits and the review each requires.
 
 Read the documentation at [pboachie.github.io/tungsten](https://pboachie.github.io/tungsten/).
 
@@ -27,6 +27,25 @@ Most SDK generators optimize for a person reading autocomplete. An agent has a f
 - **Verification.** An operation can name a read to run after success and the state to expect, attached to the result as evidence.
 - **MCP progressive disclosure.** Past a tool-count threshold the server lists a few meta-tools (`search_tools`, `describe_tool`, `invoke`, `preview`, `list_clusters`) instead of every operation. In the maintainers' measurement on the ZROtext pilot (October 2026, BPE token counts), the progressive listing of its 41 tools costs 765 tokens, against 9,473 for the 14 tools of that project's hand-written MCP server.
 - **Deterministic output.** The same inputs produce byte-identical files. Generated files record the generator version and the digest of their inputs, and `tungsten generate --check` fails when output is stale.
+
+## Supported inputs
+
+`tungsten init` takes **one** input of any of the kinds below — OpenAPI OR Swagger OR Postman OR saved cURL OR HTTP request files OR HAR, with the endpoint-manifest and manual paths alongside them — not a bundle. Every route is parsed offline: no request is sent or replayed, and no shell, script or capture is ever executed. Non-OpenAPI inputs are converted to a normalized OpenAPI document that `init` saves next to the manifests (`imported.openapi.json`, with an `import-report.json` where listed; the manual path writes `inferred.openapi.json` and `inference-report.json`), so the accepted input stays separate from the normalized artifact and the typed IR the compiler builds from it.
+
+| Input | You provide | Entry point and conversion | Limits and required review |
+|---|---|---|---|
+| OpenAPI 3.0 / 3.1 | JSON or YAML document | `tungsten init --from openapi.json` (default when unset: `openapi.json`, `openapi.yaml` or `openapi.yml` in the target directory). The document is kept in place, so relative references retain meaning, and goes through the native frontend: `$ref` resolution, overlays | The full frontend surface; overlays remain optional |
+| Swagger 2.0 | JSON or YAML document | `tungsten init --from swagger.json` (also a default name) or any path. Bounded offline conversion to OpenAPI, saved as `imported.openapi.json` | Unsupported semantics fail explicitly instead of being guessed; conversion never resolves external references |
+| Postman Collection v2.1 | JSON collection | `tungsten init --from collection.json`. Structural import; omissions are listed in `import-report.json` | Scripts and requests are never executed: script-dependent behavior, non-JSON bodies and saved responses and unsupported auth helpers are omitted per item, not interpreted — this is not a Postman runtime |
+| Saved cURL command | A saved command as text | `tungsten init --from command.curl --route '/pets/{id}'` (auto-detected by a leading `curl`, a `.curl` extension, or `--input-format curl`). Parsed as data against POSIX, cmd or PowerShell quoting (`--shell-dialect`) | Exactly one explicit `--route` path template is required; the command is parsed, never executed |
+| HTTP request files | `.http` or `.rest` file | `tungsten init --from requests.http --route '/pets/{id}'` (extension-detected, or `--input-format http`) | An explicit `--route` template per request |
+| HAR 1.2 | A capture file | `tungsten init --from capture.har --har-origin https://api.example.com --har-paths paths.json`. Bounded offline observations of the recorded traffic | A multi-origin capture needs `--har-origin`; every captured path needs a reviewed template (`--route`, or a `--har-paths` JSON mapping) before anything is saved; `--include-prefix`/`--exclude-prefix` narrow the capture and `--redact-property` redacts property names. Observations are incomplete evidence about past traffic, not the live API |
+| Endpoint manifest v1 | JSON manifest with declared models | `tungsten init --from endpoints.json`. Loaded by the endpoint-manifest frontend | Explicit HTTP routing metadata (base URL and endpoints) and JSON Schema 2020-12 models within the supported subset are required — not arbitrary standalone JSON-Schema-to-API inference |
+| Manual endpoint | No document | `tungsten init --method get --endpoint /pets/{id}`, with optional `--request-example` and `--response-example` JSON files (only their structure is persisted; the response is recorded at status 200). Writes `inferred.openapi.json` and `inference-report.json` | Explicit offline evidence only; not schema-free API discovery |
+
+All conversion routes share these limits: setup inputs are bounded (8 MiB, with larger OpenAPI documents served by the explicit compiler flow below); every converted operation is marked as imported, and targets that cannot enforce imported-operation policy refuse it (TG0705) — `typescript`, `python`, `rust`, `mcp`, `webmcp` and `docs` are supported, the Java, Kotlin, C#, F#, Dart and Ruby targets and non-opted-in external emitters are not, and `init` warns before configuring them. Imported observations are incomplete contracts: review the inferred response types, authentication, safety tiers and origins in `agent.yml` and mark reviewed operations before live use.
+
+`init` is the only entry point for the alternative inputs. The other commands (`check`, `generate`, `mock`, `diff`, `report`) take an initialized project (a directory with `tungsten.yml`, or the manifest), or — for the native format only — a single OpenAPI document passed directly.
 
 ## Targets
 
@@ -117,6 +136,8 @@ Use your own `openapi.json`, or create this complete tiny example:
 ```json
 {"openapi":"3.1.0","info":{"title":"Acme Petstore","version":"1"},"paths":{"/pets":{"get":{"operationId":"listPets","responses":{"200":{"description":"Pets","content":{"application/json":{"schema":{"type":"array","items":{"type":"string"}}}}}}}}}}
 ```
+
+The walkthrough uses an OpenAPI document, the native input. `init --from` also accepts Swagger 2.0, Postman collections, saved cURL commands, `.http`/`.rest` files, HAR captures and endpoint manifests — one of them, not a bundle — each with its own flags and review steps; see [Supported inputs](#supported-inputs).
 
 `init` writes `tungsten.yml` and `agent.yml` with **TypeScript, Python and docs**
 targets by default. Edit the existing `targets` block rather than appending a
@@ -242,9 +263,9 @@ never bundle server credentials. See the [browser WebMCP guide](https://pboachie
 
 ## Architecture
 
-<p align="center"><img src="assets/architecture.svg" alt="OpenAPI 3.0/3.1 documents and overlays, with tungsten.yml and agent.yml, go through the frontend into a typed IR, the agent compiler, and the emitters, which depend on the runtimes" width="900"></p>
+<p align="center"><img src="assets/architecture.svg" alt="Alternative inputs (OpenAPI 3.0/3.1, Swagger 2.0, Postman collections, saved cURL, HTTP request files, HAR captures, endpoint manifests), overlays and the tungsten.yml and agent.yml manifests go through import and the frontend into a typed IR, the agent compiler, and the emitters, which depend on the runtimes" width="900"></p>
 
-1. The **frontend** reads OpenAPI 3.0 and 3.1, resolves references and applies overlays.
+1. The **frontend** reads OpenAPI 3.0 and 3.1, resolves references and applies overlays. The other supported inputs (Swagger 2.0, Postman, saved cURL, `.http`/`.rest`, HAR, endpoint manifests) are converted offline to a normalized OpenAPI document first; `init` writes it as `imported.openapi.json` and the frontend reads it like any OpenAPI document.
 2. The **IR** is a versioned JSON document (`tungsten ir dump`, schema via `tungsten schema ir`).
 3. The **agent compiler** merges `agent.yml` into it: safety tiers, idempotency, confirmation, remediation text, verification hooks, macros and the disclosure mode for MCP.
 4. **Emitters** (`crates/tungsten-emit-*`) write each target from the IR. They are pure functions of their inputs.
@@ -260,7 +281,7 @@ tungsten [--json] <command>
 
 | Command | Purpose |
 |---|---|
-| `init` | Write project manifests (`--from`, `--dir`, `--name`, `--targets`, `--force`); `--targets webmcp` includes a linked TypeScript SDK |
+| `init` | Write project manifests from any supported input ([Supported inputs](#supported-inputs)): `--from`, `--dir`, `--name`, `--targets`, `--force`; `--targets webmcp` includes a linked TypeScript SDK |
 | `check` | Validate the manifests and specs and report diagnostics (`--ci`, `--strict`); `--ci` runs the emitters in memory, external ones included (`--no-external` skips them) |
 | `generate` | Generate every configured target (`--target`, `--dry-run`, `--check`, `--force`, `--strict`) |
 | `ir dump` | Write the IR as JSON (`--out`, `--compact`) |

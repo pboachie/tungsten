@@ -93,6 +93,17 @@ values as `JsonNode`, OpenID Connect as a bearer token, no CLI or MCP).
 
 ### Changed
 
+- README, the architecture diagram and the `init` help present every
+  supported input alternative instead of positioning tungsten as OpenAPI
+  only: OpenAPI 3.0/3.1, Swagger 2.0, Postman Collection v2.1, saved cURL,
+  `.http`/`.rest` files, HAR 1.2 and endpoint manifests, plus the manual
+  method-and-endpoint path, shown as OR alternatives with each route's
+  conversion path, limits and required review. The README gains a Supported
+  inputs matrix; `assets/architecture.svg` and its accessible description
+  show alternative inputs normalizing to OpenAPI before the frontend; the
+  `init --from` help and the `tungsten-cli` crate description name the
+  accepted inputs. `check`, `generate` and the other project commands still
+  take an initialized project or a single OpenAPI document. (#173)
 - `tungsten report` runs only the emitters of the configured targets. The
   other known targets stay in `coverage.targets` with the new status
   `not_configured` (and, for an `external` target skipped by `--no-external`,
