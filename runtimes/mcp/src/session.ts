@@ -30,7 +30,7 @@ import {
   truncate,
 } from "./render.js";
 import { progressSink } from "./progress.js";
-import { runSandboxed, type SandboxEngine, type SandboxOutcome } from "./sandbox.js";
+import { ConcurrencyLimiter, runSandboxed, type SandboxEngine, type SandboxOutcome } from "./sandbox.js";
 import { bm25, suggest, type Hit } from "./search.js";
 import type { Ranking, Semantic } from "./semantic.js";
 import type { ClusterEntry, ServerOptions } from "./types.js";
@@ -52,6 +52,12 @@ export interface SandboxConfig {
   timeoutMs: number;
   memoryMb: number;
   maxCalls: number;
+  /** Scripts one session may run at once. */
+  maxConcurrent: number;
+  /** Shared by every session of the server; holds the server-wide limit. */
+  limiter: ConcurrencyLimiter;
+  /** The engine was chosen by `auto` because no deno was found. */
+  fellBack: boolean;
 }
 
 type Outcome =
@@ -876,8 +882,31 @@ export class Session {
     return result.isError ? { ok: false, error: result.structuredContent, text } : { ok: true, value: result.structuredContent ?? null, text };
   }
 
+  #scripts = { running: 0, limit: 1 };
+
   async #runScript(code: string): Promise<CallToolResult> {
     const sandbox = this.#sandbox as SandboxConfig;
+    this.#scripts.limit = sandbox.maxConcurrent;
+    const slot = sandbox.limiter.acquire(this.#scripts);
+    if ("busy" in slot) {
+      const limit = slot.busy === "session" ? `${sandbox.maxConcurrent} concurrent run_script calls per session` : `${sandbox.limiter.global} concurrent run_script calls on this server`;
+      return this.#failure(
+        null,
+        envelope("run_script", "VALIDATION_FAILED", {
+          expected: `at most ${limit} (sandbox.maxConcurrent)`,
+          remediation: `Busy: the limit of ${limit} is reached; this script was not run. Wait for a running script to finish and call run_script again.`,
+          retryable: "after_delay",
+        }),
+      );
+    }
+    try {
+      return await this.#runScriptSlot(code, sandbox);
+    } finally {
+      slot.release();
+    }
+  }
+
+  async #runScriptSlot(code: string, sandbox: SandboxConfig): Promise<CallToolResult> {
     // Both engines reach the API exclusively through this session's RPC
     // handlers. The sandbox itself needs no network permission or API host.
     const outcome: SandboxOutcome = await runSandboxed({

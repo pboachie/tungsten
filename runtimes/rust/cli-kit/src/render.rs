@@ -75,6 +75,14 @@ pub(crate) fn human_value(v: &Value, style: Style) -> String {
     }
 }
 
+/// One element of an array in the indented human form, as
+/// [`human_value`] writes it between the brackets.
+pub(crate) fn human_array_item(v: &Value, style: Style) -> String {
+    let mut out = String::new();
+    write_value(&mut out, v, 1, style);
+    out
+}
+
 fn write_value(out: &mut String, v: &Value, depth: usize, style: Style) {
     let pad = |n: usize| "  ".repeat(n);
     match v {

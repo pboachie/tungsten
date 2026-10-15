@@ -20,7 +20,7 @@
 //!   body as one argument;
 //! - on operations that are not read-only: `--dry-run`, `--yes`,
 //!   `--i-understand`, `--idempotency-key` and `--verify`; on paginated
-//!   operations: `--all`;
+//!   operations: `--all` and, with it, `--max-pages <N>`;
 //! - global flags: `--json`, `--base-url`, `--profile`, `--config`,
 //!   `--timeout`, `--no-color`;
 //! - `schema <command>` (the compact JSON Schema of the arguments),
@@ -51,7 +51,13 @@
 //!   nothing else: the success body (`null` when there is none), or, for a
 //!   failure, the diagnostic envelope (a failure of the command line itself
 //!   is an envelope too, category `VALIDATION_FAILED`, code `USAGE`, nothing
-//!   sent). `--all` prints one array of every item. A preview (`--dry-run`,
+//!   sent). `--all` prints one array of every item, written page by
+//!   page (the bytes of the array printed whole, but only one page is held in
+//!   memory); `--max-pages N` stops after N pages, closes the array, exits 0
+//!   and notes on standard error that more pages are available (no limit
+//!   without it). A failure after the first page leaves the array unterminated
+//!   and reports the diagnostic on standard error with the failure's exit
+//!   code; a failure before it is the envelope as usual. A preview (`--dry-run`,
 //!   or a command that needs confirmation) is one document with the
 //!   rendered request, the effects and the confirmation token; a command
 //!   that needs confirmation adds `"confirmation_required": true` and

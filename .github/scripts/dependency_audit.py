@@ -26,6 +26,40 @@ def require(condition: object, message: str) -> None:
         raise ValueError(message)
 
 
+def workspace_members(directory: Path) -> set[str]:
+    """Package names of the cargo workspace rooted at `directory` (root package included)."""
+    manifest = directory / "Cargo.toml"
+    require(manifest.is_file() and not manifest.is_symlink(), f"{manifest}: missing workspace manifest")
+    data = tomllib.loads(manifest.read_text(encoding="utf-8"))
+    names = set()
+    if "package" in data:
+        names.add(data["package"]["name"])
+    workspace = data.get("workspace", {})
+    excluded = {(directory / pattern).resolve() for pattern in workspace.get("exclude", [])}
+    for pattern in workspace.get("members", []):
+        for member in sorted(directory.glob(pattern)):
+            member_manifest = member / "Cargo.toml"
+            if member.resolve() in excluded or not member_manifest.is_file():
+                continue
+            package = tomllib.loads(member_manifest.read_text(encoding="utf-8")).get("package", {})
+            if "name" in package:
+                names.add(package["name"])
+    return names
+
+
+def check_manifests(root: Path, files: list[str]) -> None:
+    """Refuse source overrides: a [patch] or [replace] table swaps a locked dependency's code."""
+    for file in files:
+        name = Path(file).name
+        if name != "Cargo.toml" and not (name in {"config.toml", "config"} and Path(file).parent.name == ".cargo"):
+            continue
+        path = root / file
+        require(not path.is_symlink(), f"{file}: symbolic manifest")
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+        for table in ("patch", "replace"):
+            require(table not in data, f"{file}: [{table}] source overrides are not allowed")
+
+
 def inventory(root: Path, files: list[str]) -> dict[str, list[tuple[str, str, str]]]:
     result = {}
     for file in files:
@@ -74,10 +108,13 @@ def inventory(root: Path, files: list[str]) -> dict[str, list[tuple[str, str, st
                 entries.append(("npm", name, package["version"]))
         else:
             lock = tomllib.loads(path.read_text(encoding="utf-8"))
+            members = workspace_members(path.parent) if path.name == "Cargo.lock" else set()
             for package in lock["package"]:
                 source = package.get("source")
                 if path.name == "Cargo.lock":
                     if source is None:
+                        require(package["name"] in members,
+                                f"{file}: source-less package {package['name']} is not a workspace member")
                         continue
                     require(source == "registry+https://github.com/rust-lang/crates.io-index",
                             f"{file}: unapproved source for {package['name']}")
@@ -141,6 +178,7 @@ def main() -> int:
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[2]
     files = subprocess.check_output(["git", "ls-files", "-z"], cwd=root).decode().split("\0")
+    check_manifests(root, files)
     packages = inventory(root, files)
     policy = json.loads((root / ".github/dependency-policy.json").read_text(encoding="utf-8"))
     check_policy(packages, policy)

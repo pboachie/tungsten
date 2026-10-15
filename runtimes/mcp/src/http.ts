@@ -6,7 +6,7 @@
  * open request or stream for `idleTimeoutMs` are closed, so clients that
  * vanish without DELETE do not hold session slots.
  */
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -38,6 +38,15 @@ function hostname(value: string): string | null {
   } catch {
     return null;
   }
+}
+
+/** Constant-time check of an `Authorization: Bearer` header against `token`. */
+function bearerMatches(header: string | undefined, token: string): boolean {
+  const match = typeof header === "string" ? /^bearer[ \t]+(\S+)[ \t]*$/i.exec(header) : null;
+  // Hash both sides so the comparison always covers equal-length input.
+  const given = createHash("sha256").update(match?.[1] ?? "").digest();
+  const wanted = createHash("sha256").update(token).digest();
+  return timingSafeEqual(given, wanted) && match !== null;
 }
 
 function sendError(res: ServerResponse, status: number, code: number, message: string, headers: Record<string, string> = {}): void {
@@ -81,6 +90,18 @@ export async function serveHttp(options: HttpOptions, factory: SessionFactory): 
   const allowedHosts = new Set((options.allowedHosts ?? []).map((h) => h.toLowerCase()));
   const allowedOrigins = new Set(options.allowedOrigins ?? []);
   const boundLoopback = LOOPBACK.has(host.toLowerCase());
+  if (options.bearerToken !== undefined && (typeof options.bearerToken !== "string" || options.bearerToken === "")) {
+    throw new Error("HttpOptions.bearerToken must be a non-empty string");
+  }
+  if (options.authorize !== undefined && typeof options.authorize !== "function") throw new Error("HttpOptions.authorize must be a function");
+  const bearerToken = options.bearerToken;
+  const authorize = options.authorize;
+  if (!boundLoopback && bearerToken === undefined && authorize === undefined && allowedHosts.size === 0) {
+    process.emitWarning(
+      `Streamable HTTP is bound to ${host} with no authentication (bearerToken or authorize) and no allowedHosts: any client that can reach it can use this server. Configure authentication or restrict access at the network.`,
+      "TungstenMcpWarning",
+    );
+  }
   const sessions = new Map<string, Entry>();
   const pending = new Set<{ close(): Promise<void> }>();
   const initializing = new Set<Promise<void>>();
@@ -128,6 +149,20 @@ export async function serveHttp(options: HttpOptions, factory: SessionFactory): 
 
   const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     if (closed) return sendError(res, 503, -32000, "Server closing");
+    if (bearerToken !== undefined || authorize !== undefined) {
+      let allowed = bearerToken === undefined || bearerMatches(req.headers.authorization, bearerToken);
+      if (allowed && authorize !== undefined) {
+        try {
+          allowed = (await authorize(req)) === true;
+        } catch {
+          allowed = false;
+        }
+      }
+      if (!allowed) {
+        req.resume();
+        return sendError(res, 401, -32000, "Unauthorized", { "www-authenticate": "Bearer" });
+      }
+    }
     const url = new URL(req.url ?? "/", "http://localhost");
     if (url.pathname !== path) return sendError(res, 404, -32000, "Not found");
     if (!hostAllowed(req.headers.host)) return sendError(res, 403, -32000, "Host not allowed");
