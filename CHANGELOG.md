@@ -74,6 +74,19 @@ changes.
 
 ### Fixed
 
+- Java, C# and Ruby runtimes: the server-sent events parser scans and counts
+  each fragment once and joins a line only when it ends, so a long line
+  delivered in small pieces costs linear instead of quadratic time (the
+  TypeScript, Python, Rust and Go runtimes got this in 0.1.2).
+- Java, C# and Ruby runtimes: pagination rejects cursor and page URL cycles
+  as the other four runtimes do. A cursor or `Link` URL seen before (including
+  the cursor the caller started with and an immediate repeat) delivers the
+  pages fetched so far, then ends with `UNEXPECTED_RESPONSE`; before, a repeated
+  cursor ended the traversal as a success and a longer loop ran on. A repeated
+  request URL is refused before it is sent. Relative `Link` references now
+  resolve against the URL that answered, after same-origin redirects, not the
+  base URL. Callers whose server returned a repeated cursor now get this error
+  instead of a silently truncated result.
 - Python and Java runtimes bound schema `pattern` matching: strings over 64 KiB
   skip the pattern check, and Java abandons a match after 1 s, treating it as
   not checked.
