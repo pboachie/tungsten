@@ -160,8 +160,8 @@ pub(crate) fn emit_target_live(
     let cfg = targets::target_config_for(compiled.config.as_ref(), name, &project.base_dir, live);
     if unsupported_import_policy(ir, name) {
         let mut diagnostics = Diagnostics::new();
-        diagnostics.push(Diagnostic::error("TG0702", format!("target `{name}` does not declare enforced imported-operation policy support"))
-            .with_help("select a supported TypeScript, Python, Rust, MCP, WebMCP or docs target; imported-policy metadata must not be discarded"));
+        diagnostics.push(Diagnostic::error("TG0705", format!("target `{name}` does not declare enforced imported-operation policy support"))
+            .with_help("select a supported TypeScript, Python, Rust, MCP, WebMCP or docs target (`tungsten init --resume --add-targets <targets>` adds one); imported-policy metadata must not be discarded. `tungsten explain TG0705` has the details"));
         return Emitted {
             cfg,
             files: Some(FileSet::new()),

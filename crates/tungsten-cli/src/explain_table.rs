@@ -21,6 +21,165 @@ const fn e(code: &'static str, meaning: &'static str, fix: &'static str) -> Expl
 /// `REGISTRY`; `explain` only offers codes that are registered.
 pub(crate) const EXPLANATIONS: &[Explanation] = &[
     e(
+        "GO001",
+        "A macro of agent.yml is not in the canonical form the SDKs run (an unknown step kind \
+         or operation, a reference to no earlier step, an invalid `as`, `until` or budget). The \
+         Go SDK leaves it out; the other operations are generated as usual. The Go emitter \
+         reports it through TG0806.",
+        "Fix the macro in agent.yml; the message names the offending member.",
+    ),
+    e(
+        "GO002",
+        "The API declares an OpenID Connect security scheme. The Go SDK sends the configured \
+         credential as a bearer token and does not run discovery or obtain tokens itself.",
+        "Obtain the token yourself and pass it to the client under the scheme's name.",
+    ),
+    e(
+        "GO003",
+        "An operation answers different JSON bodies depending on the status. The Go SDK's \
+         typed result for it is `json.RawMessage`; the decoded body also stays in `Response.Raw`.",
+        "Nothing to fix; decode the raw message according to the status that arrived.",
+    ),
+    e(
+        "GO004",
+        "An option of the `go` target in tungsten.yml is unknown or has the wrong type, \
+         so the Go emitter refused the target and wrote nothing.",
+        "Fix or remove the option under `targets.go` in tungsten.yml; the message names it \
+         and the type it must have.",
+    ),
+    e(
+        "GO005",
+        "The Go source the emitter generated does not parse, so nothing was written. This is a \
+         fault in the emitter or in a name taken from the API description.",
+        "Check the API description for names that cannot become Go identifiers and report \
+         the diagnostic with the offending schema if it persists.",
+    ),
+    e(
+        "GO006",
+        "The pagination items path of an operation (from the spec or inferred) does not \
+         resolve to an array in the success schema, so the Go SDK cannot type the page items.",
+        "Correct the pagination items path of the operation to name an array field of the \
+         success response, or remove the pagination declaration.",
+    ),
+    e(
+        "HR001",
+        "The HAR capture is larger than the import limits: its byte size, nesting depth or \
+         node count is over the budget. Nothing was imported.",
+        "Export a smaller capture, or narrow it with `--include-prefix` and `--exclude-prefix`.",
+    ),
+    e(
+        "HR002",
+        "The input is not a HAR 1.2 capture tungsten can read: invalid JSON, a missing `log`, \
+         entries, request, method, header name or query parameter name, an unsupported HAR \
+         version, or a response without a completed HTTP status.",
+        "Export the capture again as HAR 1.2 and exclude failed or pending requests.",
+    ),
+    e(
+        "HR003",
+        "The origin given with `--har-origin` is not one of the origins in the capture, or is \
+         not written in canonical form (scheme, host and port only).",
+        "Pass exactly one HTTP(S) origin that occurs in the capture, for example \
+         `https://api.example.com`.",
+    ),
+    e(
+        "HR006",
+        "Reviewed route templates (`--route` or `--har-paths`) are ambiguous or malformed: a \
+         captured path matches several equally specific templates, or a template replaces \
+         part of a segment instead of a whole parameter segment.",
+        "Make the templates unambiguous and let each replace whole segments only, such as \
+         `/items/{id}`; keep literal routing segments unchanged.",
+    ),
+    e(
+        "PM001",
+        "The Postman collection is over an import limit: variable expansion and parsed samples \
+         exceed the import-wide byte or node budget, or folders nest deeper than the limit.",
+        "Reduce large or repeated variables and examples, or flatten the folder nesting.",
+    ),
+    e(
+        "PM002",
+        "The input is not a Postman Collection v2.1 item tree: the `item` array is missing or \
+         not an array.",
+        "Export the collection as Postman Collection v2.1 JSON and import that file.",
+    ),
+    e(
+        "PM003",
+        "A request uses API key authentication without an explicit key name, or with a \
+         location other than header or query.",
+        "Give the API key an explicit name and set its location to header or query in the \
+         collection.",
+    ),
+    e(
+        "PM004",
+        "A request uses a Postman dynamic variable (`{{$...}}`). tungsten never runs scripts \
+         or generates dynamic values, so the request shape cannot be known.",
+        "Replace the dynamic variable with an explicit example value or a declared parameter.",
+    ),
+    e(
+        "PM005",
+        "A request URL is not HTTP(S) with an explicit path, or a variable that decides the \
+         request shape (host, path or query) cannot be resolved from the collection.",
+        "Provide the variable in the collection or an environment override, or replace it with \
+         a declared path parameter; use an absolute HTTP(S) URL.",
+    ),
+    e(
+        "PM006",
+        "A raw request body is not valid JSON after variable resolution, or a saved response \
+         body is not JSON, so no schema can be inferred from it.",
+        "Provide explicit JSON examples, remove the unsupported example, or supply a reviewed \
+         media schema.",
+    ),
+    e(
+        "PM007",
+        "Several requests describe the same operation, and some declare authentication while \
+         others leave it unknown.",
+        "Declare one consistent authentication policy for the duplicated requests.",
+    ),
+    e(
+        "PM008",
+        "Every request in the Postman collection was omitted as unsupported, so nothing could \
+         be imported.",
+        "Remove or fix the unsupported constructs, or supply a reviewed contract.",
+    ),
+    e(
+        "TC001",
+        "The structural request evidence is larger than the import byte limit.",
+        "Split the import into smaller captures or collections.",
+    ),
+    e(
+        "TC002",
+        "The structural request evidence is not valid JSON, or is nested too deeply.",
+        "Fix the JSON syntax and nesting of the evidence file.",
+    ),
+    e(
+        "TC003",
+        "The evidence model or the reviewed overrides do not match the evidence schema.",
+        "Regenerate the evidence with tungsten, or correct the overrides to match the \
+         documented shape.",
+    ),
+    e(
+        "TC004",
+        "An operation in the evidence cannot become an OpenAPI operation: its HTTP method is \
+         not supported, or its path template repeats a placeholder name.",
+        "Use an OpenAPI HTTP method and make the path placeholder names unique.",
+    ),
+    e(
+        "TC005",
+        "An evidence source id is not an opaque identifier; it looks like a file name or a URL.",
+        "Use an opaque alphanumeric source id, never a file name or URL.",
+    ),
+    e(
+        "TC006",
+        "A structural schema in the evidence uses a keyword the import does not support. \
+         References and value-bearing annotations are not imported.",
+        "Use structural fields only, or keep the declaration in the original OpenAPI document.",
+    ),
+    e(
+        "TC007",
+        "A reviewed override points into a body schema or parameter with a numeric parameter \
+         index, which changes when parameters are added or reordered.",
+        "Use `/paths/` body schema pointers or stable `parameter_schema_pointer` keys.",
+    ),
+    e(
         "TG0101",
         "An input named in tungsten.yml or on the command line could not be read: the file \
          does not exist, is a directory, or is not readable by the current user.",
@@ -501,6 +660,18 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
          written.",
         "Remove the symlink from the output directory. If the path is under `.tungsten/`, \
          the emitter is at fault: report it.",
+    ),
+    e(
+        "TG0705",
+        "The project was imported from a Postman collection or another source whose operations \
+         carry an enforced import policy (the runtime must apply it to every call), and a \
+         configured target cannot apply it. Only the typescript, python, rust, mcp, webmcp and \
+         docs targets declare that support; generating any other target would discard the \
+         policy, so tungsten refuses it and writes nothing for the run.",
+        "Generate only supported targets: remove the unsupported target from tungsten.yml, or \
+         add a supported one with `tungsten init --resume --add-targets typescript,python` \
+         (any of typescript, python, rust, mcp, webmcp, docs), then run `tungsten generate` \
+         again.",
     ),
     e(
         "TG0710",
@@ -1164,6 +1335,19 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
          in the plan's order and takes the first that fits.",
         "Give every variant a named schema and a discriminator mapping value.",
     ),
+    e(
+        "TG1201",
+        "A saved cURL command or `.http` request given to `tungsten init` cannot be imported. \
+         Requests are parsed as data and never executed, so anything that needs a shell, a \
+         file or an environment is refused: compound commands, expansions, unsupported flags, \
+         file bodies or headers, unbound `{{variables}}`, credentials in the URL, headers or \
+         query, a non-JSON body, an input over the size limit, or a missing or mismatched \
+         `--route` template. The message names the first problem.",
+        "Save exactly one request. For cURL use `curl` (or `curl.exe` in PowerShell) with \
+         --request, --header, --url and inline JSON data only, and pass the trusted path \
+         template with `--route`. Bind every `{{variable}}` of a `.http` file explicitly and \
+         describe authentication in an endpoint manifest instead of the request.",
+    ),
 ];
 
 /// The extended explanation of a code, if one exists.
@@ -1176,6 +1360,13 @@ pub(crate) fn explanation(code: &str) -> Option<&'static Explanation> {
 
 /// The code range a diagnostic belongs to.
 pub(crate) fn area(code: &str) -> &'static str {
+    match code.get(..2) {
+        Some("GO") => return "Go emitter (GOxxx)",
+        Some("HR") => return "HAR import (HRxxx)",
+        Some("PM") => return "Postman import (PMxxx)",
+        Some("TC") => return "request-contract checks (TCxxx)",
+        _ => {}
+    }
     match code.get(..4) {
         Some("TG01") => "parsing and input limits (TG01xx)",
         Some("TG02") => "references and cycles (TG02xx)",
@@ -1187,6 +1378,7 @@ pub(crate) fn area(code: &str) -> &'static str {
         Some("TG08") => "external emitters (TG08xx)",
         Some("TG09") => "staleness and CI (TG09xx)",
         Some("TG10") => "SDK emitters: Java, C#, Kotlin, Swift, PHP, Ruby, Dart, F# (TG10xx)",
+        Some("TG12") => "request import: saved cURL and .http (TG12xx)",
         _ => "unassigned range",
     }
 }
