@@ -84,6 +84,37 @@ pub(crate) fn run(args: &InitArgs, json: bool, env: &CliEnv) -> Report {
             "correct the no-schema input; existing files are never overwritten",
         );
     }
+    let original_remote = selected
+        .from
+        .as_ref()
+        .filter(|source| tungsten_openapi::acquire::is_remote(&source.to_string_lossy()))
+        .cloned();
+    if let Some(source) = &original_remote {
+        match tungsten_openapi::acquire::acquire(
+            &source.to_string_lossy(),
+            &selected.dir,
+            &tungsten_openapi::acquire::current_options(),
+        ) {
+            Ok(path) => {
+                match tungsten_openapi::acquire::content_hash(&path) {
+                    Ok(hash) => selected.source_sha256 = Some(hash),
+                    Err(diagnostic) => {
+                        let mut report = Report::new(CommandName::Init);
+                        report.exit = exit::FAILED;
+                        report.diagnostics.push(diagnostic);
+                        return report;
+                    }
+                }
+                selected.from = Some(path);
+            }
+            Err(diagnostic) => {
+                let mut report = Report::new(CommandName::Init);
+                report.exit = exit::FAILED;
+                report.diagnostics.push(diagnostic);
+                return report;
+            }
+        }
+    }
     let imported_files = if !selected.resume && selected.method.is_none() {
         match super::init_input::import(&mut selected) {
             Ok(files) => files,
@@ -97,6 +128,13 @@ pub(crate) fn run(args: &InitArgs, json: bool, env: &CliEnv) -> Report {
     } else {
         vec![]
     };
+    // Converted inputs keep the existing reviewed importer output. OpenAPI
+    // manifests retain the URL so every subsequent compilation verifies its pin.
+    if imported_files.is_empty() && original_remote.is_some() {
+        selected.from = original_remote;
+    } else if let Some(source) = original_remote {
+        selected.source_url = Some(source.to_string_lossy().into_owned());
+    }
     // An imported input carries operation policy that only some targets
     // enforce; say so before anything is generated.
     let refused_targets = if imported_files.is_empty() {

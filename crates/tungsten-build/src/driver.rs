@@ -180,6 +180,13 @@ struct AgentInput {
 /// manifest is read: the spec's `x-agent-*` extensions and the defaults
 /// apply.
 pub fn compile_spec(spec: &Path, opts: &CompileOptions) -> Compiled {
+    let source = spec.to_string_lossy();
+    if tungsten_openapi::acquire::is_remote(&source) {
+        // Do not derive names from an unvalidated URL: a query or malformed
+        // credential-bearing authority could otherwise leak through validation.
+        let config = TungstenConfig::for_single_spec("api", &source);
+        return on_compile_stack(|| compile_config_here(config, Path::new("."), None, opts));
+    }
     let stem = spec
         .file_stem()
         .map(|s| s.to_string_lossy().into_owned())
@@ -355,7 +362,41 @@ fn compile_validated(
                 .collect(),
         })
         .collect();
-    let mut workspace = tungsten_openapi::load(&entries, &opts.load);
+    let mut load = opts.load.clone();
+    load.acquisition_root = if base_dir.as_os_str().is_empty() {
+        PathBuf::from(".")
+    } else {
+        base_dir.to_path_buf()
+    };
+    for input in &config.inputs {
+        if let Some(source) = &input.source_url {
+            // A converted artifact must remain tied to the raw bytes from which
+            // it was reviewed. Refreshing only the pin would silently retain an
+            // old conversion; require re-import into a fresh project instead.
+            let mut policy = load.acquisition.clone();
+            policy.refresh = false;
+            let verified =
+                tungsten_openapi::acquire::acquire(source, &load.acquisition_root, &policy)
+                    .and_then(|path| tungsten_openapi::acquire::content_hash(&path))
+                    .and_then(|hash| {
+                        if input.source_sha256.as_deref() == Some(hash.as_str()) {
+                            Ok(())
+                        } else {
+                            Err(Diagnostic::error(
+                                "TG0122",
+                                "remote source does not match the SHA256 used for this conversion",
+                            ))
+                        }
+                    });
+            if let Err(mut error) = verified {
+                if error.code == "TG0122" {
+                    error = error.with_help("review the changed source and re-import it into a fresh project, then review imported operations again; use --offline to retain the existing conversion");
+                }
+                diagnostics.push(error);
+            }
+        }
+    }
+    let mut workspace = tungsten_openapi::load(&entries, &load);
     diagnostics.extend(std::mem::take(&mut workspace.diagnostics));
 
     let mut input_digests = BTreeMap::new();

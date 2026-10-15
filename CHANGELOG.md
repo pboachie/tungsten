@@ -11,6 +11,10 @@ changes.
 
 ### Added
 
+- HTTP(S) input acquisition for `init --from`, compiler paths and manifest inputs,
+  with bounded downloads, SHA256 source pins in `.tungsten-inputs`, explicit
+  `--refresh-inputs`, verified `--offline` reuse and redacted `--input-header`
+  authentication. Remote entries retain existing reference and import safety rules.
 - Opt-in Python 3.10/3.11 SDK generation with `python_version`, matching
   package metadata and a Python 3.10-compatible runtime for both model modes.
 - Link the importer guide from the quickstart, including per-format limits and imported-operation review.

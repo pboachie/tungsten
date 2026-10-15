@@ -30,6 +30,33 @@ Most SDK generators optimize for a person reading autocomplete. An agent has a f
 
 ## Supported inputs
 
+`init --from` also accepts HTTP(S) document URLs for these formats. OpenAPI
+URLs work directly as compiler paths or `inputs[].spec` in `tungsten.yml`.
+Other formats go through the same local importer and its required review flags:
+
+```sh
+tungsten init --from https://example.com/contracts/openapi.json --dir my-api
+tungsten generate my-api --offline
+tungsten check my-api --refresh-inputs
+```
+
+The first fetch records the source URL and SHA256 under
+`.tungsten-inputs/<url-sha256>/source.lock.json`, beside immutable downloaded
+content. Retain both files for offline use. Online commands verify upstream
+bytes against the pin and refuse changed content. `--refresh-inputs` explicitly
+accepts a new OpenAPI pin; converted imports instead require re-import into a
+fresh project and another operation review. Their `source_url` and
+`source_sha256` manifest fields preserve that provenance on every compilation.
+
+For authentication, repeat `--input-header 'Authorization: Bearer ...'`, or set
+`TUNGSTEN_INPUT_HEADERS` to newline-separated `Name: value` headers to keep
+secrets out of command history. Header values are excluded from pins and fetch
+diagnostics. URLs must have no credentials, query or fragment. Downloads are
+limited to 8 MiB and 30 seconds; redirects are refused. Remote references are
+still blocked, including relative references from a remote OpenAPI document.
+The cache contains original input bytes, so retain it with the same access
+controls as the source document and review it before sharing.
+
 `tungsten init` takes **one** input of any of the kinds below — OpenAPI OR Swagger OR Postman OR saved cURL OR HTTP request files OR HAR, with the endpoint-manifest and manual paths alongside them — not a bundle. Every route is parsed offline: no request is sent or replayed, and no shell, script or capture is ever executed. Non-OpenAPI inputs are converted to a normalized OpenAPI document that `init` saves next to the manifests (`imported.openapi.json`, with an `import-report.json` where listed; the manual path writes `inferred.openapi.json` and `inference-report.json`), so the accepted input stays separate from the normalized artifact and the typed IR the compiler builds from it.
 
 | Input | You provide | Entry point and conversion | Limits and required review |

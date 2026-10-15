@@ -7,7 +7,8 @@
 # Writes <outdir>/tungsten-<version>-<target>.tar.gz (.zip for Windows targets)
 # and <outdir>/<archive>.sha256 in `sha256sum` format. The archive holds one
 # directory, tungsten-<version>-<target>/, with the binary, LICENSE and
-# README.md. File times come from SOURCE_DATE_EPOCH (default: the HEAD commit)
+# README.md; LICENSE also includes the webpki-roots certificate-data licence. File times come
+# from SOURCE_DATE_EPOCH (default: the HEAD commit)
 # and owners are zeroed, so the same binary always gives the same archive.
 set -eu
 
@@ -35,6 +36,10 @@ mkdir "$stage/$name"
 cp "$binary" "$stage/$name/$exe"
 chmod 755 "$stage/$name/$exe"
 cp "$root/LICENSE" "$root/README.md" "$stage/$name/"
+# The distribution generator carries this complete LICENSE into container
+# contexts too, so the certificate data always travels with its agreement.
+printf '\n\nThird-party certificate data: webpki-roots\n\n' >> "$stage/$name/LICENSE"
+cat "$root/.github/WEBPKI-LICENSE.md" >> "$stage/$name/LICENSE"
 
 archive="$name.$ext"
 rm -f "$outdir/$archive"
