@@ -195,7 +195,10 @@ public sealed class FileIdempotencyStore : IAtomicIdempotencyStore
         string token = Token();
         byte[] mine = Utf8.GetBytes(Json.Text(new JsonObject
         {
-            ["version"] = 1, ["host"] = Host(), ["pid"] = Environment.ProcessId, ["token"] = token,
+            ["version"] = 1,
+            ["host"] = Host(),
+            ["pid"] = Environment.ProcessId,
+            ["token"] = token,
         }) + "\n");
         long started = Stopwatch.GetTimestamp();
         int delay = 5;
