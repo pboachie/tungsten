@@ -357,3 +357,23 @@ The test suite, conformance corpus and design documents live in a separate maint
 ## Contributing and security
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request, and open an issue to discuss a large change first. Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md); please do not file them as public issues.
+
+### Python interpreter compatibility
+
+Python targets default to Python 3.12+. To generate a client for Python 3.10
+or 3.11, set a quoted `python_version` in `targets.python`:
+
+```yaml
+targets:
+  python:
+    python_version: "3.10"
+```
+
+Supported values are `"3.10"`, `"3.11"` and `"3.12"` (the default). Both
+Pydantic and `models: dataclasses` support these modes. Compatibility output
+uses `typing_extensions` aliases and retains forward references, validation
+and transport behavior. The matching runtime supports Python 3.10 and newer;
+compatibility clients require `tungsten-runtime>=0.1.3,<0.2.0`, including when
+an explicit runtime specifier is supplied. A `runtime_path` checkout must
+contain this compatibility support. Publishing the matching runtime remains
+part of the coordinated release.

@@ -11,6 +11,9 @@ changes.
 
 ### Added
 
+- Opt-in Python 3.10/3.11 SDK generation with `python_version`, matching
+  package metadata and a Python 3.10-compatible runtime for both model modes.
+
 - Imported specs (Postman, cURL, `.http`, HAR and endpoint manifests): a
   target that cannot enforce imported-operation policy (Java, C#, Kotlin, Ruby,
   Dart and the other SDK targets) now fails alone; without `--strict` the
