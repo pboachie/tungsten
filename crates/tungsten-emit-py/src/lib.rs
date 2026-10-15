@@ -177,7 +177,9 @@ fn inline_record_notes(ir: &Ir) -> Diagnostics {
 /// Every file of the package: (path relative to the target directory,
 /// contents), in a deterministic order.
 pub fn generate(ir: &Ir, opts: &Options) -> Vec<(String, String)> {
-    let plan = plan::Plan::new(ir).with_models(opts.models);
+    let plan = plan::Plan::new(ir)
+        .with_models(opts.models)
+        .with_python_compat(opts.python_version != "3.12");
     let header = header(CommentStyle::Hash, ir);
     let shapes: Vec<ops::OpShape<'_>> = plan.ops.iter().map(|o| ops::op_shape(&plan, o)).collect();
     let (macro_plans, _) = macros::plan_macros(&plan, &shapes);
@@ -211,7 +213,7 @@ pub fn generate(ir: &Ir, opts: &Options) -> Vec<(String, String)> {
         ),
         (
             format!("{m}/_internal.py"),
-            package::internal_file(&header, opts.models),
+            package::internal_file(&header, opts.models, plan.python_compat),
         ),
         (
             format!("{m}/models/__init__.py"),
