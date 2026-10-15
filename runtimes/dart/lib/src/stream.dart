@@ -224,9 +224,9 @@ final class EventStream<T> extends Stream<Result<StreamEvent<T>>> {
       if (_stopped) return null;
       var o = _open;
       if (o == null) {
-        final (err, opened) = await _opening(
-            core._openStream(op, _args, _options, null, null)) ??
-            (null, null);
+        final (err, opened) =
+            await _opening(core._openStream(op, _args, _options, null, null)) ??
+                (null, null);
         if (_stopped) {
           opened?.body.close();
           return null;
@@ -283,9 +283,9 @@ final class EventStream<T> extends Stream<Result<StreamEvent<T>>> {
       final ceiling = math.min(server, core.reconnectMaxMs).toDouble();
       await _pause(ceiling - core._random() * 0.25 * ceiling);
       if (_stopped) return null;
-      final (err, fresh) = await _opening(
-              core._openStream(op, _args, _options, o.lastId, o)) ??
-          (null, null);
+      final (err, fresh) =
+          await _opening(core._openStream(op, _args, _options, o.lastId, o)) ??
+              (null, null);
       if (_stopped) {
         fresh?.body.close();
         return null;
