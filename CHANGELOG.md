@@ -11,6 +11,11 @@ changes.
 
 ### Added
 
+- Automate Maven Central, NuGet and RubyGems publication alongside npm, PyPI
+  and crates.io after an approved release tag. Verify package identity, source
+  and checksums before credentials, and compare public downloads with the tested
+  archives. Add a package-only rehearsal and an embedded NuGet package icon.
+
 - Enable registry packaging of the Apache-2.0 Rust runtime and CLI-kit with a
   versioned runtime dependency. Add opt-in crates.io trusted publishing to the
   existing release workflow; account ownership, first publication and publisher

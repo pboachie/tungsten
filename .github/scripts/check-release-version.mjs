@@ -18,7 +18,12 @@ const tomlVersion = (path, section) => {
 const workspace = tomlVersion("Cargo.toml", "workspace.package");
 const tag = process.env.CI_COMMIT_TAG || process.env.RELEASE_TAG || "";
 assert(tag || process.argv.includes("--workspace"), "set RELEASE_TAG/CI_COMMIT_TAG, or pass --workspace for an untagged source check");
-if (tag) assert.match(tag, /^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/, "invalid release tag");
+if (tag) {
+  assert.match(tag, /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/, "invalid release tag");
+  for (const part of tag.split("-").slice(1).join("-").split(".")) {
+    assert(!/^0\d+$/.test(part), "numeric prerelease identifiers cannot have leading zeroes");
+  }
+}
 const version = tag ? tag.slice(1) : workspace;
 assert.equal(workspace, version, "release tag and workspace version differ");
 const expect = (path, actual) => assert.equal(actual, version, `${path}: release version mismatch`);
