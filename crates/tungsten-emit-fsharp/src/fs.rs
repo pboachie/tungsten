@@ -44,9 +44,21 @@ pub fn string_array(items: &[String]) -> String {
 
 /// Text made safe for an XML documentation comment.
 pub fn xml(text: &str) -> String {
-    text.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            // A line terminator would end the `///` line: write a character
+            // reference instead.
+            '\n' | '\r' | '\u{85}' | '\u{2028}' | '\u{2029}' => {
+                out.push_str(&format!("&#x{:x};", c as u32));
+            }
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 /// A `///` documentation comment; empty text writes nothing.
