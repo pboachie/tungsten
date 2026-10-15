@@ -258,6 +258,10 @@ pub mod codes {
         ("TG0508", "malformed operation element ignored"),
         ("TG0509", "unsupported security scheme ignored"),
         (
+            "TG0510",
+            "path item field defined both beside its $ref and in the target",
+        ),
+        (
             "TG0530",
             "event stream declares no schema; events decoded as any JSON value",
         ),

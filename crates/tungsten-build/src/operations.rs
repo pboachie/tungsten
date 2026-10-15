@@ -23,6 +23,7 @@ use crate::auth::AuthTable;
 use crate::ctx::{Ctx, child, doc_of, flag, str_of};
 use crate::filter::{self, Disposition};
 use crate::names::{pascal, synthesize_operation_id};
+use crate::pathitem::PathItem;
 use crate::responses::RawResponse;
 use crate::rpc::{self, RpcVariant};
 use crate::{NamespaceInput, bodies, params, responses, streams};
@@ -71,7 +72,8 @@ pub(crate) struct NamespaceOps {
 struct Skeleton {
     path: String,
     method: HttpMethod,
-    path_item: RefTarget,
+    /// Owners of path-level parameters, base first (see `pathitem`).
+    path_owners: Vec<RefTarget>,
     target: RefTarget,
     operation_id: Option<String>,
     /// Id without the namespace.
@@ -145,10 +147,11 @@ fn enumerate(cx: &mut Ctx<'_>, input: &NamespaceInput) -> Vec<Skeleton> {
     };
     let mut out = vec![];
     for path in paths.keys() {
-        let Some((path_item, item)) = cx.deref_value(&child(&paths_at, path)) else {
+        let Some(entry) = PathItem::resolve(cx, &child(&paths_at, path)) else {
             continue;
         };
-        if !item.is_object() {
+        let path_item = entry.at.clone();
+        if !entry.item.is_object() {
             cx.report(
                 Diagnostic::warning(
                     "TG0508",
@@ -158,6 +161,7 @@ fn enumerate(cx: &mut Ctx<'_>, input: &NamespaceInput) -> Vec<Skeleton> {
             );
             continue;
         }
+        entry.report_conflicts(cx, path);
         let (path_only, query) = params::split_query(path);
         if !query.is_empty() {
             cx.report(
@@ -172,10 +176,9 @@ fn enumerate(cx: &mut Ctx<'_>, input: &NamespaceInput) -> Vec<Skeleton> {
             );
         }
         for (word, method) in METHODS {
-            let Some(op) = item.get(word) else {
+            let Some((target, op)) = entry.operation(word) else {
                 continue;
             };
-            let target = child(&path_item, word);
             if !op.is_object() {
                 cx.report(
                     Diagnostic::warning(
@@ -218,7 +221,7 @@ fn enumerate(cx: &mut Ctx<'_>, input: &NamespaceInput) -> Vec<Skeleton> {
             out.push(Skeleton {
                 path: path.clone(),
                 method,
-                path_item: path_item.clone(),
+                path_owners: entry.owners(),
                 target,
                 operation_id,
                 local_id,
@@ -312,7 +315,7 @@ fn build_op(
         hint: pascal(&local),
     };
     let template = params::path_template(&sk.path);
-    let params = params::build(cx, auth, &scope, &sk.path_item, &sk.target, &template);
+    let params = params::build(cx, auth, &scope, &sk.path_owners, &sk.target, &template);
     // An rpc envelope's body is replaced by each method's parameters, so
     // it is never converted: no type and no diagnostic for a schema that
     // is not in the IR.

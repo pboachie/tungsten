@@ -11,6 +11,13 @@ changes.
 
 ### Added
 
+- Postman import omits unsupported requests and folders per item instead of
+  failing the whole collection: non-raw or non-JSON bodies, non-JSON saved
+  responses, unsupported auth helpers, pre-request scripts and unresolved or
+  dynamic variables. Each omission is listed under `omitted` (code, JSON
+  pointer, reason) in `import-report.json`, and `init --from` prints the
+  omitted count. A collection with no importable request fails with PM008;
+  PM001 budgets and PM002 schema errors still fail the import.
 - A Dart SDK target, `dart`: a pub package with final model classes that
   decode and encode themselves, sealed unions, `Future` methods returning
   `Result<T>`, `Stream` pages and `EventStream<T>` streams, typed macros and
@@ -44,6 +51,25 @@ changes.
   the Java target's gaps.
 - `ClientOptions.identity()` and `withIdentity(...)` in the Java runtime
   (additive), so a layer on top of it reports its own runtime identity.
+- F# SDK target `fsharp` (short form `fs`), a built-in emitter over the .NET
+  runtime. It generates records, discriminated unions for enums and unions
+  with strict and lenient generated JSON codecs, `Task<Result<'T, Diagnostic>>`
+  methods for operations, previews, pages and streams, typed macros and a
+  client, with an explicit compile order. Options: `package_id`, `namespace`,
+  `version`, `runtime`, `runtime_path` and `csharp_runtime_path`.
+  Diagnostics TG1080 to TG1085, each with `tungsten explain` text.
+- `runtimes/fsharp` (`Tungsten.Runtime.FSharp`, net10.0): the F# layer over
+  `runtimes/csharp` with the F# identity, `Patch<'T>` as a union, Result and
+  option interop, Task and async-sequence helpers and the JSON helpers of
+  generated records. The public CI job `fsharp runtime build` builds it.
+- `Tungsten.Runtime`: `ClientCore` accepts a `RuntimeIdentity`, so a layer
+  over the runtime can name its own language in `User-Agent` and
+  `X-Tungsten-Runtime`. The C# identity is unchanged.
+
+Known gaps of the F# target: Task API only; net10.0 only; no Fantomas
+formatting; Fable and JavaScript targets untested; plus the C# limits
+(in-memory idempotency store, .NET regex dialect, by-status and intersection
+values as `JsonNode`, OpenID Connect as a bearer token, no CLI or MCP).
 
 ### Changed
 
@@ -79,6 +105,13 @@ changes.
   external `go` target lacks its toolchain (Java 17, .NET 10, Ruby 3.3,
   Go 1.22) or, for an external `go` target without a command, when
   `tungsten-emit-go` is not on PATH.
+- A Path Item `$ref` with fields written beside it no longer drops them:
+  sibling operations, `parameters`, `summary`, `description` and `servers`
+  are merged over the referenced item for OpenAPI 3.0 and 3.1 alike, so a
+  spec that lost an operation silently now compiles it (additive to the
+  generated API). A field defined on both sides is the new warning TG0510
+  (the sibling wins; `tungsten explain TG0510`), which fails a run only under
+  `--strict`.
 - Python and Java runtimes bound schema `pattern` matching: strings over 64 KiB
   skip the pattern check, and Java abandons a match after 1 s, treating it as
   not checked.
@@ -90,30 +123,6 @@ changes.
   before any bytes are written.
 - TypeScript runtime: header values are validated before the request body is
   built, and multipart part media types are checked as `type/subtype[;params]`.
-
-## [0.1.3]
-
-### Added
-
-- F# SDK target `fsharp` (short form `fs`), a built-in emitter over the .NET
-  runtime. It generates records, discriminated unions for enums and unions
-  with strict and lenient generated JSON codecs, `Task<Result<'T, Diagnostic>>`
-  methods for operations, previews, pages and streams, typed macros and a
-  client, with an explicit compile order. Options: `package_id`, `namespace`,
-  `version`, `runtime`, `runtime_path` and `csharp_runtime_path`.
-  Diagnostics TG1080 to TG1085, each with `tungsten explain` text.
-- `runtimes/fsharp` (`Tungsten.Runtime.FSharp`, net10.0): the F# layer over
-  `runtimes/csharp` with the F# identity, `Patch<'T>` as a union, Result and
-  option interop, Task and async-sequence helpers and the JSON helpers of
-  generated records. The public CI job `fsharp runtime build` builds it.
-- `Tungsten.Runtime`: `ClientCore` accepts a `RuntimeIdentity`, so a layer
-  over the runtime can name its own language in `User-Agent` and
-  `X-Tungsten-Runtime`. The C# identity is unchanged.
-
-Known gaps of the F# target: Task API only; net10.0 only; no Fantomas
-formatting; Fable and JavaScript targets untested; plus the C# limits
-(in-memory idempotency store, .NET regex dialect, by-status and intersection
-values as `JsonNode`, OpenID Connect as a bearer token, no CLI or MCP).
 
 ## [0.1.2]
 
