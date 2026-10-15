@@ -14,6 +14,8 @@ changes.
 - A runnable typed Python SSE recipe under `examples/typed-sse`, with an
   explicit FastAPI response declaration, a reviewed OpenAPI overlay, API-key
   authentication, sync/async consumers and explicit terminal-event cleanup.
+- Link the importer guide from the quickstart, including per-format limits and imported-operation review.
+
 - Imported specs (Postman, cURL, `.http`, HAR and endpoint manifests): a
   target that cannot enforce imported-operation policy (Java, C#, Kotlin, Ruby,
   Dart and the other SDK targets) now fails alone; without `--strict` the
@@ -168,6 +170,10 @@ values as `JsonNode`, OpenID Connect as a bearer token, no CLI or MCP).
 
 ### Fixed
 
+- Dart pagination detects repeated cursors and page URLs, including the caller's
+  starting cursor and cycles across earlier pages. Fetched pages are delivered
+  before an `UNEXPECTED_RESPONSE` diagnostic, repeated requests are refused, and
+  relative next-page links resolve against the effective URL after redirects.
 - Release packaging: the aarch64 `gnu` Linux archive needed glibc 2.39 (it was
   built on `ubuntu-24.04-arm`) while the x86_64 archive needed 2.34, so the
   same `TUNGSTEN_LIBC=gnu` choice failed on Debian 12, Ubuntu 22.04, RHEL 9

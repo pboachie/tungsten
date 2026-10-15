@@ -2,7 +2,7 @@
 part of '../tungsten_runtime.dart';
 
 /// Where a pagination is: the arguments of the next page, the URL of a
-/// Link header page, the last cursor seen, and an error to report next.
+/// Link header page, the cursors and URLs seen, and an error to report next.
 final class _PageState {
   _PageState(this.args);
 
@@ -23,11 +23,28 @@ final class _PageState {
 
   final Map<String, Object?> args;
   String? overrideUrl;
-  Object? previousCursor = unset;
+  final Set<String> seenCursors = {};
+  final Set<String> seenUrls = {};
+  String? effectiveUrl;
+  bool started = false;
   bool done = false;
   Err<Page<Object?>>? pendingError;
 
   Object? arg(String key) => args.containsKey(key) ? args[key] : unset;
+
+  static String urlKey(String url) =>
+      Uri.parse(url).removeFragment().normalizePath().toString();
+
+  static Err<T> repeated<T>(String operation, [ResponseMeta? meta]) =>
+      _diag(operation, 'UNEXPECTED_RESPONSE')
+          .status(meta?.status)
+          .requestId(meta?.requestId)
+          .retrying('never')
+          .remedy(
+            'Pagination detected a repeated cursor or page URL. Fix the server\'s next-page value before continuing.',
+          )
+          .attempts(meta?.attempts ?? 0)
+          .err<T>();
 }
 
 /// The next-page URL of a `Link` header (`rel="next"`), or null.
@@ -94,9 +111,19 @@ extension _Pages on ClientCore {
       return pending;
     }
     if (state.done) return null;
+    if (!state.started) {
+      state.started = true;
+      final pg = op.pagination;
+      if (pg?['style'] == 'cursor') {
+        final initial = state.arg(op.argName(_str(pg!['request_param'])));
+        if (!identical(initial, unset) && initial != null && initial != '') {
+          state.seenCursors.add(Json.canonical(initial));
+        }
+      }
+    }
     final response = await _guard(
       op.id,
-      () => _callWith(op, state.args, opts, state.overrideUrl, claim),
+      () => _callWith(op, state.args, opts, state.overrideUrl, claim, state),
     );
     if (response is Err<Object?>) {
       state.done = true;
@@ -131,14 +158,13 @@ extension _Pages on ClientCore {
         if (moreField.isNotEmpty) {
           finished = _Util.getPathStr(body, moreField) == false;
         }
-        final repeated = !identical(state.previousCursor, unset) &&
-            !identical(cursor, unset) &&
-            Json.canonical(state.previousCursor) == Json.canonical(cursor);
-        if (!identical(cursor, unset) && !finished && !repeated) {
-          next = cursor;
-          state
-            ..previousCursor = cursor
-            ..args[op.argName(_str(pg['request_param']))] = cursor;
+        if (!identical(cursor, unset) && !finished) {
+          if (!state.seenCursors.add(Json.canonical(cursor))) {
+            state.pendingError = _PageState.repeated(op.id, ok.meta);
+          } else {
+            next = cursor;
+            state.args[op.argName(_str(pg['request_param']))] = cursor;
+          }
         }
       case 'offset':
         final offsetKey = op.argName(_str(pg!['offset_param']));
@@ -163,10 +189,14 @@ extension _Pages on ClientCore {
       case 'link_header':
         final link = _nextLink(ok.meta.headers['link']);
         if (link != null) {
-          final target = _linkTarget(state.overrideUrl ?? baseUrl, link);
+          final target = _linkTarget(state.effectiveUrl!, link);
           if (target != null) {
-            state.overrideUrl = target;
-            next = target;
+            if (state.seenUrls.contains(_PageState.urlKey(target))) {
+              state.pendingError = _PageState.repeated(op.id, ok.meta);
+            } else {
+              state.overrideUrl = target;
+              next = target;
+            }
           } else {
             state.pendingError = _diag(op.id, 'UNEXPECTED_RESPONSE')
                 .status(ok.meta.status)
