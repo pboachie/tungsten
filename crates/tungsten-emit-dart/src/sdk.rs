@@ -390,7 +390,11 @@ pub(crate) fn arg_in(g: &Gen<'_, '_>, a: &Arg) -> Expr {
         Presence::Optional => {
             // `Wire.any` reads `Object?`; inference would otherwise settle
             // on `Object` from a parameter of type `Object?`.
-            let callee = if decoder.flat() == "Wire.any" { "_optional<Object?>" } else { "_optional" };
+            let callee = if decoder.flat() == "Wire.any" {
+                "_optional<Object?>"
+            } else {
+                "_optional"
+            };
             Expr::call(callee, vec![args, key, decoder])
         }
         Presence::OptionalNullable => Expr::call("Wire.patch", vec![args, key, path, decoder]),
