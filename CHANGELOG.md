@@ -11,6 +11,9 @@ changes.
 
 ### Added
 
+- A runnable typed Python SSE recipe under `examples/typed-sse`, with an
+  explicit FastAPI response declaration, a reviewed OpenAPI overlay, API-key
+  authentication, sync/async consumers and explicit terminal-event cleanup.
 - HTTP(S) input acquisition for `init --from`, compiler paths and manifest inputs,
   with bounded downloads, SHA256 source pins in `.tungsten-inputs`, explicit
   `--refresh-inputs`, verified `--offline` reuse and redacted `--input-header`
