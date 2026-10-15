@@ -105,6 +105,12 @@ pub enum Expr {
     Named(String, Box<Expr>),
 }
 
+/// Whether a source line ends at this character; a doc comment must not
+/// continue past it.
+fn is_line_terminator(c: char) -> bool {
+    matches!(c, '\n' | '\r' | '\u{85}' | '\u{2028}' | '\u{2029}')
+}
+
 impl Expr {
     pub fn raw(text: impl Into<String>) -> Self {
         Expr::Raw(text.into())
@@ -224,7 +230,8 @@ impl Code {
         if text.is_empty() {
             return;
         }
-        for l in text.lines() {
+        let text = text.replace("\r\n", "\n");
+        for l in text.split(is_line_terminator) {
             let l = l.trim_end();
             if l.is_empty() {
                 self.line("///");

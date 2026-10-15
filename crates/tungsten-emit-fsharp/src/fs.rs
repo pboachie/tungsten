@@ -42,11 +42,26 @@ pub fn string_array(items: &[String]) -> String {
     }
 }
 
-/// Text made safe for an XML documentation comment.
+/// Whether a source line ends at this character; a doc comment must not
+/// continue past it.
+fn is_line_terminator(c: char) -> bool {
+    matches!(c, '\n' | '\r' | '\u{85}' | '\u{2028}' | '\u{2029}')
+}
+
+/// Text made safe for an XML documentation comment on one line: every line
+/// terminator becomes a space.
 pub fn xml(text: &str) -> String {
-    text.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            c if is_line_terminator(c) => out.push(' '),
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 /// A `///` documentation comment; empty text writes nothing.
@@ -55,7 +70,8 @@ pub fn doc(w: &mut Writer, text: &str) {
     if text.is_empty() {
         return;
     }
-    for l in text.lines() {
+    let text = text.replace("\r\n", "\n");
+    for l in text.split(is_line_terminator) {
         let l = l.trim_end();
         if l.is_empty() {
             w.line("///");
