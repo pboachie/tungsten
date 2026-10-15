@@ -22,7 +22,8 @@
 //! F# requires). A recursive component is one group of `type ... and ...`
 //! declarations in one file, named after its first type, in that type's
 //! namespace (a cycle across model namespaces is declared in the namespace
-//! of its first type).
+//! of its first type; a model of that cycle whose name is taken there is
+//! prefixed with its own module, [`Ctx::placed_names`]).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -194,6 +195,53 @@ impl Ctx<'_> {
         }
     }
 
+    /// The F# name of every model, unique in the F# namespace it is
+    /// declared in. A model keeps the Namer's name unless it belongs to a
+    /// cycle declared in another model namespace's F# namespace and that
+    /// name is taken there: then it is prefixed with its own module
+    /// (`SealedError`), numbered if that is taken too.
+    pub fn placed_names(&self) -> BTreeMap<TypeId, String> {
+        let mut out = BTreeMap::new();
+        let mut taken: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        let mut moved = vec![];
+        for id in self.plan.namespaces.iter().flat_map(|n| &n.types) {
+            let Some(t) = self.plan.types.get(id) else {
+                continue;
+            };
+            if !self.has_model(id) {
+                continue;
+            }
+            let name = self.names.types.get(id).cloned().unwrap_or_default();
+            let ns = self.type_ns(id);
+            if ns == self.model_ns(&t.namespace) {
+                taken.entry(ns).or_default().push(name.clone());
+                out.insert(id.clone(), name);
+            } else {
+                moved.push((id.clone(), name, ns, t.namespace.clone()));
+            }
+        }
+        for (id, name, ns, own) in moved {
+            let names = taken.entry(ns).or_default();
+            let placed = if names.contains(&name) {
+                crate::fs::unique(format!("{}{name}", self.module(&own)), names)
+            } else {
+                names.push(name.clone());
+                name
+            };
+            out.insert(id, placed);
+        }
+        out
+    }
+
+    /// The F# name of a model, as declared ([`Ctx::placed_names`]).
+    pub fn model_name(&self, id: &TypeId) -> String {
+        self.model_names
+            .get(id)
+            .or_else(|| self.names.types.get(id))
+            .cloned()
+            .unwrap_or_default()
+    }
+
     /// Every model file in compile order (dependencies first).
     pub fn model_groups(&self) -> Vec<ModelGroup> {
         // Plan order: namespace order, then each namespace's declaration
@@ -219,7 +267,7 @@ impl Ctx<'_> {
             let Some(plan) = self.plan.types.get(lead) else {
                 continue;
             };
-            let name = self.names.types.get(lead).cloned().unwrap_or_default();
+            let name = self.model_name(lead);
             let path = if self.single_model_namespace {
                 format!("Models/{name}.fs")
             } else {
@@ -260,7 +308,7 @@ impl Ctx<'_> {
     /// in its own namespace (the types of one recursive group refer to one
     /// another), else fully qualified with `global.`.
     pub fn model_ref(&self, id: &TypeId, from: Option<&str>) -> String {
-        let name = self.names.types.get(id).cloned().unwrap_or_default();
+        let name = self.model_name(id);
         let ns = self.type_ns(id);
         if from == Some(ns.as_str()) {
             name

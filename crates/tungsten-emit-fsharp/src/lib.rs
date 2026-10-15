@@ -76,6 +76,25 @@ pub mod __testing {
             .client_class
     }
 
+    /// (type id, fully qualified F# type) of every model of the SDK of
+    /// `ir` under the root namespace `namespace`, in IR order.
+    pub fn model_classes(ir: &Ir, namespace: &str) -> Vec<(String, String)> {
+        with_ctx(ir, namespace, |ctx| {
+            ir.types
+                .types
+                .iter()
+                .filter(|t| ctx.has_model(&t.id))
+                .map(|t| {
+                    let name = ctx.model_ref(&t.id, None);
+                    (
+                        t.id.0.clone(),
+                        name.trim_start_matches("global.").to_string(),
+                    )
+                })
+                .collect()
+        })
+    }
+
     /// Every model group of the SDK of `ir` under the root namespace
     /// `namespace`, in compile order: (file, F# namespace, type ids,
     /// recursive).
@@ -160,6 +179,8 @@ pub struct Ctx<'a> {
     pub opts: &'a Options,
     /// One model namespace (`<namespace>.Models`) for every type.
     pub single_model_namespace: bool,
+    /// The F# name of every model ([`Ctx::placed_names`]).
+    pub model_names: std::collections::BTreeMap<tungsten_ir::TypeId, String>,
 }
 
 impl Ctx<'_> {
@@ -357,13 +378,16 @@ fn context<'a>(
 ) -> Ctx<'a> {
     let model_namespaces: std::collections::BTreeSet<&str> =
         plan.types.values().map(|t| t.namespace.as_str()).collect();
-    Ctx {
+    let mut ctx = Ctx {
         ir,
         plan,
         names,
         opts,
         single_model_namespace: model_namespaces.len() <= 1,
-    }
+        model_names: std::collections::BTreeMap::new(),
+    };
+    ctx.model_names = ctx.placed_names();
+    ctx
 }
 
 /// The descriptor document of the SDK, `fsharp` as its target.
