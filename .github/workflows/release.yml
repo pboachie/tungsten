@@ -16,8 +16,9 @@
 #   check step below enforces on every gnu binary), x86_64 and aarch64 macOS
 #   and x86_64 Windows, SHA256SUMS, a CycloneDX SBOM and a build provenance
 #   attestation per archive.
-# Registry publishing stays off by default. npm and PyPI trusted publishing
-# require the NPM_PUBLISH and PYPI_PUBLISH repository switches respectively. The runbook is
+# Registry publishing stays off unless its reviewed repository switch is enabled:
+# NPM_PUBLISH, PYPI_PUBLISH, CRATES_PUBLISH, MAVEN_PUBLISH, NUGET_PUBLISH or
+# RUBYGEMS_PUBLISH. Account/publisher/signing setup is separate. The runbook is
 # runbooks/release.md in tungsten-ops.
 #
 # Hardening: read-only token by default, each job asks only for what it needs
@@ -36,6 +37,11 @@ on:
         description: "Dry run: build and check everything, publish nothing"
         required: true
         default: true
+        type: boolean
+      registry_only:
+        description: "Rehearse registry packages only; requires dry_run=true and never publishes"
+        required: true
+        default: false
         type: boolean
       bootstrap_only:
         description: "Run only fresh-OS bootstrap rehearsal; skip all release and publication jobs"
@@ -81,9 +87,15 @@ jobs:
       - name: Reject published bootstrap outside bootstrap-only mode
         env:
           PUBLISHED_VERSION: ${{ inputs.bootstrap_published_version }}
+          REGISTRY_ONLY: ${{ inputs.registry_only }}
+          DRY_RUN: ${{ inputs.dry_run }}
         run: |
           if [ -n "$PUBLISHED_VERSION" ]; then
             echo "Published bootstrap requires bootstrap_only=true and dry_run=true." >&2
+            exit 1
+          fi
+          if [ "$REGISTRY_ONLY" = true ] && [ "$DRY_RUN" != true ]; then
+            echo "Registry-only rehearsal requires dry_run=true." >&2
             exit 1
           fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -113,7 +125,7 @@ jobs:
           fi
           if [ "$REF_TYPE" = tag ]; then
             tag="$REF_NAME"
-            if ! printf '%s' "$tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            if ! printf '%s' "$tag" | grep -Eq '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-([0-9A-Za-z-]+\.)*[0-9A-Za-z-]+)?$'; then
               echo "the tag must look like v1.2.3 or v1.2.3-rc.1, got: $tag" >&2
               exit 1
             fi
@@ -129,8 +141,13 @@ jobs:
               exit 1
             fi
             git fetch --quiet origin main
-            git merge-base --is-ancestor HEAD origin/main \
-              || { echo "the tagged commit is not on main" >&2; exit 1; }
+            if ! git merge-base --is-ancestor HEAD origin/main; then
+              release_branch="release/${version%%-*}"
+              git fetch --quiet origin "refs/heads/$release_branch:refs/remotes/origin/$release_branch" \
+                || { echo "the tagged commit needs main or its matching release branch" >&2; exit 1; }
+              [ "$(git rev-parse HEAD)" = "$(git rev-parse "origin/$release_branch")" ] \
+                || { echo "the tag must match the head of $release_branch" >&2; exit 1; }
+            fi
           fi
           {
             echo "release=$release"
@@ -138,6 +155,24 @@ jobs:
             echo "version=$version"
           } >> "$GITHUB_OUTPUT"
           echo "release=$release tag=${tag:-none} version=$version"
+
+      - name: Require every registry route before a real release
+        if: steps.plan.outputs.release == 'true'
+        env:
+          NPM_PUBLISH: ${{ vars.NPM_PUBLISH }}
+          PYPI_PUBLISH: ${{ vars.PYPI_PUBLISH }}
+          CRATES_PUBLISH: ${{ vars.CRATES_PUBLISH }}
+          MAVEN_PUBLISH: ${{ vars.MAVEN_PUBLISH }}
+          NUGET_PUBLISH: ${{ vars.NUGET_PUBLISH }}
+          RUBYGEMS_PUBLISH: ${{ vars.RUBYGEMS_PUBLISH }}
+        run: |
+          python3 - <<'PY'
+          import os
+          switches = ['NPM_PUBLISH', 'PYPI_PUBLISH', 'CRATES_PUBLISH', 'MAVEN_PUBLISH', 'NUGET_PUBLISH', 'RUBYGEMS_PUBLISH']
+          missing = [name for name in switches if os.environ.get(name) != 'true']
+          if missing:
+              raise SystemExit('Finish registry setup before approving a release tag: ' + ', '.join(missing))
+          PY
 
       # The release notes are the tagged CHANGELOG section, never the pull
       # request list: a release page must carry the breaking changes and
@@ -190,7 +225,9 @@ jobs:
           OPS_SHA: ${{ inputs.bootstrap_ops_sha }}
           PUBLISHED_VERSION: ${{ inputs.bootstrap_published_version }}
           DRY_RUN: ${{ inputs.dry_run }}
+          REGISTRY_ONLY: ${{ inputs.registry_only }}
         run: |
+          [ "$REGISTRY_ONLY" != true ] || { echo "Bootstrap and registry-only rehearsals are separate modes." >&2; exit 1; }
           [[ "$OPS_SHA" =~ ^[0-9a-fA-F]{40}$ ]] || exit 1
           if [ -n "$PUBLISHED_VERSION" ]; then
             [[ "$PUBLISHED_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || exit 1
@@ -328,12 +365,13 @@ jobs:
           retention-days: 14
 
   woodpecker-release:
-    name: Woodpecker npm release validation
+    name: Woodpecker registry release validation
     # The wait must not start before the artifacts it gates exist, so it runs
     # after the npm artifact validation instead of racing the build jobs. A
-    # timeout here fails only this gate (and skips npm publication); the GitHub
+    # timeout here fails this gate and skips every registry publication; the GitHub
     # Release and attestation jobs do not depend on it.
     needs: [prepare, npm-artifacts]
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.registry_only) }}
     runs-on: ubuntu-latest
     # WAIT_DEADLINE_MINUTES (45) in wait-woodpecker-release.mjs plus checkout
     # and setup.
@@ -366,6 +404,7 @@ jobs:
   build:
     name: build ${{ matrix.target }}
     needs: prepare
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.registry_only) }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     permissions:
@@ -652,7 +691,7 @@ jobs:
 
   github-release:
     name: GitHub Release
-    needs: [prepare, bundle, attest, crates-dry-run, npm-dry-run, npm-artifacts, pypi-build]
+    needs: [prepare, bundle, attest, crates-dry-run, npm-dry-run, npm-artifacts, pypi-build, native-artifacts]
     if: needs.prepare.outputs.release == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -710,6 +749,16 @@ jobs:
       - name: cargo publish --dry-run
         working-directory: runtimes/rust
         run: cargo publish --workspace --dry-run --locked
+      - name: Freeze the compiled Rust archives
+        run: |
+          version=$(python3 -c 'import pathlib,tomllib; print(tomllib.loads(pathlib.Path("Cargo.toml").read_text())["workspace"]["package"]["version"])')
+          python3 .github/scripts/registry-artifacts.py --package rust --version "$version" --directory rust-dist --stage-from runtimes/rust/target/package/tmp-crate
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: rust-dist
+          path: rust-dist/*
+          if-no-files-found: error
+          retention-days: 14
 
   # First crate ownership/bootstrap and each trusted publisher must be
   # configured before the maintainer enables CRATES_PUBLISH. No token fallback.
@@ -729,6 +778,17 @@ jobs:
           persist-credentials: false
       - name: Install the pinned toolchain (rust-toolchain.toml)
         run: rustup toolchain install
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: rust-dist
+          path: rust-dist
+      - name: Compile and compare the exact packages before credentials
+        env:
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          python3 .github/scripts/registry-artifacts.py --package rust --version "${RELEASE_TAG#v}" --directory rust-dist
+          (cd runtimes/rust && cargo publish --workspace --dry-run --locked)
+          python3 .github/scripts/registry-artifacts.py --package rust --version "${RELEASE_TAG#v}" --directory rust-dist --compare-build runtimes/rust/target/package/tmp-crate
       - uses: rust-lang/crates-io-auth-action@b7e9a28eded4986ec6b1fa40eeee8f8f165559ec # v1.0.3
         id: crates-auth
       - name: Publish runtime before its CLI-kit dependent
@@ -737,16 +797,13 @@ jobs:
           CARGO_REGISTRY_TOKEN: ${{ steps.crates-auth.outputs.token }}
           RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
         run: |
-          python3 - <<'PY'
-          import os, tomllib
-          from pathlib import Path
-          manifest = tomllib.loads(Path('Cargo.toml').read_text())['workspace']
-          version = manifest['package']['version']
-          assert os.environ['RELEASE_TAG'] == 'v' + version
-          assert manifest['package']['publish'] == ['crates-io']
-          assert manifest['dependencies']['tungsten-runtime']['version'] == version
-          PY
-          cargo publish --workspace --locked
+          # Compilation and exact archive comparison succeeded before OIDC.
+          # Cargo orders workspace dependencies and waits for registry indexing.
+          cargo publish --workspace --locked --no-verify
+      - name: Verify both public crates match the tested archives
+        env:
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+        run: python3 .github/scripts/verify-published-registries.py --package rust --version "${RELEASE_TAG#v}" --directory rust-dist
 
   npm-dry-run:
     name: npm dry run (${{ matrix.package }})
@@ -819,12 +876,15 @@ jobs:
     needs: [prepare, crates-dry-run, npm-dry-run, npm-artifacts, pypi-build, github-release, woodpecker-release]
     if: needs.prepare.outputs.release == 'true' && vars.NPM_PUBLISH == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     environment: npm
     permissions:
       contents: read
       id-token: write
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
@@ -845,7 +905,27 @@ jobs:
           npm --version
           dist_tag=latest
           case "$RELEASE_TAG" in *-*) dist_tag=next ;; esac
-          # Validate every archive's version before the first registry write.
+          # Validate every package's identity and dependencies before any write.
+          python3 - "${RELEASE_TAG#v}" <<'PY'
+          import json, pathlib, sys, tarfile
+          version = sys.argv[1]
+          names = ['@elysra/tungsten-runtime', '@elysra/tungsten-mcp', '@elysra/tungsten-webmcp']
+          expected = {name.replace('@', '').replace('/', '-') + '-' + version + '.tgz' for name in names}
+          if {path.name for path in pathlib.Path('.').glob('*.tgz')} != expected:
+              raise SystemExit('unexpected npm archive inventory')
+          for name in names:
+              path = pathlib.Path(name.replace('@', '').replace('/', '-') + '-' + version + '.tgz')
+              with tarfile.open(path, 'r:gz') as archive:
+                  members = [member for member in archive if member.name == 'package/package.json']
+                  if len(members) != 1 or not members[0].isfile() or members[0].size > 1048576:
+                      raise SystemExit('unexpected npm package metadata')
+                  manifest = json.load(archive.extractfile(members[0]))
+              if (manifest['name'], manifest['version'], manifest['license'], manifest['engines']['node']) != (name, version, 'Apache-2.0', '>=22'):
+                  raise SystemExit('npm archive identity or requirements differ from release')
+              dependency = (manifest.get('dependencies', {}) if name == names[1] else manifest.get('peerDependencies', {})).get(names[0])
+              if name != names[0] and dependency != '^' + version:
+                  raise SystemExit('npm adapter runtime dependency differs from release')
+          PY
           for package in elysra-tungsten-runtime elysra-tungsten-mcp elysra-tungsten-webmcp; do
             set -- "$package"-*.tgz
             [ "$#" -eq 1 ] && [ -f "$1" ] || { echo "expected one archive for $package" >&2; exit 1; }
@@ -854,11 +934,15 @@ jobs:
           done
           for package in elysra-tungsten-runtime elysra-tungsten-mcp elysra-tungsten-webmcp; do
             set -- "$package"-*.tgz
-            npm publish "$1" --provenance --access public --tag "$dist_tag" || {
+            npm publish "$1" --provenance --access public --tag "$dist_tag" --ignore-scripts || {
               echo "npm publication failed for $package. Verify the npm trusted publisher for pboachie/tungsten, release.yml, environment npm; no token fallback is configured. Inspect registry state before retrying a partially completed release." >&2
               exit 1
             }
           done
+      - name: Verify all three public npm archives
+        env:
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+        run: python3 .github/scripts/verify-published-registries.py --package npm --version "${RELEASE_TAG#v}" --directory runtime-dist
 
   pypi-build:
     name: PyPI build and twine check
@@ -882,10 +966,14 @@ jobs:
           "$packaging_python" -m pip --isolated install --disable-pip-version-check --require-hashes --only-binary=:all: -r ../../.github/packaging-requirements.lock
           "$packaging_python" -m build --no-isolation
           "$packaging_python" -m twine check dist/*
+      - name: Freeze the checked Python archives
+        run: |
+          version=$(python3 -c 'import pathlib,tomllib; print(tomllib.loads(pathlib.Path("Cargo.toml").read_text())["workspace"]["package"]["version"])')
+          python3 .github/scripts/registry-artifacts.py --package python --version "$version" --directory python-dist --stage-from runtimes/python/dist
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: python-dist
-          path: runtimes/python/dist/*
+          path: python-dist/*
           if-no-files-found: error
           retention-days: 14
 
@@ -894,48 +982,199 @@ jobs:
   # to "true". No stored token is used.
   pypi-publish:
     name: PyPI publish (trusted publishing)
-    needs: [prepare, pypi-build, github-release]
+    needs: [prepare, pypi-build, github-release, woodpecker-release]
     if: needs.prepare.outputs.release == 'true' && vars.PYPI_PUBLISH == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 25
     environment: pypi
     permissions:
       contents: read
       id-token: write
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: python-dist
-          path: dist
+          path: python-dist
       - name: Validate the built version before any registry write
         env:
           RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
         run: |
           set -eu
-          python3 - "${RELEASE_TAG#v}" <<'PY'
-          import pathlib, sys, tarfile, zipfile
-          version = sys.argv[1]
-          dist = pathlib.Path("dist")
-          files = sorted(p.name for p in dist.iterdir())
-          wheels = [n for n in files if n.endswith(".whl")]
-          sdists = [n for n in files if n.endswith(".tar.gz")]
-          if len(files) != 2 or len(wheels) != 1 or len(sdists) != 1:
-              raise SystemExit(f"expected exactly one sdist and one wheel in dist/, got: {files}")
-          versions = set()
-          for name in files:
-              if name.endswith(".whl"):
-                  with zipfile.ZipFile(dist / name) as wheel:
-                      metadata = next(m for m in wheel.namelist() if m.endswith(".dist-info/METADATA"))
-                      text = wheel.read(metadata).decode()
-              else:
-                  with tarfile.open(dist / name) as sdist:
-                      member = next(m for m in sdist.getmembers() if m.name.endswith("/PKG-INFO") and m.isfile())
-                      text = sdist.extractfile(member).read().decode()
-              versions.add(next(line.split(": ", 1)[1].strip() for line in text.splitlines() if line.startswith("Version:")))
-          if versions != {version}:
-              raise SystemExit(f"built package version(s) {sorted(versions)} do not match the release tag {version}; refusing to publish a different version")
-          print(f"validated {files} for {version}")
-          PY
+          python3 .github/scripts/registry-artifacts.py --package python --version "${RELEASE_TAG#v}" --directory python-dist
+          mkdir upload-dist
+          cp python-dist/*.whl python-dist/*.tar.gz upload-dist/
       - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
         with:
-          packages-dir: dist
+          packages-dir: upload-dist
+      - name: Verify the public wheel and sdist match the tested archives
+        env:
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+        run: python3 .github/scripts/verify-published-registries.py --package python --version "${RELEASE_TAG#v}" --directory python-dist
+
+  native-artifacts:
+    name: native runtime archives (${{ matrix.package }})
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [java, csharp, ruby]
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        if: matrix.package == 'java'
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        if: matrix.package == 'csharp'
+        with:
+          dotnet-version: 10.0.401
+      - uses: ruby/setup-ruby@14594264cd68ce8a2345dd349bc3d138a4ef85c8 # v1.327.0
+        if: matrix.package == 'ruby'
+        with:
+          ruby-version: "3.3"
+          bundler-cache: false
+      - name: Build and verify the registry archive inventory
+        env:
+          PACKAGE: ${{ matrix.package }}
+        run: |
+          version=$(python3 -c 'import pathlib,tomllib; print(tomllib.loads(pathlib.Path("Cargo.toml").read_text())["workspace"]["package"]["version"])')
+          export SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)
+          python3 .github/scripts/native-runtime-artifacts.py --package "$PACKAGE" --version "$version" --directory native-dist --build
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: native-dist-${{ matrix.package }}
+          path: native-dist/*
+          if-no-files-found: error
+          retention-days: 14
+
+  maven-publish:
+    name: Maven Central publish
+    needs: [prepare, native-artifacts, github-release, woodpecker-release]
+    if: needs.prepare.outputs.release == 'true' && vars.MAVEN_PUBLISH == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: maven-central
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: native-dist-java
+          path: native-dist
+      - name: Verify reviewed package version and checksums before credentials
+        env:
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+        run: python3 .github/scripts/native-runtime-artifacts.py --package java --version "${RELEASE_TAG#v}" --directory native-dist
+      - name: Sign and publish the frozen archives through Central
+        env:
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+          MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          MAVEN_GPG_PRIVATE_KEY: ${{ secrets.MAVEN_GPG_PRIVATE_KEY }}
+          MAVEN_GPG_PASSPHRASE: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
+          MAVEN_GPG_FINGERPRINT: ${{ vars.MAVEN_GPG_FINGERPRINT }}
+        run: |
+          python3 .github/scripts/central-publish.py --directory native-dist --version "${RELEASE_TAG#v}" --output central-bundle.zip --receipt central-deployment.json --publish
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: central-deployment
+          path: central-deployment.json
+          if-no-files-found: ignore
+          retention-days: 30
+      - name: Verify the public Maven component matches the tested archives
+        env:
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+        run: python3 .github/scripts/verify-published-registries.py --package java --version "${RELEASE_TAG#v}" --directory native-dist
+
+  nuget-publish:
+    name: NuGet publish (trusted publishing)
+    needs: [prepare, native-artifacts, github-release, woodpecker-release]
+    if: needs.prepare.outputs.release == 'true' && vars.NUGET_PUBLISH == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: nuget
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.401
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: native-dist-csharp
+          path: native-dist
+      - name: Verify reviewed package version and checksums before credentials
+        env:
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+          NUGET_USER: ${{ vars.NUGET_USER }}
+        run: |
+          test -n "$NUGET_USER" || { echo 'Configure the reviewed NuGet account and trusted-publishing policy first.' >&2; exit 1; }
+          python3 .github/scripts/native-runtime-artifacts.py --package csharp --version "${RELEASE_TAG#v}" --directory native-dist
+      - uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1.2.0
+        id: nuget-auth
+        with:
+          user: ${{ vars.NUGET_USER }}
+      - name: Publish the validated package without rebuilding
+        env:
+          NUGET_API_KEY: ${{ steps.nuget-auth.outputs.NUGET_API_KEY }}
+        run: dotnet nuget push native-dist/*.nupkg --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json
+      - name: Verify the public package entries and repository signature
+        env:
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          python3 .github/scripts/verify-published-registries.py --package csharp --version "${RELEASE_TAG#v}" --directory native-dist --save-download public-nuget
+          dotnet nuget verify --all public-nuget/*.nupkg
+
+  rubygems-publish:
+    name: RubyGems publish (trusted publishing)
+    needs: [prepare, native-artifacts, github-release, woodpecker-release]
+    if: needs.prepare.outputs.release == 'true' && vars.RUBYGEMS_PUBLISH == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: rubygems
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ruby/setup-ruby@14594264cd68ce8a2345dd349bc3d138a4ef85c8 # v1.327.0
+        with:
+          ruby-version: "3.3"
+          bundler-cache: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: native-dist-ruby
+          path: native-dist
+      - name: Verify reviewed package version and checksums before credentials
+        env:
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+        run: python3 .github/scripts/native-runtime-artifacts.py --package ruby --version "${RELEASE_TAG#v}" --directory native-dist
+      - uses: rubygems/configure-rubygems-credentials@dc5a8d8553e6ee01fc26761a49e99e733d17954a # v2.1.0
+        with:
+          trusted-publisher: true
+      - name: Publish the validated gem without rebuilding
+        run: gem push --host https://rubygems.org native-dist/*.gem
+      - name: Verify the public gem matches the tested archive
+        env:
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+        run: python3 .github/scripts/verify-published-registries.py --package ruby --version "${RELEASE_TAG#v}" --directory native-dist

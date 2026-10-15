@@ -49,7 +49,12 @@ jobs:
           python3 -c 'import os,re; assert re.fullmatch(r"v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?", os.environ["TAG"]), "invalid release tag"'
           git fetch origin "refs/tags/$TAG:refs/tags/$TAG" main
           commit=$(git rev-parse "$TAG^{commit}")
-          git merge-base --is-ancestor "$commit" origin/main
+          if ! git merge-base --is-ancestor "$commit" origin/main; then
+            release_branch="release/${TAG#v}"
+            release_branch="${release_branch%%-*}"
+            git fetch origin "refs/heads/$release_branch:refs/remotes/origin/$release_branch"
+            git merge-base --is-ancestor "$commit" "origin/$release_branch"
+          fi
           git show "$commit:Cargo.toml" > release-manifest.toml
           python3 -c 'import os,tomllib; assert tomllib.load(open("release-manifest.toml","rb"))["workspace"]["package"]["version"] == os.environ["TAG"][1:], "tag/manifest mismatch"'
           gh release download "$TAG" --dir release-bundle
