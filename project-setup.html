@@ -210,6 +210,10 @@ When no document is found, it writes a placeholder spec path with a TODO.
 Review the safety rules in <code>agent.yml</code>, especially operations with side effects.
 Existing manifests are preserved unless <code>--force</code> is given. Symlinks and other
 nonregular manifest entries are refused even with <code>--force</code>.</p>
+<p>The target list above describes the 0.1.3 source candidate. Kotlin, F# and Dart
+are absent from the released 0.1.2 compiler; use the candidate compiler and
+matching runtime source for those targets. The <a href="runtime-distribution.html">runtime distribution guide</a>
+separates stable package installation from candidate source requirements.</p>
 <h2 id="go-emitter-setup"><a class="header" href="#go-emitter-setup">Go emitter setup</a></h2>
 <p>With Go 1.22 or newer, build the external emitter from the matching public source
 checkout and put the binary on <code>PATH</code>:</p>

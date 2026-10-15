@@ -271,8 +271,8 @@ review and protect the cache and lock files together.</p>
 <div class="table-wrapper"><table><thead><tr><th>Target</th><th>Emits</th><th>Minimum toolchain</th><th>Runtime and installation</th></tr></thead><tbody>
 <tr><td><code>typescript</code></td><td>Typed SDK, <code>Result</code> values, Zod validation</td><td>Node 22</td><td><code>@elysra/tungsten-runtime</code>: matching npm package or built source</td></tr>
 <tr><td><code>python</code></td><td>Sync and async SDK, Pydantic v2 or dataclass models</td><td>Python 3.12 by default; <a href="getting-started.html#python-interpreter-compatibility">opt-in 3.10/3.11</a></td><td>PyPI runtime for a matching published release, or matching <code>runtimes/python</code> source</td></tr>
-<tr><td><code>rust</code></td><td>Async SDK (serde, reqwest) and optional generated CLI</td><td>Rust 1.88</td><td>Matching source paths to <code>runtimes/rust/runtime</code> and, for a CLI, <code>runtimes/rust/cli-kit</code>; see <a href="https://github.com/pboachie/tungsten/blob/b7ad5e5a2388/runtimes/rust/README.md">installation</a></td></tr>
-<tr><td><code>go</code> (external)</td><td>Models, resources, typed client, pagination and stream helpers</td><td>Go 1.22</td><td>Build <code>tungsten-emit-go</code> from <code>emitters/go</code>; use <code>runtime_path</code> to matching <code>runtimes/go</code> source; see <a href="https://github.com/pboachie/tungsten/blob/b7ad5e5a2388/runtimes/go/README.md">module status</a></td></tr>
+<tr><td><code>rust</code></td><td>Async SDK (serde, reqwest) and optional generated CLI</td><td>Rust 1.88</td><td>Matching source paths to <code>runtimes/rust/runtime</code> and, for a CLI, <code>runtimes/rust/cli-kit</code>; see <a href="https://github.com/pboachie/tungsten/blob/07b85f0031f6/runtimes/rust/README.md">installation</a></td></tr>
+<tr><td><code>go</code> (external)</td><td>Models, resources, typed client, pagination and stream helpers</td><td>Go 1.22</td><td>Build <code>tungsten-emit-go</code> from <code>emitters/go</code>; use <code>runtime_path</code> to matching <code>runtimes/go</code> source; see <a href="https://github.com/pboachie/tungsten/blob/07b85f0031f6/runtimes/go/README.md">module status</a></td></tr>
 <tr><td><code>java</code></td><td>Java SDK</td><td>Java 17 and Maven</td><td>Use <code>runtime_path</code> to matching <code>runtimes/java</code> source</td></tr>
 <tr><td><code>kotlin</code> (<code>kt</code>)</td><td>Kotlin/JVM SDK (data classes, sealed interfaces, blocking functions returning <code>Result</code>)</td><td>Java 17 and Gradle</td><td>Use <code>runtime_path</code> to matching <code>runtimes/kotlin</code>; it builds on the Java runtime in <code>runtimes/java</code> (<code>java_runtime_path</code>)</td></tr>
 <tr><td><code>csharp</code> (<code>cs</code>)</td><td>C# SDK</td><td>.NET 10</td><td>Use <code>runtime_path</code> to matching <code>runtimes/csharp</code>, referencing <code>Tungsten.Runtime.csproj</code></td></tr>
@@ -289,14 +289,20 @@ compiler and runtime package versions advance together with the release tag.
 Generated packages default to compatible 0.1.3 runtime floors; an explicit
 <code>runtime</code> setting remains yours to qualify. The earlier 0.1.2 release has
 independently versioned non-npm runtime sources. Use the matching source checkout
-when a registry artifact is unavailable: source version metadata does not prove publication. Rust, Java, Kotlin, C#, F#, Dart and Ruby registry
-publication is not part of the 0.1.2 installation guarantee. The candidate Go
-emitter defaults to the available <code>v0.1.3</code> module; see its
-<a href="https://github.com/pboachie/tungsten/blob/b7ad5e5a2388/runtimes/go/README.md">installation options</a> for matching-source use.
-Target <code>runtime_path</code> values are relative to the generated output directory.</p>
+when a registry artifact is unavailable: source version metadata does not prove publication. Published 0.1.2 packages are available for npm, Python, Java,
+C# and Ruby; use the explicit <a href="getting-started.html#released-012-consumers">released-consumer overrides</a>
+below. Rust still uses matching source. Go also has a
+<a href="https://github.com/pboachie/tungsten/blob/07b85f0031f6/runtimes/go/README.md">matching-source route</a> for stable consumers. Its optional
+candidate <code>v0.1.3</code> module has a verified Apache-2.0 archive; the older stable-commit
+pseudo-version's archive notice differs, as explained in that guide.
+Target <code>runtime_path</code> values resolve from the generated package or crate
+directory; see the target's installation guidance.</p>
+<p>Kotlin, F# and Dart are 0.1.3 candidate targets. They require the candidate
+compiler and matching wrapper/core runtime sources; the released 0.1.2 compiler
+does not generate these targets.</p>
 <p>Targets and the mock server (<code>tungsten mock</code>) share one IR. Generated-package and contract checks exercise each language, but source availability and passing shared scenarios do not establish complete validation, protocol or distribution parity. Unsupported features can vary by target. Review all compiler diagnostics: <code>--strict</code> rejects warnings, including unsupported <code>if</code>/<code>then</code>/<code>else</code> constraints, but informational diagnostics can still describe other unsupported features. Local checks do not establish live API acceptance or registry installation readiness.</p>
 <h2 id="install"><a class="header" href="#install">Install</a></h2>
-<p>Install the compiler first. The <a href="getting-started.html#runtime-packages">npm and PyPI packages below</a>
+<p>Install the compiler first. The <a href="getting-started.html#runtime-packages">runtime packages below</a>
 support generated output; they do not install the <code>tungsten</code> compiler command.
 The latest published compiler release is <a href="https://github.com/pboachie/tungsten/releases/tag/v0.1.2">v0.1.2</a>
 as of October 15, 2026. This branch describes the 0.1.3 source candidate, including
@@ -308,8 +314,8 @@ compiler and runtime source until that release's packages are published.</p>
 <pre><code class="language-powershell">irm https://raw.githubusercontent.com/pboachie/tungsten/main/install.ps1 | iex        # Windows
 </code></pre>
 <p>Pass <code>--version v0.1.2</code> to <code>install.sh</code> (or <code>-Version v0.1.2</code> to <code>install.ps1</code>) to pin a release, and <code>--dir</code> (<code>-InstallDir</code>) to choose the target directory.</p>
-<p>See <a href="https://github.com/pboachie/tungsten/blob/b7ad5e5a2388/install.sh"><code>install.sh --help</code></a> or <code>Get-Help ./install.ps1 -Full</code>
-(<a href="https://github.com/pboachie/tungsten/blob/b7ad5e5a2388/install.ps1">PowerShell script</a>) for environment variables and exit codes.
+<p>See <a href="https://github.com/pboachie/tungsten/blob/07b85f0031f6/install.sh"><code>install.sh --help</code></a> or <code>Get-Help ./install.ps1 -Full</code>
+(<a href="https://github.com/pboachie/tungsten/blob/07b85f0031f6/install.ps1">PowerShell script</a>) for environment variables and exit codes.
 Both installers check whether <code>gh attestation</code> is usable before verification.
 Without it they explain that only the checksum was verified; set
 <code>TUNGSTEN_REQUIRE_ATTESTATION=1</code> to require provenance verification. A failed
@@ -335,7 +341,7 @@ gh attestation verify tungsten.rb --repo pboachie/tungsten
 <p>The <code>irm … | iex</code> form cannot pass <code>-Init</code>. Run the downloaded script as a script block instead, or save it and run <code>.\install.ps1 -Init</code>:</p>
 <pre><code class="language-powershell">&amp; ([scriptblock]::Create((irm https://raw.githubusercontent.com/pboachie/tungsten/main/install.ps1))) -Init
 </code></pre>
-<p>Or build from source, with Rust 1.95 or newer (the repository pins 1.97.0 in <a href="https://github.com/pboachie/tungsten/blob/b7ad5e5a2388/rust-toolchain.toml"><code>rust-toolchain.toml</code></a> for development):</p>
+<p>Or build from source, with Rust 1.95 or newer (the repository pins 1.97.0 in <a href="https://github.com/pboachie/tungsten/blob/07b85f0031f6/rust-toolchain.toml"><code>rust-toolchain.toml</code></a> for development):</p>
 <pre><code class="language-sh">git clone https://github.com/pboachie/tungsten
 cd tungsten
 git checkout release/0.1.3                 # 0.1.3 source candidate
@@ -346,13 +352,17 @@ tungsten doctor                            # reports optional tools (node, pytho
 <h3 id="runtime-packages"><a class="header" href="#runtime-packages">Runtime packages</a></h3>
 <p>For a published 0.1.2 compiler and generated client, choose the runtime for the
 output you use. These package versions were verified on October 15, 2026;
-Node 22+ is required for TypeScript/MCP, and the published Python runtime needs
-Python 3.12+. Run Python installation commands in an activated virtual environment.</p>
+Node 22+ is required for TypeScript/MCP, Python needs 3.12+, Java needs 17+,
+C# needs .NET 10, and Ruby needs 3.3+. Run Python installation commands in an
+activated virtual environment.</p>
 <div class="table-wrapper"><table><thead><tr><th>Output</th><th>Runtime package</th><th>Install the published runtime</th></tr></thead><tbody>
-<tr><td>TypeScript SDK</td><td><a href="https://www.npmjs.com/package/@elysra/tungsten-runtime"><code>@elysra/tungsten-runtime</code></a></td><td><code>npm install @elysra/tungsten-runtime@0.1.2</code></td></tr>
-<tr><td>MCP server</td><td><a href="https://www.npmjs.com/package/@elysra/tungsten-mcp"><code>@elysra/tungsten-mcp</code></a></td><td><code>npm install @elysra/tungsten-mcp@0.1.2</code></td></tr>
-<tr><td>Browser WebMCP</td><td><a href="https://www.npmjs.com/package/@elysra/tungsten-webmcp"><code>@elysra/tungsten-webmcp</code></a></td><td><code>npm install @elysra/tungsten-webmcp@0.1.2</code></td></tr>
+<tr><td>TypeScript SDK</td><td><a href="https://www.npmjs.com/package/@elysra/tungsten-runtime"><code>@elysra/tungsten-runtime</code></a></td><td><code>npm install --save-exact @elysra/tungsten-runtime@0.1.2</code></td></tr>
+<tr><td>MCP server</td><td><a href="https://www.npmjs.com/package/@elysra/tungsten-mcp"><code>@elysra/tungsten-mcp</code></a></td><td><code>npm install --save-exact @elysra/tungsten-mcp@0.1.2</code></td></tr>
+<tr><td>Browser WebMCP</td><td><a href="https://www.npmjs.com/package/@elysra/tungsten-webmcp"><code>@elysra/tungsten-webmcp</code></a></td><td><code>npm install --save-exact @elysra/tungsten-webmcp@0.1.2</code></td></tr>
 <tr><td>Python SDK</td><td><a href="https://pypi.org/project/tungsten-runtime/"><code>tungsten-runtime</code></a></td><td><code>python -m pip install tungsten-runtime==0.1.2</code></td></tr>
+<tr><td>Java SDK</td><td><a href="https://central.sonatype.com/artifact/io.github.pboachie.tungsten/tungsten-runtime/0.1.2"><code>io.github.pboachie.tungsten:tungsten-runtime</code></a></td><td><code>mvn dependency:get -Dartifact=io.github.pboachie.tungsten:tungsten-runtime:0.1.2</code></td></tr>
+<tr><td>C# SDK</td><td><a href="https://www.nuget.org/packages/Tungsten.Runtime/0.1.2"><code>Tungsten.Runtime</code></a></td><td><code>dotnet add package Tungsten.Runtime --version 0.1.2</code></td></tr>
+<tr><td>Ruby SDK</td><td><a href="https://rubygems.org/gems/tungsten-runtime/versions/0.1.2"><code>tungsten-runtime</code></a></td><td><code>gem install tungsten-runtime --version 0.1.2</code></td></tr>
 </tbody></table>
 </div>
 <p>Verify a TypeScript runtime installation with
@@ -363,11 +373,42 @@ runtime imports do not generate a client or call an API.</p>
 <p>The 0.1.3 compiler is an unreleased source candidate. Use matching runtime source
 as in the quickstart below; published 0.1.2 packages do not satisfy dependencies
 on 0.1.3 runtime capabilities. Rust registry installation is currently unavailable.
-The Go proxy carries a v0.1.3 runtime module, which does not establish a compiler
-release. See the <a href="https://github.com/pboachie/tungsten/blob/b7ad5e5a2388/runtimes/rust/README.md">Rust source installation</a> and
-<a href="https://github.com/pboachie/tungsten/blob/b7ad5e5a2388/runtimes/go/README.md">Go installation options</a>. Runtime libraries do not install
-the Tungsten compiler. The <a href="https://github.com/pboachie/tungsten/blob/b7ad5e5a2388/examples/README.md">runnable gallery</a>
+Go supports matching stable source; its qualified <code>v0.1.3</code> module is an optional
+candidate dependency, not a compiler release. See the <a href="https://github.com/pboachie/tungsten/blob/07b85f0031f6/runtimes/rust/README.md">Rust source installation</a> and
+<a href="https://github.com/pboachie/tungsten/blob/07b85f0031f6/runtimes/go/README.md">Go installation options</a>. Runtime libraries do not install
+the Tungsten compiler. The <a href="https://github.com/pboachie/tungsten/blob/07b85f0031f6/examples/README.md">runnable gallery</a>
 shows complete installation and first-use flows for each output.</p>
+<h3 id="released-012-consumers"><a class="header" href="#released-012-consumers">Released 0.1.2 consumers</a></h3>
+<p>Keep the compiler and generated clients on the released route when deploying
+before 0.1.3. Pin the installer to <code>v0.1.2</code> as above and confirm
+<code>tungsten --version</code> prints <code>tungsten 0.1.2</code>. Merge these exact runtime settings
+into the targets you use in <code>tungsten.yml</code>; your output paths, API package names
+and generated package versions remain your own:</p>
+<pre><code class="language-yaml">targets:
+  typescript: {out: generated/typescript, runtime: "0.1.2"}
+  python: {out: generated/python, runtime: "==0.1.2"}
+  java: {out: generated/java, runtime: "0.1.2"}
+  csharp: {out: generated/csharp, runtime: "0.1.2"}
+  ruby: {out: generated/ruby, runtime: "= 0.1.2"}
+  mcp: {out: generated/mcp, runtime: "0.1.2", sdk_runtime: "0.1.2", sdk_path: "../typescript"}
+  webmcp: {out: generated/webmcp, runtime: "0.1.2", sdk_runtime: "0.1.2", sdk_path: "../typescript"}
+</code></pre>
+<p>Run <code>tungsten generate .</code>, then follow each generated README to install and
+build it. Build the TypeScript SDK before the adapters that reference it.
+The released compiler's native runtime defaults predate the newly published
+0.1.2 packages, so keep the Java, C# and Ruby overrides explicit. Registry
+consumers use those packages without a runtime source checkout.</p>
+<p>The <a href="https://github.com/pboachie/tungsten/blob/07b85f0031f6/runtimes/rust/README.md#released-012-sdk-and-cli">stable Rust source recipe</a>
+uses the unchanged <code>v0.1.2</code> checkout for both Rust crates while registry
+installation remains unavailable. This source route does not require a 0.1.3
+upgrade. The candidate compiler and its new features continue to require
+matching candidate runtime source; Python 3.10/3.11 output belongs to that
+candidate route. Generated SDK compatibility still needs qualification against
+your own API and deployment.</p>
+<p>For Go, build the external emitter from <code>v0.1.2</code> and set <code>runtime_path</code> to that
+checkout's <code>runtimes/go</code>; the <a href="https://github.com/pboachie/tungsten/blob/07b85f0031f6/runtimes/go/README.md#released-012-compiler-and-emitter">stable Go recipe</a>
+retains its Apache source/license context and avoids the old pseudo-version
+ZIP's inherited repository-root notice.</p>
 <h2 id="quickstart"><a class="header" href="#quickstart">Quickstart</a></h2>
 <p>Install the compiler above first. This walkthrough uses Python 3.12 or newer and
 <a href="https://docs.astral.sh/uv/getting-started/installation/">uv</a>. TypeScript targets
@@ -448,17 +489,17 @@ the idle timeout after successful headers. Custom transports must cooperate;
 uninterruptible callbacks retain capacity until completion and late results are
 rejected, without a hard settlement deadline. OS resolver cancellation depends on
 the platform.</p>
-<p>More examples: the <a href="https://github.com/pboachie/tungsten/blob/b7ad5e5a2388/examples/README.md">runnable example gallery</a> covers first
+<p>More examples: the <a href="https://github.com/pboachie/tungsten/blob/07b85f0031f6/examples/README.md">runnable example gallery</a> covers first
 SDKs, supported input routes, local mocks, destructive confirmation and CI/surface
-review workflows. <a href="https://github.com/pboachie/tungsten/blob/b7ad5e5a2388/examples/typed-sse/README.md">Typed Python SSE</a> shows how to
+review workflows. <a href="https://github.com/pboachie/tungsten/blob/07b85f0031f6/examples/typed-sse/README.md">Typed Python SSE</a> shows how to
 declare or overlay an incomplete stream response and consume named events with
-sync/async cleanup. <a href="https://github.com/pboachie/tungsten/blob/b7ad5e5a2388/examples/response-contract-audit/README.md">Response-contract quality</a>
+sync/async cleanup. <a href="https://github.com/pboachie/tungsten/blob/07b85f0031f6/examples/response-contract-audit/README.md">Response-contract quality</a>
 shows the opt-in audit and reviewed schema overlays without inferring guaranteed
-types. <a href="https://github.com/pboachie/tungsten/blob/b7ad5e5a2388/examples/showcase/README.md">Tungsten on six public APIs</a>
+types. <a href="https://github.com/pboachie/tungsten/blob/07b85f0031f6/examples/showcase/README.md">Tungsten on six public APIs</a>
 uses the public OpenAPI descriptions of Stripe, GitHub, Twilio, OpenAI, Kubernetes
 and Discord to show diagnostics, MCP listing sizes and generated SDK code in
 TypeScript, Python and Rust, reproducible with one script. The
-<a href="https://github.com/pboachie/tungsten/blob/b7ad5e5a2388/examples/external-emitter-markdown">external Markdown emitter</a> shows how to
+<a href="https://github.com/pboachie/tungsten/blob/07b85f0031f6/examples/external-emitter-markdown">external Markdown emitter</a> shows how to
 write an external emitter.</p>
 <p>An <code>external:</code> target in <code>tungsten.yml</code> names a command that tungsten starts as a process, unsandboxed and with your privileges. It runs on every command that produces output in memory, not only on a writing <code>generate</code>: <code>generate --dry-run</code> and <code>--check</code>, <code>check --ci</code>, <code>diff</code> and <code>report</code> run it too (plain <code>check</code> and <code>ir dump</code> do not). A CI job that runs <code>tungsten check --ci</code> on pull requests therefore executes whatever the pull request puts in <code>tungsten.yml</code>. Pass <code>--no-external</code> or set <code>TUNGSTEN_NO_EXTERNAL=1</code> to skip external targets (reported as TG0807) when the manifest is not trusted.</p>
 <h3 id="python-interpreter-compatibility"><a class="header" href="#python-interpreter-compatibility">Python interpreter compatibility</a></h3>
@@ -488,8 +529,8 @@ part of the coordinated release.</p>
 <p>Repository layout: <code>crates/</code> is the compiler (AGPL-3.0-only); <code>runtimes/ts</code>, <code>runtimes/mcp</code>, <code>runtimes/webmcp</code>, <code>runtimes/python</code>, <code>runtimes/rust</code>, <code>runtimes/go</code>, <code>runtimes/java</code>, <code>runtimes/kotlin</code>, <code>runtimes/csharp</code>, <code>runtimes/fsharp</code>, <code>runtimes/dart</code> and <code>runtimes/ruby</code> contain the libraries generated code depends on (Apache-2.0).</p>
 <h2 id="licensing"><a class="header" href="#licensing">Licensing</a></h2>
 <ul>
-<li>The compiler (<code>crates/</code>) is licensed under <a href="https://github.com/pboachie/tungsten/blob/b7ad5e5a2388/LICENSE">AGPL-3.0-only</a>.</li>
-<li>The runtime libraries that generated code depends on (<code>runtimes/</code>) and the external Go emitter (<code>emitters/go</code>) are licensed under <a href="https://github.com/pboachie/tungsten/blob/b7ad5e5a2388/runtimes/LICENSE">Apache-2.0</a>.</li>
+<li>The compiler (<code>crates/</code>) is licensed under <a href="https://github.com/pboachie/tungsten/blob/07b85f0031f6/LICENSE">AGPL-3.0-only</a>.</li>
+<li>The runtime libraries that generated code depends on (<code>runtimes/</code>) and the external Go emitter (<code>emitters/go</code>) are licensed under <a href="https://github.com/pboachie/tungsten/blob/07b85f0031f6/runtimes/LICENSE">Apache-2.0</a>.</li>
 <li>Output generated by tungsten is not a work covered by the AGPL and carries no licence from tungsten. The owner of the API description chooses the licence of the generated code.</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="supported-platforms"><a class="header" href="#supported-platforms">Supported platforms</a></h1>
@@ -594,6 +635,10 @@ When no document is found, it writes a placeholder spec path with a TODO.
 Review the safety rules in <code>agent.yml</code>, especially operations with side effects.
 Existing manifests are preserved unless <code>--force</code> is given. Symlinks and other
 nonregular manifest entries are refused even with <code>--force</code>.</p>
+<p>The target list above describes the 0.1.3 source candidate. Kotlin, F# and Dart
+are absent from the released 0.1.2 compiler; use the candidate compiler and
+matching runtime source for those targets. The <a href="runtime-distribution.html">runtime distribution guide</a>
+separates stable package installation from candidate source requirements.</p>
 <h2 id="go-emitter-setup"><a class="header" href="#go-emitter-setup">Go emitter setup</a></h2>
 <p>With Go 1.22 or newer, build the external emitter from the matching public source
 checkout and put the binary on <code>PATH</code>:</p>
@@ -856,26 +901,29 @@ generated code. The supported distribution units are:</p>
 <tr><td>Python SDK</td><td><code>tungsten-runtime</code></td><td>PyPI</td></tr>
 <tr><td>Rust SDK</td><td><code>tungsten-runtime</code></td><td>Matching source; crates.io installation is unavailable</td></tr>
 <tr><td>Rust CLI</td><td><code>tungsten-runtime</code>, <code>tungsten-cli-kit</code></td><td>Matching runtime/CLI-kit source; crates.io installation is unavailable</td></tr>
-<tr><td>Go SDK</td><td><code>github.com/pboachie/tungsten/runtimes/go</code></td><td>Existing v0.1.3 module; use matching source for the unreleased compiler candidate</td></tr>
-<tr><td>Java SDK</td><td><code>io.github.pboachie.tungsten:tungsten-runtime</code></td><td>Source-only; use <code>runtime_path</code></td></tr>
-<tr><td>Kotlin SDK</td><td><code>io.github.pboachie.tungsten:tungsten-runtime-kotlin</code> and Java runtime</td><td>Source-only; use <code>runtime_path</code> and <code>java_runtime_path</code></td></tr>
-<tr><td>C# SDK</td><td><code>Tungsten.Runtime</code> (net10.0)</td><td>Source-only; use <code>runtime_path</code></td></tr>
-<tr><td>F# SDK</td><td><code>Tungsten.Runtime.FSharp</code> and <code>Tungsten.Runtime</code> (net10.0)</td><td>Source-only; use <code>runtime_path</code> and <code>csharp_runtime_path</code></td></tr>
-<tr><td>Ruby SDK</td><td><code>tungsten-runtime</code> gem (Ruby 3.3+)</td><td>Source-only; use <code>runtime_path</code></td></tr>
-<tr><td>Dart SDK</td><td><code>tungsten_runtime</code> (Dart 3.6+, <code>dart:io</code>)</td><td>Source-only; use <code>runtime_path</code>; browser builds are unsupported</td></tr>
+<tr><td>Go SDK</td><td><code>github.com/pboachie/tungsten/runtimes/go</code></td><td>Matching v0.1.2 source for the stable compiler; verified v0.1.3 module or matching source for the candidate</td></tr>
+<tr><td>Java SDK</td><td><a href="https://central.sonatype.com/artifact/io.github.pboachie.tungsten/tungsten-runtime/0.1.2"><code>io.github.pboachie.tungsten:tungsten-runtime</code></a></td><td>Maven Central 0.1.2 for the stable compiler; matching source for the candidate</td></tr>
+<tr><td>Kotlin SDK</td><td><code>io.github.pboachie.tungsten:tungsten-runtime-kotlin</code> and Java runtime</td><td>Requires the 0.1.3 candidate compiler; use matching <code>runtime_path</code> and <code>java_runtime_path</code> source</td></tr>
+<tr><td>C# SDK</td><td><a href="https://www.nuget.org/packages/Tungsten.Runtime/0.1.2"><code>Tungsten.Runtime</code></a> (net10.0)</td><td>NuGet 0.1.2 for the stable compiler; matching source for the candidate</td></tr>
+<tr><td>F# SDK</td><td><code>Tungsten.Runtime.FSharp</code> and <code>Tungsten.Runtime</code> (net10.0)</td><td>Requires the 0.1.3 candidate compiler; use matching <code>runtime_path</code> and <code>csharp_runtime_path</code> source</td></tr>
+<tr><td>Ruby SDK</td><td><a href="https://rubygems.org/gems/tungsten-runtime/versions/0.1.2"><code>tungsten-runtime</code></a> gem (Ruby 3.3+)</td><td>RubyGems 0.1.2 for the stable compiler; matching source for the candidate</td></tr>
+<tr><td>Dart SDK</td><td><code>tungsten_runtime</code> (Dart 3.6+, <code>dart:io</code>)</td><td>Requires the 0.1.3 candidate compiler; use matching <code>runtime_path</code> source; browser builds are unsupported</td></tr>
 </tbody></table>
 </div>
-<p>These names describe the intended registry packages. A successful local build
-does not mean a version exists in a registry. npm and PyPI publication require
-configured trusted publishers and explicit release switches; a workflow in the
-repository does not prove that either registry contains the requested version.
-Before relying on registry installation, check that the version required by
-your generated package is available.</p>
-<p>The latest stable compiler release is <strong>0.1.2</strong>. Its three npm runtimes and PyPI
-<code>tungsten-runtime</code> were verified at 0.1.2 on October 15, 2026. Compiler 0.1.3 is
-unreleased; use matching source dependencies for its candidate capabilities.
+<p>A successful local build does not mean a version exists in a registry. Before
+relying on registry installation, check the version required by your generated
+package. The available stable packages and candidate source routes are separate
+choices; installing a runtime does not install the Tungsten compiler.</p>
+<p>The latest stable compiler release is <strong>0.1.2</strong>. The three npm runtimes, PyPI
+<code>tungsten-runtime</code>, Maven Central Java runtime, NuGet C# runtime and RubyGems
+runtime were verified at <strong>0.1.2</strong> on October 15, 2026. These native packages
+were qualified with generated SDK consumers; their publication does not make
+the 0.1.3 compiler available. Compiler 0.1.3 remains unreleased: use matching
+source dependencies for its candidate capabilities, including Python 3.10/3.11
+support and HTTP/Git input acquisition.
 The Go runtime is separately available as v0.1.3 through the public Go module
-proxy, which does not establish a stable 0.1.3 compiler release. The
+proxy, which does not establish a stable 0.1.3 compiler release. Its archive
+includes the verified Apache-2.0 runtime license. The
 <a href="getting-started.html#runtime-packages">getting-started installation guide</a>
 separates those published runtime commands from the candidate source workflow.</p>
 <p>Neither Rust runtime package is available from crates.io in the October 15
@@ -889,14 +937,15 @@ relative to the generated CLI crate directory. Do not use
 verified separately.
 These libraries do not install the Tungsten compiler. Use the compiler's
 release binary/installer or its documented source installation separately.</p>
-<p>All runtime distributions use Apache-2.0 and include the actual license file.
-The generator's license is separate. npm packages ship compiled ESM, TypeScript
+<p>Runtime source uses Apache-2.0; the generator's license is separate. Registry
+archive notices are verified separately from source and consumer builds. The
+qualified Go v0.1.3 archive includes the runtime's actual Apache-2.0 license. npm packages ship compiled ESM, TypeScript
 declarations and explicit exports. <code>@elysra/tungsten-runtime/node</code> supplies Node
 adapters; the core and WebMCP import graphs stay free of Node builtins. The MCP
 runtime runs on Node and can import Node functionality. Browser WebMCP API
 availability depends on the host browser and is checked separately from package
 distribution.</p>
-<p>For local development before registry publication, build the runtimes and set
+<p>For candidate capabilities or runtimes without a published package, build the runtimes and set
 the generator's supported runtime path options to your local checkout. A source
 path is a development dependency; package releases use registry version ranges.
 Put <code>runtime_path</code> in the target's configuration, resolving it relative to its output
@@ -912,6 +961,19 @@ Kotlin also needs the Java runtime path; F# also needs the C# runtime path.
 Keep those dependencies from the same reviewed source revision. The generated
 README may show registry-style coordinates or an example SDK install command;
 these identify the expected dependency, rather than promise a published package.</p>
+<p>For the released 0.1.2 compiler, build the Go emitter from the <code>v0.1.2</code>
+checkout and use that checkout's runtime source. Configure the Go target's
+<code>runtime_path</code> with the matching source directory:</p>
+<pre><code class="language-yaml">targets:
+  go:
+    external: true
+    out: generated/go
+    module: example.com/my-api/sdk
+    runtime_path: /absolute/path/to/tungsten-v0.1.2/runtimes/go
+</code></pre>
+<p>This stable source route does not require the 0.1.3 compiler or runtime. As with
+the other outputs, <a href="project-setup.html#go-emitter-setup">configure the external emitter</a>
+before generation and follow the generated SDK's build instructions.</p>
 <p>The candidate Go emitter defaults to the existing runtime module <code>v0.1.3</code>,
 available through the nested-module tag <code>runtimes/go/v0.1.3</code>. A root compiler
 release tag does not replace this module-specific tag. For the unreleased
@@ -928,35 +990,20 @@ establish registry availability for other languages.</p>
 <p>The release checks also install all npm tarballs together into an isolated
 project, so the core peer is resolved from the packed artifact instead of a
 source link or an unpublished registry version.</p>
-<p>Maintainers can reproduce the npm distribution check with <code>make runtime-packages</code>
-in the development repository. It checks version agreement, registry dependency
-declarations, exported JS and declaration files, Apache licenses, isolated
-package imports and the distributed browser import graph. The validated tarballs
-and checksums are retained for inspection. To check all runtime archives locally,
-run <code>python release/runtime-artifacts.py</code>; Python requires the pinned <code>build</code>
-and <code>twine</code> tools, and Rust verification compiles temporary packaged crates.
-The script builds a wheel and sdist, checks metadata, licenses and typing files,
-installs the wheel in an isolated environment, and packages the Rust workspace
-in a temporary copy without changing its committed publication switch.</p>
 <p>The 0.1.3 source candidate coordinates compiler and runtime source versions for
 its planned release tag. Generated SDKs retain their own package versions, while their
 default runtime dependencies require the candidate's capabilities. Explicit
 runtime overrides remain yours to qualify. The Go module's independent nested
-tag is published and verified separately from the compiler release.
+tag and archive notices are verified separately from the compiler release.
 The earlier 0.1.2 release had independently versioned non-npm runtime sources.
 Local archive checks validate each manifest, and tag-aware release checks
 enforce the coordinated candidate versions. Neither replaces a clean registry
 installation check or proves publication.</p>
-<p>The release workflow always checks npm packages, builds Python archives and
-rehearses Rust packaging. npm publishing uses the already validated archives,
-checks their checksums, and publishes the core runtime before its adapters.
-Only a real release with <code>NPM_PUBLISH=true</code> can publish npm packages, using
-GitHub's OIDC trusted publisher in environment <code>npm</code>. Missing registry publisher
-configuration fails the job; there is no stored-token fallback. Prereleases use
-the <code>next</code> npm dist-tag, and stable releases use <code>latest</code>. The npm archive versions
-must match the full release tag before the first upload; mismatched prerelease
-and stable package versions fail the publish step. Python publication separately
-requires <code>PYPI_PUBLISH=true</code> and matching wheel/sdist versions.</p>
+<p>Publication automation builds and checks registry archives separately from
+source generation. It verifies package versions, archive contents and digests,
+then checks public downloads after an approved release. Workflow configuration,
+local package checks and registry publication are separate checks. No
+unreleased 0.1.3 package is required for the stable 0.1.2 installation route.</p>
 <p>See <a href="downloads.html">Downloads</a> for CLI installation and
 <a href="browser-integration.html">Browser integration</a> for browser setup and capability
 checks.</p>
@@ -969,6 +1016,12 @@ changes.</p>
 <h2 id="unreleased"><a class="header" href="#unreleased"><a href="https://github.com/pboachie/tungsten/compare/v0.1.2...HEAD">Unreleased</a></a></h2>
 <h3 id="added"><a class="header" href="#added">Added</a></h3>
 <ul>
+<li>
+<p>Automate Maven Central, NuGet and RubyGems publication alongside npm, PyPI
+and crates.io after an approved release tag. Verify package identity, source
+and checksums before credentials, and compare public downloads with the tested
+archives. Add a package-only rehearsal and an embedded NuGet package icon.</p>
+</li>
 <li>
 <p>Enable registry packaging of the Apache-2.0 Rust runtime and CLI-kit with a
 versioned runtime dependency. Add opt-in crates.io trusted publishing to the
@@ -1208,7 +1261,13 @@ pushed.</li>
 </ul>
 <h3 id="changed"><a class="header" href="#changed">Changed</a></h3>
 <ul>
-<li>README, the architecture diagram and the <code>init</code> help present every
+<li>
+<p>Document released 0.1.2 compiler/runtime pins for npm, Python, Maven, NuGet
+and RubyGems consumers, plus matching-source Rust SDK/CLI and Go installation,
+independently from the unpublished 0.1.3 candidate.</p>
+</li>
+<li>
+<p>README, the architecture diagram and the <code>init</code> help present every
 supported input alternative instead of positioning tungsten as OpenAPI
 only: OpenAPI 3.0/3.1, Swagger 2.0, Postman Collection v2.1, saved cURL,
 <code>.http</code>/<code>.rest</code> files, HAR 1.2 and endpoint manifests, plus the manual
@@ -1218,52 +1277,75 @@ inputs matrix; <code>assets/architecture.svg</code> and its accessible descripti
 show alternative inputs normalizing to OpenAPI before the frontend; the
 <code>init --from</code> help and the <code>tungsten-cli</code> crate description name the
 accepted inputs. <code>check</code>, <code>generate</code> and the other project commands still
-take an initialized project or a single OpenAPI document. (#173)</li>
-<li><code>tungsten report</code> runs only the emitters of the configured targets. The
+take an initialized project or a single OpenAPI document. (#173)</p>
+</li>
+<li>
+<p><code>tungsten report</code> runs only the emitters of the configured targets. The
 other known targets stay in <code>coverage.targets</code> with the new status
 <code>not_configured</code> (and, for an <code>external</code> target skipped by <code>--no-external</code>,
 <code>skipped</code>) and their emitter is not run, so <code>report</code> on a large spec takes
 about as long as <code>generate --dry-run</code> (the Stripe showcase spec took 3 min
 18 s against 1.3 s for <code>check</code>). The token budgets of <code>docs</code> and <code>mcp</code> are
-empty unless that target is configured or <code>--all-targets</code> is given.</li>
-<li><code>tungsten check</code> prints a warning or info code at most three times in the
+empty unless that target is configured or <code>--all-targets</code> is given.</p>
+</li>
+<li>
+<p><code>tungsten check</code> prints a warning or info code at most three times in the
 human output, then one line with the number left out, and its summary lists
 the count per code (<code>--all-warnings</code> prints everything; <code>--json</code> has always
 listed every diagnostic and gains an additive <code>by_code</code> array). TG0301 for
 an untagged union of exactly two candidates where one is a plain string,
 array or map is now info instead of a warning, so <code>--strict</code> no longer
-fails on those; other untagged unions still warn. (#111)</li>
-<li>Breaking (diagnostic code): <code>tungsten generate</code> now reports the refusal of a
+fails on those; other untagged unions still warn. (#111)</p>
+</li>
+<li>
+<p>Breaking (diagnostic code): <code>tungsten generate</code> now reports the refusal of a
 target that cannot apply an enforced imported-operation policy (for example
 <code>java</code> on a Postman-imported project) as the new error TG0705; it was
 reported as TG0702. TG0702 again means only "target has no emitter in this
 version; skipped". Tooling that matched TG0702 for this refusal must match
 TG0705; <code>tungsten explain TG0705</code> names the supported targets and the
-<code>tungsten init --resume --add-targets</code> path.</li>
-<li>The release workflow's PyPI publication job is enabled through trusted
+<code>tungsten init --resume --add-targets</code> path.</p>
+</li>
+<li>
+<p>The release workflow's PyPI publication job is enabled through trusted
 publishing (repository variable <code>PYPI_PUBLISH</code>, <code>pypi</code> environment, no
 stored token) and now refuses to upload a <code>tungsten-runtime</code> sdist or wheel
 whose version does not equal the release tag, mirroring the npm publication
-preflight.</li>
-<li>The published <code>ghcr.io/pboachie/tungsten</code> container image carries
+preflight.</p>
+</li>
+<li>
+<p>The published <code>ghcr.io/pboachie/tungsten</code> container image carries
 <code>org.opencontainers.image</code> title and description labels, so the GitHub
 package page shows the package description instead of "No description
-provided".</li>
-<li>Generated Rust CLIs: <code>--all</code> writes its array page by page instead of
+provided".</p>
+</li>
+<li>
+<p>Generated Rust CLIs: <code>--all</code> writes its array page by page instead of
 collecting every item first. The output is byte-for-byte the same on
 success; a failure after the first page leaves the array unterminated and is
 reported on standard error. <code>Dispatch</code> gains the provided method
-<code>pages_each</code>, which generated clients implement lazily.</li>
-<li>MCP <code>run_script</code>: the WASM engine now runs its isolate in a worker thread
+<code>pages_each</code>, which generated clients implement lazily.</p>
+</li>
+<li>
+<p>MCP <code>run_script</code>: the WASM engine now runs its isolate in a worker thread
 that is terminated at the deadline, so a long computation no longer occupies
-the server's event loop. Results, errors and limits are unchanged.</li>
-<li>MCP <code>run_script</code>: new <code>sandbox.maxConcurrent</code> option (<code>perSession</code>, default
+the server's event loop. Results, errors and limits are unchanged.</p>
+</li>
+<li>
+<p>MCP <code>run_script</code>: new <code>sandbox.maxConcurrent</code> option (<code>perSession</code>, default
 4; <code>global</code>, default 16). Calls over a limit are refused with a
-<code>VALIDATION_FAILED</code> "busy" envelope.</li>
-<li>MCP HTTP: a warning is logged when <code>sandbox.engine: "auto"</code> falls back to the
-WASM engine because deno was not found.</li>
-<li>Distribution verifies the build provenance attestation of every release asset it consumes before rebuilding the container image, Homebrew formula and winget manifests.</li>
-<li>Dependency audit: source-less <code>Cargo.lock</code> entries must be workspace members, and <code>[patch]</code>/<code>[replace]</code> tables in Cargo manifests are rejected.</li>
+<code>VALIDATION_FAILED</code> "busy" envelope.</p>
+</li>
+<li>
+<p>MCP HTTP: a warning is logged when <code>sandbox.engine: "auto"</code> falls back to the
+WASM engine because deno was not found.</p>
+</li>
+<li>
+<p>Distribution verifies the build provenance attestation of every release asset it consumes before rebuilding the container image, Homebrew formula and winget manifests.</p>
+</li>
+<li>
+<p>Dependency audit: source-less <code>Cargo.lock</code> entries must be workspace members, and <code>[patch]</code>/<code>[replace]</code> tables in Cargo manifests are rejected.</p>
+</li>
 </ul>
 <h3 id="fixed"><a class="header" href="#fixed">Fixed</a></h3>
 <ul>
@@ -3409,10 +3491,19 @@ absolute machine paths and nondeterministic iteration fail the check.</p>
 <tr><td><code>docs</code></td><td><a href="sdk/docs.html">Docs target</a></td><td>none</td></tr>
 </tbody></table>
 </div>
+<p>For the released 0.1.2 compiler, the runtime distribution guide identifies
+verified 0.1.2 npm, PyPI, Maven Central, NuGet and RubyGems packages. Select those
+versions explicitly when generating a stable project. Rust uses the matching
+source checkout until its required crates are available. Kotlin, F# and Dart
+require the unreleased 0.1.3 compiler and their matching candidate runtime source;
+those three targets are not present in the released 0.1.2 compiler. The 0.1.3
+compiler also needs matching candidate runtime source for its newer capabilities. The generated
+examples below illustrate their recorded source configuration, not proof that
+an example package or candidate runtime is published.</p>
 <p>The pages in this section are the READMEs generated for a small example API (Swagger's Petstore), so you can see exactly what a generated project tells its users.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="typescript-sdk"><a class="header" href="#typescript-sdk">TypeScript SDK</a></h1>
 <p>This is the README that tungsten generates for the TypeScript target, shown for a small example API (Swagger's Petstore). Names change with your API; the structure does not.</p>
-<p>Installation snippets name example generated packages and runtime dependencies; they do not establish that those packages are published. Check <a href="sdk/../runtime-distribution.html">runtime distribution</a> for supported source installation and the current distribution boundaries.</p>
+<p>These recorded examples retain their original generator and runtime versions. Their installation snippets name example generated packages; they are not a current registry installation recipe. See <a href="sdk/../runtime-distribution.html">runtime distribution</a> for the verified stable 0.1.2 package versions and matching source routes for the unreleased 0.1.3 candidate.</p>
 <p>TypeScript SDK for the openapi API (1.0.0), generated by tungsten.</p>
 <p>Every call returns a <code>Result</code> and never throws for API or transport errors. Arguments are validated before any request is sent.</p>
 <h3 id="install-1"><a class="header" href="#install-1">Install</a></h3>
@@ -3459,7 +3550,7 @@ const res = await client.pets.create({}, { idempotencyKey });
 <p><code>src/custom/index.ts</code> is yours: it is created once, never overwritten, and exported as <code>custom</code>.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="python-sdk"><a class="header" href="#python-sdk">Python SDK</a></h1>
 <p>This is the README that tungsten generates for the Python target, shown for a small example API (Swagger's Petstore). Names change with your API; the structure does not.</p>
-<p>Installation snippets name example generated packages and runtime dependencies; they do not establish that those packages are published. Check <a href="sdk/../runtime-distribution.html">runtime distribution</a> for supported source installation and the current distribution boundaries.</p>
+<p>These recorded examples retain their original generator and runtime versions. Their installation snippets name example generated packages; they are not a current registry installation recipe. See <a href="sdk/../runtime-distribution.html">runtime distribution</a> for the verified stable 0.1.2 package versions and matching source routes for the unreleased 0.1.3 candidate.</p>
 <p>Python SDK for the openapi API (1.0.0), generated by tungsten.</p>
 <p>Every call returns a <code>Result</code> and never raises for API or transport errors. Arguments are validated before any request is sent. Python 3.12 or newer; models are Pydantic v2.</p>
 <h3 id="install-2"><a class="header" href="#install-2">Install</a></h3>
@@ -3527,7 +3618,7 @@ res = client.pets.create(opts={"idempotency_key": key})
 <p><code>openapi_sdk/custom/__init__.py</code> is yours: it is created once, never overwritten, and imported as <code>openapi_sdk.custom</code>.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="rust-sdk-and-cli"><a class="header" href="#rust-sdk-and-cli">Rust SDK and CLI</a></h1>
 <p>This is the README that tungsten generates for the Rust target, shown for a small example API (Swagger's Petstore). Names change with your API; the structure does not.</p>
-<p>Installation snippets name example generated packages and runtime dependencies; they do not establish that those packages are published. Check <a href="sdk/../runtime-distribution.html">runtime distribution</a> for supported source installation and the current distribution boundaries.</p>
+<p>These recorded examples retain their original generator and runtime versions. Their installation snippets name example generated packages; they are not a current registry installation recipe. See <a href="sdk/../runtime-distribution.html">runtime distribution</a> for the verified stable 0.1.2 package versions and matching source routes for the unreleased 0.1.3 candidate.</p>
 <p>Rust SDK for the openapi API (1.0.0), generated by tungsten.</p>
 <p>Every call returns <code>tungsten_runtime::Result&lt;T&gt;</code>: the value with its response metadata, or the diagnostic envelope. API and transport errors are values, never panics, and arguments are validated before any request is sent. The SDK is async (tokio), with a blocking client for programs without an async runtime (), and builds with Rust 1.88 or newer; models are <code>serde</code> types.</p>
 <h3 id="install-3"><a class="header" href="#install-3">Install</a></h3>
@@ -3611,7 +3702,7 @@ let client = OpenapiBlockingClient::new(ClientOptions::default())?;
 <p><code>src/custom/mod.rs</code> is yours: it is created once, never overwritten, and exported as <code>custom</code>.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="go-sdk"><a class="header" href="#go-sdk">Go SDK</a></h1>
 <p>This is the README that tungsten generates for the Go target, shown for a small example API (Swagger's Petstore). Names change with your API; the structure does not.</p>
-<p>Installation snippets name example generated packages and runtime dependencies; they do not establish that those packages are published. Check <a href="sdk/../runtime-distribution.html">runtime distribution</a> for supported source installation and the current distribution boundaries.</p>
+<p>These recorded examples retain their original generator and runtime versions. Their installation snippets name example generated packages; they are not a current registry installation recipe. See <a href="sdk/../runtime-distribution.html">runtime distribution</a> for the verified stable 0.1.2 package versions and matching source routes for the unreleased 0.1.3 candidate.</p>
 <p>Generated by tungsten (tungsten-emit-go 0.1.0) from the API description. Do not edit
 the generated files; regenerate them with <code>tungsten generate</code>.</p>
 <h3 id="install-4"><a class="header" href="#install-4">Install</a></h3>
@@ -3647,7 +3738,7 @@ confirmation: call the <code>Preview...</code> method and pass its token as
 </tbody></table>
 </div><div style="break-before: page; page-break-before: always;"></div><h1 id="java-sdk"><a class="header" href="#java-sdk">Java SDK</a></h1>
 <p>This is the README that tungsten generates for the Java target, shown for a small example API (Swagger's Petstore). Names change with your API; the structure does not.</p>
-<p>Installation snippets name example generated packages and runtime dependencies; they do not establish that those packages are published. Check <a href="sdk/../runtime-distribution.html">runtime distribution</a> for supported source installation and the current distribution boundaries.</p>
+<p>These recorded examples retain their original generator and runtime versions. Their installation snippets name example generated packages; they are not a current registry installation recipe. See <a href="sdk/../runtime-distribution.html">runtime distribution</a> for the verified stable 0.1.2 package versions and matching source routes for the unreleased 0.1.3 candidate.</p>
 <p>Generated by tungsten 0.1.2. Java 17 or later; the runtime is <code>io.github.pboachie.tungsten:tungsten-runtime:0.1.0</code> (no further dependencies).</p>
 <pre><code class="language-xml">&lt;dependency&gt;
   &lt;groupId&gt;com.example&lt;/groupId&gt;
@@ -3676,7 +3767,7 @@ if (result instanceof Result.Err&lt;?&gt; err) {
 <p>Files under <code>src/main/java/com/example/openapi/custom/</code> are yours: tungsten creates the folder once and never overwrites it.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="kotlin-sdk"><a class="header" href="#kotlin-sdk">Kotlin SDK</a></h1>
 <p>This is the README that tungsten generates for the Kotlin target, shown for a small example API (Swagger's Petstore). Names change with your API; the structure does not.</p>
-<p>Installation snippets name example generated packages and runtime dependencies; they do not establish that those packages are published. Check <a href="sdk/../runtime-distribution.html">runtime distribution</a> for supported source installation and the current distribution boundaries.</p>
+<p>These recorded examples retain their original generator and runtime versions. Their installation snippets name example generated packages; they are not a current registry installation recipe. See <a href="sdk/../runtime-distribution.html">runtime distribution</a> for the verified stable 0.1.2 package versions and matching source routes for the unreleased 0.1.3 candidate.</p>
 <p>Generated by tungsten 0.1.2. Kotlin/JVM, JVM 17 or later; the runtimes are <code>io.github.pboachie.tungsten:tungsten-runtime-kotlin:0.1.0</code> (the Kotlin layer) and <code>io.github.pboachie.tungsten:tungsten-runtime:0.1.0</code> (the Java runtime, no further dependencies).</p>
 <pre><code class="language-kotlin">dependencies {
     implementation("com.example:openapi-sdk:0.1.0")
@@ -3706,7 +3797,7 @@ client.pets.list()
 <p>Files under <code>src/main/kotlin/com/example/openapi/custom/</code> are yours: tungsten creates the folder once and never overwrites it.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="c-sdk"><a class="header" href="#c-sdk">C# SDK</a></h1>
 <p>This is the README that tungsten generates for the C# target, shown for a small example API (Swagger's Petstore). Names change with your API; the structure does not.</p>
-<p>Installation snippets name example generated packages and runtime dependencies; they do not establish that those packages are published. Check <a href="sdk/../runtime-distribution.html">runtime distribution</a> for supported source installation and the current distribution boundaries.</p>
+<p>These recorded examples retain their original generator and runtime versions. Their installation snippets name example generated packages; they are not a current registry installation recipe. See <a href="sdk/../runtime-distribution.html">runtime distribution</a> for the verified stable 0.1.2 package versions and matching source routes for the unreleased 0.1.3 candidate.</p>
 <p>The C# SDK of the openapi API, generated by tungsten 0.1.2. Do not edit the generated files; put your own code in <code>custom/</code>.</p>
 <h3 id="install-5"><a class="header" href="#install-5">Install</a></h3>
 <pre><code class="language-sh">dotnet add package Openapi.Sdk --version 0.1.0
@@ -3730,7 +3821,7 @@ var client = new OpenapiClient(new ClientOptions
 </tbody></table>
 </div><div style="break-before: page; page-break-before: always;"></div><h1 id="f-sdk"><a class="header" href="#f-sdk">F# SDK</a></h1>
 <p>This is the README that tungsten generates for the F# target, shown for a small example API (Swagger's Petstore). Names change with your API; the structure does not.</p>
-<p>Installation snippets name example generated packages and runtime dependencies; they do not establish that those packages are published. Check <a href="sdk/../runtime-distribution.html">runtime distribution</a> for supported source installation and the current distribution boundaries.</p>
+<p>These recorded examples retain their original generator and runtime versions. Their installation snippets name example generated packages; they are not a current registry installation recipe. See <a href="sdk/../runtime-distribution.html">runtime distribution</a> for the verified stable 0.1.2 package versions and matching source routes for the unreleased 0.1.3 candidate.</p>
 <p>The F# SDK of the openapi API, generated by tungsten 0.1.2. Do not edit the generated files; put your own code in <code>custom/</code>.</p>
 <h3 id="install-6"><a class="header" href="#install-6">Install</a></h3>
 <pre><code class="language-sh">dotnet add package Openapi.Sdk --version 0.1.0
@@ -3751,7 +3842,7 @@ let client = OpenapiClient(ClientOptions(BaseUrl = "https://api.example.com"))
 </tbody></table>
 </div><div style="break-before: page; page-break-before: always;"></div><h1 id="ruby-sdk"><a class="header" href="#ruby-sdk">Ruby SDK</a></h1>
 <p>This is the README that tungsten generates for the Ruby target, shown for a small example API (Swagger's Petstore). Names change with your API; the structure does not.</p>
-<p>Installation snippets name example generated packages and runtime dependencies; they do not establish that those packages are published. Check <a href="sdk/../runtime-distribution.html">runtime distribution</a> for supported source installation and the current distribution boundaries.</p>
+<p>These recorded examples retain their original generator and runtime versions. Their installation snippets name example generated packages; they are not a current registry installation recipe. See <a href="sdk/../runtime-distribution.html">runtime distribution</a> for the verified stable 0.1.2 package versions and matching source routes for the unreleased 0.1.3 candidate.</p>
 <!-- Generated by tungsten 0.1.2. Do not edit. Inputs: openapi.json e6e182e448b0 -->
 <p>Ruby SDK for openapi, generated by tungsten. It needs Ruby 3.3 or later and the <code>tungsten-runtime</code> gem (~&gt; 0.1); the runtime uses the standard library only (<code>net/http</code>, <code>json</code>, <code>openssl</code>).</p>
 <h3 id="usage-2"><a class="header" href="#usage-2">Usage</a></h3>
@@ -3786,7 +3877,7 @@ end
 <p><code>lib/openapi_sdk/custom/extensions.rb</code> is yours: tungsten creates it once and never overwrites it, and the gem requires it last.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="dart-sdk"><a class="header" href="#dart-sdk">Dart SDK</a></h1>
 <p>This is the README that tungsten generates for the Dart target, shown for a small example API (Swagger's Petstore). Names change with your API; the structure does not.</p>
-<p>Installation snippets name example generated packages and runtime dependencies; they do not establish that those packages are published. Check <a href="sdk/../runtime-distribution.html">runtime distribution</a> for supported source installation and the current distribution boundaries.</p>
+<p>These recorded examples retain their original generator and runtime versions. Their installation snippets name example generated packages; they are not a current registry installation recipe. See <a href="sdk/../runtime-distribution.html">runtime distribution</a> for the verified stable 0.1.2 package versions and matching source routes for the unreleased 0.1.3 candidate.</p>
 <!-- Generated by tungsten 0.1.2. Do not edit. Inputs: openapi.json e6e182e448b0 -->
 <p>Dart SDK for openapi, generated by tungsten. It needs Dart 3.6 or later and the <code>tungsten_runtime</code> package (^0.1.0), which runs on <code>dart:io</code> (servers, command-line tools, Flutter on mobile and desktop; not the web).</p>
 <h3 id="usage-3"><a class="header" href="#usage-3">Usage</a></h3>

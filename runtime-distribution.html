@@ -188,26 +188,29 @@ generated code. The supported distribution units are:</p>
 <tr><td>Python SDK</td><td><code>tungsten-runtime</code></td><td>PyPI</td></tr>
 <tr><td>Rust SDK</td><td><code>tungsten-runtime</code></td><td>Matching source; crates.io installation is unavailable</td></tr>
 <tr><td>Rust CLI</td><td><code>tungsten-runtime</code>, <code>tungsten-cli-kit</code></td><td>Matching runtime/CLI-kit source; crates.io installation is unavailable</td></tr>
-<tr><td>Go SDK</td><td><code>github.com/pboachie/tungsten/runtimes/go</code></td><td>Existing v0.1.3 module; use matching source for the unreleased compiler candidate</td></tr>
-<tr><td>Java SDK</td><td><code>io.github.pboachie.tungsten:tungsten-runtime</code></td><td>Source-only; use <code>runtime_path</code></td></tr>
-<tr><td>Kotlin SDK</td><td><code>io.github.pboachie.tungsten:tungsten-runtime-kotlin</code> and Java runtime</td><td>Source-only; use <code>runtime_path</code> and <code>java_runtime_path</code></td></tr>
-<tr><td>C# SDK</td><td><code>Tungsten.Runtime</code> (net10.0)</td><td>Source-only; use <code>runtime_path</code></td></tr>
-<tr><td>F# SDK</td><td><code>Tungsten.Runtime.FSharp</code> and <code>Tungsten.Runtime</code> (net10.0)</td><td>Source-only; use <code>runtime_path</code> and <code>csharp_runtime_path</code></td></tr>
-<tr><td>Ruby SDK</td><td><code>tungsten-runtime</code> gem (Ruby 3.3+)</td><td>Source-only; use <code>runtime_path</code></td></tr>
-<tr><td>Dart SDK</td><td><code>tungsten_runtime</code> (Dart 3.6+, <code>dart:io</code>)</td><td>Source-only; use <code>runtime_path</code>; browser builds are unsupported</td></tr>
+<tr><td>Go SDK</td><td><code>github.com/pboachie/tungsten/runtimes/go</code></td><td>Matching v0.1.2 source for the stable compiler; verified v0.1.3 module or matching source for the candidate</td></tr>
+<tr><td>Java SDK</td><td><a href="https://central.sonatype.com/artifact/io.github.pboachie.tungsten/tungsten-runtime/0.1.2"><code>io.github.pboachie.tungsten:tungsten-runtime</code></a></td><td>Maven Central 0.1.2 for the stable compiler; matching source for the candidate</td></tr>
+<tr><td>Kotlin SDK</td><td><code>io.github.pboachie.tungsten:tungsten-runtime-kotlin</code> and Java runtime</td><td>Requires the 0.1.3 candidate compiler; use matching <code>runtime_path</code> and <code>java_runtime_path</code> source</td></tr>
+<tr><td>C# SDK</td><td><a href="https://www.nuget.org/packages/Tungsten.Runtime/0.1.2"><code>Tungsten.Runtime</code></a> (net10.0)</td><td>NuGet 0.1.2 for the stable compiler; matching source for the candidate</td></tr>
+<tr><td>F# SDK</td><td><code>Tungsten.Runtime.FSharp</code> and <code>Tungsten.Runtime</code> (net10.0)</td><td>Requires the 0.1.3 candidate compiler; use matching <code>runtime_path</code> and <code>csharp_runtime_path</code> source</td></tr>
+<tr><td>Ruby SDK</td><td><a href="https://rubygems.org/gems/tungsten-runtime/versions/0.1.2"><code>tungsten-runtime</code></a> gem (Ruby 3.3+)</td><td>RubyGems 0.1.2 for the stable compiler; matching source for the candidate</td></tr>
+<tr><td>Dart SDK</td><td><code>tungsten_runtime</code> (Dart 3.6+, <code>dart:io</code>)</td><td>Requires the 0.1.3 candidate compiler; use matching <code>runtime_path</code> source; browser builds are unsupported</td></tr>
 </tbody></table>
 </div>
-<p>These names describe the intended registry packages. A successful local build
-does not mean a version exists in a registry. npm and PyPI publication require
-configured trusted publishers and explicit release switches; a workflow in the
-repository does not prove that either registry contains the requested version.
-Before relying on registry installation, check that the version required by
-your generated package is available.</p>
-<p>The latest stable compiler release is <strong>0.1.2</strong>. Its three npm runtimes and PyPI
-<code>tungsten-runtime</code> were verified at 0.1.2 on October 15, 2026. Compiler 0.1.3 is
-unreleased; use matching source dependencies for its candidate capabilities.
+<p>A successful local build does not mean a version exists in a registry. Before
+relying on registry installation, check the version required by your generated
+package. The available stable packages and candidate source routes are separate
+choices; installing a runtime does not install the Tungsten compiler.</p>
+<p>The latest stable compiler release is <strong>0.1.2</strong>. The three npm runtimes, PyPI
+<code>tungsten-runtime</code>, Maven Central Java runtime, NuGet C# runtime and RubyGems
+runtime were verified at <strong>0.1.2</strong> on October 15, 2026. These native packages
+were qualified with generated SDK consumers; their publication does not make
+the 0.1.3 compiler available. Compiler 0.1.3 remains unreleased: use matching
+source dependencies for its candidate capabilities, including Python 3.10/3.11
+support and HTTP/Git input acquisition.
 The Go runtime is separately available as v0.1.3 through the public Go module
-proxy, which does not establish a stable 0.1.3 compiler release. The
+proxy, which does not establish a stable 0.1.3 compiler release. Its archive
+includes the verified Apache-2.0 runtime license. The
 <a href="getting-started.html#runtime-packages">getting-started installation guide</a>
 separates those published runtime commands from the candidate source workflow.</p>
 <p>Neither Rust runtime package is available from crates.io in the October 15
@@ -221,14 +224,15 @@ relative to the generated CLI crate directory. Do not use
 verified separately.
 These libraries do not install the Tungsten compiler. Use the compiler's
 release binary/installer or its documented source installation separately.</p>
-<p>All runtime distributions use Apache-2.0 and include the actual license file.
-The generator's license is separate. npm packages ship compiled ESM, TypeScript
+<p>Runtime source uses Apache-2.0; the generator's license is separate. Registry
+archive notices are verified separately from source and consumer builds. The
+qualified Go v0.1.3 archive includes the runtime's actual Apache-2.0 license. npm packages ship compiled ESM, TypeScript
 declarations and explicit exports. <code>@elysra/tungsten-runtime/node</code> supplies Node
 adapters; the core and WebMCP import graphs stay free of Node builtins. The MCP
 runtime runs on Node and can import Node functionality. Browser WebMCP API
 availability depends on the host browser and is checked separately from package
 distribution.</p>
-<p>For local development before registry publication, build the runtimes and set
+<p>For candidate capabilities or runtimes without a published package, build the runtimes and set
 the generator's supported runtime path options to your local checkout. A source
 path is a development dependency; package releases use registry version ranges.
 Put <code>runtime_path</code> in the target's configuration, resolving it relative to its output
@@ -244,6 +248,19 @@ Kotlin also needs the Java runtime path; F# also needs the C# runtime path.
 Keep those dependencies from the same reviewed source revision. The generated
 README may show registry-style coordinates or an example SDK install command;
 these identify the expected dependency, rather than promise a published package.</p>
+<p>For the released 0.1.2 compiler, build the Go emitter from the <code>v0.1.2</code>
+checkout and use that checkout's runtime source. Configure the Go target's
+<code>runtime_path</code> with the matching source directory:</p>
+<pre><code class="language-yaml">targets:
+  go:
+    external: true
+    out: generated/go
+    module: example.com/my-api/sdk
+    runtime_path: /absolute/path/to/tungsten-v0.1.2/runtimes/go
+</code></pre>
+<p>This stable source route does not require the 0.1.3 compiler or runtime. As with
+the other outputs, <a href="project-setup.html#go-emitter-setup">configure the external emitter</a>
+before generation and follow the generated SDK's build instructions.</p>
 <p>The candidate Go emitter defaults to the existing runtime module <code>v0.1.3</code>,
 available through the nested-module tag <code>runtimes/go/v0.1.3</code>. A root compiler
 release tag does not replace this module-specific tag. For the unreleased
@@ -260,35 +277,20 @@ establish registry availability for other languages.</p>
 <p>The release checks also install all npm tarballs together into an isolated
 project, so the core peer is resolved from the packed artifact instead of a
 source link or an unpublished registry version.</p>
-<p>Maintainers can reproduce the npm distribution check with <code>make runtime-packages</code>
-in the development repository. It checks version agreement, registry dependency
-declarations, exported JS and declaration files, Apache licenses, isolated
-package imports and the distributed browser import graph. The validated tarballs
-and checksums are retained for inspection. To check all runtime archives locally,
-run <code>python release/runtime-artifacts.py</code>; Python requires the pinned <code>build</code>
-and <code>twine</code> tools, and Rust verification compiles temporary packaged crates.
-The script builds a wheel and sdist, checks metadata, licenses and typing files,
-installs the wheel in an isolated environment, and packages the Rust workspace
-in a temporary copy without changing its committed publication switch.</p>
 <p>The 0.1.3 source candidate coordinates compiler and runtime source versions for
 its planned release tag. Generated SDKs retain their own package versions, while their
 default runtime dependencies require the candidate's capabilities. Explicit
 runtime overrides remain yours to qualify. The Go module's independent nested
-tag is published and verified separately from the compiler release.
+tag and archive notices are verified separately from the compiler release.
 The earlier 0.1.2 release had independently versioned non-npm runtime sources.
 Local archive checks validate each manifest, and tag-aware release checks
 enforce the coordinated candidate versions. Neither replaces a clean registry
 installation check or proves publication.</p>
-<p>The release workflow always checks npm packages, builds Python archives and
-rehearses Rust packaging. npm publishing uses the already validated archives,
-checks their checksums, and publishes the core runtime before its adapters.
-Only a real release with <code>NPM_PUBLISH=true</code> can publish npm packages, using
-GitHub's OIDC trusted publisher in environment <code>npm</code>. Missing registry publisher
-configuration fails the job; there is no stored-token fallback. Prereleases use
-the <code>next</code> npm dist-tag, and stable releases use <code>latest</code>. The npm archive versions
-must match the full release tag before the first upload; mismatched prerelease
-and stable package versions fail the publish step. Python publication separately
-requires <code>PYPI_PUBLISH=true</code> and matching wheel/sdist versions.</p>
+<p>Publication automation builds and checks registry archives separately from
+source generation. It verifies package versions, archive contents and digests,
+then checks public downloads after an approved release. Workflow configuration,
+local package checks and registry publication are separate checks. No
+unreleased 0.1.3 package is required for the stable 0.1.2 installation route.</p>
 <p>See <a href="downloads.html">Downloads</a> for CLI installation and
 <a href="browser-integration.html">Browser integration</a> for browser setup and capability
 checks.</p>
