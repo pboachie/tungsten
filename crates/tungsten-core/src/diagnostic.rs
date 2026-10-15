@@ -466,6 +466,10 @@ pub mod codes {
             "TG0807",
             "external target not run: external emitters are off (--no-external)",
         ),
+        (
+            "TG0808",
+            "external emitter does not declare imported-operation policy enforcement",
+        ),
         ("TG0901", "generated output is stale relative to its inputs"),
         (
             "TG0902",

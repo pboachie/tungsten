@@ -1044,6 +1044,17 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
          without the option, on a manifest you trust, to emit or check the target.",
     ),
     e(
+        "TG0808",
+        "An external target was selected for a project with imported-operation policy, \
+         but its protocol-1 --describe response omitted `import_policy` or set it to false. \
+         The emitter is not run and no files are written for that target. Other supported \
+         targets are still processed. Built-in targets without this capability use TG0705.",
+        "Use an emitter that declares `import_policy: true` and enforces the imported \
+         metadata, or select a supported TypeScript, Python, Rust, MCP, WebMCP or docs \
+         target. Do not remove policy metadata merely to bypass this check. Protocol-1 \
+         emitters remain compatible with projects that have no imported-operation policy.",
+    ),
+    e(
         "TG0901",
         "A target's output directory differs from what `tungsten generate` would write now: \
          a generated file is missing or has other content, a file of the previous \

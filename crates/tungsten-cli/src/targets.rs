@@ -83,6 +83,22 @@ pub(crate) fn import_policy_refusal(name: &str) -> Diagnostic {
     )
 }
 
+/// A protocol-1 external emitter must explicitly declare policy enforcement
+/// before receiving imported operations.
+pub(crate) fn external_import_policy_refusal(name: &str) -> Diagnostic {
+    Diagnostic::error(
+        "TG0808",
+        format!(
+            "external target `{name}` does not declare enforced imported-operation policy support"
+        ),
+    )
+    .with_help(
+        "use an emitter whose --describe response declares `import_policy: true` and \
+         enforces imported-operation policy, or select a supported TypeScript, Python, \
+         Rust, MCP, WebMCP or docs target; `tungsten explain TG0808` has the details",
+    )
+}
+
 /// The agent tool names target `id` serves (tool name → operation id or
 /// macro name), recorded in its API surface snapshot: the MCP server's
 /// tools and the browser WebMCP invocation and preview tools; none for SDK and
