@@ -314,13 +314,20 @@ jobs:
           esac
           export RUSTFLAGS="$flags"
           cargo build --locked --release --package tungsten-cli --bin tungsten --target "$TARGET"
+      # Every target executes its own binary before it ships. x86_64-apple-darwin
+      # is cross-compiled on the arm64 runner and runs under Rosetta 2, so the
+      # shipped x86_64 macOS binary is executed instead of skipped (issue #126).
       - name: Smoke test the binary
-        if: "!(contains(matrix.target, 'apple-darwin') && matrix.target != 'aarch64-apple-darwin')"
         shell: bash
         run: |
           exe=tungsten
           case "$TARGET" in *windows*) exe=tungsten.exe ;; esac
-          "target/$TARGET/release/$exe" --version
+          if [ "$TARGET" = x86_64-apple-darwin ]; then
+            softwareupdate --install-rosetta --agree-to-license || true
+            arch -x86_64 "target/$TARGET/release/$exe" --version
+          else
+            "target/$TARGET/release/$exe" --version
+          fi
       - name: Archive and checksum
         shell: bash
         run: |
@@ -358,6 +365,88 @@ jobs:
             if ($_.ToString() -notlike '*checksum mismatch*') { throw }
           }
           if (Test-Path "$rejected/tungsten.exe") { throw 'Tampered binary was installed' }
+          # -Init without terminal input must refuse (exit 1) before anything
+          # is downloaded. The -Init cancellation path itself (exit 4) needs a
+          # real terminal and a user refusing the interactive prompts, so it is
+          # not covered by the pipeline; this gap is documented here (issue #126).
+          $initRefused = Join-Path $env:RUNNER_TEMP 'tungsten-installer-init-refused'
+          try {
+            & ./install.ps1 -Version $env:VERSION -InstallDir $initRefused -BaseUrl 'https://release.invalid' -Init
+            throw 'install.ps1 -Init accepted redirected input'
+          } catch {
+            if ($_.ToString() -notlike '*terminal input*') { throw }
+          }
+          if (Test-Path "$initRefused/tungsten.exe") { throw 'Installer ran -Init after refusing terminal input' }
+      # Unix counterpart of the Windows installer smoke (issue #126): the real
+      # install.sh installs this job's archive from a local mirror laid out like
+      # releases/download (<base>/<tag>/<asset> plus SHA256SUMS); with a custom
+      # TUNGSTEN_RELEASE_BASE_URL the gh attestation check is skipped, so the
+      # smoke stays offline. It runs for all six Unix targets (musl, gnu and
+      # darwin; TUNGSTEN_LIBC=gnu selects the gnu archives), then repeats
+      # against a tampered archive and must fail with exit 1 ("checksum
+      # mismatch"), installing nothing. The --init cancellation path (exit 4)
+      # is not covered: install.sh refuses --init without a controlling
+      # terminal, which no runner provides; only the refusal is asserted.
+      - name: Smoke test install.sh against the built archive
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          name="tungsten-$VERSION-$TARGET"
+          asset="$name.tar.gz"
+          work="$RUNNER_TEMP/install-sh-smoke"
+          www="$work/www"
+          mkdir -p "$www/v$VERSION" "$work/logs"
+          cp "dist/$asset" "$www/v$VERSION/$asset"
+          cp "dist/$asset.sha256" "$www/v$VERSION/SHA256SUMS"
+          # Serve the archive like a release mirror; install.sh downloads
+          # $TUNGSTEN_RELEASE_BASE_URL/v$VERSION/{SHA256SUMS,$asset}.
+          python3 -m http.server 8642 --bind 127.0.0.1 --directory "$www" \
+            >"$work/logs/http.server.log" 2>&1 &
+          server=$!
+          cleanup() { kill "$server" 2>/dev/null || true; }
+          trap cleanup EXIT
+          ready=0
+          for _ in $(seq 1 60); do
+            if curl -fsS "http://127.0.0.1:8642/v$VERSION/SHA256SUMS" -o /dev/null; then ready=1; break; fi
+            sleep 0.5
+          done
+          [ "$ready" -eq 1 ] || { echo "the local mirror did not come up" >&2; cat "$work/logs/http.server.log" >&2; exit 1; }
+          # x86_64-apple-darwin runs under Rosetta on the arm64 runner.
+          if [ "$TARGET" = x86_64-apple-darwin ]; then
+            softwareupdate --install-rosetta --agree-to-license || true
+            run() { arch -x86_64 "$@"; }
+          else
+            run() { "$@"; }
+          fi
+          export TUNGSTEN_RELEASE_BASE_URL=http://127.0.0.1:8642
+          case "$TARGET" in *linux-gnu) export TUNGSTEN_LIBC=gnu ;; esac
+          dest="$work/bin"
+          sh ./install.sh --version "$VERSION" --dir "$dest"
+          expected=$(run "target/$TARGET/release/tungsten" --version)
+          actual=$(run "$dest/tungsten" --version)
+          [ -n "$expected" ] || { echo "the built binary printed no --version" >&2; exit 1; }
+          if [ "$actual" != "$expected" ]; then
+            echo "the installed binary reports '$actual', the built binary '$expected'" >&2
+            exit 1
+          fi
+          # The same mirror with a tampered archive must fail with exit 1 and
+          # a checksum mismatch, installing nothing (mirrors the PowerShell smoke).
+          printf tampered >>"$www/v$VERSION/$asset"
+          rejected="$work/rejected"
+          rc=0
+          sh ./install.sh --version "$VERSION" --dir "$rejected" 2>"$work/logs/rejected.log" || rc=$?
+          [ "$rc" -eq 1 ] || { echo "install.sh exited $rc on a tampered archive, expected 1" >&2; cat "$work/logs/rejected.log" >&2; exit 1; }
+          grep -q "checksum mismatch" "$work/logs/rejected.log" || { echo "no checksum mismatch reported:" >&2; cat "$work/logs/rejected.log" >&2; exit 1; }
+          [ ! -e "$rejected/tungsten" ] || { echo "the tampered archive was installed" >&2; exit 1; }
+          # --init must refuse without a controlling terminal (exit 1, before
+          # any download); the exit 4 cancellation path itself needs a real
+          # terminal and is documented as a gap at the top of this step.
+          init_dir="$work/init-refused"
+          rc=0
+          sh ./install.sh --init --version "$VERSION" --dir "$init_dir" </dev/null 2>"$work/logs/init.log" || rc=$?
+          [ "$rc" -eq 1 ] || { echo "install.sh --init without a terminal exited $rc, expected 1" >&2; cat "$work/logs/init.log" >&2; exit 1; }
+          grep -q "controlling terminal" "$work/logs/init.log" || { echo "unexpected --init refusal:" >&2; cat "$work/logs/init.log" >&2; exit 1; }
+          echo "install.sh smoke passed for $TARGET"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dist-${{ matrix.target }}
