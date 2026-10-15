@@ -23,6 +23,9 @@ changes.
   outcomes. Python and TypeScript `collect` helpers accept optional byte/time
   budgets, retain admitted partials and preserve unbounded no-argument calls.
 
+- Public installation examples distinguish published 0.1.2 runtimes from the
+  0.1.3 source candidate, with Python compatibility prerequisites and HTTP/Git
+  acquisition, cache verification and offline reuse explained in CLI help.
 - Dedicated TG0808 diagnostics explain when an external emitter lacks imported-operation
   policy enforcement; protocol-1 emitters remain compatible with ordinary projects.
 - Git input references (`git+https://...@ref#path`) with bounded shallow
