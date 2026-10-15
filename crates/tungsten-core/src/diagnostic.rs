@@ -4,7 +4,8 @@
 //! Code ranges: `TG01xx` parsing, `TG02xx` refs and cycles, `TG03xx` type
 //! normalization, `TG04xx` naming, `TG05xx` pagination/auth inference,
 //! `TG06xx` manifests, `TG07xx` emitter limits, `TG08xx` external emitters,
-//! `TG09xx` staleness/CI and overlay suggestions, `TG10xx` the SDK emitters
+//! `TG09xx` staleness/CI, overlay suggestions and the response-contract
+//! audit (`TG0930`-`TG0939`), `TG10xx` the SDK emitters
 //! built on `tungsten_emit::sdk` in blocks of ten: `TG1000`-`TG1009` the
 //! shared SDK plan and descriptor document (reserved), `TG1010` Java,
 //! `TG1020` C#, `TG1030` Kotlin, `TG1040` Swift, `TG1050` PHP, `TG1060` Ruby,
@@ -488,6 +489,18 @@ pub mod codes {
         (
             "TG0921",
             "overlay suggest: no overlay action can fix this diagnostic code",
+        ),
+        (
+            "TG0930",
+            "response-contract audit: a success response declares a JSON media type without a schema; the value is typed as any",
+        ),
+        (
+            "TG0931",
+            "response-contract audit: a success response schema is a free-form object (no properties, unconstrained additionalProperties); typed as a mapping of any values",
+        ),
+        (
+            "TG0932",
+            "response-contract audit: traversal budget exhausted; audit is incomplete",
         ),
         ("TG1010", "invalid java target option; the default is used"),
         (

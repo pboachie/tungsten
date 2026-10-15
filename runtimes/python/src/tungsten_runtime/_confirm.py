@@ -23,7 +23,7 @@ CONFIRMATION_TTL_MS: Final = 5 * 60 * 1000
 
 _TOKEN = re.compile(r"tgc1\.([0-9]{1,16})\.([A-Za-z0-9_-]{43})")
 
-type TokenCheck = Literal["valid", "expired", "mismatch", "malformed"]
+TokenCheck = Literal["valid", "expired", "mismatch", "malformed"]
 
 
 def args_digest(args: object) -> str:

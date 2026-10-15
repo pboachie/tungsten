@@ -220,6 +220,22 @@ pub(crate) struct CheckArgs {
     /// Treat warnings as errors.
     #[arg(long)]
     pub strict: bool,
+    /// Audit the success response contracts after compiling (opt-in): a
+    /// JSON response without a schema (TG0930), a schema that constrains
+    /// nothing (TG0305) and a free-form object response (TG0931) become
+    /// warnings naming the operation, status and media type. Nothing is
+    /// rejected and the default exit behavior is unchanged; combine with
+    /// --strict to fail when the audit finds weak contracts. Typed maps,
+    /// no-content responses and non-JSON media types are not findings; a
+    /// schema (or media-type entry) with a nonempty string review note in
+    /// `x-tungsten-reviewed-contract`, usually through an overlay, counts
+    /// as reviewed. TG0932 reports an incomplete audit when budgets are hit.
+    #[arg(long)]
+    pub audit_contracts: bool,
+    /// Run the response-contract audit and treat its findings as errors.
+    /// Other warnings keep their usual severity (unlike --strict).
+    #[arg(long)]
+    pub require_contracts: bool,
     /// Print every warning and info diagnostic in full. By default a code
     /// that repeats is shown a few times, then summarized with a count;
     /// `--json` always lists every diagnostic.

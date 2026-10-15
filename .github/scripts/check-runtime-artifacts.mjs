@@ -49,6 +49,10 @@ try {
     assert.equal(manifest.name, names[i]);
     assert.equal(manifest.version, workspaceVersion, `${manifest.name}: workspace version mismatch`);
     assert.equal(manifest.license, "Apache-2.0");
+    assert.equal(manifest.engines?.node, ">=22", `${manifest.name}: Node.js support floor`);
+    assert.equal(manifest.homepage, "https://github.com/pboachie/tungsten");
+    assert.equal(manifest.bugs?.url, "https://github.com/pboachie/tungsten/issues");
+    assert.equal(manifest.author, "Prince Boachie");
     assert.equal(readFileSync(join(dir, "LICENSE"), "utf8"), readFileSync(join(root, "runtimes/LICENSE"), "utf8"));
     assert.equal(readFileSync(join(dir, "README.md"), "utf8"), readFileSync(join(cwd, "README.md"), "utf8"), `${manifest.name}: package README must be included unchanged`);
     assert(readFileSync(join(dir, "README.md"), "utf8").startsWith(`# ${manifest.name}\n`), `${manifest.name}: package README heading mismatch`);

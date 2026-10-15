@@ -186,9 +186,9 @@ from .types import (
 
 #: Version of ``tungsten-runtime``, sent in ``X-Tungsten-Runtime``; kept
 #: equal to ``pyproject.toml`` ``version``.
-RUNTIME_VERSION: Final = "0.1.0"
+RUNTIME_VERSION: Final = "0.1.3"
 
-type Purpose = Literal["call", "preview", "server_preview", "macro_preview"]
+Purpose = Literal["call", "preview", "server_preview", "macro_preview"]
 
 _RETRY_CATEGORIES = frozenset({"RATE_LIMITED", "UPSTREAM_UNAVAILABLE", "TRANSPORT_FAILED", "OUTCOME_UNKNOWN"})
 _DEFAULT_RETRIES: Final = {

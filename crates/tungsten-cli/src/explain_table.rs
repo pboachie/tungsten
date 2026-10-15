@@ -500,9 +500,10 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
         "A success response declares the `text/event-stream` media type without a schema, so \
          the SDK cannot type or check the events of the stream. Each event's `data` is still \
          decoded as JSON and handed to the caller as an untyped value.",
-        "Declare the schema of one event under the media type (usually a `oneOf` tagged by a \
-         `type` property). Name a `data` value that ends the stream, if there is one, with \
-         `x-tungsten-stream-done`.",
+        "Declare the schema of one event under the media type. Use a discriminator only if \
+         it exists inside the JSON data; the SSE event name is separate. A raw data sentinel \
+         can be declared with `x-tungsten-stream-done`. See the typed Python SSE recipe at \
+         https://github.com/pboachie/tungsten/tree/release/0.1.3/examples/typed-sse.",
     ),
     e(
         "TG0531",
@@ -1106,6 +1107,41 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
          decision or live in tungsten.yml; the count is reported once per code.",
         "Use `tungsten explain` on the code for its usual fix, for example declare the \
          pagination under `pagination` in tungsten.yml.",
+    ),
+    e(
+        "TG0930",
+        "`tungsten check --audit-contracts` found a success response whose JSON media type \
+         declares no `schema`, so any JSON value is accepted and the generated SDK types \
+         the value as any. The message names the operation, the status and the media type; \
+         the second location is the operation that answers it. Default runs are unchanged: \
+         the audit runs only with the flag or `--require-contracts`, which fails on audit \
+         findings alone. `--strict` fails on these and every other warning.",
+        "Declare a schema for the media type, in the spec or in a reviewed overlay listed \
+         under `overlays` in tungsten.yml, or acknowledge the gap with \
+         `x-tungsten-reviewed-contract` on the media-type entry when any value really is \
+         accepted.",
+    ),
+    e(
+        "TG0931",
+        "`tungsten check --audit-contracts` found a success response schema that is a \
+         free-form object: `type: object` with no properties and an open or unconstrained \
+         `additionalProperties`, so the generated type is a plain mapping of any values (a \
+         `dict[str, Any]`). A typed map, a record with properties, a response without a \
+         JSON body and a non-JSON media type are not findings; a schema marked \
+         `x-tungsten-reviewed-contract` counts as reviewed. See TG0930 for how the audit \
+         is run and enforced.",
+        "Declare the properties the server really answers with, named response models or \
+         their union, in the spec or a reviewed overlay, or acknowledge the free-form \
+         shape with `x-tungsten-reviewed-contract` when it is intentional.",
+    ),
+    e(
+        "TG0932",
+        "The opt-in response-contract audit reached its schema traversal budget. Its \
+         findings are incomplete. This warning fails --require-contracts or --strict, so an \
+         incomplete audit cannot silently satisfy that quality gate.",
+        "Split the input into smaller projects and audit each one. Reuse named schemas \
+         for shared contracts. The audit follows references and nested shapes iteratively \
+         and reports each weak source node only once.",
     ),
     e(
         "TG1010",

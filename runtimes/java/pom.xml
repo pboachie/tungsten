@@ -7,7 +7,7 @@
 
   <groupId>io.github.pboachie.tungsten</groupId>
   <artifactId>tungsten-runtime</artifactId>
-  <version>0.1.0</version>
+  <version>0.1.3</version>
   <packaging>jar</packaging>
 
   <name>tungsten runtime for Java</name>
@@ -31,6 +31,13 @@
   </properties>
 
   <build>
+    <resources>
+      <resource>
+        <directory>${project.basedir}</directory>
+        <includes><include>README.md</include><include>LICENSE</include></includes>
+        <targetPath>META-INF</targetPath>
+      </resource>
+    </resources>
     <plugins>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>

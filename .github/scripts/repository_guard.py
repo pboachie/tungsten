@@ -23,7 +23,8 @@ Tree rules:
     CODE_OF_CONDUCT.md and CHANGELOG.md at the root; the Apache-2.0 LICENSE
     in runtimes/ (and a copy of it in a runtime package directory, for npm
     packaging); Markdown directly in .github/ (pull request template and the
-    like); .github/ISSUE_TEMPLATE/*.md and *.yml; examples/<name>/README.md, and README.md in the three npm runtime packages.
+    like); .github/ISSUE_TEMPLATE/*.md and *.yml; examples/README.md,
+    examples/<name>/README.md, and README.md in the explicitly listed runtime packages.
     Everything else with a documentation extension or name stays forbidden,
     wherever it is (docs/CONTRIBUTING.md, CHANGELOG.txt, assets/notes.md);
   - the root assets/ directory holds images only (.svg and .png); examples/ holds code (and the
@@ -119,10 +120,11 @@ DOC_NAME = re.compile(
 ALLOWED_DOCS = re.compile(
     r"^(?:README\.md|LICENSE|CONTRIBUTING\.md|SECURITY\.md|CODE_OF_CONDUCT\.md|CHANGELOG\.md"
     r"|runtimes/LICENSE|runtimes/[^/]+/LICENSE|runtimes/rust/(?:runtime|cli-kit)/LICENSE"
-    r"|runtimes/(?:ts|mcp|webmcp)/README\.md"
+    r"|runtimes/(?:ts|mcp|webmcp|python|rust|go|java|csharp|ruby|kotlin|fsharp|dart)/README\.md"
+    r"|runtimes/rust/(?:runtime|cli-kit)/README\.md"
     r"|\.github/[^/]+\.md"
     r"|\.github/ISSUE_TEMPLATE/[^/]+\.(?:md|ya?ml)"
-    r"|examples/[^/]+/README\.md)$"
+    r"|examples/README\.md|examples/[^/]+/README\.md)$"
 )
 ASSET_EXTENSIONS = {".svg", ".png"}
 
@@ -273,7 +275,7 @@ def path_violations(path: str) -> list[str]:
         found.append(
             "documentation file (only the community files are allowed: README.md, LICENSE, CONTRIBUTING.md,"
             " SECURITY.md, CODE_OF_CONDUCT.md and CHANGELOG.md at the root, Markdown in .github/ and"
-            " .github/ISSUE_TEMPLATE/, examples/<name>/README.md, npm runtime README.md; docs live in the private repository)"
+            " .github/ISSUE_TEMPLATE/, examples/README.md, examples/<name>/README.md, npm runtime README.md; docs live in the private repository)"
         )
     if (suffix == ".go" or name in GO_MODULE_FILES) and not path.startswith(GO_ROOTS):
         found.append("Go source or module file outside runtimes/go/ and emitters/go/")
@@ -327,6 +329,8 @@ def content_violations(path: str, text: str, paths: set[str]) -> list[str]:
     found = []
     if path == CHANGELOG_PATH:
         found += changelog_violations(text)
+        if PRIVATE_REFERENCE.search(text):
+            found.append("private coordination reference in public changelog")
     suffix = PurePosixPath(path).suffix.lower()
     in_runtimes = path.startswith("runtimes/")
     if suffix == ".rs":
@@ -361,6 +365,13 @@ AI_NAME = re.compile(
 CO_AUTHOR = re.compile(r"^\s*co-authored-by\s*:(.*)$", re.IGNORECASE | re.MULTILINE)
 SESSION_TRAILER = re.compile(r"^\s*[A-Za-z][\w-]*-session(?:-id|-url)?\s*:", re.IGNORECASE | re.MULTILINE)
 GENERATED_FOOTER = re.compile(r"^.*\b(?:generated|written|created)\s+(?:with|by|using)\b(.*)$", re.IGNORECASE | re.MULTILINE)
+PRIVATE_REFERENCE = re.compile(
+    r"\btungsten-ops[/\\](?:issues|pull)[/\\]"
+    r"|\bplanning[/\\][0-9]{2}-"
+    r"|\brelease[/\\]plan\.json\b"
+    r"|\brunbooks[/\\]",
+    re.IGNORECASE,
+)
 
 
 def message_violations(message: str) -> list[str]:
@@ -371,6 +382,8 @@ def message_violations(message: str) -> list[str]:
         found.append("session-link trailer")
     if any(AI_NAME.search(rest) for rest in GENERATED_FOOTER.findall(message)):
         found.append("footer crediting an AI tool")
+    if PRIVATE_REFERENCE.search(message):
+        found.append("private coordination reference in public commit message")
     return found
 
 
