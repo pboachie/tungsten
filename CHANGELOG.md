@@ -236,6 +236,9 @@ values as `JsonNode`, OpenID Connect as a bearer token, no CLI or MCP).
 
 ### Fixed
 
+- Release bundles include the Homebrew formula, winget archive and distribution
+  checksums before publication, supporting GitHub immutable releases. Container
+  distribution verifies the sealed assets and no longer uploads release assets.
 - Dart pagination detects repeated cursors and page URLs, including the caller's
   starting cursor and cycles across earlier pages. Fetched pages are delivered
   before an `UNEXPECTED_RESPONSE` diagnostic, repeated requests are refused, and

@@ -562,6 +562,19 @@ jobs:
           # Every listed file must exist and match.
           sha256sum --check SHA256SUMS
           ls -l
+      - name: Include distribution assets before publication
+        run: |
+          set -eu
+          python3 .github/scripts/distribution.py --bundle dist --output distribution --tag "v$VERSION"
+          python3 -m pip install --disable-pip-version-check jsonschema==4.25.1
+          python3 .github/scripts/validate-winget.py distribution/winget
+          ruby -c distribution/tungsten.rb
+          (cd distribution && sha256sum --check DISTRIBUTION_SHA256SUMS)
+          cp distribution/tungsten.rb distribution/winget-manifests.tar.gz distribution/DISTRIBUTION_SHA256SUMS dist/
+          cd dist
+          sha256sum tungsten.rb winget-manifests.tar.gz DISTRIBUTION_SHA256SUMS >> SHA256SUMS
+          sort -k2 -o SHA256SUMS SHA256SUMS
+          sha256sum --check SHA256SUMS
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-bundle
