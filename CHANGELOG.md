@@ -11,6 +11,11 @@ changes.
 
 ### Added
 
+- Enable registry packaging of the Apache-2.0 Rust runtime and CLI-kit with a
+  versioned runtime dependency. Add opt-in crates.io trusted publishing to the
+  existing release workflow; account ownership, first publication and publisher
+  configuration remain maintainer release steps.
+
 - Generated Go SDKs require the published `v0.1.3` runtime module through its
   `runtimes/go/v0.1.3` nested-module tag, replacing the interim pseudo-version.
   Runtime version overrides and local source replacements remain supported.

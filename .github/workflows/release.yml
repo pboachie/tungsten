@@ -707,28 +707,46 @@ jobs:
           persist-credentials: false
       - name: Install the pinned toolchain (rust-toolchain.toml)
         run: rustup toolchain install
-      - name: Make the manifests publishable in this throwaway checkout only
-        working-directory: runtimes/rust
-        # The committed manifests say `publish = false`, which is the switch
-        # that keeps these crates off crates.io. The dry run flips it, and adds
-        # the version a published path dependency needs, to prove the packages
-        # would be accepted. Nothing is committed or uploaded.
-        run: |
-          sed -i 's/^publish = false$/publish = ["crates-io"]/' Cargo.toml
-          python3 - <<'PY'
-          from pathlib import Path
-          import tomllib
-          path = Path("Cargo.toml")
-          text = path.read_text()
-          version = tomllib.loads(text)["workspace"]["package"]["version"]
-          original = 'tungsten-runtime = { path = "runtime" }'
-          assert text.count(original) == 1, "unexpected runtime path dependency"
-          path.write_text(text.replace(original, f'tungsten-runtime = {{ path = "runtime", version = "{version}" }}'))
-          PY
-          grep -q '^publish = \["crates-io"\]$' Cargo.toml
       - name: cargo publish --dry-run
         working-directory: runtimes/rust
-        run: cargo publish --workspace --dry-run --locked --allow-dirty
+        run: cargo publish --workspace --dry-run --locked
+
+  # First crate ownership/bootstrap and each trusted publisher must be
+  # configured before the maintainer enables CRATES_PUBLISH. No token fallback.
+  crates-publish:
+    name: crates.io publish (trusted publishing)
+    needs: [prepare, crates-dry-run, github-release, woodpecker-release]
+    if: needs.prepare.outputs.release == 'true' && vars.CRATES_PUBLISH == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: crates-io
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the pinned toolchain (rust-toolchain.toml)
+        run: rustup toolchain install
+      - uses: rust-lang/crates-io-auth-action@b7e9a28eded4986ec6b1fa40eeee8f8f165559ec # v1.0.3
+        id: crates-auth
+      - name: Publish runtime before its CLI-kit dependent
+        working-directory: runtimes/rust
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.crates-auth.outputs.token }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          python3 - <<'PY'
+          import os, tomllib
+          from pathlib import Path
+          manifest = tomllib.loads(Path('Cargo.toml').read_text())['workspace']
+          version = manifest['package']['version']
+          assert os.environ['RELEASE_TAG'] == 'v' + version
+          assert manifest['package']['publish'] == ['crates-io']
+          assert manifest['dependencies']['tungsten-runtime']['version'] == version
+          PY
+          cargo publish --workspace --locked
 
   npm-dry-run:
     name: npm dry run (${{ matrix.package }})
