@@ -356,7 +356,9 @@ jobs:
     # ops workflow by hand with the head SHA. Every branch is dispatched, not
     # only main, because the tungsten-ops/ci status must land on pull request
     # head commits for branch protection.
-    if: github.event_name == 'push' && github.repository == 'pboachie/tungsten'
+    # Disabled by default after migration. A maintainer may opt in only for a
+    # reviewed rollback with an active private legacy receiver.
+    if: vars.LEGACY_OPS_DISPATCH == 'true' && github.event_name == 'push' && github.repository == 'pboachie/tungsten'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     # The job uses only OPS_DISPATCH_TOKEN; the run's own token gets nothing.

@@ -17,7 +17,7 @@ import hashlib
 import threading
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from typing import Literal, Protocol, cast
+from typing import Generic, Literal, Protocol, TypeVar, cast
 from urllib.parse import quote
 
 from ._auth import TokenError
@@ -41,6 +41,8 @@ from ._util import (
     field as field_of,
 )
 from .types import Err
+
+T = TypeVar("T", covariant=True)
 
 #: Tokens expiring within this many milliseconds count as expired.
 EXPIRY_SKEW_MS = 30_000
@@ -118,12 +120,12 @@ class TokenInfo:
 
 
 @dataclass(frozen=True, slots=True)
-class OAuthOk[T]:
+class OAuthOk(Generic[T]):
     value: T
     ok: Literal[True] = True
 
 
-type OAuthResult[T] = OAuthOk[T] | Err
+OAuthResult = OAuthOk[T] | Err
 
 
 def pkce_challenge(verifier: str) -> str:

@@ -151,6 +151,30 @@ impl<'o> Loader<'o> {
 
     fn load_entry(&mut self, entry: &LoadEntry) -> Option<DocId> {
         let name = entry.display_name.as_str();
+        if crate::acquire::is_remote(name) {
+            let path = match crate::acquire::acquire(
+                name,
+                &self.opts.acquisition_root,
+                &self.opts.acquisition,
+            ) {
+                Ok(path) => path,
+                Err(diagnostic) => {
+                    self.ws.diagnostics.push(diagnostic);
+                    return None;
+                }
+            };
+            let (text, digest) = self.read(&path, name, None)?;
+            let source = self.ws.sources.add(name, text);
+            let parsed = self.parse(name, source, None)?;
+            let overlays = entry
+                .overlays
+                .iter()
+                .map(|path| (path.clone(), overlay_display(path, entry)))
+                .collect::<Vec<_>>();
+            // No local path/root is registered for remote documents. Relative
+            // `$ref`s must never gain access to files beside the download cache.
+            return self.add_entry(name, None, parsed, source, digest, &overlays);
+        }
         let (text, digest) = self.read(&entry.path, name, None)?;
         let lexical = absolute(&entry.path);
         if let (Some(dir), Ok(canonical)) = (lexical.parent(), std::fs::canonicalize(&lexical))

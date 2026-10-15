@@ -59,7 +59,7 @@ pub(crate) fn run(args: &InitArgs) -> Report {
             .find(|p| p.is_file())
     });
     let info = match &spec {
-        Some(path) => match read_spec(path) {
+        Some(path) => match read_spec(path, dir) {
             Ok(info) => info,
             Err(failed) => {
                 report.diagnostics = failed.diagnostics.0;
@@ -227,13 +227,18 @@ struct SpecFailure {
     sources: tungsten_core::SourceMap,
 }
 
-fn read_spec(path: &Path) -> Result<SpecInfo, SpecFailure> {
+fn read_spec(path: &Path, dir: &Path) -> Result<SpecInfo, SpecFailure> {
     let entry = LoadEntry {
         path: path.to_path_buf(),
         display_name: path.display().to_string(),
         overlays: vec![],
     };
-    let mut ws = tungsten_openapi::load(&[entry], &LoadOptions::default());
+    let options = LoadOptions {
+        acquisition: tungsten_openapi::acquire::current_options(),
+        acquisition_root: dir.to_path_buf(),
+        ..LoadOptions::default()
+    };
+    let mut ws = tungsten_openapi::load(&[entry], &options);
     let Some(&doc) = ws.entries.first() else {
         ws.diagnostics.sort();
         return Err(SpecFailure {
@@ -325,6 +330,9 @@ fn dir_name(dir: &Path) -> Option<String> {
 /// separators. Falls back to the path as given when no relative path exists
 /// (for example different drives).
 fn spec_reference(spec: &Path, dir: &Path) -> String {
+    if tungsten_openapi::acquire::is_remote(&spec.to_string_lossy()) {
+        return spec.to_string_lossy().into_owned();
+    }
     let relative = std::fs::canonicalize(spec)
         .ok()
         .zip(std::fs::canonicalize(dir).ok())
@@ -411,6 +419,12 @@ fn tungsten_yml(
         yaml_scalar(namespace),
         yaml_scalar(spec_ref)
     );
+    if let Some(source) = &args.source_url {
+        let _ = writeln!(out, "    source_url: {}", yaml_scalar(source));
+        if let Some(hash) = &args.source_sha256 {
+            let _ = writeln!(out, "    source_sha256: {}", yaml_scalar(hash));
+        }
+    }
     if let Some(server) = args.server_url.as_ref().or(info.server.as_ref()) {
         let _ = write!(
             out,
