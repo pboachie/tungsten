@@ -98,6 +98,8 @@ module Tungsten
         rescue Errno::ENOENT
           return {}
         end
+        raise IOError, "the idempotency store file is not valid UTF-8" unless text.valid_encoding?
+
         begin
           data = JSON.parse(text)
         rescue JSON::ParserError, EncodingError, ArgumentError
@@ -149,7 +151,10 @@ module Tungsten
       end
 
       def read_owner(lease)
-        owner = JSON.parse(File.read(lease, encoding: Encoding::UTF_8))
+        text = File.read(lease, encoding: Encoding::UTF_8)
+        return nil unless text.valid_encoding?
+
+        owner = JSON.parse(text)
         return nil unless owner.is_a?(Hash) && owner["version"] == 1 &&
                           owner["host"].is_a?(String) && owner["pid"].is_a?(Integer) &&
                           owner["pid"].positive? && owner["pid"] <= 9_007_199_254_740_991 &&
