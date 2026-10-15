@@ -124,6 +124,14 @@ values as `JsonNode`, OpenID Connect as a bearer token, no CLI or MCP).
 
 ### Fixed
 
+- MCP `run_script` on native Windows: the Deno child now receives `SystemRoot`,
+  `SYSTEMDRIVE`, `TEMP`, `TMP`, `USERPROFILE`, `PATH` and `PATHEXT` (and nothing
+  else from the parent), and Deno is located by file existence plus a `PATHEXT`
+  extension instead of a POSIX `X_OK` check. Linux and macOS are unchanged.
+- MCP: `--bearer-token-env <NAME>` is accepted as an alias of `--token-env`; the
+  HTTP embeddings provider warns when `apiKeyEnv` is used with a plain `http://`
+  non-loopback URL and reads at most 1 MiB of response (larger is an embedder
+  failure, search falls back to BM25).
 - Java runtime: a `StackOverflowError` raised by `java.util.regex` on a long
   subject (for example `^(a|a)+$` against 10,000 characters) is treated like a
   match timeout, so the pattern is reported as not checked and the error no
