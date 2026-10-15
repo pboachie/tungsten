@@ -64,6 +64,7 @@ const DISPATCH_CLASS: &str = "Dispatch";
 const RUNTIME_NAMES: &[&str] = &[
     "CallOptions",
     "ClientCore",
+    "ClientCoreStreams",
     "ClientOptions",
     "DispatchEntry",
     "Dispatcher",
@@ -386,7 +387,16 @@ pub(crate) fn arg_in(g: &Gen<'_, '_>, a: &Arg) -> Expr {
         Presence::RequiredNullable => {
             Expr::call("Wire.requiredNullable", vec![args, key, path, decoder])
         }
-        Presence::Optional => Expr::call("_optional", vec![args, key, decoder]),
+        Presence::Optional => {
+            // `Wire.any` reads `Object?`; inference would otherwise settle
+            // on `Object` from a parameter of type `Object?`.
+            let callee = if decoder.flat() == "Wire.any" {
+                "_optional<Object?>"
+            } else {
+                "_optional"
+            };
+            Expr::call(callee, vec![args, key, decoder])
+        }
         Presence::OptionalNullable => Expr::call("Wire.patch", vec![args, key, path, decoder]),
     }
 }
@@ -665,7 +675,15 @@ impl LibraryText<'_> {
             Some(names) => names.iter().map(|n| n.to_string()).collect(),
             None => RUNTIME_NAMES
                 .iter()
-                .filter(|n| contains_word(&code, n))
+                .filter(|n| match **n {
+                    // The streaming and macro calls are extension methods
+                    // of the runtime's `ClientCore`; a `show` list must
+                    // name the extension for them to resolve.
+                    "ClientCoreStreams" => ["pages", "stream", "runMacro", "previewMacro"]
+                        .iter()
+                        .any(|m| code.contains(&format!("core.{m}"))),
+                    n => contains_word(&code, n),
+                })
                 .map(|n| n.to_string())
                 .collect(),
         };
