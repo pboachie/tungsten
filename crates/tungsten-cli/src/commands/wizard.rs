@@ -104,9 +104,6 @@ pub(crate) fn run(args: &InitArgs, json: bool, env: &CliEnv) -> Report {
     } else {
         import_policy_refused_targets(&selected.targets)
     };
-    if !refused_targets.is_empty() && !json {
-        eprintln!("warning: {}", import_policy_warning(&refused_targets));
-    }
     let mut report = if selected.resume {
         for name in ["tungsten.yml", "agent.yml"] {
             let path = selected.dir.join(name);
