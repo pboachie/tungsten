@@ -89,7 +89,7 @@ fn tables(g: &Gen<'_, '_>) -> Vec<Table> {
                 key: id.clone(),
                 args: op_args(g, o),
                 typed: t,
-                fallback: fallback("pages", None, &id),
+                fallback: fallback("pages", Some("Object?"), &id),
                 doc: format!("The pages of `{id}`."),
             });
         }
@@ -112,7 +112,7 @@ fn tables(g: &Gen<'_, '_>) -> Vec<Table> {
             key: m.name().to_string(),
             args: macro_args(g, k),
             typed: format!("client.macros.{}", g.names.macros[k].member),
-            fallback: fallback("runMacro", None, m.name()),
+            fallback: fallback("runMacro", Some("Object?"), m.name()),
             doc: format!("Runs the macro `{}`.", m.name()),
         })
         .collect();
