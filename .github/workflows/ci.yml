@@ -87,6 +87,8 @@ jobs:
           python-version: "3.12"
       - name: Check all committed Cargo, npm and uv locks without installing packages
         run: python3 .github/scripts/dependency_audit.py
+      - name: Check lockstep runtime manifests and identities
+        run: node .github/scripts/check-release-version.mjs --workspace
 
   deny:
     name: cargo-deny

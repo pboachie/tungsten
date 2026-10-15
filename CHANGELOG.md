@@ -11,6 +11,11 @@ changes.
 
 ### Added
 
+- Prepare compiler/runtime source manifests and identity headers for 0.1.3 in
+  lockstep. CI and release preparation check every runtime before building;
+  generated SDK defaults require the 0.1.3 runtime capabilities, while explicit
+  runtime overrides remain unchanged. The Go module default retains its
+  resolvable pseudo-version pending a separately published nested-module tag.
 - Imported specs (Postman, cURL, `.http`, HAR and endpoint manifests): a
   target that cannot enforce imported-operation policy (Java, C#, Kotlin, Ruby,
   Dart and the other SDK targets) now fails alone; without `--strict` the

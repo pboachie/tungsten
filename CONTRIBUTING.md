@@ -85,6 +85,12 @@ maintainer will add it.
 - Follow the existing style; `cargo fmt` and clippy must be clean.
 - Intermediate representation changes must be additive.
 - Update `CHANGELOG.md` under `Unreleased` for user-visible changes.
+- From 0.1.3 onward, compiler and runtime package versions follow the release
+  tag in lockstep. One release preparation change updates their manifests,
+  lockfiles and runtime identity headers together; ordinary feature changes
+  leave versions alone. `node .github/scripts/check-release-version.mjs
+  --workspace` checks source consistency, and the release prepare job checks
+  the tag before building. Generated SDK package versions remain user-owned.
 - Behaviour of the TypeScript, Python and Rust runtimes must stay identical;
   a behavioural change in one is made in all three.
 

@@ -82,6 +82,10 @@ jobs:
           python-version: "3.12"
       - name: Check dependency sources and current advisories before release preparation
         run: python3 .github/scripts/dependency_audit.py
+      - name: Check all runtime versions before any release build
+        env:
+          RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+        run: node .github/scripts/check-release-version.mjs --workspace
       - name: Decide dry run or release
         id: plan
         env:
@@ -651,9 +655,17 @@ jobs:
         # would be accepted. Nothing is committed or uploaded.
         run: |
           sed -i 's/^publish = false$/publish = ["crates-io"]/' Cargo.toml
-          sed -i 's/^tungsten-runtime = { path = "runtime" }$/tungsten-runtime = { path = "runtime", version = "0.1.0" }/' Cargo.toml
+          python3 - <<'PY'
+          from pathlib import Path
+          import tomllib
+          path = Path("Cargo.toml")
+          text = path.read_text()
+          version = tomllib.loads(text)["workspace"]["package"]["version"]
+          original = 'tungsten-runtime = { path = "runtime" }'
+          assert text.count(original) == 1, "unexpected runtime path dependency"
+          path.write_text(text.replace(original, f'tungsten-runtime = {{ path = "runtime", version = "{version}" }}'))
+          PY
           grep -q '^publish = \["crates-io"\]$' Cargo.toml
-          grep -q 'path = "runtime", version = "0.1.0"' Cargo.toml
       - name: cargo publish --dry-run
         working-directory: runtimes/rust
         run: cargo publish --workspace --dry-run --locked --allow-dirty
