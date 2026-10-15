@@ -11,6 +11,9 @@ use crate::{Gen, Library};
 use super::resources::{doc_text, late_member};
 use super::{DISPATCH_CLASS, LibraryText, has_code_flow, macros_class, resource_file};
 
+/// A member of the client: (name, class, doc).
+type Member = (String, String, String);
+
 /// The client library.
 pub(crate) fn library(g: &Gen<'_, '_>) -> Library {
     let client = &g.names.client_class;
@@ -29,9 +32,9 @@ pub(crate) fn library(g: &Gen<'_, '_>) -> Library {
     };
     let mut w = Code::new();
     // The client's members: (name, class, doc).
-    let mut members: Vec<(String, String, String)> = vec![];
-    let mut namespaces: Vec<(String, Vec<(String, String, String)>)> = vec![];
-    let resource_member = |r: usize, name: &str| -> (String, String, String) {
+    let mut members: Vec<Member> = vec![];
+    let mut namespaces: Vec<(String, Vec<Member>)> = vec![];
+    let resource_member = |r: usize, name: &str| -> Member {
         let res = &g.plan.resources[r];
         let doc = doc_text(res.resource.doc.as_ref());
         let doc = if doc.is_empty() {
