@@ -154,6 +154,16 @@ values as `JsonNode`, OpenID Connect as a bearer token, no CLI or MCP).
 
 ### Fixed
 
+- Release packaging: the aarch64 `gnu` Linux archive needed glibc 2.39 (it was
+  built on `ubuntu-24.04-arm`) while the x86_64 archive needed 2.34, so the
+  same `TUNGSTEN_LIBC=gnu` choice failed on Debian 12, Ubuntu 22.04, RHEL 9
+  and Amazon Linux 2023 only on arm64. Both `gnu` targets now build on the
+  Ubuntu 22.04 runners and share one documented floor, glibc 2.34. The release
+  pipeline extracts the highest `GLIBC_` symbol version from every `gnu`
+  binary and fails the job when it exceeds that floor, the release notes state
+  the floor and that the `musl` archives are static, and `install.sh` checks
+  `ldd` before installing a `gnu` archive and points older systems at the
+  static musl default. The README install section documents all of this.
 - MCP `run_script` on native Windows: the Deno child now receives `SystemRoot`,
   `SYSTEMDRIVE`, `TEMP`, `TMP`, `USERPROFILE`, `PATH` and `PATHEXT` (and nothing
   else from the parent), and Deno is located by file existence plus a `PATHEXT`
