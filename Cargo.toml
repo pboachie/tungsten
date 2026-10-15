@@ -47,7 +47,7 @@ schemars = { version = "1", features = ["preserve_order", "indexmap2"] }
 indexmap = { version = "2", features = ["serde"] }
 thiserror = "2"
 blake3 = "1"
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
 petgraph = "0.8"
 yaml-rust2 = "0.13"
 url = "2"

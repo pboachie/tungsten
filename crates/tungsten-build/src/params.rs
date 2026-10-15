@@ -83,12 +83,12 @@ pub(crate) fn build(
     cx: &mut Ctx<'_>,
     auth: &AuthTable,
     scope: &OpScope<'_>,
-    path_item: &RefTarget,
+    path_owners: &[RefTarget],
     op: &RefTarget,
     template: &PathTemplate,
 ) -> ParamSet {
     let mut merged: Vec<Declared<'_>> = vec![];
-    for owner in [path_item, op] {
+    for owner in path_owners.iter().chain(std::iter::once(op)) {
         let list = child(owner, "parameters");
         let Some(items) = cx.get(&list) else {
             continue;

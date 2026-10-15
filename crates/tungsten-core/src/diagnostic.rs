@@ -258,6 +258,10 @@ pub mod codes {
         ("TG0508", "malformed operation element ignored"),
         ("TG0509", "unsupported security scheme ignored"),
         (
+            "TG0510",
+            "path item field defined both beside its $ref and in the target",
+        ),
+        (
             "TG0530",
             "event stream declares no schema; events decoded as any JSON value",
         ),
@@ -443,6 +447,10 @@ pub mod codes {
             "external emitter returned a path outside the output directory",
         ),
         ("TG0806", "diagnostic reported by an external emitter"),
+        (
+            "TG0807",
+            "external target not run: external emitters are off (--no-external)",
+        ),
         ("TG0901", "generated output is stale relative to its inputs"),
         (
             "TG0902",

@@ -23,7 +23,9 @@ final class Sse {
     record Event(String event, String data, String id, Long retry) {}
 
     private final int max;
-    private String buffer = "";
+    private final StringBuilder line = new StringBuilder();
+    private int lineBytes;
+    private boolean pendingCr;
     private boolean started;
     private String event = "";
     private final StringBuilder data = new StringBuilder();
@@ -67,7 +69,50 @@ final class Sse {
     }
 
     private static int utf8Length(String s) {
-        return s.getBytes(StandardCharsets.UTF_8).length;
+        return utf8Length(s, 0, s.length());
+    }
+
+    /** The UTF-8 bytes of s[from, to): a surrogate pair is four, an unpaired surrogate one (it encodes as "?"). */
+    private static int utf8Length(CharSequence s, int from, int to) {
+        int bytes = 0;
+        for (int i = from; i < to; i++) {
+            char c = s.charAt(i);
+            if (c < 0x80) {
+                bytes += 1;
+            } else if (c < 0x800) {
+                bytes += 2;
+            } else if (Character.isHighSurrogate(c) && i + 1 < to && Character.isLowSurrogate(s.charAt(i + 1))) {
+                bytes += 4;
+                i++;
+            } else if (Character.isSurrogate(c)) {
+                bytes += 1;
+            } else {
+                bytes += 3;
+            }
+        }
+        return bytes;
+    }
+
+    /** Adds chunk[from, to) to the line being read; each fragment is scanned and counted once. */
+    private void append(String chunk, int from, int to) {
+        if (from >= to) {
+            return;
+        }
+        int n = line.length();
+        if (n > 0 && Character.isHighSurrogate(line.charAt(n - 1)) && Character.isLowSurrogate(chunk.charAt(from))) {
+            // The pair was counted as two unpaired surrogates (one byte each); it is four bytes.
+            lineBytes += 2;
+        }
+        lineBytes += utf8Length(chunk, from, to);
+        line.append(chunk, from, to);
+    }
+
+    /** The line read so far ends: it is parsed and the buffer is emptied. */
+    private void complete(List<Event> out) {
+        String text = line.toString();
+        line.setLength(0);
+        lineBytes = 0;
+        line(text, out);
     }
 
     /** Feeds text; returns the events it completes. A CR at the end waits for the next text. */
@@ -76,49 +121,72 @@ final class Sse {
         if (exceeded) {
             return out;
         }
-        String text = buffer + chunk;
-        buffer = "";
-        if (!started && !text.isEmpty()) {
+        if (!started && !chunk.isEmpty()) {
             started = true;
-            if (text.startsWith("﻿")) {
-                text = text.substring(1);
+            if (chunk.startsWith("\uFEFF")) {
+                chunk = chunk.substring(1);
             }
         }
         int start = 0;
-        for (int i = 0; i < text.length(); i++) {
-            char c = text.charAt(i);
-            if (c != '\n' && c != '\r') {
-                continue;
-            }
-            if (c == '\r' && i + 1 == text.length()) {
-                buffer = text.substring(start);
+        if (pendingCr) {
+            if (chunk.isEmpty()) {
                 return out;
             }
-            String line = text.substring(start, i);
-            if (c == '\r' && text.charAt(i + 1) == '\n') {
-                i++;
-            }
-            start = i + 1;
-            line(line, out);
+            pendingCr = false;
+            complete(out);
             if (exceeded) {
                 return out;
             }
+            if (chunk.charAt(0) == '\n') {
+                start = 1;
+            }
         }
-        buffer = text.substring(start);
-        if (eventBytes + utf8Length(buffer) > max) {
-            exceeded = true;
-            buffer = "";
+        int length = chunk.length();
+        for (int i = start; i < length; i++) {
+            char c = chunk.charAt(i);
+            if (c != '\n' && c != '\r') {
+                continue;
+            }
+            append(chunk, start, i);
+            if (c == '\r' && i + 1 == length) {
+                // The held CR counts toward the limit: it is the terminator of the line being read.
+                pendingCr = true;
+                lineBytes += 1;
+                checkLimit();
+                return out;
+            }
+            complete(out);
+            if (exceeded) {
+                return out;
+            }
+            if (c == '\r' && chunk.charAt(i + 1) == '\n') {
+                i++;
+            }
+            start = i + 1;
         }
+        append(chunk, start, length);
+        checkLimit();
         return out;
+    }
+
+    /** The event and the line being read hold more than max bytes: the parser stops. */
+    private void checkLimit() {
+        if (eventBytes + lineBytes > max) {
+            exceeded = true;
+            line.setLength(0);
+            lineBytes = 0;
+        }
     }
 
     /** The stream ended: a held-back CR ends its line, the rest is discarded. */
     List<Event> end() {
         List<Event> out = new ArrayList<>();
-        if (!exceeded && buffer.endsWith("\r")) {
-            line(buffer.substring(0, buffer.length() - 1), out);
+        if (!exceeded && pendingCr) {
+            complete(out);
         }
-        buffer = "";
+        pendingCr = false;
+        line.setLength(0);
+        lineBytes = 0;
         event = "";
         data.setLength(0);
         hasData = false;
@@ -165,8 +233,16 @@ final class Sse {
                 }
                 break;
             case "retry":
-                if (Text.allDigits(value) && value.length() <= 16) {
-                    long ms = Long.parseLong(value);
+                if (Text.allDigits(value)) {
+                    int zeros = 0;
+                    while (zeros < value.length() - 1 && value.charAt(zeros) == '0') {
+                        zeros++;
+                    }
+                    String digits = value.substring(zeros);
+                    if (digits.length() > 16) {
+                        break;
+                    }
+                    long ms = Long.parseLong(digits);
                     if (ms <= 9007199254740991L) {
                         retry = ms;
                     }

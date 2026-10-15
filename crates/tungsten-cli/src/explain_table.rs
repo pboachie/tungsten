@@ -136,9 +136,12 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
         "A `oneOf` or `anyOf` has no discriminator, so a value's variant can only be found by \
          trying the candidates in order at runtime. The order is deterministic (most \
          constrained first), but sniffing is slower and can pick the wrong variant when \
-         candidates overlap.",
+         candidates overlap. A union of exactly two candidates where one is a plain string, \
+         array or map (`X` or its id, `X` or a list of `X`) is reported as info instead of a \
+         warning: the two are told apart by JSON kind, so `--strict` does not fail on it.",
         "Add a `discriminator` with a property every variant declares as a `const` or single \
-         enum value.",
+         enum value. `tungsten check` prints a repeated code a few times and then a count; \
+         `--all-warnings` prints all of them and `--json` always lists every one.",
     ),
     e(
         "TG0302",
@@ -278,6 +281,15 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
          field its type requires. Requirements naming it stay in the IR without a scheme.",
         "Describe the credential with a supported scheme, or authenticate those operations \
          through a custom transport.",
+    ),
+    e(
+        "TG0510",
+        "A Path Item combines `$ref` with fields written beside it, and the referenced item \
+         defines the same field: an operation, `summary`, `description`, `servers`, or a \
+         parameter with the same `name` and `in`. Fields only one side defines are merged. \
+         OpenAPI leaves the conflicting ones undefined; tungsten lets the field beside the \
+         `$ref` win, and the message names both pointers.",
+        "Define the field on one side only, or drop it from the shared item.",
     ),
     e(
         "TG0530",
@@ -827,6 +839,15 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
          own code. An error fails the target; under `--strict` a warning does too.",
         "Fix the cause the emitter describes; `tungsten explain` knows only tungsten's own \
          codes, so look the emitter's code up in the emitter's documentation.",
+    ),
+    e(
+        "TG0807",
+        "A target in tungsten.yml declares `external`, and tungsten was told not to start \
+         external emitters (`--no-external` or `TUNGSTEN_NO_EXTERNAL=1`), so its command was \
+         not run and the target is skipped. Nothing is generated, compared or reported for it; \
+         the diagnostic is informational and does not fail the run.",
+        "This is the intended result for CI that validates a manifest it does not trust. Run \
+         without the option, on a manifest you trust, to emit or check the target.",
     ),
     e(
         "TG0901",
