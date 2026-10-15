@@ -120,8 +120,9 @@ new version and a new tag, never by moving the published one.
   responsible for the change.
 - A DCO `Signed-off-by` line is not required.
 - Keep commit messages and changelog entries suitable for public release notes.
-  Do not include private issue or pull-request URLs, internal planning paths,
-  release-plan paths or operational runbook paths. Describe the public behavior
+  Do not include references to the private repository (issue, pull-request,
+  commit or discussion links and `#` references), internal planning paths,
+  release-plan or release-evidence paths or operational runbook paths. Describe the public behavior
   instead; CI rejects these references.
 
 ## Review

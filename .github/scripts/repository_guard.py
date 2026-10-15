@@ -365,10 +365,19 @@ AI_NAME = re.compile(
 CO_AUTHOR = re.compile(r"^\s*co-authored-by\s*:(.*)$", re.IGNORECASE | re.MULTILINE)
 SESSION_TRAILER = re.compile(r"^\s*[A-Za-z][\w-]*-session(?:-id|-url)?\s*:", re.IGNORECASE | re.MULTILINE)
 GENERATED_FOOTER = re.compile(r"^.*\b(?:generated|written|created)\s+(?:with|by|using)\b(.*)$", re.IGNORECASE | re.MULTILINE)
+# Private coordination: the private repository in short or owner-qualified
+# form (tungsten-ops#N, owner/tungsten-ops#N, owner/tungsten-ops@<sha>), as
+# any GitHub URL or route (issues, pull, commit, discussions, ...), and its
+# private-only paths (planning documents, the release plan and evidence,
+# runbooks). The bare name and status contexts such as tungsten-ops/ci stay
+# allowed, as do references to other repositories (owner/tungsten#N).
 PRIVATE_REFERENCE = re.compile(
-    r"\btungsten-ops[/\\](?:issues|pull)[/\\]"
-    r"|\bplanning[/\\][0-9]{2}-"
-    r"|\brelease[/\\]plan\.json\b"
+    r"\btungsten-ops(?:#[0-9]|@[0-9a-f]{7,40}\b)"
+    r"|\btungsten-ops[/\\](?:issues|pulls?|commits?|discussions|compare|blob|tree|raw|releases|actions"
+    r"|wiki|security|projects|milestones?|labels)\b"
+    r"|\bgithub(?:usercontent)?\.com[/\\](?:repos[/\\])?[\w.-]+[/\\]tungsten-ops(?![\w.-])"
+    r"|\bplanning[/\\](?:[0-9]{2}-|[\w.-]+\.md\b)"
+    r"|\brelease[/\\](?:plan\.json\b|evidence[/\\])"
     r"|\brunbooks[/\\]",
     re.IGNORECASE,
 )
