@@ -11,6 +11,8 @@ changes.
 
 ### Added
 
+- Link the importer guide from the quickstart, including per-format limits and imported-operation review.
+
 - Imported specs (Postman, cURL, `.http`, HAR and endpoint manifests): a
   target that cannot enforce imported-operation policy (Java, C#, Kotlin, Ruby,
   Dart and the other SDK targets) now fails alone; without `--strict` the
