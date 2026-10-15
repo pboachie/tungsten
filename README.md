@@ -129,8 +129,8 @@ Generated packages default to compatible 0.1.3 runtime floors; an explicit
 independently versioned non-npm runtime sources. Use the matching source checkout
 when a registry artifact is unavailable: source version metadata is not evidence
 of publication. Rust, Java, Kotlin, C#, F#, Dart and Ruby registry
-publication is not part of the 0.1.2 installation guarantee; the default Go module
-still uses a resolvable pseudo-version until a nested-module tag is published.
+publication is not part of the 0.1.2 installation guarantee. The external Go
+emitter defaults to the `v0.1.3` runtime published through its nested-module tag.
 Target `runtime_path` values are relative to the generated output directory.
 
 Targets and the mock server (`tungsten mock`) share one IR. Generated-package and contract checks exercise each language, but source availability and passing shared scenarios do not establish complete validation, protocol or distribution parity. Unsupported features can vary by target. Review all compiler diagnostics: `--strict` rejects warnings, including unsupported `if`/`then`/`else` constraints, but informational diagnostics can still describe other unsupported features. Local checks do not establish live API acceptance or registry installation readiness.

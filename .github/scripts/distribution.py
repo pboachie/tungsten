@@ -2,7 +2,9 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 """Generate package-manager manifests and container contexts from checked assets."""
 import argparse
+import gzip
 import hashlib
+import io
 import json
 import re
 import tarfile
@@ -105,6 +107,17 @@ def generate(bundle: Path, output: Path, tag: str) -> None:
     for suffix, document in manifests.items():
         # JSON is a YAML subset accepted by the winget YAML parser.
         (winget / f"{package_id}{suffix}.yaml").write_text(json.dumps(document, indent=2) + "\n")
+    # Stable bytes let the post-release consumer compare its regenerated
+    # manifests with the archive sealed into the initial release bundle.
+    with (output / "winget-manifests.tar.gz").open("wb") as raw:
+        with gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0) as compressed:
+            with tarfile.open(fileobj=compressed, mode="w") as archive:
+                for path in sorted((output / "winget").rglob("*.yaml")):
+                    content = path.read_bytes()
+                    info = tarfile.TarInfo(path.relative_to(output / "winget").as_posix())
+                    info.size = len(content)
+                    info.mode = 0o644
+                    archive.addfile(info, io.BytesIO(content))
     for arch, binary in binaries.items():
         directory = output / "container" / f"linux-{arch}"
         directory.mkdir(parents=True, exist_ok=True)

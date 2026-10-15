@@ -54,7 +54,7 @@ func describe() any {
 				"module":          str("Go module path of the SDK (default example.com/<api>-sdk-go)."),
 				"package":         str("Go package name (default: the API name, lower case)."),
 				"version":         str("SDK version sent in User-Agent (default 0.1.0)."),
-				"runtime_version": str("Version of github.com/pboachie/tungsten/runtimes/go to require (default " + defaultRuntimeVersion + ", a pseudo-version that resolves without a nested-module tag)."),
+				"runtime_version": str("Version of github.com/pboachie/tungsten/runtimes/go to require (default " + defaultRuntimeVersion + ", published through its nested-module tag)."),
 				"runtime_path":    str("Directory of the runtime, relative to the output directory, for a replace directive (local builds)."),
 			},
 			"additionalProperties": false,
@@ -64,12 +64,11 @@ func describe() any {
 
 // defaultRuntimeVersion is the runtime module version a generated go.mod
 // requires when runtime_version is not set. The runtime is a nested module,
-// so only `runtimes/go/vX.Y.Z` tags resolve as release versions, and none has
-// been published; a pseudo-version names the v0.1.2 release commit
-// (1a0ee4def654) of the public repository instead, which every Go proxy can
-// serve. Set runtime_version once a nested tag exists, or runtime_path for a
-// local checkout.
-const defaultRuntimeVersion = "v0.0.0-20261014151145-1a0ee4def654"
+// so release versions use `runtimes/go/vX.Y.Z` tags rather than repository-root
+// tags. Publish and verify the runtime module before adopting its version here.
+// runtime_version remains an explicit override; runtime_path selects a local
+// replacement for source development.
+const defaultRuntimeVersion = "v0.1.3"
 
 var (
 	semver      = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$`)
