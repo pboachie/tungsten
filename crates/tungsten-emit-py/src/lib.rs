@@ -179,7 +179,7 @@ fn inline_record_notes(ir: &Ir) -> Diagnostics {
 pub fn generate(ir: &Ir, opts: &Options) -> Vec<(String, String)> {
     let plan = plan::Plan::new(ir)
         .with_models(opts.models)
-        .with_python_compat(opts.python_version != "3.12");
+        .with_python_version(&opts.python_version);
     let header = header(CommentStyle::Hash, ir);
     let shapes: Vec<ops::OpShape<'_>> = plan.ops.iter().map(|o| ops::op_shape(&plan, o)).collect();
     let (macro_plans, _) = macros::plan_macros(&plan, &shapes);
