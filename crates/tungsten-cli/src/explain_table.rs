@@ -1263,6 +1263,52 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
         "Give every variant a `discriminator.mapping` entry or a `const` tag property.",
     ),
     e(
+        "TG1080",
+        "An option of the `fsharp` target in tungsten.yml is not valid: `package_id` must be a \
+         NuGet package id, `namespace` a dotted F# namespace (no F# or C# keywords), `version` \
+         and `runtime` versions such as 1.2.3, `runtime_path` and `csharp_runtime_path` \
+         non-empty paths. The generator uses the option's default instead.",
+        "Fix the option under `targets.fsharp` in tungsten.yml, or remove it to keep the default.",
+    ),
+    e(
+        "TG1081",
+        "The F# SDK has no native type for this schema (an allOf whose members cannot be merged \
+         into one record, or an enum whose values mix JSON types), so the typed value is the \
+         .NET runtime's `JsonNode`. The runtime still validates it against the schema.",
+        "Merge the allOf members into one object, or give the enum values a single type, if a \
+         typed F# model is wanted.",
+    ),
+    e(
+        "TG1082",
+        "A macro of the agent manifest is not in the canonical form the SDK runtimes run \
+         (steps over callable operations, references to $input or earlier steps, a known step \
+         kind), so the F# SDK does not include it; the TypeScript SDK reports the same macro as \
+         TG0710.",
+        "Fix the macro in agent.yml at the pointer the diagnostic names.",
+    ),
+    e(
+        "TG1083",
+        "The F# SDK runs on the .NET runtime, which sends an OpenID Connect scheme as a bearer \
+         token. It does not run discovery or obtain tokens itself.",
+        "Configure the scheme with `Credential.Secret(token)` holding an access token you \
+         obtained from the provider.",
+    ),
+    e(
+        "TG1084",
+        "The operation answers different JSON bodies depending on the exact status, so the typed \
+         method's result is the runtime's `JsonNode`; the result's `Meta.Status` tells them \
+         apart.",
+        "Read `Meta.Status` of the result and decode the body with the matching model's \
+         `fromJson`.",
+    ),
+    e(
+        "TG1085",
+        "The union declares a discriminator, but at least one variant has no tag value or is not \
+         a named type, so the F# SDK cannot pick the variant by its tag: it decodes the variants \
+         in the plan's order and takes the first that fits.",
+        "Give every variant a named schema and a discriminator mapping value.",
+    ),
+    e(
         "TG1201",
         "A saved cURL command or `.http` request given to `tungsten init` cannot be imported. \
          Requests are parsed as data and never executed, so anything that needs a shell, a \
@@ -1304,7 +1350,7 @@ pub(crate) fn area(code: &str) -> &'static str {
         Some("TG07") => "emitter limits (TG07xx)",
         Some("TG08") => "external emitters (TG08xx)",
         Some("TG09") => "staleness and CI (TG09xx)",
-        Some("TG10") => "SDK emitters: Java, C#, Kotlin, Swift, PHP, Ruby, Dart (TG10xx)",
+        Some("TG10") => "SDK emitters: Java, C#, Kotlin, Swift, PHP, Ruby, Dart, F# (TG10xx)",
         Some("TG12") => "request import: saved cURL and .http (TG12xx)",
         _ => "unassigned range",
     }
