@@ -189,6 +189,11 @@ pub(crate) struct CheckArgs {
     /// Treat warnings as errors.
     #[arg(long)]
     pub strict: bool,
+    /// Print every warning and info diagnostic in full. By default a code
+    /// that repeats is shown a few times, then summarized with a count;
+    /// `--json` always lists every diagnostic.
+    #[arg(long)]
+    pub all_warnings: bool,
 }
 
 #[derive(Debug, Args)]

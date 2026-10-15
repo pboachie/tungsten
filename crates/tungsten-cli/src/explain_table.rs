@@ -136,9 +136,12 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
         "A `oneOf` or `anyOf` has no discriminator, so a value's variant can only be found by \
          trying the candidates in order at runtime. The order is deterministic (most \
          constrained first), but sniffing is slower and can pick the wrong variant when \
-         candidates overlap.",
+         candidates overlap. A union of exactly two candidates where one is a plain string, \
+         array or map (`X` or its id, `X` or a list of `X`) is reported as info instead of a \
+         warning: the two are told apart by JSON kind, so `--strict` does not fail on it.",
         "Add a `discriminator` with a property every variant declares as a `const` or single \
-         enum value.",
+         enum value. `tungsten check` prints a repeated code a few times and then a count; \
+         `--all-warnings` prints all of them and `--json` always lists every one.",
     ),
     e(
         "TG0302",

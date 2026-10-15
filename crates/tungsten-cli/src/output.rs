@@ -212,6 +212,9 @@ pub struct CheckResult {
     pub documents: usize,
     /// Diagnostic counts after `--strict` promotion.
     pub counts: DiagnosticCounts,
+    /// Diagnostics per code and severity (after `--strict` promotion), by
+    /// code; the human output collapses repeats, this keeps the counts.
+    pub by_code: Vec<CodeCount>,
     /// Warnings promoted to errors by `--strict`.
     pub promoted: usize,
     pub strict: bool,
@@ -319,6 +322,15 @@ pub struct RefStats {
     pub cycles: usize,
     /// Schemas that take part in a cycle.
     pub recursive: usize,
+}
+
+/// How many diagnostics one code produced at one severity.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct CodeCount {
+    pub code: String,
+    pub severity: Severity,
+    pub count: usize,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, JsonSchema)]
