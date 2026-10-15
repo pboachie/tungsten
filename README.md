@@ -166,7 +166,15 @@ verification always refuses installation and shows the verifier's error output.
 `TUNGSTEN_NO_ATTESTATION=1` explicitly disables the check and cannot be combined
 with required verification. Required verification also refuses custom mirrors.
 
-On Linux each release ships two archives per architecture. The `musl` archives (the installer default) are statically linked and run on any Linux. The `gnu` archives (`TUNGSTEN_LIBC=gnu`) are dynamically linked and need glibc 2.34 or newer — the same floor on x86_64 and aarch64 (Debian 12, Ubuntu 22.04, RHEL 9 and Amazon Linux 2023 all qualify; Ubuntu 20.04 and Debian 11 do not). `install.sh` checks the system's glibc before installing a `gnu` archive and points older systems at the static musl default.
+On Linux the `musl` archives (the installer default) are statically linked and
+avoid a glibc dependency. Prefer them on older distributions. The published
+**v0.1.2** `gnu` archives (`TUNGSTEN_LIBC=gnu`) require glibc **2.34 on x86_64**
+and **2.39 on aarch64**, as verified from their required symbol versions. Check
+your architecture and glibc version before selecting a stable GNU archive:
+`install.sh` currently checks only a 2.34 floor and does not enforce the stable
+aarch64 archive's higher requirement. The **unreleased 0.1.3 candidate** targets
+a common glibc 2.34 floor for both architectures; that target does not describe
+the published v0.1.2 binaries.
 
 Release archives, the Homebrew formula, the winget manifests and the `ghcr.io/pboachie/tungsten` container image carry build provenance attestations. To verify them with the GitHub CLI:
 
