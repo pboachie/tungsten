@@ -170,6 +170,13 @@ pub struct EmitterDescription {
     /// A JSON Schema of the target options, for tooling.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub options: Option<Value>,
+    /// `true` when the emitter's generated runtime enforces imported-operation
+    /// policy (the `import_policy` metadata of operations that come from
+    /// Postman, cURL, `.http` or HAR input). Absent or `false`: the compiler
+    /// refuses this target for such projects instead of discarding the
+    /// metadata.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub import_policy: Option<bool>,
 }
 
 /// The JSON Schema (draft 2020-12) of the three documents, published as

@@ -666,8 +666,10 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
         "The project was imported from a Postman collection or another source whose operations \
          carry an enforced import policy (the runtime must apply it to every call), and a \
          configured target cannot apply it. Only the typescript, python, rust, mcp, webmcp and \
-         docs targets declare that support; generating any other target would discard the \
-         policy, so tungsten refuses it and writes nothing for the run.",
+         docs targets declare that support, and an external emitter declares it with \
+         `import_policy` in its `--describe` response; generating any other target would \
+         discard the policy, so tungsten refuses that target alone. The other targets are \
+         still written, unless `--strict` asks for all or none.",
         "Generate only supported targets: remove the unsupported target from tungsten.yml, or \
          add a supported one with `tungsten init --resume --add-targets typescript,python` \
          (any of typescript, python, rust, mcp, webmcp, docs), then run `tungsten generate` \

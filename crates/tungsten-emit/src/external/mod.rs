@@ -105,12 +105,19 @@
 //!
 //! ```json
 //! { "protocol": 1, "name": "go", "version": "0.3.1",
-//!   "options": { "type": "object", "properties": { "package": { "type": "string" } } } }
+//!   "options": { "type": "object", "properties": { "package": { "type": "string" } } },
+//!   "import_policy": true }
 //! ```
 //!
 //! `tungsten emitters` lists the emitters found on `PATH` (and, given a
 //! project, those its targets configure) with this information. `options` is
-//! an optional JSON Schema of the target options, for tooling.
+//! an optional JSON Schema of the target options, for tooling. `import_policy`
+//! is an optional flag: `true` declares that the emitter's runtime enforces
+//! the imported-operation policy carried by operations that come from Postman,
+//! cURL, `.http` or HAR input. The compiler asks (`--describe`) before it
+//! dispatches such a project to the emitter; an absent or `false` flag means
+//! the target is refused for that project, so protocol 1 emitters written
+//! before the flag keep working for every other project.
 //!
 //! ## Limits and failures
 //!

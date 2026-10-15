@@ -125,16 +125,20 @@ impl Emitted {
     }
 }
 
-/// Runtime-policy capability must be demonstrated, not inferred from a target
-/// accepting the IR. External emitters have no policy capability handshake yet.
-fn unsupported_import_policy(ir: &Ir, name: &str) -> bool {
+/// Whether `ir` carries imported-operation policy metadata.
+pub(crate) fn has_import_policy(ir: &Ir) -> bool {
     ir.operations()
         .iter()
         .any(|op| op.agent.import_policy.is_some())
-        && (!matches!(
-            name,
-            "typescript" | "python" | "rust" | "mcp" | "webmcp" | "docs"
-        ) || targets::emitter(name).is_none())
+}
+
+/// Runtime-policy capability must be demonstrated, not inferred from a target
+/// accepting the IR: a built-in target is on the allow-list; an external one
+/// declares `import_policy` in `--describe` (checked in `emit_external`).
+fn unsupported_import_policy(ir: &Ir, name: &str) -> bool {
+    has_import_policy(ir)
+        && targets::emitter(name).is_some()
+        && !targets::serves_import_policy(name)
 }
 
 /// Run the emitter of target `name` over `ir` without touching the disk:
@@ -160,8 +164,7 @@ pub(crate) fn emit_target_live(
     let cfg = targets::target_config_for(compiled.config.as_ref(), name, &project.base_dir, live);
     if unsupported_import_policy(ir, name) {
         let mut diagnostics = Diagnostics::new();
-        diagnostics.push(Diagnostic::error("TG0705", format!("target `{name}` does not declare enforced imported-operation policy support"))
-            .with_help("select a supported TypeScript, Python, Rust, MCP, WebMCP or docs target (`tungsten init --resume --add-targets <targets>` adds one); imported-policy metadata must not be discarded. `tungsten explain TG0705` has the details"));
+        diagnostics.push(targets::import_policy_refusal(name));
         return Emitted {
             cfg,
             files: Some(FileSet::new()),
@@ -235,6 +238,22 @@ fn emit_external(
         &project.base_dir,
         &project.search_path,
     ) {
+        Ok(command) if has_import_policy(ir) => {
+            match external::describe(&name, &command, &project.working_dir()) {
+                Ok(d) if d.import_policy == Some(true) => {
+                    out = external::run(
+                        &name,
+                        &command,
+                        serde_json::Value::Object(options),
+                        ir,
+                        &project.working_dir(),
+                        limits,
+                    );
+                }
+                Ok(_) => out.diagnostics.push(targets::import_policy_refusal(&name)),
+                Err(d) => out.diagnostics.push(d),
+            }
+        }
         Ok(command) => {
             out = external::run(
                 &name,
@@ -295,8 +314,10 @@ pub(crate) fn run_targets(
             (name, e)
         })
         .collect();
-    // A strict run writes every target or none.
-    let withhold = (strict || names.iter().any(|name| unsupported_import_policy(ir, name)))
+    // A strict run writes every target or none; otherwise a target that
+    // fails (for example one refused for imported-operation policy) fails
+    // alone.
+    let withhold = strict
         && matches!(mode, Mode::Write { .. })
         && emitted.iter().any(|(_, e)| e.files.is_some() && e.failed());
     for (name, e) in emitted.drain(..) {
