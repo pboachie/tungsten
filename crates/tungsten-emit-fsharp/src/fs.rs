@@ -55,7 +55,10 @@ pub fn doc(w: &mut Writer, text: &str) {
     if text.is_empty() {
         return;
     }
-    for l in text.lines() {
+    // Only LF ends a line of generated source: the other terminators the
+    // compiler recognises are line breaks of the comment too.
+    let text = text.replace("\r\n", "\n");
+    for l in text.split(['\n', '\r', '\u{85}', '\u{2028}', '\u{2029}']) {
         let l = l.trim_end();
         if l.is_empty() {
             w.line("///");
