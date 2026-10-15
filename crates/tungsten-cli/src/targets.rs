@@ -54,6 +54,31 @@ pub fn emitter(id: &str) -> Option<&'static dyn Emitter> {
     }
 }
 
+/// Whether built-in target `id` enforces imported-operation policy in its
+/// generated runtime. Only these may be generated for a project whose
+/// operations come from Postman, cURL, `.http` or HAR input; an external
+/// emitter opts in through `import_policy` in its `--describe` response.
+pub(crate) fn serves_import_policy(id: &str) -> bool {
+    matches!(
+        id,
+        "typescript" | "python" | "rust" | "mcp" | "webmcp" | "docs"
+    )
+}
+
+/// The refusal of target `name` for a project with imported-operation
+/// policy, one target at a time.
+pub(crate) fn import_policy_refusal(name: &str) -> Diagnostic {
+    Diagnostic::error(
+        "TG0702",
+        format!("target `{name}` does not declare enforced imported-operation policy support"),
+    )
+    .with_help(
+        "remove it from `targets`, or select a TypeScript, Python, Rust, MCP, WebMCP or docs \
+         target (or an external emitter that declares `import_policy`); imported-policy \
+         metadata must not be discarded",
+    )
+}
+
 /// The agent tool names target `id` serves (tool name → operation id or
 /// macro name), recorded in its API surface snapshot: the MCP server's
 /// tools and the browser WebMCP invocation and preview tools; none for SDK and

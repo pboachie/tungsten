@@ -11,6 +11,16 @@ changes.
 
 ### Added
 
+- Imported specs (Postman, cURL, `.http`, HAR and endpoint manifests): a
+  target that cannot enforce imported-operation policy (Java, C#, Kotlin, Ruby,
+  Dart and the other SDK targets) now fails alone; without `--strict` the
+  supported targets are still written, and the summary no longer blames
+  `--strict`. `tungsten init` and the guided wizard warn up front, before
+  anything is generated, when a chosen target will be refused for an imported
+  input. The external emitter protocol gains an optional `import_policy` flag in
+  the `--describe` response (and `specs/external-emitter.schema.json`), checked
+  before dispatch, so an emitter such as `tungsten-emit-go` can opt in; an
+  absent flag means no support, and existing protocol 1 emitters are unchanged.
 - A Dart SDK target, `dart`: a pub package with final model classes that
   decode and encode themselves, sealed unions, `Future` methods returning
   `Result<T>`, `Stream` pages and `EventStream<T>` streams, typed macros and

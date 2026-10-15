@@ -8,6 +8,26 @@ use crate::output::{
 };
 use crate::{CliEnv, Report, exit};
 
+/// The chosen targets that `generate` refuses for an imported input.
+fn import_policy_refused_targets(chosen: &[String]) -> Vec<String> {
+    chosen
+        .iter()
+        .map(|t| crate::targets::canonical(t))
+        .filter(|t| {
+            crate::targets::emitter(t).is_some() && !crate::targets::serves_import_policy(t)
+        })
+        .map(str::to_owned)
+        .collect()
+}
+
+fn import_policy_warning(refused: &[String]) -> String {
+    format!(
+        "imported operations carry runtime policy that {} cannot enforce yet; `tungsten generate` will refuse {} and still write the other targets. Choose typescript, python, rust, mcp, webmcp or docs for this input",
+        refused.join(", "),
+        if refused.len() == 1 { "it" } else { "them" },
+    )
+}
+
 pub(crate) fn run(args: &InitArgs, json: bool, env: &CliEnv) -> Report {
     let bare = args.method.is_none()
         && args.from.is_none()
@@ -77,6 +97,16 @@ pub(crate) fn run(args: &InitArgs, json: bool, env: &CliEnv) -> Report {
     } else {
         vec![]
     };
+    // An imported input carries operation policy that only some targets
+    // enforce; say so before anything is generated.
+    let refused_targets = if imported_files.is_empty() {
+        vec![]
+    } else {
+        import_policy_refused_targets(&selected.targets)
+    };
+    if !refused_targets.is_empty() && !json {
+        eprintln!("warning: {}", import_policy_warning(&refused_targets));
+    }
     let mut report = if selected.resume {
         for name in ["tungsten.yml", "agent.yml"] {
             let path = selected.dir.join(name);
@@ -142,6 +172,12 @@ pub(crate) fn run(args: &InitArgs, json: bool, env: &CliEnv) -> Report {
     } else {
         super::init::run(&selected)
     };
+    if !refused_targets.is_empty() {
+        report.diagnostics.push(tungsten_core::Diagnostic::warning(
+            "TG0702",
+            import_policy_warning(&refused_targets),
+        ));
+    }
     if report.exit == exit::OK
         && selected.method.is_some()
         && let Some(CommandResult::Init(result)) = &mut report.result
