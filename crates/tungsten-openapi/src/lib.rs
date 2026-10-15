@@ -13,6 +13,7 @@
 //! once each) → reference graph and cycles. Every problem is a diagnostic;
 //! nothing here panics on bad input.
 
+pub mod acquire;
 pub mod endpoint_manifest;
 mod graph;
 mod jsonpath;
@@ -52,6 +53,10 @@ pub enum SpecVersion {
 /// Limits and policies for loading.
 #[derive(Debug, Clone)]
 pub struct LoadOptions {
+    /// Explicit remote entry acquisition policy; remote `$ref` policy is separate.
+    pub acquisition: acquire::Options,
+    /// Project directory containing `.tungsten-inputs`; set by the build driver.
+    pub acquisition_root: PathBuf,
     /// URL prefixes remote `$ref`s may fetch from. Empty: remote refs are
     /// refused with TG0202.
     pub allow_remote: Vec<String>,
@@ -66,6 +71,8 @@ pub struct LoadOptions {
 impl Default for LoadOptions {
     fn default() -> Self {
         Self {
+            acquisition: acquire::Options::default(),
+            acquisition_root: PathBuf::from("."),
             allow_remote: vec![],
             max_bytes: 32 * 1024 * 1024,
             max_depth: 256,

@@ -188,6 +188,20 @@ impl Validator<'_> {
             );
         }
         for (i, input) in config.inputs.iter().enumerate() {
+            if input.source_url.is_some() != input.source_sha256.is_some()
+                || input.source_sha256.as_ref().is_some_and(|hash| {
+                    hash.len() != 64
+                        || !hash
+                            .bytes()
+                            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+                })
+            {
+                self.report(
+                    "TG0602",
+                    &format!("/inputs/{i}/source_sha256"),
+                    "converted remote inputs require source_url and its lowercase SHA256 source_sha256 together".into(),
+                );
+            }
             let at = format!("/inputs/{i}/namespace");
             if !is_machine_name(&input.namespace) {
                 self.report(

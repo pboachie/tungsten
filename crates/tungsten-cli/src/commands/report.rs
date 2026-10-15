@@ -80,7 +80,7 @@ pub(crate) fn run(args: &ReportArgs, env: &CliEnv, no_external: bool) -> Report 
             );
         }
     }
-    let path = args.input.path.display().to_string();
+    let path = tungsten_openapi::acquire::display_source(&args.input.path.to_string_lossy());
     report.human = human(&path, compiled.workspace.documents.len(), &data);
     report.result = Some(CommandResult::Report(Box::new(data)));
     report

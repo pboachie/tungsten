@@ -105,6 +105,13 @@ pub struct InputConfig {
     pub namespace: String,
     /// Path relative to the manifest's directory.
     pub spec: String,
+    /// Original remote source of a locally converted import. Its SHA256 pin is
+    /// verified before compilation; changed sources require explicit re-import.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_url: Option<String>,
+    /// SHA256 of the remote bytes used for the reviewed local conversion.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_sha256: Option<String>,
     #[serde(default)]
     pub overlays: Vec<String>,
     /// Keep only operations matching this predicate.
@@ -382,6 +389,8 @@ impl TungstenConfig {
             inputs: vec![InputConfig {
                 namespace: name.into(),
                 spec: spec.into(),
+                source_url: None,
+                source_sha256: None,
                 overlays: vec![],
                 include: None,
                 planned_from: None,

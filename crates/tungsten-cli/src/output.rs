@@ -219,6 +219,13 @@ pub struct CheckResult {
     pub promoted: usize,
     pub strict: bool,
     pub ci: bool,
+    /// Response-contract audit requested (`--audit-contracts` or --require-contracts).
+    pub audit_contracts: bool,
+    /// Audit findings alone are promoted to errors (`--require-contracts`).
+    pub require_contracts: bool,
+    /// Findings of the response-contract audit (TG0930-2, TG0305),
+    /// Included in `counts` and `by_code`; 0 when the audit did not run.
+    pub audit_findings: usize,
     /// The `$ref` graph of the loaded documents.
     pub refs: RefStats,
     /// Summary of the IR; null when errors prevented building it.

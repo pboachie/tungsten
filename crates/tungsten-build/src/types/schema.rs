@@ -109,13 +109,13 @@ pub(super) fn is_unsupported(key: &str) -> bool {
 }
 
 /// Whether `key` constrains values in a way the converter models.
-pub(super) fn is_structural(key: &str) -> bool {
+pub(crate) fn is_structural(key: &str) -> bool {
     !is_annotation(key) && !is_unsupported(key)
 }
 
 /// True when the schema has no keyword the converter models: only
 /// annotations and unsupported keywords (`{}`, `{description}`, `{if, then}`).
-pub(super) fn is_inert(map: &Object) -> bool {
+pub(crate) fn is_inert(map: &Object) -> bool {
     !map.keys().any(|k| is_structural(k))
 }
 
@@ -130,7 +130,7 @@ pub(super) fn unsupported_keywords(map: &Object) -> impl Iterator<Item = &str> {
 
 /// JSON value types, as named by the `type` keyword.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub(super) enum JsonType {
+pub(crate) enum JsonType {
     Null,
     Boolean,
     Integer,
@@ -183,7 +183,7 @@ impl JsonType {
 /// The declared `type`: `Ok(None)` when absent, the listed types in
 /// declaration order (duplicates removed) otherwise, `Err` with the
 /// offending text when a member is not a JSON type name.
-pub(super) fn declared_types(map: &Object) -> Result<Option<Vec<JsonType>>, String> {
+pub(crate) fn declared_types(map: &Object) -> Result<Option<Vec<JsonType>>, String> {
     let parse = |v: &Value| match v {
         Value::String(s) => JsonType::parse(s).ok_or_else(|| s.clone()),
         other => Err(other.to_string()),
