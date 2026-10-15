@@ -135,6 +135,12 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
         "Declare one consistent authentication policy for the duplicated requests.",
     ),
     e(
+        "PM008",
+        "Every request in the Postman collection was omitted as unsupported, so nothing could \
+         be imported.",
+        "Remove or fix the unsupported constructs, or supply a reviewed contract.",
+    ),
+    e(
         "TC001",
         "The structural request evidence is larger than the import byte limit.",
         "Split the import into smaller captures or collections.",
