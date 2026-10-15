@@ -1,4 +1,5 @@
 {
+  "advisory_exceptions": [],
   ".github/packaging-requirements.lock": [
     "build",
     "certifi",
