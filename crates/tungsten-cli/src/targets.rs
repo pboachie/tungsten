@@ -14,6 +14,7 @@ use tungsten_emit::{Emitter, TargetConfig};
 use tungsten_emit_csharp::CSharpEmitter;
 use tungsten_emit_dart::DartEmitter;
 use tungsten_emit_docs::DocsEmitter;
+use tungsten_emit_fsharp::FSharpEmitter;
 use tungsten_emit_java::JavaEmitter;
 use tungsten_emit_kotlin::KotlinEmitter;
 use tungsten_emit_mcp::McpEmitter;
@@ -33,6 +34,7 @@ static RUST: RustEmitter = RustEmitter;
 static JAVA: JavaEmitter = JavaEmitter;
 static KOTLIN: KotlinEmitter = KotlinEmitter;
 static CSHARP: CSharpEmitter = CSharpEmitter;
+static FSHARP: FSharpEmitter = FSharpEmitter;
 static DART: DartEmitter = DartEmitter;
 static RUBY: RubyEmitter = RubyEmitter;
 
@@ -48,6 +50,7 @@ pub fn emitter(id: &str) -> Option<&'static dyn Emitter> {
         "java" => Some(&JAVA),
         "kotlin" => Some(&KOTLIN),
         "csharp" => Some(&CSHARP),
+        "fsharp" => Some(&FSHARP),
         "dart" => Some(&DART),
         "ruby" => Some(&RUBY),
         _ => None,
@@ -92,13 +95,14 @@ pub fn tool_names(id: &str, ir: &Ir) -> BTreeMap<String, String> {
 }
 
 /// The target id for a name given on the command line: the ids themselves
-/// and the short forms `ts`, `py`, `rs`, `cs`, `kt` and `rb`.
+/// and the short forms `ts`, `py`, `rs`, `cs`, `fs`, `kt` and `rb`.
 pub fn canonical(name: &str) -> &str {
     match name {
         "ts" => "typescript",
         "py" => "python",
         "rs" => "rust",
         "cs" => "csharp",
+        "fs" => "fsharp",
         "kt" => "kotlin",
         "rb" => "ruby",
         other => other,
