@@ -26,6 +26,15 @@ responsible for authorization and server-side idempotency.
 
 ## Limits
 
+Set `ClientOptions.MaxResponseBytes` to opt into an ordinary-response byte cap;
+a call option with the same name overrides it. The value must be a positive
+safe integer (at most 9007199254740991); unset keeps the existing unbounded
+behavior. Content-Length is checked before reading, and actual bytes are
+counted even without that header. Overflow closes the body and returns
+`UNEXPECTED_RESPONSE` with code `RESPONSE_TOO_LARGE` and `retryable: never`.
+A mutation may have taken effect: inspect API state before retrying. The cap
+does not limit a successful SSE stream; use its event and collection limits.
+
 Built-in idempotency stores are memory-only; applications that need durable
 keys must implement the store interface. Applications configure and own the
 HTTP client and persistent credential storage.

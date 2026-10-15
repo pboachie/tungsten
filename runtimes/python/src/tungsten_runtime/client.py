@@ -30,6 +30,7 @@ from ._drivers import AsyncDriver, SyncDriver, SyncStream, async_http, sync_http
 from ._helpers import safe_id, safe_name
 from ._oauth import AsyncOAuthFlow, OAuthFlow
 from ._streams import AsyncEventStream, EventStream
+from ._util import field
 from .types import (
     ApiDescriptor,
     CallOptions,
@@ -149,7 +150,9 @@ class ClientCore:
             except Exception as error:
                 yield self._engine.internal(safe_id(op), error, "streaming")
 
-        return EventStream(items(), close, stop)
+        return EventStream(
+            items(), close, stop, safe_id(op), field(field(op, "agent"), "safety") != "read_only"
+        )
 
     def poll(
         self,
@@ -286,7 +289,9 @@ class AsyncClientCore:
             except Exception as error:
                 yield self._engine.internal(safe_id(op), error, "streaming")
 
-        return AsyncEventStream(items(), stop)
+        return AsyncEventStream(
+            items(), stop, safe_id(op), field(field(op, "agent"), "safety") != "read_only"
+        )
 
     async def poll(
         self,

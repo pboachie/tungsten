@@ -39,11 +39,12 @@ func newHTTPClient() *http.Client {
 }
 
 type attemptRequest struct {
-	url     string
-	method  string
-	headers []headerEntry
-	body    *payload
-	timeout time.Duration
+	maxResponseBytes *int64
+	url              string
+	method           string
+	headers          []headerEntry
+	body             *payload
+	timeout          time.Duration
 	// stream hands a 2xx text/event-stream answer back unread.
 	stream bool
 	// idle (with stream) is the silence after which a read of the body
@@ -387,12 +388,32 @@ func attempt(ctx context.Context, client *http.Client, req attemptRequest) attem
 		return attemptOutcome{kind: outcomeStreaming, status: status, headers: headers,
 			stream: &eventBody{response: resp, cancel: cancel, idle: streamIdle(req)}}
 	}
-	data, readErr := io.ReadAll(resp.Body)
+	if req.method == "HEAD" || status == 204 || status == 205 || status == 304 {
+		req.maxResponseBytes = nil
+	}
+	oversized := false
+	var reader io.Reader = resp.Body
+	if maximum := req.maxResponseBytes; maximum != nil {
+		length := headers["content-length"]
+		if length != "" && strings.IndexFunc(length, func(r rune) bool { return r < '0' || r > '9' }) == -1 {
+			value, err := strconv.ParseUint(length, 10, 64)
+			oversized = err != nil || value > uint64(*maximum)
+		}
+		reader = io.LimitReader(resp.Body, *maximum+1)
+	}
+	var data []byte
+	var readErr error
+	if !oversized {
+		data, readErr = io.ReadAll(reader)
+		oversized = req.maxResponseBytes != nil && int64(len(data)) > *req.maxResponseBytes
+	}
 	timer.Stop()
 	_ = resp.Body.Close()
 	cancel()
 	out := attemptOutcome{kind: outcomeResponse, status: status, headers: headers}
 	switch {
+	case oversized:
+		out.bodyFailure = "oversized"
 	case readErr == nil:
 		out.body, out.bodyOK = data, true
 	case expired():

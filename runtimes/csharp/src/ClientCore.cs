@@ -35,6 +35,7 @@ public sealed partial class ClientCore
     private readonly string baseUrl;
     private readonly TimeSpan timeout;
     private readonly int maxEventBytes;
+    private readonly long? maxResponseBytes;
     private readonly int maxCollectBytes;
     private readonly TimeSpan maxCollectTime;
     private readonly int maxReconnects;
@@ -101,6 +102,7 @@ public sealed partial class ClientCore
         headers = options.Headers ?? new Dictionary<string, string>();
         timeout = options.Timeout is TimeSpan t && t > TimeSpan.Zero ? t : ClientOptions.DefaultTimeout;
         maxEventBytes = options.MaxEventBytes is int m && m > 0 ? m : ClientOptions.DefaultMaxEventBytes;
+        maxResponseBytes = options.MaxResponseBytes;
         maxCollectBytes = options.MaxCollectBytes is int c && c > 0 ? c : ClientOptions.DefaultMaxCollectBytes;
         maxCollectTime = options.MaxCollectTime is TimeSpan ct && ct > TimeSpan.Zero ? ct : ClientOptions.DefaultMaxCollectTime;
         maxReconnects = options.MaxReconnects is int r ? Math.Min(Math.Max(r, 0), 1000) : ClientOptions.DefaultMaxReconnects;
@@ -299,7 +301,7 @@ public sealed partial class ClientCore
         {
             response = await SendAsync(p, opts, ct).ConfigureAwait(false);
         }
-        catch (Failure f) when (f.Error.Diagnostic.HttpStatus == 401 && p.OAuth is not null)
+        catch (Failure f) when (f.Error.Diagnostic.HttpStatus == 401 && p.OAuth is not null && !(f.Error.Diagnostic.Category == Category.UnexpectedResponse && f.Error.Diagnostic.Code == "RESPONSE_TOO_LARGE"))
         {
             response = await ResendRejectedAsync(p, f, opts, ct).ConfigureAwait(false);
         }

@@ -28,6 +28,21 @@ responsible for authorization and server-side idempotency.
 
 ## Limits
 
+Stream `collect(max_bytes=..., max_ms=...)` accepts optional byte and time budgets. Setting
+either defaults the other to 4 MiB or 60 seconds. The byte count uses UTF-8
+JSON for the event values, excluding SSE framing. A limit closes the stream
+and returns a nonretryable error with only the admitted events as `partial`.
+Calling `collect()` with no arguments preserves unbounded collection.
+
+Set `ClientOptions.max_response_bytes` to opt into an ordinary-response byte cap;
+a call option with the same name overrides it. The value must be a positive
+safe integer (at most 9007199254740991); unset keeps the existing unbounded
+behavior. Content-Length is checked before reading, and actual bytes are
+counted even without that header. Overflow closes the body and returns
+`UNEXPECTED_RESPONSE` with code `RESPONSE_TOO_LARGE` and `retryable: never`.
+A mutation may have taken effect: inspect API state before retrying. The cap
+does not limit a successful SSE stream; use its event and collection limits.
+
 Default idempotency and OAuth token state are in memory. A
 `FileIdempotencyStore` is available for durable idempotency keys; it does not
 store OAuth tokens. Applications own persistence, permissions and lifecycle.

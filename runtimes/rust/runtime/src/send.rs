@@ -172,6 +172,7 @@ impl ClientCore {
                     timeout,
                     stream,
                     idle: self.inner.idle_timeout.filter(|_| stream),
+                    max_response_bytes: opts.max_response_bytes.or(self.inner.max_response_bytes),
                 },
             )
             .await;
@@ -183,12 +184,13 @@ impl ClientCore {
                 let AttemptOutcome::Response {
                     status,
                     headers: answer,
+                    body_failure,
                     ..
                 } = &outcome
                 else {
                     break;
                 };
-                if !is_redirect(*status) {
+                if *body_failure == Some(BodyFailure::Oversized) || !is_redirect(*status) {
                     break;
                 }
                 let status = *status;
@@ -220,6 +222,9 @@ impl ClientCore {
                         timeout,
                         stream,
                         idle: self.inner.idle_timeout.filter(|_| stream),
+                        max_response_bytes: opts
+                            .max_response_bytes
+                            .or(self.inner.max_response_bytes),
                     },
                 )
                 .await;
@@ -427,6 +432,26 @@ impl ClientCore {
             .as_ref()
             .map(|v| format!("Call {} to read the current state.", v.operation));
 
+        if body_failure == Some(BodyFailure::Oversized) {
+            let after = if mutation {
+                "The call may have taken effect; inspect API state before retrying."
+            } else {
+                "The read is incomplete."
+            };
+            return Err(fail(
+                Diag::new(op.id.clone(), Category::UnexpectedResponse)
+                    .code(Some("RESPONSE_TOO_LARGE".to_owned()))
+                    .http_status(Some(status))
+                    .request_id(request_id)
+                    .retryable(Retryable::Never)
+                    .next_action(hint)
+                    .remediation(format!(
+                        "Response exceeded maxResponseBytes and was abandoned. {after}"
+                    ))
+                    .attempts(attempts)
+                    .build(),
+            ));
+        }
         if success && body.is_none() {
             let failure = match body_failure {
                 Some(BodyFailure::Timeout) => "timeout",
@@ -811,6 +836,7 @@ impl ClientCore {
                 timeout: self.inner.timeout.max(Duration::from_millis(1)),
                 stream: false,
                 idle: None,
+                max_response_bytes: None,
             },
         )
         .await;

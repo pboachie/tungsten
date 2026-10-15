@@ -824,6 +824,8 @@ pub struct ClientOptions {
     pub token_store: Option<Arc<dyn TokenStore>>,
     /// Per-attempt timeout. Default 30 s.
     pub timeout: Duration,
+    /// Optional ordinary-response byte cap. Positive safe integer; unset is unbounded.
+    pub max_response_bytes: Option<u64>,
     /// Overrides the API's per-tier retry defaults field by field, for every tier.
     pub retries: PartialRetryOptions,
     pub idempotency_store: Option<Arc<dyn IdempotencyStore>>,
@@ -889,6 +891,7 @@ impl Default for ClientOptions {
             auth: AuthConfig::new(),
             token_store: None,
             timeout: Duration::from_secs(30),
+            max_response_bytes: None,
             retries: PartialRetryOptions::default(),
             idempotency_store: None,
             middleware: Vec::new(),
@@ -916,6 +919,7 @@ impl fmt::Debug for ClientOptions {
             .field("base_url", &self.base_url)
             .field("auth", &self.auth)
             .field("timeout", &self.timeout)
+            .field("max_response_bytes", &self.max_response_bytes)
             .field("validate_responses", &self.validate_responses)
             .finish_non_exhaustive()
     }
@@ -958,6 +962,8 @@ pub struct CallOptions {
     pub allow_confirm_true: bool,
     /// Per-attempt timeout; default: the client's.
     pub timeout: Option<Duration>,
+    /// Override the client ordinary-response byte cap.
+    pub max_response_bytes: Option<u64>,
     /// Run the operation's verification hook after success.
     pub verify: bool,
     pub headers: BTreeMap<String, String>,
@@ -975,6 +981,7 @@ impl fmt::Debug for CallOptions {
             .field("allow_confirm_true", &self.allow_confirm_true)
             .field("max_pages", &self.max_pages)
             .field("timeout", &self.timeout)
+            .field("max_response_bytes", &self.max_response_bytes)
             .field("verify", &self.verify)
             .field("headers", &self.headers.keys().collect::<Vec<_>>())
             .finish()
@@ -989,6 +996,7 @@ impl Default for CallOptions {
             confirm: None,
             allow_confirm_true: true,
             timeout: None,
+            max_response_bytes: None,
             verify: false,
             headers: BTreeMap::new(),
         }

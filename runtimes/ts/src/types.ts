@@ -398,6 +398,8 @@ export interface ClientOptions {
   fetch?: typeof fetch;
   /** Per-attempt timeout. Default 30000. */
   timeoutMs?: number;
+  /** Optional ordinary-response byte cap; a call may override it. Unset: unbounded. */
+  maxResponseBytes?: number;
   /** Overrides the API's per-tier retry defaults (`ApiDescriptor.retries`)
    * field by field, for every tier. */
   retries?: Partial<RetryOptions>;

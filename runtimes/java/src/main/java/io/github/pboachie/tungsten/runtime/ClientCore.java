@@ -304,7 +304,7 @@ public final class ClientCore {
             response = send(p, opts);
         } catch (TungstenException e) {
             Integer status = e.diagnostic().httpStatus();
-            if (status == null || status != 401 || p.oauth == null) {
+            if (status == null || status != 401 || p.oauth == null || (e.diagnostic().category() == Category.UNEXPECTED_RESPONSE && "RESPONSE_TOO_LARGE".equals(e.diagnostic().code()))) {
                 throw e;
             }
             response = resendRejected(p, e, opts);
@@ -1295,6 +1295,11 @@ public final class ClientCore {
     /** Sends with retries. With stream, a 2xx text/event-stream answer is returned unread. */
     Sent sendWith(Prepared p, CallOptions opts, boolean stream) {
         OperationDescriptor op = p.op;
+        Long cap = opts.maxResponseBytes() != null ? opts.maxResponseBytes() : options.maxResponseBytes;
+        if (cap != null && (cap < 1 || cap > 9_007_199_254_740_991L)) {
+            throw diag(op.id(), Category.VALIDATION_FAILED).param("maxResponseBytes")
+                    .remedy("maxResponseBytes must be a positive safe integer; nothing was sent.").fail();
+        }
         RetryPolicy policy = retryPolicy(op);
         boolean mutation = op.isMutation();
         boolean protectedCall = Classify.hasReplayProtection(op, p.hasKey);
@@ -1313,9 +1318,9 @@ public final class ClientCore {
             Serialize.Payload body = p.payload;
             List<Serialize.Header> hs = new ArrayList<>(p.headers.entries);
             Transport.Outcome outcome = Transport.attempt(http,
-                    new Transport.Request(target, method, hs, body, attemptTimeout, stream, idle));
+                    new Transport.Request(target, method, hs, body, attemptTimeout, stream, idle, cap));
             for (int hops = 0; !redirectsDisabled && !mutation && hops < MAX_REDIRECTS; hops++) {
-                if (outcome.kind != Transport.Kind.RESPONSE || !isRedirect(outcome.status)) {
+                if (outcome.kind != Transport.Kind.RESPONSE || "oversized".equals(outcome.bodyFailure) || !isRedirect(outcome.status)) {
                     break;
                 }
                 String[] next = redirectTarget(p, target, outcome.headers.get("location"));
@@ -1331,7 +1336,7 @@ public final class ClientCore {
                 }
                 rctx = new Middleware.RequestContext(rctx.operation(), rctx.attempt(), method, next[1], rctx.headers(),
                         rctx.body(), rctx.hasBody());
-                outcome = Transport.attempt(http, new Transport.Request(target, method, hs, body, attemptTimeout, stream, idle));
+                outcome = Transport.attempt(http, new Transport.Request(target, method, hs, body, attemptTimeout, stream, idle, cap));
             }
             p.finalUrl = target;
             Classify.Context cctx = new Classify.Context(identity, api, op, p.key, p.hasKey, p.keyHeader, attempts, check);
@@ -1472,6 +1477,13 @@ public final class ClientCore {
         boolean success = !refusedRedirect && ((status >= 200 && status <= 299)
                 || (declared != null && declared.kind().equals("success") && status >= 100 && status <= 399));
         String hint = op.agent().verify() != null ? "Call " + op.agent().verify().operation() + " to read the current state." : null;
+        if ("oversized".equals(outcome.bodyFailure)) {
+            throw diag(op.id(), Category.UNEXPECTED_RESPONSE).code("RESPONSE_TOO_LARGE").status(status)
+                    .requestId(requestId).retry(Retryable.NEVER).next(hint).attempts(attempts)
+                    .remedy("Response exceeded maxResponseBytes and was abandoned. "
+                            + (mutation ? "The call may have taken effect; inspect API state before retrying." : "The read is incomplete."))
+                    .fail();
+        }
         if (success && !outcome.bodyOk) {
             String failure = "timeout".equals(outcome.bodyFailure) ? "timeout" : "broken";
             if (!mutation) {

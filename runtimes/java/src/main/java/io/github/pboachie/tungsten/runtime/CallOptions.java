@@ -14,6 +14,7 @@ public final class CallOptions {
     private final Confirm confirm;
     private final boolean refuseConfirmYes;
     private final Duration timeout;
+    private final Long maxResponseBytes;
     private final boolean verify;
     private final Map<String, String> headers;
 
@@ -22,6 +23,7 @@ public final class CallOptions {
         confirm = b.confirm;
         refuseConfirmYes = b.refuseConfirmYes;
         timeout = b.timeout;
+        maxResponseBytes = b.maxResponseBytes;
         verify = b.verify;
         headers = Collections.unmodifiableMap(new LinkedHashMap<>(b.headers));
     }
@@ -43,6 +45,7 @@ public final class CallOptions {
         b.confirm = confirm;
         b.refuseConfirmYes = refuseConfirmYes;
         b.timeout = timeout;
+        b.maxResponseBytes = maxResponseBytes;
         b.verify = verify;
         b.headers.putAll(headers);
         return b;
@@ -66,6 +69,11 @@ public final class CallOptions {
     /** The per-attempt timeout, or null for the client's. */
     public Duration timeout() {
         return timeout;
+    }
+
+    /** Maximum ordinary response bytes; null uses the client's limit. */
+    public Long maxResponseBytes() {
+        return maxResponseBytes;
     }
 
     /** Whether the verification hook runs after success. */
@@ -95,6 +103,7 @@ public final class CallOptions {
         private Confirm confirm = Confirm.NONE;
         private boolean refuseConfirmYes;
         private Duration timeout;
+        private Long maxResponseBytes;
         private boolean verify;
         private final Map<String, String> headers = new LinkedHashMap<>();
 
@@ -150,6 +159,17 @@ public final class CallOptions {
         public Builder headers(Map<String, String> values) {
             headers.clear();
             headers.putAll(values);
+            return this;
+        }
+
+        /** Overrides the client ordinary response limit with a positive safe integer. */
+        public Builder maxResponseBytes(long value) {
+            return maxResponseBytes(Long.valueOf(value));
+        }
+
+        /** Overrides the client ordinary response limit, or null to use its limit. */
+        public Builder maxResponseBytes(Long value) {
+            maxResponseBytes = value;
             return this;
         }
 

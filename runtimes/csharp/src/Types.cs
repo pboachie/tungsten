@@ -574,6 +574,8 @@ public sealed record ClientOptions
     public IReadOnlyDictionary<string, string>? Headers { get; init; }
     /// <summary>The largest server-sent event a stream accepts, in UTF-8 bytes (default 1 MiB).</summary>
     public int? MaxEventBytes { get; init; }
+    /// <summary>Maximum ordinary response bytes; null is unbounded. Must be a positive safe integer.</summary>
+    public long? MaxResponseBytes { get; init; }
     /// <summary>Bounds collecting a stream (default 4 MiB).</summary>
     public int? MaxCollectBytes { get; init; }
     /// <summary>Bounds collecting a stream (default 60 s).</summary>
@@ -607,6 +609,8 @@ public sealed record ClientOptions
 /// <summary>Configures one call.</summary>
 public sealed record CallOptions
 {
+    /// <summary>Overrides the client ordinary response limit; null uses the client's limit.</summary>
+    public long? MaxResponseBytes { get; init; }
     /// <summary>Required for caller_owned operations with a required persisted key.</summary>
     public string? IdempotencyKey { get; init; }
     /// <summary>

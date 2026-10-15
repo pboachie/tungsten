@@ -8,7 +8,8 @@
  * connection when it returns.
  */
 import type { Diagnostic, StreamItem } from "./types.js";
-import { hasOwn } from "./util.js";
+import { canonicalJson, hasOwn } from "./util.js";
+import { diagnostic } from "./envelope.js";
 
 /** One delivered event. */
 export interface StreamEvent<T> {
@@ -35,16 +36,26 @@ export type EventHandler<T> = (value: T, event: StreamEvent<T>) => void | Promis
  * other handler took. */
 export const ANY_EVENT = "*";
 
+/** Optional collection budgets; setting either defaults the other to 4 MiB or 60 seconds. */
+export interface CollectOptions {
+  maxBytes?: number;
+  maxMs?: number;
+}
+
 export class EventStream<T> implements AsyncIterable<StreamItem<T>> {
   readonly #source: AsyncGenerator<StreamItem<T>>;
   readonly #abort: () => void;
   #cancelled = false;
+  readonly #operation: string;
+  readonly #mutation: boolean;
 
   /** @param source the items of the stream
    * @param abort aborts the request the source reads (closes the connection) */
-  constructor(source: AsyncGenerator<StreamItem<T>>, abort: () => void) {
+  constructor(source: AsyncGenerator<StreamItem<T>>, abort: () => void, operation = "<stream>", mutation = false) {
     this.#source = source;
     this.#abort = abort;
+    this.#operation = operation;
+    this.#mutation = mutation;
   }
 
   /** Whether {@link cancel} was called. */
@@ -107,11 +118,65 @@ export class EventStream<T> implements AsyncIterable<StreamItem<T>> {
   }
 
   /** Read the stream to its end into a list of the events' `data`. */
-  collect(): Promise<StreamResult<T[]>> {
-    return this.reduce<T[]>((all, value) => {
-      all.push(value);
-      return all;
-    }, []);
+  async collect(options?: CollectOptions): Promise<StreamResult<T[]>> {
+    if (options === undefined) {
+      return this.reduce<T[]>((all, value) => { all.push(value); return all; }, []);
+    }
+    const maximum = options?.maxBytes ?? 4 * 1024 * 1024;
+    const milliseconds = options?.maxMs ?? 60_000;
+    const values: T[] = [];
+    let reconnects = 0;
+    const failure = (what: string, invalid = false): StreamResult<T[]> => ({
+      ok: false, partial: values, reconnects,
+      error: diagnostic(this.#operation, invalid ? "VALIDATION_FAILED" : "UNEXPECTED_RESPONSE", {
+        failed_parameter: "events", expected: what, retryable: "never",
+        remediation: invalid ? "Collection budgets must be positive safe integers; nothing was read." :
+          `The stream was abandoned after ${values.length} events (${what}; collect maxBytes and maxMs).${this.#mutation ? " The call may have taken effect; inspect API state before retrying." : ""} The events collected so far precede this error.`,
+      }),
+    });
+    if (options === null || ![maximum, milliseconds].every(value => Number.isSafeInteger(value) && value > 0)) {
+      this.cancel();
+      return failure("positive safe integer collection budgets", true);
+    }
+    const deadline = performance.now() + milliseconds;
+    let bytes = 0;
+    const expired = Symbol("collection deadline");
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      for (;;) {
+        const remaining = deadline - performance.now();
+        if (remaining <= 0) return failure(`at most ${milliseconds} ms to collect the events`);
+        const step = await Promise.race([
+          this.#source.next(),
+          new Promise<typeof expired>(resolve => {
+            const wake = (): void => {
+              const left = deadline - performance.now();
+              if (left <= 0) resolve(expired);
+              else timer = setTimeout(wake, Math.min(left, 2_147_483_647));
+            };
+            wake();
+          }),
+        ]);
+        clearTimeout(timer);
+        timer = undefined;
+        if (step === expired) return failure(`at most ${milliseconds} ms to collect the events`);
+        if (step.done === true || this.#cancelled) return { ok: true, value: values, reconnects };
+        const item = step.value;
+        if (!item.ok) return { ok: false, error: item.error, partial: values, reconnects };
+        reconnects = item.meta.reconnects;
+        try {
+          bytes += new TextEncoder().encode(canonicalJson(item.value)).byteLength;
+        } catch {
+          return failure("JSON-serializable events");
+        }
+        if (performance.now() >= deadline) return failure(`at most ${milliseconds} ms to collect the events`);
+        if (bytes > maximum) return failure(`at most ${maximum} bytes of events`);
+        values.push(item.value);
+      }
+    } finally {
+      clearTimeout(timer);
+      this.cancel();
+    }
   }
 
   /** The first event for which `predicate` holds (any event without one),
