@@ -11,6 +11,9 @@ changes.
 
 ### Added
 
+- CI builds the compiler and example emitter at their declared Rust minimum,
+  checks the runtime at its own minimum, and rejects locked dependencies or
+  README compiler prerequisites that exceed or disagree with those floors.
 - Imported specs (Postman, cURL, `.http`, HAR and endpoint manifests): a
   target that cannot enforce imported-operation policy (Java, C#, Kotlin, Ruby,
   Dart and the other SDK targets) now fails alone; without `--strict` the
