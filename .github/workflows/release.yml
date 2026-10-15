@@ -484,6 +484,8 @@ jobs:
             sleep 0.5
           done
           [ "$ready" -eq 1 ] || { echo "the local mirror did not come up" >&2; cat "$work/logs/http.server.log" >&2; exit 1; }
+          # Run both the installer and its installed binary under the target
+          # architecture: the installer selects its archive from uname -m.
           # x86_64-apple-darwin runs under Rosetta on the arm64 runner.
           if [ "$TARGET" = x86_64-apple-darwin ]; then
             softwareupdate --install-rosetta --agree-to-license || true
@@ -494,7 +496,7 @@ jobs:
           export TUNGSTEN_RELEASE_BASE_URL=http://127.0.0.1:8642
           case "$TARGET" in *linux-gnu) export TUNGSTEN_LIBC=gnu ;; esac
           dest="$work/bin"
-          sh ./install.sh --version "$VERSION" --dir "$dest"
+          run sh ./install.sh --version "$VERSION" --dir "$dest"
           expected=$(run "target/$TARGET/release/tungsten" --version)
           actual=$(run "$dest/tungsten" --version)
           [ -n "$expected" ] || { echo "the built binary printed no --version" >&2; exit 1; }
@@ -507,7 +509,7 @@ jobs:
           printf tampered >>"$www/v$VERSION/$asset"
           rejected="$work/rejected"
           rc=0
-          sh ./install.sh --version "$VERSION" --dir "$rejected" 2>"$work/logs/rejected.log" || rc=$?
+          run sh ./install.sh --version "$VERSION" --dir "$rejected" 2>"$work/logs/rejected.log" || rc=$?
           [ "$rc" -eq 1 ] || { echo "install.sh exited $rc on a tampered archive, expected 1" >&2; cat "$work/logs/rejected.log" >&2; exit 1; }
           grep -q "checksum mismatch" "$work/logs/rejected.log" || { echo "no checksum mismatch reported:" >&2; cat "$work/logs/rejected.log" >&2; exit 1; }
           [ ! -e "$rejected/tungsten" ] || { echo "the tampered archive was installed" >&2; exit 1; }
@@ -516,7 +518,7 @@ jobs:
           # terminal and is documented as a gap at the top of this step.
           init_dir="$work/init-refused"
           rc=0
-          sh ./install.sh --init --version "$VERSION" --dir "$init_dir" </dev/null 2>"$work/logs/init.log" || rc=$?
+          run sh ./install.sh --init --version "$VERSION" --dir "$init_dir" </dev/null 2>"$work/logs/init.log" || rc=$?
           [ "$rc" -eq 1 ] || { echo "install.sh --init without a terminal exited $rc, expected 1" >&2; cat "$work/logs/init.log" >&2; exit 1; }
           grep -q "controlling terminal" "$work/logs/init.log" || { echo "unexpected --init refusal:" >&2; cat "$work/logs/init.log" >&2; exit 1; }
           echo "install.sh smoke passed for $TARGET"
