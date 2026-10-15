@@ -37,21 +37,22 @@ Tree rules:
     there with `// SPDX-License-Identifier: Apache-2.0`;
   - the SDK runtimes of LANGUAGE_ROOTS: Java (runtimes/java/: .java,
     pom.xml), C# (runtimes/csharp/: .cs, .csproj, Directory.Build.props),
-    Kotlin (runtimes/kotlin/: .kt, .kts), Swift (runtimes/swift/: .swift,
-    Package.swift, Package.resolved), PHP (runtimes/php/: .php,
+    F# (runtimes/fsharp/: .fs, .fsi, .fsproj), Kotlin (runtimes/kotlin/:
+    .kt, .kts), Swift (runtimes/swift/: .swift, Package.swift,
+    Package.resolved), PHP (runtimes/php/: .php,
     composer.json, phpstan.neon), Ruby (runtimes/ruby/: .rb, .gemspec,
     Gemfile) and Dart (runtimes/dart/: .dart, pubspec.yaml,
     analysis_options.yaml). Their sources and manifests are refused
     anywhere else (generated SDKs never live here). Headers: `//
-    SPDX-License-Identifier: Apache-2.0` in .java, .cs, .kt, .kts, .swift
-    and .dart (Package.swift may put `// swift-tools-version:` first); `#
+    SPDX-License-Identifier: Apache-2.0` in .java, .cs, .fs, .fsi, .kt,
+    .kts, .swift and .dart (Package.swift may put `// swift-tools-version:` first); `#
     SPDX-...` in .rb, .gemspec, Gemfile, pubspec.yaml,
     analysis_options.yaml and phpstan.neon; in .php the `//` header follows
-    the `<?php` line; pom.xml, .csproj and .props carry `<!--
+    the `<?php` line; pom.xml, .csproj, .fsproj and .props carry `<!--
     SPDX-License-Identifier: Apache-2.0 -->` (after an optional XML
     declaration); composer.json has `"license": "Apache-2.0"`. Their test
-    files (*Test.java, *Tests.java, *Test.kt, *Tests.cs, *Tests.swift,
-    *Test.php, *_test.rb, *_spec.rb, *_test.dart) and test directories (any
+    files (*Test.java, *Tests.java, *Test.kt, *Tests.cs, *Tests.fs,
+    *Tests.swift, *Test.php, *_test.rb, *_spec.rb, *_test.dart) and test directories (any
     case, `Tests/` included, and spec/ under runtimes/ruby/) are refused.
 Commit rules: no Co-Authored-By trailer naming an AI assistant or its vendor,
 no session-link trailers, no "generated with" footers naming an AI tool, and
@@ -93,7 +94,7 @@ TEST_FILE = re.compile(
 )
 # Test classes of the SDK languages, matched case-sensitively so that
 # `Latest.java` or `Contest.cs` stay ordinary sources.
-TEST_CLASS_FILE = re.compile(r"(?:Tests?\.(?:java|kt)|Tests?\.cs|Tests\.swift|Test\.php)$")
+TEST_CLASS_FILE = re.compile(r"(?:Tests?\.(?:java|kt)|Tests?\.cs|Tests?\.fs|Tests\.swift|Test\.php)$")
 # An attribute at the start of a line: #[...] or #![...].
 RUST_ATTRIBUTE = re.compile(r"^\s*#!?\[\s*([A-Za-z_][\w:]*)\s*(.*)$")
 STRING_LITERAL = re.compile(r'"(?:[^"\\]|\\.)*"')
@@ -137,13 +138,14 @@ HEADER_LINES = 5  # the header may follow a shebang or a blank line
 LANGUAGE_ROOTS = (
     ("runtimes/java/", "Java", {".java"}, {"pom.xml"}, set()),
     ("runtimes/csharp/", "C#", {".cs"}, {"Directory.Build.props"}, {".csproj"}),
+    ("runtimes/fsharp/", "F#", {".fs", ".fsi"}, set(), {".fsproj"}),
     ("runtimes/kotlin/", "Kotlin", {".kt", ".kts"}, set(), set()),
     ("runtimes/swift/", "Swift", {".swift"}, {"Package.swift", "Package.resolved"}, set()),
     ("runtimes/php/", "PHP", {".php"}, {"composer.json", "phpstan.neon"}, set()),
     ("runtimes/ruby/", "Ruby", {".rb"}, {"Gemfile"}, {".gemspec"}),
     ("runtimes/dart/", "Dart", {".dart"}, {"pubspec.yaml", "analysis_options.yaml"}, set()),
 )
-SLASH_HEADER_SOURCES = {".java", ".cs", ".kt", ".kts", ".swift", ".dart"}
+SLASH_HEADER_SOURCES = {".java", ".cs", ".fs", ".fsi", ".kt", ".kts", ".swift", ".dart"}
 HASH_HEADER_FILES = {"Gemfile", "pubspec.yaml", "analysis_options.yaml", "phpstan.neon"}
 HASH_HEADER_SOURCES = {".rb", ".gemspec"}
 XML_MANIFESTS = {"pom.xml", "Directory.Build.props"}
@@ -186,7 +188,7 @@ def language_header_violations(path: str, text: str) -> list[str] | None:
         except (ValueError, AttributeError):
             return ["composer.json does not parse"]
         return [] if licence == "Apache-2.0" else ['composer.json without "license": "Apache-2.0"']
-    if name in XML_MANIFESTS or suffix in {".csproj", ".props"}:
+    if name in XML_MANIFESTS or suffix in {".csproj", ".fsproj", ".props"}:
         return [] if has_header(text, XML_HEADER) else [f"manifest without the licence header '{XML_HEADER}'"]
     if suffix == ".php":
         ok = bool(lines) and lines[0].strip() == "<?php" and any(

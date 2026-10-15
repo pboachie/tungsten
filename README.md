@@ -12,7 +12,7 @@
 
 </div>
 
-tungsten is a deterministic compiler written in Rust. It reads OpenAPI 3.0 and 3.1 documents plus two small manifests, builds one typed intermediate representation (IR), and emits TypeScript, Python, Rust, Go, Java, C# and Ruby SDKs, a Rust command-line client, an MCP server, browser WebMCP tools and LLM-oriented docs. Every emitted client is built for an autonomous caller: failures are instructions, side effects are never duplicated, and irreversible calls need an explicit confirmation.
+tungsten is a deterministic compiler written in Rust. It reads OpenAPI 3.0 and 3.1 documents plus two small manifests, builds one typed intermediate representation (IR), and emits TypeScript, Python, Rust, Go, Java, C#, F# and Ruby SDKs, a Rust command-line client, an MCP server, browser WebMCP tools and LLM-oriented docs. Every emitted client is built for an autonomous caller: failures are instructions, side effects are never duplicated, and irreversible calls need an explicit confirmation.
 
 Read the documentation at [pboachie.github.io/tungsten](https://pboachie.github.io/tungsten/).
 
@@ -38,12 +38,13 @@ Most SDK generators optimize for a person reading autocomplete. An agent has a f
 | `go` (external) | Models, resources, typed client, pagination and stream helpers | Go 1.22 | Build `tungsten-emit-go` from `emitters/go`; use `runtime_path` to matching `runtimes/go` source |
 | `java` | Java SDK | Java 17 and Maven | Use `runtime_path` to matching `runtimes/java` source |
 | `csharp` (`cs`) | C# SDK | .NET 10 | Use `runtime_path` to matching `runtimes/csharp`, referencing `Tungsten.Runtime.csproj` |
+| `fsharp` (`fs`) | F# SDK (records, discriminated unions, `Task` of `Result`) | .NET 10 | Use `runtime_path` to matching `runtimes/fsharp`; it references the .NET runtime in `runtimes/csharp` (`csharp_runtime_path`) |
 | `ruby` (`rb`) | Ruby SDK | Ruby 3.3 and Bundler | Use `runtime_path` to matching `runtimes/ruby` source |
 | `mcp` | MCP server over stdio or Streamable HTTP, discrete or progressive | Node 22 | `@elysra/tungsten-mcp`: matching npm package or built source |
 | `webmcp` | Browser ESM package with tool manifest and registration helper | Node 22 to build; compatible browser to run | `@elysra/tungsten-webmcp` and the generated TypeScript SDK |
 | `docs` | `llms.txt`, `llms-full.txt`, `tools.json`, README | None beyond the compiler | No runtime dependency |
 
-These targets are implemented in source. Compiler and runtime packages have independent versions: use a runtime compatible with the generated package's dependency declaration, or the matching compiler source checkout. npm publication is separate from compiler availability. Python, Rust, Java, C# and Ruby registry publication is not part of the 0.1.2 installation guarantee; the default Go module version also lacks a published nested-module tag. Use the source routes above rather than assuming a package name or version in generated metadata proves registry availability. Target `runtime_path` values are relative to the generated output directory.
+These targets are implemented in source. Compiler and runtime packages have independent versions: use a runtime compatible with the generated package's dependency declaration, or the matching compiler source checkout. npm publication is separate from compiler availability. Python, Rust, Java, C#, F# and Ruby registry publication is not part of the 0.1.2 installation guarantee; the default Go module version also lacks a published nested-module tag. Use the source routes above rather than assuming a package name or version in generated metadata proves registry availability. Target `runtime_path` values are relative to the generated output directory.
 
 Targets and the mock server (`tungsten mock`) share one IR. Generated-package and contract checks exercise each language, but source availability and passing shared scenarios do not establish complete validation, protocol or distribution parity. Unsupported features can vary by target. Review all compiler diagnostics: `--strict` rejects warnings, including unsupported `if`/`then`/`else` constraints, but informational diagnostics can still describe other unsupported features. Local checks do not establish live API acceptance or registry installation readiness.
 
@@ -245,7 +246,7 @@ never bundle server credentials. See the [browser WebMCP guide](https://pboachie
 4. **Emitters** (`crates/tungsten-emit-*`) write each target from the IR. They are pure functions of their inputs.
 5. **Runtimes** (`runtimes/`) hold the behaviour shared by generated code: validation, auth, retries, idempotency stores, the envelope, previews, pagination and middleware.
 
-Repository layout: `crates/` is the compiler (AGPL-3.0-only); `runtimes/ts`, `runtimes/mcp`, `runtimes/webmcp`, `runtimes/python`, `runtimes/rust`, `runtimes/go`, `runtimes/java`, `runtimes/csharp` and `runtimes/ruby` contain the libraries generated code depends on (Apache-2.0).
+Repository layout: `crates/` is the compiler (AGPL-3.0-only); `runtimes/ts`, `runtimes/mcp`, `runtimes/webmcp`, `runtimes/python`, `runtimes/rust`, `runtimes/go`, `runtimes/java`, `runtimes/csharp`, `runtimes/fsharp` and `runtimes/ruby` contain the libraries generated code depends on (Apache-2.0).
 
 ## CLI
 
@@ -316,7 +317,7 @@ The CLI that tungsten generates for a Rust target has its own exit codes (0 succ
 
 ## Project status
 
-tungsten is **early-stage**. Seven SDK targets, the generated Rust CLI, MCP, WebMCP, docs and the mock server are implemented. Validation is target-specific; do not infer that every target has the same live pilot coverage or published runtime packages. Check the [GitHub releases](https://github.com/pboachie/tungsten/releases) for available compiler binaries and matching sources. The quickstart installs a runtime from matching source and does not require registry publication; compiler and runtime packages have independent versions. Expect breaking changes to manifests, the IR and generated code between releases. Open an issue if a target limitation blocks you.
+tungsten is **early-stage**. Eight SDK targets, the generated Rust CLI, MCP, WebMCP, docs and the mock server are implemented. Validation is target-specific; do not infer that every target has the same live pilot coverage or published runtime packages. Check the [GitHub releases](https://github.com/pboachie/tungsten/releases) for available compiler binaries and matching sources. The quickstart installs a runtime from matching source and does not require registry publication; compiler and runtime packages have independent versions. Expect breaking changes to manifests, the IR and generated code between releases. Open an issue if a target limitation blocks you.
 
 The test suite, conformance corpus and design documents live in a separate maintainers' repository, which runs against every pull request. This repository is source only.
 
