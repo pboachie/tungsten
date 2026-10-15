@@ -10,10 +10,12 @@ use tungsten_openapi::SpecVersion;
 use crate::args::CheckArgs;
 use crate::commands::generate::{Mode, Project, run_targets};
 use crate::output::{
-    CheckResult, CommandName, CommandResult, DiagnosticCounts, TargetReport, TargetStatus,
+    CheckResult, CodeCount, CommandName, CommandResult, DiagnosticCounts, TargetReport,
+    TargetStatus,
 };
+use crate::render::thousands;
 use crate::stats::{describe, describe_refs, headline, ir_stats, plural, ref_stats};
-use crate::{CliEnv, Report, exit, input};
+use crate::{CliEnv, Collapse, Report, exit, input};
 
 pub(crate) fn run(args: &CheckArgs, env: &CliEnv) -> Report {
     let compiled = input::compile(&args.input.path);
@@ -21,6 +23,11 @@ pub(crate) fn run(args: &CheckArgs, env: &CliEnv) -> Report {
     // Whether the project compiles, before `--strict` turns warnings into
     // errors: the staleness comparison runs whenever the emitters can.
     let compiles = !has_errors(&diagnostics);
+    // A promoted warning stays collapsible: only real errors are always shown.
+    let mut eligible: Vec<bool> = diagnostics
+        .iter()
+        .map(|d| d.severity != Severity::Error)
+        .collect();
     let mut promoted = if args.strict {
         promote_warnings(&mut diagnostics)
     } else {
@@ -41,6 +48,12 @@ pub(crate) fn run(args: &CheckArgs, env: &CliEnv) -> Report {
         io_failed = outcome.io_failed;
         // The emitters' warnings (TG07xx, such as TG0713 over the schema
         // budget) are warnings like the compiler's: `--strict` fails on them.
+        eligible.extend(
+            outcome
+                .diagnostics
+                .iter()
+                .map(|d| d.severity != Severity::Error),
+        );
         if args.strict {
             promoted += promote_warnings(&mut outcome.diagnostics);
         }
@@ -53,6 +66,7 @@ pub(crate) fn run(args: &CheckArgs, env: &CliEnv) -> Report {
         openapi_versions: openapi_versions(&compiled),
         documents: compiled.workspace.documents.len(),
         counts,
+        by_code: by_code(&diagnostics),
         promoted,
         strict: args.strict,
         ci: args.ci,
@@ -70,10 +84,20 @@ pub(crate) fn run(args: &CheckArgs, env: &CliEnv) -> Report {
     };
     report.human = human(&args.input.path.display().to_string(), &result);
     report.diagnostics = diagnostics;
+    if !args.all_warnings {
+        report.collapse = Some(Collapse {
+            limit: COLLAPSE_AFTER,
+            eligible,
+        });
+    }
     report.sources = compiled.workspace.sources;
     report.result = Some(CommandResult::Check(result));
     report
 }
+
+/// Diagnostics of one code and severity printed in full before the human
+/// output summarizes the rest (`--all-warnings` lifts the limit).
+const COLLAPSE_AFTER: usize = 3;
 
 /// `--strict`: warnings become errors. Returns how many were promoted.
 pub(crate) fn promote_warnings(diagnostics: &mut [Diagnostic]) -> usize {
@@ -102,6 +126,26 @@ pub(crate) fn count(diagnostics: &[Diagnostic]) -> DiagnosticCounts {
         }
     }
     c
+}
+
+/// Counts per (code, severity), ordered by code.
+fn by_code(diagnostics: &[Diagnostic]) -> Vec<CodeCount> {
+    let mut map: std::collections::BTreeMap<(&str, u8), (Severity, usize)> = Default::default();
+    for d in diagnostics {
+        let rank = match d.severity {
+            Severity::Error => 0,
+            Severity::Warning => 1,
+            Severity::Info => 2,
+        };
+        map.entry((&d.code, rank)).or_insert((d.severity, 0)).1 += 1;
+    }
+    map.into_iter()
+        .map(|((code, _), (severity, count))| CodeCount {
+            code: code.to_string(),
+            severity,
+            count,
+        })
+        .collect()
 }
 
 /// The OpenAPI version of each entry document, in manifest order.
@@ -167,7 +211,23 @@ fn human(path: &str, r: &CheckResult) -> String {
         let _ = write!(line, " ({} promoted by --strict)", r.promoted);
     }
     let _ = writeln!(out, "  {:<9}{line}", "result");
+    if !r.by_code.is_empty() {
+        let codes: Vec<String> = r
+            .by_code
+            .iter()
+            .map(|c| format!("{} {} x{}", c.code, severity_word(c), thousands(c.count)))
+            .collect();
+        let _ = writeln!(out, "  {:<9}{}", "codes", codes.join(" · "));
+    }
     out
+}
+
+fn severity_word(c: &CodeCount) -> &'static str {
+    match c.severity {
+        Severity::Error => "error",
+        Severity::Warning => "warning",
+        Severity::Info => "info",
+    }
 }
 
 /// `fresh`, `stale (2 files)`, `skipped`, ... for the human `output` line.

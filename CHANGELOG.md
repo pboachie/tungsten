@@ -47,6 +47,13 @@ changes.
 
 ### Changed
 
+- `tungsten check` prints a warning or info code at most three times in the
+  human output, then one line with the number left out, and its summary lists
+  the count per code (`--all-warnings` prints everything; `--json` has always
+  listed every diagnostic and gains an additive `by_code` array). TG0301 for
+  an untagged union of exactly two candidates where one is a plain string,
+  array or map is now info instead of a warning, so `--strict` no longer
+  fails on those; other untagged unions still warn. (#111)
 - The release workflow's PyPI publication job is enabled through trusted
   publishing (repository variable `PYPI_PUBLISH`, `pypi` environment, no
   stored token) and now refuses to upload a `tungsten-runtime` sdist or wheel

@@ -19,7 +19,8 @@
 //!    can accept the same JSON value.
 //! 4. `Untagged`, with candidates ordered most constrained first (more
 //!    required fields, then closed records, then more `const` fields, then
-//!    spec order) and TG0301.
+//!    spec order) and TG0301 (info, not a warning, for a pair with an inline
+//!    string, array or map).
 //!
 //! Variant names: the referenced type's name, else the member's `const`
 //! tag value, else its kind for inline primitives, else `Variant<n>`.
@@ -256,16 +257,24 @@ impl<'a> TypeBuilder<'a> {
     fn untagged(&mut self, target: &RefTarget, mut variants: Vec<Candidate>) -> Body {
         variants.sort_by_cached_key(|v| self.sniff_key(v));
         let order: Vec<String> = variants.iter().map(|v| v.name.pascal()).collect();
+        let message = format!(
+            "untagged union: the runtime sniffs {} candidates in order ({})",
+            variants.len(),
+            order.join(", ")
+        );
+        // A pair with a plain string, array or map next to another type is
+        // the ordinary "X or its id/list/map" shape. The runtime tells the
+        // two apart by JSON kind, and a third-party spec cannot add a
+        // discriminator to it, so it is reported as info.
+        let diagnostic = if is_nullable_style(&variants) {
+            Diagnostic::info("TG0301", message)
+        } else {
+            Diagnostic::warning("TG0301", message)
+        };
         self.report(
-            Diagnostic::warning(
-                "TG0301",
-                format!(
-                    "untagged union: the runtime sniffs {} candidates in order ({})",
-                    variants.len(),
-                    order.join(", ")
-                ),
-            )
-            .with_help("add a discriminator, or a const property that tells the variants apart"),
+            diagnostic.with_help(
+                "add a discriminator, or a const property that tells the variants apart",
+            ),
             &target.doc_pointer(),
         );
         let n = variants.len();
@@ -577,6 +586,24 @@ fn kind_name(shape: &Shape, index: usize) -> Ident {
         _ => return variant_name(index),
     };
     Ident::new(name)
+}
+
+/// Two candidates, one of them an inline string, array or map: the shape of
+/// `oneOf: [X, {type: string}]` and its array and map cousins.
+fn is_nullable_style(variants: &[Candidate]) -> bool {
+    variants.len() == 2
+        && variants.iter().any(|v| {
+            matches!(
+                &v.ty,
+                TypeRef::Inline(
+                    Shape::Primitive {
+                        primitive: Primitive::String { .. },
+                        ..
+                    } | Shape::Array { .. }
+                        | Shape::Map { .. }
+                )
+            )
+        })
 }
 
 /// `Variant<n>` for the member at spec position `index`.

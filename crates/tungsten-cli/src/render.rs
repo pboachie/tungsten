@@ -106,6 +106,32 @@ fn severity_style(severity: Severity) -> (&'static str, &'static str) {
     }
 }
 
+/// The line that stands for the diagnostics of one code left out of the
+/// human output.
+pub fn collapsed_line(code: &str, severity: Severity, more: usize, color: bool) -> String {
+    let p = Paint { color };
+    let (word, tint) = severity_style(severity);
+    format!(
+        "{}: and {} more like the above (`--all-warnings` prints them, `--json` lists every \
+         diagnostic)",
+        p.paint(tint, &format!("{word}[{code}]")),
+        thousands(more)
+    )
+}
+
+/// `1568` as `1,568`.
+pub fn thousands(n: usize) -> String {
+    let digits = n.to_string();
+    let mut out = String::new();
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
+}
+
 /// Render one diagnostic. The result ends with a newline; callers separate
 /// consecutive diagnostics with a blank line.
 pub fn render_diagnostic(d: &Diagnostic, sources: &SourceMap, color: bool) -> String {
