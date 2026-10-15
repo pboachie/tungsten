@@ -91,8 +91,32 @@ formatting; Fable and JavaScript targets untested; plus the C# limits
 (in-memory idempotency store, .NET regex dialect, by-status and intersection
 values as `JsonNode`, OpenID Connect as a bearer token, no CLI or MCP).
 
+- The release dependency audit supports reviewed, scoped and expiring advisory
+  exceptions: entries in the `advisory_exceptions` list of
+  `.github/dependency-policy.json` name an advisory id, the one locked package
+  it applies to, the reason it was accepted and an `expires` date. The audit
+  prints every exception in the release job log, suppresses only the matching
+  advisory, and fails once an entry is past its expiry, so an exception is a
+  time-limited review decision instead of a standing ignore. CONTRIBUTING and
+  SECURITY.md now record that release tags are immutable — a failed release is
+  fixed forward with a new version, never by moving a tag — and that a
+  `workflow_dispatch` dry run (`dry_run: true`) of the release workflow, which
+  runs the same audit, is required on the release commit before the tag is
+  pushed.
+
 ### Changed
 
+- README, the architecture diagram and the `init` help present every
+  supported input alternative instead of positioning tungsten as OpenAPI
+  only: OpenAPI 3.0/3.1, Swagger 2.0, Postman Collection v2.1, saved cURL,
+  `.http`/`.rest` files, HAR 1.2 and endpoint manifests, plus the manual
+  method-and-endpoint path, shown as OR alternatives with each route's
+  conversion path, limits and required review. The README gains a Supported
+  inputs matrix; `assets/architecture.svg` and its accessible description
+  show alternative inputs normalizing to OpenAPI before the frontend; the
+  `init --from` help and the `tungsten-cli` crate description name the
+  accepted inputs. `check`, `generate` and the other project commands still
+  take an initialized project or a single OpenAPI document. (#173)
 - `tungsten report` runs only the emitters of the configured targets. The
   other known targets stay in `coverage.targets` with the new status
   `not_configured` (and, for an `external` target skipped by `--no-external`,
@@ -141,6 +165,16 @@ values as `JsonNode`, OpenID Connect as a bearer token, no CLI or MCP).
 
 ### Fixed
 
+- Release packaging: the aarch64 `gnu` Linux archive needed glibc 2.39 (it was
+  built on `ubuntu-24.04-arm`) while the x86_64 archive needed 2.34, so the
+  same `TUNGSTEN_LIBC=gnu` choice failed on Debian 12, Ubuntu 22.04, RHEL 9
+  and Amazon Linux 2023 only on arm64. Both `gnu` targets now build on the
+  Ubuntu 22.04 runners and share one documented floor, glibc 2.34. The release
+  pipeline extracts the highest `GLIBC_` symbol version from every `gnu`
+  binary and fails the job when it exceeds that floor, the release notes state
+  the floor and that the `musl` archives are static, and `install.sh` checks
+  `ldd` before installing a `gnu` archive and points older systems at the
+  static musl default. The README install section documents all of this.
 - MCP `run_script` on native Windows: the Deno child now receives `SystemRoot`,
   `SYSTEMDRIVE`, `TEMP`, `TMP`, `USERPROFILE`, `PATH` and `PATHEXT` (and nothing
   else from the parent), and Deno is located by file existence plus a `PATHEXT`

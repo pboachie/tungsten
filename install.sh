@@ -15,7 +15,8 @@
 #                                 (<base>/<tag>/<asset>), for mirrors and tests; needs a version
 #   TUNGSTEN_REQUIRE_ATTESTATION  1: fail unless the `gh` CLI verifies the build attestation
 #   TUNGSTEN_NO_ATTESTATION       1: do not look for an attestation at all
-#   TUNGSTEN_LIBC                 Linux archive ABI: musl (default, static) or gnu
+#   TUNGSTEN_LIBC                 Linux archive ABI: musl (default, static) or
+#                                 gnu (dynamically linked; needs glibc 2.34+)
 #
 # The archive is checked against the release's SHA256SUMS before anything is
 # installed. When the GitHub CLI (gh) is available the archive's build
@@ -30,6 +31,41 @@ say() { printf '%s\n' "install.sh: $*" >&2; }
 die() { say "error: $*"; exit 1; }
 
 have() { command -v "$1" >/dev/null 2>&1; }
+
+# The -gnu archives are dynamically linked and need glibc 2.34 or newer; the
+# x86_64 and aarch64 builds share that one floor (the release pipeline enforces
+# it on every built binary). The musl default is static and has no floor.
+gnu_glibc_floor='2.34'
+
+glibc_version() { # print the runtime glibc version, or nothing if undetectable
+  ldd --version 2>/dev/null | awk 'NR == 1 { print $NF }'
+}
+
+version_lt() { # version_lt A B: succeed when version A is older than B
+  awk -v a="$1" -v b="$2" 'BEGIN {
+    na = split(a, A, ".")
+    nb = split(b, B, ".")
+    n = na > nb ? na : nb
+    for (i = 1; i <= n; i++) {
+      x = (i <= na ? A[i] : 0) + 0
+      y = (i <= nb ? B[i] : 0) + 0
+      if (x < y) exit 0
+      if (x > y) exit 1
+    }
+    exit 1
+  }'
+}
+
+check_gnu_glibc_floor() { # refuse a gnu install on a system below the floor
+  if runtime_glibc=$(glibc_version) && [ -n "$runtime_glibc" ]; then
+    if version_lt "$runtime_glibc" "$gnu_glibc_floor"; then
+      die "the gnu archive needs glibc $gnu_glibc_floor or newer; this system reports $runtime_glibc. Keep the default musl build (unset TUNGSTEN_LIBC or set TUNGSTEN_LIBC=musl); it is static"
+    fi
+    say "glibc $runtime_glibc detected; the gnu archive needs $gnu_glibc_floor or newer"
+  else
+    say "could not detect the glibc version; the gnu archive needs glibc $gnu_glibc_floor or newer (the musl default is static and always works)"
+  fi
+}
 
 fetch() { # fetch URL DEST ; return 22 for "not found"
   if have curl; then
@@ -114,6 +150,7 @@ main() {
   case "$version" in *[!A-Za-z0-9._+-]*) die "invalid version: $version" ;; esac
 
   target=$(target_triple)
+  case "$target" in *-linux-gnu) check_gnu_glibc_floor ;; esac
   name="tungsten-${version#v}-$target"
   asset="$name.tar.gz"
   work=$(mktemp -d)
