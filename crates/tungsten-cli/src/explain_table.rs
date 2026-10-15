@@ -714,7 +714,9 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
          configured target cannot apply it. Only the typescript, python, rust, mcp, webmcp and \
          docs targets declare that support, and an external emitter declares it with \
          `import_policy` in its `--describe` response; generating any other target would \
-         discard the policy, so tungsten refuses that target alone. The other targets are \
+         discard the policy. During input conversion, init refuses unsupported built-in \
+         targets before saving the converted input or project manifests. During generation \
+         of an existing project, tungsten refuses that target alone; other targets are \
          still written, unless `--strict` asks for all or none.",
         "Generate only supported targets: remove the unsupported target from tungsten.yml, or \
          add a supported one with `tungsten init --resume --add-targets typescript,python` \

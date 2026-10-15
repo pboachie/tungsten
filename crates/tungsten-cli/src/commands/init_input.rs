@@ -202,9 +202,15 @@ pub(super) fn omitted_count(dir: &std::path::Path) -> usize {
         .unwrap_or(0)
 }
 
-/// Detect a Swagger document and persist its bounded conversion for the ordinary
-/// compiler. OpenAPI input is left in place so relative references retain meaning.
-pub(super) fn import(args: &mut InitArgs) -> Result<Vec<String>, String> {
+/// A conversion held in memory until setup has checked the selected targets.
+pub(super) struct PreparedImport {
+    document: serde_json::Value,
+    report: Option<serde_json::Value>,
+}
+
+/// Detect and convert an input without writing project files. OpenAPI input is
+/// left in place so relative references retain meaning.
+pub(super) fn import(args: &InitArgs) -> Result<Option<PreparedImport>, String> {
     let source = args.from.clone().or_else(|| {
         [
             "openapi.json",
@@ -218,7 +224,7 @@ pub(super) fn import(args: &mut InitArgs) -> Result<Vec<String>, String> {
         .find(|path| path.is_file())
     });
     let Some(source) = source else {
-        return Ok(vec![]);
+        return Ok(None);
     };
     let mut bytes = Vec::new();
     std::fs::File::open(&source)
@@ -348,7 +354,7 @@ pub(super) fn import(args: &mut InitArgs) -> Result<Vec<String>, String> {
             )
         })?
     } else {
-        return Ok(vec![]);
+        return Ok(None);
     };
     if let Some(paths) = converted
         .get_mut("paths")
@@ -373,6 +379,18 @@ pub(super) fn import(args: &mut InitArgs) -> Result<Vec<String>, String> {
             }
         }
     }
+    Ok(Some(PreparedImport {
+        document: converted,
+        report: import_report,
+    }))
+}
+
+/// Persist a checked conversion using the same exclusive writes as other setup
+/// artifacts. Target capability refusal happens before this function is called.
+pub(super) fn save_import(
+    args: &mut InitArgs,
+    prepared: PreparedImport,
+) -> Result<Vec<String>, String> {
     for name in [
         "tungsten.yml",
         "agent.yml",
@@ -391,13 +409,13 @@ pub(super) fn import(args: &mut InitArgs) -> Result<Vec<String>, String> {
         .open(&destination)
         .map_err(|_| "cannot create converted input; choose a fresh project directory")?;
     file.write_all(
-        serde_json::to_string_pretty(&converted)
+        serde_json::to_string_pretty(&prepared.document)
             .map_err(|_| "cannot encode converted input")?
             .as_bytes(),
     )
     .map_err(|_| "cannot write converted input; inspect partial files before retrying")?;
     let mut files = vec!["imported.openapi.json".to_owned()];
-    if let Some(report) = import_report {
+    if let Some(report) = prepared.report {
         let mut file = std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)

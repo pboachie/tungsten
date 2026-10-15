@@ -11,6 +11,9 @@ changes.
 
 ### Added
 
+- Imported-input setup validates built-in target policy support before saving
+  converted documents or project manifests; unsupported selections return TG0705
+  with supported alternatives instead of leaving an unusable project behind.
 - A bounded Rust/Axum source-declaration API in `tungsten_contract::source_axum`,
   with literal route/type evidence, file/line coverage and explicit unresolved
   constructs. It parses supplied source text without loading modules or running
