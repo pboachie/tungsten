@@ -38,6 +38,7 @@ expect("F# manifest", capture("runtimes/fsharp/Tungsten.Runtime.FSharp.fsproj", 
 expect("Kotlin manifest", capture("runtimes/kotlin/build.gradle.kts", /^version\s*=\s*"([^"]+)"/m));
 expect("Kotlin Java runtime dependency", capture("runtimes/kotlin/build.gradle.kts", /api\("io\.github\.pboachie\.tungsten:tungsten-runtime:([^"]+)"\)/));
 expect("Dart manifest", capture("runtimes/dart/pubspec.yaml", /^version:\s*(\S+)/m));
+expect("Go emitter default", capture("emitters/go/main.go", /const defaultRuntimeVersion\s*=\s*"v([^"]+)"/));
 
 // Identity headers must describe the same runtime as the package metadata.
 for (const [path, pattern] of [

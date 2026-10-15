@@ -11,6 +11,9 @@ changes.
 
 ### Added
 
+- Generated Go SDKs require the published `v0.1.3` runtime module through its
+  `runtimes/go/v0.1.3` nested-module tag, replacing the interim pseudo-version.
+  Runtime version overrides and local source replacements remain supported.
 - Complete the architecture overview with explicit alternative input routes, separate
   optional configuration and all current SDK, CLI, MCP, WebMCP and docs outputs; link
   the reviewed response-contract recipe from the quickstart and gallery. Kotlin
@@ -53,8 +56,7 @@ changes.
 - Prepare compiler/runtime source manifests and identity headers for 0.1.3 in
   lockstep. CI and release preparation check every runtime before building;
   generated SDK defaults require the 0.1.3 runtime capabilities, while explicit
-  runtime overrides remain unchanged. The Go module default retains its
-  resolvable pseudo-version pending a separately published nested-module tag.
+  runtime overrides remain unchanged. Go uses a separately published nested-module tag.
 - Runtime package installation and limits guidance, packaged README/LICENSE
   files, and consistent npm metadata checks.
 - Opt-in `check --audit-contracts` response quality diagnostics for missing JSON
