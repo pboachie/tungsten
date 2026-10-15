@@ -11,6 +11,8 @@ changes.
 
 ### Added
 
+- The container accepts patched zlib updates above its minimum required Alpine
+  version and verifies the installed version; Dependabot checks the root image.
 - Installers detect whether `gh attestation` is available, explain checksum-only
   installation when it is absent, and show verification errors while refusing
   failed attestations. Both scripts honor required/disabled attestation settings
