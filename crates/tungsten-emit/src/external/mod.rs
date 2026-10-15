@@ -126,7 +126,12 @@
 //! not list more than 10000 files (TG0804). The compiler checks every path and writes only inside `out`,
 //! also through symlinks (TG0704). The process itself is not sandboxed: it
 //! runs with the user's privileges like a build script, so only configure
-//! emitters you trust.
+//! emitters you trust. The command starts on every command that emits in
+//! memory, not only on a writing `generate`: `generate --dry-run` and
+//! `--check`, `check --ci`, `diff` and `report` run it too (plain `check`
+//! and `ir dump` do not). `--no-external` (or `TUNGSTEN_NO_EXTERNAL=1`)
+//! skips every `external` target with a TG0807 notice, so a CI job can
+//! validate a manifest it does not trust.
 //!
 //! | Code | Meaning |
 //! |---|---|
@@ -136,6 +141,7 @@
 //! | TG0804 | the response is not valid protocol JSON |
 //! | TG0805 | a file path leaves the output directory or is reserved |
 //! | TG0806 | a diagnostic reported by the emitter |
+//! | TG0807 | the target was skipped: external emitters are off (`--no-external`) |
 
 mod base64;
 mod discover;

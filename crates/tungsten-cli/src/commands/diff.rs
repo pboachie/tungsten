@@ -44,7 +44,7 @@ pub(crate) struct DiffOptions {
     pub semver: bool,
 }
 
-pub(crate) fn run(args: &DiffArgs, env: &CliEnv) -> Report {
+pub(crate) fn run(args: &DiffArgs, env: &CliEnv, no_external: bool) -> Report {
     let mut compiled = input::compile(&args.input.path);
     let mut report = Report::new(CommandName::Diff);
     report.diagnostics = compiled.diagnostics.0.clone();
@@ -57,7 +57,7 @@ pub(crate) fn run(args: &DiffArgs, env: &CliEnv) -> Report {
         Ok(names) => names,
         Err(error) => return report.failed(exit::FAILED, error),
     };
-    let project = Project::of(&args.input.path, env);
+    let project = Project::of(&args.input.path, env).with_no_external(no_external);
     let opts = DiffOptions {
         patches: true,
         semver: args.semver || args.migration,
@@ -167,7 +167,11 @@ pub(crate) fn target_diff(
         semver: None,
     };
     let Some(files) = &emitted.files else {
-        out.push(targets::not_implemented(name, &project.manifest));
+        out.push(if emitted.external_skipped {
+            targets::external_skipped(name, &project.manifest)
+        } else {
+            targets::not_implemented(name, &project.manifest)
+        });
         return diff;
     };
     if emitted.failed() {

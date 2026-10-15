@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
@@ -19,7 +20,9 @@ internal sealed record SseEvent(string Event, string Data, string? Id, long? Ret
 internal sealed class SseParser
 {
     private readonly int max;
-    private string buffer = "";
+    private readonly StringBuilder pending = new();
+    private int lineBytes;
+    private bool pendingCr;
     private bool started;
     private string eventName = "";
     private readonly StringBuilder data = new();
@@ -35,7 +38,33 @@ internal sealed class SseParser
 
     public bool Exceeded { get; private set; }
 
-    private static int Bytes(string s) => Encoding.UTF8.GetByteCount(s);
+    private static int Bytes(ReadOnlySpan<char> s) => Encoding.UTF8.GetByteCount(s);
+
+    /// <summary>Adds chunk[from..to] to the line being read; each fragment is scanned and counted once.</summary>
+    private void Append(string chunk, int from, int to)
+    {
+        if (from >= to)
+        {
+            return;
+        }
+        int n = pending.Length;
+        if (n > 0 && char.IsHighSurrogate(pending[n - 1]) && char.IsLowSurrogate(chunk[from]))
+        {
+            // The pair was counted as two unpaired surrogates (three bytes each); it is four bytes.
+            lineBytes -= 2;
+        }
+        lineBytes += Bytes(chunk.AsSpan(from, to - from));
+        pending.Append(chunk, from, to - from);
+    }
+
+    /// <summary>The line read so far ends: it is parsed and the buffer is emptied.</summary>
+    private void Complete(List<SseEvent> outList)
+    {
+        var text = pending.ToString();
+        pending.Clear();
+        lineBytes = 0;
+        Line(text, outList);
+    }
 
     /// <summary>Feeds decoded text and returns the events it completes. A CR at the end is held back until the next text shows whether an LF follows.</summary>
     public List<SseEvent> Push(string chunk)
@@ -45,59 +74,86 @@ internal sealed class SseParser
         {
             return outList;
         }
-        var text = buffer + chunk;
-        buffer = "";
-        if (!started && text.Length > 0)
+        if (!started && chunk.Length > 0)
         {
             started = true;
-            if (text[0] == '﻿')
+            if (chunk[0] == '\uFEFF')
             {
-                text = text[1..];
+                chunk = chunk[1..];
             }
         }
         int start = 0;
-        for (int i = 0; i < text.Length; i++)
+        if (pendingCr)
         {
-            char c = text[i];
-            if (c != '\n' && c != '\r')
+            if (chunk.Length == 0)
             {
-                continue;
-            }
-            if (c == '\r' && i + 1 == text.Length)
-            {
-                buffer = text[start..];
                 return outList;
             }
-            var line = text[start..i];
-            if (c == '\r' && text[i + 1] == '\n')
-            {
-                i++;
-            }
-            start = i + 1;
-            Line(line, outList);
+            pendingCr = false;
+            Complete(outList);
             if (Exceeded)
             {
                 return outList;
             }
+            if (chunk[0] == '\n')
+            {
+                start = 1;
+            }
         }
-        buffer = text[start..];
-        if (eventBytes + Bytes(buffer) > max)
+        for (int i = start; i < chunk.Length; i++)
+        {
+            char c = chunk[i];
+            if (c != '\n' && c != '\r')
+            {
+                continue;
+            }
+            Append(chunk, start, i);
+            if (c == '\r' && i + 1 == chunk.Length)
+            {
+                // The held CR counts toward the limit: it is the terminator of the line being read.
+                pendingCr = true;
+                lineBytes += 1;
+                CheckLimit();
+                return outList;
+            }
+            Complete(outList);
+            if (Exceeded)
+            {
+                return outList;
+            }
+            if (c == '\r' && chunk[i + 1] == '\n')
+            {
+                i++;
+            }
+            start = i + 1;
+        }
+        Append(chunk, start, chunk.Length);
+        CheckLimit();
+        return outList;
+    }
+
+    /// <summary>The event and the line being read hold more than max bytes: the parser stops.</summary>
+    private void CheckLimit()
+    {
+        if (eventBytes + lineBytes > max)
         {
             Exceeded = true;
-            buffer = "";
+            pending.Clear();
+            lineBytes = 0;
         }
-        return outList;
     }
 
     /// <summary>The stream ended; a held-back CR ends its line, the rest is discarded.</summary>
     public List<SseEvent> End()
     {
         var outList = new List<SseEvent>();
-        if (!Exceeded && buffer.EndsWith('\r'))
+        if (!Exceeded && pendingCr)
         {
-            Line(buffer[..^1], outList);
+            Complete(outList);
         }
-        buffer = "";
+        pendingCr = false;
+        pending.Clear();
+        lineBytes = 0;
         eventName = "";
         data.Clear();
         hasData = false;

@@ -64,6 +64,7 @@ use crate::ctx::{Ctx, child, pointer};
 use crate::names::disambiguate_all;
 use crate::operations::{BuiltOp, METHODS};
 use crate::params::{path_template, split_query};
+use crate::pathitem::PathItem;
 
 /// Name of the resource holding operations with no literal path segment.
 const ROOT_RESOURCE: &str = "root";
@@ -228,10 +229,10 @@ impl PathIndex {
         let mut paths = vec![];
         if let Some(Value::Object(map)) = cx.get(&paths_at) {
             for path in map.keys() {
-                let item = cx.deref_value(&child(&paths_at, path)).map(|(_, v)| v);
+                let item = PathItem::resolve(cx, &child(&paths_at, path));
                 let methods = METHODS
                     .iter()
-                    .filter(|(word, _)| item.is_some_and(|i| i.get(*word).is_some()))
+                    .filter(|(word, _)| item.as_ref().is_some_and(|i| i.operation(word).is_some()))
                     .map(|(_, m)| *m)
                     .collect();
                 paths.push((path_template(path).segments, methods));

@@ -194,6 +194,8 @@ the platform.
 
 More examples: [tungsten on six public APIs](examples/showcase/README.md) (the public OpenAPI descriptions of Stripe, GitHub, Twilio, OpenAI, Kubernetes and Discord): what `tungsten check` finds, MCP listing sizes, and generated SDK code in TypeScript, Python and Rust, reproducible with one script. [`examples/external-emitter-markdown`](examples/external-emitter-markdown) shows how to write an external emitter.
 
+An `external:` target in `tungsten.yml` names a command that tungsten starts as a process, unsandboxed and with your privileges. It runs on every command that produces output in memory, not only on a writing `generate`: `generate --dry-run` and `--check`, `check --ci`, `diff` and `report` run it too (plain `check` and `ir dump` do not). A CI job that runs `tungsten check --ci` on pull requests therefore executes whatever the pull request puts in `tungsten.yml`. Pass `--no-external` or set `TUNGSTEN_NO_EXTERNAL=1` to skip external targets (reported as TG0807) when the manifest is not trusted.
+
 ## Browser WebMCP
 
 Add a browser target alongside your TypeScript SDK:
@@ -259,13 +261,13 @@ tungsten [--json] <command>
 | Command | Purpose |
 |---|---|
 | `init` | Write project manifests (`--from`, `--dir`, `--name`, `--targets`, `--force`); `--targets webmcp` includes a linked TypeScript SDK |
-| `check` | Validate the manifests and specs and report diagnostics (`--ci`, `--strict`) |
+| `check` | Validate the manifests and specs and report diagnostics (`--ci`, `--strict`); `--ci` runs the emitters in memory, external ones included (`--no-external` skips them) |
 | `generate` | Generate every configured target (`--target`, `--dry-run`, `--check`, `--force`, `--strict`) |
 | `ir dump` | Write the IR as JSON (`--out`, `--compact`) |
 | `explain` | Explain a diagnostic code (`TG0201`), an operation or a type |
 | `schema` | Print a JSON Schema: `tungsten`, `agent`, `ir`, `cli-output`, `external-emitter`, `sdk-descriptors`, `tool-catalog` |
 | `mock` | Serve a mock of the API from the IR (`--port`, `--seed`, `--gate`) |
-| `report` | Coverage, safety matrix, token budgets and diagnostics, as text, JSON or one static HTML file (`--html`) |
+| `report` | Coverage, safety matrix, token budgets and diagnostics, as text, JSON or one static HTML file (`--html`); only configured targets run, `--all-targets` runs every known emitter |
 | `diff` | Show regeneration changes; `--semver` classifies the API surface, `--migration` adds upgrade actions and runtime requirement review |
 | `lsp` | Serve diagnostics, completion, hover, go-to-definition and symbols for `tungsten.yml`, `agent.yml` and overlays to an editor over stdio (`--config`) |
 | `doctor` | Report external tools; pass a project path and `--strict` to fail when its required tools are missing or too old |

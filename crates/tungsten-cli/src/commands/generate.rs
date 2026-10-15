@@ -39,9 +39,18 @@ pub(crate) struct Project {
     /// Where external emitters are looked up: the environment's search
     /// path, by default the process `PATH`.
     pub search_path: OsString,
+    /// `--no-external` / `TUNGSTEN_NO_EXTERNAL`: `external` targets are
+    /// skipped instead of started as processes.
+    pub no_external: bool,
 }
 
 impl Project {
+    /// This project with external emitters skipped (`no_external`) or run.
+    pub fn with_no_external(mut self, no_external: bool) -> Project {
+        self.no_external = no_external;
+        self
+    }
+
     /// The manifest's directory as a working directory for a child process
     /// (`.` when the manifest is named without a directory).
     pub fn working_dir(&self) -> PathBuf {
@@ -76,6 +85,7 @@ impl Project {
                 .clone()
                 .or_else(|| std::env::var_os("PATH"))
                 .unwrap_or_default(),
+            no_external: false,
         }
     }
 }
@@ -103,6 +113,9 @@ pub(crate) struct Emitted {
     /// The agent tools the target serves (tool name to operation id or
     /// macro name), recorded in its API surface snapshot.
     pub tools: BTreeMap<String, String>,
+    /// An `external` target whose emitter was not started because external
+    /// emitters are off (`--no-external`); `files` is `None` then.
+    pub external_skipped: bool,
 }
 
 impl Emitted {
@@ -136,8 +149,11 @@ pub(crate) fn emit_target(compiled: &Compiled, ir: &Ir, project: &Project, name:
 }
 
 /// [`emit_target`] for a run that writes: with `live`, the MCP target may
-/// call its embedding provider (everything else never touches a network or
-/// starts a process, so `--check`, `--dry-run`, `diff` and `report` do not).
+/// call its embedding provider. Built-in emitters never touch a network or
+/// start a process. An `external` target does start its command, on every
+/// command that emits (`generate` in any mode, `check --ci`, `diff`,
+/// `report`), unless the project has external emitters off
+/// (`--no-external`).
 pub(crate) fn emit_target_live(
     compiled: &Compiled,
     ir: &Ir,
@@ -154,17 +170,26 @@ pub(crate) fn emit_target_live(
             files: Some(FileSet::new()),
             diagnostics,
             tools: BTreeMap::new(),
+            external_skipped: false,
         };
     }
 
     let Some(emitter) = targets::emitter(name) else {
         return match tungsten_config::external_target(&cfg.options) {
+            Ok(Some(_)) if project.no_external => Emitted {
+                cfg,
+                files: None,
+                diagnostics: Diagnostics::new(),
+                tools: BTreeMap::new(),
+                external_skipped: true,
+            },
             Ok(Some(external)) => emit_external(ir, project, cfg, &external),
             _ => Emitted {
                 cfg,
                 files: None,
                 diagnostics: Diagnostics::new(),
                 tools: BTreeMap::new(),
+                external_skipped: false,
             },
         };
     };
@@ -176,6 +201,7 @@ pub(crate) fn emit_target_live(
         cfg,
         files: Some(files),
         diagnostics,
+        external_skipped: false,
     }
 }
 
@@ -252,6 +278,7 @@ fn emit_external(
         files: Some(out.files),
         diagnostics: out.diagnostics,
         tools: out.tools,
+        external_skipped: false,
     }
 }
 
@@ -299,6 +326,7 @@ pub(crate) fn run_targets(
             files,
             diagnostics,
             tools,
+            external_skipped,
         } = e;
         let mut report = TargetReport {
             target: name.clone(),
@@ -312,9 +340,11 @@ pub(crate) fn run_targets(
             stale: vec![],
         };
         let Some(files) = files else {
-            outcome
-                .diagnostics
-                .push(targets::not_implemented(name, &project.manifest));
+            outcome.diagnostics.push(if external_skipped {
+                targets::external_skipped(name, &project.manifest)
+            } else {
+                targets::not_implemented(name, &project.manifest)
+            });
             outcome.reports.push(report);
             continue;
         };
@@ -404,7 +434,7 @@ pub(crate) fn exit_code(diagnostics: &[Diagnostic], outcome: &Outcome) -> i32 {
     }
 }
 
-pub(crate) fn run(args: &GenerateArgs, env: &CliEnv) -> Report {
+pub(crate) fn run(args: &GenerateArgs, env: &CliEnv, no_external: bool) -> Report {
     let mut compiled = input::compile(&args.input.path);
     let mut report = Report::new(CommandName::Generate);
     report.diagnostics = compiled.diagnostics.0.clone();
@@ -433,7 +463,7 @@ pub(crate) fn run(args: &GenerateArgs, env: &CliEnv) -> Report {
             force: args.force,
         }
     };
-    let project = Project::of(&args.input.path, env);
+    let project = Project::of(&args.input.path, env).with_no_external(no_external);
     let outcome = run_targets(&compiled, ir, &project, &names, mode, args.strict);
     report
         .diagnostics

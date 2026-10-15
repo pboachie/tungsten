@@ -200,6 +200,12 @@ pub(crate) fn run(args: &InitArgs, json: bool, env: &CliEnv) -> Report {
             .any(|name| name == "import-report.json")
         {
             report.human.push_str("Import report saved: review omitted scripts, authentication and missing origin configuration in import-report.json.\n");
+            let omitted = super::init_input::omitted_count(&selected.dir);
+            if omitted > 0 {
+                report.human.push_str(&format!(
+                    "Omitted {omitted} unsupported Postman item(s); nothing was inferred from them. Each omission lists its code, location and reason under \"omitted\" in import-report.json.\n"
+                ));
+            }
         }
     }
     if report.exit != exit::OK || !selected.generate {
@@ -242,6 +248,8 @@ pub(crate) fn run(args: &InitArgs, json: bool, env: &CliEnv) -> Report {
             strict: selected.strict,
         },
         env,
+        // The wizard writes built-in targets only; never start a command.
+        true,
     );
     report.exit = generated.exit;
     report.error = generated.error;

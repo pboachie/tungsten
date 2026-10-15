@@ -261,6 +261,10 @@ pub mod codes {
         ("TG0508", "malformed operation element ignored"),
         ("TG0509", "unsupported security scheme ignored"),
         (
+            "TG0510",
+            "path item field defined both beside its $ref and in the target",
+        ),
+        (
             "TG0530",
             "event stream declares no schema; events decoded as any JSON value",
         ),
@@ -450,6 +454,10 @@ pub mod codes {
             "external emitter returned a path outside the output directory",
         ),
         ("TG0806", "diagnostic reported by an external emitter"),
+        (
+            "TG0807",
+            "external target not run: external emitters are off (--no-external)",
+        ),
         ("TG0901", "generated output is stale relative to its inputs"),
         (
             "TG0902",
@@ -656,6 +664,7 @@ pub mod codes {
             "PM007",
             "duplicate Postman operations mix unknown and explicit authentication",
         ),
+        ("PM008", "every Postman request was omitted as unsupported"),
         ("TC001", "request evidence exceeds the byte limit"),
         ("TC002", "request evidence is not valid JSON"),
         (

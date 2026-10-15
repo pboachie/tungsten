@@ -193,6 +193,15 @@ fn detect_root(text: &str) -> Result<serde_json::Value, String> {
         .unwrap_or(serde_json::Value::Null))
 }
 
+/// Number of items a Postman import omitted, from the saved `import-report.json`.
+pub(super) fn omitted_count(dir: &std::path::Path) -> usize {
+    std::fs::read(dir.join("import-report.json"))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+        .and_then(|report| report.pointer("/source/omitted")?.as_array().map(Vec::len))
+        .unwrap_or(0)
+}
+
 /// Detect a Swagger document and persist its bounded conversion for the ordinary
 /// compiler. OpenAPI input is left in place so relative references retain meaning.
 pub(super) fn import(args: &mut InitArgs) -> Result<Vec<String>, String> {

@@ -18,7 +18,8 @@ module Tungsten
 
       def initialize(max)
         @max = max
-        @buffer = +""
+        @line = String.new(encoding: Encoding::BINARY)
+        @pending_cr = false
         @started = false
         reset_event
         @id = nil
@@ -29,34 +30,45 @@ module Tungsten
       def exceeded? = @exceeded
 
       # Feed decoded text; the events it completes. A CR at the end is held
-      # back until the next text shows whether an LF follows.
+      # back until the next text shows whether an LF follows. Each fragment
+      # is scanned once and joined to the line being read only by byte
+      # appends, so a long line delivered in small pieces costs linear time.
       def push(chunk)
         return [] if @exceeded
 
-        text = @buffer + chunk
-        @buffer = +""
-        if !@started && !text.empty?
+        if !@started && !chunk.empty?
           @started = true
-          text = text.delete_prefix("\uFEFF")
+          chunk = chunk.delete_prefix("\uFEFF")
         end
         out = []
-        bytes = text.b
         start = 0
+        bytes = chunk.b
+        if @pending_cr
+          return out if bytes.empty?
+
+          @pending_cr = false
+          complete(out)
+          return out if @exceeded
+
+          start = 1 if bytes.getbyte(0) == 10
+        end
+        size = bytes.bytesize
         while (i = bytes.byteindex(/[\r\n]/n, start))
+          @line << bytes.byteslice(start, i - start)
           cr = bytes.getbyte(i) == 13
-          if cr && i + 1 == bytes.bytesize
-            @buffer = utf8(bytes.byteslice(start..))
+          if cr && i + 1 == size
+            # The held CR counts toward the limit: it is the terminator of the line being read.
+            @pending_cr = true
+            check_limit(1)
             return out
           end
-          line(utf8(bytes.byteslice(start, i - start)), out)
-          start = cr && bytes.getbyte(i + 1) == 10 ? i + 2 : i + 1
+          complete(out)
           return out if @exceeded
+
+          start = cr && bytes.getbyte(i + 1) == 10 ? i + 2 : i + 1
         end
-        @buffer = utf8(bytes.byteslice(start..) || "")
-        if @event_bytes + @buffer.bytesize > @max
-          @exceeded = true
-          @buffer = +""
-        end
+        @line << bytes.byteslice(start, size - start)
+        check_limit(0)
         out
       end
 
@@ -64,8 +76,9 @@ module Tungsten
       # discarded.
       def finish
         out = []
-        line(@buffer.delete_suffix("\r"), out) if !@exceeded && @buffer.end_with?("\r")
-        @buffer = +""
+        complete(out) if !@exceeded && @pending_cr
+        @pending_cr = false
+        @line.clear
         reset_event
         out
       end
@@ -73,6 +86,22 @@ module Tungsten
       private
 
       def utf8(bytes) = bytes.dup.force_encoding(Encoding::UTF_8)
+
+      # The event and the line being read (plus `extra` bytes) hold more than
+      # `max` bytes: the parser stops.
+      def check_limit(extra)
+        return unless @event_bytes + @line.bytesize + extra > @max
+
+        @exceeded = true
+        @line.clear
+      end
+
+      # The line read so far ends: it is parsed and the buffer is emptied.
+      def complete(out)
+        text = utf8(@line)
+        @line.clear
+        line(text, out)
+      end
 
       def reset_event
         @event = ""
