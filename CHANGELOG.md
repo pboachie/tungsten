@@ -11,6 +11,9 @@ changes.
 
 ### Added
 
+- Runtime package installation and limits guidance, packaged README/LICENSE
+  files, and consistent npm metadata checks.
+
 - Imported specs (Postman, cURL, `.http`, HAR and endpoint manifests): a
   target that cannot enforce imported-operation policy (Java, C#, Kotlin, Ruby,
   Dart and the other SDK targets) now fails alone; without `--strict` the
