@@ -263,6 +263,31 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
         "Fetch once online and retain both source.lock.json and its content file for offline use. Inspect permissions and unexpected cache entries before retrying.",
     ),
     e(
+        "TG0130",
+        "The Git input reference has an unsupported transport, URL credentials, query, invalid ref or unsafe subpath. Git authentication stays in the credential helper or environment.",
+        "Use git+https://host/owner/repository@ref#path. Local hermetic inputs may use git+file:///absolute/repository@ref#path. Do not put secrets in the reference.",
+    ),
+    e(
+        "TG0131",
+        "Git could not start, acquire the repository or resolve the ref to one commit. Raw Git stderr is discarded so credential helpers and servers cannot leak credentials into diagnostics.",
+        "Install Git, verify access and credentials, and use a full refs/heads/... or refs/tags/... name when branch/tag names conflict. Use --offline with a previously verified pin.",
+    ),
+    e(
+        "TG0132",
+        "Git acquisition exceeded its time, file, byte or process-output budget, or encountered a symlink, submodule or unsafe repository path. Only regular files are materialized and nothing is checked out or executed.",
+        "Narrow #subpath to the contract directory, select a smaller repository, or acquire a single document over HTTP(S).",
+    ),
+    e(
+        "TG0133",
+        "The Git source lock or its materialized files are missing, invalid, modified, symlinked or not writable. Every reused content file is SHA256-verified.",
+        "Restore the pinned cache from a trusted copy or re-import into a fresh project. Retain .tungsten-inputs with the same access controls as the original source for offline use.",
+    ),
+    e(
+        "TG0134",
+        "Discovery found zero or multiple supported documents under the selected repository subpath. Tungsten lists candidates and does not choose one implicitly.",
+        "Append #path to select exactly one OpenAPI, Swagger, Postman, HAR, saved request or JSON Schema endpoint manifest document.",
+    ),
+    e(
         "TG0201",
         "A `$ref` points at a location that does not exist: the JSON Pointer names a missing \
          member, or the referenced file has no such path.",
