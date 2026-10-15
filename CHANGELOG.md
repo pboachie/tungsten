@@ -11,6 +11,8 @@ changes.
 
 ### Added
 
+- Dedicated TG0808 diagnostics explain when an external emitter lacks imported-operation
+  policy enforcement; protocol-1 emitters remain compatible with ordinary projects.
 - Git input references (`git+https://...@ref#path`) with bounded shallow
   acquisition, deterministic document discovery, commit/content pins and verified
   offline reuse through the existing input and importer flows.
