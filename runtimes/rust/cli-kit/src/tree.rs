@@ -197,6 +197,15 @@ fn leaf_command(
                 .long("all")
                 .action(ArgAction::SetTrue)
                 .help("Fetch every page and print one array of the items"),
+        )
+        .arg(
+            Arg::new("max-pages")
+                .long("max-pages")
+                .value_name("N")
+                .action(ArgAction::Set)
+                .requires("all")
+                .value_parser(clap::value_parser!(u32).range(1..))
+                .help("With --all, stop after N pages and say so when more remain (default: no limit)"),
         );
     }
     if safety != Safety::ReadOnly {

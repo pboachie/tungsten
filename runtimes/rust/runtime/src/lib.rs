@@ -95,6 +95,7 @@ pub use oauth::{
     AuthorizationUrlParams, ExchangeCodeParams, MemoryTokenStore, OAuthFlow, Pkce, StoredToken,
     TokenInfo, TokenStore, generate_pkce, pkce_challenge,
 };
+pub use pages::MAX_PAGES_REACHED;
 pub use stream::{
     DEFAULT_MAX_COLLECT_BYTES, DEFAULT_MAX_COLLECT_TIME, DEFAULT_MAX_RECONNECTS,
     DEFAULT_RECONNECT_MAX, EventHandlers, EventStream, Folded, StreamEvent, StreamResult,
