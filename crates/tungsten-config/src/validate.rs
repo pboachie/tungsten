@@ -20,6 +20,7 @@ pub const KNOWN_TARGETS: &[&str] = &[
     "csharp",
     "dart",
     "docs",
+    "fsharp",
     "java",
     "kotlin",
     "mcp",

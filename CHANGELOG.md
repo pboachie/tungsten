@@ -11,6 +11,23 @@ changes.
 
 ### Added
 
+- `--no-external` (global; also `TUNGSTEN_NO_EXTERNAL=1`) skips every
+  `external` target instead of starting its command, with an informational
+  TG0807 notice, so CI can run `check --ci`, `report`, `diff` and `generate`
+  over a manifest it does not trust. Without it nothing changes. SECURITY.md,
+  the README, the `targets` description in the `tungsten.yml` schema and the
+  `check --ci` help now say that `external` commands run on every command that
+  emits in memory (`generate --dry-run` and `--check`, `check --ci`, `diff`,
+  `report`); the source comment that said otherwise is corrected.
+- `report --all-targets` runs the emitter of every known target, as `report`
+  used to.
+- Postman import omits unsupported requests and folders per item instead of
+  failing the whole collection: non-raw or non-JSON bodies, non-JSON saved
+  responses, unsupported auth helpers, pre-request scripts and unresolved or
+  dynamic variables. Each omission is listed under `omitted` (code, JSON
+  pointer, reason) in `import-report.json`, and `init --from` prints the
+  omitted count. A collection with no importable request fails with PM008;
+  PM001 budgets and PM002 schema errors still fail the import.
 - A Dart SDK target, `dart`: a pub package with final model classes that
   decode and encode themselves, sealed unions, `Future` methods returning
   `Result<T>`, `Stream` pages and `EventStream<T>` streams, typed macros and
@@ -44,9 +61,42 @@ changes.
   the Java target's gaps.
 - `ClientOptions.identity()` and `withIdentity(...)` in the Java runtime
   (additive), so a layer on top of it reports its own runtime identity.
+- F# SDK target `fsharp` (short form `fs`), a built-in emitter over the .NET
+  runtime. It generates records, discriminated unions for enums and unions
+  with strict and lenient generated JSON codecs, `Task<Result<'T, Diagnostic>>`
+  methods for operations, previews, pages and streams, typed macros and a
+  client, with an explicit compile order. Options: `package_id`, `namespace`,
+  `version`, `runtime`, `runtime_path` and `csharp_runtime_path`.
+  Diagnostics TG1080 to TG1085, each with `tungsten explain` text.
+- `runtimes/fsharp` (`Tungsten.Runtime.FSharp`, net10.0): the F# layer over
+  `runtimes/csharp` with the F# identity, `Patch<'T>` as a union, Result and
+  option interop, Task and async-sequence helpers and the JSON helpers of
+  generated records. The public CI job `fsharp runtime build` builds it.
+- `Tungsten.Runtime`: `ClientCore` accepts a `RuntimeIdentity`, so a layer
+  over the runtime can name its own language in `User-Agent` and
+  `X-Tungsten-Runtime`. The C# identity is unchanged.
+
+Known gaps of the F# target: Task API only; net10.0 only; no Fantomas
+formatting; Fable and JavaScript targets untested; plus the C# limits
+(in-memory idempotency store, .NET regex dialect, by-status and intersection
+values as `JsonNode`, OpenID Connect as a bearer token, no CLI or MCP).
 
 ### Changed
 
+- `tungsten report` runs only the emitters of the configured targets. The
+  other known targets stay in `coverage.targets` with the new status
+  `not_configured` (and, for an `external` target skipped by `--no-external`,
+  `skipped`) and their emitter is not run, so `report` on a large spec takes
+  about as long as `generate --dry-run` (the Stripe showcase spec took 3 min
+  18 s against 1.3 s for `check`). The token budgets of `docs` and `mcp` are
+  empty unless that target is configured or `--all-targets` is given.
+- `tungsten check` prints a warning or info code at most three times in the
+  human output, then one line with the number left out, and its summary lists
+  the count per code (`--all-warnings` prints everything; `--json` has always
+  listed every diagnostic and gains an additive `by_code` array). TG0301 for
+  an untagged union of exactly two candidates where one is a plain string,
+  array or map is now info instead of a warning, so `--strict` no longer
+  fails on those; other untagged unions still warn. (#111)
 - The release workflow's PyPI publication job is enabled through trusted
   publishing (repository variable `PYPI_PUBLISH`, `pypi` environment, no
   stored token) and now refuses to upload a `tungsten-runtime` sdist or wheel
@@ -82,6 +132,39 @@ changes.
   HTTP embeddings provider warns when `apiKeyEnv` is used with a plain `http://`
   non-loopback URL and reads at most 1 MiB of response (larger is an embedder
   failure, search falls back to BM25).
+- Java runtime: a `StackOverflowError` raised by `java.util.regex` on a long
+  subject (for example `^(a|a)+$` against 10,000 characters) is treated like a
+  match timeout, so the pattern is reported as not checked and the error no
+  longer escapes `accepts()`.
+- Go emitter: the generated `go.mod` requires a runtime version that resolves
+  for clean consumers. The default `runtime_version` is now the pseudo-version
+  `v0.0.0-20261014151145-1a0ee4def654` of the v0.1.2 release commit, because
+  the nested module has no `runtimes/go/v*` tag and `v0.1.0` did not resolve.
+- Java, C# and Ruby runtimes: the server-sent events parser scans and counts
+  each fragment once and joins a line only when it ends, so a long line
+  delivered in small pieces costs linear instead of quadratic time (the
+  TypeScript, Python, Rust and Go runtimes got this in 0.1.2).
+- Java, C# and Ruby runtimes: pagination rejects cursor and page URL cycles
+  as the other four runtimes do. A cursor or `Link` URL seen before (including
+  the cursor the caller started with and an immediate repeat) delivers the
+  pages fetched so far, then ends with `UNEXPECTED_RESPONSE`; before, a repeated
+  cursor ended the traversal as a success and a longer loop ran on. A repeated
+  request URL is refused before it is sent. Relative `Link` references now
+  resolve against the URL that answered, after same-origin redirects, not the
+  base URL. Callers whose server returned a repeated cursor now get this error
+  instead of a silently truncated result.
+- `doctor` now lists `java`, `mvn`, `dotnet`, `ruby`, `bundle` and `go`, and
+  `doctor --strict` fails when a configured `java`, `csharp`, `ruby` or
+  external `go` target lacks its toolchain (Java 17, .NET 10, Ruby 3.3,
+  Go 1.22) or, for an external `go` target without a command, when
+  `tungsten-emit-go` is not on PATH.
+- A Path Item `$ref` with fields written beside it no longer drops them:
+  sibling operations, `parameters`, `summary`, `description` and `servers`
+  are merged over the referenced item for OpenAPI 3.0 and 3.1 alike, so a
+  spec that lost an operation silently now compiles it (additive to the
+  generated API). A field defined on both sides is the new warning TG0510
+  (the sibling wins; `tungsten explain TG0510`), which fails a run only under
+  `--strict`.
 - Python and Java runtimes bound schema `pattern` matching: strings over 64 KiB
   skip the pattern check, and Java abandons a match after 1 s, treating it as
   not checked.

@@ -67,6 +67,12 @@ pub struct TungstenConfig {
     #[serde(default)]
     pub types: TypesConfig,
     /// Target name → target options, kept as raw JSON and typed by each emitter.
+    /// A target with an `external` key (`true`, or a command) runs that command
+    /// as a process with the user's privileges, not only on `generate` but on
+    /// every command that emits in memory: `generate --dry-run` and `--check`,
+    /// `check --ci`, `diff` and `report`. Plain `check` and `ir dump` never run
+    /// it. Pass `--no-external` or set `TUNGSTEN_NO_EXTERNAL=1` to skip external
+    /// targets, for example in CI over a manifest you do not trust.
     #[serde(default)]
     pub targets: IndexMap<String, serde_json::Value>,
     #[serde(default)]

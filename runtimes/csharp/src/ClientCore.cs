@@ -61,6 +61,7 @@ public sealed partial class ClientCore
     private readonly Func<long>? nowFn;
     private readonly Func<double>? randomFn;
     private readonly ITokenStore tokenStore;
+    private readonly RuntimeIdentity identity = RuntimeIdentity.CSharp;
 
     private readonly ConcurrentDictionary<string, OperationDescriptor> registry = new(StringComparer.Ordinal);
     private readonly object usedTokensLock = new();
@@ -130,8 +131,21 @@ public sealed partial class ClientCore
     {
     }
 
+    /// <summary>
+    /// A client of a descriptor document for an SDK in another .NET language built on this runtime
+    /// (F#), which identifies itself with <paramref name="identity"/> on the wire.
+    /// </summary>
+    public ClientCore(SdkDescriptors descriptors, ClientOptions? options, RuntimeIdentity identity)
+        : this(descriptors.Api, options, descriptors.Operations.Values)
+    {
+        this.identity = identity ?? throw new ClientConfigException("the runtime identity is missing");
+    }
+
     /// <summary>The API descriptor.</summary>
     public ApiDescriptor Api => api;
+
+    /// <summary>Who this client says it is in <c>User-Agent</c> and <c>X-Tungsten-Runtime</c>.</summary>
+    public RuntimeIdentity Identity => identity;
 
     internal ITokenStore TokenStore => tokenStore;
 
@@ -267,9 +281,19 @@ public sealed partial class ClientCore
     // ------------------------------------------------------------ pipeline
 
     /// <summary>The pipeline shared by calls, pages, polls and macro steps.</summary>
-    internal async Task<Result<JsonNode?>.Ok> CallWithAsync(OperationDescriptor op, JsonNode? args, CallOptions opts, string? urlOverride, MacroClaim? claim, CancellationToken ct)
+    internal Task<Result<JsonNode?>.Ok> CallWithAsync(OperationDescriptor op, JsonNode? args, CallOptions opts, string? urlOverride, MacroClaim? claim, CancellationToken ct) =>
+        CallWithAsync(op, args, opts, urlOverride, claim, null, ct);
+
+    /// <summary>As the shared pipeline; with a trace, a request URL used before is refused unsent and the final URL is recorded.</summary>
+    internal async Task<Result<JsonNode?>.Ok> CallWithAsync(OperationDescriptor op, JsonNode? args, CallOptions opts, string? urlOverride, MacroClaim? claim, PageTrace? trace, CancellationToken ct)
     {
         var p = await PrepareAsync(op, args, opts, Purpose.Call, urlOverride, claim, ct).ConfigureAwait(false);
+        if (trace is not null && !trace.Urls.Add(p.Url))
+        {
+            throw new Failure(new Diag(op.Id, Category.UnexpectedResponse)
+                .Remedy("Pagination detected a repeated effective page request URL after authentication. Fix the server's next-page Link before continuing; no repeated request was sent.")
+                .Build());
+        }
         Result<JsonNode?>.Ok response;
         try
         {
@@ -278,6 +302,14 @@ public sealed partial class ClientCore
         catch (Failure f) when (f.Error.Diagnostic.HttpStatus == 401 && p.OAuth is not null)
         {
             response = await ResendRejectedAsync(p, f, opts, ct).ConfigureAwait(false);
+        }
+        if (trace is not null)
+        {
+            trace.LastUrl = p.FinalUrl;
+            if (p.FinalUrl is not null)
+            {
+                trace.Urls.Add(p.FinalUrl);
+            }
         }
         if (opts.Verify && op.Agent.Verify is not null)
         {

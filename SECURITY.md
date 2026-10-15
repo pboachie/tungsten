@@ -67,6 +67,21 @@ vulnerabilities. Python release tools are installed from the hash-locked
 so the build frontend cannot resolve additional unreviewed tools.
 Generated SDK dependency changes also require emitter and runtime review.
 
+## Project manifests and external emitters
+
+A `tungsten.yml` is trusted input in one respect: a target with an `external`
+key names a command that tungsten starts as a process, with the privileges of
+the user running tungsten and no sandbox. The command runs on every command
+that produces output in memory, not only on a writing `generate`: `generate
+--dry-run` and `--check`, `check --ci`, `diff` and `report`. Plain `check`,
+`ir dump` and `explain` never run it. A CI job that runs `tungsten check --ci`
+on pull requests therefore executes whatever command a pull request puts in
+`tungsten.yml`, the same trust model as a Makefile.
+
+To validate a manifest you do not trust, pass `--no-external` or set
+`TUNGSTEN_NO_EXTERNAL=1`: external targets are then skipped with a TG0807
+notice and no command is started.
+
 ## Scope
 
 In scope: the compiler (`crates/`), the runtime libraries (`runtimes/`), and

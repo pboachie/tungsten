@@ -523,14 +523,16 @@ public final class Schema {
             }
         }
 
-        /** True when the pattern matches or cannot be checked (too long, or out of time). */
+        /** True when the pattern matches or cannot be checked (too long, out of time, or too deep to match). */
         private boolean patternFound(Pattern re, String text) {
             if (text.length() > MAX_PATTERN_SUBJECT) {
                 return true;
             }
             try {
                 return re.matcher(new DeadlineSequence(text, System.nanoTime() + PATTERN_TIMEOUT_NANOS)).find();
-            } catch (PatternTimeout e) {
+            } catch (PatternTimeout | StackOverflowError e) {
+                // java.util.regex recurses per repetition of some groups, so a long subject can
+                // overflow the stack; that is as unbounded as a timeout and reads as not checked.
                 return true;
             }
         }

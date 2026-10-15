@@ -73,6 +73,9 @@ internal sealed class Prepared
     public required List<string> HiddenQuery { get; init; }
     public required SecretSet Secrets { get; init; }
     public string? OAuth { get; set; }
+
+    /// <summary>The URL that answered, after any followed redirect.</summary>
+    public string? FinalUrl { get; set; }
 }
 
 /// <summary>Query manipulation on URL texts (URLSearchParams semantics).</summary>
@@ -1059,10 +1062,10 @@ public sealed partial class ClientCore
         }
         var apiName = string.IsNullOrEmpty(api.Name) ? "api" : api.Name;
         var apiVersion = string.IsNullOrEmpty(api.Version) ? "0" : api.Version;
-        bag.Set("X-Tungsten-Runtime", $"tungsten-cs/{Version} {apiName}-sdk/{apiVersion}", false);
+        bag.Set("X-Tungsten-Runtime", $"tungsten-{identity.Runtime}/{identity.Version} {apiName}-sdk/{apiVersion}", false);
         bag.Set("X-Tungsten-Operation", op.Id, false);
         var tungsten = string.IsNullOrEmpty(api.TungstenVersion) ? Version : api.TungstenVersion;
-        bag.Set("User-Agent", $"{apiName}-sdk/{apiVersion} tungsten/{tungsten} (csharp)", false);
+        bag.Set("User-Agent", $"{apiName}-sdk/{apiVersion} tungsten/{tungsten} ({identity.Language})", false);
         foreach (var p in op.Params)
         {
             if (p.Role == "constant" && p.In == "header" && p.Constant is not null)

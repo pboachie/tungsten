@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! Diagnostics with stable codes.
 //!
-//! Code ranges: `TG01xx` parsing, `TG02xx` refs and cycles,
-//! `TG03xx` type normalization, `TG04xx` naming, `TG05xx` pagination/auth
-//! inference, `TG06xx` manifests, `TG07xx` emitter limits, `TG08xx`
-//! external emitters, `TG09xx` staleness/CI and overlay suggestions,
-//! `TG10xx` the SDK emitters built on `tungsten_emit::sdk` in blocks of ten:
-//! `TG1000`-`TG1009` the shared SDK plan and descriptor document (reserved),
-//! `TG1010` Java, `TG1020` C#, `TG1030` Kotlin, `TG1040` Swift, `TG1050`
-//! PHP, `TG1060` Ruby, `TG1070` Dart, `TG1080`-`TG1099` reserved for later
+//! Code ranges: `TG01xx` parsing, `TG02xx` refs and cycles, `TG03xx` type
+//! normalization, `TG04xx` naming, `TG05xx` pagination/auth inference,
+//! `TG06xx` manifests, `TG07xx` emitter limits, `TG08xx` external emitters,
+//! `TG09xx` staleness/CI and overlay suggestions, `TG10xx` the SDK emitters
+//! built on `tungsten_emit::sdk` in blocks of ten: `TG1000`-`TG1009` the
+//! shared SDK plan and descriptor document (reserved), `TG1010` Java,
+//! `TG1020` C#, `TG1030` Kotlin, `TG1040` Swift, `TG1050` PHP, `TG1060` Ruby,
+//! `TG1070` Dart, `TG1080` F#, `TG1090`-`TG1099` reserved for later
 //! languages. Within a language block (base B): B+0 invalid target option,
-//! B+1 schema without a native type, B+2 macro not in the canonical form,
-//! B+3 OpenID Connect sent as a bearer token, B+4 success bodies that differ
-//! by status, B+5 discriminated variant without a tag value, B+6 to B+9
+//! B+1 schema without a native type, B+2 macro not in the canonical form, B+3
+//! OpenID Connect sent as a bearer token, B+4 success bodies that differ by
+//! status, B+5 discriminated variant without a tag value, B+6 to B+9
 //! language-specific. The registry of codes lives in [`codes`].
 
 use crate::source::{SourceMap, Span};
@@ -258,6 +258,10 @@ pub mod codes {
         ("TG0508", "malformed operation element ignored"),
         ("TG0509", "unsupported security scheme ignored"),
         (
+            "TG0510",
+            "path item field defined both beside its $ref and in the target",
+        ),
+        (
             "TG0530",
             "event stream declares no schema; events decoded as any JSON value",
         ),
@@ -443,6 +447,10 @@ pub mod codes {
             "external emitter returned a path outside the output directory",
         ),
         ("TG0806", "diagnostic reported by an external emitter"),
+        (
+            "TG0807",
+            "external target not run: external emitters are off (--no-external)",
+        ),
         ("TG0901", "generated output is stale relative to its inputs"),
         (
             "TG0902",
@@ -566,6 +574,30 @@ pub mod codes {
         (
             "TG1075",
             "discriminated union variant without a tag value: the dart target tries variants in order",
+        ),
+        (
+            "TG1080",
+            "invalid fsharp target option; the default is used",
+        ),
+        (
+            "TG1081",
+            "schema has no F# type in the fsharp target; the runtime's JsonNode is used",
+        ),
+        (
+            "TG1082",
+            "macro is not in the canonical form; the fsharp target leaves it out",
+        ),
+        (
+            "TG1083",
+            "OpenID Connect scheme is sent as a bearer token by the fsharp target",
+        ),
+        (
+            "TG1084",
+            "different success bodies by status: the fsharp typed result is the JsonNode",
+        ),
+        (
+            "TG1085",
+            "discriminated union variant without a tag value: the fsharp target tries variants in order",
         ),
     ];
 

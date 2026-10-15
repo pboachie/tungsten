@@ -9,6 +9,13 @@ using System.Threading.Tasks;
 
 namespace Tungsten.Runtime;
 
+/// <summary>The request URLs a link-header pagination has used, and the URL that produced the last page.</summary>
+internal sealed class PageTrace
+{
+    public HashSet<string> Urls { get; } = new(StringComparer.Ordinal);
+    public string? LastUrl { get; set; }
+}
+
 internal sealed class PageState
 {
     public PageState(JsonNode? args)
@@ -22,8 +29,9 @@ internal sealed class PageState
 
     public JsonNode? Raw { get; }
     public string? OverrideUrl { get; set; }
-    public JsonNode? PreviousCursor { get; set; }
-    public bool HasPrevious { get; set; }
+    public HashSet<string> Seen { get; } = new(StringComparer.Ordinal);
+    public PageTrace Trace { get; } = new();
+    public bool Started { get; set; }
     public bool Done { get; set; }
     public TungstenError? PendingError { get; set; }
 }
@@ -46,10 +54,20 @@ public sealed partial class ClientCore
         {
             return null;
         }
+        var style = op.Pagination?.Style;
+        if (!st.Started)
+        {
+            st.Started = true;
+            if (style == "cursor" && st.Args is { } first && first.TryGetPropertyValue(op.ArgName(op.Pagination!.RequestParam ?? ""), out var initial) &&
+                !Json.IsNull(initial) && !(Json.TryString(initial, out var initialText) && initialText.Length == 0))
+            {
+                st.Seen.Add(Json.Canonical(initial));
+            }
+        }
         Result<JsonNode?>.Ok response;
         try
         {
-            response = await CallWithAsync(op, st.Args ?? st.Raw, opts, st.OverrideUrl, claim, ct).ConfigureAwait(false);
+            response = await CallWithAsync(op, st.Args ?? st.Raw, opts, st.OverrideUrl, claim, style == "link_header" ? st.Trace : null, ct).ConfigureAwait(false);
         }
         catch (Failure)
         {
@@ -98,11 +116,9 @@ public sealed partial class ClientCore
                         }
                         bool finished = !string.IsNullOrEmpty(pg.HasMoreField) && Util.GetPathStr(body, response.HasValue, pg.HasMoreField, out var more) &&
                             Json.TryBoolean(more, out var b) && !b;
-                        if (has && !finished && !(st.HasPrevious && Json.Canonical(st.PreviousCursor) == Json.Canonical(cursor)))
+                        if (has && !finished)
                         {
                             next = Json.Copy(cursor);
-                            st.PreviousCursor = Json.Copy(cursor);
-                            st.HasPrevious = true;
                             Json.Put(args, op.ArgName(pg.RequestParam ?? ""), cursor);
                         }
                         break;
@@ -144,11 +160,13 @@ public sealed partial class ClientCore
                         response.Meta.Headers.TryGetValue("link", out var linkHeader);
                         if (Transport.NextLink(linkHeader) is string link)
                         {
-                            var baseText = st.OverrideUrl ?? baseUrl;
+                            var baseText = st.Trace.LastUrl ?? st.OverrideUrl ?? baseUrl;
+                            st.Seen.Add(baseText);
                             if (Uri.TryCreate(baseText, UriKind.Absolute, out var origin) && Uri.TryCreate(origin, link, out var resolved) && Urls.SameOrigin(origin, resolved))
                             {
-                                st.OverrideUrl = resolved.AbsoluteUri;
-                                next = JsonValue.Create(resolved.AbsoluteUri);
+                                var target = resolved.GetComponents(UriComponents.AbsoluteUri & ~UriComponents.Fragment, UriFormat.UriEscaped);
+                                st.OverrideUrl = target;
+                                next = JsonValue.Create(target);
                                 break;
                             }
                             st.PendingError = new TungstenError(new Diag(op.Id, Category.UnexpectedResponse).Status(response.Meta.Status)
@@ -158,6 +176,18 @@ public sealed partial class ClientCore
                         }
                         break;
                     }
+            }
+        }
+        if (next is not null && st.PendingError is null)
+        {
+            var key = style == "link_header" && Json.TryString(next, out var nextUrl) ? nextUrl : Json.Canonical(next);
+            if (!st.Seen.Add(key))
+            {
+                next = null;
+                st.PendingError = new TungstenError(new Diag(op.Id, Category.UnexpectedResponse).Status(response.Meta.Status)
+                    .RequestId(response.Meta.RequestId)
+                    .Remedy("Pagination detected a repeated cursor or page URL. Fix the server's next-page value before continuing.")
+                    .Attempts(response.Meta.Attempts).Build());
             }
         }
         if (CheckItems(op, itemsField, items, response) is Failure f)

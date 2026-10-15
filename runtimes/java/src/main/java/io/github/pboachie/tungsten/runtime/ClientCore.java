@@ -281,7 +281,24 @@ public final class ClientCore {
 
     /** The pipeline shared by calls, pages, polls and macro steps. */
     Result.Ok<Object> callWith(OperationDescriptor op, Object args, CallOptions opts, String urlOverride, MacroClaim claim) {
+        return callWith(op, args, opts, urlOverride, claim, null);
+    }
+
+    /** The request URLs a link-header pagination has used, and the URL that produced the last page. */
+    static final class PageTrace {
+        final java.util.Set<String> urls = new java.util.HashSet<>();
+        String lastUrl;
+    }
+
+    /** As {@link #callWith}; with a trace, a request URL used before is refused unsent and the final URL is recorded. */
+    Result.Ok<Object> callWith(OperationDescriptor op, Object args, CallOptions opts, String urlOverride, MacroClaim claim,
+            PageTrace trace) {
         Prepared p = prepare(op, args, opts, Purpose.CALL, urlOverride, claim);
+        if (trace != null && !trace.urls.add(p.url)) {
+            throw diag(op.id(), Category.UNEXPECTED_RESPONSE)
+                    .remedy("Pagination detected a repeated effective page request URL after authentication. Fix the server's next-page Link before continuing; no repeated request was sent.")
+                    .fail();
+        }
         Result.Ok<Object> response;
         try {
             response = send(p, opts);
@@ -291,6 +308,10 @@ public final class ClientCore {
                 throw e;
             }
             response = resendRejected(p, e, opts);
+        }
+        if (trace != null) {
+            trace.lastUrl = p.finalUrl;
+            trace.urls.add(p.finalUrl);
         }
         if (opts.verify() && op.agent().verify() != null) {
             Verification v = Previews.verify(this, op, p.args, response.hasValue() ? response.value() : Json.ABSENT, opts);
@@ -354,6 +375,8 @@ public final class ClientCore {
         JsonObject args;
         String method;
         String url;
+        /** The URL that answered, after any followed redirect. */
+        String finalUrl;
         String displayUrl;
         Serialize.Headers headers;
         Serialize.Payload payload;
@@ -1310,6 +1333,7 @@ public final class ClientCore {
                         rctx.body(), rctx.hasBody());
                 outcome = Transport.attempt(http, new Transport.Request(target, method, hs, body, attemptTimeout, stream, idle));
             }
+            p.finalUrl = target;
             Classify.Context cctx = new Classify.Context(identity, api, op, p.key, p.hasKey, p.keyHeader, attempts, check);
             TungstenException failure;
             try {

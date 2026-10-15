@@ -136,9 +136,12 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
         "A `oneOf` or `anyOf` has no discriminator, so a value's variant can only be found by \
          trying the candidates in order at runtime. The order is deterministic (most \
          constrained first), but sniffing is slower and can pick the wrong variant when \
-         candidates overlap.",
+         candidates overlap. A union of exactly two candidates where one is a plain string, \
+         array or map (`X` or its id, `X` or a list of `X`) is reported as info instead of a \
+         warning: the two are told apart by JSON kind, so `--strict` does not fail on it.",
         "Add a `discriminator` with a property every variant declares as a `const` or single \
-         enum value.",
+         enum value. `tungsten check` prints a repeated code a few times and then a count; \
+         `--all-warnings` prints all of them and `--json` always lists every one.",
     ),
     e(
         "TG0302",
@@ -278,6 +281,15 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
          field its type requires. Requirements naming it stay in the IR without a scheme.",
         "Describe the credential with a supported scheme, or authenticate those operations \
          through a custom transport.",
+    ),
+    e(
+        "TG0510",
+        "A Path Item combines `$ref` with fields written beside it, and the referenced item \
+         defines the same field: an operation, `summary`, `description`, `servers`, or a \
+         parameter with the same `name` and `in`. Fields only one side defines are merged. \
+         OpenAPI leaves the conflicting ones undefined; tungsten lets the field beside the \
+         `$ref` win, and the message names both pointers.",
+        "Define the field on one side only, or drop it from the shared item.",
     ),
     e(
         "TG0530",
@@ -829,6 +841,15 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
          codes, so look the emitter's code up in the emitter's documentation.",
     ),
     e(
+        "TG0807",
+        "A target in tungsten.yml declares `external`, and tungsten was told not to start \
+         external emitters (`--no-external` or `TUNGSTEN_NO_EXTERNAL=1`), so its command was \
+         not run and the target is skipped. Nothing is generated, compared or reported for it; \
+         the diagnostic is informational and does not fail the run.",
+        "This is the intended result for CI that validates a manifest it does not trust. Run \
+         without the option, on a manifest you trust, to emit or check the target.",
+    ),
+    e(
         "TG0901",
         "A target's output directory differs from what `tungsten generate` would write now: \
          a generated file is missing or has other content, a file of the previous \
@@ -1097,6 +1118,52 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
          in order and decodes the first that accepts the value.",
         "Give every variant a `discriminator.mapping` entry or a `const` tag property.",
     ),
+    e(
+        "TG1080",
+        "An option of the `fsharp` target in tungsten.yml is not valid: `package_id` must be a \
+         NuGet package id, `namespace` a dotted F# namespace (no F# or C# keywords), `version` \
+         and `runtime` versions such as 1.2.3, `runtime_path` and `csharp_runtime_path` \
+         non-empty paths. The generator uses the option's default instead.",
+        "Fix the option under `targets.fsharp` in tungsten.yml, or remove it to keep the default.",
+    ),
+    e(
+        "TG1081",
+        "The F# SDK has no native type for this schema (an allOf whose members cannot be merged \
+         into one record, or an enum whose values mix JSON types), so the typed value is the \
+         .NET runtime's `JsonNode`. The runtime still validates it against the schema.",
+        "Merge the allOf members into one object, or give the enum values a single type, if a \
+         typed F# model is wanted.",
+    ),
+    e(
+        "TG1082",
+        "A macro of the agent manifest is not in the canonical form the SDK runtimes run \
+         (steps over callable operations, references to $input or earlier steps, a known step \
+         kind), so the F# SDK does not include it; the TypeScript SDK reports the same macro as \
+         TG0710.",
+        "Fix the macro in agent.yml at the pointer the diagnostic names.",
+    ),
+    e(
+        "TG1083",
+        "The F# SDK runs on the .NET runtime, which sends an OpenID Connect scheme as a bearer \
+         token. It does not run discovery or obtain tokens itself.",
+        "Configure the scheme with `Credential.Secret(token)` holding an access token you \
+         obtained from the provider.",
+    ),
+    e(
+        "TG1084",
+        "The operation answers different JSON bodies depending on the exact status, so the typed \
+         method's result is the runtime's `JsonNode`; the result's `Meta.Status` tells them \
+         apart.",
+        "Read `Meta.Status` of the result and decode the body with the matching model's \
+         `fromJson`.",
+    ),
+    e(
+        "TG1085",
+        "The union declares a discriminator, but at least one variant has no tag value or is not \
+         a named type, so the F# SDK cannot pick the variant by its tag: it decodes the variants \
+         in the plan's order and takes the first that fits.",
+        "Give every variant a named schema and a discriminator mapping value.",
+    ),
 ];
 
 /// The extended explanation of a code, if one exists.
@@ -1119,7 +1186,7 @@ pub(crate) fn area(code: &str) -> &'static str {
         Some("TG07") => "emitter limits (TG07xx)",
         Some("TG08") => "external emitters (TG08xx)",
         Some("TG09") => "staleness and CI (TG09xx)",
-        Some("TG10") => "SDK emitters: Java, C#, Kotlin, Swift, PHP, Ruby, Dart (TG10xx)",
+        Some("TG10") => "SDK emitters: Java, C#, Kotlin, Swift, PHP, Ruby, Dart, F# (TG10xx)",
         _ => "unassigned range",
     }
 }

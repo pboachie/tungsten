@@ -94,6 +94,7 @@ public sealed partial class ClientCore
                 rctx.Method = method;
                 outcome = await Transport.AttemptAsync(http, new AttemptRequest { Url = target, Method = method, Headers = entries, Body = body, Timeout = attemptTimeout, Stream = stream, Idle = idle }, ct).ConfigureAwait(false);
             }
+            p.FinalUrl = target;
             var cctx = new CallContext { Api = api, Op = op, Key = p.Key, HasKey = p.HasKey, KeyHeader = p.KeyHeader, Attempts = attempts, Check = check };
             TungstenError error;
             try

@@ -34,7 +34,7 @@ use std::sync::Arc;
 
 use clap::Parser;
 use clap::error::ErrorKind as ClapErrorKind;
-use tungsten_core::{Diagnostic, SourceMap};
+use tungsten_core::{Diagnostic, Severity, SourceMap};
 
 use crate::output::{CliError, CliOutput, CommandName, CommandResult, ErrorKind};
 
@@ -106,8 +106,21 @@ pub(crate) struct Report {
     pub error: Option<CliError>,
     /// Human-mode stdout text.
     pub human: String,
+    /// Human mode: show a repeated warning or info code only a few times.
+    pub collapse: Option<Collapse>,
     /// A mock server started by `mock`, served after the report is printed.
     pub serving: Option<tungsten_mock::MockServer>,
+}
+
+/// Which diagnostics the human output may collapse.
+#[derive(Debug)]
+pub(crate) struct Collapse {
+    /// Diagnostics of one code and severity shown in full before the rest
+    /// are summarized.
+    pub limit: usize,
+    /// Parallel to `Report::diagnostics`: false for a diagnostic that must
+    /// always be shown (a real error, as opposed to a promoted warning).
+    pub eligible: Vec<bool>,
 }
 
 impl Report {
@@ -120,6 +133,7 @@ impl Report {
             result: None,
             error: None,
             human: String::new(),
+            collapse: None,
             serving: None,
         }
     }
@@ -292,12 +306,40 @@ fn write_json(stdout: &mut dyn Write, output: &CliOutput) -> std::io::Result<()>
 fn emit_human(report: Report, color: bool, stdout: &mut dyn Write, stderr: &mut dyn Write) -> i32 {
     // Diagnostics and errors go to stderr; failures to write them are not
     // actionable and must not change the exit code.
-    for d in &report.diagnostics {
+    let mut shown: Vec<(&str, Severity, usize)> = vec![];
+    for (i, d) in report.diagnostics.iter().enumerate() {
+        if let Some(c) = &report.collapse
+            && c.eligible.get(i).copied().unwrap_or(false)
+        {
+            let at = match shown
+                .iter()
+                .position(|(code, sev, _)| *code == d.code && *sev == d.severity)
+            {
+                Some(at) => at,
+                None => {
+                    shown.push((&d.code, d.severity, 0));
+                    shown.len() - 1
+                }
+            };
+            shown[at].2 += 1;
+            if shown[at].2 > c.limit {
+                continue;
+            }
+        }
         let _ = writeln!(
             stderr,
             "{}",
             render::render_diagnostic(d, &report.sources, color)
         );
+    }
+    if let Some(c) = &report.collapse {
+        for (code, severity, n) in shown.iter().filter(|(_, _, n)| *n > c.limit) {
+            let _ = writeln!(
+                stderr,
+                "{}\n",
+                render::collapsed_line(code, *severity, n - c.limit, color)
+            );
+        }
     }
     let mut code = report.exit;
     if !report.human.is_empty() && write_or_internal(stdout, &report.human) != exit::OK {
