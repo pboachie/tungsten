@@ -15,6 +15,9 @@ Gem::Specification.new do |spec|
   spec.files = Dir["lib/**/*.rb"] + ["LICENSE", "README.md"]
   spec.require_paths = ["lib"]
   spec.required_ruby_version = ">= 3.3"
+  # Base64 is a bundled gem rather than a default gem from Ruby 3.4 onward.
+  # Declare it so Bundler makes it available to installed consumers.
+  spec.add_dependency "base64", ">= 0.2", "< 1"
   spec.metadata["rubygems_mfa_required"] = "true"
   spec.metadata["source_code_uri"] = "https://github.com/pboachie/tungsten/tree/main/runtimes/ruby"
 end
