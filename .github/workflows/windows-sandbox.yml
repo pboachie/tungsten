@@ -1,0 +1,148 @@
+# Native Windows acceptance; test helpers remain outside public source.
+name: windows sandbox
+
+on:
+  push:
+    branches: [main, "release/**"]
+    paths:
+      - "runtimes/mcp/**"
+      - "runtimes/ts/**"
+      - ".github/workflows/windows-sandbox.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-sandbox-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  windows-sandbox:
+    name: native Windows Deno sandbox
+    if: github.repository == 'pboachie/tungsten' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/'))
+    runs-on: windows-2025
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+          package-manager-cache: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      # Same bounded immutable-helper route as the release bootstrap rehearsal.
+      # The credential exists only in this download step; no source/test process
+      # is started here, and no checkout credentials persist on disk.
+      - name: Fetch the immutable acceptance helper
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.OPS_DISPATCH_TOKEN }}
+          HELPER_SHA: c6bb2004d78e096db025321beb921a681524a107
+        run: |
+          @'
+          import base64, hashlib, json, os, pathlib, re, subprocess
+          sha = os.environ['HELPER_SHA']
+          if not re.fullmatch(r'[0-9a-f]{40}', sha) or not os.environ.get('GH_TOKEN'):
+              raise SystemExit('Immutable helpers require a valid pin and private contents-read access.')
+          root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'windows-sandbox-helpers'
+          root.mkdir()
+          names = (
+              'scripts/check_windows_sandbox.mjs',
+              'runtime-tests/mcp/test/helpers.mjs',
+              'runtime-tests/mcp/package.json',
+              'runtime-tests/mcp/package-lock.json',
+          )
+          for name in names:
+              try:
+                  result = subprocess.run(['gh', 'api', f'repos/pboachie/tungsten-ops/contents/{name}?ref={sha}'], capture_output=True, timeout=60)
+              except (OSError, subprocess.TimeoutExpired):
+                  raise SystemExit('Immutable helper download was unavailable or exceeded its deadline.') from None
+              if result.returncode:
+                  raise SystemExit('Cannot fetch the immutable acceptance files; check the pin and read permission.')
+              try:
+                  item = json.loads(result.stdout)
+                  if item.get('type') != 'file' or item.get('path') != name or item.get('encoding') != 'base64' or not 0 < item.get('size', 0) <= 131072:
+                      raise ValueError()
+                  content = base64.b64decode(''.join(item['content'].split()), validate=True)
+                  if len(content) != item['size']:
+                      raise ValueError()
+                  blob = b'blob ' + str(len(content)).encode('ascii') + b'\0' + content
+                  if hashlib.sha1(blob, usedforsecurity=False).hexdigest() != item.get('sha'):
+                      raise ValueError()
+              except (ValueError, KeyError, TypeError):
+                  raise SystemExit('Immutable helper response was invalid.') from None
+              destination = root / name
+              destination.parent.mkdir(parents=True, exist_ok=True)
+              destination.write_bytes(content)
+          '@ | python -
+          if ($LASTEXITCODE -ne 0) { throw 'Immutable acceptance helper download failed.' }
+      - name: Build matching runtimes and run the native sandbox checks
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ((git rev-parse HEAD).Trim() -cne $env:GITHUB_SHA) { throw 'Public source identity mismatch.' }
+          $root = Join-Path $env:RUNNER_TEMP 'windows-sandbox-helpers'
+          $node = (Get-Command node.exe).Source
+          $npm = Join-Path (Split-Path $node) 'node_modules/npm/bin/npm-cli.js'
+          if (!(Test-Path -LiteralPath $npm)) { throw 'The declared Node installation is missing npm.' }
+          # Clear the environment for every Node/npm/test process, including
+          # runner credential variables. Deno then applies its own narrower
+          # sandbox allowlist and permission checks inside this clean parent.
+          function Invoke-CleanNode([string]$Label, [string[]]$Arguments) {
+            $start = [Diagnostics.ProcessStartInfo]::new($node)
+            $start.WorkingDirectory = $env:GITHUB_WORKSPACE
+            $start.UseShellExecute = $false
+            $start.RedirectStandardOutput = $true
+            $start.RedirectStandardError = $true
+            $start.Environment.Clear()
+            foreach ($name in @('SystemRoot','SystemDrive','WINDIR','PATH','PATHEXT','TEMP','TMP','USERPROFILE','HOME','LOCALAPPDATA','APPDATA','COMSPEC')) {
+              $value = [Environment]::GetEnvironmentVariable($name)
+              if ($value) { $start.Environment[$name] = $value }
+            }
+            foreach ($argument in $Arguments) { $start.ArgumentList.Add($argument) }
+            $child = [Diagnostics.Process]::Start($start)
+            $stdout = $child.StandardOutput.ReadToEndAsync()
+            $stderr = $child.StandardError.ReadToEndAsync()
+            if (!$child.WaitForExit(180000)) {
+              $child.Kill($true)
+              throw "Windows acceptance phase '$Label' exceeded its deadline."
+            }
+            # Raw helper output and npm diagnostics remain runner-local.
+            [IO.File]::WriteAllText((Join-Path $root "$Label.stdout.log"), $stdout.GetAwaiter().GetResult())
+            [IO.File]::WriteAllText((Join-Path $root "$Label.stderr.log"), $stderr.GetAwaiter().GetResult())
+            if ($child.ExitCode -ne 0) { throw "Windows acceptance phase '$Label' failed; details remain runner-local." }
+            $child.Dispose()
+          }
+          Invoke-CleanNode 'ts-install' @($npm,'ci','--prefix','runtimes/ts','--no-audit','--no-fund')
+          Invoke-CleanNode 'ts-build' @($npm,'run','build','--prefix','runtimes/ts')
+          Invoke-CleanNode 'mcp-install' @($npm,'ci','--prefix','runtimes/mcp','--no-audit','--no-fund')
+          Invoke-CleanNode 'mcp-build' @($npm,'run','build','--prefix','runtimes/mcp')
+          Invoke-CleanNode 'deno-install' @($npm,'ci','--prefix',(Join-Path $root 'runtime-tests/mcp'),'--no-audit','--no-fund')
+          $report = Join-Path $root 'receipt.json'
+          Invoke-CleanNode 'sandbox' @((Join-Path $root 'scripts/check_windows_sandbox.mjs'),$env:GITHUB_WORKSPACE,(Join-Path $root 'runtime-tests/mcp/node_modules/deno/deno.exe'),$report)
+          # Never print raw helper JSON or logs. Only reconstruct a bounded
+          # receipt after checking its exact keys, fixed checks and public SHA.
+          try {
+            if (!(Test-Path -LiteralPath $report) -or (Get-Item -LiteralPath $report).Length -gt 4096) { throw 'receipt' }
+            $receipt = Get-Content -LiteralPath $report -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+            $keys = @($receipt.PSObject.Properties.Name | Sort-Object) -join ','
+            if ($keys -cne 'checks,deno,node,platform,public_sha,schema,status') { throw 'fields' }
+            if ($receipt.schema -ne 1 -or $receipt.status -cne 'passed' -or $receipt.platform -cne 'win32' -or $receipt.public_sha -cne $env:GITHUB_SHA) { throw 'identity' }
+            if ($receipt.node -isnot [string] -or $receipt.deno -isnot [string]) { throw 'types' }
+            if ($receipt.node -cnotmatch '^\d+\.\d+\.\d+\z' -or $receipt.deno -cnotmatch '^deno 2\.5\.6 \(stable, release, x86_64-pc-windows-msvc\)\z') { throw 'versions' }
+            $checks = @('startup','parent-rpc','environment-denied','file-denied','network-denied','process-denied','early-exit','timeout')
+            if (@($receipt.checks).Count -ne 8 -or ($receipt.checks -join ',') -cne ($checks -join ',')) { throw 'checks' }
+            $safe = [ordered]@{ schema = 1; status = 'passed'; platform = 'win32'; public_sha = $env:GITHUB_SHA; node = $receipt.node; deno = $receipt.deno; checks = $checks } | ConvertTo-Json -Compress
+          } catch {
+            # PowerShell parse/type diagnostics can echo the raw input. Replace
+            # every receipt error with one fixed message, without inner details.
+            throw 'Invalid bounded Windows acceptance receipt.'
+          }
+          Write-Output $safe
