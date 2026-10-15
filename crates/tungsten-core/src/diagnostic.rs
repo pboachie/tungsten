@@ -9,10 +9,13 @@
 //! shared SDK plan and descriptor document (reserved), `TG1010` Java,
 //! `TG1020` C#, `TG1030` Kotlin, `TG1040` Swift, `TG1050` PHP, `TG1060` Ruby,
 //! `TG1070` Dart, `TG1080` F#, `TG1090`-`TG1099` reserved for later
-//! languages. Within a language block (base B): B+0 invalid target option,
-//! B+1 schema without a native type, B+2 macro not in the canonical form, B+3
-//! OpenID Connect sent as a bearer token, B+4 success bodies that differ by
-//! status, B+5 discriminated variant without a tag value, B+6 to B+9
+//! languages; `TG12xx` request import (saved cURL and `.http`). The
+//! importers, the request-contract engine and the Go emitter use their own
+//! `PM`, `HR`, `TC` and `GO` prefixes. Within a language block (base B):
+//! B+0 invalid target option, B+1 schema without a native type, B+2 macro not
+//! in the canonical form, B+3 OpenID Connect sent as a bearer token, B+4
+//! success bodies that differ by status, B+5 discriminated variant without a
+//! tag value, B+6 to B+9
 //! language-specific. The registry of codes lives in [`codes`].
 
 use crate::source::{SourceMap, Span};
@@ -319,6 +322,10 @@ pub mod codes {
             "output path leaves the output directory or is reserved",
         ),
         (
+            "TG0705",
+            "target does not declare enforced imported-operation policy support; not generated",
+        ),
+        (
             "TG0710",
             "macro not emitted by the TypeScript SDK (not in the canonical form)",
         ),
@@ -591,9 +598,87 @@ pub mod codes {
             "TG1085",
             "discriminated union variant without a tag value: the fsharp target tries variants in order",
         ),
+        (
+            "TG1201",
+            "saved cURL or .http request could not be imported",
+        ),
+    ];
+
+    /// Codes of the importers (Postman `PM`, HAR `HR`), the request-contract
+    /// engine (`TC`) and the Go emitter (`GO`). They do not carry the `TG`
+    /// prefix; `tungsten explain` reads this table next to [`REGISTRY`].
+    /// Sorted by code.
+    pub const SUBSYSTEM_REGISTRY: &[(&str, &str)] = &[
+        ("GO001", "macro is not emitted by the Go SDK"),
+        (
+            "GO002",
+            "OpenID Connect scheme is sent as a bearer token by the Go SDK",
+        ),
+        (
+            "GO003",
+            "different success bodies by status: the Go typed result is json.RawMessage",
+        ),
+        ("GO004", "invalid go target option"),
+        ("GO005", "the generated Go source is invalid"),
+        (
+            "GO006",
+            "pagination items path does not resolve to an array in the success schema",
+        ),
+        (
+            "HR001",
+            "HAR capture exceeds the byte, nesting or node limit",
+        ),
+        ("HR002", "HAR capture is malformed or unsupported"),
+        ("HR003", "selected HAR origin is absent or noncanonical"),
+        (
+            "HR006",
+            "reviewed HAR route templates are ambiguous or not whole-segment",
+        ),
+        (
+            "PM001",
+            "Postman collection exceeds an import budget or nesting limit",
+        ),
+        ("PM002", "not a Postman Collection v2.1 item tree"),
+        (
+            "PM003",
+            "Postman API key authentication lacks an explicit name or location",
+        ),
+        (
+            "PM004",
+            "Postman dynamic variable cannot be resolved offline",
+        ),
+        (
+            "PM005",
+            "Postman request URL or variable cannot be resolved to a fixed shape",
+        ),
+        ("PM006", "Postman body or response example is not JSON"),
+        (
+            "PM007",
+            "duplicate Postman operations mix unknown and explicit authentication",
+        ),
+        ("TC001", "request evidence exceeds the byte limit"),
+        ("TC002", "request evidence is not valid JSON"),
+        (
+            "TC003",
+            "request evidence or reviewed overrides are invalid",
+        ),
+        (
+            "TC004",
+            "request evidence has an unsupported method or duplicate path placeholders",
+        ),
+        ("TC005", "evidence source id is not an opaque identifier"),
+        ("TC006", "unsupported schema keyword in structural evidence"),
+        (
+            "TC007",
+            "reviewed override uses an unstable parameter index pointer",
+        ),
     ];
 
     pub fn describe(code: &str) -> Option<&'static str> {
-        REGISTRY.iter().find(|(c, _)| *c == code).map(|(_, d)| *d)
+        REGISTRY
+            .iter()
+            .chain(SUBSYSTEM_REGISTRY)
+            .find(|(c, _)| *c == code)
+            .map(|(_, d)| *d)
     }
 }

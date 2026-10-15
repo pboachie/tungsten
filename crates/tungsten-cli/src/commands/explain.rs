@@ -4,7 +4,7 @@
 use std::fmt::Write as _;
 
 use serde::Serialize;
-use tungsten_core::diagnostic::codes::REGISTRY;
+use tungsten_core::diagnostic::codes::{REGISTRY, SUBSYSTEM_REGISTRY};
 use tungsten_ir::{
     Additional, Ir, NamedType, Operation, OperationStatus, Param, Primitive, Shape, StatusMatch,
     StringFormat, TypeRef, UnionStrategy,
@@ -53,19 +53,24 @@ fn finish(mut report: Report, outcome: Result<(ExplainResult, String), CliError>
     }
 }
 
-/// `TG` followed by four digits, in any letter case.
+/// `TG` followed by four digits, or the importer, contract-check and Go
+/// emitter prefixes followed by three, in any letter case.
 fn is_code(target: &str) -> bool {
-    target.len() == 6
-        && target.is_ascii()
-        && target[..2].eq_ignore_ascii_case("TG")
-        && target[2..].bytes().all(|b| b.is_ascii_digit())
+    let bytes = target.as_bytes();
+    let digits = |n: usize| bytes.len() == 2 + n && bytes[2..].iter().all(u8::is_ascii_digit);
+    target.is_ascii()
+        && ((target[..2.min(target.len())].eq_ignore_ascii_case("TG") && digits(4))
+            || (["GO", "HR", "PM", "TC"]
+                .iter()
+                .any(|p| target[..2.min(target.len())].eq_ignore_ascii_case(p))
+                && digits(3)))
 }
 
 pub(crate) fn explain_code(code: &str) -> Result<(ExplainResult, String), CliError> {
-    let Some(&(_, summary)) = REGISTRY.iter().find(|(c, _)| *c == code) else {
-        let prefix = &code[..4];
-        let siblings: Vec<&str> = REGISTRY
-            .iter()
+    let all = || REGISTRY.iter().chain(SUBSYSTEM_REGISTRY);
+    let Some(&(_, summary)) = all().find(|(c, _)| *c == code) else {
+        let prefix = &code[..code.len() - 2];
+        let siblings: Vec<&str> = all()
             .map(|(c, _)| *c)
             .filter(|c| c.starts_with(prefix))
             .collect();

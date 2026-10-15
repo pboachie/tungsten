@@ -76,6 +76,13 @@ values as `JsonNode`, OpenID Connect as a bearer token, no CLI or MCP).
 
 ### Changed
 
+- Breaking (diagnostic code): `tungsten generate` now reports the refusal of a
+  target that cannot apply an enforced imported-operation policy (for example
+  `java` on a Postman-imported project) as the new error TG0705; it was
+  reported as TG0702. TG0702 again means only "target has no emitter in this
+  version; skipped". Tooling that matched TG0702 for this refusal must match
+  TG0705; `tungsten explain TG0705` names the supported targets and the
+  `tungsten init --resume --add-targets` path.
 - The release workflow's PyPI publication job is enabled through trusted
   publishing (repository variable `PYPI_PUBLISH`, `pypi` environment, no
   stored token) and now refuses to upload a `tungsten-runtime` sdist or wheel
@@ -103,6 +110,11 @@ values as `JsonNode`, OpenID Connect as a bearer token, no CLI or MCP).
 
 ### Fixed
 
+- `tungsten explain` now knows every code the importers and the Go emitter
+  emit: PM001-PM007 (Postman), HR001-HR003 and HR006 (HAR), TC001-TC007
+  (request-contract checks), GO001-GO006 (Go emitter) and TG1201 (saved cURL
+  and `.http` input). `tungsten explain PM005` works outside a project, and
+  `tungsten init` importer errors name the `tungsten explain <code>` command.
 - Python and Java runtimes bound schema `pattern` matching: strings over 64 KiB
   skip the pattern check, and Java abandons a match after 1 s, treating it as
   not checked.

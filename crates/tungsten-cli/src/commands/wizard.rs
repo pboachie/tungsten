@@ -174,7 +174,7 @@ pub(crate) fn run(args: &InitArgs, json: bool, env: &CliEnv) -> Report {
     };
     if !refused_targets.is_empty() {
         report.diagnostics.push(tungsten_core::Diagnostic::warning(
-            "TG0702",
+            "TG0705",
             import_policy_warning(&refused_targets),
         ));
     }
