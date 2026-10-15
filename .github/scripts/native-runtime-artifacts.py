@@ -321,11 +321,12 @@ def check_ruby(directory, version):
     if files != expected:
         raise ValueError("Ruby archive content differs from source")
     command = """p = Gem::Package.new(ARGV[0]); p.verify; s = p.spec
-puts JSON.generate(name: s.name, version: s.version.to_s, licenses: s.licenses,
+puts JSON.generate(name: s.name, version: s.version.to_s, release_version: Gem::Version.new(ARGV[1]).to_s, licenses: s.licenses,
  ruby: s.required_ruby_version.to_s, paths: s.require_paths, files: s.files,
  platform: s.platform.to_s, dependencies: s.dependencies.map { |d| [d.name, d.type.to_s, d.requirement.to_s] })"""
     result = subprocess.check_output(
-        ["ruby", "-rrubygems/package", "-rjson", "-e", command, str(gem)], text=True
+        ["ruby", "-rrubygems/package", "-rjson", "-e", command, str(gem), version],
+        text=True,
     )
     spec = json.loads(result)
     if (
@@ -335,7 +336,14 @@ puts JSON.generate(name: s.name, version: s.version.to_s, licenses: s.licenses,
         spec["ruby"],
         spec["paths"],
         spec["platform"],
-    ) != (PACKAGES["ruby"], version, ["Apache-2.0"], ">= 3.3", ["lib"], "ruby"):
+    ) != (
+        PACKAGES["ruby"],
+        spec["release_version"],
+        ["Apache-2.0"],
+        ">= 3.3",
+        ["lib"],
+        "ruby",
+    ):
         raise ValueError(
             "Ruby package identity, license or runtime requirements differ"
         )
