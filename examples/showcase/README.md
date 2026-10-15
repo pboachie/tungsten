@@ -28,12 +28,12 @@ Numbers from tungsten 0.1.2.
 
 | API | Operations | Errors / warnings / infos | MCP listing, discrete (tokens) | MCP listing, progressive (tokens) |
 |---|---:|---:|---:|---:|
-| Stripe | 612 | 0 / 1,626 / 305 | 1,128,102 | 855 |
-| GitHub REST | 1,232 | 0 / 404 / 50 | 1,140,213 | 860 |
+| Stripe | 612 | 0 / 648 / 1,283 | 1,128,102 | 855 |
+| GitHub REST | 1,232 | 0 / 372 / 82 | 1,140,213 | 860 |
 | Twilio | 197 | 0 / 22 / 309 | 207,004 | 865 |
-| OpenAI | 359 | 0 / 196 / 57 | 759,853 | 857 |
+| OpenAI | 359 | 0 / 99 / 154 | 759,853 | 857 |
 | Kubernetes (core/v1) | 248 | 0 / 65 / 0 | 1,507,247 | 863 |
-| Discord | 246 | 0 / 282 / 7 | 410,070 | 858 |
+| Discord | 246 | 0 / 274 / 15 | 410,070 | 858 |
 <!-- showcase:end summary -->
 
 Each row expands below. "Errors / warnings / infos" is what `tungsten check` reports for the description with the manifests in [`apis/`](apis). "MCP listing" is the size of the tool list a server would send to a model: `discrete` lists one tool per operation, `progressive` lists a handful of meta-tools (`search_tools`, `describe_tool`, `invoke`, `preview`, `list_clusters`) that find the operation on demand. Token counts come from tungsten's built-in estimator (`tungsten-estimate-v2`), not from a model's tokenizer: compare them with each other, not with a bill. The discrete figure counts what a server in discrete mode would send for every tool (name, description, input schema, output schema and annotations), so descriptions with large, deeply nested schemas (Stripe's) grow far faster than their operation count.
@@ -42,7 +42,7 @@ Each row expands below. "Errors / warnings / infos" is what `tungsten check` rep
 
 <!-- showcase:begin api-stripe -->
 <details>
-<summary><b>Stripe</b> · 612 operations · 0 errors, 1,626 warnings · MCP listing 1,128,102 to 855 tokens</summary>
+<summary><b>Stripe</b> · 612 operations · 0 errors, 648 warnings · MCP listing 1,128,102 to 855 tokens</summary>
 
 Payments. The public OpenAPI description. The largest description of the six by schema count (about 9,000 types).
 
@@ -55,7 +55,8 @@ tungsten 0.1.2 · stripe · 1 document · 612 operations (612 implemented, 0 pla
   inputs   ../../.cache/specs/stripe.json (OpenAPI 3.0.0)
   refs     1538 schemas · 2064 edges · 7 cycles (120 recursive) · 0 cross-document
   ir       1 namespace · 233 resources · 612 operations · 9338 types · 2 auth schemes
-  result   ok · 0 errors · 1626 warnings
+  result   ok · 0 errors · 648 warnings
+  codes    TG0203 info ×7 · TG0301 warning ×595 · TG0301 info ×978 · TG0304 info ×298 · TG0401 warning ×46 · TG0501 warning ×7
 ```
 
 Diagnostics of that run, by code:
@@ -63,7 +64,8 @@ Diagnostics of that run, by code:
 | Code | Severity | Count | Meaning |
 |---|---|---:|---|
 | `TG0203` | info | 7 | circular $ref through named types (recursion preserved) |
-| `TG0301` | warning | 1,573 | untagged union: runtime will sniff candidates in order |
+| `TG0301` | info | 978 | untagged union: runtime will sniff candidates in order |
+| `TG0301` | warning | 595 | untagged union: runtime will sniff candidates in order |
 | `TG0304` | info | 298 | unknown string format treated as plain string |
 | `TG0401` | warning | 46 | identifier collision disambiguated |
 | `TG0501` | warning | 7 | pagination inferred by heuristic |
@@ -268,7 +270,7 @@ tungsten mock apis/stripe --port 8099
 
 <!-- showcase:begin api-github -->
 <details>
-<summary><b>GitHub REST</b> · 1,232 operations · 0 errors, 404 warnings · MCP listing 1,140,213 to 860 tokens</summary>
+<summary><b>GitHub REST</b> · 1,232 operations · 0 errors, 372 warnings · MCP listing 1,140,213 to 860 tokens</summary>
 
 Repositories, issues, pull requests, organizations. The api.github.com description. The largest by operation count. Operation ids are GitHub's own (`repos/delete`).
 
@@ -281,14 +283,16 @@ tungsten 0.1.2 · github · 1 document · 1232 operations (1232 implemented, 0 p
   inputs   ../../.cache/specs/github.json (OpenAPI 3.0.3)
   refs     994 schemas · 2591 edges · 0 cycles (0 recursive) · 0 cross-document
   ir       1 namespace · 680 resources · 1232 operations · 2724 types · 0 auth schemes
-  result   ok · 0 errors · 404 warnings
+  result   ok · 0 errors · 372 warnings
+  codes    TG0301 warning ×69 · TG0301 info ×32 · TG0302 warning ×15 · TG0304 info ×49 · TG0306 warning ×1 · TG0401 warning ×25 · TG0501 warning ×262 · TG0760 info ×1
 ```
 
 Diagnostics of that run, by code:
 
 | Code | Severity | Count | Meaning |
 |---|---|---:|---|
-| `TG0301` | warning | 101 | untagged union: runtime will sniff candidates in order |
+| `TG0301` | info | 32 | untagged union: runtime will sniff candidates in order |
+| `TG0301` | warning | 69 | untagged union: runtime will sniff candidates in order |
 | `TG0302` | warning | 15 | allOf members conflict and could not be flattened |
 | `TG0304` | info | 49 | unknown string format treated as plain string |
 | `TG0306` | warning | 1 | discriminator could not be applied as written |
@@ -524,6 +528,7 @@ tungsten 0.1.2 · twilio · 1 document · 197 operations (197 implemented, 0 pla
   refs     150 schemas · 43 edges · 0 cycles (0 recursive) · 0 cross-document
   ir       1 namespace · 116 resources · 197 operations · 388 types · 1 auth scheme
   result   ok · 0 errors · 22 warnings
+  codes    TG0304 info ×308 · TG0401 warning ×22 · TG0760 info ×1
 ```
 
 Diagnostics of that run, by code:
@@ -718,7 +723,7 @@ tungsten mock apis/twilio --port 8099
 
 <!-- showcase:begin api-openai -->
 <details>
-<summary><b>OpenAI</b> · 359 operations · 0 errors, 196 warnings · MCP listing 759,853 to 857 tokens</summary>
+<summary><b>OpenAI</b> · 359 operations · 0 errors, 99 warnings · MCP listing 759,853 to 857 tokens</summary>
 
 Models, assistants, files, batches. The published OpenAPI 3.1 description (YAML). OpenAPI 3.1 with streaming responses.
 
@@ -731,7 +736,8 @@ tungsten 0.1.2 · openai · 1 document · 359 operations (359 implemented, 0 pla
   inputs   ../../.cache/specs/openai.yaml (OpenAPI 3.1.0)
   refs     2048 schemas · 3019 edges · 2 cycles (2 recursive) · 0 cross-document
   ir       1 namespace · 153 resources · 359 operations · 2690 types · 2 auth schemes
-  result   ok · 0 errors · 196 warnings
+  result   ok · 0 errors · 99 warnings
+  codes    TG0111 info ×6 · TG0203 info ×2 · TG0301 warning ×54 · TG0301 info ×97 · TG0302 warning ×19 · TG0303 warning ×1 · TG0303 info ×41 · TG0305 info ×7 · TG0401 warning ×13 · TG0501 warning ×12 · TG0760 info ×1
 ```
 
 Diagnostics of that run, by code:
@@ -740,7 +746,8 @@ Diagnostics of that run, by code:
 |---|---|---:|---|
 | `TG0111` | info | 6 | path key carries a query string; its pairs are sent on every call |
 | `TG0203` | info | 2 | circular $ref through named types (recursion preserved) |
-| `TG0301` | warning | 151 | untagged union: runtime will sniff candidates in order |
+| `TG0301` | info | 97 | untagged union: runtime will sniff candidates in order |
+| `TG0301` | warning | 54 | untagged union: runtime will sniff candidates in order |
 | `TG0302` | warning | 19 | allOf members conflict and could not be flattened |
 | `TG0303` | info | 41 | unsupported or unknown schema keyword ignored |
 | `TG0303` | warning | 1 | unsupported or unknown schema keyword ignored |
@@ -994,6 +1001,7 @@ tungsten 0.1.2 · kubernetes · 1 document · 248 operations (248 implemented, 0
   refs     258 schemas · 375 edges · 0 cycles (0 recursive) · 0 cross-document
   ir       1 namespace · 78 resources · 248 operations · 258 types · 1 auth scheme
   result   ok · 0 errors · 65 warnings
+  codes    TG0401 warning ×65
 ```
 
 Diagnostics of that run, by code:
@@ -1206,7 +1214,7 @@ tungsten mock apis/kubernetes --port 8099
 
 <!-- showcase:begin api-discord -->
 <details>
-<summary><b>Discord</b> · 246 operations · 0 errors, 282 warnings · MCP listing 410,070 to 858 tokens</summary>
+<summary><b>Discord</b> · 246 operations · 0 errors, 274 warnings · MCP listing 410,070 to 858 tokens</summary>
 
 Channels, messages, guilds. Discord labels this description a preview of its v10 HTTP API. OpenAPI 3.1.
 
@@ -1219,7 +1227,8 @@ tungsten 0.1.2 · discord · 1 document · 246 operations (246 implemented, 0 pl
   inputs   ../../.cache/specs/discord.json (OpenAPI 3.1.0)
   refs     538 schemas · 1272 edges · 1 cycle (1 recursive) · 0 cross-document
   ir       1 namespace · 132 resources · 246 operations · 870 types · 2 auth schemes
-  result   ok · 0 errors · 282 warnings
+  result   ok · 0 errors · 274 warnings
+  codes    TG0203 info ×1 · TG0301 warning ×100 · TG0301 info ×8 · TG0302 warning ×154 · TG0304 info ×6 · TG0307 warning ×2 · TG0401 warning ×18
 ```
 
 Diagnostics of that run, by code:
@@ -1227,7 +1236,8 @@ Diagnostics of that run, by code:
 | Code | Severity | Count | Meaning |
 |---|---|---:|---|
 | `TG0203` | info | 1 | circular $ref through named types (recursion preserved) |
-| `TG0301` | warning | 108 | untagged union: runtime will sniff candidates in order |
+| `TG0301` | info | 8 | untagged union: runtime will sniff candidates in order |
+| `TG0301` | warning | 100 | untagged union: runtime will sniff candidates in order |
 | `TG0302` | warning | 154 | allOf members conflict and could not be flattened |
 | `TG0304` | info | 6 | unknown string format treated as plain string |
 | `TG0307` | warning | 2 | schema admits no value (empty enum or union) |

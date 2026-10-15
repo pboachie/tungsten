@@ -17,3 +17,4 @@ targets:
   python: { out: ../../.cache/out/kubernetes/python }
   rust: { out: ../../.cache/out/kubernetes/rust }
   docs: { out: ../../.cache/out/kubernetes/docs }
+  mcp: { out: ../../.cache/out/kubernetes/mcp }

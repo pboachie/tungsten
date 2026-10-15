@@ -17,3 +17,4 @@ targets:
   python: { out: ../../.cache/out/openai/python }
   rust: { out: ../../.cache/out/openai/rust }
   docs: { out: ../../.cache/out/openai/docs }
+  mcp: { out: ../../.cache/out/openai/mcp }

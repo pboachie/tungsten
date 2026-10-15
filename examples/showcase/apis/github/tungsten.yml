@@ -17,3 +17,4 @@ targets:
   python: { out: ../../.cache/out/github/python }
   rust: { out: ../../.cache/out/github/rust }
   docs: { out: ../../.cache/out/github/docs }
+  mcp: { out: ../../.cache/out/github/mcp }

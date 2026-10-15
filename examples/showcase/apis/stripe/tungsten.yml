@@ -17,3 +17,4 @@ targets:
   python: { out: ../../.cache/out/stripe/python }
   rust: { out: ../../.cache/out/stripe/rust }
   docs: { out: ../../.cache/out/stripe/docs }
+  mcp: { out: ../../.cache/out/stripe/mcp }

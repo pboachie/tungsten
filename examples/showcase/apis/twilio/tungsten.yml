@@ -17,3 +17,4 @@ targets:
   python: { out: ../../.cache/out/twilio/python }
   rust: { out: ../../.cache/out/twilio/rust }
   docs: { out: ../../.cache/out/twilio/docs }
+  mcp: { out: ../../.cache/out/twilio/mcp }
