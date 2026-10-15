@@ -24,7 +24,7 @@ module Tungsten
 
       # A request ready to send, with its redacted rendering.
       Prepared = Struct.new(:op, :args, :http_method, :url, :display_url, :headers, :body, :key, :key_header, :auth_query,
-                            :hidden_query, :secrets, :oauth, keyword_init: true)
+                            :hidden_query, :secrets, :oauth, :final_url, keyword_init: true)
 
       attr_reader :descriptors, :base_url, :timeout_ms, :max_event_bytes, :max_collect_bytes, :max_collect_ms,
                   :max_reconnects, :reconnect_max_ms, :idle_timeout_ms
@@ -193,15 +193,28 @@ module Tungsten
       end
 
       # The pipeline shared by calls, pages, polls and macro steps.
-      def call_with(op, args, opts, url_override, claim)
+      #
+      # With `page_state` (a link-header pagination) a request URL used
+      # before is refused unsent, and the URL that answered is recorded.
+      def call_with(op, args, opts, url_override, claim, page_state = nil)
         prepared = prepare(op, args, opts, :call, url_override, claim)
         return prepared if prepared.is_a?(Err)
+
+        if page_state && !page_state.request_urls.add?(prepared.url)
+          return Runtime.diag(op.id, "UNEXPECTED_RESPONSE")
+                        .remedy("Pagination detected a repeated effective page request URL after authentication. Fix the server's next-page Link before continuing; no repeated request was sent.").err
+        end
 
         result = send_request(prepared, opts)
         if result.is_a?(Err) && result.error.http_status == 401 && prepared.oauth
           result = resend_rejected(prepared, result, opts)
         end
         return result if result.is_a?(Err)
+
+        if page_state
+          page_state.last_url = prepared.final_url
+          page_state.request_urls << prepared.final_url if prepared.final_url
+        end
 
         if opts.verify && op.agent["verify"]
           return result.with(verification: verify(op, prepared.args, result.raw.nil? ? UNSET : result.raw, opts))
@@ -799,6 +812,7 @@ module Tungsten
               outcome = send_once.call
             end
           end
+          p.final_url = target
           ctx = Classify::CallContext.new(api: @api, op: op, key: p.key, key_header: p.key_header, attempts: attempts, check: check)
           result = classify_response(ctx, p, outcome, rctx, timeout)
           return result unless result.is_a?(Err)
