@@ -452,15 +452,54 @@ fn http_method(method: &str) -> bool {
     .contains(&method)
 }
 
-fn local_items(block: &syn::Block) -> bool {
-    struct Check(bool);
+fn local_shadowing(function: &syn::ItemFn, file: &File<'_>) -> bool {
+    let protected: BTreeSet<_> = file
+        .functions
+        .keys()
+        .chain(file.aliases.iter().filter_map(|(name, path)| {
+            path.strip_prefix("axum::routing::")
+                .filter(|method| http_method(method))
+                .map(|_| name)
+        }))
+        .cloned()
+        .collect();
+    struct Check {
+        protected: BTreeSet<String>,
+        shadowed: bool,
+    }
     impl<'ast> Visit<'ast> for Check {
         fn visit_item(&mut self, _: &'ast Item) {
-            self.0 = true;
+            self.shadowed = true;
+        }
+        fn visit_pat_ident(&mut self, pattern: &'ast syn::PatIdent) {
+            if self.protected.contains(&pattern.ident.to_string()) {
+                self.shadowed = true;
+            }
+            visit::visit_pat_ident(self, pattern);
+        }
+    }
+    let mut check = Check {
+        protected,
+        shadowed: false,
+    };
+    for argument in &function.sig.inputs {
+        if let FnArg::Typed(argument) = argument {
+            check.visit_pat(&argument.pat);
+        }
+    }
+    check.visit_block(&function.block);
+    check.shadowed
+}
+
+fn conditional_function(function: &syn::ItemFn) -> bool {
+    struct Check(bool);
+    impl<'ast> Visit<'ast> for Check {
+        fn visit_attribute(&mut self, attribute: &'ast syn::Attribute) {
+            self.0 |= attribute.path().is_ident("cfg") || attribute.path().is_ident("cfg_attr");
         }
     }
     let mut check = Check(false);
-    check.visit_block(block);
+    check.visit_item_fn(function);
     check.0
 }
 
@@ -996,9 +1035,9 @@ fn import_inner(files: &[SourceFile<'_>], limits: &Limits) -> Result<AxumImport,
             file: &file,
             output: &mut output,
             limits,
-            conditional: conditional(&function.attrs),
+            conditional: conditional_function(function),
             macro_unexpanded: unknown_function_attribute(&function.attrs),
-            scope_shadowed: local_items(&function.block),
+            scope_shadowed: local_shadowing(function, &file),
             nodes: 0,
             overflow: false,
         };
