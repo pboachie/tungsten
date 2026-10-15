@@ -124,6 +124,14 @@ values as `JsonNode`, OpenID Connect as a bearer token, no CLI or MCP).
 
 ### Fixed
 
+- Java runtime: a `StackOverflowError` raised by `java.util.regex` on a long
+  subject (for example `^(a|a)+$` against 10,000 characters) is treated like a
+  match timeout, so the pattern is reported as not checked and the error no
+  longer escapes `accepts()`.
+- Go emitter: the generated `go.mod` requires a runtime version that resolves
+  for clean consumers. The default `runtime_version` is now the pseudo-version
+  `v0.0.0-20261014151145-1a0ee4def654` of the v0.1.2 release commit, because
+  the nested module has no `runtimes/go/v*` tag and `v0.1.0` did not resolve.
 - Java, C# and Ruby runtimes: the server-sent events parser scans and counts
   each fragment once and joins a line only when it ends, so a long line
   delivered in small pieces costs linear instead of quadratic time (the
