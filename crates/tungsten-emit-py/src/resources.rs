@@ -526,7 +526,14 @@ pub(crate) fn client_file(plan: &Plan<'_>, has_macros: bool, header: &str) -> St
     imports.add("__future__", "annotations");
     imports.add("collections.abc", "Mapping");
     imports.add("typing", "Literal");
-    imports.add("typing", "Self");
+    imports.add(
+        if plan.python_compat {
+            "typing_extensions"
+        } else {
+            "typing"
+        },
+        "Self",
+    );
     for n in [
         "AsyncClientCore",
         "AuthConfig",
