@@ -17,6 +17,24 @@ changes.
   A runnable response-contract example
   enriches an untouched specification with reviewed run/job union schemas through
   standard OpenAPI overlays; generated response types and default checks are unchanged.
+- CI builds the compiler and example emitter at their declared Rust minimum,
+  checks the runtime at its own minimum, and rejects locked dependencies or
+  README compiler prerequisites that exceed or disagree with those floors.
+- The container accepts patched zlib updates above its minimum required Alpine
+  version and verifies the installed version; Dependabot checks the root image.
+- Installers detect whether `gh attestation` is available, explain checksum-only
+  installation when it is absent, and show verification errors while refusing
+  failed attestations. Both scripts honor required/disabled attestation settings
+  and replace stale unpublished-release hints with the release listing.
+- A runnable typed Python SSE recipe under `examples/typed-sse`, with an
+  explicit FastAPI response declaration, a reviewed OpenAPI overlay, API-key
+  authentication, sync/async consumers and explicit terminal-event cleanup.
+- HTTP(S) input acquisition for `init --from`, compiler paths and manifest inputs,
+  with bounded downloads, SHA256 source pins in `.tungsten-inputs`, explicit
+  `--refresh-inputs`, verified `--offline` reuse and redacted `--input-header`
+  authentication. Remote entries retain existing reference and import safety rules.
+- Opt-in Python 3.10/3.11 SDK generation with `python_version`, matching
+  package metadata and a Python 3.10-compatible runtime for both model modes.
 - Link the importer guide from the quickstart, including per-format limits and imported-operation review.
 - Imported specs (Postman, cURL, `.http`, HAR and endpoint manifests): a
   target that cannot enforce imported-operation policy (Java, C#, Kotlin, Ruby,

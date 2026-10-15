@@ -3,7 +3,7 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/pboachie/tungsten/main/install.sh | sh
 #   curl -fsSL https://raw.githubusercontent.com/pboachie/tungsten/main/install.sh | sh -s -- --init
-#   sh install.sh [--version v0.1.0] [--dir DIR] [--init]
+#   sh install.sh [--version v0.1.2] [--dir DIR] [--init]
 #
 # Options (flags win over the environment):
 #   --init                        after installing, run the guided `tungsten init` setup;
@@ -15,6 +15,7 @@
 #                                 (<base>/<tag>/<asset>), for mirrors and tests; needs a version
 #   TUNGSTEN_REQUIRE_ATTESTATION  1: fail unless the `gh` CLI verifies the build attestation
 #   TUNGSTEN_NO_ATTESTATION       1: do not look for an attestation at all
+#                                 (cannot be combined with REQUIRE_ATTESTATION=1)
 #   TUNGSTEN_LIBC                 Linux archive ABI: musl (default, static) or
 #                                 gnu (dynamically linked; needs glibc 2.34+)
 #
@@ -111,11 +112,11 @@ latest_tag() {
   url="https://github.com/$repo/releases/latest"
   have curl || die "curl is required to find the latest release; pass --version instead"
   final=$(curl -fsSL --retry 3 -o /dev/null -w '%{url_effective}' "$url") \
-    || die "no release found: $url does not exist yet. Releases are not published until v0.1.0; build from source with: cargo install --git https://github.com/$repo tungsten-cli"
+    || die "no latest release; see https://github.com/$repo/releases; build from source with: cargo install --git https://github.com/$repo tungsten-cli"
   tag=${final##*/}
   case "$tag" in
     v[0-9]*) echo "$tag" ;;
-    *) die "no release found at $url. Releases are not published until v0.1.0; build from source with: cargo install --git https://github.com/$repo tungsten-cli" ;;
+    *) die "no latest release; see https://github.com/$repo/releases; build from source with: cargo install --git https://github.com/$repo tungsten-cli" ;;
   esac
 }
 
@@ -160,7 +161,7 @@ main() {
   rc=0
   fetch "$base/$version/SHA256SUMS" "$work/SHA256SUMS" || rc=$?
   if [ "$rc" -eq 22 ]; then
-    die "no release $version found at $base/$version/ (no SHA256SUMS). Releases are not published until v0.1.0; build from source with: cargo install --git https://github.com/$repo tungsten-cli"
+    die "no release $version (no SHA256SUMS); see https://github.com/$repo/releases; build from source with: cargo install --git https://github.com/$repo tungsten-cli"
   elif [ "$rc" -ne 0 ]; then
     die "could not download $base/$version/SHA256SUMS"
   fi
@@ -208,19 +209,33 @@ main() {
 }
 
 verify_attestation() {
-  [ "${TUNGSTEN_NO_ATTESTATION:-0}" = 1 ] && return 0
+  if [ "${TUNGSTEN_NO_ATTESTATION:-0}" = 1 ]; then
+    [ "${TUNGSTEN_REQUIRE_ATTESTATION:-0}" != 1 ] \
+      || die "TUNGSTEN_NO_ATTESTATION=1 conflicts with TUNGSTEN_REQUIRE_ATTESTATION=1"
+    say "checksum verified; attestation not checked (TUNGSTEN_NO_ATTESTATION=1)"
+    return 0
+  fi
   if [ -n "${TUNGSTEN_RELEASE_BASE_URL:-}" ]; then
+    [ "${TUNGSTEN_REQUIRE_ATTESTATION:-0}" != 1 ] \
+      || die "TUNGSTEN_REQUIRE_ATTESTATION=1 cannot verify a custom release location"
     say "custom release location: skipping the build attestation check"
     return 0
   fi
-  if have gh; then
-    gh attestation verify "$1" --repo "$repo" >/dev/null 2>&1 \
-      || die "the build attestation of $1 could not be verified; nothing was installed"
+  reason='gh is not installed'
+  if have gh && gh attestation --help >"$work/attestation-help.log" 2>&1; then
+    if ! gh attestation verify "$1" --repo "$repo" >"$work/attestation-out.log" 2>"$work/attestation-error.log"; then
+      tail -n 8 "$work/attestation-error.log" >&2
+      die "the build attestation could not be verified; nothing was installed"
+    fi
     say "build attestation verified"
-  elif [ "${TUNGSTEN_REQUIRE_ATTESTATION:-0}" = 1 ]; then
-    die "TUNGSTEN_REQUIRE_ATTESTATION=1 but the gh CLI is not installed"
   else
-    say "gh is not installed: build attestation not checked (checksum only)"
+    if have gh; then
+      reason='gh attestation is unavailable; update GitHub CLI (2.49 or newer)'
+      tail -n 8 "$work/attestation-help.log" >&2
+    fi
+    [ "${TUNGSTEN_REQUIRE_ATTESTATION:-0}" != 1 ] \
+      || die "TUNGSTEN_REQUIRE_ATTESTATION=1 but $reason"
+    say "checksum verified; attestation not checked ($reason)"
   fi
 }
 

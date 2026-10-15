@@ -115,7 +115,10 @@ pub(crate) fn run(args: &CheckArgs, env: &CliEnv, no_external: bool) -> Report {
     } else {
         exit::OK
     };
-    report.human = human(&args.input.path.display().to_string(), &result);
+    report.human = human(
+        &tungsten_openapi::acquire::display_source(&args.input.path.to_string_lossy()),
+        &result,
+    );
     report.diagnostics = diagnostics;
     if !args.all_warnings {
         report.collapse = Some(Collapse {
@@ -198,7 +201,12 @@ fn input_names(compiled: &Compiled) -> Vec<String> {
     compiled
         .config
         .as_ref()
-        .map(|c| c.inputs.iter().map(|i| i.spec.clone()).collect())
+        .map(|c| {
+            c.inputs
+                .iter()
+                .map(|i| tungsten_openapi::acquire::display_source(&i.spec))
+                .collect()
+        })
         .unwrap_or_default()
 }
 

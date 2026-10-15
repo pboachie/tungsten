@@ -32,6 +32,42 @@ env:
   CARGO_INCREMENTAL: "0"
 
 jobs:
+  msrv:
+    name: msrv
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Read and check declared floors
+        id: floors
+        run: python3 .github/scripts/check-msrv.py --toolchains >> "$GITHUB_OUTPUT"
+      - name: Install the declared minimum toolchains
+        env:
+          COMPILER_MSRV: ${{ steps.floors.outputs.compiler }}
+          RUNTIME_MSRV: ${{ steps.floors.outputs.runtime }}
+        run: |
+          rustup toolchain install "$COMPILER_MSRV" "$RUNTIME_MSRV" --profile minimal
+      - name: Reject dependencies above the declared floors
+        run: python3 .github/scripts/check-msrv.py
+      - name: Build the compiler and example at their declared minimum
+        env:
+          COMPILER_MSRV: ${{ steps.floors.outputs.compiler }}
+          EXAMPLE_MSRV: ${{ steps.floors.outputs.example }}
+        run: |
+          cargo +"$COMPILER_MSRV" build --locked --workspace
+          cargo +"$EXAMPLE_MSRV" build --locked --manifest-path examples/external-emitter-markdown/Cargo.toml
+      - name: Check the Rust runtimes at their declared minimum
+        env:
+          RUNTIME_MSRV: ${{ steps.floors.outputs.runtime }}
+        run: cargo +"$RUNTIME_MSRV" check --locked --workspace --manifest-path runtimes/rust/Cargo.toml
+
   check:
     name: fmt, clippy, build
     runs-on: ubuntu-latest
