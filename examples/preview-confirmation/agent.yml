@@ -1,0 +1,12 @@
+agent: 1
+defaults:
+  safety:
+    get: read_only
+    delete: destructive
+  preview: local
+tools:
+  - operation: pets.deletePet
+    safety: destructive
+    confirmation:
+      summary_fields: [pet_id]
+      message: Delete pet {pet_id}.

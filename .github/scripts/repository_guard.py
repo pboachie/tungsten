@@ -23,7 +23,8 @@ Tree rules:
     CODE_OF_CONDUCT.md and CHANGELOG.md at the root; the Apache-2.0 LICENSE
     in runtimes/ (and a copy of it in a runtime package directory, for npm
     packaging); Markdown directly in .github/ (pull request template and the
-    like); .github/ISSUE_TEMPLATE/*.md and *.yml; examples/<name>/README.md, and README.md in the three npm runtime packages.
+    like); .github/ISSUE_TEMPLATE/*.md and *.yml; examples/README.md,
+    examples/<name>/README.md, and README.md in the three npm runtime packages.
     Everything else with a documentation extension or name stays forbidden,
     wherever it is (docs/CONTRIBUTING.md, CHANGELOG.txt, assets/notes.md);
   - the root assets/ directory holds images only (.svg and .png); examples/ holds code (and the
@@ -122,7 +123,7 @@ ALLOWED_DOCS = re.compile(
     r"|runtimes/(?:ts|mcp|webmcp)/README\.md"
     r"|\.github/[^/]+\.md"
     r"|\.github/ISSUE_TEMPLATE/[^/]+\.(?:md|ya?ml)"
-    r"|examples/[^/]+/README\.md)$"
+    r"|examples/README\.md|examples/[^/]+/README\.md)$"
 )
 ASSET_EXTENSIONS = {".svg", ".png"}
 
@@ -273,7 +274,7 @@ def path_violations(path: str) -> list[str]:
         found.append(
             "documentation file (only the community files are allowed: README.md, LICENSE, CONTRIBUTING.md,"
             " SECURITY.md, CODE_OF_CONDUCT.md and CHANGELOG.md at the root, Markdown in .github/ and"
-            " .github/ISSUE_TEMPLATE/, examples/<name>/README.md, npm runtime README.md; docs live in the private repository)"
+            " .github/ISSUE_TEMPLATE/, examples/README.md, examples/<name>/README.md, npm runtime README.md; docs live in the private repository)"
         )
     if (suffix == ".go" or name in GO_MODULE_FILES) and not path.startswith(GO_ROOTS):
         found.append("Go source or module file outside runtimes/go/ and emitters/go/")

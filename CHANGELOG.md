@@ -11,6 +11,10 @@ changes.
 
 ### Added
 
+- A runnable example gallery for first SDKs, supported input routes, destructive
+  confirmation, local mock development, generated-file drift and API surface
+  review. The catalog runner checks recipe documentation and builds generated
+  packages against matching runtime source in public CI.
 - Imported specs (Postman, cURL, `.http`, HAR and endpoint manifests): a
   target that cannot enforce imported-operation policy (Java, C#, Kotlin, Ruby,
   Dart and the other SDK targets) now fails alone; without `--strict` the
