@@ -17,9 +17,9 @@ use crate::commands::generate::Project;
 use crate::output::{
     CommandName, CommandResult, EmitterReport, EmitterSource, EmitterStatus, EmittersResult,
 };
-use crate::{CliEnv, Report, exit, input};
+use crate::{CliEnv, Report, exit, input, targets};
 
-pub(crate) fn run(args: &EmittersArgs, env: &CliEnv) -> Report {
+pub(crate) fn run(args: &EmittersArgs, env: &CliEnv, no_external: bool) -> Report {
     let mut report = Report::new(CommandName::Emitters);
     let mut emitters: Vec<EmitterReport> = vec![];
     let search_path = env
@@ -42,6 +42,13 @@ pub(crate) fn run(args: &EmittersArgs, env: &CliEnv) -> Report {
             let Ok(Some(target)) = tungsten_config::external_target(options) else {
                 continue;
             };
+            // The manifest's commands are the untrusted part: not started.
+            if no_external {
+                report
+                    .diagnostics
+                    .push(targets::external_skipped(name, &project.manifest));
+                continue;
+            }
             let located = external::locate(
                 name,
                 target.command.as_deref(),

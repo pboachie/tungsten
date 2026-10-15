@@ -139,6 +139,18 @@ pub fn target_config_for(
     }
 }
 
+/// TG0807: an `external` target was not run because external emitters are
+/// off (`--no-external` or `TUNGSTEN_NO_EXTERNAL=1`).
+pub(crate) fn external_skipped(name: &str, manifest: &str) -> Diagnostic {
+    Diagnostic::info(
+        "TG0807",
+        format!(
+            "external target `{name}` was not run: external emitters are off (--no-external or TUNGSTEN_NO_EXTERNAL)"
+        ),
+    )
+    .at(manifest, format!("/targets/{name}"), None)
+}
+
 /// TG0702: the target has no emitter in this version.
 pub(crate) fn not_implemented(name: &str, manifest: &str) -> Diagnostic {
     Diagnostic::info(

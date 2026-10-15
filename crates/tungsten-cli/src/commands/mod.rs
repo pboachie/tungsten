@@ -30,7 +30,7 @@ use crate::{CliEnv, Report};
 
 pub(crate) fn dispatch(cli: &Cli, env: &CliEnv) -> Report {
     match &cli.command {
-        Command::Check(args) => check::run(args, env),
+        Command::Check(args) => check::run(args, env, cli.no_external),
         Command::Ir {
             command: IrCommand::Dump(args),
         } => ir::dump(args, cli.json),
@@ -38,11 +38,11 @@ pub(crate) fn dispatch(cli: &Cli, env: &CliEnv) -> Report {
         Command::Schema(args) => schema::run(args),
         Command::Init(args) => wizard::run(args, cli.json, env),
         Command::Doctor(args) => doctor::run(args, env),
-        Command::Emitters(args) => emitters::run(args, env),
-        Command::Generate(args) => generate::run(args, env),
+        Command::Emitters(args) => emitters::run(args, env, cli.no_external),
+        Command::Generate(args) => generate::run(args, env, cli.no_external),
         Command::Mock(args) => mock::start(args),
-        Command::Report(args) => report::run(args, env),
-        Command::Diff(args) => diff::run(args, env),
+        Command::Report(args) => report::run(args, env, cli.no_external),
+        Command::Diff(args) => diff::run(args, env, cli.no_external),
         Command::Overlay {
             command: OverlayCommand::Suggest(args),
         } => overlay::suggest(args),

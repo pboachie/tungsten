@@ -73,6 +73,9 @@ internal sealed class Prepared
     public required List<string> HiddenQuery { get; init; }
     public required SecretSet Secrets { get; init; }
     public string? OAuth { get; set; }
+
+    /// <summary>The URL that answered, after any followed redirect.</summary>
+    public string? FinalUrl { get; set; }
 }
 
 /// <summary>Query manipulation on URL texts (URLSearchParams semantics).</summary>

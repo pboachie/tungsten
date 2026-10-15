@@ -12,7 +12,7 @@
 
 </div>
 
-tungsten is a deterministic compiler written in Rust. It reads OpenAPI 3.0 and 3.1 documents plus two small manifests, builds one typed intermediate representation (IR), and emits TypeScript, Python, Rust, Go, Java, C#, F# and Ruby SDKs, a Rust command-line client, an MCP server, browser WebMCP tools and LLM-oriented docs. Every emitted client is built for an autonomous caller: failures are instructions, side effects are never duplicated, and irreversible calls need an explicit confirmation.
+tungsten is a deterministic compiler written in Rust. It reads OpenAPI 3.0 and 3.1 documents plus two small manifests, builds one typed intermediate representation (IR), and emits TypeScript, Python, Rust, Go, Java, Kotlin, C#, F#, Dart and Ruby SDKs, a Rust command-line client, an MCP server, browser WebMCP tools and LLM-oriented docs. Every emitted client is built for an autonomous caller: failures are instructions, side effects are never duplicated, and irreversible calls need an explicit confirmation.
 
 Read the documentation at [pboachie.github.io/tungsten](https://pboachie.github.io/tungsten/).
 
@@ -37,14 +37,16 @@ Most SDK generators optimize for a person reading autocomplete. An agent has a f
 | `rust` | Async SDK (serde, reqwest) and optional generated CLI | Rust 1.88 | Source paths to `runtimes/rust/runtime` and, for a CLI, `runtimes/rust/cli-kit` |
 | `go` (external) | Models, resources, typed client, pagination and stream helpers | Go 1.22 | Build `tungsten-emit-go` from `emitters/go`; use `runtime_path` to matching `runtimes/go` source |
 | `java` | Java SDK | Java 17 and Maven | Use `runtime_path` to matching `runtimes/java` source |
+| `kotlin` (`kt`) | Kotlin/JVM SDK (data classes, sealed interfaces, blocking functions returning `Result`) | Java 17 and Gradle | Use `runtime_path` to matching `runtimes/kotlin`; it builds on the Java runtime in `runtimes/java` (`java_runtime_path`) |
 | `csharp` (`cs`) | C# SDK | .NET 10 | Use `runtime_path` to matching `runtimes/csharp`, referencing `Tungsten.Runtime.csproj` |
 | `fsharp` (`fs`) | F# SDK (records, discriminated unions, `Task` of `Result`) | .NET 10 | Use `runtime_path` to matching `runtimes/fsharp`; it references the .NET runtime in `runtimes/csharp` (`csharp_runtime_path`) |
+| `dart` | Dart SDK (final model classes, sealed unions, `Future` methods returning `Result`, `Stream` pages) | Dart 3.6 | Use `runtime_path` to matching `runtimes/dart` (`tungsten_runtime`, a `dart:io` package) |
 | `ruby` (`rb`) | Ruby SDK | Ruby 3.3 and Bundler | Use `runtime_path` to matching `runtimes/ruby` source |
 | `mcp` | MCP server over stdio or Streamable HTTP, discrete or progressive | Node 22 | `@elysra/tungsten-mcp`: matching npm package or built source |
 | `webmcp` | Browser ESM package with tool manifest and registration helper | Node 22 to build; compatible browser to run | `@elysra/tungsten-webmcp` and the generated TypeScript SDK |
 | `docs` | `llms.txt`, `llms-full.txt`, `tools.json`, README | None beyond the compiler | No runtime dependency |
 
-These targets are implemented in source. Compiler and runtime packages have independent versions: use a runtime compatible with the generated package's dependency declaration, or the matching compiler source checkout. npm publication is separate from compiler availability. Python, Rust, Java, C#, F# and Ruby registry publication is not part of the 0.1.2 installation guarantee; the default Go module version also lacks a published nested-module tag. Use the source routes above rather than assuming a package name or version in generated metadata proves registry availability. Target `runtime_path` values are relative to the generated output directory.
+These targets are implemented in source. Compiler and runtime packages have independent versions: use a runtime compatible with the generated package's dependency declaration, or the matching compiler source checkout. npm publication is separate from compiler availability. Python, Rust, Java, Kotlin, C#, F#, Dart and Ruby registry publication is not part of the 0.1.2 installation guarantee; the default Go module version also lacks a published nested-module tag. Use the source routes above rather than assuming a package name or version in generated metadata proves registry availability. Target `runtime_path` values are relative to the generated output directory.
 
 Targets and the mock server (`tungsten mock`) share one IR. Generated-package and contract checks exercise each language, but source availability and passing shared scenarios do not establish complete validation, protocol or distribution parity. Unsupported features can vary by target. Review all compiler diagnostics: `--strict` rejects warnings, including unsupported `if`/`then`/`else` constraints, but informational diagnostics can still describe other unsupported features. Local checks do not establish live API acceptance or registry installation readiness.
 
@@ -192,6 +194,8 @@ the platform.
 
 More examples: [tungsten on six public APIs](examples/showcase/README.md) (the public OpenAPI descriptions of Stripe, GitHub, Twilio, OpenAI, Kubernetes and Discord): what `tungsten check` finds, MCP listing sizes, and generated SDK code in TypeScript, Python and Rust, reproducible with one script. [`examples/external-emitter-markdown`](examples/external-emitter-markdown) shows how to write an external emitter.
 
+An `external:` target in `tungsten.yml` names a command that tungsten starts as a process, unsandboxed and with your privileges. It runs on every command that produces output in memory, not only on a writing `generate`: `generate --dry-run` and `--check`, `check --ci`, `diff` and `report` run it too (plain `check` and `ir dump` do not). A CI job that runs `tungsten check --ci` on pull requests therefore executes whatever the pull request puts in `tungsten.yml`. Pass `--no-external` or set `TUNGSTEN_NO_EXTERNAL=1` to skip external targets (reported as TG0807) when the manifest is not trusted.
+
 ## Browser WebMCP
 
 Add a browser target alongside your TypeScript SDK:
@@ -246,7 +250,7 @@ never bundle server credentials. See the [browser WebMCP guide](https://pboachie
 4. **Emitters** (`crates/tungsten-emit-*`) write each target from the IR. They are pure functions of their inputs.
 5. **Runtimes** (`runtimes/`) hold the behaviour shared by generated code: validation, auth, retries, idempotency stores, the envelope, previews, pagination and middleware.
 
-Repository layout: `crates/` is the compiler (AGPL-3.0-only); `runtimes/ts`, `runtimes/mcp`, `runtimes/webmcp`, `runtimes/python`, `runtimes/rust`, `runtimes/go`, `runtimes/java`, `runtimes/csharp`, `runtimes/fsharp` and `runtimes/ruby` contain the libraries generated code depends on (Apache-2.0).
+Repository layout: `crates/` is the compiler (AGPL-3.0-only); `runtimes/ts`, `runtimes/mcp`, `runtimes/webmcp`, `runtimes/python`, `runtimes/rust`, `runtimes/go`, `runtimes/java`, `runtimes/kotlin`, `runtimes/csharp`, `runtimes/fsharp`, `runtimes/dart` and `runtimes/ruby` contain the libraries generated code depends on (Apache-2.0).
 
 ## CLI
 
@@ -257,13 +261,13 @@ tungsten [--json] <command>
 | Command | Purpose |
 |---|---|
 | `init` | Write project manifests (`--from`, `--dir`, `--name`, `--targets`, `--force`); `--targets webmcp` includes a linked TypeScript SDK |
-| `check` | Validate the manifests and specs and report diagnostics (`--ci`, `--strict`) |
+| `check` | Validate the manifests and specs and report diagnostics (`--ci`, `--strict`); `--ci` runs the emitters in memory, external ones included (`--no-external` skips them) |
 | `generate` | Generate every configured target (`--target`, `--dry-run`, `--check`, `--force`, `--strict`) |
 | `ir dump` | Write the IR as JSON (`--out`, `--compact`) |
 | `explain` | Explain a diagnostic code (`TG0201`), an operation or a type |
 | `schema` | Print a JSON Schema: `tungsten`, `agent`, `ir`, `cli-output`, `external-emitter`, `sdk-descriptors`, `tool-catalog` |
 | `mock` | Serve a mock of the API from the IR (`--port`, `--seed`, `--gate`) |
-| `report` | Coverage, safety matrix, token budgets and diagnostics, as text, JSON or one static HTML file (`--html`) |
+| `report` | Coverage, safety matrix, token budgets and diagnostics, as text, JSON or one static HTML file (`--html`); only configured targets run, `--all-targets` runs every known emitter |
 | `diff` | Show regeneration changes; `--semver` classifies the API surface, `--migration` adds upgrade actions and runtime requirement review |
 | `lsp` | Serve diagnostics, completion, hover, go-to-definition and symbols for `tungsten.yml`, `agent.yml` and overlays to an editor over stdio (`--config`) |
 | `doctor` | Report external tools; pass a project path and `--strict` to fail when its required tools are missing or too old |

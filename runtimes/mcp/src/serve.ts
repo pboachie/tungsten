@@ -55,6 +55,7 @@ export function serveUsage(bin: string): string {
     "                   accept any Host header: use --token-env or your own access control)",
     "  --token-env <NAME>  with --http, require `Authorization: Bearer <token>` where the token",
     "                   is read from the environment variable NAME (never pass it as an argument)",
+    "  --bearer-token-env <NAME>  same as --token-env",
     "  --help           print this text",
     "",
   ].join("\n");
@@ -63,12 +64,13 @@ export function serveUsage(bin: string): string {
 /**
  * Parse a server's arguments (`process.argv.slice(2)`): `--stdio`,
  * `--http <port>` or `--http=<port>`, `--host <host>` and
- * `--token-env <NAME>` (only with `--http`), `--help`. Throws an `Error` for anything else.
+ * `--token-env <NAME>` or its alias `--bearer-token-env <NAME>` (only with `--http`), `--help`. Throws an `Error` for anything else.
  */
 export function parseServeArgs(argv: readonly string[]): ServeArgs {
   let http: number | null = null;
   let host: string | null = null;
   let tokenEnv: string | null = null;
+  let tokenFlag = "--token-env";
   let stdio = false;
   const value = (flag: string, i: number, inline: string | undefined): [string, number] => {
     if (inline !== undefined) return [inline, i];
@@ -103,11 +105,13 @@ export function parseServeArgs(argv: readonly string[]): ServeArgs {
         host = text;
         break;
       }
-      case "--token-env": {
+      case "--token-env":
+      case "--bearer-token-env": {
         const [text, next] = value(flag, i, inline);
         i = next;
-        if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(text)) throw new Error("--token-env needs the NAME of an environment variable, not the token itself");
+        if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(text)) throw new Error(`${flag} needs the NAME of an environment variable, not the token itself`);
         tokenEnv = text;
+        tokenFlag = flag;
         break;
       }
       default:
@@ -116,7 +120,7 @@ export function parseServeArgs(argv: readonly string[]): ServeArgs {
   }
   if (http !== null && stdio) throw new Error("--stdio and --http exclude each other");
   if (http === null && host !== null) throw new Error("--host needs --http");
-  if (http === null && tokenEnv !== null) throw new Error("--token-env needs --http");
+  if (http === null && tokenEnv !== null) throw new Error(`${tokenFlag} needs --http`);
   if (http === null) return { transport: "stdio" };
   return tokenEnv === null ? { transport: "http", port: http, host: host ?? "127.0.0.1" } : { transport: "http", port: http, host: host ?? "127.0.0.1", tokenEnv };
 }
