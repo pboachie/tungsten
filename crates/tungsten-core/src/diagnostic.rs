@@ -501,6 +501,30 @@ pub mod codes {
             "TG1025",
             "discriminated union variant without a tag value: the csharp target tries variants in order",
         ),
+        (
+            "TG1030",
+            "invalid kotlin target option; the default is used",
+        ),
+        (
+            "TG1031",
+            "schema has no Kotlin type in the kotlin target; the runtime's JSON value is used",
+        ),
+        (
+            "TG1032",
+            "macro is not in the canonical form; the kotlin target leaves it out",
+        ),
+        (
+            "TG1033",
+            "OpenID Connect scheme is sent as a bearer token by the kotlin target",
+        ),
+        (
+            "TG1034",
+            "different success bodies by status: the kotlin typed result is the JSON value",
+        ),
+        (
+            "TG1035",
+            "discriminated union variant without a tag value: the kotlin target tries variants in order",
+        ),
         ("TG1060", "invalid Ruby target option; default used"),
         (
             "TG1061",
@@ -521,6 +545,27 @@ pub mod codes {
         (
             "TG1065",
             "discriminated union variant without a tag value; the Ruby SDK tries the variants in order",
+        ),
+        ("TG1070", "invalid dart target option; the default is used"),
+        (
+            "TG1071",
+            "schema has no Dart type in the dart target; the JSON value (Object?) is used",
+        ),
+        (
+            "TG1072",
+            "macro is not in the canonical form; the dart target leaves it out",
+        ),
+        (
+            "TG1073",
+            "OpenID Connect scheme is sent as a bearer token by the dart target",
+        ),
+        (
+            "TG1074",
+            "different success bodies by status: the dart typed result is the JSON value (Object?)",
+        ),
+        (
+            "TG1075",
+            "discriminated union variant without a tag value: the dart target tries variants in order",
         ),
         (
             "TG1080",

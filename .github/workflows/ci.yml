@@ -1,5 +1,5 @@
-# Public CI: repository rules, format, lint, build (Rust, Go, Java and Ruby) and dependency
-# policy. The test suite lives in the private tungsten-ops repository; the last
+# Public CI: repository rules, format, lint, build (Rust, Go, Java, C#, Ruby and Dart) and
+# dependency policy. The test suite lives in the private tungsten-ops repository; the last
 # job asks it to test this commit and it reports back as the commit status "tungsten-ops/ci".
 #
 # The job names "fmt, clippy, build", "cargo-deny" and "repository-guard" are
@@ -175,6 +175,42 @@ jobs:
         working-directory: runtimes/java
         run: mvn -B -q package -DskipTests
 
+  # The Kotlin layer (runtimes/kotlin) compiled against the Java runtime's
+  # classes with kotlinc -Werror; its tests, and the build of the SDKs the
+  # Kotlin emitter generates, run in tungsten-ops.
+  kotlin:
+    name: kotlin runtime build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      KOTLIN_VERSION: "2.4.21"
+      KOTLIN_SHA256: 7cc140e76daf416a0424a5557f99afd7ca89ebd463ea1101261e3e01c33e75cd
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Install kotlinc (sha256 checked)
+        run: |
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/kotlin.zip" \
+            "https://github.com/JetBrains/kotlin/releases/download/v$KOTLIN_VERSION/kotlin-compiler-$KOTLIN_VERSION.zip"
+          echo "$KOTLIN_SHA256  $RUNNER_TEMP/kotlin.zip" | sha256sum -c -
+          unzip -q "$RUNNER_TEMP/kotlin.zip" -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/kotlinc/bin" >> "$GITHUB_PATH"
+      - name: javac --release 17 (runtimes/java)
+        run: |
+          find runtimes/java/src/main/java -name '*.java' > "$RUNNER_TEMP/java.txt"
+          javac --release 17 -Xlint:all -Werror -encoding UTF-8 -d "$RUNNER_TEMP/java" "@$RUNNER_TEMP/java.txt"
+      - name: kotlinc -Werror -jvm-target 17 (runtimes/kotlin)
+        run: |
+          find runtimes/kotlin/src/main/kotlin -name '*.kt' | sort > "$RUNNER_TEMP/kotlin.txt"
+          kotlinc -Werror -jvm-target 17 -Xexplicit-api=strict -cp "$RUNNER_TEMP/java" -d "$RUNNER_TEMP/kotlin-classes" "@$RUNNER_TEMP/kotlin.txt"
+
   # The .NET runtime (runtimes/csharp, net10.0, no dependencies); its tests,
   # and the build of the SDKs the C# emitter generates, run in tungsten-ops.
   csharp:
@@ -248,6 +284,33 @@ jobs:
       - name: gem build
         working-directory: runtimes/ruby
         run: gem build tungsten-runtime.gemspec --output "$RUNNER_TEMP/tungsten-runtime.gem"
+
+  # The Dart runtime (runtimes/dart, dart:io plus package:crypto): `dart pub
+  # get`, `dart format` without changes and `dart analyze --fatal-infos` with
+  # the committed analysis options; its tests and the packages the Dart
+  # emitter generates run in tungsten-ops.
+  dart:
+    name: dart runtime check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
+        with:
+          sdk: 3.13.5
+      - name: dart pub get
+        working-directory: runtimes/dart
+        run: dart pub get
+      - name: dart format
+        working-directory: runtimes/dart
+        run: dart format --output=none --set-exit-if-changed .
+      - name: dart analyze --fatal-infos
+        working-directory: runtimes/dart
+        run: dart analyze --fatal-infos
 
   guard:
     name: repository-guard

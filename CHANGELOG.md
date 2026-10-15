@@ -11,6 +11,14 @@ changes.
 
 ### Added
 
+- A Dart SDK target, `dart`: a pub package with final model classes that
+  decode and encode themselves, sealed unions, `Future` methods returning
+  `Result<T>`, `Stream` pages and `EventStream<T>` streams, typed macros and
+  a `Dispatch` entry point, over the new `dart:io` runtime `tungsten_runtime`
+  (`runtimes/dart`, Dart 3.6 or later, `package:crypto` as its only
+  dependency). Options `package`, `version`, `runtime` and `runtime_path`;
+  diagnostics TG1070 to TG1079. The Dart runtime passes the L4 contract
+  suite in parity with TypeScript, with no skips.
 - Generated Rust CLIs: `--max-pages <N>` (with `--all`) stops paging after N
   pages and notes on standard error that more pages are available. There is no
   default limit.
@@ -19,6 +27,23 @@ changes.
   `--token-env <NAME>` on generated servers) to require authentication; a
   startup warning when binding a non-loopback host with no authentication and
   no `allowedHosts`.
+- A Kotlin target (`kotlin`, short form `kt`, `tungsten-emit-kotlin`): a
+  Kotlin/JVM SDK over the Java runtime and the new Kotlin layer
+  `runtimes/kotlin` (`io.github.pboachie.tungsten:tungsten-runtime-kotlin`,
+  JVM target 17, kotlin-stdlib and the Java runtime only). Data classes with
+  named, defaulted parameters (`Patch<T>` where null is a value, `T?`
+  otherwise), enum classes with wire values, sealed interfaces for unions,
+  blocking typed functions returning the runtime's `Result`, previews, pages
+  as a `Sequence` of page results, event streams, macros and `Dispatch`; a
+  Gradle (Kotlin DSL) project per SDK that builds with `kotlinc -Werror`.
+  The Kotlin layer reports `(kotlin)` in `User-Agent` and `tungsten-kt/0.1.0`
+  in `X-Tungsten-Runtime` and adds `Result` extensions (`getOrThrow`, `fold`,
+  `onError`). Options `group`, `artifact`, `package`, `version`, `runtime`,
+  `runtime_path` and `java_runtime_path`; diagnostics TG1030 to TG1035.
+  First version: blocking API only (no coroutines or `Flow`), JVM only, and
+  the Java target's gaps.
+- `ClientOptions.identity()` and `withIdentity(...)` in the Java runtime
+  (additive), so a layer on top of it reports its own runtime identity.
 
 ### Changed
 
