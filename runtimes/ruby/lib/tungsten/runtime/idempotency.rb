@@ -33,7 +33,7 @@ module Tungsten
     end
 
     # Shared version-1 JSON store, compatible with the TypeScript, Python, Go
-    # and Rust runtimes. Atomic reserve holds <path>.lock for up to two seconds;
+    # and Rust runtimes. Atomic reserve waits up to two seconds for <path>.lock;
     # another writer's lease is never reclaimed, even if its PID is no longer
     # alive. Remove abandoned leases by hand after checking their owner.
     # Writes use an exclusive mode-0600 temporary file and atomic rename. An

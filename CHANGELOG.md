@@ -11,6 +11,10 @@ changes.
 
 ### Added
 
+- Durable Java, C# and Ruby idempotency stores share the version-1 owner lease
+  format with TypeScript, Python, Go and Rust. Automatic keys use atomic
+  reservations while existing get/put-only custom stores remain compatible.
+
 - Dedicated TG0808 diagnostics explain when an external emitter lacks imported-operation
   policy enforcement; protocol-1 emitters remain compatible with ordinary projects.
 - Git input references (`git+https://...@ref#path`) with bounded shallow
