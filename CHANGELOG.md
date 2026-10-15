@@ -236,6 +236,10 @@ values as `JsonNode`, OpenID Connect as a bearer token, no CLI or MCP).
 
 ### Fixed
 
+- The Axum source-declaration importer accepts long `Router::new().route(..)`
+  builder chains; routers with 19 or more chained routes no longer fail the
+  lexical expression budget. Chains are walked iteratively, and only chains over
+  4096 links fail, with a dedicated diagnostic.
 - Dart pagination detects repeated cursors and page URLs, including the caller's
   starting cursor and cycles across earlier pages. Fetched pages are delivered
   before an `UNEXPECTED_RESPONSE` diagnostic, repeated requests are refused, and
