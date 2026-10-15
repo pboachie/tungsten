@@ -114,7 +114,10 @@ abstract final class _Keys {
   static (int, String)? tokenExpiry(String token) {
     final m = _tokenShape.firstMatch(token);
     if (m == null) return null;
-    return (int.parse(m[1]!), m[2]!);
+    final expiry = int.parse(m[1]!);
+    // A leading zero is another spelling of the same expiry: not canonical.
+    if ('$expiry' != m[1]) return null;
+    return (expiry, m[2]!);
   }
 
   /// valid, expired, mismatch or malformed.
