@@ -11,6 +11,10 @@ changes.
 
 ### Added
 
+- Installers detect whether `gh attestation` is available, explain checksum-only
+  installation when it is absent, and show verification errors while refusing
+  failed attestations. Both scripts honor required/disabled attestation settings
+  and replace stale unpublished-release hints with the release listing.
 - A runnable typed Python SSE recipe under `examples/typed-sse`, with an
   explicit FastAPI response declaration, a reviewed OpenAPI overlay, API-key
   authentication, sync/async consumers and explicit terminal-event cleanup.
