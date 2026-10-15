@@ -7,6 +7,7 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.function.Consumer;
 import java.util.function.DoubleSupplier;
 import java.util.function.LongSupplier;
@@ -92,6 +93,45 @@ public final class ClientOptions {
         clock = b.clock;
         random = b.random;
         identity = b.identity != null ? b.identity : RuntimeIdentity.JAVA;
+    }
+
+    private ClientOptions(ClientOptions o, RuntimeIdentity identity) {
+        redirects = o.redirects;
+        baseUrl = o.baseUrl;
+        auth = o.auth;
+        tokenStore = o.tokenStore;
+        timeout = o.timeout;
+        retries = o.retries;
+        idempotencyStore = o.idempotencyStore;
+        middleware = o.middleware;
+        validateResponses = o.validateResponses;
+        onDiagnostic = o.onDiagnostic;
+        headers = o.headers;
+        maxEventBytes = o.maxEventBytes;
+        maxCollectBytes = o.maxCollectBytes;
+        maxCollectTime = o.maxCollectTime;
+        maxReconnects = o.maxReconnects;
+        reconnectMax = o.reconnectMax;
+        idleTimeout = o.idleTimeout;
+        confirmationKey = o.confirmationKey;
+        sslSocketFactory = o.sslSocketFactory;
+        clock = o.clock;
+        random = o.random;
+        this.identity = identity;
+    }
+
+    /** The identity the runtime reports ({@link RuntimeIdentity#JAVA} unless a builder set another). */
+    public RuntimeIdentity identity() {
+        return identity;
+    }
+
+    /**
+     * These options reporting another identity (a language built on this runtime). Every other
+     * option is kept as built, including the confirmation key and the token and idempotency
+     * stores, which stay shared with this instance.
+     */
+    public ClientOptions withIdentity(RuntimeIdentity value) {
+        return new ClientOptions(this, Objects.requireNonNull(value, "identity"));
     }
 
     private static Duration positive(Duration d, Duration fallback) {
