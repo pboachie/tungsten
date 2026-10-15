@@ -1,27 +1,16 @@
 # Tungsten Rust runtime packages
 
-## Install published runtimes
+## Registry status
 
-Requires Rust 1.88 or newer. Both runtime crates,
-[`tungsten-runtime`](https://crates.io/crates/tungsten-runtime/0.1.3) and
-[`tungsten-cli-kit`](https://crates.io/crates/tungsten-cli-kit/0.1.3), are
-published at 0.1.3 on crates.io. Generated SDK and CLI workspaces declare their matching registry
-dependencies, so `cargo build --workspace` resolves them without local runtime
-paths. In another Cargo project, add the package you need:
-
-```sh
-cargo add tungsten-runtime@0.1.3
-# Only for a generated Rust CLI's command engine:
-cargo add tungsten-cli-kit@0.1.3
-```
-
-These are libraries used by generated clients. They do not install the
-Tungsten compiler; use its release binary/installer or source installation.
+The 0.1.3 compiler is an unreleased source candidate. Registry installation of
+`tungsten-runtime` and `tungsten-cli-kit` is currently unavailable. Use matching
+runtime source for both stable 0.1.2 and the 0.1.3 source candidate.
 
 ## Install from source
 
-For local development or an unpublished revision, use a matching local
-dependency (adjust the checkout path):
+Requires Rust 1.88 or newer. Use the same source revision as your compiler and
+generated SDK: `v0.1.2` for stable 0.1.2, or the matching 0.1.3 candidate checkout.
+Configure a local dependency in the consuming Cargo project (adjust the path):
 
 ```toml
 [dependencies]
@@ -33,6 +22,7 @@ path. The sibling `cli-kit` crate supplies the command engine for generated
 Rust CLIs. The async runtime uses Tokio and reqwest with rustls.
 For a local CLI-kit dependency, set `targets.rust.cli.kit_path` relative to the
 generated CLI crate's directory. Keep it and the runtime on the same revision.
+These runtime libraries do not install the Tungsten compiler.
 
 ## Shared contract
 
