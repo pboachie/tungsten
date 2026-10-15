@@ -35,6 +35,17 @@ pub enum Authentication {
     },
 }
 
+/// A request or folder left out of the import, with the reason it is unsupported.
+/// Nothing is inferred from an omitted item.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct OmittedItem {
+    /// Diagnostic code of the unsupported construct (PM003 to PM006).
+    pub code: String,
+    /// JSON pointer of the omitted item in the collection (never its name).
+    pub pointer: String,
+    pub reason: String,
+}
+
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct PostmanReport {
     pub authentication: BTreeMap<String, BTreeSet<Authentication>>,
@@ -44,6 +55,8 @@ pub struct PostmanReport {
     pub locations: BTreeMap<String, BTreeSet<String>>,
     pub skipped_test_scripts: usize,
     pub disabled_items: usize,
+    /// Unsupported requests and folders omitted per item, in collection order.
+    pub omitted: Vec<OmittedItem>,
 }
 
 #[derive(Debug, Clone)]
@@ -254,7 +267,9 @@ fn nodes(value: &Value) -> usize {
     count
 }
 
-fn events(value: &Value, report: &mut PostmanReport) -> Result<(), Diagnostic> {
+/// Count the non-empty test scripts of one scope; any other script is an error.
+fn events(value: &Value) -> Result<usize, Diagnostic> {
+    let mut skipped = 0usize;
     for event in array(value, "event")? {
         if !enabled(event) {
             continue;
@@ -272,7 +287,7 @@ fn events(value: &Value, report: &mut PostmanReport) -> Result<(), Diagnostic> {
             continue;
         }
         match event.get("listen").and_then(Value::as_str) {
-            Some("test") => report.skipped_test_scripts += 1,
+            Some("test") => skipped += 1,
             _ => {
                 return Err(error(
                     "PM004",
@@ -290,7 +305,16 @@ fn events(value: &Value, report: &mut PostmanReport) -> Result<(), Diagnostic> {
             "Custom protocol behavior is unsupported; export a request using standard HTTP semantics.",
         ));
     }
-    Ok(())
+    Ok(skipped)
+}
+
+/// Unsupported-construct errors omit the item that holds them; structural
+/// problems (PM001 budgets, PM002 schema) still fail the whole import.
+fn omittable(diagnostic: &Diagnostic) -> bool {
+    matches!(
+        diagnostic.code.as_str(),
+        "PM003" | "PM004" | "PM005" | "PM006"
+    )
 }
 
 fn shape(value: Value) -> ShapeEvidence {
@@ -435,6 +459,26 @@ impl Context<'_> {
         })
     }
 
+    /// Record an omittable error as an omitted item and roll back what the item
+    /// charged to the import-wide budgets; any other error is returned.
+    fn omit(
+        &mut self,
+        pointer: &str,
+        diagnostic: Diagnostic,
+        budgets: (usize, usize),
+    ) -> Result<(), Diagnostic> {
+        if !omittable(&diagnostic) {
+            return Err(diagnostic);
+        }
+        (self.expanded_bytes, self.sample_nodes) = budgets;
+        self.output.report.omitted.push(OmittedItem {
+            code: diagnostic.code,
+            pointer: pointer.to_owned(),
+            reason: diagnostic.message,
+        });
+        Ok(())
+    }
+
     fn visit<'a>(
         &mut self,
         parent: &'a Value,
@@ -449,9 +493,18 @@ impl Context<'_> {
                 "Folder nesting exceeds the limit; flatten the collection.",
             ));
         }
-        events(parent, &mut self.output.report)?;
-        let scope = Scope::new(parent, scope)?;
-        let inherited = self.auth(parent.get("auth"), inherited, &scope)?;
+        let budgets = (self.expanded_bytes, self.sample_nodes);
+        let prelude =
+            events(parent).and_then(|skipped| Scope::new(parent, scope).map(|s| (skipped, s)));
+        let (skipped, scope) = match prelude {
+            Ok(prelude) => prelude,
+            Err(diagnostic) => return self.omit(pointer, diagnostic, budgets),
+        };
+        let inherited = match self.auth(parent.get("auth"), inherited, &scope) {
+            Ok(auth) => auth,
+            Err(diagnostic) => return self.omit(pointer, diagnostic, budgets),
+        };
+        self.output.report.skipped_test_scripts += skipped;
         for (index, item) in array(parent, "item")?.iter().enumerate() {
             if !enabled(item) {
                 self.output.report.disabled_items += 1;
@@ -467,11 +520,14 @@ impl Context<'_> {
                 }
                 self.visit(item, Some(&scope), &inherited, &pointer, depth + 1)?;
             } else {
-                self.request(item, &scope, &inherited, &pointer)
-                    .map_err(|mut diagnostic| {
+                let budgets = (self.expanded_bytes, self.sample_nodes);
+                if let Err(mut diagnostic) = self.request(item, &scope, &inherited, &pointer) {
+                    if !omittable(&diagnostic) {
                         diagnostic.message.push_str(&format!(" Source: {pointer}."));
-                        diagnostic
-                    })?;
+                        return Err(diagnostic);
+                    }
+                    self.omit(&pointer, diagnostic, budgets)?;
+                }
             }
         }
         Ok(())
@@ -484,7 +540,7 @@ impl Context<'_> {
         inherited: &Authentication,
         pointer: &str,
     ) -> Result<(), Diagnostic> {
-        events(item, &mut self.output.report)?;
+        let skipped_scripts = events(item)?;
         let scope = Scope::new(item, Some(scope))?;
         let request = item.get("request").ok_or_else(|| {
             error(
@@ -494,6 +550,7 @@ impl Context<'_> {
         })?;
         if !enabled(request) {
             self.output.report.disabled_items += 1;
+            self.output.report.skipped_test_scripts += skipped_scripts;
             return Ok(());
         }
         if request.get("proxy").is_some_and(enabled) || request.get("certificate").is_some() {
@@ -525,24 +582,6 @@ impl Context<'_> {
             line: None,
             column: None,
         };
-        self.output
-            .report
-            .locations
-            .entry(id.clone())
-            .or_default()
-            .insert(format!("{pointer}/request"));
-        self.output
-            .report
-            .configure_origin_variables
-            .entry(id.clone())
-            .or_default()
-            .extend(origin_variables);
-        self.output
-            .report
-            .authentication
-            .entry(id)
-            .or_default()
-            .insert(authentication.clone());
         let request_headers = headers(request)?;
         let mut content_type = None;
         for (name, value) in request_headers {
@@ -651,6 +690,27 @@ impl Context<'_> {
             }
             responses.push(ResponseEvidence { status, content });
         }
+        // Report entries are written only once the request is fully accepted, so an
+        // omitted request leaves no trace in the locations, auth or origin maps.
+        self.output.report.skipped_test_scripts += skipped_scripts;
+        self.output
+            .report
+            .locations
+            .entry(id.clone())
+            .or_default()
+            .insert(format!("{pointer}/request"));
+        self.output
+            .report
+            .configure_origin_variables
+            .entry(id.clone())
+            .or_default()
+            .extend(origin_variables);
+        self.output
+            .report
+            .authentication
+            .entry(id)
+            .or_default()
+            .insert(authentication.clone());
         self.output.evidence.operations.push(HttpEvidence {
             method,
             path,
@@ -979,6 +1039,24 @@ pub fn import_collection(
         sample_nodes: 0,
     };
     context.visit(&root, None, &Authentication::Unknown, "", 0)?;
+    if context.output.evidence.operations.is_empty()
+        && let Some(first) = context.output.report.omitted.first()
+    {
+        return Err(Diagnostic {
+            code: "PM008".into(),
+            message: format!(
+                "No request could be imported: {} item(s) were omitted as unsupported. First: {} at {}: {} Fix or remove the unsupported constructs, or supply a reviewed contract.",
+                context.output.report.omitted.len(),
+                first.code,
+                if first.pointer.is_empty() {
+                    "the collection"
+                } else {
+                    &first.pointer
+                },
+                first.reason
+            ),
+        });
+    }
     // Reuse the engine's total bytes/nodes/samples/source/schema validation.
     crate::infer(
         &context.output.evidence,

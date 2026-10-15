@@ -21,6 +21,13 @@ changes.
   `report`); the source comment that said otherwise is corrected.
 - `report --all-targets` runs the emitter of every known target, as `report`
   used to.
+- Postman import omits unsupported requests and folders per item instead of
+  failing the whole collection: non-raw or non-JSON bodies, non-JSON saved
+  responses, unsupported auth helpers, pre-request scripts and unresolved or
+  dynamic variables. Each omission is listed under `omitted` (code, JSON
+  pointer, reason) in `import-report.json`, and `init --from` prints the
+  omitted count. A collection with no importable request fails with PM008;
+  PM001 budgets and PM002 schema errors still fail the import.
 - A Dart SDK target, `dart`: a pub package with final model classes that
   decode and encode themselves, sealed unions, `Future` methods returning
   `Result<T>`, `Stream` pages and `EventStream<T>` streams, typed macros and
@@ -83,6 +90,13 @@ values as `JsonNode`, OpenID Connect as a bearer token, no CLI or MCP).
   about as long as `generate --dry-run` (the Stripe showcase spec took 3 min
   18 s against 1.3 s for `check`). The token budgets of `docs` and `mcp` are
   empty unless that target is configured or `--all-targets` is given.
+- `tungsten check` prints a warning or info code at most three times in the
+  human output, then one line with the number left out, and its summary lists
+  the count per code (`--all-warnings` prints everything; `--json` has always
+  listed every diagnostic and gains an additive `by_code` array). TG0301 for
+  an untagged union of exactly two candidates where one is a plain string,
+  array or map is now info instead of a warning, so `--strict` no longer
+  fails on those; other untagged unions still warn. (#111)
 - The release workflow's PyPI publication job is enabled through trusted
   publishing (repository variable `PYPI_PUBLISH`, `pypi` environment, no
   stored token) and now refuses to upload a `tungsten-runtime` sdist or wheel
@@ -110,6 +124,18 @@ values as `JsonNode`, OpenID Connect as a bearer token, no CLI or MCP).
 
 ### Fixed
 
+- `doctor` now lists `java`, `mvn`, `dotnet`, `ruby`, `bundle` and `go`, and
+  `doctor --strict` fails when a configured `java`, `csharp`, `ruby` or
+  external `go` target lacks its toolchain (Java 17, .NET 10, Ruby 3.3,
+  Go 1.22) or, for an external `go` target without a command, when
+  `tungsten-emit-go` is not on PATH.
+- A Path Item `$ref` with fields written beside it no longer drops them:
+  sibling operations, `parameters`, `summary`, `description` and `servers`
+  are merged over the referenced item for OpenAPI 3.0 and 3.1 alike, so a
+  spec that lost an operation silently now compiles it (additive to the
+  generated API). A field defined on both sides is the new warning TG0510
+  (the sibling wins; `tungsten explain TG0510`), which fails a run only under
+  `--strict`.
 - Python and Java runtimes bound schema `pattern` matching: strings over 64 KiB
   skip the pattern check, and Java abandons a match after 1 s, treating it as
   not checked.
