@@ -17,7 +17,7 @@ uv pip install --python .venv/bin/python "$source_dir/runtimes/python" ./generat
 cp "$example_dir/consume.py" consume.py
 printf '%s\n' '{"typeCheckingMode":"strict","pythonVersion":"3.12","venvPath":".","venv":".venv","include":["consume.py"]}' > pyrightconfig.json
 .venv/bin/pyright
-export SSE_API_KEY=local-example-key
+export SSE_API_KEY=example
 .venv/bin/python "$example_dir/server.py" upstream.json
 .venv/bin/uvicorn --app-dir "$example_dir" server:app --host 127.0.0.1 --port 8098 > server.log 2>&1 &
 server_pid=$!
