@@ -115,6 +115,34 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           echo "release=$release tag=${tag:-none} version=$version"
 
+      # The release notes are the tagged CHANGELOG section, never the pull
+      # request list: a release page must carry the breaking changes and
+      # migration notes. A real release fails on a missing, empty or undated
+      # section; a dry run prints the notes it would publish (the Unreleased
+      # section when the checkout has no section for a dry-run version).
+      - name: Extract the release notes from CHANGELOG.md
+        env:
+          VERSION: ${{ steps.plan.outputs.version }}
+          RELEASE: ${{ steps.plan.outputs.release }}
+        run: |
+          if python3 .github/scripts/release_notes.py --changelog CHANGELOG.md --version "$VERSION" --output release-notes/release-notes.md; then
+            echo "--- release notes for $VERSION ---"
+            cat release-notes/release-notes.md
+          else
+            if [ "$RELEASE" = "true" ]; then
+              echo "a release needs a dated CHANGELOG section for $VERSION" >&2
+              exit 1
+            fi
+            echo "no CHANGELOG section for $VERSION (dry run); the Unreleased notes a release would ship:"
+            python3 .github/scripts/release_notes.py --changelog CHANGELOG.md --version Unreleased
+          fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-notes
+          path: release-notes/release-notes.md
+          if-no-files-found: ignore
+          retention-days: 14
+
   # Private helpers remain private. Only bounded, sanitized result JSON is
   # uploaded; helper contents and logs stay in the ephemeral runner directory.
   bootstrap:
@@ -445,11 +473,18 @@ jobs:
         with:
           name: release-bundle
           path: dist
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-notes
+          path: release-notes
       - name: Create the release (never overwrites an existing one)
         run: |
           prerelease=""
           case "$TAG" in *-*) prerelease="--prerelease" ;; esac
-          gh release create "$TAG" dist/* --verify-tag --title "$TAG" --generate-notes $prerelease
+          # The CHANGELOG section carries the notes; --generate-notes appends
+          # the pull-request list after them.
+          gh release create "$TAG" dist/* --verify-tag --title "$TAG" \
+            --notes-file release-notes/release-notes.md --generate-notes $prerelease
 
   # Publish dry runs: they prove that packaging and registry checks pass; they
   # upload nothing. Actual publishing is switched on as described in the runbook.
