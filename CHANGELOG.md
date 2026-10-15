@@ -11,6 +11,8 @@ changes.
 
 ### Added
 
+- The container accepts patched zlib updates above its minimum required Alpine
+  version and verifies the installed version; Dependabot checks the root image.
 - Imported specs (Postman, cURL, `.http`, HAR and endpoint manifests): a
   target that cannot enforce imported-operation policy (Java, C#, Kotlin, Ruby,
   Dart and the other SDK targets) now fails alone; without `--strict` the
