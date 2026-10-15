@@ -27,9 +27,11 @@ responsible for authorization and server-side idempotency.
 
 ## Limits
 
-Transport and safety behavior come from the C# runtime. Its built-in
-idempotency stores are memory-only; applications own durable key and token
-storage. Package versions must match the generated consumer's dependencies.
+Transport and safety behavior come from the C# runtime. For durable automatic
+keys, configure C#'s `FileIdempotencyStore` through the shared client options;
+see the [C# store and lease limits](../csharp/README.md#durable-automatic-keys).
+Applications own the storage location and lifecycle. Package versions must
+match the generated consumer's dependencies.
 
 No runtime ships a file-backed OAuth token store. Provide an application-owned
 token-store implementation when tokens must survive process restarts; protect
