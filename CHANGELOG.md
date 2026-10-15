@@ -11,6 +11,8 @@ changes.
 
 ### Added
 
+- Runtime package installation and limits guidance, packaged README/LICENSE
+  files, and consistent npm metadata checks.
 - Opt-in `check --audit-contracts` response quality diagnostics for missing JSON
   schemas, unconstrained values and free-form objects, with scoped review notes
   and `--require-contracts` enforcement (or existing `--strict` enforcement).

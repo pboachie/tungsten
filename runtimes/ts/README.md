@@ -73,6 +73,10 @@ const idempotencyStore = new FileIdempotencyStore("./state/idempotency.json");
 
 Keep `@elysra/tungsten-runtime/node` out of browser bundles. Applications own the storage location and its lifecycle.
 
+## Limits
+
+The core package is browser-safe; the separate `/node` adapter requires Node.js. No file-backed OAuth token store is provided.
+
 ## Related packages and documentation
 
 - [@elysra/tungsten-mcp](https://www.npmjs.com/package/@elysra/tungsten-mcp): MCP servers for generated APIs.
