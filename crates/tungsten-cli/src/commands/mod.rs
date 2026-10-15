@@ -29,6 +29,17 @@ use crate::args::{Cli, Command, IrCommand, OverlayCommand};
 use crate::{CliEnv, Report};
 
 pub(crate) fn dispatch(cli: &Cli, env: &CliEnv) -> Report {
+    tungsten_openapi::acquire::with_options(
+        tungsten_openapi::acquire::Options {
+            offline: cli.offline,
+            refresh: cli.refresh_inputs,
+            headers: cli.input_header.clone(),
+        },
+        || dispatch_with_inputs(cli, env),
+    )
+}
+
+fn dispatch_with_inputs(cli: &Cli, env: &CliEnv) -> Report {
     match &cli.command {
         Command::Check(args) => check::run(args, env, cli.no_external),
         Command::Ir {

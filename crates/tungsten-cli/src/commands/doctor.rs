@@ -135,10 +135,18 @@ pub(crate) fn run(args: &DoctorArgs, env: &CliEnv) -> Report {
                 purpose: "Go SDK emitter".into(),
             });
         }
+        let python_minimum = config
+            .targets
+            .get("python")
+            .and_then(|options| options.get("python_version"))
+            .and_then(|value| value.as_str())
+            .filter(|version| matches!(*version, "3.10" | "3.11" | "3.12"))
+            .and_then(version_pair)
+            .unwrap_or((3, 12));
         for (name, required, minimum) in [
             ("node", javascript, Some((22, 0))),
             ("npm", javascript, None),
-            ("python3", has("python"), Some((3, 12))),
+            ("python3", has("python"), Some(python_minimum)),
             ("cargo", has("rust"), Some((1, 88))),
             ("rustc", has("rust"), Some((1, 88))),
             ("java", has("java"), Some((17, 0))),
