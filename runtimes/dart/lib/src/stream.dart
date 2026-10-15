@@ -77,6 +77,7 @@ final class EventStream<T> extends Stream<Result<StreamEvent<T>>> {
   bool _stopped = false;
   _StreamOpen? _open;
   Completer<void>? _wake;
+  final Completer<void> _stopSignal = Completer<void>();
 
   /// The streaming operation, or null when the stream failed before it
   /// started.
@@ -100,6 +101,7 @@ final class EventStream<T> extends Stream<Result<StreamEvent<T>>> {
     final wake = _wake;
     _wake = null;
     if (wake != null && !wake.isCompleted) wake.complete();
+    if (!_stopSignal.isCompleted) _stopSignal.complete();
   }
 
   @override
@@ -173,6 +175,34 @@ final class EventStream<T> extends Stream<Result<StreamEvent<T>>> {
   }
 
   /// Waits [ms] milliseconds, or less when the stream is stopped.
+  /// The result of an open that is in flight, or null once the stream is
+  /// stopped first (a cancel or a collection deadline interrupts the wait for
+  /// the response; a connection that opens later is closed).
+  Future<(Err<Object?>?, _StreamOpen?)?> _opening(
+    Future<(Err<Object?>?, _StreamOpen?)> opening,
+  ) async {
+    if (_stopped) {
+      unawaited(_discard(opening));
+      return null;
+    }
+    final stopped = _stopSignal.future.then<(Err<Object?>?, _StreamOpen?)?>(
+      (_) => null,
+    );
+    final result = await Future.any([opening, stopped]);
+    if (result == null) unawaited(_discard(opening));
+    return result;
+  }
+
+  static Future<void> _discard(
+    Future<(Err<Object?>?, _StreamOpen?)> opening,
+  ) async {
+    try {
+      (await opening).$2?.body.close();
+    } catch (_) {
+      // The abandoned open failed; nothing is left to close.
+    }
+  }
+
   Future<void> _pause(double ms) {
     final wake = Completer<void>();
     _wake = wake;
@@ -194,11 +224,15 @@ final class EventStream<T> extends Stream<Result<StreamEvent<T>>> {
       if (_stopped) return null;
       var o = _open;
       if (o == null) {
-        final (err, opened) =
-            await core._openStream(op, _args, _options, null, null);
+        final (err, opened) = await _opening(
+            core._openStream(op, _args, _options, null, null)) ??
+            (null, null);
+        if (_stopped) {
+          opened?.body.close();
+          return null;
+        }
         if (err != null) return err.cast<StreamEvent<T>>();
         _open = o = opened!;
-        if (_stopped) return null;
       }
       if (o.queue.isNotEmpty) {
         final ev = o.queue.removeFirst();
@@ -249,11 +283,15 @@ final class EventStream<T> extends Stream<Result<StreamEvent<T>>> {
       final ceiling = math.min(server, core.reconnectMaxMs).toDouble();
       await _pause(ceiling - core._random() * 0.25 * ceiling);
       if (_stopped) return null;
-      final (err, fresh) =
-          await core._openStream(op, _args, _options, o.lastId, o);
+      final (err, fresh) = await _opening(
+              core._openStream(op, _args, _options, o.lastId, o)) ??
+          (null, null);
+      if (_stopped) {
+        fresh?.body.close();
+        return null;
+      }
       if (err != null) return err.cast<StreamEvent<T>>();
       _open = fresh;
-      if (_stopped) return null;
     }
   }
 
