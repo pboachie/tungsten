@@ -60,10 +60,14 @@ pub fn with_options<T>(options: Options, run: impl FnOnce() -> T) -> T {
 pub fn is_remote(source: &str) -> bool {
     source.to_ascii_lowercase().starts_with("http://")
         || source.to_ascii_lowercase().starts_with("https://")
+        || crate::git_input::is_source(source)
 }
 
 /// Display a source without reflecting forbidden URL credentials or queries.
 pub fn display_source(source: &str) -> String {
+    if crate::git_input::is_source(source) {
+        return crate::git_input::display(source);
+    }
     if is_remote(source)
         && !Url::parse(source).is_ok_and(|url| {
             url.host_str().is_some()
@@ -100,7 +104,7 @@ fn cache_error() -> Diagnostic {
     )
 }
 
-fn hash(bytes: &[u8]) -> String {
+pub(crate) fn hash(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 
@@ -109,7 +113,7 @@ pub fn content_hash(path: &Path) -> Result<String, Diagnostic> {
     read(path, MAX_BYTES).map(|bytes| hash(&bytes))
 }
 
-fn directory(path: &Path) -> Result<(), Diagnostic> {
+pub(crate) fn directory(path: &Path) -> Result<(), Diagnostic> {
     match std::fs::symlink_metadata(path) {
         Ok(meta) if meta.file_type().is_dir() => Ok(()),
         Ok(_) => Err(cache_error()),
@@ -120,7 +124,7 @@ fn directory(path: &Path) -> Result<(), Diagnostic> {
     }
 }
 
-fn read(path: &Path, limit: usize) -> Result<Vec<u8>, Diagnostic> {
+pub(crate) fn read(path: &Path, limit: usize) -> Result<Vec<u8>, Diagnostic> {
     if !std::fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_file()) {
         return Err(cache_error());
     }
@@ -136,7 +140,7 @@ fn read(path: &Path, limit: usize) -> Result<Vec<u8>, Diagnostic> {
     Ok(bytes)
 }
 
-fn write_new(path: &Path, bytes: &[u8]) -> Result<(), Diagnostic> {
+pub(crate) fn write_new(path: &Path, bytes: &[u8]) -> Result<(), Diagnostic> {
     let mut file = std::fs::OpenOptions::new()
         .create_new(true)
         .write(true)
@@ -151,6 +155,9 @@ fn write_new(path: &Path, bytes: &[u8]) -> Result<(), Diagnostic> {
 /// when offline reproducibility is required. Ordinary online loads verify
 /// upstream bytes against the pin; only explicit refresh replaces a pin.
 pub fn acquire(source: &str, project: &Path, options: &Options) -> Result<PathBuf, Diagnostic> {
+    if crate::git_input::is_source(source) {
+        return crate::git_input::acquire(source, project, options);
+    }
     let invalid = || {
         diagnostic(
             "TG0120",

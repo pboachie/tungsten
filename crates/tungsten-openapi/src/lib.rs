@@ -15,6 +15,7 @@
 
 pub mod acquire;
 pub mod endpoint_manifest;
+pub mod git_input;
 mod graph;
 mod jsonpath;
 mod load;

@@ -57,6 +57,31 @@ still blocked, including relative references from a remote OpenAPI document.
 The cache contains original input bytes, so retain it with the same access
 controls as the source document and review it before sharing.
 
+Git inputs use `git+https://host/owner/repository@ref#path` in `init --from`,
+compiler paths or OpenAPI manifest inputs. A branch or tag resolves to exactly
+one commit, which is fetched shallowly into a disposable bare repository. No
+checkout, hooks, submodules or repository code runs. Git supplies private-source
+credentials through its configured helper or environment; `--input-header`
+applies only to HTTP document downloads. Local repositories for offline workflows
+and hermetic validation use `git+file:///absolute/repository@ref#path`.
+
+```sh
+tungsten init --from 'git+https://github.com/example/api@main#contracts/openapi.yaml' --dir my-api
+tungsten generate my-api --offline
+```
+
+The Git source lock under `.tungsten-inputs/git/` records the repository URL,
+requested ref, resolved commit, selected document and SHA256 of every materialized
+file. Ordinary runs retain that commit; `--refresh-inputs` is the explicit request
+to resolve a moving ref again. Converted imports retain their review provenance
+and require re-import into a fresh project to change source commits. Discovery
+recognizes all supported input formats and requires an explicit `#path` when
+multiple documents are found. Relative references retain the compiler's local
+input-root confinement. Acquisition is limited to 60 seconds, 512 files, 8 MiB per
+file and 64 MiB of materialized content and fetched Git object data. Narrow
+`#path` to bound discovery; the shallow fetch itself must still fit the object
+budget. Git redirects, symlinks, submodules and unsafe paths are refused.
+
 `tungsten init` takes **one** input of any of the kinds below — OpenAPI OR Swagger OR Postman OR saved cURL OR HTTP request files OR HAR, with the endpoint-manifest and manual paths alongside them — not a bundle. Every route is parsed offline: no request is sent or replayed, and no shell, script or capture is ever executed. Non-OpenAPI inputs are converted to a normalized OpenAPI document that `init` saves next to the manifests (`imported.openapi.json`, with an `import-report.json` where listed; the manual path writes `inferred.openapi.json` and `inference-report.json`), so the accepted input stays separate from the normalized artifact and the typed IR the compiler builds from it.
 
 | Input | You provide | Entry point and conversion | Limits and required review |
