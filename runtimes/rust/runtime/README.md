@@ -1,9 +1,20 @@
 # tungsten-runtime (Rust)
 
+## Install from crates.io
+
+Requires Rust 1.88 or newer. `tungsten-runtime` 0.1.3 is published on crates.io:
+
+```sh
+cargo add tungsten-runtime@0.1.3
+```
+
+Generated Rust SDKs already declare their matching runtime dependency. This
+library does not install the Tungsten compiler; install that binary separately.
+
 ## Install from source
 
-Requires Rust 1.88 or newer. Until a matching crates.io release is available,
-use a local dependency (adjust the checkout path):
+For local development or an unpublished revision, use a matching local
+dependency (adjust the checkout path):
 
 ```toml
 [dependencies]

@@ -110,8 +110,8 @@ All conversion routes share these limits: setup inputs are bounded (8 MiB, with 
 |---|---|---|---|
 | `typescript` | Typed SDK, `Result` values, Zod validation | Node 22 | `@elysra/tungsten-runtime`: matching npm package or built source |
 | `python` | Sync and async SDK, Pydantic v2 or dataclass models | Python 3.12 by default; [opt-in 3.10/3.11](#python-interpreter-compatibility) | PyPI runtime for a matching published release, or matching `runtimes/python` source |
-| `rust` | Async SDK (serde, reqwest) and optional generated CLI | Rust 1.88 | Source paths to `runtimes/rust/runtime` and, for a CLI, `runtimes/rust/cli-kit` |
-| `go` (external) | Models, resources, typed client, pagination and stream helpers | Go 1.22 | Build `tungsten-emit-go` from `emitters/go`; use `runtime_path` to matching `runtimes/go` source |
+| `rust` | Async SDK (serde, reqwest) and optional generated CLI | Rust 1.88 | Published `tungsten-runtime` and `tungsten-cli-kit` 0.1.3 on crates.io, or matching [runtime source](runtimes/rust/README.md) |
+| `go` (external) | Models, resources, typed client, pagination and stream helpers | Go 1.22 | Build `tungsten-emit-go` from `emitters/go`; its default uses the published [Go runtime](runtimes/go/README.md) v0.1.3; matching source remains available for development |
 | `java` | Java SDK | Java 17 and Maven | Use `runtime_path` to matching `runtimes/java` source |
 | `kotlin` (`kt`) | Kotlin/JVM SDK (data classes, sealed interfaces, blocking functions returning `Result`) | Java 17 and Gradle | Use `runtime_path` to matching `runtimes/kotlin`; it builds on the Java runtime in `runtimes/java` (`java_runtime_path`) |
 | `csharp` (`cs`) | C# SDK | .NET 10 | Use `runtime_path` to matching `runtimes/csharp`, referencing `Tungsten.Runtime.csproj` |
@@ -219,8 +219,14 @@ Then install and build your generated package as its README describes. These
 runtime imports do not generate a client or call an API.
 
 For the 0.1.3 source candidate, use matching runtime source as in the quickstart
-below. Its generated packages require 0.1.3 runtime capabilities; the published
-0.1.2 packages above do not satisfy that dependency. The [runnable gallery](examples/README.md)
+below when a matching package is not yet published. Its generated packages require
+0.1.3 runtime capabilities; the published 0.1.2 packages above do not satisfy that
+dependency. The Rust `tungsten-runtime` and `tungsten-cli-kit` crates and the Go
+runtime module are separately published at 0.1.3. Generated Rust workspaces and
+Go modules declare these dependencies; their package managers resolve them
+without local runtime paths. See the [Rust installation guide](runtimes/rust/README.md)
+and [Go installation guide](runtimes/go/README.md). These runtime libraries do
+not install the Tungsten compiler. The [runnable gallery](examples/README.md)
 shows complete installation and first-use flows for each output.
 
 ## Quickstart
