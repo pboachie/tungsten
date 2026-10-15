@@ -11,6 +11,10 @@ changes.
 
 ### Added
 
+- HTTP(S) input acquisition for `init --from`, compiler paths and manifest inputs,
+  with bounded downloads, SHA256 source pins in `.tungsten-inputs`, explicit
+  `--refresh-inputs`, verified `--offline` reuse and redacted `--input-header`
+  authentication. Remote entries retain existing reference and import safety rules.
 - Imported specs (Postman, cURL, `.http`, HAR and endpoint manifests): a
   target that cannot enforce imported-operation policy (Java, C#, Kotlin, Ruby,
   Dart and the other SDK targets) now fails alone; without `--strict` the

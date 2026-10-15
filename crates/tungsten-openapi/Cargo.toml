@@ -22,6 +22,8 @@ doctest = false
 testing = []
 
 [dependencies]
+ureq = { version = "3.3", default-features = false, features = ["rustls"] }
+sha2 = "0.10"
 serde.workspace = true
 schemars.workspace = true
 url.workspace = true

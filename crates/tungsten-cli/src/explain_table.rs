@@ -243,6 +243,26 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
          overlay can add both) to make the intent explicit and silence the diagnostic.",
     ),
     e(
+        "TG0120",
+        "A remote input URL contains credentials, a query or fragment, or its acquisition policy is invalid. Authentication belongs in headers, never source identifiers.",
+        "Supply an HTTP(S) document URL and --input-header or newline-separated TUNGSTEN_INPUT_HEADERS. Choose either --offline or --refresh-inputs.",
+    ),
+    e(
+        "TG0121",
+        "Fetching an input failed, returned a non-success HTTP status, exceeded 8 MiB or did not finish within 30 seconds. Redirects are refused so credentials cannot cross origins.",
+        "Check network access, trusted TLS certificates and authentication. Pass the final document URL explicitly. Use --offline to reuse a verified pin.",
+    ),
+    e(
+        "TG0122",
+        "Downloaded or cached bytes differ from their SHA256 pin, or a converted import no longer matches its original remote source.",
+        "Review upstream changes before --refresh-inputs. Converted inputs require re-import into a fresh project and renewed review. Use --offline for the existing pin; restore corrupted cache bytes from a trusted copy.",
+    ),
+    e(
+        "TG0123",
+        "The .tungsten-inputs cache has no usable pin, contains a symlink or invalid file, or cannot be written safely.",
+        "Fetch once online and retain both source.lock.json and its content file for offline use. Inspect permissions and unexpected cache entries before retrying.",
+    ),
+    e(
         "TG0201",
         "A `$ref` points at a location that does not exist: the JSON Pointer names a missing \
          member, or the referenced file has no such path.",

@@ -78,7 +78,11 @@ impl Project {
                 .unwrap_or_else(|| tungsten_build::DEFAULT_MANIFEST_NAME.to_string()),
         };
         Project {
-            base_dir: file.parent().map(Path::to_path_buf).unwrap_or_default(),
+            base_dir: if tungsten_openapi::acquire::is_remote(&path.to_string_lossy()) {
+                PathBuf::from(".")
+            } else {
+                file.parent().map(Path::to_path_buf).unwrap_or_default()
+            },
             manifest,
             search_path: env
                 .search_path

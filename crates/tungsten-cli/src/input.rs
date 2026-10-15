@@ -22,6 +22,9 @@ pub(crate) enum Input {
 /// Classify a PATH argument. Fails with TG0101 for a directory without a
 /// manifest.
 pub(crate) fn resolve(path: &Path) -> Result<Input, Diagnostic> {
+    if tungsten_openapi::acquire::is_remote(&path.to_string_lossy()) {
+        return Ok(Input::Spec(path.to_path_buf()));
+    }
     if path.is_dir() {
         return MANIFEST_NAMES
             .iter()
@@ -64,7 +67,8 @@ pub(crate) fn join(dir: &Path, name: &str) -> PathBuf {
 
 /// Compile whatever PATH names.
 pub(crate) fn compile(path: &Path) -> Compiled {
-    let opts = CompileOptions::default();
+    let mut opts = CompileOptions::default();
+    opts.load.acquisition = tungsten_openapi::acquire::current_options();
     match resolve(path) {
         Ok(Input::Project(manifest)) => compile_project(&manifest, &opts),
         Ok(Input::Spec(spec)) => compile_spec(&spec, &opts),
