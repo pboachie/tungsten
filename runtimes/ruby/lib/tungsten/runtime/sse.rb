@@ -57,7 +57,9 @@ module Tungsten
           @line << bytes.byteslice(start, i - start)
           cr = bytes.getbyte(i) == 13
           if cr && i + 1 == size
+            # The held CR counts toward the limit: it is the terminator of the line being read.
             @pending_cr = true
+            check_limit(1)
             return out
           end
           complete(out)
@@ -66,10 +68,7 @@ module Tungsten
           start = cr && bytes.getbyte(i + 1) == 10 ? i + 2 : i + 1
         end
         @line << bytes.byteslice(start, size - start)
-        if @event_bytes + @line.bytesize > @max
-          @exceeded = true
-          @line.clear
-        end
+        check_limit(0)
         out
       end
 
@@ -87,6 +86,15 @@ module Tungsten
       private
 
       def utf8(bytes) = bytes.dup.force_encoding(Encoding::UTF_8)
+
+      # The event and the line being read (plus `extra` bytes) hold more than
+      # `max` bytes: the parser stops.
+      def check_limit(extra)
+        return unless @event_bytes + @line.bytesize + extra > @max
+
+        @exceeded = true
+        @line.clear
+      end
 
       # The line read so far ends: it is parsed and the buffer is emptied.
       def complete(out)

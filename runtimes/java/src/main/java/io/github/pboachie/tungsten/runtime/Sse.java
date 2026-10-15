@@ -149,7 +149,10 @@ final class Sse {
             }
             append(chunk, start, i);
             if (c == '\r' && i + 1 == length) {
+                // The held CR counts toward the limit: it is the terminator of the line being read.
                 pendingCr = true;
+                lineBytes += 1;
+                checkLimit();
                 return out;
             }
             complete(out);
@@ -162,12 +165,17 @@ final class Sse {
             start = i + 1;
         }
         append(chunk, start, length);
+        checkLimit();
+        return out;
+    }
+
+    /** The event and the line being read hold more than max bytes: the parser stops. */
+    private void checkLimit() {
         if (eventBytes + lineBytes > max) {
             exceeded = true;
             line.setLength(0);
             lineBytes = 0;
         }
-        return out;
     }
 
     /** The stream ended: a held-back CR ends its line, the rest is discarded. */

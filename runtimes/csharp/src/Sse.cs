@@ -110,7 +110,10 @@ internal sealed class SseParser
             Append(chunk, start, i);
             if (c == '\r' && i + 1 == chunk.Length)
             {
+                // The held CR counts toward the limit: it is the terminator of the line being read.
                 pendingCr = true;
+                lineBytes += 1;
+                CheckLimit();
                 return outList;
             }
             Complete(outList);
@@ -125,13 +128,19 @@ internal sealed class SseParser
             start = i + 1;
         }
         Append(chunk, start, chunk.Length);
+        CheckLimit();
+        return outList;
+    }
+
+    /// <summary>The event and the line being read hold more than max bytes: the parser stops.</summary>
+    private void CheckLimit()
+    {
         if (eventBytes + lineBytes > max)
         {
             Exceeded = true;
             pending.Clear();
             lineBytes = 0;
         }
-        return outList;
     }
 
     /// <summary>The stream ended; a held-back CR ends its line, the rest is discarded.</summary>
