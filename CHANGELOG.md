@@ -11,6 +11,9 @@ changes.
 
 ### Added
 
+- Imported-input setup validates built-in target policy support before saving
+  converted documents or project manifests; unsupported selections return TG0705
+  with supported alternatives instead of leaving an unusable project behind.
 - Durable Java, C# and Ruby idempotency stores share the version-1 owner lease
   format with TypeScript, Python, Go and Rust. Automatic keys use atomic
   reservations while existing get/put-only custom stores remain compatible.
