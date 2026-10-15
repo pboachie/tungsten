@@ -74,6 +74,14 @@ changes.
 
 ### Fixed
 
+- MCP `run_script` on native Windows: the Deno child now receives `SystemRoot`,
+  `SYSTEMDRIVE`, `TEMP`, `TMP`, `USERPROFILE`, `PATH` and `PATHEXT` (and nothing
+  else from the parent), and Deno is located by file existence plus a `PATHEXT`
+  extension instead of a POSIX `X_OK` check. Linux and macOS are unchanged.
+- MCP: `--bearer-token-env <NAME>` is accepted as an alias of `--token-env`; the
+  HTTP embeddings provider warns when `apiKeyEnv` is used with a plain `http://`
+  non-loopback URL and reads at most 1 MiB of response (larger is an embedder
+  failure, search falls back to BM25).
 - Python and Java runtimes bound schema `pattern` matching: strings over 64 KiB
   skip the pattern check, and Java abandons a match after 1 s, treating it as
   not checked.
