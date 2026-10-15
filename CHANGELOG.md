@@ -11,6 +11,11 @@ changes.
 
 ### Added
 
+- Enable registry packaging of the Apache-2.0 Rust runtime and CLI-kit with a
+  versioned runtime dependency. Add opt-in crates.io trusted publishing to the
+  existing release workflow; account ownership, first publication and publisher
+  configuration remain maintainer release steps.
+
 - Complete the architecture overview with explicit alternative input routes, separate
   optional configuration and all current SDK, CLI, MCP, WebMCP and docs outputs; link
   the reviewed response-contract recipe from the quickstart and gallery. Kotlin
