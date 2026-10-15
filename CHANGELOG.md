@@ -236,6 +236,9 @@ values as `JsonNode`, OpenID Connect as a bearer token, no CLI or MCP).
 
 ### Fixed
 
+- Release bundles include the Homebrew formula, winget archive and distribution
+  checksums before publication, supporting GitHub immutable releases. Container
+  distribution verifies the sealed assets and no longer uploads release assets.
 - Python 3.11 SDKs import `Self` and `NotRequired` from the standard library,
   matching their generated lint target; Python 3.10 keeps the required backports.
 
