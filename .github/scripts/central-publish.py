@@ -48,8 +48,8 @@ def gpg(home, args, data=None):
     result = subprocess.run(
         ["gpg", "--homedir", str(home), "--batch", "--no-tty", *args],
         input=data,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
+        check=False,
     )
     if result.returncode:
         raise ValueError("GPG operation failed; inspect signing configuration locally")
@@ -139,6 +139,7 @@ def sign_bundle(directory, version, output):
                 ["gpgconf", "--homedir", str(home), "--kill", "gpg-agent"],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
+                check=False,
             )
     return inventory
 

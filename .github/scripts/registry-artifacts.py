@@ -316,9 +316,10 @@ def dependency_tables(manifest, workspace=None):
                     value = (
                         {"version": value} if isinstance(value, str) else dict(value)
                     )
-                    if "path" in value:
-                        if name != "tungsten-runtime" or value.pop("path") != "runtime":
-                            raise ValueError("unexpected inherited path dependency")
+                    if "path" in value and (
+                        name != "tungsten-runtime" or value.pop("path") != "runtime"
+                    ):
+                        raise ValueError("unexpected inherited path dependency")
                 result[target, kind, name] = dependency_semantics(name, value)
     return result
 
