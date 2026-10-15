@@ -54,6 +54,10 @@ Tree rules:
     files (*Test.java, *Tests.java, *Test.kt, *Tests.cs, *Tests.fs,
     *Tests.swift, *Test.php, *_test.rb, *_spec.rb, *_test.dart) and test directories (any
     case, `Tests/` included, and spec/ under runtimes/ruby/) are refused.
+  - CHANGELOG.md (the source of the GitHub Release notes) keeps, inside one
+    release section (`## [X.Y.Z]` or `## [Unreleased]`), one heading of each
+    kind and one bullet per change (no repeated bullet text), and every
+    version heading carries a date (`## [1.2.3] - YYYY-MM-DD`).
 Commit rules: no Co-Authored-By trailer naming an AI assistant or its vendor,
 no session-link trailers, no "generated with" footers naming an AI tool, and
 no author or committer identity of an AI assistant.
@@ -150,6 +154,56 @@ HASH_HEADER_FILES = {"Gemfile", "pubspec.yaml", "analysis_options.yaml", "phpsta
 HASH_HEADER_SOURCES = {".rb", ".gemspec"}
 XML_MANIFESTS = {"pom.xml", "Directory.Build.props"}
 XML_HEADER = "<!-- SPDX-License-Identifier: Apache-2.0 -->"
+
+# ── CHANGELOG rules ──────────────────────────────────────────────────────────
+# The changelog is the source of the GitHub Release notes, so a release
+# section stays readable: one heading of each kind, one bullet per change and
+# a date on every version heading. `Unreleased` is exempt from the date.
+
+CHANGELOG_PATH = "CHANGELOG.md"
+CHANGELOG_RELEASE_HEADING = re.compile(r"^## \[([^]]+)\]\s*(?:-\s*(\d{4}-\d{2}-\d{2}))?\s*$")
+CHANGELOG_SUB_HEADING = re.compile(r"^### (.+?)\s*$")
+CHANGELOG_BULLET = re.compile(r"^- ")
+
+
+def changelog_violations(text: str) -> list[str]:
+    found = []
+    section: str | None = None
+    sub_headings: dict[str, int] = {}
+    bullets: dict[str, int] = {}
+    lines = text.splitlines()
+    for number, line in enumerate(lines, 1):
+        release = CHANGELOG_RELEASE_HEADING.match(line)
+        if release:
+            name, date = release[1], release[2]
+            if name != "Unreleased" and not date:
+                found.append(f"line {number}: release heading [{name}] has no date"
+                             f" (write '## [{name}] - YYYY-MM-DD')")
+            section, sub_headings, bullets = name, {}, {}
+            continue
+        if section is None:
+            continue
+        sub = CHANGELOG_SUB_HEADING.match(line)
+        if sub:
+            if sub[1] in sub_headings:
+                found.append(f"line {number}: duplicate '### {sub[1]}' heading in [{section}]"
+                             f" (first at line {sub_headings[sub[1]]})")
+            else:
+                sub_headings[sub[1]] = number
+            continue
+        if CHANGELOG_BULLET.match(line):
+            body = [line[2:]]
+            for follow in lines[number:]:
+                if not follow.strip() or follow.startswith("#") or CHANGELOG_BULLET.match(follow):
+                    break
+                body.append(follow)
+            bullet = " ".join(part.strip() for part in body)
+            if bullet in bullets:
+                found.append(f"line {number}: duplicate bullet in [{section}]"
+                             f" (first at line {bullets[bullet]}): {bullet[:80]}...")
+            else:
+                bullets[bullet] = number
+    return found
 
 
 def language_of(path: str) -> tuple[str, str] | None:
@@ -271,6 +325,8 @@ def manifest_violations(path: str, text: str, paths: set[str]) -> list[str]:
 
 def content_violations(path: str, text: str, paths: set[str]) -> list[str]:
     found = []
+    if path == CHANGELOG_PATH:
+        found += changelog_violations(text)
     suffix = PurePosixPath(path).suffix.lower()
     in_runtimes = path.startswith("runtimes/")
     if suffix == ".rs":
