@@ -28,7 +28,12 @@ module Tungsten
       end
 
       def reserve(scope, logical_id, candidate)
-        @lock.synchronize { @keys[[scope, logical_id]] ||= candidate }
+        @lock.synchronize do
+          existing = @keys[[scope, logical_id]]
+          return existing if existing.is_a?(String) && !existing.empty?
+
+          @keys[[scope, logical_id]] = candidate
+        end
       end
     end
 
