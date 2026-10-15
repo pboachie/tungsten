@@ -280,15 +280,24 @@ jobs:
 
   woodpecker-release:
     name: Woodpecker npm release validation
-    needs: prepare
+    # The wait must not start before the artifacts it gates exist, so it runs
+    # after the npm artifact validation instead of racing the build jobs. A
+    # timeout here fails only this gate (and skips npm publication); the GitHub
+    # Release and attestation jobs do not depend on it.
+    needs: [prepare, npm-artifacts]
     runs-on: ubuntu-latest
-    timeout-minutes: 18
+    # WAIT_DEADLINE_MINUTES (45) in wait-woodpecker-release.mjs plus checkout
+    # and setup.
+    timeout-minutes: 50
     permissions:
       contents: read
       statuses: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # Full history with tags: the dry-run gate exercise resolves the
+          # last released tag and its commit locally.
+          fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -296,6 +305,9 @@ jobs:
       - name: Require the exact Woodpecker tag validation when enabled
         env:
           WOODPECKER_RELEASE: ${{ needs.prepare.outputs.release == 'true' && vars.WOODPECKER_RELEASE == 'true' && 'true' || 'false' }}
+          # A dry run exercises the same wait against the last released tag,
+          # so the gate is tested before a release relies on it.
+          WOODPECKER_EXERCISE: ${{ needs.prepare.outputs.release != 'true' && vars.WOODPECKER_RELEASE == 'true' && 'true' || 'false' }}
           WOODPECKER_REPO_ID: ${{ vars.WOODPECKER_REPO_ID }}
           WOODPECKER_URL: ${{ vars.WOODPECKER_URL }}
           RELEASE_TAG: ${{ needs.prepare.outputs.tag }}

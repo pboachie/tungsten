@@ -175,6 +175,20 @@ values as `JsonNode`, OpenID Connect as a bearer token, no CLI or MCP).
   the floor and that the `musl` archives are static, and `install.sh` checks
   `ldd` before installing a `gnu` archive and points older systems at the
   static musl default. The README install section documents all of this.
+- Release workflow: the Woodpecker npm gate can no longer time out a real
+  release run. The wait starts only after the npm artifacts it gates exist
+  (the `Woodpecker npm release validation` job depends on `npm-artifacts`
+  instead of racing the build jobs), its deadline is 45 minutes instead of 15
+  (the v0.1.2 tag needed a manual re-run about 20 minutes after its first
+  attempt died at 15; the value and its history are documented in
+  `wait-woodpecker-release.mjs`, and the job timeout is 50 minutes),
+  transient GitHub status or pipeline lookup failures are retried instead of
+  failing the gate, and a timeout reports that only npm publication is blocked
+  — the GitHub Release and attestations are unaffected — and to re-run the
+  failed jobs. A `workflow_dispatch` dry run now exercises the same wait
+  against the last released tag, so the gate is tested before a release
+  relies on it, and the Woodpecker-side artifact validation step's own
+  timeout is aligned with the GitHub-side 20-minute budget.
 - MCP `run_script` on native Windows: the Deno child now receives `SystemRoot`,
   `SYSTEMDRIVE`, `TEMP`, `TMP`, `USERPROFILE`, `PATH` and `PATHEXT` (and nothing
   else from the parent), and Deno is located by file existence plus a `PATHEXT`
