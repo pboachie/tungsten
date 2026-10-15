@@ -1,0 +1,17 @@
+tungsten: 1
+
+api:
+  name: runs_api
+  title: Runs API
+
+inputs:
+  - namespace: runs
+    spec: openapi.yaml
+    overlays:
+      # Reviewed response contracts, applied after the spec loads. Remove
+      # this line once upstream ships the same schemas in the spec itself.
+      - contracts.overlay.yaml
+
+targets:
+  python:
+    out: sdk/python

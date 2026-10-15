@@ -34,6 +34,7 @@ kotlin {
 }
 
 tasks.jar {
+    from("README.md", "LICENSE") { into("META-INF") }
     manifest {
         attributes("Automatic-Module-Name" to "io.github.pboachie.tungsten.runtime.kotlin")
     }

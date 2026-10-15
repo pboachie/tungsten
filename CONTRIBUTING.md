@@ -64,8 +64,9 @@ separate private repository, so pull requests here must not add tests, test
 data, `#[cfg(test)]` modules, `[dev-dependencies]`, doctests or documentation
 directories. A repository guard job in CI enforces this. Besides the community
 files at the root and in `.github/`, only images in `assets/` and code in
-`examples/` (with a `README.md` per example), and package READMEs in
-`runtimes/ts`, `runtimes/mcp` and `runtimes/webmcp` are accepted.
+`examples/` (with a `README.md` per example), and package READMEs directly in
+the runtime package directories (including `runtimes/rust/runtime` and
+`runtimes/rust/cli-kit`) are accepted.
 
 You do not need access to that suite. A maintainer runs it against your pull
 request, and its result appears on the pull request as the `tungsten-ops/ci`
@@ -118,6 +119,10 @@ new version and a new tag, never by moving the published one.
   them. Using tools to help you is fine; you remain the author and are
   responsible for the change.
 - A DCO `Signed-off-by` line is not required.
+- Keep commit messages and changelog entries suitable for public release notes.
+  Do not include private issue or pull-request URLs, internal planning paths,
+  release-plan paths or operational runbook paths. Describe the public behavior
+  instead; CI rejects these references.
 
 ## Review
 
