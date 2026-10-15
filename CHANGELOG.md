@@ -20,6 +20,11 @@ changes.
   outcomes. Python and TypeScript `collect` helpers accept optional byte/time
   budgets, retain admitted partials and preserve unbounded no-argument calls.
 
+- Dedicated TG0808 diagnostics explain when an external emitter lacks imported-operation
+  policy enforcement; protocol-1 emitters remain compatible with ordinary projects.
+- Git input references (`git+https://...@ref#path`) with bounded shallow
+  acquisition, deterministic document discovery, commit/content pins and verified
+  offline reuse through the existing input and importer flows.
 - A runnable example gallery for first SDKs, supported input routes, destructive
   confirmation, local mock development, generated-file drift and API surface
   review. The catalog runner checks recipe documentation and builds generated

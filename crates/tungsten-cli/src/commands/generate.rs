@@ -254,7 +254,9 @@ fn emit_external(
                         limits,
                     );
                 }
-                Ok(_) => out.diagnostics.push(targets::import_policy_refusal(&name)),
+                Ok(_) => out
+                    .diagnostics
+                    .push(targets::external_import_policy_refusal(&name)),
                 Err(d) => out.diagnostics.push(d),
             }
         }
