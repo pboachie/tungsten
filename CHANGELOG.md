@@ -93,6 +93,13 @@ values as `JsonNode`, OpenID Connect as a bearer token, no CLI or MCP).
 
 ### Fixed
 
+- A Path Item `$ref` with fields written beside it no longer drops them:
+  sibling operations, `parameters`, `summary`, `description` and `servers`
+  are merged over the referenced item for OpenAPI 3.0 and 3.1 alike, so a
+  spec that lost an operation silently now compiles it (additive to the
+  generated API). A field defined on both sides is the new warning TG0510
+  (the sibling wins; `tungsten explain TG0510`), which fails a run only under
+  `--strict`.
 - Python and Java runtimes bound schema `pattern` matching: strings over 64 KiB
   skip the pattern check, and Java abandons a match after 1 s, treating it as
   not checked.
