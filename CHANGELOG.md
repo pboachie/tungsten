@@ -11,6 +11,12 @@ changes.
 
 ### Added
 
+- Opt-in `check --audit-contracts` response quality diagnostics for missing JSON
+  schemas, unconstrained values and free-form objects, with scoped review notes
+  and `--require-contracts` enforcement (or existing `--strict` enforcement).
+  A runnable response-contract example
+  enriches an untouched specification with reviewed run/job union schemas through
+  standard OpenAPI overlays; generated response types and default checks are unchanged.
 - CI builds the compiler and example emitter at their declared Rust minimum,
   checks the runtime at its own minimum, and rejects locked dependencies or
   README compiler prerequisites that exceed or disagree with those floors.
@@ -30,7 +36,6 @@ changes.
 - Opt-in Python 3.10/3.11 SDK generation with `python_version`, matching
   package metadata and a Python 3.10-compatible runtime for both model modes.
 - Link the importer guide from the quickstart, including per-format limits and imported-operation review.
-
 - Imported specs (Postman, cURL, `.http`, HAR and endpoint manifests): a
   target that cannot enforce imported-operation policy (Java, C#, Kotlin, Ruby,
   Dart and the other SDK targets) now fails alone; without `--strict` the
