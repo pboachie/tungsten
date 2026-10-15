@@ -68,14 +68,15 @@ const LONG_HELP: &str = concat!(examples_text!(), exit_codes_text!());
     color = ColorChoice::Never
 )]
 pub(crate) struct Cli {
-    /// Reuse SHA256-verified remote inputs without network access.
+    /// Reuse verified HTTP/Git input pins and cached files without network access.
     #[arg(long, global = true, conflicts_with = "refresh_inputs")]
     pub offline: bool,
-    /// Explicitly accept changed remote input bytes and replace their SHA256 pins.
+    /// Refresh an HTTP content pin or resolve a Git ref again after review.
+    /// Converted imports require init into a fresh project to change sources.
     #[arg(long, global = true)]
     pub refresh_inputs: bool,
-    /// Header for remote input acquisition only (repeatable). Environment values
-    /// are newline-separated. Prefer the environment for secret header values.
+    /// Header for HTTP document downloads only (repeatable; not Git authentication).
+    /// Environment values are newline-separated. Prefer the environment for secrets.
     #[arg(
         long,
         global = true,
@@ -202,7 +203,7 @@ pub(crate) enum IrCommand {
 #[derive(Debug, Args)]
 pub(crate) struct InputArgs {
     /// A directory with a tungsten.yml, a tungsten*.yml manifest, or a
-    /// single OpenAPI document.
+    /// single OpenAPI document (local path, HTTP(S) URL or git+ URL).
     #[arg(default_value = ".")]
     pub path: PathBuf,
 }
@@ -511,7 +512,9 @@ pub(crate) struct InitArgs {
     /// Swagger 2.0 document, a Postman Collection v2.1 JSON file, a saved
     /// cURL command, an HTTP request file (.http/.rest), a HAR 1.2 capture
     /// or an endpoint manifest. Saved requests and captures need explicit
-    /// --route templates. Default: openapi.json, openapi.yaml, openapi.yml,
+    /// --route templates. Accepts a local path, HTTP(S) URL or
+    /// git+https://host/repository@ref#path (also git+file://).
+    /// Default: openapi.json, openapi.yaml, openapi.yml,
     /// swagger.json or swagger.yaml in the target directory.
     #[arg(long, value_name = "SPEC")]
     pub from: Option<PathBuf>,

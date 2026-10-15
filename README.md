@@ -12,7 +12,7 @@
 
 </div>
 
-tungsten is a deterministic compiler written in Rust. It reads one API description — an OpenAPI 3.0 or 3.1 document (JSON or YAML), a Swagger 2.0 document, a Postman Collection v2.1 file, a saved cURL command, an HTTP request file (`.http`/`.rest`), a HAR 1.2 capture or an endpoint manifest with JSON Schema 2020-12 models, each parsed offline — plus two small manifests, builds one typed intermediate representation (IR), and emits TypeScript, Python, Rust, Go, Java, Kotlin, C#, F#, Dart and Ruby SDKs, a Rust command-line client, an MCP server, browser WebMCP tools and LLM-oriented docs. Every emitted client is built for an autonomous caller: failures are instructions, side effects are never duplicated, and irreversible calls need an explicit confirmation. See [Supported inputs](#supported-inputs) for the exact alternatives, their limits and the review each requires.
+tungsten is a deterministic compiler written in Rust. It reads one API description — an OpenAPI 3.0 or 3.1 document (JSON or YAML), a Swagger 2.0 document, a Postman Collection v2.1 file, a saved cURL command, an HTTP request file (`.http`/`.rest`), a HAR 1.2 capture or an endpoint manifest with JSON Schema 2020-12 models — plus two small manifests, builds one typed intermediate representation (IR), and emits TypeScript, Python, Rust, Go, Java, Kotlin, C#, F#, Dart and Ruby SDKs, a Rust command-line client, an MCP server, browser WebMCP tools and LLM-oriented docs. Documents are parsed locally; optional HTTP/Git acquisition pins the downloaded source for verified offline reuse. Every emitted client is built for an autonomous caller: failures are instructions, side effects are never duplicated, and irreversible calls need an explicit confirmation. See [Supported inputs](#supported-inputs) for the exact alternatives, their limits and the review each requires.
 
 Read the documentation at [pboachie.github.io/tungsten](https://pboachie.github.io/tungsten/).
 
@@ -42,7 +42,7 @@ tungsten check my-api --refresh-inputs
 
 The first fetch records the source URL and SHA256 under
 `.tungsten-inputs/<url-sha256>/source.lock.json`, beside immutable downloaded
-content. Retain both files for offline use. Online commands verify upstream
+content. Retain the complete source cache directory for offline use. Online commands verify upstream
 bytes against the pin and refuse changed content. `--refresh-inputs` explicitly
 accepts a new OpenAPI pin; converted imports instead require re-import into a
 fresh project and another operation review. Their `source_url` and
@@ -81,8 +81,13 @@ input-root confinement. Acquisition is limited to 60 seconds, 512 files, 8 MiB p
 file and 64 MiB of materialized content and fetched Git object data. Narrow
 `#path` to bound discovery; the shallow fetch itself must still fit the object
 budget. Git redirects, symlinks, submodules and unsafe paths are refused.
+Retain the complete `.tungsten-inputs/git/` cache for offline use, including its
+locks and materialized files; offline reuse needs no Git executable. Every
+materialized file is verified, and unexpected cached files or directories are
+rejected. HTTP/Git pins verify source consistency, not the publisher's identity:
+review and protect the cache and lock files together.
 
-`tungsten init` takes **one** input of any of the kinds below — OpenAPI OR Swagger OR Postman OR saved cURL OR HTTP request files OR HAR, with the endpoint-manifest and manual paths alongside them — not a bundle. Every route is parsed offline: no request is sent or replayed, and no shell, script or capture is ever executed. Non-OpenAPI inputs are converted to a normalized OpenAPI document that `init` saves next to the manifests (`imported.openapi.json`, with an `import-report.json` where listed; the manual path writes `inferred.openapi.json` and `inference-report.json`), so the accepted input stays separate from the normalized artifact and the typed IR the compiler builds from it.
+`tungsten init` takes **one** input of any of the kinds below — OpenAPI OR Swagger OR Postman OR saved cURL OR HTTP request files OR HAR, with the endpoint-manifest and manual paths alongside them — not a bundle. Acquisition may download a document or fetch a Git commit; parsing never sends or replays the API requests described by that input, and no shell, script or capture is ever executed. Non-OpenAPI inputs are converted to a normalized OpenAPI document that `init` saves next to the manifests (`imported.openapi.json`, with an `import-report.json` where listed; the manual path writes `inferred.openapi.json` and `inference-report.json`), so the accepted input stays separate from the normalized artifact and the typed IR the compiler builds from it.
 
 | Input | You provide | Entry point and conversion | Limits and required review |
 |---|---|---|---|
@@ -104,7 +109,7 @@ All conversion routes share these limits: setup inputs are bounded (8 MiB, with 
 | Target | Emits | Minimum toolchain | Runtime and installation |
 |---|---|---|---|
 | `typescript` | Typed SDK, `Result` values, Zod validation | Node 22 | `@elysra/tungsten-runtime`: matching npm package or built source |
-| `python` | Sync and async SDK, Pydantic v2 models | Python 3.12 | Install `tungsten-runtime` from matching `runtimes/python` source |
+| `python` | Sync and async SDK, Pydantic v2 or dataclass models | Python 3.12 by default; [opt-in 3.10/3.11](#python-interpreter-compatibility) | PyPI runtime for a matching published release, or matching `runtimes/python` source |
 | `rust` | Async SDK (serde, reqwest) and optional generated CLI | Rust 1.88 | Source paths to `runtimes/rust/runtime` and, for a CLI, `runtimes/rust/cli-kit` |
 | `go` (external) | Models, resources, typed client, pagination and stream helpers | Go 1.22 | Build `tungsten-emit-go` from `emitters/go`; use `runtime_path` to matching `runtimes/go` source |
 | `java` | Java SDK | Java 17 and Maven | Use `runtime_path` to matching `runtimes/java` source |
@@ -123,7 +128,7 @@ Generated packages default to compatible 0.1.3 runtime floors; an explicit
 `runtime` setting remains yours to qualify. The earlier 0.1.2 release has
 independently versioned non-npm runtime sources. Use the matching source checkout
 when a registry artifact is unavailable: source version metadata is not evidence
-of publication. Python, Rust, Java, Kotlin, C#, F#, Dart and Ruby registry
+of publication. Rust, Java, Kotlin, C#, F#, Dart and Ruby registry
 publication is not part of the 0.1.2 installation guarantee; the default Go module
 still uses a resolvable pseudo-version until a nested-module tag is published.
 Target `runtime_path` values are relative to the generated output directory.
@@ -131,6 +136,13 @@ Target `runtime_path` values are relative to the generated output directory.
 Targets and the mock server (`tungsten mock`) share one IR. Generated-package and contract checks exercise each language, but source availability and passing shared scenarios do not establish complete validation, protocol or distribution parity. Unsupported features can vary by target. Review all compiler diagnostics: `--strict` rejects warnings, including unsupported `if`/`then`/`else` constraints, but informational diagnostics can still describe other unsupported features. Local checks do not establish live API acceptance or registry installation readiness.
 
 ## Install
+
+Install the compiler first. The [npm and PyPI packages below](#runtime-packages)
+support generated output; they do not install the `tungsten` compiler command.
+The latest published compiler release is [v0.1.2](https://github.com/pboachie/tungsten/releases/tag/v0.1.2)
+as of October 15, 2026. This branch describes the 0.1.3 source candidate, including
+HTTP/Git inputs and Python 3.10/3.11 compatibility, which require matching 0.1.3
+compiler and runtime source until that release's packages are published.
 
 Prebuilt binaries for Linux, macOS and Windows are attached to each [GitHub release](https://github.com/pboachie/tungsten/releases). The installer checks the archive against the release's `SHA256SUMS` before it installs anything:
 
@@ -179,11 +191,37 @@ Or build from source, with Rust 1.95 or newer (the repository pins 1.97.0 in [`r
 ```sh
 git clone https://github.com/pboachie/tungsten
 cd tungsten
+git checkout release/0.1.3                 # 0.1.3 source candidate
 cargo install --path crates/tungsten-cli   # installs the `tungsten` binary
 tungsten doctor                            # reports optional tools (node, python3, uv, formatters)
 ```
 
 Node, Python and the formatters are optional: a missing tool only disables the target or `--format` option that needs it.
+
+### Runtime packages
+
+For a published 0.1.2 compiler and generated client, choose the runtime for the
+output you use. These package versions were verified on October 15, 2026;
+Node 22+ is required for TypeScript/MCP, and the published Python runtime needs
+Python 3.12+. Run Python installation commands in an activated virtual environment.
+
+| Output | Runtime package | Install the published runtime |
+|---|---|---|
+| TypeScript SDK | [`@elysra/tungsten-runtime`](https://www.npmjs.com/package/@elysra/tungsten-runtime) | `npm install @elysra/tungsten-runtime@0.1.2` |
+| MCP server | [`@elysra/tungsten-mcp`](https://www.npmjs.com/package/@elysra/tungsten-mcp) | `npm install @elysra/tungsten-mcp@0.1.2` |
+| Browser WebMCP | [`@elysra/tungsten-webmcp`](https://www.npmjs.com/package/@elysra/tungsten-webmcp) | `npm install @elysra/tungsten-webmcp@0.1.2` |
+| Python SDK | [`tungsten-runtime`](https://pypi.org/project/tungsten-runtime/) | `python -m pip install tungsten-runtime==0.1.2` |
+
+Verify a TypeScript runtime installation with
+`node --input-type=module -e 'import("@elysra/tungsten-runtime").then(() => console.log("runtime ready"))'`,
+or Python with `python -c 'import tungsten_runtime; print("runtime ready")'`.
+Then install and build your generated package as its README describes. These
+runtime imports do not generate a client or call an API.
+
+For the 0.1.3 source candidate, use matching runtime source as in the quickstart
+below. Its generated packages require 0.1.3 runtime capabilities; the published
+0.1.2 packages above do not satisfy that dependency. The [runnable gallery](examples/README.md)
+shows complete installation and first-use flows for each output.
 
 ## Quickstart
 
@@ -192,8 +230,8 @@ Install the compiler above first. This walkthrough uses Python 3.12 or newer and
 require Node 22 or newer. Installing the compiler does not install generated
 SDKs or their language runtimes.
 
-This walkthrough continues from the source installation above, using the same
-checkout for the v0.1.2 compiler and runtime. From that `tungsten` directory, set
+This walkthrough continues from the 0.1.3 source installation above, using the same
+checkout for the compiler and runtime. From that `tungsten` directory, set
 its absolute path and create a separate project. If you installed a release
 binary, obtain its matching source archive from the release first:
 
@@ -428,7 +466,7 @@ The CLI that tungsten generates for a Rust target has its own exit codes (0 succ
 
 ## Project status
 
-tungsten is **early-stage**. Eight SDK targets, the generated Rust CLI, MCP, WebMCP, docs and the mock server are implemented. Validation is target-specific; do not infer that every target has the same live pilot coverage or published runtime packages. Check the [GitHub releases](https://github.com/pboachie/tungsten/releases) for available compiler binaries and matching sources. The quickstart installs a runtime from matching source and does not require registry publication; compiler and runtime packages have independent versions. Expect breaking changes to manifests, the IR and generated code between releases. Open an issue if a target limitation blocks you.
+tungsten is **early-stage**. Ten SDK targets, the generated Rust CLI, MCP, WebMCP, docs and the mock server are implemented. Validation is target-specific; do not infer that every target has the same live pilot coverage or published runtime packages. Check the [GitHub releases](https://github.com/pboachie/tungsten/releases) for available compiler binaries and matching sources. The quickstart installs a runtime from matching source and does not require registry publication; from 0.1.3, compiler and runtime source versions follow the release tag together. Expect breaking changes to manifests, the IR and generated code between releases. Open an issue if a target limitation blocks you.
 
 The test suite, conformance corpus and design documents live in a separate maintainers' repository, which runs against every pull request. This repository is source only.
 
