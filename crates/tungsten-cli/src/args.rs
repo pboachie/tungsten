@@ -77,7 +77,12 @@ pub(crate) struct Cli {
     /// the manifest says; pass it (or set TUNGSTEN_NO_EXTERNAL=1) when the
     /// manifest is not trusted, for example on a pull request in CI. Such
     /// targets are reported as skipped (TG0807).
-    #[arg(long, global = true, env = "TUNGSTEN_NO_EXTERNAL")]
+    #[arg(
+        long,
+        global = true,
+        env = "TUNGSTEN_NO_EXTERNAL",
+        value_parser = clap::builder::BoolishValueParser::new()
+    )]
     pub no_external: bool,
     #[command(subcommand)]
     pub command: Command,

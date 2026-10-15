@@ -206,6 +206,7 @@ fn target_names(configured: &[String]) -> Vec<String> {
             names.push(name.clone());
         }
     }
+    names.sort();
     names
 }
 
