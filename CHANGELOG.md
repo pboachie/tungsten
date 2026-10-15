@@ -100,6 +100,11 @@ values as `JsonNode`, OpenID Connect as a bearer token, no CLI or MCP).
 
 ### Fixed
 
+- `doctor` now lists `java`, `mvn`, `dotnet`, `ruby`, `bundle` and `go`, and
+  `doctor --strict` fails when a configured `java`, `csharp`, `ruby` or
+  external `go` target lacks its toolchain (Java 17, .NET 10, Ruby 3.3,
+  Go 1.22) or, for an external `go` target without a command, when
+  `tungsten-emit-go` is not on PATH.
 - A Path Item `$ref` with fields written beside it no longer drops them:
   sibling operations, `parameters`, `summary`, `description` and `servers`
   are merged over the referenced item for OpenAPI 3.0 and 3.1 alike, so a
