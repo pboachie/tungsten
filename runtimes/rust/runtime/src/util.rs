@@ -5,7 +5,7 @@
 //! TypeScript runtime writes, byte for byte, so digests, tokens and request
 //! bodies agree across runtimes.
 
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use serde::Deserialize;
 use serde_json::{Map, Number, Value};
 use sha2::{Digest, Sha256};

@@ -266,6 +266,8 @@ values as `JsonNode`, OpenID Connect as a bearer token, no CLI or MCP).
 
 ### Fixed
 
+- Keep the Rust runtime's HMAC and SHA-256 dependencies on compatible digest
+  APIs after dependency updates, preserving its declared minimum Rust version.
 - Restore Python environment proxy and `NO_PROXY` routing while retaining
   socket-level attempt deadlines on direct and proxied connections.
 - Isolate Git input commands from project configuration and inherited Git
