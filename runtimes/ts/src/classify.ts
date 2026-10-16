@@ -69,14 +69,17 @@ export interface DecodedBody {
   badLine?: number;
 }
 
+/** One stateless decoder for every body: constructing one per response is
+ * a measurable share of a small call. */
+const utf8 = new TextDecoder();
+
 export function decodeBody(bytes: Uint8Array, headers: Record<string, string>, declared: string | null): DecodedBody {
   const announced = mediaTypeOf(headers);
   const media = announced || (declared ?? "").toLowerCase();
-  const text = (): string => new TextDecoder().decode(bytes);
   // An empty body is no body, unless the server says it is JSON Lines: then it is no lines.
   if (bytes.byteLength === 0 && !isJsonlMedia(announced)) return { value: undefined, json: false, invalidJson: false, empty: true };
   if (isJsonlMedia(announced || media.split(";")[0]!.trim())) {
-    const raw = text();
+    const raw = utf8.decode(bytes);
     const values: unknown[] = [];
     const lines = raw.split("\n");
     for (const [index, line] of lines.entries()) {
@@ -90,7 +93,7 @@ export function decodeBody(bytes: Uint8Array, headers: Record<string, string>, d
     return { value: values, json: false, invalidJson: false, empty: false, jsonl: true };
   }
   if (isJsonMedia(media)) {
-    const raw = text();
+    const raw = utf8.decode(bytes);
     try {
       return { value: JSON.parse(raw) as unknown, json: true, invalidJson: false, empty: false };
     } catch {
@@ -98,7 +101,7 @@ export function decodeBody(bytes: Uint8Array, headers: Record<string, string>, d
     }
   }
   if (media === "" || media.startsWith("text/") || media === "application/problem+xml" || media.endsWith("+xml") || media === "application/xml") {
-    const raw = text();
+    const raw = utf8.decode(bytes);
     if (media === "" && /^\s*[[{]/.test(raw)) {
       try {
         return { value: JSON.parse(raw) as unknown, json: true, invalidJson: false, empty: false };

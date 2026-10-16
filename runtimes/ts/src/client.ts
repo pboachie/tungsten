@@ -446,6 +446,11 @@ function trimTrailingSlash(base: string): string {
   return base.replace(/\/+$/, "");
 }
 
+function addAll<T>(set: Set<T>, values: Iterable<T>): Set<T> {
+  for (const value of values) set.add(value);
+  return set;
+}
+
 /**
  * The runtime core used by generated clients. One instance per client:
  * it owns the idempotency store, the confirmation-token key, the OAuth2
@@ -751,8 +756,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
   /** Pre-flight validation of the args. With `placeholders`, an issue at
    * (or below) a value that is a dry evaluation's placeholder is not a
    * failure: the value is only known once the earlier step has run. */
-  #validateArgs(op: OperationDescriptor, args: Record<string, unknown>, placeholders: boolean): Failure | null {
-    const params = argParams(op);
+  #validateArgs(op: OperationDescriptor, args: Record<string, unknown>, placeholders: boolean, params = argParams(op)): Failure | null {
     for (const p of params) {
       if (p.required && (args[p.name] === undefined || args[p.name] === null)) {
         return this.#validation(
@@ -940,15 +944,17 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
         }),
       );
     }
+    // The snapshot walks every own value, so it is also the cycle check.
+    let args: Record<string, unknown>;
     try {
-      canonicalJson(rawArgs);
+      args = argumentSnapshot(rawArgs) as Record<string, unknown>;
     } catch {
       return this.#validation(op, [], "<cyclic value>", "a JSON-like value without cycles", "Pass arguments without circular references.");
     }
-    const args = argumentSnapshot(rawArgs) as Record<string, unknown>;
     const interrupted = this.#beforeDispatch(op, opts);
     if (interrupted) return interrupted;
-    const invalid = this.#validateArgs(op, args, purpose === "macro_preview") ?? this.#checkKey(op, opts, purpose);
+    const params = argParams(op);
+    const invalid = this.#validateArgs(op, args, purpose === "macro_preview", params) ?? this.#checkKey(op, opts, purpose);
     if (invalid) return invalid;
     if (purpose === "call") {
       const unconfirmed = await this.#checkConfirmation(op, args, opts);
@@ -971,21 +977,21 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
       for (const value of found) secrets.add(value);
     }
 
-    const url = this.#buildUrl(op, args, auth.plan, urlOverride);
+    const url = this.#buildUrl(op, args, auth.plan, urlOverride, params);
     if (!url.ok) return url;
 
     const headers = new HeaderBag();
-    this.#buildHeaders(op, args, opts, auth.plan, headers);
+    this.#buildHeaders(op, args, opts, auth.plan, headers, params);
     const earlyHeaderFailure = this.#checkHeaders(op, headers, auth.plan);
     if (earlyHeaderFailure) return earlyHeaderFailure;
 
     let encoded;
     try {
-      const value = isSafeMethod(method) && method !== "OPTIONS" ? undefined : bodyValue(op, args, new Set(argParams(op).map((p) => p.name)));
-      const bodyPaths = sensitiveBodyPaths(op);
-      encoded = await encodeBody(op.body ?? null, value, (display) =>
-        redactSensitiveKeys(bodyPaths.includes("") ? REDACTED : redactPaths(display, bodyPaths.filter((p) => p !== ""))),
-      );
+      const value = isSafeMethod(method) && method !== "OPTIONS" ? undefined : bodyValue(op, args, new Set(params.map((p) => p.name)));
+      encoded = await encodeBody(op.body ?? null, value, (display) => {
+        const bodyPaths = sensitiveBodyPaths(op);
+        return redactSensitiveKeys(bodyPaths.includes("") ? REDACTED : redactPaths(display, bodyPaths.filter((p) => p !== "")));
+      });
     } catch (error) {
       if (error instanceof SerializationError) {
         return this.#validation(op, error.parameter === "body" && op.body?.shape.kind === "arg" ? [op.body.shape.arg] : [], error.value, error.expected, `Pass ${error.parameter} as ${error.expected}.`);
@@ -1041,7 +1047,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
         keyHeader: header,
         authQuery: auth.plan.query.map((q) => ({ name: q.name, value: q.value })),
         hiddenQuery: [...auth.plan.query.map((q) => q.name), ...op.params.filter((x) => x.in === "query" && x.sensitive === true).map((x) => x.wire)],
-        secrets: new Set([...secrets, ...headers.secrets()]),
+        secrets: addAll(secrets, headers.secrets()),
         oauth: auth.oauth,
       },
     };
@@ -1064,14 +1070,23 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     return null;
   }
 
-  #buildUrl(op: OperationDescriptor, args: Record<string, unknown>, plan: AuthPlan, urlOverride: string | null): Step<{ url: string; display: string }> {
-    const servers = Array.isArray(this.api.servers) ? this.api.servers.filter((s) => typeof s === "string") : [];
-    const base = typeof this.options.baseUrl === "string" ? this.options.baseUrl : servers[0];
-    if (base === undefined || base === "") {
+  #buildUrl(op: OperationDescriptor, args: Record<string, unknown>, plan: AuthPlan, urlOverride: string | null, params = argParams(op)): Step<{ url: string; display: string }> {
+    let base: unknown = this.options.baseUrl;
+    if (typeof base !== "string") base = Array.isArray(this.api.servers) ? this.api.servers.find((s) => typeof s === "string") : undefined;
+    if (typeof base !== "string" || base === "") {
       return fail(diagnostic(op.id, "TRANSPORT_FAILED", { retryable: "never", remediation: "No base URL is configured: set ClientOptions.baseUrl. Nothing was sent." }));
     }
     const enc = encodeURIComponent;
-    const params = argParams(op);
+    // The path parameter of a placeholder: by wire name, else by argument name.
+    const pathParam = (wire: string): ParamDescriptor | undefined => {
+      let byName: ParamDescriptor | undefined;
+      for (const x of params) {
+        if (x.in !== "path") continue;
+        if (x.wire === wire) return x;
+        if (byName === undefined && x.name === wire) byName = x;
+      }
+      return byName;
+    };
     let url: string;
     let display: string;
     if (urlOverride !== null) {
@@ -1081,7 +1096,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
       let missing: ParamDescriptor | null = null;
       let unknownPlaceholder: string | null = null;
       const path = op.path.replace(/\{([^{}]+)\}/g, (match, wire: string) => {
-        const p = params.find((x) => x.in === "path" && x.wire === wire) ?? params.find((x) => x.in === "path" && x.name === wire);
+        const p = pathParam(wire);
         if (!p) {
           unknownPlaceholder = wire;
           return match;
@@ -1168,8 +1183,10 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
    * breaks, NUL, other control characters), redacting secret values. Runs
    * before the body is encoded and again once every header is set. */
   #checkHeaders(op: OperationDescriptor, headers: HeaderBag, authPlan: AuthPlan) {
-    const record = headers.toRecord(false);
-    for (const [name, value] of Object.entries(record)) {
+    for (const entry of headers.entries()) {
+      // The second pass only looks at headers set since the first.
+      if (entry.checked) continue;
+      const { name, value } = entry;
       if (!validHeaderName(name) || !validHeaderValue(value)) {
         const fromAuth = authPlan.headers.some((h) => h.name.toLowerCase() === name.toLowerCase());
         if (fromAuth) {
@@ -1184,6 +1201,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
           `Header ${name} cannot carry this value; remove line breaks and non-Latin-1 characters.`,
         );
       }
+      entry.checked = true;
     }
     return null;
   }
@@ -1194,15 +1212,23 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     opts: CallOptions,
     plan: AuthPlan,
     headers: HeaderBag,
+    params = argParams(op),
   ): void {
-    const accept = [
-      ...new Set(
-        op.responses
-          .filter((r) => isRecord(r) && r.kind === "success" && typeof r.mediaType === "string")
-          .map((r) => r.mediaType as string),
-      ),
-    ];
-    if (accept.length > 0) headers.set("Accept", accept.join(", "));
+    // The success media types, each once, in declaration order.
+    let accept: string | undefined;
+    let seen: Set<string> | undefined;
+    for (const r of op.responses) {
+      if (!isRecord(r) || r.kind !== "success" || typeof r.mediaType !== "string") continue;
+      if (accept === undefined) {
+        accept = r.mediaType;
+        continue;
+      }
+      seen ??= new Set([accept]);
+      if (seen.has(r.mediaType)) continue;
+      seen.add(r.mediaType);
+      accept = `${accept}, ${r.mediaType}`;
+    }
+    if (accept !== undefined) headers.set("Accept", accept);
     const apiName = typeof this.api.name === "string" ? this.api.name : "api";
     const apiVersion = typeof this.api.version === "string" ? this.api.version : "0";
     headers.set("X-Tungsten-Runtime", `tungsten-ts/${RUNTIME_VERSION} ${apiName}-sdk/${apiVersion}`);
@@ -1225,7 +1251,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     const cookies: string[] = [];
     const existingCookie = headers.get("Cookie");
     if (existingCookie !== undefined) cookies.push(existingCookie);
-    for (const p of argParams(op)) {
+    for (const p of params) {
       const value = args[p.name];
       if (value === undefined || value === null) continue;
       if (p.in === "header") headers.set(p.wire, serializeHeaderParam(p, value), p.sensitive === true);
@@ -1321,7 +1347,6 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
 
   async #send<T>(prepared: Prepared, opts: CallOptions, stream = false, idleMs?: number): Promise<Result<T>> {
     const { op } = prepared;
-    const retries = this.#retryOptions(op);
     const mutation = isMutation(op);
     const protectedReplay = hasReplayProtection(op, prepared.key);
     const check = mutation && !protectedReplay ? this.#outcomeCheck(op, prepared.args) : null;
@@ -1396,6 +1421,8 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
         previousMutationFailure = done();
       }
       if (previousMutationFailure && this.#beforeDispatch(op, opts)) return previousMutationFailure;
+      // The policy is only needed once an attempt failed; most calls never get here.
+      const retries = this.#retryOptions(op);
       if (opts.signal?.aborted === true || attempts > retries.max || !RETRY_CATEGORIES.has(error.category)) return done();
       if (error.retryable === "never" || error.retryable === "after_remediation") return done();
       if (mutation && !protectedReplay) return done();
@@ -1510,8 +1537,11 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
    * changes (other than redacted ones) are applied to the real request. */
   async #beforeRequest(ctx: RequestContext, prepared: Prepared): Promise<Record<string, string>> {
     const real = prepared.headers.toRecord(false);
+    const middleware = this.#middleware();
+    // Nothing observes the context, so nothing can have changed its headers.
+    if (middleware.length === 0) return real;
     const shown = { ...ctx.headers };
-    for (const m of this.#middleware()) {
+    for (const m of middleware) {
       try {
         await m.onRequest?.(ctx);
       } catch {
