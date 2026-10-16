@@ -21,6 +21,7 @@ pub struct AttemptRequest<'a> {
     pub headers: &'a [(String, String)],
     pub body: &'a Payload,
     pub timeout: Duration,
+    pub max_response_bytes: Option<u64>,
     /// Hand a `text/event-stream` answer with a 2xx status back unread, as
     /// [`AttemptOutcome::Streaming`]; any other answer is read as usual.
     pub stream: bool,
@@ -71,6 +72,7 @@ fn is_event_stream(headers: &BTreeMap<String, String>) -> bool {
 /// Why a response body could not be read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BodyFailure {
+    Oversized,
     Timeout,
     Broken,
 }
@@ -241,7 +243,7 @@ pub async fn attempt(client: &reqwest::Client, req: &AttemptRequest<'_>) -> Atte
     if Instant::now() >= deadline {
         return AttemptOutcome::NotSent("request deadline expired before send".to_owned());
     }
-    let response = match timeout_at(deadline, builder.send()).await {
+    let mut response = match timeout_at(deadline, builder.send()).await {
         Err(_) => return AttemptOutcome::Timeout,
         Ok(Err(error)) => return failure(&error),
         Ok(Ok(response)) => response,
@@ -271,10 +273,36 @@ pub async fn attempt(client: &reqwest::Client, req: &AttemptRequest<'_>) -> Atte
             },
         };
     }
-    let (body, body_failure) = match timeout_at(deadline, response.bytes()).await {
-        Err(_) => (None, Some(BodyFailure::Timeout)),
-        Ok(Err(_)) => (None, Some(BodyFailure::Broken)),
-        Ok(Ok(bytes)) => (Some(bytes.to_vec()), None),
+    let maximum = req
+        .max_response_bytes
+        .filter(|_| req.method != HttpMethod::Head && !matches!(status, 204 | 205 | 304));
+    let over_length = maximum.is_some_and(|limit| {
+        headers.get("content-length").is_some_and(|value| {
+            !value.is_empty()
+                && value.bytes().all(|b| b.is_ascii_digit())
+                && value.parse::<u64>().map_or(true, |length| length > limit)
+        })
+    });
+    let (body, body_failure) = if over_length {
+        (None, Some(BodyFailure::Oversized))
+    } else {
+        let read = async {
+            let mut bytes = Vec::new();
+            while let Some(chunk) = response.chunk().await.map_err(|_| BodyFailure::Broken)? {
+                if maximum.is_some_and(|limit| {
+                    chunk.len() as u64 > limit.saturating_sub(bytes.len() as u64)
+                }) {
+                    return Err(BodyFailure::Oversized);
+                }
+                bytes.extend_from_slice(&chunk);
+            }
+            Ok(bytes)
+        };
+        match timeout_at(deadline, read).await {
+            Err(_) => (None, Some(BodyFailure::Timeout)),
+            Ok(Err(failure)) => (None, Some(failure)),
+            Ok(Ok(bytes)) => (Some(bytes), None),
+        }
     };
     AttemptOutcome::Response {
         status,

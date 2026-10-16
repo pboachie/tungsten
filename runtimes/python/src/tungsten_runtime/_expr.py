@@ -27,7 +27,7 @@ from ._json import display_json, parse_json
 from ._util import contains_subset, deep_equal, get_path, is_array, is_record, split_path
 from .sentinels import UNSET
 
-type Scope = Mapping[str, object]
+Scope = Mapping[str, object]
 
 
 def evaluate_predicate(predicate: object, value: object) -> bool:

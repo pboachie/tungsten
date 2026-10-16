@@ -231,6 +231,23 @@ def _file_of(value: bytes | bytearray | memoryview | FilePart, name: str) -> Fil
     return FilePart(name, bytes(value), None)
 
 
+_MEDIA_TOKEN = re.compile(r"[!#$%&'*+\-.^_`|~0-9A-Za-z]+")
+_MEDIA_VISIBLE = re.compile(r"[\t\x20-\x7e]*")
+
+
+def _valid_media_type(value: str) -> bool:
+    """`type/subtype` tokens, optionally followed by `;` parameters, in visible
+    ASCII, space and tab."""
+    if _MEDIA_VISIBLE.fullmatch(value) is None:
+        return False
+    kind, slash, subtype = value.split(";", 1)[0].strip().partition("/")
+    return (
+        bool(slash)
+        and _MEDIA_TOKEN.fullmatch(kind) is not None
+        and _MEDIA_TOKEN.fullmatch(subtype) is not None
+    )
+
+
 def encode_body(
     descriptor: BodyDescriptor | None, value: object, redact_display: Callable[[object], object]
 ) -> EncodedBody:
@@ -265,6 +282,10 @@ def encode_body(
                 if is_binary(item):
                     part = _file_of(item, k)
                     content_type = part.content_type or "application/octet-stream"
+                    if not _valid_media_type(content_type):
+                        raise SerializationError(
+                            parameter, "multipart file content types that are valid media types", value
+                        )
                     files.append(
                         (k, (part.filename if part.filename is not None else k, part.content, content_type))
                     )

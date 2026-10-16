@@ -22,6 +22,9 @@ doctest = false
 testing = []
 
 [dependencies]
+process-wrap = { version = "=10.0.1", default-features = false, features = ["std", "process-group", "job-object", "creation-flags"] }
+ureq = { version = "3.3", default-features = false, features = ["rustls"] }
+sha2 = "0.10"
 serde.workspace = true
 schemars.workspace = true
 url.workspace = true
@@ -30,6 +33,9 @@ serde_json.workspace = true
 serde_path_to_error = "0.1"
 petgraph.workspace = true
 yaml-rust2.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "=0.62.2", default-features = false, features = ["Win32_System_Threading"] }
 
 [lints]
 workspace = true

@@ -9,6 +9,11 @@ use tungsten_contract::{
     UnknownFact,
 };
 
+/// An importer diagnostic as a message that names `tungsten explain`.
+fn hinted(d: &tungsten_contract::Diagnostic) -> String {
+    format!("{d} (see `tungsten explain {}`)", d.code)
+}
+
 fn har_paths(args: &InitArgs) -> Result<std::collections::BTreeMap<String, String>, String> {
     let Some(path) = &args.har_paths else {
         return Ok(Default::default());
@@ -136,7 +141,7 @@ pub(super) fn prepare(args: &mut InitArgs) -> Result<(), String> {
         &ReviewedOverrides::default(),
         &Limits::default(),
     )
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| hinted(&e))?;
     std::fs::create_dir_all(&args.dir).map_err(|_| "cannot create project directory")?;
     // Exclusive opens refuse symlinks and races. On failure keep the created evidence
     // for inspection; never claim completed initialization or overwrite a conflict.
@@ -188,9 +193,24 @@ fn detect_root(text: &str) -> Result<serde_json::Value, String> {
         .unwrap_or(serde_json::Value::Null))
 }
 
-/// Detect a Swagger document and persist its bounded conversion for the ordinary
-/// compiler. OpenAPI input is left in place so relative references retain meaning.
-pub(super) fn import(args: &mut InitArgs) -> Result<Vec<String>, String> {
+/// Number of items a Postman import omitted, from the saved `import-report.json`.
+pub(super) fn omitted_count(dir: &std::path::Path) -> usize {
+    std::fs::read(dir.join("import-report.json"))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+        .and_then(|report| report.pointer("/source/omitted")?.as_array().map(Vec::len))
+        .unwrap_or(0)
+}
+
+/// A conversion held in memory until setup has checked the selected targets.
+pub(super) struct PreparedImport {
+    document: serde_json::Value,
+    report: Option<serde_json::Value>,
+}
+
+/// Detect and convert an input without writing project files. OpenAPI input is
+/// left in place so relative references retain meaning.
+pub(super) fn import(args: &InitArgs) -> Result<Option<PreparedImport>, String> {
     let source = args.from.clone().or_else(|| {
         [
             "openapi.json",
@@ -204,7 +224,7 @@ pub(super) fn import(args: &mut InitArgs) -> Result<Vec<String>, String> {
         .find(|path| path.is_file())
     });
     let Some(source) = source else {
-        return Ok(vec![]);
+        return Ok(None);
     };
     let mut bytes = Vec::new();
     std::fs::File::open(&source)
@@ -254,9 +274,9 @@ pub(super) fn import(args: &mut InitArgs) -> Result<Vec<String>, String> {
                 &limits,
             )
         }
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| hinted(&error))?;
         let output = tungsten_contract::infer(&evidence, &ReviewedOverrides::default(), &limits)
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| hinted(&error))?;
         import_report = Some(serde_json::json!({"contract": output.report}));
         output.openapi
     } else if root.get("log").is_some() {
@@ -271,7 +291,7 @@ pub(super) fn import(args: &mut InitArgs) -> Result<Vec<String>, String> {
             ..Default::default()
         };
         let imported = tungsten_contract::har::import_har(&bytes, &options, &limits)
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| hinted(&error))?;
         // Captured paths may hold identifiers or secrets; never persist one unreviewed.
         let literal = imported
             .report
@@ -288,7 +308,7 @@ pub(super) fn import(args: &mut InitArgs) -> Result<Vec<String>, String> {
         }
         let output = imported
             .infer(&ReviewedOverrides::default(), &limits)
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| hinted(&error))?;
         import_report =
             Some(serde_json::json!({"source": output.report, "contract": output.contract.report}));
         output.contract.openapi
@@ -299,10 +319,10 @@ pub(super) fn import(args: &mut InitArgs) -> Result<Vec<String>, String> {
             &tungsten_contract::postman::PostmanOptions::default(),
             &limits,
         )
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| hinted(&error))?;
         let output = imported
             .infer(&ReviewedOverrides::default(), &limits)
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| hinted(&error))?;
         import_report =
             Some(serde_json::json!({"source": imported.report, "contract": output.report}));
         output.openapi
@@ -334,7 +354,7 @@ pub(super) fn import(args: &mut InitArgs) -> Result<Vec<String>, String> {
             )
         })?
     } else {
-        return Ok(vec![]);
+        return Ok(None);
     };
     if let Some(paths) = converted
         .get_mut("paths")
@@ -359,6 +379,18 @@ pub(super) fn import(args: &mut InitArgs) -> Result<Vec<String>, String> {
             }
         }
     }
+    Ok(Some(PreparedImport {
+        document: converted,
+        report: import_report,
+    }))
+}
+
+/// Persist a checked conversion using the same exclusive writes as other setup
+/// artifacts. Target capability refusal happens before this function is called.
+pub(super) fn save_import(
+    args: &mut InitArgs,
+    prepared: PreparedImport,
+) -> Result<Vec<String>, String> {
     for name in [
         "tungsten.yml",
         "agent.yml",
@@ -377,13 +409,13 @@ pub(super) fn import(args: &mut InitArgs) -> Result<Vec<String>, String> {
         .open(&destination)
         .map_err(|_| "cannot create converted input; choose a fresh project directory")?;
     file.write_all(
-        serde_json::to_string_pretty(&converted)
+        serde_json::to_string_pretty(&prepared.document)
             .map_err(|_| "cannot encode converted input")?
             .as_bytes(),
     )
     .map_err(|_| "cannot write converted input; inspect partial files before retrying")?;
     let mut files = vec!["imported.openapi.json".to_owned()];
-    if let Some(report) = import_report {
+    if let Some(report) = prepared.report {
         let mut file = std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)

@@ -27,6 +27,9 @@ export const DEFAULT_RRF_K = 60;
 const FUSION_DEPTH = 100;
 const MAX_DIMENSIONS = 8192;
 const MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
+/** The largest response body an embeddings endpoint may send. */
+const MAX_HTTP_RESPONSE_BYTES = 1024 * 1024;
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
 const CACHE_SIZE = 64;
 
 /** The loaded index: row-major unit vectors, one row per manifest position. */
@@ -200,6 +203,47 @@ function commandEmbedder(command: string, model: string, dimensions: number | nu
     });
 }
 
+/** The warning for an API key sent over plain HTTP to a non-loopback host,
+ * or null (https, loopback, no key, or a URL that does not parse). */
+function insecureKeyWarning(url: string, apiKeyEnv: string | undefined): string | null {
+  if (apiKeyEnv === undefined) return null;
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== "http:" || LOOPBACK_HOSTS.has(parsed.hostname.toLowerCase())) return null;
+  return `search.embeddings.apiKeyEnv (${apiKeyEnv}) is sent as a bearer token to ${parsed.host} over plain http: use an https url`;
+}
+
+class OversizeError extends Error {}
+
+/** The body of `response` as text, read in chunks; throws when it exceeds `limit` bytes. */
+async function readBounded(response: Response, limit: number): Promise<string> {
+  const declared = Number(response.headers.get("content-length"));
+  const tooLarge = (): Error => new OversizeError(`the embedding endpoint's response is larger than ${limit / 1024 / 1024} MiB`);
+  if (Number.isFinite(declared) && declared > limit) {
+    await response.body?.cancel().catch(() => undefined);
+    throw tooLarge();
+  }
+  if (response.body === null) return "";
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.length;
+    if (size > limit) {
+      await reader.cancel().catch(() => undefined);
+      throw tooLarge();
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
 function httpEmbedder(url: string, model: string, dimensions: number | null, apiKeyEnv: string | undefined, timeoutMs: number): Embedder {
   return async (query) => {
     const headers: Record<string, string> = { "content-type": "application/json", accept: "application/json" };
@@ -218,9 +262,17 @@ function httpEmbedder(url: string, model: string, dimensions: number | null, api
       throw new Error(timedOut ? `the embedding endpoint did not answer within ${timeoutMs} ms` : "the embedding endpoint could not be reached");
     }
     if (!response.ok) throw new Error(`the embedding endpoint answered HTTP ${response.status}`);
+    let text: string;
+    try {
+      text = await readBounded(response, MAX_HTTP_RESPONSE_BYTES);
+    } catch (error) {
+      if (error instanceof OversizeError) throw error;
+      const timedOut = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");
+      throw new Error(timedOut ? `the embedding endpoint did not answer within ${timeoutMs} ms` : "the embedding endpoint's response could not be read");
+    }
     let parsed: unknown;
     try {
-      parsed = await response.json();
+      parsed = JSON.parse(text);
     } catch {
       throw new Error("the embedding endpoint's response is not JSON");
     }
@@ -288,6 +340,8 @@ export function buildSemantic(config: EmbeddingsOptions | undefined, catalog: Ca
   } else if (config.provider === "command" && typeof config.command === "string") {
     embedder = commandEmbedder(config.command, model, dimensions, timeoutMs);
   } else if (config.provider === "http" && typeof config.url === "string") {
+    const insecure = insecureKeyWarning(config.url, typeof config.apiKeyEnv === "string" ? config.apiKeyEnv : undefined);
+    if (insecure !== null) warnings.push(insecure);
     embedder = httpEmbedder(config.url, model, dimensions, typeof config.apiKeyEnv === "string" ? config.apiKeyEnv : undefined, timeoutMs);
   } else {
     embedder = "no query embedder is configured (search.embeddings.provider and command or url, or embed)";

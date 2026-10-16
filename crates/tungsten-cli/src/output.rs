@@ -212,10 +212,20 @@ pub struct CheckResult {
     pub documents: usize,
     /// Diagnostic counts after `--strict` promotion.
     pub counts: DiagnosticCounts,
+    /// Diagnostics per code and severity (after `--strict` promotion), by
+    /// code; the human output collapses repeats, this keeps the counts.
+    pub by_code: Vec<CodeCount>,
     /// Warnings promoted to errors by `--strict`.
     pub promoted: usize,
     pub strict: bool,
     pub ci: bool,
+    /// Response-contract audit requested (`--audit-contracts` or --require-contracts).
+    pub audit_contracts: bool,
+    /// Audit findings alone are promoted to errors (`--require-contracts`).
+    pub require_contracts: bool,
+    /// Findings of the response-contract audit (TG0930-2, TG0305),
+    /// Included in `counts` and `by_code`; 0 when the audit did not run.
+    pub audit_findings: usize,
     /// The `$ref` graph of the loaded documents.
     pub refs: RefStats,
     /// Summary of the IR; null when errors prevented building it.
@@ -319,6 +329,15 @@ pub struct RefStats {
     pub cycles: usize,
     /// Schemas that take part in a cycle.
     pub recursive: usize,
+}
+
+/// How many diagnostics one code produced at one severity.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct CodeCount {
+    pub code: String,
+    pub severity: Severity,
+    pub count: usize,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, JsonSchema)]
@@ -793,6 +812,12 @@ pub enum CoverageStatus {
     NoEmitter,
     /// The emitter reported errors, or the project has errors.
     Failed,
+    /// Not listed under `targets` in tungsten.yml, so its emitter was not
+    /// run (`report --all-targets` runs it).
+    NotConfigured,
+    /// An `external` target whose command was not started
+    /// (`--no-external`, TG0807).
+    Skipped,
 }
 
 /// The safety metadata of one operation (the report's safety matrix).

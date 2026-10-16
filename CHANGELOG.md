@@ -9,7 +9,401 @@ changes.
 
 ## [Unreleased]
 
-## [0.1.2]
+### Added
+
+- Automate Maven Central, NuGet and RubyGems publication alongside npm, PyPI
+  and crates.io after an approved release tag. Verify package identity, source
+  and checksums before credentials, and compare public downloads with the tested
+  archives. Add a package-only rehearsal and an embedded NuGet package icon.
+  Rust registry publication is deferred to 0.2.0: 0.1.3 keeps crates.io uploads
+  disabled while retaining Rust archive checks and documented source installation.
+
+- Enable registry packaging of the Apache-2.0 Rust runtime and CLI-kit with a
+  versioned runtime dependency. Add opt-in crates.io trusted publishing to the
+  existing release workflow; account ownership, first publication and publisher
+  configuration remain maintainer release steps.
+
+- Generated Go SDKs require the published `v0.1.3` runtime module through its
+  `runtimes/go/v0.1.3` nested-module tag, replacing the interim pseudo-version.
+  Runtime version overrides and local source replacements remain supported.
+- Complete the architecture overview with explicit alternative input routes, separate
+  optional configuration and all current SDK, CLI, MCP, WebMCP and docs outputs; link
+  the reviewed response-contract recipe from the quickstart and gallery. Kotlin
+  and F# installation guidance now links the inherited durable idempotency stores.
+- Imported-input setup validates built-in target policy support before saving
+  converted documents or project manifests; unsupported selections return TG0705
+  with supported alternatives instead of leaving an unusable project behind.
+- A bounded Rust/Axum source-declaration API in `tungsten_contract::source_axum`,
+  with literal route/type evidence, file/line coverage and explicit unresolved
+  constructs. It parses supplied source text without loading modules or running
+  applications, macros or build scripts, and preserves separately reviewed overrides.
+  Routing/handler binding shadows and conditional router contexts remain
+  unresolved coverage rather than claimed operations.
+- Ruby runtime gems declare their `base64` dependency so packaged SDKs load
+  inside Bundler on Ruby 3.4+, with source and offline installation guidance.
+- Durable Java, C# and Ruby idempotency stores share the version-1 owner lease
+  format with TypeScript, Python, Go and Rust. Automatic keys use atomic
+  reservations while existing get/put-only custom stores remain compatible.
+- Python and Rust `max_response_bytes`, Go and C# `MaxResponseBytes`, Java
+  `maxResponseBytes` and Ruby `max_response_bytes` now bound ordinary response
+  bodies on opt-in, matching TypeScript. Client defaults and per-call overrides
+  validate positive safe integers; header and counting reads close overflowed
+  bodies and report `UNEXPECTED_RESPONSE` / `RESPONSE_TOO_LARGE` without retry,
+  redirect following or OAuth replay. Mutation remediation preserves unknown
+  outcomes. Python and TypeScript `collect` helpers accept optional byte/time
+  budgets, retain admitted partials and preserve unbounded no-argument calls.
+
+- Public installation examples distinguish published 0.1.2 runtimes from the
+  0.1.3 source candidate, with Python compatibility prerequisites and HTTP/Git
+  acquisition, cache verification and offline reuse explained in CLI help.
+- Dedicated TG0808 diagnostics explain when an external emitter lacks imported-operation
+  policy enforcement; protocol-1 emitters remain compatible with ordinary projects.
+- Git input references (`git+https://...@ref#path`) with bounded shallow
+  acquisition, deterministic document discovery, commit/content pins and verified
+  offline reuse through the existing input and importer flows.
+- A runnable example gallery for first SDKs, supported input routes, destructive
+  confirmation, local mock development, generated-file drift and API surface
+  review. The catalog runner checks recipe documentation and builds generated
+  packages against matching runtime source in public CI.
+- Prepare compiler/runtime source manifests and identity headers for 0.1.3 in
+  lockstep. CI and release preparation check every runtime before building;
+  generated SDK defaults require the 0.1.3 runtime capabilities, while explicit
+  runtime overrides remain unchanged. Go uses a separately published nested-module tag.
+- Runtime package installation and limits guidance, packaged README/LICENSE
+  files, and consistent npm metadata checks.
+- Opt-in `check --audit-contracts` response quality diagnostics for missing JSON
+  schemas, unconstrained values and free-form objects, with scoped review notes
+  and `--require-contracts` enforcement (or existing `--strict` enforcement).
+  A runnable response-contract example
+  enriches an untouched specification with reviewed run/job union schemas through
+  standard OpenAPI overlays; generated response types and default checks are unchanged.
+- CI builds the compiler and example emitter at their declared Rust minimum,
+  checks the runtime at its own minimum, and rejects locked dependencies or
+  README compiler prerequisites that exceed or disagree with those floors.
+- The container accepts patched zlib updates above its minimum required Alpine
+  version and verifies the installed version; Dependabot checks the root image.
+- Installers detect whether `gh attestation` is available, explain checksum-only
+  installation when it is absent, and show verification errors while refusing
+  failed attestations. Both scripts honor required/disabled attestation settings
+  and replace stale unpublished-release hints with the release listing.
+- A runnable typed Python SSE recipe under `examples/typed-sse`, with an
+  explicit FastAPI response declaration, a reviewed OpenAPI overlay, API-key
+  authentication, sync/async consumers and explicit terminal-event cleanup.
+- HTTP(S) input acquisition for `init --from`, compiler paths and manifest inputs,
+  with bounded downloads, SHA256 source pins in `.tungsten-inputs`, explicit
+  `--refresh-inputs`, verified `--offline` reuse and redacted `--input-header`
+  authentication. Remote entries retain existing reference and import safety rules.
+- Opt-in Python 3.10/3.11 SDK generation with `python_version`, matching
+  package metadata and a Python 3.10-compatible runtime for both model modes.
+- Link the importer guide from the quickstart, including per-format limits and imported-operation review.
+- Imported specs (Postman, cURL, `.http`, HAR and endpoint manifests): a
+  target that cannot enforce imported-operation policy (Java, C#, Kotlin, Ruby,
+  Dart and the other SDK targets) now fails alone; without `--strict` the
+  supported targets are still written, and the summary no longer blames
+  `--strict`. `tungsten init` and the guided wizard warn up front, before
+  anything is generated, when a chosen target will be refused for an imported
+  input. The external emitter protocol gains an optional `import_policy` flag in
+  the `--describe` response (and `specs/external-emitter.schema.json`), checked
+  before dispatch, so an emitter such as `tungsten-emit-go` can opt in; an
+  absent flag means no support, and existing protocol 1 emitters are unchanged.
+- `--no-external` (global; also `TUNGSTEN_NO_EXTERNAL=1`) skips every
+  `external` target instead of starting its command, with an informational
+  TG0807 notice, so CI can run `check --ci`, `report`, `diff` and `generate`
+  over a manifest it does not trust. Without it nothing changes. SECURITY.md,
+  the README, the `targets` description in the `tungsten.yml` schema and the
+  `check --ci` help now say that `external` commands run on every command that
+  emits in memory (`generate --dry-run` and `--check`, `check --ci`, `diff`,
+  `report`); the source comment that said otherwise is corrected.
+- `report --all-targets` runs the emitter of every known target, as `report`
+  used to.
+- Postman import omits unsupported requests and folders per item instead of
+  failing the whole collection: non-raw or non-JSON bodies, non-JSON saved
+  responses, unsupported auth helpers, pre-request scripts and unresolved or
+  dynamic variables. Each omission is listed under `omitted` (code, JSON
+  pointer, reason) in `import-report.json`, and `init --from` prints the
+  omitted count. A collection with no importable request fails with PM008;
+  PM001 budgets and PM002 schema errors still fail the import.
+- A Dart SDK target, `dart`: a pub package with final model classes that
+  decode and encode themselves, sealed unions, `Future` methods returning
+  `Result<T>`, `Stream` pages and `EventStream<T>` streams, typed macros and
+  a `Dispatch` entry point, over the new `dart:io` runtime `tungsten_runtime`
+  (`runtimes/dart`, Dart 3.6 or later, `package:crypto` as its only
+  dependency). Options `package`, `version`, `runtime` and `runtime_path`;
+  diagnostics TG1070 to TG1079. The Dart runtime passes the L4 contract
+  suite in parity with TypeScript, with no skips.
+- Generated Rust CLIs: `--max-pages <N>` (with `--all`) stops paging after N
+  pages and notes on standard error that more pages are available. There is no
+  default limit.
+- Build provenance attestations for the container image, the Homebrew formula, the winget manifests and `DISTRIBUTION_SHA256SUMS`, with install notes on verifying them.
+- MCP Streamable HTTP: optional `bearerToken` and `authorize(req)` options (and
+  `--token-env <NAME>` on generated servers) to require authentication; a
+  startup warning when binding a non-loopback host with no authentication and
+  no `allowedHosts`.
+- A Kotlin target (`kotlin`, short form `kt`, `tungsten-emit-kotlin`): a
+  Kotlin/JVM SDK over the Java runtime and the new Kotlin layer
+  `runtimes/kotlin` (`io.github.pboachie.tungsten:tungsten-runtime-kotlin`,
+  JVM target 17, kotlin-stdlib and the Java runtime only). Data classes with
+  named, defaulted parameters (`Patch<T>` where null is a value, `T?`
+  otherwise), enum classes with wire values, sealed interfaces for unions,
+  blocking typed functions returning the runtime's `Result`, previews, pages
+  as a `Sequence` of page results, event streams, macros and `Dispatch`; a
+  Gradle (Kotlin DSL) project per SDK that builds with `kotlinc -Werror`.
+  The Kotlin layer reports `(kotlin)` in `User-Agent` and `tungsten-kt/0.1.0`
+  in `X-Tungsten-Runtime` and adds `Result` extensions (`getOrThrow`, `fold`,
+  `onError`). Options `group`, `artifact`, `package`, `version`, `runtime`,
+  `runtime_path` and `java_runtime_path`; diagnostics TG1030 to TG1035.
+  First version: blocking API only (no coroutines or `Flow`), JVM only, and
+  the Java target's gaps.
+- `ClientOptions.identity()` and `withIdentity(...)` in the Java runtime
+  (additive), so a layer on top of it reports its own runtime identity.
+- F# SDK target `fsharp` (short form `fs`), a built-in emitter over the .NET
+  runtime. It generates records, discriminated unions for enums and unions
+  with strict and lenient generated JSON codecs, `Task<Result<'T, Diagnostic>>`
+  methods for operations, previews, pages and streams, typed macros and a
+  client, with an explicit compile order. Options: `package_id`, `namespace`,
+  `version`, `runtime`, `runtime_path` and `csharp_runtime_path`.
+  Diagnostics TG1080 to TG1085, each with `tungsten explain` text.
+- `runtimes/fsharp` (`Tungsten.Runtime.FSharp`, net10.0): the F# layer over
+  `runtimes/csharp` with the F# identity, `Patch<'T>` as a union, Result and
+  option interop, Task and async-sequence helpers and the JSON helpers of
+  generated records. The public CI job `fsharp runtime build` builds it.
+- `Tungsten.Runtime`: `ClientCore` accepts a `RuntimeIdentity`, so a layer
+  over the runtime can name its own language in `User-Agent` and
+  `X-Tungsten-Runtime`. The C# identity is unchanged.
+
+Known gaps of the F# target: Task API only; net10.0 only; no Fantomas
+formatting; Fable and JavaScript targets untested; plus the C# limits
+(in-memory idempotency store, .NET regex dialect, by-status and intersection
+values as `JsonNode`, OpenID Connect as a bearer token, no CLI or MCP).
+
+- The release dependency audit supports reviewed, scoped and expiring advisory
+  exceptions: entries in the `advisory_exceptions` list of
+  `.github/dependency-policy.json` name an advisory id, the one locked package
+  it applies to, the reason it was accepted and an `expires` date. The audit
+  prints every exception in the release job log, suppresses only the matching
+  advisory, and fails once an entry is past its expiry, so an exception is a
+  time-limited review decision instead of a standing ignore. CONTRIBUTING and
+  SECURITY.md now record that release tags are immutable — a failed release is
+  fixed forward with a new version, never by moving a tag — and that a
+  `workflow_dispatch` dry run (`dry_run: true`) of the release workflow, which
+  runs the same audit, is required on the release commit before the tag is
+  pushed.
+
+### Changed
+
+- Runtime performance. Successful responses are decoded once instead of
+  several times: the Go runtime parses the body in one pass and unmarshals the
+  original bytes into the typed result, and generated Rust SDKs call the new
+  `Client::call_typed`, which deserializes the body bytes straight into the
+  result type and builds the generic JSON value only when it is needed. The
+  Python sync client runs on httpx's own transport with socket-level attempt
+  deadlines instead of a background event-loop thread, and declares `sniffio`.
+  The TypeScript runtime does less work preparing each request. Error
+  envelopes, validation modes and timeout semantics are unchanged.
+- Avoid unnecessary request argument copies in the Rust runtime and defer
+  TypeScript middleware header lookup allocation until a header changes.
+
+- Document released 0.1.2 compiler/runtime pins for npm, Python, Maven, NuGet
+  and RubyGems consumers, plus matching-source Rust SDK/CLI and Go installation,
+  independently from the unpublished 0.1.3 candidate.
+
+- README, the architecture diagram and the `init` help present every
+  supported input alternative instead of positioning tungsten as OpenAPI
+  only: OpenAPI 3.0/3.1, Swagger 2.0, Postman Collection v2.1, saved cURL,
+  `.http`/`.rest` files, HAR 1.2 and endpoint manifests, plus the manual
+  method-and-endpoint path, shown as OR alternatives with each route's
+  conversion path, limits and required review. The README gains a Supported
+  inputs matrix; `assets/architecture.svg` and its accessible description
+  show alternative inputs normalizing to OpenAPI before the frontend; the
+  `init --from` help and the `tungsten-cli` crate description name the
+  accepted inputs. `check`, `generate` and the other project commands still
+  take an initialized project or a single OpenAPI document. (#173)
+- `tungsten report` runs only the emitters of the configured targets. The
+  other known targets stay in `coverage.targets` with the new status
+  `not_configured` (and, for an `external` target skipped by `--no-external`,
+  `skipped`) and their emitter is not run, so `report` on a large spec takes
+  about as long as `generate --dry-run` (the Stripe showcase spec took 3 min
+  18 s against 1.3 s for `check`). The token budgets of `docs` and `mcp` are
+  empty unless that target is configured or `--all-targets` is given.
+- `tungsten check` prints a warning or info code at most three times in the
+  human output, then one line with the number left out, and its summary lists
+  the count per code (`--all-warnings` prints everything; `--json` has always
+  listed every diagnostic and gains an additive `by_code` array). TG0301 for
+  an untagged union of exactly two candidates where one is a plain string,
+  array or map is now info instead of a warning, so `--strict` no longer
+  fails on those; other untagged unions still warn. (#111)
+- Breaking (diagnostic code): `tungsten generate` now reports the refusal of a
+  target that cannot apply an enforced imported-operation policy (for example
+  `java` on a Postman-imported project) as the new error TG0705; it was
+  reported as TG0702. TG0702 again means only "target has no emitter in this
+  version; skipped". Tooling that matched TG0702 for this refusal must match
+  TG0705; `tungsten explain TG0705` names the supported targets and the
+  `tungsten init --resume --add-targets` path.
+- The release workflow's PyPI publication job is enabled through trusted
+  publishing (repository variable `PYPI_PUBLISH`, `pypi` environment, no
+  stored token) and now refuses to upload a `tungsten-runtime` sdist or wheel
+  whose version does not equal the release tag, mirroring the npm publication
+  preflight.
+- The published `ghcr.io/pboachie/tungsten` container image carries
+  `org.opencontainers.image` title and description labels, so the GitHub
+  package page shows the package description instead of "No description
+  provided".
+- Generated Rust CLIs: `--all` writes its array page by page instead of
+  collecting every item first. The output is byte-for-byte the same on
+  success; a failure after the first page leaves the array unterminated and is
+  reported on standard error. `Dispatch` gains the provided method
+  `pages_each`, which generated clients implement lazily.
+- MCP `run_script`: the WASM engine now runs its isolate in a worker thread
+  that is terminated at the deadline, so a long computation no longer occupies
+  the server's event loop. Results, errors and limits are unchanged.
+- MCP `run_script`: new `sandbox.maxConcurrent` option (`perSession`, default
+  4; `global`, default 16). Calls over a limit are refused with a
+  `VALIDATION_FAILED` "busy" envelope.
+- MCP HTTP: a warning is logged when `sandbox.engine: "auto"` falls back to the
+  WASM engine because deno was not found.
+- Distribution verifies the build provenance attestation of every release asset it consumes before rebuilding the container image, Homebrew formula and winget manifests.
+- Dependency audit: source-less `Cargo.lock` entries must be workspace members, and `[patch]`/`[replace]` tables in Cargo manifests are rejected.
+
+### Fixed
+
+- Restore Python environment proxy and `NO_PROXY` routing while retaining
+  socket-level attempt deadlines on direct and proxied connections.
+- Isolate Git input commands from project configuration and inherited Git
+  environment overrides; terminate the complete process tree on budget failure.
+- Restrict input authentication headers to explicitly selected URLs or an
+  explicitly scoped origin, so manifests cannot redirect credentials.
+- Add Dart `maxResponseBytes` limits with bounded buffering and no automatic
+  replay after an oversized response, including failed and redirected requests.
+- Hash-lock release bundle validation dependencies and restrict installer
+  attestation verification to the release workflow.
+- Preserve Go response decoding semantics for duplicate JSON members, large
+  integers and dynamic values modified before typed decoding.
+- Close Python transport sockets when TLS setup fails or its deadline expires.
+- The Axum source-declaration importer accepts long `Router::new().route(..)`
+  builder chains; routers with 19 or more chained routes no longer fail the
+  lexical expression budget. Chains are walked iteratively, and only chains over
+  4096 links fail, with a dedicated diagnostic.
+- Interrupting a remote HTTP(S) or Git input fetch no longer wedges the
+  `.tungsten-inputs` cache. Pins, content and Git tree files are written to unique
+  scratch names and renamed into place; the next online run holds a per-source
+  `acquire.lock`, discards abandoned `*.pending` entries and restores truncated
+  content-addressed files. Cache write, cleanup and lock-contention errors now
+  name the affected path and how to recover.
+- Remote inputs: `--input-header`/`TUNGSTEN_INPUT_HEADERS` values sent to a
+  plain `http://` URL on a non-loopback host now print a warning (once per
+  origin, never echoing header names or values); use `https://` for
+  authenticated inputs. Redirects stay refused, so headers never cross origins.
+- Git inputs read every selected file through one `git cat-file --batch`
+  process and wait on Git without polling, so large subpaths acquire much
+  faster. Timeouts stop Git through the standard library instead of an
+  external `kill`/`taskkill` binary, and Git now shares tungsten's process
+  group so an interrupt also ends an in-flight fetch.
+- Release bundles include the Homebrew formula, winget archive and distribution
+  checksums before publication, supporting GitHub immutable releases. Container
+  distribution verifies the sealed assets and no longer uploads release assets.
+- Python 3.11 SDKs import `Self` and `NotRequired` from the standard library,
+  matching their generated lint target; Python 3.10 keeps the required backports.
+
+- Dart pagination detects repeated cursors and page URLs, including the caller's
+  starting cursor and cycles across earlier pages. Fetched pages are delivered
+  before an `UNEXPECTED_RESPONSE` diagnostic, repeated requests are refused, and
+  relative next-page links resolve against the effective URL after redirects.
+- Release packaging: the aarch64 `gnu` Linux archive needed glibc 2.39 (it was
+  built on `ubuntu-24.04-arm`) while the x86_64 archive needed 2.34, so the
+  same `TUNGSTEN_LIBC=gnu` choice failed on Debian 12, Ubuntu 22.04, RHEL 9
+  and Amazon Linux 2023 only on arm64. Both `gnu` targets now build on the
+  Ubuntu 22.04 runners and share one documented floor, glibc 2.34. The release
+  pipeline extracts the highest `GLIBC_` symbol version from every `gnu`
+  binary and fails the job when it exceeds that floor, the release notes state
+  the floor and that the `musl` archives are static, and `install.sh` checks
+  `ldd` before installing a `gnu` archive and points older systems at the
+  static musl default. The README install section documents all of this.
+- Release workflow: the Woodpecker npm gate can no longer time out a real
+  release run. The wait starts only after the npm artifacts it gates exist
+  (the `Woodpecker npm release validation` job depends on `npm-artifacts`
+  instead of racing the build jobs), its deadline is 45 minutes instead of 15
+  (the v0.1.2 tag needed a manual re-run about 20 minutes after its first
+  attempt died at 15; the value and its history are documented in
+  `wait-woodpecker-release.mjs`, and the job timeout is 50 minutes),
+  transient GitHub status or pipeline lookup failures are retried instead of
+  failing the gate, and a timeout reports that only npm publication is blocked
+  — the GitHub Release and attestations are unaffected — and to re-run the
+  failed jobs. A `workflow_dispatch` dry run now exercises the same wait
+  against the last released tag, so the gate is tested before a release
+  relies on it, and the Woodpecker-side artifact validation step's own
+  timeout is aligned with the GitHub-side 20-minute budget.
+- MCP `run_script` on native Windows: the Deno child now receives `SystemRoot`,
+  `SYSTEMDRIVE`, `TEMP`, `TMP`, `USERPROFILE`, `PATH` and `PATHEXT` (and nothing
+  else from the parent), and Deno is located by file existence plus a `PATHEXT`
+  extension instead of a POSIX `X_OK` check. Linux and macOS are unchanged.
+- MCP: `--bearer-token-env <NAME>` is accepted as an alias of `--token-env`; the
+  HTTP embeddings provider warns when `apiKeyEnv` is used with a plain `http://`
+  non-loopback URL and reads at most 1 MiB of response (larger is an embedder
+  failure, search falls back to BM25).
+- Java runtime: a `StackOverflowError` raised by `java.util.regex` on a long
+  subject (for example `^(a|a)+$` against 10,000 characters) is treated like a
+  match timeout, so the pattern is reported as not checked and the error no
+  longer escapes `accepts()`.
+- Go emitter: the generated `go.mod` requires a runtime version that resolves
+  for clean consumers. The default `runtime_version` is now the pseudo-version
+  `v0.0.0-20261014151145-1a0ee4def654` of the v0.1.2 release commit, because
+  the nested module has no `runtimes/go/v*` tag and `v0.1.0` did not resolve.
+- Java, C# and Ruby runtimes: the server-sent events parser scans and counts
+  each fragment once and joins a line only when it ends, so a long line
+  delivered in small pieces costs linear instead of quadratic time (the
+  TypeScript, Python, Rust and Go runtimes got this in 0.1.2).
+- Java, C# and Ruby runtimes: pagination rejects cursor and page URL cycles
+  as the other four runtimes do. A cursor or `Link` URL seen before (including
+  the cursor the caller started with and an immediate repeat) delivers the
+  pages fetched so far, then ends with `UNEXPECTED_RESPONSE`; before, a repeated
+  cursor ended the traversal as a success and a longer loop ran on. A repeated
+  request URL is refused before it is sent. Relative `Link` references now
+  resolve against the URL that answered, after same-origin redirects, not the
+  base URL. Callers whose server returned a repeated cursor now get this error
+  instead of a silently truncated result.
+- `doctor` now lists `java`, `mvn`, `dotnet`, `ruby`, `bundle` and `go`, and
+  `doctor --strict` fails when a configured `java`, `csharp`, `ruby` or
+  external `go` target lacks its toolchain (Java 17, .NET 10, Ruby 3.3,
+  Go 1.22) or, for an external `go` target without a command, when
+  `tungsten-emit-go` is not on PATH.
+- A Path Item `$ref` with fields written beside it no longer drops them:
+  sibling operations, `parameters`, `summary`, `description` and `servers`
+  are merged over the referenced item for OpenAPI 3.0 and 3.1 alike, so a
+  spec that lost an operation silently now compiles it (additive to the
+  generated API). A field defined on both sides is the new warning TG0510
+  (the sibling wins; `tungsten explain TG0510`), which fails a run only under
+  `--strict`.
+- `tungsten explain` now knows every code the importers and the Go emitter
+  emit: PM001-PM007 (Postman), HR001-HR003 and HR006 (HAR), TC001-TC007
+  (request-contract checks), GO001-GO006 (Go emitter) and TG1201 (saved cURL
+  and `.http` input). `tungsten explain PM005` works outside a project, and
+  `tungsten init` importer errors name the `tungsten explain <code>` command.
+- Python and Java runtimes bound schema `pattern` matching: strings over 64 KiB
+  skip the pattern check, and Java abandons a match after 1 s, treating it as
+  not checked.
+- C# emitter: documentation comments treat every C# line terminator (lone CR,
+  U+0085, U+2028, U+2029) as a line break, so descriptions stay inside the
+  comment.
+- Go, C#, Java, Python, Ruby and Rust runtimes: validate the media type of a
+  binary multipart part and refuse malformed values with `VALIDATION_FAILED`
+  before any bytes are written.
+- TypeScript runtime: header values are validated before the request body is
+  built, and multipart part media types are checked as `type/subtype[;params]`.
+
+## [0.1.2] - 2026-10-14
+
+**Migrating to 0.1.2:** regenerate every generated SDK and its runtime
+together; an SDK generated by 0.1.2 expects the 0.1.2 runtime of the same
+language. Three generated sources changed shape, so hand-written code that
+constructs them must be updated:
+
+- Java: `ApiDescriptor` gained the `redirects` record component and lost its
+  eleven-argument constructor; construct it with the canonical constructor.
+- Ruby: `ClientOptions` gained the `redirects` member (first), which shifts
+  positional construction and `deconstruct`; pass options by keyword.
+- Rust: `CallOptions` gained the public `max_pages` field and `ApiDescriptor`
+  the `redirects` field; build `CallOptions` with `..CallOptions::default()`
+  and add `redirects` to handwritten `ApiDescriptor` literals.
 
 ### Breaking
 
@@ -80,68 +474,11 @@ changes.
   None or zero: unbounded), and `ApiDescriptor` the `redirects` field. Build
   `CallOptions` with `..CallOptions::default()` so later fields do not break
   handwritten literals.
-- Postman import never copies variable values into contract paths. A
-  `{{name}}` path segment is accepted only as a whole segment naming a variable
-  declared in the request URL's `variable` list, and becomes the `{name}` path
-  parameter; any other path variable is refused (PM005, use `:name`). Base URL
-  variables must hold an origin only; a value with a path prefix is refused
-  (PM005). Dynamic variables such as `{{$guid}}` are refused in every path
-  segment (PM004), including after an unresolved base URL variable.
-- `tungsten init` from a HAR capture requires a reviewed path for every
-  imported path before saving: a `--route` template (literal paths too, for
-  example `--route /health`) or a `--har-paths` JSON mapping of captured paths
-  to templates, which the interactive setup also asks for; a
-  captured path without one, a `--route` that matches no imported entry, or two
-  equally specific matching templates are refused. `HarOptions` gains a
-  `route_templates` field.
-- `tungsten init` reports JSON setup input it cannot parse (invalid syntax or
-  nesting deeper than 128 levels) instead of passing it on as OpenAPI.
 
 ### Fixed
 
 - Wait for the MCP sandbox child to close before removing its temporary files,
   including failed starts and terminated scripts on Windows.
-
-- MCP `run_script`: the Deno sandbox no longer gets `--allow-net`. Scripts
-  reach the API only through the session's client RPC. `denoArguments` and
-  `sandboxCommand` ignore `host`, now optional, and `run_script` no longer
-  needs or validates a `baseUrl`.
-- MCP servers bound upstream response bodies to 4 MiB by default (new
-  `maxResponseBytes` server option). Larger responses fail with
-  `RESPONSE_TOO_LARGE` before they are materialized.
-- WebMCP `maxResultBytes` now always bounds the upstream HTTP body before
-  parsing, not only with `binaryResults` or `streamCollection`. An oversized
-  response reports `RESPONSE_TOO_LARGE` instead of `RESULT_TOO_LARGE`.
-- MCP sessions refuse a tool, sending nothing (`UNEXPECTED_RESPONSE`), when the
-  manifest safety tier differs from the SDK operation's tier or from a macro's
-  strictest declared or step tier. Regenerate the manifest and SDK together.
-  Manifest annotations can make hints more cautious than the tier, never less.
-- MCP HTTP servers answer 503 `Server closing` once `close()` starts, wait for
-  sessions still initializing, and count those sessions against `maxSessions`.
-- The Java transport buffers at most 64 response chunks per body and applies
-  backpressure to the socket reader. Closing a body discards buffered chunks.
-- CI and release preparation fail when a committed lockfile gains a package
-  name missing from `.github/dependency-policy.json` or when OSV reports an
-  advisory. Release npm installs run with `--ignore-scripts`, and Python
-  packages build with hash-locked tools and `--no-isolation`.
-
-### Security
-
-- Reserve MCP session capacity during asynchronous initialization, validate
-  manifest safety against executable descriptors, and keep Deno scripts on
-  the client RPC channel without direct network permission.
-- Bound upstream MCP response bodies to 4 MiB by default (configurable through
-  `maxResponseBytes`), and apply WebMCP result byte limits before HTTP body
-  materialization. Oversized responses return the SDK's `RESPONSE_TOO_LARGE`
-  diagnostic; inconsistent MCP manifest/SDK safety tiers fail before dispatch.
-- Bound Java transport queues with backpressure and cancellation cleanup.
-- Check locked dependency names, sources, hashes and current advisories in CI
-  and release preparation; disable npm install hooks in release builds.
-- Hash-lock Python release tooling and disable build isolation during package
-  creation to prevent unpinned build-tool resolution.
-
-### Fixed
-
 - Bound Postman variable expansion and parsed examples by one import-wide byte
   and node budget (PM001), so a large variable referenced many times cannot
   amplify memory use.
@@ -318,19 +655,6 @@ changes.
   (`STREAM_IDLE`); `on`, `collect`, `reduce`, `first` and `cancel` helpers.
   `tungsten mock` continues a stream after `Last-Event-ID` and can drop or
   stall one for testing.
-- `tungsten lsp`: a Language Server Protocol server over stdio for
-  `tungsten.yml`, `agent.yml` and overlay files. It reports the same
-  diagnostics as `tungsten check` on the YAML lines they belong to, completes
-  keys, values and operation ids, documents fields and operations on hover,
-  jumps from an operation id to its place in the OpenAPI document and
-  outlines the manifests. See the README for editor setup.
-- External emitters: a target of `tungsten.yml` with `external: true` (or a
-  command) is generated by a separate `tungsten-emit-<name>` executable that
-  speaks a small JSON protocol (the IR on standard input, files and
-  diagnostics on standard output). The compiler writes the files, so
-  `generate --check`, the output manifest and the API surface diff work
-  unchanged. New: `tungsten emitters`, `tungsten schema external-emitter`,
-  diagnostics TG0801 to TG0806 and the example `examples/external-emitter-markdown`.
 - Optional embedding index for the MCP server's `search_tools`, off by
   default and with no model shipped. `targets.mcp.search.embeddings` names a
   provider (a command speaking a small JSON protocol, or a plain `http://`
@@ -356,6 +680,12 @@ changes.
   1.22 or later), with the same error envelope, retries, idempotency,
   previews, confirmation tokens, auth handling and resumable event streams
   as the other runtimes.
+
+## [0.1.1] - 2026-10-11
+
+Release engineering only: npm package READMEs for the published TypeScript
+packages and resolvable Woodpecker workflow status URLs. No compiler, runtime
+or generated-output changes, and nothing to migrate.
 
 ## [0.1.0] - 2026-10-11
 
@@ -410,6 +740,19 @@ runtime (`@elysra/tungsten-mcp`) and the installers ship together at 0.1.0.
   the helpers only when the specification declares an `authorizationCode` flow.
 - Repository guard and community files (contributing guide, security policy,
   code of conduct, issue forms and pull request template).
+- `tungsten lsp`: a Language Server Protocol server over stdio for
+  `tungsten.yml`, `agent.yml` and overlay files. It reports the same
+  diagnostics as `tungsten check` on the YAML lines they belong to, completes
+  keys, values and operation ids, documents fields and operations on hover,
+  jumps from an operation id to its place in the OpenAPI document and
+  outlines the manifests. See the README for editor setup.
+- External emitters: a target of `tungsten.yml` with `external: true` (or a
+  command) is generated by a separate `tungsten-emit-<name>` executable that
+  speaks a small JSON protocol (the IR on standard input, files and
+  diagnostics on standard output). The compiler writes the files, so
+  `generate --check`, the output manifest and the API surface diff work
+  unchanged. New: `tungsten emitters`, `tungsten schema external-emitter`,
+  diagnostics TG0801 to TG0806 and the example `examples/external-emitter-markdown`.
 
 ### Changed
 
@@ -424,6 +767,7 @@ runtime (`@elysra/tungsten-mcp`) and the installers ship together at 0.1.0.
 - The compiler warns when a `gates` entry in `agent.yml` matches no
   operation.
 
-[Unreleased]: https://github.com/pboachie/tungsten/compare/v0.1.1...HEAD
-[0.1.2]: https://github.com/pboachie/tungsten/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/pboachie/tungsten/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/pboachie/tungsten/compare/v0.1.1...v0.1.2
+[0.1.1]: https://github.com/pboachie/tungsten/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/pboachie/tungsten/releases/tag/v0.1.0

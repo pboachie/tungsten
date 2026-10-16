@@ -64,8 +64,9 @@ separate private repository, so pull requests here must not add tests, test
 data, `#[cfg(test)]` modules, `[dev-dependencies]`, doctests or documentation
 directories. A repository guard job in CI enforces this. Besides the community
 files at the root and in `.github/`, only images in `assets/` and code in
-`examples/` (with a `README.md` per example), and package READMEs in
-`runtimes/ts`, `runtimes/mcp` and `runtimes/webmcp` are accepted.
+`examples/` (with the `examples/README.md` gallery index and a `README.md` per
+example), and package READMEs directly in the runtime package directories
+(including `runtimes/rust/runtime` and `runtimes/rust/cli-kit`) are accepted.
 
 You do not need access to that suite. A maintainer runs it against your pull
 request, and its result appears on the pull request as the `tungsten-ops/ci`
@@ -85,8 +86,30 @@ maintainer will add it.
 - Follow the existing style; `cargo fmt` and clippy must be clean.
 - Intermediate representation changes must be additive.
 - Update `CHANGELOG.md` under `Unreleased` for user-visible changes.
+- From 0.1.3 onward, compiler and runtime package versions follow the release
+  tag in lockstep. One release preparation change updates their manifests,
+  lockfiles and runtime identity headers together; ordinary feature changes
+  leave versions alone. `node .github/scripts/check-release-version.mjs
+  --workspace` checks source consistency, and the release prepare job checks
+  the tag before building. Generated SDK package versions remain user-owned.
 - Behaviour of the TypeScript, Python and Rust runtimes must stay identical;
   a behavioural change in one is made in all three.
+
+### Releases and tags
+
+Before a release tag is pushed, the release workflow is run once on the exact
+release commit through `workflow_dispatch` with `dry_run: true` (the default).
+The dry run exercises the same pipeline as the release — the dependency
+advisory audit, the full build matrix, the SBOM and the crates.io, npm and
+PyPI publish dry runs — while publishing nothing, so advisory matches and
+packaging failures surface before an immutable tag exists. A release whose
+dry run has not passed on that commit is not tagged.
+
+Release tags are immutable. Once a `vX.Y.Z` tag has been pushed it is never
+moved, re-pointed, or deleted and re-created: build provenance attestations,
+the release job's `--verify-tag` check and everyone who fetched the first
+commit all key on that exact tag. A failed release is fixed forward with a
+new version and a new tag, never by moving the published one.
 
 ### Commit messages
 
@@ -96,6 +119,11 @@ maintainer will add it.
   them. Using tools to help you is fine; you remain the author and are
   responsible for the change.
 - A DCO `Signed-off-by` line is not required.
+- Keep commit messages and changelog entries suitable for public release notes.
+  Do not include references to the private repository (issue, pull-request,
+  commit or discussion links and `#` references), internal planning paths,
+  release-plan or release-evidence paths or operational runbook paths. Describe the public behavior
+  instead; CI rejects these references.
 
 ## Review
 

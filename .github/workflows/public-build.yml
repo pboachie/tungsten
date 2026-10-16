@@ -71,3 +71,26 @@ jobs:
           python -m pip install --disable-pip-version-check build==1.6.1 twine==7.0.0
           python -m build --outdir "$RUNNER_TEMP/python-dist"
           python -m twine check "$RUNNER_TEMP/python-dist/"*
+
+  ruby:
+    name: public Ruby package notices
+    if: github.repository == 'pboachie/tungsten' && github.event.repository.private == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify source identity
+        env:
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+      - uses: ruby/setup-ruby@14594264cd68ce8a2345dd349bc3d138a4ef85c8 # v1.327.0
+        with:
+          ruby-version: "3.3"
+          bundler-cache: false
+      - name: Build the local gem and verify packaged notices
+        run: python3 .github/scripts/check-ruby-artifact.py

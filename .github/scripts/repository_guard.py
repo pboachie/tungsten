@@ -23,7 +23,8 @@ Tree rules:
     CODE_OF_CONDUCT.md and CHANGELOG.md at the root; the Apache-2.0 LICENSE
     in runtimes/ (and a copy of it in a runtime package directory, for npm
     packaging); Markdown directly in .github/ (pull request template and the
-    like); .github/ISSUE_TEMPLATE/*.md and *.yml; examples/<name>/README.md, and README.md in the three npm runtime packages.
+    like); .github/ISSUE_TEMPLATE/*.md and *.yml; examples/README.md,
+    examples/<name>/README.md, and README.md in the explicitly listed runtime packages.
     Everything else with a documentation extension or name stays forbidden,
     wherever it is (docs/CONTRIBUTING.md, CHANGELOG.txt, assets/notes.md);
   - the root assets/ directory holds images only (.svg and .png); examples/ holds code (and the
@@ -37,22 +38,27 @@ Tree rules:
     there with `// SPDX-License-Identifier: Apache-2.0`;
   - the SDK runtimes of LANGUAGE_ROOTS: Java (runtimes/java/: .java,
     pom.xml), C# (runtimes/csharp/: .cs, .csproj, Directory.Build.props),
-    Kotlin (runtimes/kotlin/: .kt, .kts), Swift (runtimes/swift/: .swift,
-    Package.swift, Package.resolved), PHP (runtimes/php/: .php,
+    F# (runtimes/fsharp/: .fs, .fsi, .fsproj), Kotlin (runtimes/kotlin/:
+    .kt, .kts), Swift (runtimes/swift/: .swift, Package.swift,
+    Package.resolved), PHP (runtimes/php/: .php,
     composer.json, phpstan.neon), Ruby (runtimes/ruby/: .rb, .gemspec,
     Gemfile) and Dart (runtimes/dart/: .dart, pubspec.yaml,
     analysis_options.yaml). Their sources and manifests are refused
     anywhere else (generated SDKs never live here). Headers: `//
-    SPDX-License-Identifier: Apache-2.0` in .java, .cs, .kt, .kts, .swift
-    and .dart (Package.swift may put `// swift-tools-version:` first); `#
+    SPDX-License-Identifier: Apache-2.0` in .java, .cs, .fs, .fsi, .kt,
+    .kts, .swift and .dart (Package.swift may put `// swift-tools-version:` first); `#
     SPDX-...` in .rb, .gemspec, Gemfile, pubspec.yaml,
     analysis_options.yaml and phpstan.neon; in .php the `//` header follows
-    the `<?php` line; pom.xml, .csproj and .props carry `<!--
+    the `<?php` line; pom.xml, .csproj, .fsproj and .props carry `<!--
     SPDX-License-Identifier: Apache-2.0 -->` (after an optional XML
     declaration); composer.json has `"license": "Apache-2.0"`. Their test
-    files (*Test.java, *Tests.java, *Test.kt, *Tests.cs, *Tests.swift,
-    *Test.php, *_test.rb, *_spec.rb, *_test.dart) and test directories (any
+    files (*Test.java, *Tests.java, *Test.kt, *Tests.cs, *Tests.fs,
+    *Tests.swift, *Test.php, *_test.rb, *_spec.rb, *_test.dart) and test directories (any
     case, `Tests/` included, and spec/ under runtimes/ruby/) are refused.
+  - CHANGELOG.md (the source of the GitHub Release notes) keeps, inside one
+    release section (`## [X.Y.Z]` or `## [Unreleased]`), one heading of each
+    kind and one bullet per change (no repeated bullet text), and every
+    version heading carries a date (`## [1.2.3] - YYYY-MM-DD`).
 Commit rules: no Co-Authored-By trailer naming an AI assistant or its vendor,
 no session-link trailers, no "generated with" footers naming an AI tool, and
 no author or committer identity of an AI assistant.
@@ -93,7 +99,7 @@ TEST_FILE = re.compile(
 )
 # Test classes of the SDK languages, matched case-sensitively so that
 # `Latest.java` or `Contest.cs` stay ordinary sources.
-TEST_CLASS_FILE = re.compile(r"(?:Tests?\.(?:java|kt)|Tests?\.cs|Tests\.swift|Test\.php)$")
+TEST_CLASS_FILE = re.compile(r"(?:Tests?\.(?:java|kt)|Tests?\.cs|Tests?\.fs|Tests\.swift|Test\.php)$")
 # An attribute at the start of a line: #[...] or #![...].
 RUST_ATTRIBUTE = re.compile(r"^\s*#!?\[\s*([A-Za-z_][\w:]*)\s*(.*)$")
 STRING_LITERAL = re.compile(r'"(?:[^"\\]|\\.)*"')
@@ -114,10 +120,11 @@ DOC_NAME = re.compile(
 ALLOWED_DOCS = re.compile(
     r"^(?:README\.md|LICENSE|CONTRIBUTING\.md|SECURITY\.md|CODE_OF_CONDUCT\.md|CHANGELOG\.md"
     r"|runtimes/LICENSE|runtimes/[^/]+/LICENSE|runtimes/rust/(?:runtime|cli-kit)/LICENSE"
-    r"|runtimes/(?:ts|mcp|webmcp)/README\.md"
+    r"|runtimes/(?:ts|mcp|webmcp|python|rust|go|java|csharp|ruby|kotlin|fsharp|dart)/README\.md"
+    r"|runtimes/rust/(?:runtime|cli-kit)/README\.md"
     r"|\.github/[^/]+\.md"
     r"|\.github/ISSUE_TEMPLATE/[^/]+\.(?:md|ya?ml)"
-    r"|examples/[^/]+/README\.md)$"
+    r"|examples/README\.md|examples/[^/]+/README\.md)$"
 )
 ASSET_EXTENSIONS = {".svg", ".png"}
 
@@ -137,17 +144,68 @@ HEADER_LINES = 5  # the header may follow a shebang or a blank line
 LANGUAGE_ROOTS = (
     ("runtimes/java/", "Java", {".java"}, {"pom.xml"}, set()),
     ("runtimes/csharp/", "C#", {".cs"}, {"Directory.Build.props"}, {".csproj"}),
+    ("runtimes/fsharp/", "F#", {".fs", ".fsi"}, set(), {".fsproj"}),
     ("runtimes/kotlin/", "Kotlin", {".kt", ".kts"}, set(), set()),
     ("runtimes/swift/", "Swift", {".swift"}, {"Package.swift", "Package.resolved"}, set()),
     ("runtimes/php/", "PHP", {".php"}, {"composer.json", "phpstan.neon"}, set()),
     ("runtimes/ruby/", "Ruby", {".rb"}, {"Gemfile"}, {".gemspec"}),
     ("runtimes/dart/", "Dart", {".dart"}, {"pubspec.yaml", "analysis_options.yaml"}, set()),
 )
-SLASH_HEADER_SOURCES = {".java", ".cs", ".kt", ".kts", ".swift", ".dart"}
+SLASH_HEADER_SOURCES = {".java", ".cs", ".fs", ".fsi", ".kt", ".kts", ".swift", ".dart"}
 HASH_HEADER_FILES = {"Gemfile", "pubspec.yaml", "analysis_options.yaml", "phpstan.neon"}
 HASH_HEADER_SOURCES = {".rb", ".gemspec"}
 XML_MANIFESTS = {"pom.xml", "Directory.Build.props"}
 XML_HEADER = "<!-- SPDX-License-Identifier: Apache-2.0 -->"
+
+# ── CHANGELOG rules ──────────────────────────────────────────────────────────
+# The changelog is the source of the GitHub Release notes, so a release
+# section stays readable: one heading of each kind, one bullet per change and
+# a date on every version heading. `Unreleased` is exempt from the date.
+
+CHANGELOG_PATH = "CHANGELOG.md"
+CHANGELOG_RELEASE_HEADING = re.compile(r"^## \[([^]]+)\]\s*(?:-\s*(\d{4}-\d{2}-\d{2}))?\s*$")
+CHANGELOG_SUB_HEADING = re.compile(r"^### (.+?)\s*$")
+CHANGELOG_BULLET = re.compile(r"^- ")
+
+
+def changelog_violations(text: str) -> list[str]:
+    found = []
+    section: str | None = None
+    sub_headings: dict[str, int] = {}
+    bullets: dict[str, int] = {}
+    lines = text.splitlines()
+    for number, line in enumerate(lines, 1):
+        release = CHANGELOG_RELEASE_HEADING.match(line)
+        if release:
+            name, date = release[1], release[2]
+            if name != "Unreleased" and not date:
+                found.append(f"line {number}: release heading [{name}] has no date"
+                             f" (write '## [{name}] - YYYY-MM-DD')")
+            section, sub_headings, bullets = name, {}, {}
+            continue
+        if section is None:
+            continue
+        sub = CHANGELOG_SUB_HEADING.match(line)
+        if sub:
+            if sub[1] in sub_headings:
+                found.append(f"line {number}: duplicate '### {sub[1]}' heading in [{section}]"
+                             f" (first at line {sub_headings[sub[1]]})")
+            else:
+                sub_headings[sub[1]] = number
+            continue
+        if CHANGELOG_BULLET.match(line):
+            body = [line[2:]]
+            for follow in lines[number:]:
+                if not follow.strip() or follow.startswith("#") or CHANGELOG_BULLET.match(follow):
+                    break
+                body.append(follow)
+            bullet = " ".join(part.strip() for part in body)
+            if bullet in bullets:
+                found.append(f"line {number}: duplicate bullet in [{section}]"
+                             f" (first at line {bullets[bullet]}): {bullet[:80]}...")
+            else:
+                bullets[bullet] = number
+    return found
 
 
 def language_of(path: str) -> tuple[str, str] | None:
@@ -186,7 +244,7 @@ def language_header_violations(path: str, text: str) -> list[str] | None:
         except (ValueError, AttributeError):
             return ["composer.json does not parse"]
         return [] if licence == "Apache-2.0" else ['composer.json without "license": "Apache-2.0"']
-    if name in XML_MANIFESTS or suffix in {".csproj", ".props"}:
+    if name in XML_MANIFESTS or suffix in {".csproj", ".fsproj", ".props"}:
         return [] if has_header(text, XML_HEADER) else [f"manifest without the licence header '{XML_HEADER}'"]
     if suffix == ".php":
         ok = bool(lines) and lines[0].strip() == "<?php" and any(
@@ -217,7 +275,7 @@ def path_violations(path: str) -> list[str]:
         found.append(
             "documentation file (only the community files are allowed: README.md, LICENSE, CONTRIBUTING.md,"
             " SECURITY.md, CODE_OF_CONDUCT.md and CHANGELOG.md at the root, Markdown in .github/ and"
-            " .github/ISSUE_TEMPLATE/, examples/<name>/README.md, npm runtime README.md; docs live in the private repository)"
+            " .github/ISSUE_TEMPLATE/, examples/README.md, examples/<name>/README.md, npm runtime README.md; docs live in the private repository)"
         )
     if (suffix == ".go" or name in GO_MODULE_FILES) and not path.startswith(GO_ROOTS):
         found.append("Go source or module file outside runtimes/go/ and emitters/go/")
@@ -269,6 +327,10 @@ def manifest_violations(path: str, text: str, paths: set[str]) -> list[str]:
 
 def content_violations(path: str, text: str, paths: set[str]) -> list[str]:
     found = []
+    if path == CHANGELOG_PATH:
+        found += changelog_violations(text)
+        if PRIVATE_REFERENCE.search(text):
+            found.append("private coordination reference in public changelog")
     suffix = PurePosixPath(path).suffix.lower()
     in_runtimes = path.startswith("runtimes/")
     if suffix == ".rs":
@@ -303,6 +365,22 @@ AI_NAME = re.compile(
 CO_AUTHOR = re.compile(r"^\s*co-authored-by\s*:(.*)$", re.IGNORECASE | re.MULTILINE)
 SESSION_TRAILER = re.compile(r"^\s*[A-Za-z][\w-]*-session(?:-id|-url)?\s*:", re.IGNORECASE | re.MULTILINE)
 GENERATED_FOOTER = re.compile(r"^.*\b(?:generated|written|created)\s+(?:with|by|using)\b(.*)$", re.IGNORECASE | re.MULTILINE)
+# Private coordination: the private repository in short or owner-qualified
+# form (tungsten-ops#N, owner/tungsten-ops#N, owner/tungsten-ops@<sha>), as
+# any GitHub URL or route (issues, pull, commit, discussions, ...), and its
+# private-only paths (planning documents, the release plan and evidence,
+# runbooks). The bare name and status contexts such as tungsten-ops/ci stay
+# allowed, as do references to other repositories (owner/tungsten#N).
+PRIVATE_REFERENCE = re.compile(
+    r"\btungsten-ops(?:#[0-9]|@[0-9a-f]{7,40}\b)"
+    r"|\btungsten-ops[/\\](?:issues|pulls?|commits?|discussions|compare|blob|tree|raw|releases|actions"
+    r"|wiki|security|projects|milestones?|labels)\b"
+    r"|\bgithub(?:usercontent)?\.com[/\\](?:repos[/\\])?[\w.-]+[/\\]tungsten-ops(?![\w.-])"
+    r"|\bplanning[/\\](?:[0-9]{2}-|[\w.-]+\.md\b)"
+    r"|\brelease[/\\](?:plan\.json\b|evidence[/\\])"
+    r"|\brunbooks[/\\]",
+    re.IGNORECASE,
+)
 
 
 def message_violations(message: str) -> list[str]:
@@ -313,6 +391,8 @@ def message_violations(message: str) -> list[str]:
         found.append("session-link trailer")
     if any(AI_NAME.search(rest) for rest in GENERATED_FOOTER.findall(message)):
         found.append("footer crediting an AI tool")
+    if PRIVATE_REFERENCE.search(message):
+        found.append("private coordination reference in public commit message")
     return found
 
 

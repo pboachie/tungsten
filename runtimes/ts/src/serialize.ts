@@ -242,6 +242,9 @@ export async function encodeBody(
         for (const item of items) {
           if (isBinary(item) || isNamedBinary(item)) {
             const { data, filename, contentType } = isNamedBinary(item) ? item : { data: item, filename: undefined, contentType: undefined };
+            if (contentType !== undefined && contentType !== "" && !validMediaType(contentType)) {
+              throw new SerializationError(`${parameter}.${k}`, "a media type such as type/subtype or type/subtype; charset=utf-8", "<invalid media type>");
+            }
             const blob = toBlob(data, contentType ?? "");
             const name = filename ?? (typeof File !== "undefined" && data instanceof File ? data.name : k);
             form.append(k, blob, name);
@@ -288,6 +291,17 @@ export async function encodeBody(
 const TOKEN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
 const HEADER_VALUE = /^[\t\x20-\x7e\x80-\xff]*$/;
 
+const MEDIA_TOKEN = "[!#$%&'*+\\-.^_`|~0-9A-Za-z]+";
+const MEDIA_TYPE = new RegExp(
+  `^${MEDIA_TOKEN}/${MEDIA_TOKEN}(?:[ \\t]*;[ \\t]*${MEDIA_TOKEN}=(?:${MEDIA_TOKEN}|"(?:[\\t\\x20\\x21\\x23-\\x5b\\x5d-\\x7e]|\\\\[\\t\\x20-\\x7e])*"))*$`,
+);
+
+/** Whether `value` is a media type of visible ASCII: `type/subtype` with
+ * optional `;name=value` parameters (no line breaks or control characters). */
+export function validMediaType(value: string): boolean {
+  return MEDIA_TYPE.test(value);
+}
+
 export function validHeaderName(name: string): boolean {
   return TOKEN.test(name);
 }
@@ -296,13 +310,21 @@ export function validHeaderValue(value: string): boolean {
   return HEADER_VALUE.test(value);
 }
 
+interface HeaderEntry {
+  name: string;
+  value: string;
+  secret: boolean;
+  /** Set once the name and value passed the header check; a new value resets it. */
+  checked: boolean;
+}
+
 /** Case-insensitive header collection that remembers which values are
  * secrets, so previews and middleware see them redacted. */
 export class HeaderBag {
-  readonly #entries = new Map<string, { name: string; value: string; secret: boolean }>();
+  readonly #entries = new Map<string, HeaderEntry>();
 
   set(name: string, value: string, secret = false): void {
-    this.#entries.set(name.toLowerCase(), { name, value, secret });
+    this.#entries.set(name.toLowerCase(), { name, value, secret, checked: false });
   }
 
   get(name: string): string | undefined {
@@ -317,11 +339,19 @@ export class HeaderBag {
     return this.#entries.get(name.toLowerCase())?.secret ?? false;
   }
 
+  /** The headers in insertion order, as set. */
+  entries(): IterableIterator<HeaderEntry> {
+    return this.#entries.values();
+  }
+
   /** Plain record; secret values replaced by `<redacted>` when `redact`. */
   toRecord(redact: boolean): Record<string, string> {
     const out: Record<string, string> = {};
     for (const { name, value, secret } of this.#entries.values()) {
-      Object.defineProperty(out, name, { value: redact && secret ? REDACTED : value, enumerable: true, configurable: true, writable: true });
+      const shown = redact && secret ? REDACTED : value;
+      // A header named __proto__ must become an own property, not the prototype.
+      if (name === "__proto__") Object.defineProperty(out, name, { value: shown, enumerable: true, configurable: true, writable: true });
+      else out[name] = shown;
     }
     return out;
   }

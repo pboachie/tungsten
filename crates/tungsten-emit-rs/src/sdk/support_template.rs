@@ -4,7 +4,9 @@
 //! exact paths, and the validators the descriptors hand to the runtime.
 //! Not part of the SDK's API.
 
+use std::any::Any;
 use std::fmt::{self, Display};
+use std::ops::ControlFlow;
 use std::sync::{Arc, LazyLock};
 
 use regex::Regex;
@@ -734,7 +736,8 @@ impl<T: DeserializeOwned + Serialize + 'static> Validator for Typed<T> {
             return Validation::Invalid(issues);
         }
         if !self.request {
-            return Validation::Valid(value.clone());
+            // The runtime keeps the wire body; the judged value is not copied.
+            return Validation::Valid(Value::Null);
         }
         match serde_json::to_value(&decoded) {
             Ok(normalized) => Validation::Valid(normalized),
@@ -743,6 +746,15 @@ impl<T: DeserializeOwned + Serialize + 'static> Validator for Typed<T> {
                 message: e.to_string(),
             }]),
         }
+    }
+
+    /// A body the runtime decoded as `T` passes when `T`'s checks pass: a
+    /// member the schema does not allow cannot have decoded.
+    fn check_decoded(&self, value: &dyn Any) -> Option<Vec<Issue>> {
+        let decoded = value.downcast_ref::<T>()?;
+        let mut checker = Checker::new();
+        (self.check)(decoded, &mut checker);
+        Some(checker.finish())
     }
 }
 
@@ -891,6 +903,32 @@ pub async fn collect_typed<T: Serialize + DeserializeOwned>(
         out.push(encode_page(page));
     }
     out
+}
+
+/// Where a streamed iteration delivers its pages; returning `Break` stops
+/// it before the next request.
+pub type PageSink<'a> =
+    &'a mut (dyn FnMut(tungsten_runtime::Result<Page<Value>>) -> ControlFlow<()> + Send);
+
+/// Hand each page of a typed iteration to `sink` as it arrives.
+pub async fn each_typed<T: Serialize + DeserializeOwned>(
+    mut pages: TypedPages<T>,
+    sink: PageSink<'_>,
+) {
+    while let Some(page) = pages.next().await {
+        if sink(encode_page(page)).is_break() {
+            break;
+        }
+    }
+}
+
+/// Hand each page of an untyped iteration to `sink` as it arrives.
+pub async fn each_raw(mut pages: Pages, sink: PageSink<'_>) {
+    while let Some(page) = pages.next().await {
+        if sink(page).is_break() {
+            break;
+        }
+    }
 }
 
 /// Every page of an untyped iteration.

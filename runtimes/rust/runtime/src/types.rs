@@ -491,9 +491,9 @@ pub enum PathSegment {
 pub enum Validation {
     /// Request validators: the normalized, JSON-ready arguments object (keys
     /// are argument names; absent optionals are not keys; binary values are
-    /// the [`crate::Binary`] form). Response and page-item validators: the
-    /// value that was checked (the runtime keeps the decoded wire body, not
-    /// this value).
+    /// the [`crate::Binary`] form). Response and page-item validators: not
+    /// read (the runtime keeps the decoded wire body); generated validators
+    /// answer `Value::Null` rather than copy the body.
     Valid(Value),
     Invalid(Vec<Issue>),
 }
@@ -504,6 +504,18 @@ pub enum Validation {
 /// running the type's constraint checks, so issue paths are exact.
 pub trait Validator: Send + Sync + fmt::Debug {
     fn validate(&self, value: &Value) -> Validation;
+
+    /// Judge a body the runtime already decoded into the validator's type
+    /// (the typed call path decodes the body bytes straight into the SDK's
+    /// type, so the JSON form is never built when the body is valid): the
+    /// issues [`Validator::validate`] would report for its JSON form, none
+    /// when it is valid, or `None` when `value` is not of the validator's
+    /// type. The default judges nothing, so the runtime judges the JSON form
+    /// instead.
+    fn check_decoded(&self, value: &dyn std::any::Any) -> Option<Vec<Issue>> {
+        let _ = value;
+        None
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -824,6 +836,8 @@ pub struct ClientOptions {
     pub token_store: Option<Arc<dyn TokenStore>>,
     /// Per-attempt timeout. Default 30 s.
     pub timeout: Duration,
+    /// Optional ordinary-response byte cap. Positive safe integer; unset is unbounded.
+    pub max_response_bytes: Option<u64>,
     /// Overrides the API's per-tier retry defaults field by field, for every tier.
     pub retries: PartialRetryOptions,
     pub idempotency_store: Option<Arc<dyn IdempotencyStore>>,
@@ -889,6 +903,7 @@ impl Default for ClientOptions {
             auth: AuthConfig::new(),
             token_store: None,
             timeout: Duration::from_secs(30),
+            max_response_bytes: None,
             retries: PartialRetryOptions::default(),
             idempotency_store: None,
             middleware: Vec::new(),
@@ -916,6 +931,7 @@ impl fmt::Debug for ClientOptions {
             .field("base_url", &self.base_url)
             .field("auth", &self.auth)
             .field("timeout", &self.timeout)
+            .field("max_response_bytes", &self.max_response_bytes)
             .field("validate_responses", &self.validate_responses)
             .finish_non_exhaustive()
     }
@@ -958,6 +974,8 @@ pub struct CallOptions {
     pub allow_confirm_true: bool,
     /// Per-attempt timeout; default: the client's.
     pub timeout: Option<Duration>,
+    /// Override the client ordinary-response byte cap.
+    pub max_response_bytes: Option<u64>,
     /// Run the operation's verification hook after success.
     pub verify: bool,
     pub headers: BTreeMap<String, String>,
@@ -975,6 +993,7 @@ impl fmt::Debug for CallOptions {
             .field("allow_confirm_true", &self.allow_confirm_true)
             .field("max_pages", &self.max_pages)
             .field("timeout", &self.timeout)
+            .field("max_response_bytes", &self.max_response_bytes)
             .field("verify", &self.verify)
             .field("headers", &self.headers.keys().collect::<Vec<_>>())
             .finish()
@@ -989,6 +1008,7 @@ impl Default for CallOptions {
             confirm: None,
             allow_confirm_true: true,
             timeout: None,
+            max_response_bytes: None,
             verify: false,
             headers: BTreeMap::new(),
         }

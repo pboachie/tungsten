@@ -14,16 +14,23 @@ PHASE-4 CONTRACT: the signatures are shared with the Python emitter.
 
 from __future__ import annotations
 
+import sys
 import threading
 from collections.abc import AsyncIterator, Iterator, Mapping
 from types import TracebackType
-from typing import Any, Self, cast
+from typing import Any, cast
+
+if sys.version_info >= (3, 11):
+    from typing import Self
+else:
+    from typing_extensions import Self
 
 from ._core import Engine
 from ._drivers import AsyncDriver, SyncDriver, SyncStream, async_http, sync_http
 from ._helpers import safe_id, safe_name
 from ._oauth import AsyncOAuthFlow, OAuthFlow
 from ._streams import AsyncEventStream, EventStream
+from ._util import field
 from .types import (
     ApiDescriptor,
     CallOptions,
@@ -143,7 +150,9 @@ class ClientCore:
             except Exception as error:
                 yield self._engine.internal(safe_id(op), error, "streaming")
 
-        return EventStream(items(), close, stop)
+        return EventStream(
+            items(), close, stop, safe_id(op), field(field(op, "agent"), "safety") != "read_only"
+        )
 
     def poll(
         self,
@@ -280,7 +289,9 @@ class AsyncClientCore:
             except Exception as error:
                 yield self._engine.internal(safe_id(op), error, "streaming")
 
-        return AsyncEventStream(items(), stop)
+        return AsyncEventStream(
+            items(), stop, safe_id(op), field(field(op, "agent"), "safety") != "read_only"
+        )
 
     async def poll(
         self,

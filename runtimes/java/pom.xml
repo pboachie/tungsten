@@ -7,7 +7,7 @@
 
   <groupId>io.github.pboachie.tungsten</groupId>
   <artifactId>tungsten-runtime</artifactId>
-  <version>0.1.0</version>
+  <version>0.1.3</version>
   <packaging>jar</packaging>
 
   <name>tungsten runtime for Java</name>
@@ -23,7 +23,18 @@
 
   <scm>
     <url>https://github.com/pboachie/tungsten</url>
+    <connection>scm:git:https://github.com/pboachie/tungsten.git</connection>
+    <developerConnection>scm:git:ssh://git@github.com/pboachie/tungsten.git</developerConnection>
+    <tag>v0.1.3</tag>
   </scm>
+
+  <developers>
+    <developer>
+      <id>pboachie</id>
+      <name>Prince Boachie</name>
+      <url>https://github.com/pboachie</url>
+    </developer>
+  </developers>
 
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
@@ -31,6 +42,13 @@
   </properties>
 
   <build>
+    <resources>
+      <resource>
+        <directory>${project.basedir}</directory>
+        <includes><include>README.md</include><include>LICENSE</include></includes>
+        <targetPath>META-INF</targetPath>
+      </resource>
+    </resources>
     <plugins>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
@@ -58,4 +76,27 @@
       </plugin>
     </plugins>
   </build>
+
+  <profiles>
+    <profile>
+      <id>release-artifacts</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-source-plugin</artifactId>
+            <version>3.3.1</version>
+            <executions><execution><id>sources</id><goals><goal>jar-no-fork</goal></goals></execution></executions>
+          </plugin>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-javadoc-plugin</artifactId>
+            <version>3.12.0</version>
+            <configuration><doclint>none</doclint></configuration>
+            <executions><execution><id>javadoc</id><goals><goal>jar</goal></goals></execution></executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
 </project>

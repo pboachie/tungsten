@@ -18,6 +18,7 @@
 //! that depend on schema structure (pagination, rpc, error envelope) read
 //! the normalized documents, never type shapes.
 
+pub mod contracts;
 pub mod driver;
 pub mod suggest;
 pub mod types;
@@ -31,6 +32,7 @@ mod names;
 mod operations;
 mod pagination;
 mod params;
+mod pathitem;
 mod prune;
 mod resources;
 mod responses;

@@ -237,6 +237,56 @@ public final class Schema {
     private static final Map<String, Pattern> PATTERNS = new ConcurrentHashMap<>();
     private static final Set<String> BAD_PATTERNS = ConcurrentHashMap.newKeySet();
 
+    /** Longest string (in characters) a spec pattern is matched against; longer is not checked. */
+    static final int MAX_PATTERN_SUBJECT = 64 * 1024;
+    /** Longest a single pattern match may run, in nanoseconds; a timeout means not checked. */
+    static final long PATTERN_TIMEOUT_NANOS = 1_000_000_000L;
+
+    /** Thrown by {@link DeadlineSequence} once its deadline has passed. */
+    private static final class PatternTimeout extends RuntimeException {
+        private static final long serialVersionUID = 1L;
+
+        PatternTimeout() {
+            super(null, null, false, false);
+        }
+    }
+
+    /** A CharSequence that fails reads after a deadline, so a runaway match can be abandoned. */
+    private static final class DeadlineSequence implements CharSequence {
+        private final CharSequence text;
+        private final long deadline;
+        private int reads;
+
+        DeadlineSequence(CharSequence text, long deadline) {
+            this.text = text;
+            this.deadline = deadline;
+        }
+
+        @Override
+        public char charAt(int index) {
+            if ((++reads & 0x3FF) == 0 && System.nanoTime() - deadline > 0) {
+                throw new PatternTimeout();
+            }
+            return text.charAt(index);
+        }
+
+        @Override
+        public int length() {
+            return text.length();
+        }
+
+        @Override
+        public CharSequence subSequence(int start, int end) {
+            DeadlineSequence sub = new DeadlineSequence(text.subSequence(start, end), deadline);
+            return sub;
+        }
+
+        @Override
+        public String toString() {
+            return text.toString();
+        }
+    }
+
     private Pattern compiled() {
         if (pattern == null || BAD_PATTERNS.contains(pattern)) {
             return null;
@@ -464,12 +514,26 @@ public final class Schema {
                 limit(path, "must have at most " + s.maxLength + " characters");
             }
             Pattern re = s.compiled();
-            if (re != null && !re.matcher(text).find()) {
+            if (re != null && !patternFound(re, text)) {
                 limit(path, "must match the pattern /" + s.pattern + "/");
             }
             Pattern f = s.format == null ? null : FORMATS.get(s.format);
             if (f != null && !f.matcher(text).matches()) {
                 limit(path, "must be a valid " + s.format);
+            }
+        }
+
+        /** True when the pattern matches or cannot be checked (too long, out of time, or too deep to match). */
+        private boolean patternFound(Pattern re, String text) {
+            if (text.length() > MAX_PATTERN_SUBJECT) {
+                return true;
+            }
+            try {
+                return re.matcher(new DeadlineSequence(text, System.nanoTime() + PATTERN_TIMEOUT_NANOS)).find();
+            } catch (PatternTimeout | StackOverflowError e) {
+                // java.util.regex recurses per repetition of some groups, so a long subject can
+                // overflow the stack; that is as unbounded as a timeout and reads as not checked.
+                return true;
             }
         }
 

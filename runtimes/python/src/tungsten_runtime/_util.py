@@ -34,7 +34,8 @@ _DIGITS = re.compile(r"[0-9]+")
 
 def is_record(value: object) -> TypeGuard[Mapping[str, object]]:
     """A JSON object (any mapping)."""
-    return isinstance(value, Mapping)
+    # A plain dict (the common case) skips the abstract-class check.
+    return type(value) is dict or isinstance(value, Mapping)
 
 
 def is_array(value: object) -> TypeGuard[Sequence[object]]:

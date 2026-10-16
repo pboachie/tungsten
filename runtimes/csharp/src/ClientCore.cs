@@ -27,7 +27,7 @@ public sealed class ClientConfigException : Exception
 public sealed partial class ClientCore
 {
     /// <summary>The version of this runtime, sent as <c>X-Tungsten-Runtime: tungsten-cs/&lt;version&gt;</c>.</summary>
-    public const string Version = "0.1.1";
+    public const string Version = "0.1.3";
 
     private readonly ApiDescriptor api;
     private readonly IReadOnlyDictionary<string, Credential> auth;
@@ -35,6 +35,7 @@ public sealed partial class ClientCore
     private readonly string baseUrl;
     private readonly TimeSpan timeout;
     private readonly int maxEventBytes;
+    private readonly long? maxResponseBytes;
     private readonly int maxCollectBytes;
     private readonly TimeSpan maxCollectTime;
     private readonly int maxReconnects;
@@ -61,6 +62,7 @@ public sealed partial class ClientCore
     private readonly Func<long>? nowFn;
     private readonly Func<double>? randomFn;
     private readonly ITokenStore tokenStore;
+    private readonly RuntimeIdentity identity = RuntimeIdentity.CSharp;
 
     private readonly ConcurrentDictionary<string, OperationDescriptor> registry = new(StringComparer.Ordinal);
     private readonly object usedTokensLock = new();
@@ -100,6 +102,7 @@ public sealed partial class ClientCore
         headers = options.Headers ?? new Dictionary<string, string>();
         timeout = options.Timeout is TimeSpan t && t > TimeSpan.Zero ? t : ClientOptions.DefaultTimeout;
         maxEventBytes = options.MaxEventBytes is int m && m > 0 ? m : ClientOptions.DefaultMaxEventBytes;
+        maxResponseBytes = options.MaxResponseBytes;
         maxCollectBytes = options.MaxCollectBytes is int c && c > 0 ? c : ClientOptions.DefaultMaxCollectBytes;
         maxCollectTime = options.MaxCollectTime is TimeSpan ct && ct > TimeSpan.Zero ? ct : ClientOptions.DefaultMaxCollectTime;
         maxReconnects = options.MaxReconnects is int r ? Math.Min(Math.Max(r, 0), 1000) : ClientOptions.DefaultMaxReconnects;
@@ -130,8 +133,21 @@ public sealed partial class ClientCore
     {
     }
 
+    /// <summary>
+    /// A client of a descriptor document for an SDK in another .NET language built on this runtime
+    /// (F#), which identifies itself with <paramref name="identity"/> on the wire.
+    /// </summary>
+    public ClientCore(SdkDescriptors descriptors, ClientOptions? options, RuntimeIdentity identity)
+        : this(descriptors.Api, options, descriptors.Operations.Values)
+    {
+        this.identity = identity ?? throw new ClientConfigException("the runtime identity is missing");
+    }
+
     /// <summary>The API descriptor.</summary>
     public ApiDescriptor Api => api;
+
+    /// <summary>Who this client says it is in <c>User-Agent</c> and <c>X-Tungsten-Runtime</c>.</summary>
+    public RuntimeIdentity Identity => identity;
 
     internal ITokenStore TokenStore => tokenStore;
 
@@ -267,17 +283,35 @@ public sealed partial class ClientCore
     // ------------------------------------------------------------ pipeline
 
     /// <summary>The pipeline shared by calls, pages, polls and macro steps.</summary>
-    internal async Task<Result<JsonNode?>.Ok> CallWithAsync(OperationDescriptor op, JsonNode? args, CallOptions opts, string? urlOverride, MacroClaim? claim, CancellationToken ct)
+    internal Task<Result<JsonNode?>.Ok> CallWithAsync(OperationDescriptor op, JsonNode? args, CallOptions opts, string? urlOverride, MacroClaim? claim, CancellationToken ct) =>
+        CallWithAsync(op, args, opts, urlOverride, claim, null, ct);
+
+    /// <summary>As the shared pipeline; with a trace, a request URL used before is refused unsent and the final URL is recorded.</summary>
+    internal async Task<Result<JsonNode?>.Ok> CallWithAsync(OperationDescriptor op, JsonNode? args, CallOptions opts, string? urlOverride, MacroClaim? claim, PageTrace? trace, CancellationToken ct)
     {
         var p = await PrepareAsync(op, args, opts, Purpose.Call, urlOverride, claim, ct).ConfigureAwait(false);
+        if (trace is not null && !trace.Urls.Add(p.Url))
+        {
+            throw new Failure(new Diag(op.Id, Category.UnexpectedResponse)
+                .Remedy("Pagination detected a repeated effective page request URL after authentication. Fix the server's next-page Link before continuing; no repeated request was sent.")
+                .Build());
+        }
         Result<JsonNode?>.Ok response;
         try
         {
             response = await SendAsync(p, opts, ct).ConfigureAwait(false);
         }
-        catch (Failure f) when (f.Error.Diagnostic.HttpStatus == 401 && p.OAuth is not null)
+        catch (Failure f) when (f.Error.Diagnostic.HttpStatus == 401 && p.OAuth is not null && !(f.Error.Diagnostic.Category == Category.UnexpectedResponse && f.Error.Diagnostic.Code == "RESPONSE_TOO_LARGE"))
         {
             response = await ResendRejectedAsync(p, f, opts, ct).ConfigureAwait(false);
+        }
+        if (trace is not null)
+        {
+            trace.LastUrl = p.FinalUrl;
+            if (p.FinalUrl is not null)
+            {
+                trace.Urls.Add(p.FinalUrl);
+            }
         }
         if (opts.Verify && op.Agent.Verify is not null)
         {

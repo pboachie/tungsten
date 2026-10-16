@@ -18,7 +18,7 @@ use crate::output::{CliError, CommandName, CommandResult, DoctorResult, ErrorKin
 use crate::{CliEnv, Report, exit, input};
 
 /// Tools in report order, with what tungsten uses them for.
-const TOOLS: [(&str, &str); 8] = [
+const TOOLS: [(&str, &str); 14] = [
     ("cargo", "Rust SDK and CLI targets"),
     ("node", "TypeScript SDK and MCP server"),
     ("python3", "Python SDK"),
@@ -27,6 +27,15 @@ const TOOLS: [(&str, &str); 8] = [
     ("prettier", "formatting TypeScript output (--format)"),
     ("ruff", "formatting Python output (--format)"),
     ("rustfmt", "formatting Rust output (--format)"),
+    ("java", "Java SDK (JDK 17 or later)"),
+    ("mvn", "Java SDK build (Maven)"),
+    ("dotnet", "C# SDK (.NET 10 or later)"),
+    ("ruby", "Ruby SDK (Ruby 3.3 or later)"),
+    ("bundle", "Ruby SDK packaging (Bundler)"),
+    (
+        "go",
+        "Go SDK from the external go target (Go 1.22 or later)",
+    ),
 ];
 /// How long a tool may take to print its version.
 const VERSION_TIMEOUT: Duration = Duration::from_secs(5);
@@ -45,7 +54,9 @@ pub(crate) fn run(args: &DoctorArgs, env: &CliEnv) -> Report {
             ToolReport {
                 name: name.to_string(),
                 found: exe.is_some(),
-                version: exe.as_deref().and_then(tool_version),
+                version: exe
+                    .as_deref()
+                    .and_then(|exe| tool_version(exe, version_arg(name))),
                 purpose: purpose.to_string(),
             }
         })
@@ -90,7 +101,9 @@ pub(crate) fn run(args: &DoctorArgs, env: &CliEnv) -> Report {
             tools.push(ToolReport {
                 name: "npm".into(),
                 found: exe.is_some(),
-                version: exe.as_deref().and_then(tool_version),
+                version: exe
+                    .as_deref()
+                    .and_then(|exe| tool_version(exe, "--version")),
                 purpose: "JavaScript package installation".into(),
             });
         }
@@ -99,16 +112,50 @@ pub(crate) fn run(args: &DoctorArgs, env: &CliEnv) -> Report {
             tools.push(ToolReport {
                 name: "rustc".into(),
                 found: exe.is_some(),
-                version: exe.as_deref().and_then(tool_version),
+                version: exe
+                    .as_deref()
+                    .and_then(|exe| tool_version(exe, "--version")),
                 purpose: "Rust compiler".into(),
             });
         }
+        // The Go target is an external emitter: it needs `tungsten-emit-go`
+        // on PATH unless the manifest names an explicit command.
+        let go = config
+            .targets
+            .get("go")
+            .and_then(|options| tungsten_config::external_target(options).ok().flatten());
+        let go_emitter = go
+            .as_ref()
+            .is_some_and(|external| external.command.is_none());
+        if go_emitter {
+            tools.push(ToolReport {
+                name: "tungsten-emit-go".into(),
+                found: find_executable("tungsten-emit-go", &search_path).is_some(),
+                version: None,
+                purpose: "Go SDK emitter".into(),
+            });
+        }
+        let python_minimum = config
+            .targets
+            .get("python")
+            .and_then(|options| options.get("python_version"))
+            .and_then(|value| value.as_str())
+            .filter(|version| matches!(*version, "3.10" | "3.11" | "3.12"))
+            .and_then(version_pair)
+            .unwrap_or((3, 12));
         for (name, required, minimum) in [
             ("node", javascript, Some((22, 0))),
             ("npm", javascript, None),
-            ("python3", has("python"), Some((3, 12))),
+            ("python3", has("python"), Some(python_minimum)),
             ("cargo", has("rust"), Some((1, 88))),
             ("rustc", has("rust"), Some((1, 88))),
+            ("java", has("java"), Some((17, 0))),
+            ("mvn", has("java"), None),
+            ("dotnet", has("csharp"), Some((10, 0))),
+            ("ruby", has("ruby"), Some((3, 3))),
+            ("bundle", has("ruby"), None),
+            ("go", go.is_some(), Some((1, 22))),
+            ("tungsten-emit-go", go_emitter, None),
         ] {
             if !required {
                 continue;
@@ -203,10 +250,15 @@ fn human(tools: &[ToolReport]) -> String {
     out
 }
 
-/// Run `<exe> --version` with a timeout and parse its output.
-fn tool_version(exe: &Path) -> Option<String> {
+/// The argument that makes a tool print its version (`go` has no flag).
+fn version_arg(name: &str) -> &'static str {
+    if name == "go" { "version" } else { "--version" }
+}
+
+/// Run `<exe> <arg>` with a timeout and parse its output.
+fn tool_version(exe: &Path, arg: &str) -> Option<String> {
     let mut child = Command::new(exe)
-        .arg("--version")
+        .arg(arg)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -253,6 +305,11 @@ pub(crate) fn parse_version(text: &str) -> Option<String> {
     let line = text.lines().find(|l| !l.trim().is_empty())?;
     line.split_whitespace().find_map(|token| {
         let token = token.strip_prefix('v').unwrap_or(token);
+        // `go version go1.22.1 linux/amd64`
+        let token = token
+            .strip_prefix("go")
+            .filter(|rest| rest.starts_with(|c: char| c.is_ascii_digit()))
+            .unwrap_or(token);
         let token = token.trim_end_matches(|c: char| !c.is_ascii_alphanumeric());
         let version_like = token.starts_with(|c: char| c.is_ascii_digit())
             && token.contains('.')

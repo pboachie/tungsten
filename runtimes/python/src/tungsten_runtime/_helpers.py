@@ -10,6 +10,7 @@ from __future__ import annotations
 import datetime as dt
 import math
 import re
+import sys
 from collections.abc import Mapping, Sequence
 from email.utils import parsedate_to_datetime
 from urllib.parse import unquote_plus, urlsplit
@@ -436,6 +437,14 @@ def with_search_params(url: str, updates: Sequence[tuple[str, str]], only_missin
     return f"{base}{'?' if serialized else ''}{serialized}{fragment}"
 
 
+def _iso_datetime(text: str) -> dt.datetime:
+    """``datetime.fromisoformat``, with the ``Z`` UTC suffix Python 3.10
+    does not parse yet (3.11 reads it as ``+00:00``)."""
+    if sys.version_info < (3, 11) and text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    return dt.datetime.fromisoformat(text)
+
+
 def parse_retry_after(value: str | None, now: float) -> int | None:
     """Retry-After in milliseconds (delta seconds or HTTP date), or None."""
     if value is None:
@@ -447,11 +456,11 @@ def parse_retry_after(value: str | None, now: float) -> int | None:
         when = parsedate_to_datetime(trimmed)
     except (TypeError, ValueError, IndexError):
         try:
-            when = dt.datetime.fromisoformat(trimmed)
+            when = _iso_datetime(trimmed)
         except ValueError:
             return None
     if when.tzinfo is None:
-        when = when.replace(tzinfo=dt.UTC)
+        when = when.replace(tzinfo=dt.timezone.utc)
     return max(0, math.floor(when.timestamp() * 1000 - now + 0.5))
 
 

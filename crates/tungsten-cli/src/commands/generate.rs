@@ -39,9 +39,18 @@ pub(crate) struct Project {
     /// Where external emitters are looked up: the environment's search
     /// path, by default the process `PATH`.
     pub search_path: OsString,
+    /// `--no-external` / `TUNGSTEN_NO_EXTERNAL`: `external` targets are
+    /// skipped instead of started as processes.
+    pub no_external: bool,
 }
 
 impl Project {
+    /// This project with external emitters skipped (`no_external`) or run.
+    pub fn with_no_external(mut self, no_external: bool) -> Project {
+        self.no_external = no_external;
+        self
+    }
+
     /// The manifest's directory as a working directory for a child process
     /// (`.` when the manifest is named without a directory).
     pub fn working_dir(&self) -> PathBuf {
@@ -69,13 +78,18 @@ impl Project {
                 .unwrap_or_else(|| tungsten_build::DEFAULT_MANIFEST_NAME.to_string()),
         };
         Project {
-            base_dir: file.parent().map(Path::to_path_buf).unwrap_or_default(),
+            base_dir: if tungsten_openapi::acquire::is_remote(&path.to_string_lossy()) {
+                PathBuf::from(".")
+            } else {
+                file.parent().map(Path::to_path_buf).unwrap_or_default()
+            },
             manifest,
             search_path: env
                 .search_path
                 .clone()
                 .or_else(|| std::env::var_os("PATH"))
                 .unwrap_or_default(),
+            no_external: false,
         }
     }
 }
@@ -103,6 +117,9 @@ pub(crate) struct Emitted {
     /// The agent tools the target serves (tool name to operation id or
     /// macro name), recorded in its API surface snapshot.
     pub tools: BTreeMap<String, String>,
+    /// An `external` target whose emitter was not started because external
+    /// emitters are off (`--no-external`); `files` is `None` then.
+    pub external_skipped: bool,
 }
 
 impl Emitted {
@@ -112,16 +129,20 @@ impl Emitted {
     }
 }
 
-/// Runtime-policy capability must be demonstrated, not inferred from a target
-/// accepting the IR. External emitters have no policy capability handshake yet.
-fn unsupported_import_policy(ir: &Ir, name: &str) -> bool {
+/// Whether `ir` carries imported-operation policy metadata.
+pub(crate) fn has_import_policy(ir: &Ir) -> bool {
     ir.operations()
         .iter()
         .any(|op| op.agent.import_policy.is_some())
-        && (!matches!(
-            name,
-            "typescript" | "python" | "rust" | "mcp" | "webmcp" | "docs"
-        ) || targets::emitter(name).is_none())
+}
+
+/// Runtime-policy capability must be demonstrated, not inferred from a target
+/// accepting the IR: a built-in target is on the allow-list; an external one
+/// declares `import_policy` in `--describe` (checked in `emit_external`).
+fn unsupported_import_policy(ir: &Ir, name: &str) -> bool {
+    has_import_policy(ir)
+        && targets::emitter(name).is_some()
+        && !targets::serves_import_policy(name)
 }
 
 /// Run the emitter of target `name` over `ir` without touching the disk:
@@ -132,8 +153,11 @@ pub(crate) fn emit_target(compiled: &Compiled, ir: &Ir, project: &Project, name:
 }
 
 /// [`emit_target`] for a run that writes: with `live`, the MCP target may
-/// call its embedding provider (everything else never touches a network or
-/// starts a process, so `--check`, `--dry-run`, `diff` and `report` do not).
+/// call its embedding provider. Built-in emitters never touch a network or
+/// start a process. An `external` target does start its command, on every
+/// command that emits (`generate` in any mode, `check --ci`, `diff`,
+/// `report`), unless the project has external emitters off
+/// (`--no-external`).
 pub(crate) fn emit_target_live(
     compiled: &Compiled,
     ir: &Ir,
@@ -144,24 +168,32 @@ pub(crate) fn emit_target_live(
     let cfg = targets::target_config_for(compiled.config.as_ref(), name, &project.base_dir, live);
     if unsupported_import_policy(ir, name) {
         let mut diagnostics = Diagnostics::new();
-        diagnostics.push(Diagnostic::error("TG0702", format!("target `{name}` does not declare enforced imported-operation policy support"))
-            .with_help("select a supported TypeScript, Python, Rust, MCP, WebMCP or docs target; imported-policy metadata must not be discarded"));
+        diagnostics.push(targets::import_policy_refusal(name));
         return Emitted {
             cfg,
             files: Some(FileSet::new()),
             diagnostics,
             tools: BTreeMap::new(),
+            external_skipped: false,
         };
     }
 
     let Some(emitter) = targets::emitter(name) else {
         return match tungsten_config::external_target(&cfg.options) {
+            Ok(Some(_)) if project.no_external => Emitted {
+                cfg,
+                files: None,
+                diagnostics: Diagnostics::new(),
+                tools: BTreeMap::new(),
+                external_skipped: true,
+            },
             Ok(Some(external)) => emit_external(ir, project, cfg, &external),
             _ => Emitted {
                 cfg,
                 files: None,
                 diagnostics: Diagnostics::new(),
                 tools: BTreeMap::new(),
+                external_skipped: false,
             },
         };
     };
@@ -173,6 +205,7 @@ pub(crate) fn emit_target_live(
         cfg,
         files: Some(files),
         diagnostics,
+        external_skipped: false,
     }
 }
 
@@ -209,6 +242,24 @@ fn emit_external(
         &project.base_dir,
         &project.search_path,
     ) {
+        Ok(command) if has_import_policy(ir) => {
+            match external::describe(&name, &command, &project.working_dir()) {
+                Ok(d) if d.import_policy == Some(true) => {
+                    out = external::run(
+                        &name,
+                        &command,
+                        serde_json::Value::Object(options),
+                        ir,
+                        &project.working_dir(),
+                        limits,
+                    );
+                }
+                Ok(_) => out
+                    .diagnostics
+                    .push(targets::external_import_policy_refusal(&name)),
+                Err(d) => out.diagnostics.push(d),
+            }
+        }
         Ok(command) => {
             out = external::run(
                 &name,
@@ -233,6 +284,7 @@ fn emit_external(
         files: Some(out.files),
         diagnostics: out.diagnostics,
         tools: out.tools,
+        external_skipped: false,
     }
 }
 
@@ -268,8 +320,10 @@ pub(crate) fn run_targets(
             (name, e)
         })
         .collect();
-    // A strict run writes every target or none.
-    let withhold = (strict || names.iter().any(|name| unsupported_import_policy(ir, name)))
+    // A strict run writes every target or none; otherwise a target that
+    // fails (for example one refused for imported-operation policy) fails
+    // alone.
+    let withhold = strict
         && matches!(mode, Mode::Write { .. })
         && emitted.iter().any(|(_, e)| e.files.is_some() && e.failed());
     for (name, e) in emitted.drain(..) {
@@ -278,6 +332,7 @@ pub(crate) fn run_targets(
             files,
             diagnostics,
             tools,
+            external_skipped,
         } = e;
         let mut report = TargetReport {
             target: name.clone(),
@@ -291,9 +346,11 @@ pub(crate) fn run_targets(
             stale: vec![],
         };
         let Some(files) = files else {
-            outcome
-                .diagnostics
-                .push(targets::not_implemented(name, &project.manifest));
+            outcome.diagnostics.push(if external_skipped {
+                targets::external_skipped(name, &project.manifest)
+            } else {
+                targets::not_implemented(name, &project.manifest)
+            });
             outcome.reports.push(report);
             continue;
         };
@@ -383,7 +440,7 @@ pub(crate) fn exit_code(diagnostics: &[Diagnostic], outcome: &Outcome) -> i32 {
     }
 }
 
-pub(crate) fn run(args: &GenerateArgs, env: &CliEnv) -> Report {
+pub(crate) fn run(args: &GenerateArgs, env: &CliEnv, no_external: bool) -> Report {
     let mut compiled = input::compile(&args.input.path);
     let mut report = Report::new(CommandName::Generate);
     report.diagnostics = compiled.diagnostics.0.clone();
@@ -412,7 +469,7 @@ pub(crate) fn run(args: &GenerateArgs, env: &CliEnv) -> Report {
             force: args.force,
         }
     };
-    let project = Project::of(&args.input.path, env);
+    let project = Project::of(&args.input.path, env).with_no_external(no_external);
     let outcome = run_targets(&compiled, ir, &project, &names, mode, args.strict);
     report
         .diagnostics

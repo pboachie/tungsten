@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! `tungsten check`: compile and report.
 
+use std::collections::BTreeSet;
 use std::fmt::Write as _;
 
 use tungsten_build::Compiled;
@@ -10,19 +11,55 @@ use tungsten_openapi::SpecVersion;
 use crate::args::CheckArgs;
 use crate::commands::generate::{Mode, Project, run_targets};
 use crate::output::{
-    CheckResult, CommandName, CommandResult, DiagnosticCounts, TargetReport, TargetStatus,
+    CheckResult, CodeCount, CommandName, CommandResult, DiagnosticCounts, TargetReport,
+    TargetStatus,
 };
+use crate::render::thousands;
 use crate::stats::{describe, describe_refs, headline, ir_stats, plural, ref_stats};
-use crate::{CliEnv, Report, exit, input};
+use crate::{CliEnv, Collapse, Report, exit, input};
 
-pub(crate) fn run(args: &CheckArgs, env: &CliEnv) -> Report {
+pub(crate) fn run(args: &CheckArgs, env: &CliEnv, no_external: bool) -> Report {
     let compiled = input::compile(&args.input.path);
     let mut diagnostics = compiled.diagnostics.0.clone();
     // Whether the project compiles, before `--strict` turns warnings into
     // errors: the staleness comparison runs whenever the emitters can.
     let compiles = !has_errors(&diagnostics);
+    // `--audit-contracts`: the response-contract audit adds its findings as
+    // warnings (TG0930, TG0305, TG0931), before `--strict` promotes them
+    // with every other warning.
+    let mut audit_findings = 0;
+    let audit_contracts = args.audit_contracts || args.require_contracts;
+    let mut audit_start = diagnostics.len();
+    if audit_contracts && compiles {
+        let found = tungsten_build::contracts::audit(&compiled);
+        audit_findings = found.len();
+        // Prefer the contextual audit message over an existing converter
+        // warning at the same weak node (not two TG0305s for one schema).
+        let audited: BTreeSet<_> = found
+            .iter()
+            .filter_map(|d| {
+                d.labels
+                    .first()
+                    .map(|label| (d.code.as_str(), label.file.as_str(), label.pointer.as_str()))
+            })
+            .collect();
+        diagnostics.retain(|d| {
+            !d.labels.first().is_some_and(|label| {
+                audited.contains(&(d.code.as_str(), label.file.as_str(), label.pointer.as_str()))
+            })
+        });
+        audit_start = diagnostics.len();
+        diagnostics.extend(found.0);
+    }
+    // A promoted warning stays collapsible: only real errors are always shown.
+    let mut eligible: Vec<bool> = diagnostics
+        .iter()
+        .map(|d| d.severity != Severity::Error)
+        .collect();
     let mut promoted = if args.strict {
         promote_warnings(&mut diagnostics)
+    } else if args.require_contracts {
+        promote_warnings(&mut diagnostics[audit_start..])
     } else {
         0
     };
@@ -36,11 +73,17 @@ pub(crate) fn run(args: &CheckArgs, env: &CliEnv) -> Report {
             .as_ref()
             .map(|c| c.targets.keys().cloned().collect())
             .unwrap_or_default();
-        let project = Project::of(&args.input.path, env);
+        let project = Project::of(&args.input.path, env).with_no_external(no_external);
         let mut outcome = run_targets(&compiled, ir, &project, &names, Mode::Check, false);
         io_failed = outcome.io_failed;
         // The emitters' warnings (TG07xx, such as TG0713 over the schema
         // budget) are warnings like the compiler's: `--strict` fails on them.
+        eligible.extend(
+            outcome
+                .diagnostics
+                .iter()
+                .map(|d| d.severity != Severity::Error),
+        );
         if args.strict {
             promoted += promote_warnings(&mut outcome.diagnostics);
         }
@@ -53,9 +96,13 @@ pub(crate) fn run(args: &CheckArgs, env: &CliEnv) -> Report {
         openapi_versions: openapi_versions(&compiled),
         documents: compiled.workspace.documents.len(),
         counts,
+        by_code: by_code(&diagnostics),
         promoted,
         strict: args.strict,
         ci: args.ci,
+        audit_contracts,
+        require_contracts: args.require_contracts,
+        audit_findings,
         refs: ref_stats(&compiled.workspace.graph),
         stats: compiled.ir.as_ref().map(ir_stats),
         outputs,
@@ -68,12 +115,25 @@ pub(crate) fn run(args: &CheckArgs, env: &CliEnv) -> Report {
     } else {
         exit::OK
     };
-    report.human = human(&args.input.path.display().to_string(), &result);
+    report.human = human(
+        &tungsten_openapi::acquire::display_source(&args.input.path.to_string_lossy()),
+        &result,
+    );
     report.diagnostics = diagnostics;
+    if !args.all_warnings {
+        report.collapse = Some(Collapse {
+            limit: COLLAPSE_AFTER,
+            eligible,
+        });
+    }
     report.sources = compiled.workspace.sources;
     report.result = Some(CommandResult::Check(result));
     report
 }
+
+/// Diagnostics of one code and severity printed in full before the human
+/// output summarizes the rest (`--all-warnings` lifts the limit).
+const COLLAPSE_AFTER: usize = 3;
 
 /// `--strict`: warnings become errors. Returns how many were promoted.
 pub(crate) fn promote_warnings(diagnostics: &mut [Diagnostic]) -> usize {
@@ -104,6 +164,26 @@ pub(crate) fn count(diagnostics: &[Diagnostic]) -> DiagnosticCounts {
     c
 }
 
+/// Counts per (code, severity), ordered by code.
+fn by_code(diagnostics: &[Diagnostic]) -> Vec<CodeCount> {
+    let mut map: std::collections::BTreeMap<(&str, u8), (Severity, usize)> = Default::default();
+    for d in diagnostics {
+        let rank = match d.severity {
+            Severity::Error => 0,
+            Severity::Warning => 1,
+            Severity::Info => 2,
+        };
+        map.entry((&d.code, rank)).or_insert((d.severity, 0)).1 += 1;
+    }
+    map.into_iter()
+        .map(|((code, _), (severity, count))| CodeCount {
+            code: code.to_string(),
+            severity,
+            count,
+        })
+        .collect()
+}
+
 /// The OpenAPI version of each entry document, in manifest order.
 fn openapi_versions(compiled: &Compiled) -> Vec<Option<String>> {
     let ws = &compiled.workspace;
@@ -121,7 +201,12 @@ fn input_names(compiled: &Compiled) -> Vec<String> {
     compiled
         .config
         .as_ref()
-        .map(|c| c.inputs.iter().map(|i| i.spec.clone()).collect())
+        .map(|c| {
+            c.inputs
+                .iter()
+                .map(|i| tungsten_openapi::acquire::display_source(&i.spec))
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -148,6 +233,17 @@ fn human(path: &str, r: &CheckResult) -> String {
         None => "not built".to_string(),
     };
     let _ = writeln!(out, "  {:<9}{ir}", "ir");
+    if r.audit_contracts {
+        let line = if r.audit_findings > 0 {
+            format!(
+                "{}; --require-contracts or --strict fails on them",
+                plural(r.audit_findings, "finding", "findings")
+            )
+        } else {
+            "no weak response contracts".to_string()
+        };
+        let _ = writeln!(out, "  {:<9}{line}", "audit");
+    }
     if !r.outputs.is_empty() {
         let outputs: Vec<String> = r
             .outputs
@@ -164,10 +260,31 @@ fn human(path: &str, r: &CheckResult) -> String {
         plural(c.warnings, "warning", "warnings")
     );
     if r.promoted > 0 {
-        let _ = write!(line, " ({} promoted by --strict)", r.promoted);
+        let flag = if r.strict {
+            "--strict"
+        } else {
+            "--require-contracts"
+        };
+        let _ = write!(line, " ({} promoted by {flag})", r.promoted);
     }
     let _ = writeln!(out, "  {:<9}{line}", "result");
+    if !r.by_code.is_empty() {
+        let codes: Vec<String> = r
+            .by_code
+            .iter()
+            .map(|c| format!("{} {} ×{}", c.code, severity_word(c), thousands(c.count)))
+            .collect();
+        let _ = writeln!(out, "  {:<9}{}", "codes", codes.join(" · "));
+    }
     out
+}
+
+fn severity_word(c: &CodeCount) -> &'static str {
+    match c.severity {
+        Severity::Error => "error",
+        Severity::Warning => "warning",
+        Severity::Info => "info",
+    }
 }
 
 /// `fresh`, `stale (2 files)`, `skipped`, ... for the human `output` line.

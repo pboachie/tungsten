@@ -62,9 +62,14 @@ Adjust paths to your generated outputs. `createCore` creates a separate client f
 
 - Discrete mode exposes individual tools. Progressive mode exposes discovery tools such as `search_tools`, `describe_tool`, `invoke` and `preview`, keeping the initial tool listing small.
 - Generated metadata carries operation safety, idempotency and confirmation requirements. A preview is not execution; execution still needs the required argument-bound confirmation token.
-- HTTP exposure and API authorization belong to your application. Put non-local HTTP listeners behind appropriate access control.
-- `run_script` is disabled by default. Enabling it requires an explicit sandbox configuration; Deno execution also requires a Deno executable. The WASM engine runs in the server process with configured bounds.
+- HTTP exposure and API authorization belong to your application. Put non-local HTTP listeners behind appropriate access control. Streamable HTTP can require a bearer token: pass `bearerToken` (compared in constant time) and/or an `authorize(req)` callback in the `connectHttp` options, or start a generated server with `--http <port> --token-env <NAME>` (alias `--bearer-token-env <NAME>`) to read the token from the environment variable `NAME` (the token is never accepted as an argument). Unauthenticated requests get `401` with `WWW-Authenticate: Bearer` before any session is created or looked up. Binding a non-loopback host with neither authentication nor `allowedHosts` emits a startup warning. The HTTP embeddings provider (`search.embeddings.provider: "http"`) adds a startup warning when `apiKeyEnv` is set and the `url` is plain `http://` to a non-loopback host (use `https://`), and reads at most 1 MiB of response; a larger body is an embedder failure and search falls back to BM25.
+- `run_script` on the Deno engine starts the child with a scrubbed environment on every platform. On native Windows only `SystemRoot`, `SYSTEMDRIVE`, `TEMP`, `TMP`, `USERPROFILE`, `PATH` and `PATHEXT` are passed through, and Deno is found by file existence plus a `PATHEXT` extension (`.exe`, `.com`) instead of a POSIX execute-permission check.
+- `run_script` is disabled by default. Enabling it requires an explicit sandbox configuration; Deno execution also requires a Deno executable. The WASM engine runs in a worker thread of the server process with configured bounds. `sandbox.maxConcurrent` (`perSession`, default 4; `global`, default 16) caps scripts running at once.
 - Deno limits wall time and V8 heap on all platforms; its additional process data limit is enforced on Linux. On Windows and macOS, `memoryMb` does not bound memory outside the V8 heap, including `ArrayBuffer` backing stores.
+
+## Limits
+
+MCP uses the TypeScript runtime and does not supply a file-backed OAuth token store. Deno `memoryMb` adds a process data bound only on Linux; other platforms bound V8 heap but not all process memory.
 
 ## Related packages and documentation
 

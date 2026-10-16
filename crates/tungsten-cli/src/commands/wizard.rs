@@ -8,6 +8,18 @@ use crate::output::{
 };
 use crate::{CliEnv, Report, exit};
 
+/// The chosen targets that `generate` refuses for an imported input.
+fn import_policy_refused_targets(chosen: &[String]) -> Vec<String> {
+    chosen
+        .iter()
+        .map(|t| crate::targets::canonical(t))
+        .filter(|t| {
+            crate::targets::emitter(t).is_some() && !crate::targets::serves_import_policy(t)
+        })
+        .map(str::to_owned)
+        .collect()
+}
+
 pub(crate) fn run(args: &InitArgs, json: bool, env: &CliEnv) -> Report {
     let bare = args.method.is_none()
         && args.from.is_none()
@@ -64,9 +76,62 @@ pub(crate) fn run(args: &InitArgs, json: bool, env: &CliEnv) -> Report {
             "correct the no-schema input; existing files are never overwritten",
         );
     }
+    let original_remote = selected
+        .from
+        .as_ref()
+        .filter(|source| tungsten_openapi::acquire::is_remote(&source.to_string_lossy()))
+        .cloned();
+    if let Some(source) = &original_remote {
+        match tungsten_openapi::acquire::acquire(
+            &source.to_string_lossy(),
+            &selected.dir,
+            &tungsten_openapi::acquire::current_options(),
+        ) {
+            Ok(path) => {
+                match tungsten_openapi::acquire::content_hash(&path) {
+                    Ok(hash) => selected.source_sha256 = Some(hash),
+                    Err(diagnostic) => {
+                        let mut report = Report::new(CommandName::Init);
+                        report.exit = exit::FAILED;
+                        report.diagnostics.push(diagnostic);
+                        return report;
+                    }
+                }
+                selected.from = Some(path);
+            }
+            Err(diagnostic) => {
+                let mut report = Report::new(CommandName::Init);
+                report.exit = exit::FAILED;
+                report.diagnostics.push(diagnostic);
+                return report;
+            }
+        }
+    }
     let imported_files = if !selected.resume && selected.method.is_none() {
-        match super::init_input::import(&mut selected) {
-            Ok(files) => files,
+        match super::init_input::import(&selected) {
+            Ok(Some(prepared)) => {
+                let refused_targets = import_policy_refused_targets(&selected.targets);
+                if !refused_targets.is_empty() {
+                    let mut report = Report::new(CommandName::Init);
+                    report.exit = exit::REFUSED;
+                    for name in refused_targets {
+                        report
+                            .diagnostics
+                            .push(crate::targets::import_policy_refusal(&name));
+                    }
+                    return report;
+                }
+                match super::init_input::save_import(&mut selected, prepared) {
+                    Ok(files) => files,
+                    Err(error) => {
+                        return refused(
+                            &error,
+                            "inspect the project and retry in a fresh directory; existing files are never overwritten",
+                        );
+                    }
+                }
+            }
+            Ok(None) => vec![],
             Err(error) => {
                 return refused(
                     &error,
@@ -77,6 +142,13 @@ pub(crate) fn run(args: &InitArgs, json: bool, env: &CliEnv) -> Report {
     } else {
         vec![]
     };
+    // Converted inputs keep the existing reviewed importer output. OpenAPI
+    // manifests retain the URL so every subsequent compilation verifies its pin.
+    if imported_files.is_empty() && original_remote.is_some() {
+        selected.from = original_remote;
+    } else if let Some(source) = original_remote {
+        selected.source_url = Some(source.to_string_lossy().into_owned());
+    }
     let mut report = if selected.resume {
         for name in ["tungsten.yml", "agent.yml"] {
             let path = selected.dir.join(name);
@@ -167,6 +239,12 @@ pub(crate) fn run(args: &InitArgs, json: bool, env: &CliEnv) -> Report {
             .any(|name| name == "import-report.json")
         {
             report.human.push_str("Import report saved: review omitted scripts, authentication and missing origin configuration in import-report.json.\n");
+            let omitted = super::init_input::omitted_count(&selected.dir);
+            if omitted > 0 {
+                report.human.push_str(&format!(
+                    "Omitted {omitted} unsupported Postman item(s); nothing was inferred from them. Each omission lists its code, location and reason under \"omitted\" in import-report.json.\n"
+                ));
+            }
         }
     }
     if report.exit != exit::OK || !selected.generate {
@@ -209,6 +287,8 @@ pub(crate) fn run(args: &InitArgs, json: bool, env: &CliEnv) -> Report {
             strict: selected.strict,
         },
         env,
+        // The wizard writes built-in targets only; never start a command.
+        true,
     );
     report.exit = generated.exit;
     report.error = generated.error;

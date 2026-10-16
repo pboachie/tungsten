@@ -37,7 +37,10 @@ steps:
       - git fetch origin main
       - git merge-base --is-ancestor HEAD FETCH_HEAD
       - node .github/scripts/check-release-version.mjs
-      - timeout --signal=TERM --kill-after=30s 15m node .github/scripts/check-runtime-artifacts.mjs runtime-dist
+      # 20 minutes matches the GitHub-side npm-artifacts job budget: this
+      # worker is CPU-limited, and a step killed here turns a queued release
+      # into a failed validation instead of a slower one.
+      - timeout --signal=TERM --kill-after=30s 20m node .github/scripts/check-runtime-artifacts.mjs runtime-dist
     backend_options:
       kubernetes:
         securityContext: *restricted

@@ -8,6 +8,7 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use serde::de::DeserializeOwned;
 use serde_json::Value;
 use url::Url;
 
@@ -75,6 +76,7 @@ pub(crate) struct Inner {
     pub headers: BTreeMap<String, String>,
     pub base_url: Option<String>,
     pub timeout: Duration,
+    pub max_response_bytes: Option<u64>,
     pub max_event_bytes: usize,
     pub max_collect_bytes: usize,
     pub max_collect_time: Duration,
@@ -189,6 +191,7 @@ impl ClientCore {
                 headers: options.headers,
                 base_url,
                 timeout: options.timeout,
+                max_response_bytes: options.max_response_bytes,
                 max_event_bytes: options.max_event_bytes.max(1),
                 max_collect_bytes: options.max_collect_bytes.max(1),
                 max_collect_time: options.max_collect_time.max(Duration::from_millis(1)),
@@ -249,6 +252,47 @@ impl ClientCore {
     /// object (a JSON object keyed by argument name).
     pub async fn call(&self, op: &OperationDescriptor, args: Value, opts: &CallOptions) -> Outcome {
         self.call_with(op, &args, opts, None, None).await
+    }
+
+    /// [`ClientCore::call`] for a typed wrapper: the success body is decoded
+    /// once, straight from its bytes into `T`, and judged by the operation's
+    /// response validator on that value. The JSON form of the body is built
+    /// only when it is needed: a body that is not JSON, does not decode as
+    /// `T` or does not pass validation, and a call whose verification hook
+    /// reads the response; those answer exactly what [`ClientCore::call`]
+    /// followed by [`crate::decode`] answers (the same envelopes, with the
+    /// body as `partial`).
+    pub async fn call_typed<T: DeserializeOwned + Send + 'static>(
+        &self,
+        op: &OperationDescriptor,
+        args: Value,
+        opts: &CallOptions,
+    ) -> Result<T> {
+        let mut sink = crate::dispatch::TypedSink::<T>::new(op.response.clone());
+        // The verification hook may read the response, so it needs the body's JSON form.
+        let verifies = opts.verify && op.agent.verify.is_some();
+        let outcome = self
+            .call_with_tracked(
+                op,
+                &args,
+                opts,
+                None,
+                None,
+                (
+                    &mut String::new(),
+                    None,
+                    (!verifies).then_some(&mut sink as &mut dyn crate::dispatch::BodySink),
+                ),
+            )
+            .await;
+        match (outcome, sink.take_value()) {
+            (Ok(response), Some(value)) => Ok(Response {
+                value,
+                meta: response.meta,
+                verification: response.verification,
+            }),
+            (outcome, _) => crate::dispatch::decode(&op.id, outcome),
+        }
     }
 
     /// Run the operation's preview mode: local rendering (no network), a
@@ -328,7 +372,7 @@ impl ClientCore {
             opts,
             url_override,
             step,
-            (&mut String::new(), None),
+            (&mut String::new(), None, None),
         )
         .await
     }
@@ -340,9 +384,13 @@ impl ClientCore {
         opts: &CallOptions,
         url_override: Option<&str>,
         step: Option<&crate::prepare::MacroClaim>,
-        tracking: (&mut String, Option<&mut std::collections::HashSet<String>>),
+        tracking: (
+            &mut String,
+            Option<&mut std::collections::HashSet<String>>,
+            Option<&mut (dyn crate::dispatch::BodySink + '_)>,
+        ),
     ) -> Outcome {
-        let (request_url, page_urls) = tracking;
+        let (request_url, page_urls, mut sink) = tracking;
         let mut prepared = self
             .prepare(
                 op,
@@ -358,13 +406,20 @@ impl ClientCore {
         {
             return Err(crate::types::Error::new(crate::envelope::Diag::new(op.id.clone(), crate::types::Category::UnexpectedResponse).remediation("Pagination detected a repeated effective page request URL after authentication. Fix the server's next-page Link before continuing; no repeated request was sent.").build()));
         }
-        let mut response = match self.send_tracked(&prepared, opts, request_url).await {
+        let mut response = match self
+            .send_tracked(&prepared, opts, request_url, sink.as_deref_mut())
+            .await
+        {
             Err(rejected)
-                if rejected.diagnostic.http_status == Some(401) && prepared.oauth.is_some() =>
+                if rejected.diagnostic.http_status == Some(401)
+                    && !(rejected.diagnostic.category
+                        == crate::types::Category::UnexpectedResponse
+                        && rejected.diagnostic.code.as_deref() == Some("RESPONSE_TOO_LARGE"))
+                    && prepared.oauth.is_some() =>
             {
                 // An authorization-code token the server no longer accepts:
                 // refresh it and send once more. Never a second time.
-                self.resend_rejected(&mut prepared, rejected, opts, request_url)
+                self.resend_rejected(&mut prepared, rejected, opts, request_url, sink)
                     .await?
             }
             sent => sent?,
@@ -390,6 +445,7 @@ impl ClientCore {
         rejected: crate::types::Error,
         opts: &CallOptions,
         request_url: &mut String,
+        sink: Option<&mut (dyn crate::dispatch::BodySink + '_)>,
     ) -> std::result::Result<Response<Option<Value>>, crate::types::Error> {
         self.check_send_deadline(prepared, rejected.diagnostic.trace.attempts, None)?;
         let Some(scheme) = prepared.oauth.take() else {
@@ -412,7 +468,7 @@ impl ClientCore {
             .headers
             .set("Authorization", format!("Bearer {token}"), true);
         prepared.secrets.insert(token);
-        self.send_tracked(prepared, opts, request_url).await
+        self.send_tracked(prepared, opts, request_url, sink).await
     }
 
     /// Epoch milliseconds from the configured clock.

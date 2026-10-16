@@ -24,7 +24,7 @@ module Tungsten
 
       # A request ready to send, with its redacted rendering.
       Prepared = Struct.new(:op, :args, :http_method, :url, :display_url, :headers, :body, :key, :key_header, :auth_query,
-                            :hidden_query, :secrets, :oauth, keyword_init: true)
+                            :hidden_query, :secrets, :oauth, :final_url, keyword_init: true)
 
       attr_reader :descriptors, :base_url, :timeout_ms, :max_event_bytes, :max_collect_bytes, :max_collect_ms,
                   :max_reconnects, :reconnect_max_ms, :idle_timeout_ms
@@ -53,6 +53,7 @@ module Tungsten
         @headers = (o.headers || {}).to_h.transform_keys(&:to_s)
         @timeout_ms = positive(o.timeout_ms) || DEFAULT_TIMEOUT_MS
         @max_event_bytes = positive(o.max_event_bytes) || DEFAULT_MAX_EVENT_BYTES
+        @max_response_bytes = o.max_response_bytes
         @max_collect_bytes = positive(o.max_collect_bytes) || DEFAULT_MAX_COLLECT_BYTES
         @max_collect_ms = positive(o.max_collect_ms) || DEFAULT_MAX_COLLECT_MS
         @max_reconnects = o.max_reconnects.nil? ? DEFAULT_MAX_RECONNECTS : o.max_reconnects.to_i.clamp(0, 1000)
@@ -193,15 +194,28 @@ module Tungsten
       end
 
       # The pipeline shared by calls, pages, polls and macro steps.
-      def call_with(op, args, opts, url_override, claim)
+      #
+      # With `page_state` (a link-header pagination) a request URL used
+      # before is refused unsent, and the URL that answered is recorded.
+      def call_with(op, args, opts, url_override, claim, page_state = nil)
         prepared = prepare(op, args, opts, :call, url_override, claim)
         return prepared if prepared.is_a?(Err)
 
+        if page_state && !page_state.request_urls.add?(prepared.url)
+          return Runtime.diag(op.id, "UNEXPECTED_RESPONSE")
+                        .remedy("Pagination detected a repeated effective page request URL after authentication. Fix the server's next-page Link before continuing; no repeated request was sent.").err
+        end
+
         result = send_request(prepared, opts)
-        if result.is_a?(Err) && result.error.http_status == 401 && prepared.oauth
+        if result.is_a?(Err) && result.error.http_status == 401 && prepared.oauth && !(result.error.category == "UNEXPECTED_RESPONSE" && result.error.code == "RESPONSE_TOO_LARGE")
           result = resend_rejected(prepared, result, opts)
         end
         return result if result.is_a?(Err)
+
+        if page_state
+          page_state.last_url = prepared.final_url
+          page_state.request_urls << prepared.final_url if prepared.final_url
+        end
 
         if opts.verify && op.agent["verify"]
           return result.with(verification: verify(op, prepared.args, result.raw.nil? ? UNSET : result.raw, opts))
@@ -698,12 +712,17 @@ module Tungsten
 
           logical = Util.sha256_hex(Json.canonical(args))
           @key_lock.synchronize do
-            existing = @store.get(op.id, logical)
-            return existing if existing.is_a?(String) && !existing.empty?
+            if @store.respond_to?(:reserve)
+              key = @store.reserve(op.id, logical, Util.uuid_v4)
+              return key if key.is_a?(String) && !key.empty?
+            else
+              existing = @store.get(op.id, logical)
+              return existing if existing.is_a?(String) && !existing.empty?
 
-            key = Util.uuid_v4
-            @store.put(op.id, logical, key)
-            return key if @store.get(op.id, logical) == key
+              key = Util.uuid_v4
+              @store.put(op.id, logical, key)
+              return key if @store.get(op.id, logical) == key
+            end
 
             Runtime.diag(op.id, "TRANSPORT_FAILED").retrying("never")
                    .remedy("The idempotency store failed (the key could not be stored), so the call was not sent rather than risk a second key " \
@@ -763,6 +782,11 @@ module Tungsten
       # returned unread as [:stream, meta, body]; otherwise Ok or Err.
       def send_with(p, opts, stream)
         op = p.op
+        cap = opts.max_response_bytes.nil? ? @max_response_bytes : opts.max_response_bytes
+        unless cap.nil? || (cap.is_a?(Integer) && cap.between?(1, 9_007_199_254_740_991))
+          return Runtime.diag(op.id, "VALIDATION_FAILED").param("maxResponseBytes")
+                        .remedy("maxResponseBytes must be a positive safe integer; nothing was sent.").err
+        end
         retries = retry_options(op)
         mutation = op.mutation?
         protected_ = Classify.replay_protection?(op, !p.key.nil?)
@@ -779,12 +803,12 @@ module Tungsten
           headers = p.headers.entries.map { |e| [e.name, e.value] }
           send_once = lambda do
             Transport.attempt(url: target, method: method, headers: headers, body: body, timeout_ms: timeout, stream: stream,
-                              idle_ms: stream ? @idle_timeout_ms : nil)
+                              idle_ms: stream ? @idle_timeout_ms : nil, max_response_bytes: cap)
           end
           outcome = send_once.call
           unless mutation || @redirects_disabled
             MAX_REDIRECTS.times do
-              break unless outcome.kind == :response && redirect?(outcome.status)
+              break unless outcome.kind == :response && outcome.body_failure != "oversized" && redirect?(outcome.status)
 
               next_url = redirect_target(p, target, outcome.headers["location"])
               break unless next_url
@@ -799,6 +823,7 @@ module Tungsten
               outcome = send_once.call
             end
           end
+          p.final_url = target
           ctx = Classify::CallContext.new(api: @api, op: op, key: p.key, key_header: p.key_header, attempts: attempts, check: check)
           result = classify_response(ctx, p, outcome, rctx, timeout)
           return result unless result.is_a?(Err)
@@ -864,6 +889,12 @@ module Tungsten
         success = !refused_redirect && (status.between?(200, 299) || (declared&.kind == "success" && status.between?(100, 399)))
         verify_op = op.agent["verify"]
         hint = verify_op ? "Call #{verify_op['operation']} to read the current state." : nil
+        if outcome.body_failure == "oversized"
+          after = mutation ? "The call may have taken effect; inspect API state before retrying." : "The read is incomplete."
+          return Runtime.diag(op.id, "UNEXPECTED_RESPONSE").code("RESPONSE_TOO_LARGE").status(status).request_id(rid)
+                        .retrying("never").next_action(hint).attempts(attempts)
+                        .remedy("Response exceeded maxResponseBytes and was abandoned. #{after}").err
+        end
         if success && outcome.body.nil?
           failure = outcome.body_failure == "timeout" ? "timeout" : "broken"
           unless mutation

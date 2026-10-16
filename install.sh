@@ -3,7 +3,7 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/pboachie/tungsten/main/install.sh | sh
 #   curl -fsSL https://raw.githubusercontent.com/pboachie/tungsten/main/install.sh | sh -s -- --init
-#   sh install.sh [--version v0.1.0] [--dir DIR] [--init]
+#   sh install.sh [--version v0.1.2] [--dir DIR] [--init]
 #
 # Options (flags win over the environment):
 #   --init                        after installing, run the guided `tungsten init` setup;
@@ -15,7 +15,9 @@
 #                                 (<base>/<tag>/<asset>), for mirrors and tests; needs a version
 #   TUNGSTEN_REQUIRE_ATTESTATION  1: fail unless the `gh` CLI verifies the build attestation
 #   TUNGSTEN_NO_ATTESTATION       1: do not look for an attestation at all
-#   TUNGSTEN_LIBC                 Linux archive ABI: musl (default, static) or gnu
+#                                 (cannot be combined with REQUIRE_ATTESTATION=1)
+#   TUNGSTEN_LIBC                 Linux archive ABI: musl (default, static) or
+#                                 gnu (dynamically linked; needs glibc 2.34+)
 #
 # The archive is checked against the release's SHA256SUMS before anything is
 # installed. When the GitHub CLI (gh) is available the archive's build
@@ -30,6 +32,41 @@ say() { printf '%s\n' "install.sh: $*" >&2; }
 die() { say "error: $*"; exit 1; }
 
 have() { command -v "$1" >/dev/null 2>&1; }
+
+# The -gnu archives are dynamically linked and need glibc 2.34 or newer; the
+# x86_64 and aarch64 builds share that one floor (the release pipeline enforces
+# it on every built binary). The musl default is static and has no floor.
+gnu_glibc_floor='2.34'
+
+glibc_version() { # print the runtime glibc version, or nothing if undetectable
+  ldd --version 2>/dev/null | awk 'NR == 1 { print $NF }'
+}
+
+version_lt() { # version_lt A B: succeed when version A is older than B
+  awk -v a="$1" -v b="$2" 'BEGIN {
+    na = split(a, A, ".")
+    nb = split(b, B, ".")
+    n = na > nb ? na : nb
+    for (i = 1; i <= n; i++) {
+      x = (i <= na ? A[i] : 0) + 0
+      y = (i <= nb ? B[i] : 0) + 0
+      if (x < y) exit 0
+      if (x > y) exit 1
+    }
+    exit 1
+  }'
+}
+
+check_gnu_glibc_floor() { # refuse a gnu install on a system below the floor
+  if runtime_glibc=$(glibc_version) && [ -n "$runtime_glibc" ]; then
+    if version_lt "$runtime_glibc" "$gnu_glibc_floor"; then
+      die "the gnu archive needs glibc $gnu_glibc_floor or newer; this system reports $runtime_glibc. Keep the default musl build (unset TUNGSTEN_LIBC or set TUNGSTEN_LIBC=musl); it is static"
+    fi
+    say "glibc $runtime_glibc detected; the gnu archive needs $gnu_glibc_floor or newer"
+  else
+    say "could not detect the glibc version; the gnu archive needs glibc $gnu_glibc_floor or newer (the musl default is static and always works)"
+  fi
+}
 
 fetch() { # fetch URL DEST ; return 22 for "not found"
   if have curl; then
@@ -75,11 +112,11 @@ latest_tag() {
   url="https://github.com/$repo/releases/latest"
   have curl || die "curl is required to find the latest release; pass --version instead"
   final=$(curl -fsSL --retry 3 -o /dev/null -w '%{url_effective}' "$url") \
-    || die "no release found: $url does not exist yet. Releases are not published until v0.1.0; build from source with: cargo install --git https://github.com/$repo tungsten-cli"
+    || die "no latest release; see https://github.com/$repo/releases; build from source with: cargo install --git https://github.com/$repo tungsten-cli"
   tag=${final##*/}
   case "$tag" in
     v[0-9]*) echo "$tag" ;;
-    *) die "no release found at $url. Releases are not published until v0.1.0; build from source with: cargo install --git https://github.com/$repo tungsten-cli" ;;
+    *) die "no latest release; see https://github.com/$repo/releases; build from source with: cargo install --git https://github.com/$repo tungsten-cli" ;;
   esac
 }
 
@@ -114,6 +151,7 @@ main() {
   case "$version" in *[!A-Za-z0-9._+-]*) die "invalid version: $version" ;; esac
 
   target=$(target_triple)
+  case "$target" in *-linux-gnu) check_gnu_glibc_floor ;; esac
   name="tungsten-${version#v}-$target"
   asset="$name.tar.gz"
   work=$(mktemp -d)
@@ -123,7 +161,7 @@ main() {
   rc=0
   fetch "$base/$version/SHA256SUMS" "$work/SHA256SUMS" || rc=$?
   if [ "$rc" -eq 22 ]; then
-    die "no release $version found at $base/$version/ (no SHA256SUMS). Releases are not published until v0.1.0; build from source with: cargo install --git https://github.com/$repo tungsten-cli"
+    die "no release $version (no SHA256SUMS); see https://github.com/$repo/releases; build from source with: cargo install --git https://github.com/$repo tungsten-cli"
   elif [ "$rc" -ne 0 ]; then
     die "could not download $base/$version/SHA256SUMS"
   fi
@@ -171,19 +209,37 @@ main() {
 }
 
 verify_attestation() {
-  [ "${TUNGSTEN_NO_ATTESTATION:-0}" = 1 ] && return 0
+  if [ "${TUNGSTEN_NO_ATTESTATION:-0}" = 1 ]; then
+    [ "${TUNGSTEN_REQUIRE_ATTESTATION:-0}" != 1 ] \
+      || die "TUNGSTEN_NO_ATTESTATION=1 conflicts with TUNGSTEN_REQUIRE_ATTESTATION=1"
+    say "checksum verified; attestation not checked (TUNGSTEN_NO_ATTESTATION=1)"
+    return 0
+  fi
   if [ -n "${TUNGSTEN_RELEASE_BASE_URL:-}" ]; then
+    [ "${TUNGSTEN_REQUIRE_ATTESTATION:-0}" != 1 ] \
+      || die "TUNGSTEN_REQUIRE_ATTESTATION=1 cannot verify a custom release location"
     say "custom release location: skipping the build attestation check"
     return 0
   fi
-  if have gh; then
-    gh attestation verify "$1" --repo "$repo" >/dev/null 2>&1 \
-      || die "the build attestation of $1 could not be verified; nothing was installed"
+  reason='gh is not installed'
+  if have gh && gh attestation --help >"$work/attestation-help.log" 2>&1; then
+    gh --version >"$work/gh-version.log" 2>&1 \
+      || die "cannot determine GitHub CLI version; update to 2.102.0 or newer"
+    awk 'NR == 1 { split($3,v,"."); ok = ($1 == "gh" && $2 == "version" && $3 ~ /^[0-9]+\.[0-9]+\.[0-9]+$/ && (v[1] > 2 || (v[1] == 2 && v[2] >= 102))) } END { exit !ok }' "$work/gh-version.log" \
+      || die "GitHub CLI 2.102.0 or newer is required for exact workflow attestation verification"
+    if ! gh attestation verify "$1" --repo "$repo" --signer-workflow "$repo/.github/workflows/release.yml" >"$work/attestation-out.log" 2>"$work/attestation-error.log"; then
+      tail -n 8 "$work/attestation-error.log" >&2
+      die "the build attestation could not be verified; nothing was installed"
+    fi
     say "build attestation verified"
-  elif [ "${TUNGSTEN_REQUIRE_ATTESTATION:-0}" = 1 ]; then
-    die "TUNGSTEN_REQUIRE_ATTESTATION=1 but the gh CLI is not installed"
   else
-    say "gh is not installed: build attestation not checked (checksum only)"
+    if have gh; then
+      reason='gh attestation is unavailable; update GitHub CLI (2.49 or newer)'
+      tail -n 8 "$work/attestation-help.log" >&2
+    fi
+    [ "${TUNGSTEN_REQUIRE_ATTESTATION:-0}" != 1 ] \
+      || die "TUNGSTEN_REQUIRE_ATTESTATION=1 but $reason"
+    say "checksum verified; attestation not checked ($reason)"
   fi
 }
 

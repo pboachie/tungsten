@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 )
 
 var requestIDHeaders = []string{"x-request-id", "request-id", "x-correlation-id", "x-amzn-requestid", "cf-ray"}
@@ -72,12 +73,29 @@ type decodedBody struct {
 	empty       bool
 	jsonl       bool
 	badLine     int
+	// body is the JSON text value was parsed from (valid UTF-8, no BOM)
+	// and info what the parser noticed about it; a typed decode reads
+	// body directly instead of re-serializing value.
+	body []byte
+	info parseInfo
 }
 
 var bom = []byte{0xEF, 0xBB, 0xBF}
 
 func decodeText(data []byte) string {
 	return validUTF8(bytes.TrimPrefix(data, bom))
+}
+
+// parseBody parses a JSON body without copying it: the BOM is dropped and
+// invalid UTF-8 replaced only when present. text is the parsed text.
+func parseBody(data []byte) (v any, info parseInfo, text []byte, err error) {
+	text = bytes.TrimPrefix(data, bom)
+	valid := utf8.Valid(text)
+	if !valid {
+		text = []byte(strings.ToValidUTF8(string(text), "\uFFFD"))
+	}
+	v, info, err = parseJSON(text, true)
+	return v, info, text, err
 }
 
 func decodeBody(data []byte, headers map[string]string, declared string) decodedBody {
@@ -110,23 +128,23 @@ func decodeBody(data []byte, headers map[string]string, declared string) decoded
 		return decodedBody{value: values, has: true, jsonl: true}
 	}
 	if isJSONMedia(media) {
-		raw := decodeText(data)
-		v, err := ParseJSONString(raw)
+		v, info, text, err := parseBody(data)
 		if err != nil {
-			return decodedBody{value: raw, has: true, invalidJSON: true}
+			return decodedBody{value: string(text), has: true, invalidJSON: true}
 		}
-		return decodedBody{value: v, has: true, json: true}
+		return decodedBody{value: v, has: true, json: true, body: text, info: info}
 	}
 	if media == "" || strings.HasPrefix(media, "text/") || media == "application/problem+xml" ||
 		strings.HasSuffix(media, "+xml") || media == "application/xml" {
-		raw := decodeText(data)
-		trimmed := strings.TrimLeft(raw, " \t\r\n\v\f")
-		if media == "" && (strings.HasPrefix(trimmed, "[") || strings.HasPrefix(trimmed, "{")) {
-			if v, err := ParseJSONString(raw); err == nil {
-				return decodedBody{value: v, has: true, json: true}
+		if media == "" {
+			trimmed := bytes.TrimLeft(bytes.TrimPrefix(data, bom), " \t\r\n\v\f")
+			if len(trimmed) > 0 && (trimmed[0] == '[' || trimmed[0] == '{') {
+				if v, info, text, err := parseBody(data); err == nil {
+					return decodedBody{value: v, has: true, json: true, body: text, info: info}
+				}
 			}
 		}
-		return decodedBody{value: raw, has: true}
+		return decodedBody{value: decodeText(data), has: true}
 	}
 	return decodedBody{value: NewBinary(data).object(), has: true}
 }

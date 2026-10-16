@@ -257,6 +257,8 @@ fn coverage(h: &mut String, r: &ReportResult) {
                 CoverageStatus::NotGenerated => "not generated",
                 CoverageStatus::NoEmitter => "<span class=\"info\">no emitter yet</span>",
                 CoverageStatus::Failed => "<span class=\"error\">failed</span>",
+                CoverageStatus::NotConfigured => "not configured",
+                CoverageStatus::Skipped => "<span class=\"info\">skipped</span>",
             };
             vec![
                 format!("<code>{}</code>", escape(&t.target)),

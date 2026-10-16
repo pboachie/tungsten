@@ -183,6 +183,11 @@ type Response[T any] struct {
 	Raw          any
 	Meta         ResponseMeta
 	Verification *Verification
+	// body is the JSON text Raw was parsed from, when the body was JSON,
+	// and bodyInfo what the parser noticed about it; CallTyped can read
+	// the text directly before the dynamic value is exposed to callers.
+	body     []byte
+	bodyInfo parseInfo
 }
 
 // Outcome is the result of a dynamic call: the decoded JSON body.
@@ -688,6 +693,8 @@ const (
 
 // ClientOptions configures a client.
 type ClientOptions struct {
+	// Optional ordinary-response byte cap; a positive safe integer. Nil is unbounded.
+	MaxResponseBytes *int64
 	// Redirects may tighten the API policy. The zero value inherits it.
 	Redirects RedirectPolicy
 	// BaseURL defaults to the first server.
@@ -779,6 +786,8 @@ func (c Confirm) String() string {
 
 // CallOptions configures one call.
 type CallOptions struct {
+	// Override the client ordinary-response byte cap.
+	MaxResponseBytes *int64
 	// MaxPages bounds a traversal; zero means unbounded.
 	MaxPages int
 	// IdempotencyKey is required for caller_owned operations with a

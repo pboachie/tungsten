@@ -67,6 +67,12 @@ pub struct TungstenConfig {
     #[serde(default)]
     pub types: TypesConfig,
     /// Target name → target options, kept as raw JSON and typed by each emitter.
+    /// A target with an `external` key (`true`, or a command) runs that command
+    /// as a process with the user's privileges, not only on `generate` but on
+    /// every command that emits in memory: `generate --dry-run` and `--check`,
+    /// `check --ci`, `diff` and `report`. Plain `check` and `ir dump` never run
+    /// it. Pass `--no-external` or set `TUNGSTEN_NO_EXTERNAL=1` to skip external
+    /// targets, for example in CI over a manifest you do not trust.
     #[serde(default)]
     pub targets: IndexMap<String, serde_json::Value>,
     #[serde(default)]
@@ -99,6 +105,13 @@ pub struct InputConfig {
     pub namespace: String,
     /// Path relative to the manifest's directory.
     pub spec: String,
+    /// Original remote source of a locally converted import. Its SHA256 pin is
+    /// verified before compilation; changed sources require explicit re-import.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_url: Option<String>,
+    /// SHA256 of the remote bytes used for the reviewed local conversion.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_sha256: Option<String>,
     #[serde(default)]
     pub overlays: Vec<String>,
     /// Keep only operations matching this predicate.
@@ -376,6 +389,8 @@ impl TungstenConfig {
             inputs: vec![InputConfig {
                 namespace: name.into(),
                 spec: spec.into(),
+                source_url: None,
+                source_sha256: None,
                 overlays: vec![],
                 include: None,
                 planned_from: None,

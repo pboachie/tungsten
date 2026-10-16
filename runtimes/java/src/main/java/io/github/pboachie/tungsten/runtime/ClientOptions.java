@@ -7,6 +7,7 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.function.Consumer;
 import java.util.function.DoubleSupplier;
 import java.util.function.LongSupplier;
@@ -54,6 +55,7 @@ public final class ClientOptions {
     final Consumer<Diagnostic> onDiagnostic;
     final Map<String, String> headers;
     final int maxEventBytes;
+    final Long maxResponseBytes;
     final int maxCollectBytes;
     final Duration maxCollectTime;
     final int maxReconnects;
@@ -78,6 +80,7 @@ public final class ClientOptions {
         onDiagnostic = b.onDiagnostic;
         headers = Collections.unmodifiableMap(new LinkedHashMap<>(b.headers));
         maxEventBytes = b.maxEventBytes > 0 ? b.maxEventBytes : DEFAULT_MAX_EVENT_BYTES;
+        maxResponseBytes = b.maxResponseBytes;
         maxCollectBytes = b.maxCollectBytes > 0 ? b.maxCollectBytes : DEFAULT_MAX_COLLECT_BYTES;
         maxCollectTime = positive(b.maxCollectTime, DEFAULT_MAX_COLLECT_TIME);
         maxReconnects = b.maxReconnects == null ? DEFAULT_MAX_RECONNECTS : Math.min(Math.max(b.maxReconnects, 0), 1000);
@@ -92,6 +95,46 @@ public final class ClientOptions {
         clock = b.clock;
         random = b.random;
         identity = b.identity != null ? b.identity : RuntimeIdentity.JAVA;
+    }
+
+    private ClientOptions(ClientOptions o, RuntimeIdentity identity) {
+        redirects = o.redirects;
+        baseUrl = o.baseUrl;
+        auth = o.auth;
+        tokenStore = o.tokenStore;
+        timeout = o.timeout;
+        retries = o.retries;
+        idempotencyStore = o.idempotencyStore;
+        middleware = o.middleware;
+        validateResponses = o.validateResponses;
+        onDiagnostic = o.onDiagnostic;
+        headers = o.headers;
+        maxEventBytes = o.maxEventBytes;
+        maxResponseBytes = o.maxResponseBytes;
+        maxCollectBytes = o.maxCollectBytes;
+        maxCollectTime = o.maxCollectTime;
+        maxReconnects = o.maxReconnects;
+        reconnectMax = o.reconnectMax;
+        idleTimeout = o.idleTimeout;
+        confirmationKey = o.confirmationKey;
+        sslSocketFactory = o.sslSocketFactory;
+        clock = o.clock;
+        random = o.random;
+        this.identity = identity;
+    }
+
+    /** The identity the runtime reports ({@link RuntimeIdentity#JAVA} unless a builder set another). */
+    public RuntimeIdentity identity() {
+        return identity;
+    }
+
+    /**
+     * These options reporting another identity (a language built on this runtime). Every other
+     * option is kept as built, including the confirmation key and the token and idempotency
+     * stores, which stay shared with this instance.
+     */
+    public ClientOptions withIdentity(RuntimeIdentity value) {
+        return new ClientOptions(this, Objects.requireNonNull(value, "identity"));
     }
 
     private static Duration positive(Duration d, Duration fallback) {
@@ -117,6 +160,7 @@ public final class ClientOptions {
         private Consumer<Diagnostic> onDiagnostic;
         private final Map<String, String> headers = new LinkedHashMap<>();
         private int maxEventBytes;
+        private Long maxResponseBytes;
         private int maxCollectBytes;
         private Duration maxCollectTime;
         private Integer maxReconnects;
@@ -203,6 +247,17 @@ public final class ClientOptions {
         /** The largest server-sent event a stream accepts, in UTF-8 bytes (1 MiB by default). */
         public Builder maxEventBytes(int value) {
             maxEventBytes = value;
+            return this;
+        }
+
+        /** Maximum ordinary response bytes; unset means unbounded. Must be a positive safe integer. */
+        public Builder maxResponseBytes(long value) {
+            return maxResponseBytes(Long.valueOf(value));
+        }
+
+        /** Maximum ordinary response bytes, or null to leave it unbounded. */
+        public Builder maxResponseBytes(Long value) {
+            maxResponseBytes = value;
             return this;
         }
 

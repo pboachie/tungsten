@@ -5,8 +5,10 @@ module Tungsten
   module Runtime
     class ClientCore
       # Where a pagination is: the arguments of the next page, the URL of a
-      # Link header page, the last cursor seen, and an error to report next.
-      PageState = Struct.new(:args, :override_url, :previous_cursor, :done, :pending_error)
+      # Link header page, the cursors and page URLs seen (a repeat is a server
+      # bug), the request URLs used, the URL that answered last, and an error
+      # to report next.
+      PageState = Struct.new(:args, :override_url, :seen, :done, :pending_error, :request_urls, :last_url, :started)
 
       # Every page of a paginated operation, fetched as the enumeration
       # proceeds: each item is Ok (whose value is a Page) or, last, Err.
@@ -38,7 +40,7 @@ module Tungsten
           rescue ArgumentError
             args
           end
-        PageState.new(converted.is_a?(Hash) ? converted.dup : converted, nil, UNSET, false, nil)
+        PageState.new(converted.is_a?(Hash) ? converted.dup : converted, nil, Set.new, false, nil, Set.new, nil, false)
       end
 
       def set_arg(args, key, value)
@@ -57,13 +59,20 @@ module Tungsten
         end
         return nil if state.done
 
-        response = call_with(op, state.args, opts, state.override_url, claim)
+        pg = op.pagination
+        unless state.started
+          state.started = true
+          if pg && pg["style"] == "cursor"
+            initial = arg_at(state.args, op.arg_name(pg["request_param"]))
+            state.seen << Json.canonical(initial) unless UNSET.equal?(initial) || initial.nil? || initial == ""
+          end
+        end
+        response = call_with(op, state.args, opts, state.override_url, claim, pg && pg["style"] == "link_header" ? state : nil)
         if response.is_a?(Err)
           state.done = true
           return response
         end
         body = response.raw.nil? ? UNSET : response.raw
-        pg = op.pagination
         items_field = pg ? pg["items_field"].to_s : ""
         found = items_field.empty? ? body : Util.get_path_str(body, items_field)
         items = found.is_a?(Array) ? found.dup : []
@@ -85,11 +94,8 @@ module Tungsten
             v = Util.get_path_str(body, pg["has_more_field"])
             finished = v == false
           end
-          repeated = !UNSET.equal?(state.previous_cursor) && !UNSET.equal?(cursor) &&
-                     Json.canonical(state.previous_cursor) == Json.canonical(cursor)
-          if !UNSET.equal?(cursor) && !finished && !repeated
+          if !UNSET.equal?(cursor) && !finished
             next_page = cursor
-            state.previous_cursor = cursor
             set_arg(state.args, op.arg_name(pg["request_param"]), cursor)
           end
         when "offset"
@@ -113,7 +119,9 @@ module Tungsten
         when "link_header"
           link = Transport.next_link(response.meta.headers["link"])
           if link
-            target = link_target(state.override_url || @base_url, link)
+            base = state.last_url || state.override_url || @base_url
+            state.seen << base
+            target = link_target(base, link)
             if target
               state.override_url = target
               next_page = target
@@ -123,6 +131,16 @@ module Tungsten
                                            .remedy("The next-page Link header points to another origin; it is not followed so credentials never leave the API's host. Stop paginating here.")
                                            .attempts(response.meta.attempts).err
             end
+          end
+        end
+        if !next_page.nil? && state.pending_error.nil?
+          key = pg["style"] == "link_header" ? next_page : Json.canonical(next_page)
+          unless state.seen.add?(key)
+            next_page = nil
+            state.pending_error = Runtime.diag(op.id, "UNEXPECTED_RESPONSE").status(response.meta.status)
+                                         .request_id(response.meta.request_id)
+                                         .remedy("Pagination detected a repeated cursor or page URL. Fix the server's next-page value before continuing.")
+                                         .attempts(response.meta.attempts).err
           end
         end
         err = check_items(op, items_field, items, response)
@@ -139,6 +157,7 @@ module Tungsten
         return nil if origin.scheme.nil?
 
         resolved = origin.merge(link)
+        resolved.fragment = nil
         same_origin?(origin, resolved) ? resolved.to_s : nil
       rescue URI::Error
         nil

@@ -3,6 +3,7 @@
 //! wrappers use.
 
 use std::future::Future;
+use std::ops::ControlFlow;
 
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -57,6 +58,28 @@ pub trait Dispatch: Send + Sync {
         args: Value,
         opts: CallOptions,
     ) -> impl Future<Output = Vec<Result<Page<Value>>>> + Send;
+
+    /// Like [`Dispatch::pages`], but hands each page to `sink` as soon as it
+    /// arrives and stops fetching when `sink` returns
+    /// [`ControlFlow::Break`], so a caller can print or drop a page before
+    /// the next request and never holds more than one page. The default
+    /// collects through [`Dispatch::pages`] first; a generated client
+    /// overrides it to iterate lazily.
+    fn pages_each<'a>(
+        &'a self,
+        operation: &'a str,
+        args: Value,
+        opts: CallOptions,
+        sink: &'a mut (dyn FnMut(Result<Page<Value>>) -> ControlFlow<()> + Send),
+    ) -> impl Future<Output = ()> + Send + 'a {
+        async move {
+            for page in self.pages(operation, args, opts).await {
+                if sink(page).is_break() {
+                    break;
+                }
+            }
+        }
+    }
 
     /// Collect the events of an operation's event stream, each as its decoded
     /// JSON value, through the typed `<method>_stream`. The final error, if
@@ -135,15 +158,88 @@ pub struct Mismatch {
     message: String,
 }
 
+fn mismatch_of<E: std::fmt::Display>(error: serde_path_to_error::Error<E>) -> Mismatch {
+    let (path, segments) = path_parts(error.path());
+    Mismatch {
+        path,
+        segments,
+        message: error.inner().to_string(),
+    }
+}
+
 fn decode_value<T: DeserializeOwned>(value: &Value) -> std::result::Result<T, Mismatch> {
-    serde_path_to_error::deserialize::<_, T>(value).map_err(|error| {
-        let (path, segments) = path_parts(error.path());
-        Mismatch {
-            path,
-            segments,
-            message: error.inner().to_string(),
+    serde_path_to_error::deserialize::<_, T>(value).map_err(mismatch_of)
+}
+
+/// Decode a JSON body straight from its bytes into `T`: the value its JSON
+/// form (as [`crate::internals::decode_body`] builds it, integral floats as
+/// integers) decodes to, without building that form. `None` when the body
+/// does not decode or is not one JSON text; that is reported from the JSON
+/// form, with the failing path, so no path is tracked here (tracking costs
+/// most of a decode).
+fn decode_bytes<T: DeserializeOwned>(bytes: &[u8]) -> Option<T> {
+    let bytes = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(bytes);
+    let mut json = serde_json::Deserializer::from_slice(bytes);
+    let value = T::deserialize(crate::integral::Integral(&mut json)).ok()?;
+    json.end().ok()?;
+    Some(value)
+}
+
+/// Where a typed call takes a success body straight from its bytes, before
+/// the runtime builds the body's JSON form.
+pub(crate) trait BodySink: Send {
+    /// Take the JSON body `bytes`, judging it with the operation's response
+    /// validator when `judge`; true when taken, so the runtime builds no JSON
+    /// form and the call's value is the sink's. False leaves the body to the
+    /// JSON path: a body that does not decode, or does not pass validation,
+    /// is reported from its JSON form, exactly as a dynamic call reports it.
+    fn take(&mut self, bytes: &[u8], judge: bool) -> bool;
+}
+
+/// The sink of [`crate::ClientCore::call_typed`]: the body as `T`, judged by
+/// the operation's response validator.
+pub(crate) struct TypedSink<T> {
+    validator: Option<std::sync::Arc<dyn crate::types::Validator>>,
+    value: Option<T>,
+}
+
+impl<T> TypedSink<T> {
+    pub(crate) fn new(validator: Option<std::sync::Arc<dyn crate::types::Validator>>) -> Self {
+        TypedSink {
+            validator,
+            value: None,
         }
-    })
+    }
+
+    pub(crate) fn take_value(&mut self) -> Option<T> {
+        self.value.take()
+    }
+}
+
+impl<T: DeserializeOwned + Send + 'static> BodySink for TypedSink<T> {
+    fn take(&mut self, bytes: &[u8], judge: bool) -> bool {
+        let validator = self.validator.as_deref().filter(|_| judge);
+        // A validator that panics is reported by the JSON path.
+        let decoded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let value: T = decode_bytes(bytes)?;
+            match validator {
+                None => Some(value),
+                Some(validator) => match validator.check_decoded(&value) {
+                    Some(issues) if issues.is_empty() => Some(value),
+                    _ => None,
+                },
+            }
+        }))
+        .ok()
+        .flatten();
+        match decoded {
+            Some(value) => {
+                self.value = Some(value);
+                true
+            }
+            None => false,
+        }
+    }
 }
 
 fn mismatch_error(

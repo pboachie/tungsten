@@ -258,8 +258,8 @@ module Tungsten
             bin = Json.binary_of(x)
             if !UNSET.equal?(bin)
               content_type = bin.content_type || "application/octet-stream"
-              unless valid_header_value?(content_type)
-                return SerializationError.new(parameter: "body", expected: "multipart file content types without header control characters",
+              unless valid_media_type?(content_type)
+                return SerializationError.new(parameter: "body", expected: "multipart file content types that are valid media types",
                                               value: value)
               end
 
@@ -311,6 +311,14 @@ module Tungsten
       # Visible ASCII, tab, space and Latin-1 characters.
       def valid_header_value?(value)
         value.is_a?(String) && value.each_char.all? { |c| c == "\t" || (c.ord >= 0x20 && c.ord <= 0x7e) || (c.ord >= 0x80 && c.ord <= 0xff) }
+      end
+
+      # `type/subtype` (RFC 9110 tokens) optionally followed by `;` parameters,
+      # all in visible ASCII, space and tab.
+      def valid_media_type?(value)
+        return false unless value.is_a?(String) && value.match?(/\A[\t\x20-\x7e]*\z/)
+
+        value.split(";", 2).first.strip.match?(%r{\A[!#$%&'*+\-.^_`|~0-9A-Za-z]+/[!#$%&'*+\-.^_`|~0-9A-Za-z]+\z})
       end
 
       # The Latin-1 bytes of a valid header value.

@@ -42,6 +42,12 @@ public sealed partial class ClientCore
     internal async Task<Sent> SendWithAsync(Prepared p, CallOptions opts, bool stream, CancellationToken ct)
     {
         var op = p.Op;
+        long? cap = opts.MaxResponseBytes ?? maxResponseBytes;
+        if (cap is long limit && (limit < 1 || limit > 9_007_199_254_740_991L))
+        {
+            throw new Diag(op.Id, Category.ValidationFailed).Param("maxResponseBytes")
+                .Remedy("maxResponseBytes must be a positive safe integer; nothing was sent.").Fail();
+        }
         var plan = RetryOptionsFor(op);
         bool mutation = Classify.IsMutation(op);
         bool protectedCall = Classify.HasReplayProtection(op, p.HasKey);
@@ -69,10 +75,10 @@ public sealed partial class ClientCore
             var body = p.Payload;
             var entries = p.Headers.Entries.ToList();
             var idle = stream ? idleTimeout : null;
-            var outcome = await Transport.AttemptAsync(http, new AttemptRequest { Url = target, Method = method, Headers = entries, Body = body, Timeout = attemptTimeout, Stream = stream, Idle = idle }, ct).ConfigureAwait(false);
+            var outcome = await Transport.AttemptAsync(http, new AttemptRequest { Url = target, Method = method, Headers = entries, Body = body, Timeout = attemptTimeout, Stream = stream, Idle = idle, MaxResponseBytes = cap }, ct).ConfigureAwait(false);
             for (int hops = 0; !redirectsDisabled && !mutation && hops < MaxRedirects; hops++)
             {
-                if (outcome.Kind != OutcomeKind.Response || !IsRedirect(outcome.Status))
+                if (outcome.Kind != OutcomeKind.Response || outcome.BodyFailure == "oversized" || !IsRedirect(outcome.Status))
                 {
                     break;
                 }
@@ -92,8 +98,9 @@ public sealed partial class ClientCore
                 }
                 rctx.Url = next.Value.Shown;
                 rctx.Method = method;
-                outcome = await Transport.AttemptAsync(http, new AttemptRequest { Url = target, Method = method, Headers = entries, Body = body, Timeout = attemptTimeout, Stream = stream, Idle = idle }, ct).ConfigureAwait(false);
+                outcome = await Transport.AttemptAsync(http, new AttemptRequest { Url = target, Method = method, Headers = entries, Body = body, Timeout = attemptTimeout, Stream = stream, Idle = idle, MaxResponseBytes = cap }, ct).ConfigureAwait(false);
             }
+            p.FinalUrl = target;
             var cctx = new CallContext { Api = api, Op = op, Key = p.Key, HasKey = p.HasKey, KeyHeader = p.KeyHeader, Attempts = attempts, Check = check };
             TungstenError error;
             try
@@ -236,6 +243,14 @@ public sealed partial class ClientCore
         bool refusedRedirect = redirectsDisabled && status >= 300 && status <= 399 && (declared is null || declared.StatusKind == "default");
         bool success = !refusedRedirect && ((status >= 200 && status <= 299) || (declared is not null && declared.Kind == "success" && status >= 100 && status <= 399));
         string? hint = op.Agent.Verify is { } v ? $"Call {v.Operation} to read the current state." : null;
+        if (outcome.BodyFailure == "oversized")
+        {
+            throw new Diag(op.Id, Category.UnexpectedResponse).Code("RESPONSE_TOO_LARGE").Status(status)
+                .RequestId(requestId).Retry(Retryable.Never).Next(hint).Attempts(attempts)
+                .Remedy("Response exceeded maxResponseBytes and was abandoned. " +
+                    (mutation ? "The call may have taken effect; inspect API state before retrying." : "The read is incomplete."))
+                .Fail();
+        }
         if (success && !outcome.BodyOk)
         {
             var failure = outcome.BodyFailure == "timeout" ? "timeout" : "broken";

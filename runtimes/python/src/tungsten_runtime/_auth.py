@@ -81,9 +81,9 @@ class OAuth2Client:
 
 
 #: Fetches (and caches) OAuth2 client-credentials tokens.
-type TokenSource = Callable[[OAuth2Client], Flow[str]]
+TokenSource = Callable[[OAuth2Client], Flow[str]]
 
-type _Apply = Callable[[AuthPlan, list[str], TokenSource, list[str]], Flow[str | None]]
+_Apply = Callable[[AuthPlan, list[str], TokenSource, list[str]], Flow[str | None]]
 
 
 @dataclass(frozen=True, slots=True)

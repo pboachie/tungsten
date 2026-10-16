@@ -281,16 +281,37 @@ public final class ClientCore {
 
     /** The pipeline shared by calls, pages, polls and macro steps. */
     Result.Ok<Object> callWith(OperationDescriptor op, Object args, CallOptions opts, String urlOverride, MacroClaim claim) {
+        return callWith(op, args, opts, urlOverride, claim, null);
+    }
+
+    /** The request URLs a link-header pagination has used, and the URL that produced the last page. */
+    static final class PageTrace {
+        final java.util.Set<String> urls = new java.util.HashSet<>();
+        String lastUrl;
+    }
+
+    /** As {@link #callWith}; with a trace, a request URL used before is refused unsent and the final URL is recorded. */
+    Result.Ok<Object> callWith(OperationDescriptor op, Object args, CallOptions opts, String urlOverride, MacroClaim claim,
+            PageTrace trace) {
         Prepared p = prepare(op, args, opts, Purpose.CALL, urlOverride, claim);
+        if (trace != null && !trace.urls.add(p.url)) {
+            throw diag(op.id(), Category.UNEXPECTED_RESPONSE)
+                    .remedy("Pagination detected a repeated effective page request URL after authentication. Fix the server's next-page Link before continuing; no repeated request was sent.")
+                    .fail();
+        }
         Result.Ok<Object> response;
         try {
             response = send(p, opts);
         } catch (TungstenException e) {
             Integer status = e.diagnostic().httpStatus();
-            if (status == null || status != 401 || p.oauth == null) {
+            if (status == null || status != 401 || p.oauth == null || (e.diagnostic().category() == Category.UNEXPECTED_RESPONSE && "RESPONSE_TOO_LARGE".equals(e.diagnostic().code()))) {
                 throw e;
             }
             response = resendRejected(p, e, opts);
+        }
+        if (trace != null) {
+            trace.lastUrl = p.finalUrl;
+            trace.urls.add(p.finalUrl);
         }
         if (opts.verify() && op.agent().verify() != null) {
             Verification v = Previews.verify(this, op, p.args, response.hasValue() ? response.value() : Json.ABSENT, opts);
@@ -354,6 +375,8 @@ public final class ClientCore {
         JsonObject args;
         String method;
         String url;
+        /** The URL that answered, after any followed redirect. */
+        String finalUrl;
         String displayUrl;
         Serialize.Headers headers;
         Serialize.Payload payload;
@@ -645,25 +668,14 @@ public final class ClientCore {
                 }
                 String logical = Text.sha256Hex(Text.utf8(Json.canonical(args)));
                 synchronized (keyLock) {
-                    String existing;
+                    String key;
                     try {
-                        existing = store.get(op.id(), logical);
+                        key = store.reserve(op.id(), logical, Text.uuidV4());
                     } catch (RuntimeException e) {
                         throw storeFailure(op, "the store threw " + e.getClass().getSimpleName());
                     }
-                    if (existing != null && !existing.isEmpty()) {
-                        return existing;
-                    }
-                    String key = Text.uuidV4();
-                    String stored;
-                    try {
-                        store.put(op.id(), logical, key);
-                        stored = store.get(op.id(), logical);
-                    } catch (RuntimeException e) {
-                        throw storeFailure(op, "the store threw " + e.getClass().getSimpleName());
-                    }
-                    if (!key.equals(stored)) {
-                        throw storeFailure(op, "the key could not be stored");
+                    if (key == null || key.isEmpty()) {
+                        throw storeFailure(op, "the store returned no key");
                     }
                     return key;
                 }
@@ -1272,6 +1284,11 @@ public final class ClientCore {
     /** Sends with retries. With stream, a 2xx text/event-stream answer is returned unread. */
     Sent sendWith(Prepared p, CallOptions opts, boolean stream) {
         OperationDescriptor op = p.op;
+        Long cap = opts.maxResponseBytes() != null ? opts.maxResponseBytes() : options.maxResponseBytes;
+        if (cap != null && (cap < 1 || cap > 9_007_199_254_740_991L)) {
+            throw diag(op.id(), Category.VALIDATION_FAILED).param("maxResponseBytes")
+                    .remedy("maxResponseBytes must be a positive safe integer; nothing was sent.").fail();
+        }
         RetryPolicy policy = retryPolicy(op);
         boolean mutation = op.isMutation();
         boolean protectedCall = Classify.hasReplayProtection(op, p.hasKey);
@@ -1290,9 +1307,9 @@ public final class ClientCore {
             Serialize.Payload body = p.payload;
             List<Serialize.Header> hs = new ArrayList<>(p.headers.entries);
             Transport.Outcome outcome = Transport.attempt(http,
-                    new Transport.Request(target, method, hs, body, attemptTimeout, stream, idle));
+                    new Transport.Request(target, method, hs, body, attemptTimeout, stream, idle, cap));
             for (int hops = 0; !redirectsDisabled && !mutation && hops < MAX_REDIRECTS; hops++) {
-                if (outcome.kind != Transport.Kind.RESPONSE || !isRedirect(outcome.status)) {
+                if (outcome.kind != Transport.Kind.RESPONSE || "oversized".equals(outcome.bodyFailure) || !isRedirect(outcome.status)) {
                     break;
                 }
                 String[] next = redirectTarget(p, target, outcome.headers.get("location"));
@@ -1308,8 +1325,9 @@ public final class ClientCore {
                 }
                 rctx = new Middleware.RequestContext(rctx.operation(), rctx.attempt(), method, next[1], rctx.headers(),
                         rctx.body(), rctx.hasBody());
-                outcome = Transport.attempt(http, new Transport.Request(target, method, hs, body, attemptTimeout, stream, idle));
+                outcome = Transport.attempt(http, new Transport.Request(target, method, hs, body, attemptTimeout, stream, idle, cap));
             }
+            p.finalUrl = target;
             Classify.Context cctx = new Classify.Context(identity, api, op, p.key, p.hasKey, p.keyHeader, attempts, check);
             TungstenException failure;
             try {
@@ -1448,6 +1466,13 @@ public final class ClientCore {
         boolean success = !refusedRedirect && ((status >= 200 && status <= 299)
                 || (declared != null && declared.kind().equals("success") && status >= 100 && status <= 399));
         String hint = op.agent().verify() != null ? "Call " + op.agent().verify().operation() + " to read the current state." : null;
+        if ("oversized".equals(outcome.bodyFailure)) {
+            throw diag(op.id(), Category.UNEXPECTED_RESPONSE).code("RESPONSE_TOO_LARGE").status(status)
+                    .requestId(requestId).retry(Retryable.NEVER).next(hint).attempts(attempts)
+                    .remedy("Response exceeded maxResponseBytes and was abandoned. "
+                            + (mutation ? "The call may have taken effect; inspect API state before retrying." : "The read is incomplete."))
+                    .fail();
+        }
         if (success && !outcome.bodyOk) {
             String failure = "timeout".equals(outcome.bodyFailure) ? "timeout" : "broken";
             if (!mutation) {

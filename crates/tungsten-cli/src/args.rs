@@ -68,9 +68,41 @@ const LONG_HELP: &str = concat!(examples_text!(), exit_codes_text!());
     color = ColorChoice::Never
 )]
 pub(crate) struct Cli {
+    /// Reuse verified HTTP/Git input pins and cached files without network access.
+    #[arg(long, global = true, conflicts_with = "refresh_inputs")]
+    pub offline: bool,
+    /// Refresh an HTTP content pin or resolve a Git ref again after review.
+    /// Converted imports require init into a fresh project to change sources.
+    #[arg(long, global = true)]
+    pub refresh_inputs: bool,
+    /// Header for a URL typed on the command line; for manifest URLs use
+    /// [https://api.example.com] Name: value to restrict it to that origin. Not Git authentication.
+    /// Environment values are newline-separated. Prefer the environment for secrets.
+    #[arg(
+        long,
+        global = true,
+        env = "TUNGSTEN_INPUT_HEADERS",
+        hide_env_values = true,
+        value_delimiter = '\n',
+        value_name = "[ORIGIN] NAME: VALUE"
+    )]
+    pub input_header: Vec<String>,
     /// Print exactly one JSON document on stdout.
     #[arg(long, global = true)]
     pub json: bool,
+    /// Never start the commands of `external` targets. Without it, an
+    /// `external` target's command runs on `generate` (any mode), `check
+    /// --ci`, `diff` and `report`, with your privileges and with whatever
+    /// the manifest says; pass it (or set TUNGSTEN_NO_EXTERNAL=1) when the
+    /// manifest is not trusted, for example on a pull request in CI. Such
+    /// targets are reported as skipped (TG0807).
+    #[arg(
+        long,
+        global = true,
+        env = "TUNGSTEN_NO_EXTERNAL",
+        value_parser = clap::builder::BoolishValueParser::new()
+    )]
+    pub no_external: bool,
     #[command(subcommand)]
     pub command: Command,
 }
@@ -172,7 +204,7 @@ pub(crate) enum IrCommand {
 #[derive(Debug, Args)]
 pub(crate) struct InputArgs {
     /// A directory with a tungsten.yml, a tungsten*.yml manifest, or a
-    /// single OpenAPI document.
+    /// single OpenAPI document (local path, HTTP(S) URL or git+ URL).
     #[arg(default_value = ".")]
     pub path: PathBuf,
 }
@@ -183,12 +215,34 @@ pub(crate) struct CheckArgs {
     pub input: InputArgs,
     /// CI mode: never prompt, never color, and fail (TG0901) when the
     /// generated output of a target differs from what `generate` would
-    /// write.
+    /// write. This runs every configured target's emitter in memory,
+    /// including the commands of `external` targets (see --no-external).
     #[arg(long)]
     pub ci: bool,
     /// Treat warnings as errors.
     #[arg(long)]
     pub strict: bool,
+    /// Audit the success response contracts after compiling (opt-in): a
+    /// JSON response without a schema (TG0930), a schema that constrains
+    /// nothing (TG0305) and a free-form object response (TG0931) become
+    /// warnings naming the operation, status and media type. Nothing is
+    /// rejected and the default exit behavior is unchanged; combine with
+    /// --strict to fail when the audit finds weak contracts. Typed maps,
+    /// no-content responses and non-JSON media types are not findings; a
+    /// schema (or media-type entry) with a nonempty string review note in
+    /// `x-tungsten-reviewed-contract`, usually through an overlay, counts
+    /// as reviewed. TG0932 reports an incomplete audit when budgets are hit.
+    #[arg(long)]
+    pub audit_contracts: bool,
+    /// Run the response-contract audit and treat its findings as errors.
+    /// Other warnings keep their usual severity (unlike --strict).
+    #[arg(long)]
+    pub require_contracts: bool,
+    /// Print every warning and info diagnostic in full. By default a code
+    /// that repeats is shown a few times, then summarized with a count;
+    /// `--json` always lists every diagnostic.
+    #[arg(long)]
+    pub all_warnings: bool,
 }
 
 #[derive(Debug, Args)]
@@ -224,6 +278,13 @@ pub(crate) struct ReportArgs {
     /// scripts).
     #[arg(long, value_name = "FILE")]
     pub html: Option<PathBuf>,
+    /// Also run the emitter of every target this version knows, not only
+    /// the configured ones, to fill the coverage table and the token
+    /// budgets of targets that are not enabled yet. Slow on a large API.
+    /// Without it those targets are listed as `not_configured`. Configured
+    /// `external` targets run either way (see --no-external).
+    #[arg(long)]
+    pub all_targets: bool,
 }
 
 #[derive(Debug, Args)]
@@ -348,6 +409,11 @@ pub enum SchemaName {
 
 #[derive(Debug, Clone, Args)]
 pub(crate) struct InitArgs {
+    /// Acquisition provenance for a converted remote import, set internally.
+    #[arg(skip)]
+    pub source_url: Option<String>,
+    #[arg(skip)]
+    pub source_sha256: Option<String>,
     /// Advanced: default server URL for later live use; no credentials/query/fragment.
     #[arg(long, conflicts_with = "resume")]
     pub server_url: Option<String>,
@@ -443,8 +509,14 @@ pub(crate) struct InitArgs {
     /// Generate from existing manifests without overwriting reviewed settings.
     #[arg(long, requires = "generate", conflicts_with_all = ["force", "from", "targets", "name"])]
     pub resume: bool,
-    /// OpenAPI document to start from. Default: openapi.json, openapi.yaml
-    /// or openapi.yml in the target directory.
+    /// API description to start from: an OpenAPI 3.0 or 3.1 document, a
+    /// Swagger 2.0 document, a Postman Collection v2.1 JSON file, a saved
+    /// cURL command, an HTTP request file (.http/.rest), a HAR 1.2 capture
+    /// or an endpoint manifest. Saved requests and captures need explicit
+    /// --route templates. Accepts a local path, HTTP(S) URL or
+    /// git+https://host/repository@ref#path (also git+file://).
+    /// Default: openapi.json, openapi.yaml, openapi.yml,
+    /// swagger.json or swagger.yaml in the target directory.
     #[arg(long, value_name = "SPEC")]
     pub from: Option<PathBuf>,
     /// Directory to write the manifests into (created if missing).

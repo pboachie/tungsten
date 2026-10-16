@@ -16,10 +16,10 @@
  * permission check, and the process has no read permission at all.
  */
 import { spawn } from "node:child_process";
-import { accessSync, constants } from "node:fs";
+import { accessSync, constants, statSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { delimiter, isAbsolute, join } from "node:path";
+import { join, posix, win32 } from "node:path";
 
 import { createDriver, startFailure, type SandboxEngine, type SandboxOutcome, type SandboxRunBase } from "./protocol.js";
 import { runWasm } from "./wasm.js";
@@ -28,31 +28,117 @@ export { type SandboxCall, type SandboxEngine, type SandboxLateResult, type Sand
 
 export const SANDBOX_DEFAULTS = { timeoutMs: 30000, memoryMb: 128, maxCalls: 50 } as const;
 
+/** Scripts that may run at once, per session and in the whole server. */
+export const CONCURRENCY_DEFAULTS = { perSession: 4, global: 16 } as const;
+
+/** Counts the scripts running at once, in one session and in the whole server. */
+export class ConcurrencyLimiter {
+  #total = 0;
+  constructor(readonly global: number) {}
+  /** A slot for a script of a session counted by `session` (a one-field
+   * counter owned by the session); `busy` names the limit hit when none is free. */
+  acquire(session: { running: number; limit: number }): { release(): void } | { busy: "session" | "global" } {
+    if (session.running >= session.limit) return { busy: "session" };
+    if (this.#total >= this.global) return { busy: "global" };
+    session.running += 1;
+    this.#total += 1;
+    let released = false;
+    return {
+      release: () => {
+        if (released) return;
+        released = true;
+        session.running -= 1;
+        this.#total -= 1;
+      },
+    };
+  }
+}
+
 const MAX_STDERR_CHARS = 4000;
 /** Data (writable private memory) that deno needs besides the V8 heap: it
  * reserves its code range up front, so it does not start below ~560 MB. */
 export const DENO_RESERVED_MB = 768;
 
+/** What `resolveDeno` asks of the platform; every field is injectable. */
+export interface ResolveOptions {
+  platform?: string;
+  /** The `PATHEXT` value (Windows only); the default list when missing. */
+  pathext?: string;
+  /** Whether `file` is a regular file the process may run (POSIX: execute
+   * permission) or open (Windows, where `X_OK` carries no meaning). */
+  usable?: (file: string) => boolean;
+}
+
+const DEFAULT_PATHEXT = ".COM;.EXE;.BAT;.CMD";
+/** `PATHEXT` entries that `spawn` cannot start without a shell. */
+const SHELL_ONLY = new Set([".bat", ".cmd"]);
+
+function usableFile(file: string, platform: string): boolean {
+  try {
+    if (!statSync(file).isFile()) return false;
+    accessSync(file, platform === "win32" ? constants.R_OK : constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The extensions (lower case, with the dot) Windows treats as programs
+ * that `spawn` can start directly. */
+function windowsExtensions(pathext: string | undefined): string[] {
+  const list = (pathext ?? "") === "" ? DEFAULT_PATHEXT : (pathext as string);
+  return list
+    .split(";")
+    .map((ext) => ext.trim().toLowerCase())
+    .filter((ext) => ext.startsWith(".") && ext.length > 1 && !SHELL_ONLY.has(ext));
+}
+
 /** The executable for `path`: itself when it contains a separator, else
- * the first executable match on `PATH`; null when none exists. */
-export function resolveDeno(path: string, searchPath: string = process.env.PATH ?? ""): string | null {
-  const executable = (file: string): boolean => {
-    try {
-      accessSync(file, constants.X_OK);
-      return true;
-    } catch {
-      return false;
-    }
+ * the first match on `PATH`; null when none exists. On Windows a match is
+ * an existing readable file whose extension is in `PATHEXT` (a missing
+ * extension is tried against each `PATHEXT` entry); elsewhere an existing
+ * file with execute permission. */
+export function resolveDeno(path: string, searchPath: string = process.env.PATH ?? "", options: ResolveOptions = {}): string | null {
+  const platform = options.platform ?? process.platform;
+  const windows = platform === "win32";
+  const usable = options.usable ?? ((file: string) => usableFile(file, platform));
+  const flavor = windows ? win32 : posix;
+  const extensions = windows ? windowsExtensions(options.pathext ?? process.env.PATHEXT) : [];
+  const variants = (file: string): string[] => {
+    if (!windows) return [file];
+    const ext = flavor.extname(file).toLowerCase();
+    return extensions.includes(ext) ? [file] : extensions.map((e) => file + e);
   };
+  const first = (file: string): string | null => variants(file).find(usable) ?? null;
   if (path === "") return null;
-  if (isAbsolute(path) || path.includes("/") || path.includes("\\")) return executable(path) ? path : null;
-  for (const dir of searchPath.split(delimiter)) {
+  if (flavor.isAbsolute(path) || path.includes("/") || path.includes("\\")) return first(path);
+  for (const dir of searchPath.split(flavor.delimiter)) {
     if (dir === "") continue;
-    for (const candidate of process.platform === "win32" ? [join(dir, `${path}.exe`), join(dir, path)] : [join(dir, path)]) {
-      if (executable(candidate)) return candidate;
-    }
+    const found = first(flavor.join(dir, path));
+    if (found !== null) return found;
   }
   return null;
+}
+
+/** Variables a native Windows process needs to start: `SystemRoot` for
+ * the system libraries and sockets, `TEMP`/`TMP`/`USERPROFILE` for
+ * runtime initialisation, `PATH`/`PATHEXT` for the loader. No variable
+ * outside this list reaches the sandbox, so no credential does. */
+const WINDOWS_ENV = ["SystemRoot", "SYSTEMDRIVE", "TEMP", "TMP", "USERPROFILE", "PATH", "PATHEXT"] as const;
+
+/** The environment of a script's process: scrubbed on every platform. On
+ * Windows the allow-listed variables of `parent` are added (Windows
+ * variable names are case-insensitive, so they are found regardless of
+ * case and written in the canonical case). */
+export function sandboxEnvironment(dir: string, platform: string = process.platform, parent: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  const env: Record<string, string> = { NO_COLOR: "1", DENO_NO_UPDATE_CHECK: "1", DENO_NO_PROMPT: "1", DENO_DIR: join(dir, ".deno"), HOME: dir };
+  if (platform !== "win32") return env;
+  for (const name of WINDOWS_ENV) {
+    const key = Object.keys(parent).find((k) => k.toUpperCase() === name.toUpperCase());
+    const value = key === undefined ? undefined : parent[key];
+    if (typeof value === "string" && value !== "") env[name] = value;
+  }
+  return env;
 }
 
 /** The API host (`host[:port]`) of a base URL, or null when it is not a
@@ -205,6 +291,11 @@ export function selectEngine(configured: unknown, denoFound: boolean): SandboxEn
   return denoFound ? "deno" : "wasm";
 }
 
+/** Whether `configured` asks for the engine to be chosen (`auto`, missing or unknown). */
+export function isAutoEngine(configured: unknown): boolean {
+  return configured !== "off" && configured !== "wasm" && configured !== "deno";
+}
+
 export interface SandboxRun extends SandboxRunBase {
   engine?: SandboxEngine;
   deno: string;
@@ -231,7 +322,7 @@ function execute(run: SandboxRun, dir: string): Promise<SandboxOutcome> {
   const { command, args } = sandboxCommand({ deno: run.deno, memoryMb: run.memoryMb, entry: join(dir, "main.ts") });
   const child = spawn(command, args, {
     cwd: dir,
-    env: { NO_COLOR: "1", DENO_NO_UPDATE_CHECK: "1", DENO_NO_PROMPT: "1", DENO_DIR: join(dir, ".deno"), HOME: dir },
+    env: sandboxEnvironment(dir),
     stdio: ["pipe", "pipe", "pipe"],
   });
   // `close` follows process exit (or a spawn error) and closure of its stdio.

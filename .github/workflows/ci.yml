@@ -1,5 +1,5 @@
-# Public CI: repository rules, format, lint, build (Rust, Go, Java and Ruby) and dependency
-# policy. The test suite lives in the private tungsten-ops repository; the last
+# Public CI: repository rules, format, lint, build (Rust, Go, Java, C#, Ruby and Dart) and
+# dependency policy. The test suite lives in the private tungsten-ops repository; the last
 # job asks it to test this commit and it reports back as the commit status "tungsten-ops/ci".
 #
 # The job names "fmt, clippy, build", "cargo-deny" and "repository-guard" are
@@ -32,6 +32,42 @@ env:
   CARGO_INCREMENTAL: "0"
 
 jobs:
+  msrv:
+    name: msrv
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Read and check declared floors
+        id: floors
+        run: python3 .github/scripts/check-msrv.py --toolchains >> "$GITHUB_OUTPUT"
+      - name: Install the declared minimum toolchains
+        env:
+          COMPILER_MSRV: ${{ steps.floors.outputs.compiler }}
+          RUNTIME_MSRV: ${{ steps.floors.outputs.runtime }}
+        run: |
+          rustup toolchain install "$COMPILER_MSRV" "$RUNTIME_MSRV" --profile minimal
+      - name: Reject dependencies above the declared floors
+        run: python3 .github/scripts/check-msrv.py
+      - name: Build the compiler and example at their declared minimum
+        env:
+          COMPILER_MSRV: ${{ steps.floors.outputs.compiler }}
+          EXAMPLE_MSRV: ${{ steps.floors.outputs.example }}
+        run: |
+          cargo +"$COMPILER_MSRV" build --locked --workspace
+          cargo +"$EXAMPLE_MSRV" build --locked --manifest-path examples/external-emitter-markdown/Cargo.toml
+      - name: Check the Rust runtimes at their declared minimum
+        env:
+          RUNTIME_MSRV: ${{ steps.floors.outputs.runtime }}
+        run: cargo +"$RUNTIME_MSRV" check --locked --workspace --manifest-path runtimes/rust/Cargo.toml
+
   check:
     name: fmt, clippy, build
     runs-on: ubuntu-latest
@@ -87,6 +123,8 @@ jobs:
           python-version: "3.12"
       - name: Check all committed Cargo, npm and uv locks without installing packages
         run: python3 .github/scripts/dependency_audit.py
+      - name: Check lockstep runtime manifests and identities
+        run: node .github/scripts/check-release-version.mjs --workspace
 
   deny:
     name: cargo-deny
@@ -174,6 +212,44 @@ jobs:
       - name: mvn package
         working-directory: runtimes/java
         run: mvn -B -q package -DskipTests
+      - name: Verify packaged Java notices
+        run: python3 .github/scripts/check-archive-notices.py runtimes/java/target/tungsten-runtime-*.jar runtimes/java --prefix META-INF/
+
+  # The Kotlin layer (runtimes/kotlin) compiled against the Java runtime's
+  # classes with kotlinc -Werror; its tests, and the build of the SDKs the
+  # Kotlin emitter generates, run in tungsten-ops.
+  kotlin:
+    name: kotlin runtime build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      KOTLIN_VERSION: "2.4.21"
+      KOTLIN_SHA256: 7cc140e76daf416a0424a5557f99afd7ca89ebd463ea1101261e3e01c33e75cd
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Install kotlinc (sha256 checked)
+        run: |
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/kotlin.zip" \
+            "https://github.com/JetBrains/kotlin/releases/download/v$KOTLIN_VERSION/kotlin-compiler-$KOTLIN_VERSION.zip"
+          echo "$KOTLIN_SHA256  $RUNNER_TEMP/kotlin.zip" | sha256sum -c -
+          unzip -q "$RUNNER_TEMP/kotlin.zip" -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/kotlinc/bin" >> "$GITHUB_PATH"
+      - name: javac --release 17 (runtimes/java)
+        run: |
+          find runtimes/java/src/main/java -name '*.java' > "$RUNNER_TEMP/java.txt"
+          javac --release 17 -Xlint:all -Werror -encoding UTF-8 -d "$RUNNER_TEMP/java" "@$RUNNER_TEMP/java.txt"
+      - name: kotlinc -Werror -jvm-target 17 (runtimes/kotlin)
+        run: |
+          find runtimes/kotlin/src/main/kotlin -name '*.kt' | sort > "$RUNNER_TEMP/kotlin.txt"
+          kotlinc -Werror -jvm-target 17 -Xexplicit-api=strict -cp "$RUNNER_TEMP/java" -d "$RUNNER_TEMP/kotlin-classes" "@$RUNNER_TEMP/kotlin.txt"
 
   # The .NET runtime (runtimes/csharp, net10.0, no dependencies); its tests,
   # and the build of the SDKs the C# emitter generates, run in tungsten-ops.
@@ -197,6 +273,36 @@ jobs:
         run: dotnet format whitespace runtimes/csharp --folder --verify-no-changes
       - name: dotnet build -warnaserror
         run: dotnet build runtimes/csharp/Tungsten.Runtime.csproj -warnaserror --artifacts-path "$RUNNER_TEMP/csharp"
+      - name: Pack and verify runtime notices
+        run: |
+          dotnet pack runtimes/csharp/Tungsten.Runtime.csproj -c Release --artifacts-path "$RUNNER_TEMP/csharp" -o "$RUNNER_TEMP/csharp-packages"
+          python3 .github/scripts/check-archive-notices.py "$RUNNER_TEMP/csharp-packages/"*.nupkg runtimes/csharp
+
+  # The F# layer over the .NET runtime (runtimes/fsharp, net10.0, FSharp.Core
+  # pinned to the SDK's bundled version), built against runtimes/csharp; its
+  # tests and the generated F# SDKs run in tungsten-ops.
+  fsharp:
+    name: fsharp runtime build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+      DOTNET_NOLOGO: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.401
+      - name: dotnet build -warnaserror
+        run: dotnet build runtimes/fsharp/Tungsten.Runtime.FSharp.fsproj -warnaserror --artifacts-path "$RUNNER_TEMP/fsharp"
+      - name: Pack and verify runtime notices
+        run: |
+          dotnet pack runtimes/fsharp/Tungsten.Runtime.FSharp.fsproj -c Release --artifacts-path "$RUNNER_TEMP/fsharp" -o "$RUNNER_TEMP/fsharp-packages"
+          python3 .github/scripts/check-archive-notices.py "$RUNNER_TEMP/fsharp-packages/"*.nupkg runtimes/fsharp
 
   # The Ruby runtime (runtimes/ruby, standard library only): every file
   # passes `ruby -wc` without a warning and the gemspec builds; its tests,
@@ -226,6 +332,33 @@ jobs:
       - name: gem build
         working-directory: runtimes/ruby
         run: gem build tungsten-runtime.gemspec --output "$RUNNER_TEMP/tungsten-runtime.gem"
+
+  # The Dart runtime (runtimes/dart, dart:io plus package:crypto): `dart pub
+  # get`, `dart format` without changes and `dart analyze --fatal-infos` with
+  # the committed analysis options; its tests and the packages the Dart
+  # emitter generates run in tungsten-ops.
+  dart:
+    name: dart runtime check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
+        with:
+          sdk: 3.13.5
+      - name: dart pub get
+        working-directory: runtimes/dart
+        run: dart pub get
+      - name: dart format
+        working-directory: runtimes/dart
+        run: dart format --output=none --set-exit-if-changed .
+      - name: dart analyze --fatal-infos
+        working-directory: runtimes/dart
+        run: dart analyze --fatal-infos
 
   guard:
     name: repository-guard
@@ -271,7 +404,9 @@ jobs:
     # ops workflow by hand with the head SHA. Every branch is dispatched, not
     # only main, because the tungsten-ops/ci status must land on pull request
     # head commits for branch protection.
-    if: github.event_name == 'push' && github.repository == 'pboachie/tungsten'
+    # Disabled by default after migration. A maintainer may opt in only for a
+    # reviewed rollback with an active private legacy receiver.
+    if: vars.LEGACY_OPS_DISPATCH == 'true' && github.event_name == 'push' && github.repository == 'pboachie/tungsten'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     # The job uses only OPS_DISPATCH_TOKEN; the run's own token gets nothing.

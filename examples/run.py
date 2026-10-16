@@ -1,0 +1,394 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-only
+"""Run the committed gallery recipes against matching local runtime source."""
+
+from __future__ import annotations
+
+import argparse
+import contextlib
+import hashlib
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import time
+import urllib.request
+
+HERE = Path(__file__).resolve().parent
+REPO = HERE.parent
+CATALOG = json.loads((HERE / "gallery.json").read_text())
+
+
+def command(argv: list[str], cwd: Path, expected: int = 0) -> subprocess.CompletedProcess[str]:
+    result = subprocess.run(argv, cwd=cwd, text=True, capture_output=True, timeout=900)
+    if result.returncode != expected:
+        raise RuntimeError(f"{argv!r} exited {result.returncode}, expected {expected}\n{result.stdout}\n{result.stderr}")
+    return result
+
+
+def compiler() -> str:
+    value = os.environ.get("TUNGSTEN") or shutil.which("tungsten")
+    if not value:
+        local = REPO / "target/debug" / ("tungsten.exe" if os.name == "nt" else "tungsten")
+        if local.is_file():
+            value = str(local)
+    if not value:
+        raise RuntimeError("Set TUNGSTEN to the matching compiler, or run cargo build -p tungsten-cli")
+    return str(Path(value).resolve())
+
+
+def tungsten(binary: str, cwd: Path, *args: str, expected: int = 0) -> dict:
+    return json.loads(command([binary, *args, "--json"], cwd, expected).stdout)
+
+
+def relative(path: Path, output: Path) -> str:
+    return Path(os.path.relpath(path, output)).as_posix()
+
+
+def fresh_work(example: Path) -> Path:
+    work = example / ".work"
+    # Verify the absolute target before replacing generated artifacts.
+    if work.is_symlink() or work.resolve() != example.resolve() / ".work":
+        raise RuntimeError(f"refusing redirected work directory: {work}")
+    if work.exists():
+        shutil.rmtree(work)
+    work.mkdir()
+    return work
+
+
+def target_options(target: str, work: Path) -> dict:
+    out = work / "sdk"
+    runtime = REPO / "runtimes"
+    options: dict = {"out": "sdk"}
+    if target == "typescript":
+        options.update(package="@gallery/petstore", runtime_path=relative(runtime / "ts", out))
+    elif target == "rust":
+        options.update(runtime_path=relative(runtime / "rust/runtime", out / "petstore-sdk"),
+                       cli={"kit_path": relative(runtime / "rust/cli-kit", out / "petstore-cli")})
+    elif target in {"java", "csharp", "ruby"}:
+        options["runtime_path"] = relative(runtime / target, out)
+    elif target == "go":
+        emitter = HERE / ".cache" / ("tungsten-emit-go.exe" if os.name == "nt" else "tungsten-emit-go")
+        emitter.parent.mkdir(exist_ok=True)
+        command(["go", "build", "-o", str(emitter), "."], REPO / "emitters/go")
+        options.update(external=f'"{emitter}"', module="example.com/gallery/petstore",
+                       package="petstore", runtime_path=relative(runtime / "go", out))
+    elif target in {"mcp", "webmcp"}:
+        options.update(package=f"@gallery/petstore-{target}", sdk="@gallery/petstore",
+                       sdk_path="../typescript", runtime_path=relative(runtime / target, out),
+                       sdk_runtime_path=relative(runtime / "ts", out))
+    return options
+
+
+def manifest(target: str, work: Path) -> dict:
+    targets = {target: target_options(target, work)}
+    if target in {"mcp", "webmcp"}:
+        ts = target_options("typescript", work)
+        ts.update(out="typescript", runtime_path=relative(REPO / "runtimes/ts", work / "typescript"))
+        targets = {"typescript": ts, **targets}
+    return {"tungsten": 1, "api": {"name": "petstore", "title": "Gallery Petstore"},
+            "inputs": [{"namespace": "pets", "spec": "openapi.json"}],
+            "servers": {"default": "http://127.0.0.1:4010", "allow_override": True},
+            "targets": targets}
+
+
+def write_json(path: Path, value: object) -> None:
+    path.write_text(json.dumps(value, indent=2) + "\n")
+
+
+def python_environment(work: Path) -> Path:
+    venv = work / "venv"
+    python = venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    uv = shutil.which("uv")
+    if uv:
+        command([uv, "venv", "--python", sys.executable, str(venv)], work)
+        install = [uv, "pip", "install", "--python", str(python)]
+    else:
+        command([sys.executable, "-m", "venv", str(venv)], work)
+        install = [str(python), "-m", "pip", "install", "--disable-pip-version-check"]
+    command([*install, "-e", str(REPO / "runtimes/python"), "-e", str(work / "sdk")], work)
+    return python
+
+
+def npm_build(path: Path) -> None:
+    action = "ci" if (path / "package-lock.json").is_file() else "install"
+    command(["npm", action, "--ignore-scripts", "--no-audit", "--no-fund"], path)
+    command(["npm", "run", "build"], path)
+
+
+def build(target: str, work: Path) -> None:
+    sdk = work / "sdk"
+    if target == "python":
+        python = python_environment(work)
+        command([str(python), "-c", "from petstore_sdk import PetstoreClient; print(PetstoreClient.__name__)"], work)
+    elif target in {"typescript", "mcp", "webmcp"}:
+        npm_build(REPO / "runtimes/ts")
+        if target != "typescript":
+            npm_build(REPO / "runtimes" / target)
+            npm_build(work / "typescript")
+        npm_build(sdk)
+        if target == "typescript":
+            command(["node", "--input-type=module", "-e", "import {PetstoreClient} from './dist/index.js'; console.log(PetstoreClient.name)"], sdk)
+    elif target == "rust":
+        command(["cargo", "build", "--workspace"], sdk)
+        command(["cargo", "run", "--quiet", "-p", "petstore-cli", "--", "--help"], sdk)
+    elif target == "go":
+        command(["go", "build", "./..."], sdk)
+    elif target == "java":
+        command(["mvn", "-B", "-q", "package", "-DskipTests"], sdk)
+    elif target == "csharp":
+        command(["dotnet", "build", str(next(sdk.glob("*.csproj"))), "--nologo",
+                 "--artifacts-path", str(work / "artifacts")], sdk)
+    elif target == "ruby":
+        command(["bundle", "install"], sdk)
+        command(["bundle", "exec", "ruby", "-Ilib", "-e", "require 'petstore_sdk'"], sdk)
+
+
+@contextlib.contextmanager
+def mock(binary: str, work: Path):
+    with (work / "mock.log").open("w+") as log:
+        process = subprocess.Popen([binary, "mock", "tungsten.yml", "--port", "0", "--json"],
+                                   cwd=work, stdin=subprocess.PIPE, stdout=log, stderr=log, text=True)
+        try:
+            deadline = time.monotonic() + 20
+            while time.monotonic() < deadline:
+                log.seek(0)
+                for line in log.read().splitlines():
+                    if line.startswith('{"tool"'):
+                        yield json.loads(line)["result"]["base_url"]
+                        return
+                if process.poll() is not None:
+                    raise RuntimeError("mock exited before listening")
+                time.sleep(0.05)
+            raise RuntimeError("mock did not listen within 20 seconds")
+        finally:
+            if process.stdin:
+                process.stdin.close()
+            try:
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                process.terminate()
+                process.wait(timeout=10)
+
+
+def local_client(binary: str, work: Path, preview: bool) -> None:
+    python = python_environment(work)
+    script = '''from petstore_sdk import PetstoreClient
+from tungsten_runtime import Err
+import sys
+with PetstoreClient(base_url=sys.argv[1], validate_responses="strict") as client:
+    result = client.pets.list()
+    if isinstance(result, Err):
+        raise RuntimeError(str(result.error))
+    assert len(result.value) > 0
+    print("mock returned typed pets")
+'''
+    if preview:
+        script += '''    rejected = client.pets.delete(pet_id="pet-1")
+    assert isinstance(rejected, Err) and rejected.error["category"] == "CONFIRMATION_REQUIRED"
+    preview = client.pets.preview_delete(pet_id="pet-1")
+    if isinstance(preview, Err):
+        raise RuntimeError(str(preview.error))
+    token = preview.value["confirmation_token"]
+    assert isinstance(token, str) and token
+    result = client.pets.delete(pet_id="pet-1", opts={"confirm": token})
+    assert not isinstance(result, Err), result
+    print("preview confirmed the same destructive arguments")
+'''
+    (work / "client.py").write_text(script)
+    with mock(binary, work) as base:
+        command([str(python), str(work / "client.py"), base], work)
+        with urllib.request.urlopen(base + "/__tungsten/calls", timeout=10) as response:
+            calls = json.load(response)
+        deletes = [call for call in calls if call["method"] == "DELETE"]
+        assert len(deletes) == (1 if preview else 0), "preview or missing confirmation executed a mutation"
+
+
+def digest_tree(root: Path) -> dict[str, str]:
+    return {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest()
+            for p in root.rglob("*") if p.is_file()}
+
+
+def execute(entry: dict, binary: str, build_packages: bool) -> None:
+    example = HERE / entry["name"]
+    work = fresh_work(example)
+    mode = entry["mode"]
+    if mode == "input":
+        args = ["init", "--from", str(example / entry["input"]), "--dir", str(work / "project"),
+                "--targets", "docs", "--no-interactive", *entry.get("args", [])]
+        tungsten(binary, work, *args)
+        project = work / "project"
+        assert (project / "tungsten.yml").is_file() and (project / "agent.yml").is_file()
+        tungsten(binary, project, "check")
+        tungsten(binary, project, "generate")
+        docs = next(project.rglob("llms.txt")).parent
+        first = digest_tree(docs)
+        tungsten(binary, project, "generate")
+        assert first == digest_tree(docs), "input regeneration was not deterministic"
+        tungsten(binary, project, "generate", "--check")
+        assert list(project.rglob("llms.txt")), "docs were not generated"
+        return
+    target = entry.get("target", "python" if mode in {"mock", "preview"} else "docs")
+    shutil.copyfile(example / "openapi.json", work / "openapi.json")
+    write_json(work / "tungsten.yml", manifest(target, work))
+    if mode == "preview":
+        shutil.copyfile(example / "agent.yml", work / "agent.yml")
+    tungsten(binary, work, "check")
+    tungsten(binary, work, "generate")
+    first = digest_tree(work / "sdk")
+    assert first, "the selected target produced no files; inspect skipped/refused target diagnostics"
+    tungsten(binary, work, "generate")
+    assert first == digest_tree(work / "sdk"), "regeneration was not deterministic"
+    tungsten(binary, work, "generate", "--check")
+    if target == "docs":
+        assert (work / "sdk/llms.txt").is_file() and (work / "sdk/tools.json").is_file()
+    if mode in {"drift", "diff"}:
+        changed = json.loads((work / "openapi.json").read_text())
+        changed["paths"]["/status"] = {"get": {"operationId": "getStatus", "responses": {"204": {"description": "healthy"}}}}
+        write_json(work / "openapi.json", changed)
+        if mode == "drift":
+            stale = tungsten(binary, work, "generate", "--check", expected=1)
+            assert any(d["code"] == "TG0901" for d in stale["diagnostics"])
+            tungsten(binary, work, "generate")
+            tungsten(binary, work, "generate", "--check")
+        else:
+            result = tungsten(binary, work, "diff", "--semver")
+            assert result["result"]["level"] == "minor", result
+            migration = tungsten(binary, work, "diff", "--migration")
+            assert any(c["semver"]["migration"]["actions"] for c in migration["result"]["changes"])
+    elif mode in {"mock", "preview"}:
+        local_client(binary, work, mode == "preview")
+    elif build_packages:
+        build(target, work)
+
+
+def example_readme(entry: dict) -> str:
+    return f'''# {entry["title"]}
+
+{entry["description"]}
+
+Prerequisites: matching tungsten compiler and source checkout, Python 3.12 or
+later for the runner; {entry["prerequisites"]}.
+
+From the repository root:
+
+```sh
+python3 examples/run.py --only {entry["name"]}
+```
+
+The runner copies this directory's committed input into `.work/`, writes the
+complete project manifest there, then validates and generates it twice. Package
+dependencies use matching runtime source. Generated files remain in `.work/`
+for inspection; rerunning replaces only that generated directory. Package-manager
+downloads may need internet access. No external API is called.
+
+Expected outcome: {entry["outcome"]}.
+
+Add `--generate-only` to inspect compiler output without building a first-SDK
+package. Mock and confirmation scenarios always install and exercise the Python
+SDK. Recipes verify deterministic generation and `generate --check`; input
+recipes check their initialized project's generated output.
+
+Target availability, minimum toolchains and acceptance limits belong to the
+[canonical target matrix](../../README.md#targets), maintained through
+[#61](https://github.com/pboachie/tungsten/issues/61). A small example does not
+establish full target parity, registry availability or live API readiness.
+'''
+
+
+def index_readme() -> str:
+    rows = "\n".join(f'| [{e["title"]}]({e["name"]}/README.md) | {e["description"]} |' for e in CATALOG)
+    return f'''# Runnable example gallery
+
+Start with a matching compiler and source checkout (`cargo build -p tungsten-cli`
+or `TUNGSTEN=/absolute/path/to/tungsten`). Each recipe has a committed small
+Petstore-shaped input, complete prerequisites and a checked outcome. Run one
+from its README, or run all recipes from the repository root:
+
+```sh
+python3 examples/run.py --check
+```
+
+The full run needs Python 3.12 with venv/pip, Node 22 with npm, the pinned Rust
+toolchain, Go 1.22, Java 17 with Maven, .NET 10 and Ruby 3.3 with Bundler. It builds
+generated packages against matching runtime source, including the Rust CLI.
+It contacts package registries and loopback mocks, never an external API.
+For compiler/input/workflow smoke coverage without first-SDK package builds,
+use `--generate-only`. Use `--only NAME` (repeatable or comma-separated) to select
+recipes. Missing tools fail explicitly; no entry is silently skipped.
+
+The runner checks this index and every recipe README against the catalog,
+then executes the described outcomes. CI runs all gallery recipes with package
+builds enabled. Generated work stays below each recipe's ignored `.work/`;
+canonical inputs are never modified.
+
+| Recipe | What it demonstrates |
+|---|---|
+{rows}
+
+JSON Schema needs explicit HTTP routing: its recipe uses a versioned endpoint
+manifest with declared models, rather than guessing an API from a bare schema.
+Imported observations need review before live use; see
+[supported inputs](../README.md#supported-inputs).
+
+The [target matrix](../README.md#targets) and [#61](https://github.com/pboachie/tungsten/issues/61)
+own readiness claims. A sample does not establish registry publication, complete
+validation parity or live acceptance.
+
+Additional examples have their own runners and prerequisites:
+
+- [Six public APIs](showcase/README.md): pinned specifications and regenerated showcase.
+- [External Markdown emitter](external-emitter-markdown/README.md): implement the emitter protocol.
+- [Typed Python SSE](typed-sse/README.md): declare and consume named streams with explicit cleanup.
+- [Response-contract quality](response-contract-audit/README.md): audit weak responses and apply reviewed schema overlays.
+'''
+
+
+def documentation(write: bool) -> None:
+    outputs = {HERE / "README.md": index_readme()}
+    outputs.update({HERE / e["name"] / "README.md": example_readme(e) for e in CATALOG})
+    for path, expected in outputs.items():
+        if write:
+            path.write_text(expected)
+        elif not path.is_file() or path.read_text() != expected:
+            raise RuntimeError(f"gallery README drift: {path}; run python3 examples/run.py --write-index")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--only", action="append", default=[])
+    parser.add_argument("--generate-only", action="store_true")
+    parser.add_argument("--check", action="store_true", help="check README drift and run recipes (the default)")
+    parser.add_argument("--write-index", action="store_true", help="rewrite gallery READMEs only")
+    parser.add_argument("--list", action="store_true")
+    args = parser.parse_args()
+    if args.list:
+        print("\n".join(e["name"] for e in CATALOG))
+        return
+    documentation(args.write_index)
+    if args.write_index:
+        return
+    selected = {name for group in args.only for name in group.split(",")}
+    known = {e["name"] for e in CATALOG}
+    if selected - known:
+        raise RuntimeError(f"unknown recipes: {', '.join(sorted(selected - known))}")
+    binary = compiler()
+    for entry in CATALOG:
+        if selected and entry["name"] not in selected:
+            continue
+        print(f"Running {entry['name']}", flush=True)
+        execute(entry, binary, not args.generate_only)
+        if args.generate_only and entry["mode"] == "target" and entry["target"] != "docs":
+            print(f"OK: {entry['target']} generation is deterministic and fresh; package build was not run", flush=True)
+        else:
+            print(f"OK: {entry['outcome']}", flush=True)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (AssertionError, RuntimeError, subprocess.SubprocessError, OSError) as error:
+        print(f"gallery: {error}", file=sys.stderr)
+        raise SystemExit(1)

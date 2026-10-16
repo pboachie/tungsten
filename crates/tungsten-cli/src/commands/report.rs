@@ -3,10 +3,13 @@
 //! token budgets, diagnostics grouped by code and the changes since the
 //! last generation.
 //!
-//! Every emitter of this version runs in memory: the configured targets
-//! with their options, the others with defaults so that budgets are known
-//! before a target is enabled (only the configured targets' diagnostics
-//! are reported). Nothing but the `--html` file is written. The data is
+//! The emitters of the configured targets run in memory, with their
+//! options; the other known targets are listed as `not_configured` without
+//! running (`--all-targets` runs them with defaults so that budgets are
+//! known before a target is enabled; only the configured targets'
+//! diagnostics are reported). Configured `external` targets start their
+//! command unless `--no-external` is given. Nothing but the `--html` file
+//! is written. The data is
 //! deterministic: no timestamps, paths as given on the command line.
 
 use std::collections::BTreeMap;
@@ -43,13 +46,19 @@ const COUNTER: Counter = Counter::Estimate;
 const BUCKET: usize = 100;
 const LAST_BUCKET: usize = 600;
 
-pub(crate) fn run(args: &ReportArgs, env: &CliEnv) -> Report {
+pub(crate) fn run(args: &ReportArgs, env: &CliEnv, no_external: bool) -> Report {
     let mut compiled = input::compile(&args.input.path);
     let mut report = Report::new(CommandName::Report);
     let sources = std::mem::take(&mut compiled.workspace.sources);
     let mut diagnostics = compiled.diagnostics.0.clone();
-    let project = Project::of(&args.input.path, env);
-    let mut data = collect(&compiled, &project, &args.input.path, &mut diagnostics);
+    let project = Project::of(&args.input.path, env).with_no_external(no_external);
+    let mut data = collect(
+        &compiled,
+        &project,
+        &args.input.path,
+        args.all_targets,
+        &mut diagnostics,
+    );
     data.diagnostic_groups = groups(&diagnostics, &sources);
     data.summary.counts = check::count(&diagnostics);
     report.exit = if diagnostics.iter().any(|d| d.severity == Severity::Error) {
@@ -71,7 +80,7 @@ pub(crate) fn run(args: &ReportArgs, env: &CliEnv) -> Report {
             );
         }
     }
-    let path = args.input.path.display().to_string();
+    let path = tungsten_openapi::acquire::display_source(&args.input.path.to_string_lossy());
     report.human = human(&path, compiled.workspace.documents.len(), &data);
     report.result = Some(CommandResult::Report(Box::new(data)));
     report
@@ -89,6 +98,7 @@ fn collect(
     compiled: &Compiled,
     project: &Project,
     input: &Path,
+    all_targets: bool,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> ReportResult {
     let ir = compiled
@@ -121,7 +131,13 @@ fn collect(
     let Some(ir) = ir else {
         data.coverage.targets = target_names(&configured)
             .into_iter()
-            .map(|name| failed_coverage(&name, &configured))
+            .map(|name| {
+                if configured.contains(&name) {
+                    failed_coverage(&name, &configured)
+                } else {
+                    not_configured_coverage(&name)
+                }
+            })
             .collect();
         return data;
     };
@@ -129,15 +145,22 @@ fn collect(
     data.safety = safety_rows(ir, agent.as_ref());
     let mut runs: BTreeMap<String, Emitted> = BTreeMap::new();
     for name in target_names(&configured) {
+        let is_configured = configured.contains(&name);
+        if !is_configured && !all_targets {
+            continue;
+        }
         let emitted = emit_target(compiled, ir, project, &name);
-        if configured.contains(&name) {
+        if is_configured {
             diagnostics.extend(emitted.diagnostics.0.iter().cloned());
         }
         runs.insert(name, emitted);
     }
-    data.coverage.targets = runs
+    data.coverage.targets = target_names(&configured)
         .iter()
-        .map(|(name, e)| coverage(ir, name, e, &configured))
+        .map(|name| match runs.get(name) {
+            Some(e) => coverage(ir, name, e, &configured),
+            None => not_configured_coverage(name),
+        })
         .collect();
     if let Some(files) = runs
         .get("docs")
@@ -183,6 +206,7 @@ fn target_names(configured: &[String]) -> Vec<String> {
             names.push(name.clone());
         }
     }
+    names.sort();
     names
 }
 
@@ -203,6 +227,13 @@ fn failed_coverage(name: &str, configured: &[String]) -> TargetCoverage {
         warnings: 0,
         errors: 0,
     }
+}
+
+/// A known target absent from tungsten.yml, whose emitter was not run.
+fn not_configured_coverage(name: &str) -> TargetCoverage {
+    let mut c = failed_coverage(name, &[]);
+    c.status = CoverageStatus::NotConfigured;
+    c
 }
 
 fn namespaces(ir: &Ir) -> Vec<NamespaceCoverage> {
@@ -236,6 +267,9 @@ fn namespaces(ir: &Ir) -> Vec<NamespaceCoverage> {
 fn coverage(ir: &Ir, name: &str, e: &Emitted, configured: &[String]) -> TargetCoverage {
     let mut c = failed_coverage(name, configured);
     let Some(files) = &e.files else {
+        if e.external_skipped {
+            c.status = CoverageStatus::Skipped;
+        }
         return c;
     };
     // Also true for an external emitter, which has no entry in the registry.
@@ -784,6 +818,8 @@ fn human(path: &str, documents: usize, r: &ReportResult) -> String {
                 CoverageStatus::NotGenerated => "not generated".into(),
                 CoverageStatus::NoEmitter => "no emitter".into(),
                 CoverageStatus::Failed => "failed".into(),
+                CoverageStatus::NotConfigured => "not configured".into(),
+                CoverageStatus::Skipped => "skipped".into(),
             };
             format!("{} {state}", t.target)
         })

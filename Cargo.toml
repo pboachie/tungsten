@@ -4,7 +4,7 @@ members = ["crates/*"]
 exclude = ["runtimes", "examples"]
 
 [workspace.package]
-version = "0.1.2"
+version = "0.1.3"
 edition = "2024"
 rust-version = "1.95"
 license = "AGPL-3.0-only"
@@ -33,7 +33,10 @@ tungsten-emit-webmcp = { path = "crates/tungsten-emit-webmcp" }
 tungsten-emit-py = { path = "crates/tungsten-emit-py" }
 tungsten-emit-rs = { path = "crates/tungsten-emit-rs" }
 tungsten-emit-java = { path = "crates/tungsten-emit-java" }
+tungsten-emit-kotlin = { path = "crates/tungsten-emit-kotlin" }
 tungsten-emit-csharp = { path = "crates/tungsten-emit-csharp" }
+tungsten-emit-fsharp = { path = "crates/tungsten-emit-fsharp" }
+tungsten-emit-dart = { path = "crates/tungsten-emit-dart" }
 tungsten-emit-ruby = { path = "crates/tungsten-emit-ruby" }
 tungsten-tokens = { path = "crates/tungsten-tokens" }
 tungsten-lsp = { path = "crates/tungsten-lsp" }
@@ -44,7 +47,7 @@ schemars = { version = "1", features = ["preserve_order", "indexmap2"] }
 indexmap = { version = "2", features = ["serde"] }
 thiserror = "2"
 blake3 = "1"
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
 petgraph = "0.8"
 yaml-rust2 = "0.13"
 url = "2"

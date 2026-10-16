@@ -105,12 +105,19 @@
 //!
 //! ```json
 //! { "protocol": 1, "name": "go", "version": "0.3.1",
-//!   "options": { "type": "object", "properties": { "package": { "type": "string" } } } }
+//!   "options": { "type": "object", "properties": { "package": { "type": "string" } } },
+//!   "import_policy": true }
 //! ```
 //!
 //! `tungsten emitters` lists the emitters found on `PATH` (and, given a
 //! project, those its targets configure) with this information. `options` is
-//! an optional JSON Schema of the target options, for tooling.
+//! an optional JSON Schema of the target options, for tooling. `import_policy`
+//! is an optional flag: `true` declares that the emitter's runtime enforces
+//! the imported-operation policy carried by operations that come from Postman,
+//! cURL, `.http` or HAR input. The compiler asks (`--describe`) before it
+//! dispatches such a project to the emitter; an absent or `false` flag means
+//! the target is refused for that project, so protocol 1 emitters written
+//! before the flag keep working for every other project.
 //!
 //! ## Limits and failures
 //!
@@ -119,7 +126,12 @@
 //! not list more than 10000 files (TG0804). The compiler checks every path and writes only inside `out`,
 //! also through symlinks (TG0704). The process itself is not sandboxed: it
 //! runs with the user's privileges like a build script, so only configure
-//! emitters you trust.
+//! emitters you trust. The command starts on every command that emits in
+//! memory, not only on a writing `generate`: `generate --dry-run` and
+//! `--check`, `check --ci`, `diff` and `report` run it too (plain `check`
+//! and `ir dump` do not). `--no-external` (or `TUNGSTEN_NO_EXTERNAL=1`)
+//! skips every `external` target with a TG0807 notice, so a CI job can
+//! validate a manifest it does not trust.
 //!
 //! | Code | Meaning |
 //! |---|---|
@@ -129,6 +141,7 @@
 //! | TG0804 | the response is not valid protocol JSON |
 //! | TG0805 | a file path leaves the output directory or is reserved |
 //! | TG0806 | a diagnostic reported by the emitter |
+//! | TG0807 | the target was skipped: external emitters are off (`--no-external`) |
 
 mod base64;
 mod discover;

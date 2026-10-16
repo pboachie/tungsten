@@ -561,6 +561,20 @@ impl ClientCore {
         url_override: Option<&str>,
         step: Option<&MacroClaim>,
     ) -> Step<Prepared<'a>> {
+        if opts
+            .max_response_bytes
+            .or(self.inner.max_response_bytes)
+            .is_some_and(|limit| limit == 0 || limit > 9_007_199_254_740_991)
+        {
+            return Err(fail(
+                Diag::new(op.id.clone(), Category::ValidationFailed)
+                    .failed_parameter("max_response_bytes")
+                    .remediation(
+                        "max_response_bytes must be a positive safe integer; nothing was sent.",
+                    )
+                    .build(),
+            ));
+        }
         if let Some(problem) = descriptor_problem(op) {
             let id = if op.id.is_empty() {
                 "<unknown operation>"
@@ -615,7 +629,10 @@ impl ClientCore {
         let args = self.validate_args(op, supplied, purpose == Purpose::MacroPreview)?;
         crate::verify::check_poll_deadline(&op.id)?;
         self.check_key(op, opts.idempotency_key.as_deref(), purpose)?;
-        if purpose == Purpose::Call && step.is_none() {
+        if purpose == Purpose::Call
+            && step.is_none()
+            && matches!(op.agent.safety, Safety::Destructive | Safety::Irreversible)
+        {
             self.confirmed(
                 &ConfirmTarget {
                     id: &op.id,
@@ -658,12 +675,15 @@ impl ClientCore {
                 }
             }
         }
-        let root = Value::Object(args.clone());
-        for path in sensitive_request_paths(op) {
-            let mut found = Vec::new();
-            values_at(&root, &split_path(path), &mut found, 0);
-            for value in found {
-                secrets.insert(value);
+        let sensitive_paths = sensitive_request_paths(op);
+        if !sensitive_paths.is_empty() {
+            let root = Value::Object(args.clone());
+            for path in sensitive_paths {
+                let mut found = Vec::new();
+                values_at(&root, &split_path(path), &mut found, 0);
+                for value in found {
+                    secrets.insert(value);
+                }
             }
         }
 

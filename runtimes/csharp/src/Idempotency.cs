@@ -9,13 +9,16 @@ using System.Text.Json.Nodes;
 namespace Tungsten.Runtime;
 
 /// <summary>Keeps idempotency keys for the life of the process.</summary>
-public sealed class MemoryIdempotencyStore : IIdempotencyStore
+public sealed class MemoryIdempotencyStore : IAtomicIdempotencyStore
 {
     private readonly ConcurrentDictionary<(string, string), string> keys = new();
 
     public string? Get(string scope, string logicalId) => keys.TryGetValue((scope, logicalId), out var k) ? k : null;
 
     public void Put(string scope, string logicalId, string key) => keys[(scope, logicalId)] = key;
+
+    public string Reserve(string scope, string logicalId, string candidate) =>
+        keys.AddOrUpdate((scope, logicalId), candidate, (_, existing) => existing.Length > 0 ? existing : candidate);
 }
 
 internal static class Keys

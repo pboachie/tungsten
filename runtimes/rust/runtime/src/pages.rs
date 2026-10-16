@@ -45,6 +45,12 @@ impl PageState {
     }
 }
 
+/// The remediation of the error that ends an iteration stopped by
+/// `CallOptions::max_pages` while the server still offers another page;
+/// callers match it to tell that stop from a failure.
+pub const MAX_PAGES_REACHED: &str =
+    "Pagination reached max_pages before another request. Increase max_pages to continue.";
+
 /// An asynchronous page iterator: call [`Pages::next`] until it returns
 /// `None`. After an error item it returns `None`.
 pub struct Pages {
@@ -146,7 +152,11 @@ impl ClientCore {
         }
         if opts.max_pages.is_some_and(|max| max > 0 && st.count >= max) {
             st.done = true;
-            return Some(Err(Error::new(Diag::new(op.id.clone(), Category::UnexpectedResponse).remediation("Pagination reached max_pages before another request. Increase max_pages to continue.").build())));
+            return Some(Err(Error::new(
+                Diag::new(op.id.clone(), Category::UnexpectedResponse)
+                    .remediation(MAX_PAGES_REACHED)
+                    .build(),
+            )));
         }
         if st.count == 0
             && let Some(PaginationDescriptor::Cursor { request_param, .. }) = &op.pagination
@@ -175,6 +185,7 @@ impl ClientCore {
                     } else {
                         None
                     },
+                    None,
                 ),
             )
             .await
@@ -329,9 +340,7 @@ impl ClientCore {
                     "Pagination detected a repeated cursor or page URL. Fix the server's next-page value before continuing.",
                 )
             } else if opts.max_pages.is_some_and(|max| max > 0 && st.count >= max) {
-                Some(
-                    "Pagination reached max_pages before another request. Increase max_pages to continue.",
-                )
+                Some(MAX_PAGES_REACHED)
             } else {
                 st.seen.insert(key);
                 None

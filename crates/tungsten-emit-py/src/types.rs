@@ -177,7 +177,18 @@ impl Uses {
             imports.add("collections.abc", a);
         }
         for t in &self.typing {
-            imports.add("typing", t);
+            let module = if (plan.python_310 && *t == "NotRequired")
+                || (plan.python_compat && *t == "TypeAliasType")
+            {
+                "typing_extensions"
+            } else {
+                "typing"
+            };
+            if plan.python_compat && *t == "TypeAliasType" {
+                imports.add_as(module, t, "_TypeAliasType");
+            } else {
+                imports.add(module, t);
+            }
         }
         for p in &self.pydantic {
             imports.add("pydantic", p);
@@ -934,7 +945,16 @@ fn write_named(w: &mut Writer, cx: &Cx<'_, '_>, nt: &NamedType, name: &str) {
         }
         shape => {
             let t = cx.shape(shape, Flavor::Schema);
-            w.line(format!("type {name} = {}", t.text()));
+            if cx.plan.python_compat {
+                cx.typing("TypeAliasType");
+                w.line(format!(
+                    "{name} = _TypeAliasType({}, {})",
+                    string_lit(name),
+                    string_lit(&t.text())
+                ));
+            } else {
+                w.line(format!("type {name} = {}", t.text()));
+            }
             docstring(w, &doc);
         }
     }

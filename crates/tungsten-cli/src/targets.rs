@@ -12,8 +12,11 @@ use tungsten_config::TungstenConfig;
 use tungsten_core::Diagnostic;
 use tungsten_emit::{Emitter, TargetConfig};
 use tungsten_emit_csharp::CSharpEmitter;
+use tungsten_emit_dart::DartEmitter;
 use tungsten_emit_docs::DocsEmitter;
+use tungsten_emit_fsharp::FSharpEmitter;
 use tungsten_emit_java::JavaEmitter;
+use tungsten_emit_kotlin::KotlinEmitter;
 use tungsten_emit_mcp::McpEmitter;
 use tungsten_emit_py::PythonEmitter;
 use tungsten_emit_rs::RustEmitter;
@@ -29,7 +32,10 @@ static WEBMCP: WebMcpEmitter = WebMcpEmitter;
 static PYTHON: PythonEmitter = PythonEmitter;
 static RUST: RustEmitter = RustEmitter;
 static JAVA: JavaEmitter = JavaEmitter;
+static KOTLIN: KotlinEmitter = KotlinEmitter;
 static CSHARP: CSharpEmitter = CSharpEmitter;
+static FSHARP: FSharpEmitter = FSharpEmitter;
+static DART: DartEmitter = DartEmitter;
 static RUBY: RubyEmitter = RubyEmitter;
 
 /// The emitter for a target id, if this version has one.
@@ -42,10 +48,55 @@ pub fn emitter(id: &str) -> Option<&'static dyn Emitter> {
         "python" => Some(&PYTHON),
         "rust" => Some(&RUST),
         "java" => Some(&JAVA),
+        "kotlin" => Some(&KOTLIN),
         "csharp" => Some(&CSHARP),
+        "fsharp" => Some(&FSHARP),
+        "dart" => Some(&DART),
         "ruby" => Some(&RUBY),
         _ => None,
     }
+}
+
+/// Whether built-in target `id` enforces imported-operation policy in its
+/// generated runtime. Only these may be generated for a project whose
+/// operations come from Postman, cURL, `.http` or HAR input; an external
+/// emitter opts in through `import_policy` in its `--describe` response.
+pub(crate) fn serves_import_policy(id: &str) -> bool {
+    matches!(
+        id,
+        "typescript" | "python" | "rust" | "mcp" | "webmcp" | "docs"
+    )
+}
+
+/// The refusal of target `name` for a project with imported-operation
+/// policy, one target at a time.
+pub(crate) fn import_policy_refusal(name: &str) -> Diagnostic {
+    Diagnostic::error(
+        "TG0705",
+        format!("target `{name}` does not declare enforced imported-operation policy support"),
+    )
+    .with_help(
+        "select a supported TypeScript, Python, Rust, MCP, WebMCP or docs target, or an \
+         external emitter that declares `import_policy` (`tungsten init --resume --add-targets \
+         <targets>` adds one); imported-policy metadata must not be discarded. `tungsten \
+         explain TG0705` has the details",
+    )
+}
+
+/// A protocol-1 external emitter must explicitly declare policy enforcement
+/// before receiving imported operations.
+pub(crate) fn external_import_policy_refusal(name: &str) -> Diagnostic {
+    Diagnostic::error(
+        "TG0808",
+        format!(
+            "external target `{name}` does not declare enforced imported-operation policy support"
+        ),
+    )
+    .with_help(
+        "use an emitter whose --describe response declares `import_policy: true` and \
+         enforces imported-operation policy, or select a supported TypeScript, Python, \
+         Rust, MCP, WebMCP or docs target; `tungsten explain TG0808` has the details",
+    )
 }
 
 /// The agent tool names target `id` serves (tool name → operation id or
@@ -61,13 +112,15 @@ pub fn tool_names(id: &str, ir: &Ir) -> BTreeMap<String, String> {
 }
 
 /// The target id for a name given on the command line: the ids themselves
-/// and the short forms `ts`, `py`, `rs`, `cs` and `rb`.
+/// and the short forms `ts`, `py`, `rs`, `cs`, `fs`, `kt` and `rb`.
 pub fn canonical(name: &str) -> &str {
     match name {
         "ts" => "typescript",
         "py" => "python",
         "rs" => "rust",
         "cs" => "csharp",
+        "fs" => "fsharp",
+        "kt" => "kotlin",
         "rb" => "ruby",
         other => other,
     }
@@ -126,6 +179,18 @@ pub fn target_config_for(
         out_dir: crate::input::join(base_dir, &out),
         options,
     }
+}
+
+/// TG0807: an `external` target was not run because external emitters are
+/// off (`--no-external` or `TUNGSTEN_NO_EXTERNAL=1`).
+pub(crate) fn external_skipped(name: &str, manifest: &str) -> Diagnostic {
+    Diagnostic::info(
+        "TG0807",
+        format!(
+            "external target `{name}` was not run: external emitters are off (--no-external or TUNGSTEN_NO_EXTERNAL)"
+        ),
+    )
+    .at(manifest, format!("/targets/{name}"), None)
 }
 
 /// TG0702: the target has no emitter in this version.

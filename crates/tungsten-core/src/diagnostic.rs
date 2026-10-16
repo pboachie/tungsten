@@ -1,18 +1,22 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! Diagnostics with stable codes.
 //!
-//! Code ranges: `TG01xx` parsing, `TG02xx` refs and cycles,
-//! `TG03xx` type normalization, `TG04xx` naming, `TG05xx` pagination/auth
-//! inference, `TG06xx` manifests, `TG07xx` emitter limits, `TG08xx`
-//! external emitters, `TG09xx` staleness/CI and overlay suggestions,
-//! `TG10xx` the SDK emitters built on `tungsten_emit::sdk` in blocks of ten:
-//! `TG1000`-`TG1009` the shared SDK plan and descriptor document (reserved),
-//! `TG1010` Java, `TG1020` C#, `TG1030` Kotlin, `TG1040` Swift, `TG1050`
-//! PHP, `TG1060` Ruby, `TG1070` Dart, `TG1080`-`TG1099` reserved for later
-//! languages. Within a language block (base B): B+0 invalid target option,
-//! B+1 schema without a native type, B+2 macro not in the canonical form,
-//! B+3 OpenID Connect sent as a bearer token, B+4 success bodies that differ
-//! by status, B+5 discriminated variant without a tag value, B+6 to B+9
+//! Code ranges: `TG01xx` parsing, `TG02xx` refs and cycles, `TG03xx` type
+//! normalization, `TG04xx` naming, `TG05xx` pagination/auth inference,
+//! `TG06xx` manifests, `TG07xx` emitter limits, `TG08xx` external emitters,
+//! `TG09xx` staleness/CI, overlay suggestions and the response-contract
+//! audit (`TG0930`-`TG0939`), `TG10xx` the SDK emitters
+//! built on `tungsten_emit::sdk` in blocks of ten: `TG1000`-`TG1009` the
+//! shared SDK plan and descriptor document (reserved), `TG1010` Java,
+//! `TG1020` C#, `TG1030` Kotlin, `TG1040` Swift, `TG1050` PHP, `TG1060` Ruby,
+//! `TG1070` Dart, `TG1080` F#, `TG1090`-`TG1099` reserved for later
+//! languages; `TG12xx` request import (saved cURL and `.http`). The
+//! importers, the request-contract engine and the Go emitter use their own
+//! `PM`, `HR`, `TC` and `GO` prefixes. Within a language block (base B):
+//! B+0 invalid target option, B+1 schema without a native type, B+2 macro not
+//! in the canonical form, B+3 OpenID Connect sent as a bearer token, B+4
+//! success bodies that differ by status, B+5 discriminated variant without a
+//! tag value, B+6 to B+9
 //! language-specific. The registry of codes lives in [`codes`].
 
 use crate::source::{SourceMap, Span};
@@ -194,6 +198,24 @@ pub mod codes {
             "TG0112",
             "apiKey header scheme inferred from a credential header parameter",
         ),
+        ("TG0120", "invalid remote input URL or acquisition policy"),
+        ("TG0121", "remote input fetch failed or exceeded its limits"),
+        (
+            "TG0122",
+            "remote input SHA256 differs from its pin or conversion",
+        ),
+        ("TG0123", "remote input cache is missing, invalid or unsafe"),
+        ("TG0130", "invalid Git input reference"),
+        ("TG0131", "Git acquisition or ref resolution failed"),
+        ("TG0132", "Git input exceeds its acquisition safety budget"),
+        (
+            "TG0133",
+            "Git input pin or cache is missing, invalid or unsafe",
+        ),
+        (
+            "TG0134",
+            "Git discovery requires exactly one input document",
+        ),
         ("TG0201", "unresolvable $ref"),
         (
             "TG0202",
@@ -258,6 +280,10 @@ pub mod codes {
         ("TG0508", "malformed operation element ignored"),
         ("TG0509", "unsupported security scheme ignored"),
         (
+            "TG0510",
+            "path item field defined both beside its $ref and in the target",
+        ),
+        (
             "TG0530",
             "event stream declares no schema; events decoded as any JSON value",
         ),
@@ -317,6 +343,10 @@ pub mod codes {
         (
             "TG0704",
             "output path leaves the output directory or is reserved",
+        ),
+        (
+            "TG0705",
+            "target does not declare enforced imported-operation policy support; not generated",
         ),
         (
             "TG0710",
@@ -443,6 +473,14 @@ pub mod codes {
             "external emitter returned a path outside the output directory",
         ),
         ("TG0806", "diagnostic reported by an external emitter"),
+        (
+            "TG0807",
+            "external target not run: external emitters are off (--no-external)",
+        ),
+        (
+            "TG0808",
+            "external emitter does not declare imported-operation policy enforcement",
+        ),
         ("TG0901", "generated output is stale relative to its inputs"),
         (
             "TG0902",
@@ -455,6 +493,18 @@ pub mod codes {
         (
             "TG0921",
             "overlay suggest: no overlay action can fix this diagnostic code",
+        ),
+        (
+            "TG0930",
+            "response-contract audit: a success response declares a JSON media type without a schema; the value is typed as any",
+        ),
+        (
+            "TG0931",
+            "response-contract audit: a success response schema is a free-form object (no properties, unconstrained additionalProperties); typed as a mapping of any values",
+        ),
+        (
+            "TG0932",
+            "response-contract audit: traversal budget exhausted; audit is incomplete",
         ),
         ("TG1010", "invalid java target option; the default is used"),
         (
@@ -501,6 +551,30 @@ pub mod codes {
             "TG1025",
             "discriminated union variant without a tag value: the csharp target tries variants in order",
         ),
+        (
+            "TG1030",
+            "invalid kotlin target option; the default is used",
+        ),
+        (
+            "TG1031",
+            "schema has no Kotlin type in the kotlin target; the runtime's JSON value is used",
+        ),
+        (
+            "TG1032",
+            "macro is not in the canonical form; the kotlin target leaves it out",
+        ),
+        (
+            "TG1033",
+            "OpenID Connect scheme is sent as a bearer token by the kotlin target",
+        ),
+        (
+            "TG1034",
+            "different success bodies by status: the kotlin typed result is the JSON value",
+        ),
+        (
+            "TG1035",
+            "discriminated union variant without a tag value: the kotlin target tries variants in order",
+        ),
         ("TG1060", "invalid Ruby target option; default used"),
         (
             "TG1061",
@@ -522,9 +596,133 @@ pub mod codes {
             "TG1065",
             "discriminated union variant without a tag value; the Ruby SDK tries the variants in order",
         ),
+        ("TG1070", "invalid dart target option; the default is used"),
+        (
+            "TG1071",
+            "schema has no Dart type in the dart target; the JSON value (Object?) is used",
+        ),
+        (
+            "TG1072",
+            "macro is not in the canonical form; the dart target leaves it out",
+        ),
+        (
+            "TG1073",
+            "OpenID Connect scheme is sent as a bearer token by the dart target",
+        ),
+        (
+            "TG1074",
+            "different success bodies by status: the dart typed result is the JSON value (Object?)",
+        ),
+        (
+            "TG1075",
+            "discriminated union variant without a tag value: the dart target tries variants in order",
+        ),
+        (
+            "TG1080",
+            "invalid fsharp target option; the default is used",
+        ),
+        (
+            "TG1081",
+            "schema has no F# type in the fsharp target; the runtime's JsonNode is used",
+        ),
+        (
+            "TG1082",
+            "macro is not in the canonical form; the fsharp target leaves it out",
+        ),
+        (
+            "TG1083",
+            "OpenID Connect scheme is sent as a bearer token by the fsharp target",
+        ),
+        (
+            "TG1084",
+            "different success bodies by status: the fsharp typed result is the JsonNode",
+        ),
+        (
+            "TG1085",
+            "discriminated union variant without a tag value: the fsharp target tries variants in order",
+        ),
+        (
+            "TG1201",
+            "saved cURL or .http request could not be imported",
+        ),
+    ];
+
+    /// Codes of the importers (Postman `PM`, HAR `HR`), the request-contract
+    /// engine (`TC`) and the Go emitter (`GO`). They do not carry the `TG`
+    /// prefix; `tungsten explain` reads this table next to [`REGISTRY`].
+    /// Sorted by code.
+    pub const SUBSYSTEM_REGISTRY: &[(&str, &str)] = &[
+        ("GO001", "macro is not emitted by the Go SDK"),
+        (
+            "GO002",
+            "OpenID Connect scheme is sent as a bearer token by the Go SDK",
+        ),
+        (
+            "GO003",
+            "different success bodies by status: the Go typed result is json.RawMessage",
+        ),
+        ("GO004", "invalid go target option"),
+        ("GO005", "the generated Go source is invalid"),
+        (
+            "GO006",
+            "pagination items path does not resolve to an array in the success schema",
+        ),
+        (
+            "HR001",
+            "HAR capture exceeds the byte, nesting or node limit",
+        ),
+        ("HR002", "HAR capture is malformed or unsupported"),
+        ("HR003", "selected HAR origin is absent or noncanonical"),
+        (
+            "HR006",
+            "reviewed HAR route templates are ambiguous or not whole-segment",
+        ),
+        (
+            "PM001",
+            "Postman collection exceeds an import budget or nesting limit",
+        ),
+        ("PM002", "not a Postman Collection v2.1 item tree"),
+        (
+            "PM003",
+            "Postman API key authentication lacks an explicit name or location",
+        ),
+        (
+            "PM004",
+            "Postman dynamic variable cannot be resolved offline",
+        ),
+        (
+            "PM005",
+            "Postman request URL or variable cannot be resolved to a fixed shape",
+        ),
+        ("PM006", "Postman body or response example is not JSON"),
+        (
+            "PM007",
+            "duplicate Postman operations mix unknown and explicit authentication",
+        ),
+        ("PM008", "every Postman request was omitted as unsupported"),
+        ("TC001", "request evidence exceeds the byte limit"),
+        ("TC002", "request evidence is not valid JSON"),
+        (
+            "TC003",
+            "request evidence or reviewed overrides are invalid",
+        ),
+        (
+            "TC004",
+            "request evidence has an unsupported method or duplicate path placeholders",
+        ),
+        ("TC005", "evidence source id is not an opaque identifier"),
+        ("TC006", "unsupported schema keyword in structural evidence"),
+        (
+            "TC007",
+            "reviewed override uses an unstable parameter index pointer",
+        ),
     ];
 
     pub fn describe(code: &str) -> Option<&'static str> {
-        REGISTRY.iter().find(|(c, _)| *c == code).map(|(_, d)| *d)
+        REGISTRY
+            .iter()
+            .chain(SUBSYSTEM_REGISTRY)
+            .find(|(c, _)| *c == code)
+            .map(|(_, d)| *d)
     }
 }

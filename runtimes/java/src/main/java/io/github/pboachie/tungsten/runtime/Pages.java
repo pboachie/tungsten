@@ -66,7 +66,9 @@ public final class Pages implements Iterable<Result<Page<Object>>>, Iterator<Res
     static final class State {
         Object args;
         String overrideUrl;
-        Object previousCursor = Json.ABSENT;
+        final java.util.Set<String> seen = new java.util.HashSet<>();
+        final ClientCore.PageTrace trace = new ClientCore.PageTrace();
+        boolean started;
         boolean done;
         TungstenException pendingError;
 
@@ -109,9 +111,20 @@ public final class Pages implements Iterable<Result<Page<Object>>>, Iterator<Res
         if (st.done) {
             return null;
         }
+        OperationDescriptor.Pagination first = op.pagination();
+        if (!st.started) {
+            st.started = true;
+            if (first != null && "cursor".equals(first.style())) {
+                Object initial = st.arg(Args.argName(op, first.requestParam()));
+                if (usable(initial)) {
+                    st.seen.add(Json.canonical(initial));
+                }
+            }
+        }
+        boolean linked = first != null && "link_header".equals(first.style());
         Result.Ok<Object> response;
         try {
-            response = c.callWith(op, st.args, opts, st.overrideUrl, claim);
+            response = c.callWith(op, st.args, opts, st.overrideUrl, claim, linked ? st.trace : null);
         } catch (TungstenException e) {
             st.done = true;
             return e.toResult();
@@ -145,11 +158,8 @@ public final class Pages implements Iterable<Result<Page<Object>>>, Iterator<Res
                     if (pg.hasMoreField() != null && !pg.hasMoreField().isEmpty()) {
                         finished = Boolean.FALSE.equals(Json.at(body, pg.hasMoreField()));
                     }
-                    boolean repeated = st.previousCursor != Json.ABSENT && cursor != Json.ABSENT
-                            && Json.canonical(st.previousCursor).equals(Json.canonical(cursor));
-                    if (cursor != Json.ABSENT && !finished && !repeated) {
+                    if (cursor != Json.ABSENT && !finished) {
                         next = cursor;
-                        st.previousCursor = cursor;
                         st.setArg(Args.argName(op, pg.requestParam()), cursor);
                     }
                     break;
@@ -183,7 +193,8 @@ public final class Pages implements Iterable<Result<Page<Object>>>, Iterator<Res
                     if (link == null) {
                         break;
                     }
-                    String base = st.overrideUrl != null ? st.overrideUrl : c.baseUrl;
+                    String base = st.trace.lastUrl != null ? st.trace.lastUrl : st.overrideUrl != null ? st.overrideUrl : c.baseUrl;
+                    st.seen.add(base);
                     URI resolved = Urls.resolve(base, link);
                     URI origin = null;
                     try {
@@ -192,7 +203,9 @@ public final class Pages implements Iterable<Result<Page<Object>>>, Iterator<Res
                         // not followed below
                     }
                     if (resolved != null && origin != null && origin.getScheme() != null && Urls.sameOrigin(origin, resolved)) {
-                        st.overrideUrl = resolved.toString();
+                        String target = resolved.toString();
+                        int hash = target.indexOf('#');
+                        st.overrideUrl = hash < 0 ? target : target.substring(0, hash);
                         next = st.overrideUrl;
                         break;
                     }
@@ -204,6 +217,16 @@ public final class Pages implements Iterable<Result<Page<Object>>>, Iterator<Res
                 }
                 default:
                     break;
+            }
+        }
+        if (next != null && st.pendingError == null) {
+            String key = pg != null && "link_header".equals(pg.style()) ? (String) next : Json.canonical(next);
+            if (!st.seen.add(key)) {
+                next = null;
+                st.pendingError = c.diag(op.id(), Category.UNEXPECTED_RESPONSE).status(response.meta().status())
+                        .requestId(response.meta().requestId())
+                        .remedy("Pagination detected a repeated cursor or page URL. Fix the server's next-page value before continuing.")
+                        .attempts(response.meta().attempts()).fail();
             }
         }
         TungstenException bad = checkItems(c, op, itemsField, items, response);

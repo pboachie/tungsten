@@ -437,6 +437,11 @@ internal static class Serialize
                         {
                             if (Binary.TryFrom(x, out var bin))
                             {
+                                if (bin.ContentType is not null && !ValidMediaType(bin.ContentType))
+                                {
+                                    throw new SerializationError(parameter, "multipart file content types that are valid media types", v);
+                                }
+
                                 shown.Add((JsonNode?)JsonValue.Create(BinaryDisplay(bin.Data.Length, bin.ContentType)));
                                 parts.Add(new MultipartPart(kv.Key, PartKind.File, "", bin.Data, bin.Filename ?? kv.Key, bin.ContentType ?? "application/octet-stream"));
                             }
@@ -517,6 +522,20 @@ internal static class Serialize
     /// <summary>An RFC 9110 token.</summary>
     internal static bool ValidHeaderName(string name) =>
         name.Length > 0 && name.All(c => c < 128 && IsUnreserved((byte)c, "!#$%&'*+-.^_`|~"));
+
+    /// <summary>`type/subtype` tokens, optionally followed by `;` parameters, in visible ASCII, space and tab.</summary>
+    internal static bool ValidMediaType(string value)
+    {
+        if (!value.All(c => c == '\t' || (c >= 0x20 && c <= 0x7e)))
+        {
+            return false;
+        }
+
+        var semi = value.IndexOf(';');
+        var head = (semi < 0 ? value : value[..semi]).Trim();
+        var slash = head.IndexOf('/');
+        return slash > 0 && ValidHeaderName(head[..slash]) && ValidHeaderName(head[(slash + 1)..]);
+    }
 
     /// <summary>Visible ASCII, tab, space and Latin-1 characters.</summary>
     internal static bool ValidHeaderValue(string value) =>

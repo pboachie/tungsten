@@ -17,3 +17,4 @@ targets:
   python: { out: ../../.cache/out/discord/python }
   rust: { out: ../../.cache/out/discord/rust }
   docs: { out: ../../.cache/out/discord/docs }
+  mcp: { out: ../../.cache/out/discord/mcp }

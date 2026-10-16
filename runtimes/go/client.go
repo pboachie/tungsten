@@ -14,7 +14,7 @@ import (
 )
 
 // Version of this runtime, sent as X-Tungsten-Runtime: tungsten-go/<version>.
-const Version = "0.1.0"
+const Version = "0.1.3"
 
 // ClientCore is the engine behind every generated client: pre-flight
 // validation, auth, idempotency keys, confirmation rules, sending with
@@ -22,6 +22,7 @@ const Version = "0.1.0"
 // envelope. It is safe for concurrent use. API and transport failures are
 // returned as *Error values carrying the envelope.
 type ClientCore struct {
+	maxResponseBytes  *int64
 	redirectsDisabled bool
 	api               *APIDescriptor
 	auth              AuthConfig
@@ -99,7 +100,13 @@ func NewClientCore(api *APIDescriptor, options ClientOptions) (*ClientCore, erro
 		}
 		key = random
 	}
+	maximum := options.MaxResponseBytes
+	if maximum != nil {
+		copy := *maximum
+		maximum = &copy
+	}
 	c := &ClientCore{
+		maxResponseBytes:  maximum,
 		redirectsDisabled: api.Redirects == RedirectNone || options.Redirects == RedirectNone,
 		api:               api,
 		auth:              options.Auth,
@@ -279,7 +286,7 @@ func (c *ClientCore) callWithPages(ctx context.Context, op *OperationDescriptor,
 	}
 	response, err := c.send(ctx, prepared, opts)
 	if err != nil {
-		if err.Diagnostic.HTTPStatus != nil && *err.Diagnostic.HTTPStatus == 401 && prepared.oauth != "" {
+		if err.Diagnostic.HTTPStatus != nil && *err.Diagnostic.HTTPStatus == 401 && !(err.Diagnostic.Category == UnexpectedResponse && err.Diagnostic.Code != nil && *err.Diagnostic.Code == "RESPONSE_TOO_LARGE") && prepared.oauth != "" {
 			response, err = c.resendRejected(ctx, prepared, err, opts)
 		}
 		if err != nil {
@@ -400,4 +407,11 @@ func (c *ClientCore) emit(d *Diagnostic) {
 	}
 	defer func() { _ = recover() }()
 	c.onDiagnostic(d)
+}
+
+func (c *ClientCore) responseLimit(opts CallOptions) *int64 {
+	if opts.MaxResponseBytes != nil {
+		return opts.MaxResponseBytes
+	}
+	return c.maxResponseBytes
 }

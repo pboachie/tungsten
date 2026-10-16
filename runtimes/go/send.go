@@ -98,9 +98,9 @@ func (c *ClientCore) sendWith(ctx context.Context, p *prepared, opts CallOptions
 		method := p.method
 		body := &p.payload
 		headers := append([]headerEntry(nil), p.headers.entries...)
-		outcome := attempt(ctx, c.http, attemptRequest{url: target, method: method, headers: headers, body: body, timeout: timeout, stream: stream, idle: c.streamIdle(stream)})
+		outcome := attempt(ctx, c.http, attemptRequest{url: target, method: method, headers: headers, body: body, timeout: timeout, stream: stream, idle: c.streamIdle(stream), maxResponseBytes: c.responseLimit(opts)})
 		for hops := 0; !c.redirectsDisabled && !mutation && hops < maxRedirects; hops++ {
-			if outcome.kind != outcomeResponse || !isRedirect(outcome.status) {
+			if outcome.kind != outcomeResponse || outcome.bodyFailure == "oversized" || !isRedirect(outcome.status) {
 				break
 			}
 			next, shown, ok := redirectTarget(p, target, outcome.headers["location"])
@@ -122,7 +122,7 @@ func (c *ClientCore) sendWith(ctx context.Context, p *prepared, opts CallOptions
 			}
 			rctx.URL = shown
 			rctx.Method = method
-			outcome = attempt(ctx, c.http, attemptRequest{url: target, method: method, headers: headers, body: body, timeout: timeout, stream: stream, idle: c.streamIdle(stream)})
+			outcome = attempt(ctx, c.http, attemptRequest{url: target, method: method, headers: headers, body: body, timeout: timeout, stream: stream, idle: c.streamIdle(stream), maxResponseBytes: c.responseLimit(opts)})
 		}
 		cctx := &callContext{api: c.api, op: op, key: p.key, hasKey: p.hasKey, keyHeader: p.keyHeader, attempts: attempts, check: check}
 		result, err := c.classifyResponse(cctx, p, outcome, rctx, timeout)
@@ -279,6 +279,15 @@ func (c *ClientCore) classifyResponse(cctx *callContext, p *prepared, outcome at
 	if v := op.Agent.Verify; v != nil {
 		hint = strPtr(fmt.Sprintf("Call %s to read the current state.", v.Operation))
 	}
+	if outcome.bodyFailure == "oversized" {
+		after := "The read is incomplete."
+		if mutation {
+			after = "The call may have taken effect; inspect API state before retrying."
+		}
+		return nil, newDiag(op.ID, UnexpectedResponse).code(strPtr("RESPONSE_TOO_LARGE")).
+			status(status).requestID(requestID).retry(RetryNever).next(hint).attempts(attempts).
+			remedy("Response exceeded maxResponseBytes and was abandoned. " + after).err()
+	}
 	if success && !outcome.bodyOK {
 		failure := "broken"
 		if outcome.bodyFailure == "timeout" {
@@ -378,6 +387,8 @@ func (c *ClientCore) classifyResponse(cctx *callContext, p *prepared, outcome at
 		HasValue: decoded.has,
 		Raw:      decoded.value,
 		Meta:     ResponseMeta{Status: status, Headers: headers, RequestID: requestID, Attempts: attempts},
+		body:     decoded.body,
+		bodyInfo: decoded.info,
 	}}, nil
 }
 

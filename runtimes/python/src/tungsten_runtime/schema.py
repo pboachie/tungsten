@@ -29,24 +29,34 @@ import binascii
 import dataclasses
 import math
 import re
+import sys
+import warnings
 from collections.abc import Callable, Mapping, Sequence
 from types import NoneType, UnionType
 from typing import (
     Annotated,
     Any,
     Literal,
-    Self,
-    TypeAliasType,
+    TypeVar,
     Union,
     cast,
-    dataclass_transform,
     get_args,
     get_origin,
     get_type_hints,
 )
 
+if sys.version_info >= (3, 12):
+    from typing import Self, TypeAliasType, dataclass_transform
+else:
+    from typing_extensions import Self, TypeAliasType, dataclass_transform
+
+from typing_extensions import TypeAliasType as BackportTypeAliasType
+
 from .sentinels import UNSET
 from .types import Invalid, Issue, Valid
+
+T = TypeVar("T")
+_AliasType = TypeAliasType | BackportTypeAliasType
 
 Mode = Literal["response", "json", "plain"]
 Path = list[str | int]
@@ -201,32 +211,34 @@ def _same(a: object, b: object) -> bool:
     return type(cast("object", a)) is type(b) and a == b
 
 
-type Bytes = bytes
+#: The scalar kinds are aliases of their own (``TypeAliasType`` objects, not
+#: the plain types) so ``_KINDS`` can tell them apart by identity.
+Bytes = TypeAliasType("Bytes", bytes)
 """Bytes; a base64 string in JSON. As a request argument it takes bytes; a
 file object or a ``(filename, content[, content_type])`` tuple only in a
 multipart body, where the runtime reads it."""
 
-type Binary = bytes
+Binary = TypeAliasType("Binary", bytes)
 """A whole binary request body: bytes, or a file object or ``(filename,
 content[, content_type])`` tuple the runtime reads."""
 
-type Float = float
+Float = TypeAliasType("Float", float)
 """A number: finite, as in JSON (``nan`` and infinities are not numbers
 there, and the TypeScript SDK rejects them)."""
 
-type Int = int
+Int = TypeAliasType("Int", int)
 """An integer. JSON Schema's ``integer`` is any number without a fractional
 part, so ``1.0`` is the integer ``1``; ``1.5``, ``"1"`` and ``True`` are not
 integers."""
 
-type Int32 = int
+Int32 = TypeAliasType("Int32", int)
 """A 32-bit integer (see ``Int``)."""
 
-type Never = Any
+Never = TypeAliasType("Never", Any)
 """A schema no value satisfies."""
 
 # Aliases of the scalar kinds above are told apart by identity.
-_KINDS: dict[TypeAliasType, str] = {
+_KINDS: dict[_AliasType, str] = {
     Bytes: "bytes",
     Binary: "binary",
     Float: "float",
@@ -265,7 +277,7 @@ def field(
 
 
 @dataclass_transform(kw_only_default=True, field_specifiers=(field,))
-def model[T](
+def model(
     *, extra: Literal["forbid", "allow"] | Callable[[], Any] = "forbid"
 ) -> Callable[[type[T]], type[T]]:
     """Makes a class a model: a ``kw_only`` dataclass whose members are
@@ -602,13 +614,16 @@ class _AliasNode(_Node):
     """A ``type`` alias, read on first use (aliases may refer to each other
     and to themselves)."""
 
-    def __init__(self, alias: TypeAliasType) -> None:
+    def __init__(self, alias: _AliasType) -> None:
         self.alias = alias
         self.node: _Node | None = None
 
     def check(self, value: object, path: Path, mode: Mode, issues: list[Issue]) -> Any:
         if self.node is None:
-            self.node = _compile(self.alias.__value__)
+            annotation = self.alias.__value__
+            if isinstance(annotation, str):
+                annotation = eval(annotation, vars(sys.modules[self.alias.__module__ or __name__]))
+            self.node = _compile(annotation)
         return self.node.check(value, path, mode, issues)
 
 
@@ -650,6 +665,12 @@ _FORMATS: dict[str, re.Pattern[str]] = {
         rf"|{_H16}:(?:(?::{_H16}){{1,6}})|:(?:(?::{_H16}){{1,7}}|:))"
     ),
 }
+
+
+#: Longest string (in characters) a spec ``pattern`` is matched against. Python's
+#: ``re`` cannot be interrupted, so a longer value skips the pattern check (with
+#: a warning) rather than risking unbounded backtracking.
+MAX_PATTERN_SUBJECT = 64 * 1024
 
 
 def _compile_pattern(source: str) -> re.Pattern[str] | None:
@@ -728,6 +749,13 @@ class _CheckedNode(_Node):
                 return _fail(issues, path, *problem)
         if isinstance(subject, str):
             for source, compiled in self.patterns:
+                if compiled is not None and len(subject) > MAX_PATTERN_SUBJECT:
+                    warnings.warn(
+                        f"String longer than {MAX_PATTERN_SUBJECT} characters: pattern /{source[:80]}/ not checked",
+                        RuntimeWarning,
+                        stacklevel=2,
+                    )
+                    continue
                 if compiled is not None and compiled.search(subject) is None:
                     return _fail(
                         issues, path, f"String should match pattern /{source}/", "string_pattern_mismatch"
@@ -842,7 +870,7 @@ class _ModelNode(_Node):
 
 
 _MODELS: dict[type, _ModelNode] = {}
-_ALIASES: dict[TypeAliasType, _AliasNode] = {}
+_ALIASES: dict[_AliasType, _AliasNode] = {}
 
 
 def _model_node(cls: type) -> _ModelNode:
@@ -858,7 +886,7 @@ def _compile(tp: Any) -> _Node:
         return _AnyNode()
     if tp is None or tp is NoneType:
         return _NoneNode()
-    if isinstance(tp, TypeAliasType):
+    if isinstance(tp, (TypeAliasType, BackportTypeAliasType)):
         kind = _KINDS.get(tp)
         if kind is not None:
             return _scalar(kind)

@@ -21,6 +21,165 @@ const fn e(code: &'static str, meaning: &'static str, fix: &'static str) -> Expl
 /// `REGISTRY`; `explain` only offers codes that are registered.
 pub(crate) const EXPLANATIONS: &[Explanation] = &[
     e(
+        "GO001",
+        "A macro of agent.yml is not in the canonical form the SDKs run (an unknown step kind \
+         or operation, a reference to no earlier step, an invalid `as`, `until` or budget). The \
+         Go SDK leaves it out; the other operations are generated as usual. The Go emitter \
+         reports it through TG0806.",
+        "Fix the macro in agent.yml; the message names the offending member.",
+    ),
+    e(
+        "GO002",
+        "The API declares an OpenID Connect security scheme. The Go SDK sends the configured \
+         credential as a bearer token and does not run discovery or obtain tokens itself.",
+        "Obtain the token yourself and pass it to the client under the scheme's name.",
+    ),
+    e(
+        "GO003",
+        "An operation answers different JSON bodies depending on the status. The Go SDK's \
+         typed result for it is `json.RawMessage`; the decoded body also stays in `Response.Raw`.",
+        "Nothing to fix; decode the raw message according to the status that arrived.",
+    ),
+    e(
+        "GO004",
+        "An option of the `go` target in tungsten.yml is unknown or has the wrong type, \
+         so the Go emitter refused the target and wrote nothing.",
+        "Fix or remove the option under `targets.go` in tungsten.yml; the message names it \
+         and the type it must have.",
+    ),
+    e(
+        "GO005",
+        "The Go source the emitter generated does not parse, so nothing was written. This is a \
+         fault in the emitter or in a name taken from the API description.",
+        "Check the API description for names that cannot become Go identifiers and report \
+         the diagnostic with the offending schema if it persists.",
+    ),
+    e(
+        "GO006",
+        "The pagination items path of an operation (from the spec or inferred) does not \
+         resolve to an array in the success schema, so the Go SDK cannot type the page items.",
+        "Correct the pagination items path of the operation to name an array field of the \
+         success response, or remove the pagination declaration.",
+    ),
+    e(
+        "HR001",
+        "The HAR capture is larger than the import limits: its byte size, nesting depth or \
+         node count is over the budget. Nothing was imported.",
+        "Export a smaller capture, or narrow it with `--include-prefix` and `--exclude-prefix`.",
+    ),
+    e(
+        "HR002",
+        "The input is not a HAR 1.2 capture tungsten can read: invalid JSON, a missing `log`, \
+         entries, request, method, header name or query parameter name, an unsupported HAR \
+         version, or a response without a completed HTTP status.",
+        "Export the capture again as HAR 1.2 and exclude failed or pending requests.",
+    ),
+    e(
+        "HR003",
+        "The origin given with `--har-origin` is not one of the origins in the capture, or is \
+         not written in canonical form (scheme, host and port only).",
+        "Pass exactly one HTTP(S) origin that occurs in the capture, for example \
+         `https://api.example.com`.",
+    ),
+    e(
+        "HR006",
+        "Reviewed route templates (`--route` or `--har-paths`) are ambiguous or malformed: a \
+         captured path matches several equally specific templates, or a template replaces \
+         part of a segment instead of a whole parameter segment.",
+        "Make the templates unambiguous and let each replace whole segments only, such as \
+         `/items/{id}`; keep literal routing segments unchanged.",
+    ),
+    e(
+        "PM001",
+        "The Postman collection is over an import limit: variable expansion and parsed samples \
+         exceed the import-wide byte or node budget, or folders nest deeper than the limit.",
+        "Reduce large or repeated variables and examples, or flatten the folder nesting.",
+    ),
+    e(
+        "PM002",
+        "The input is not a Postman Collection v2.1 item tree: the `item` array is missing or \
+         not an array.",
+        "Export the collection as Postman Collection v2.1 JSON and import that file.",
+    ),
+    e(
+        "PM003",
+        "A request uses API key authentication without an explicit key name, or with a \
+         location other than header or query.",
+        "Give the API key an explicit name and set its location to header or query in the \
+         collection.",
+    ),
+    e(
+        "PM004",
+        "A request uses a Postman dynamic variable (`{{$...}}`). tungsten never runs scripts \
+         or generates dynamic values, so the request shape cannot be known.",
+        "Replace the dynamic variable with an explicit example value or a declared parameter.",
+    ),
+    e(
+        "PM005",
+        "A request URL is not HTTP(S) with an explicit path, or a variable that decides the \
+         request shape (host, path or query) cannot be resolved from the collection.",
+        "Provide the variable in the collection or an environment override, or replace it with \
+         a declared path parameter; use an absolute HTTP(S) URL.",
+    ),
+    e(
+        "PM006",
+        "A raw request body is not valid JSON after variable resolution, or a saved response \
+         body is not JSON, so no schema can be inferred from it.",
+        "Provide explicit JSON examples, remove the unsupported example, or supply a reviewed \
+         media schema.",
+    ),
+    e(
+        "PM007",
+        "Several requests describe the same operation, and some declare authentication while \
+         others leave it unknown.",
+        "Declare one consistent authentication policy for the duplicated requests.",
+    ),
+    e(
+        "PM008",
+        "Every request in the Postman collection was omitted as unsupported, so nothing could \
+         be imported.",
+        "Remove or fix the unsupported constructs, or supply a reviewed contract.",
+    ),
+    e(
+        "TC001",
+        "The structural request evidence is larger than the import byte limit.",
+        "Split the import into smaller captures or collections.",
+    ),
+    e(
+        "TC002",
+        "The structural request evidence is not valid JSON, or is nested too deeply.",
+        "Fix the JSON syntax and nesting of the evidence file.",
+    ),
+    e(
+        "TC003",
+        "The evidence model or the reviewed overrides do not match the evidence schema.",
+        "Regenerate the evidence with tungsten, or correct the overrides to match the \
+         documented shape.",
+    ),
+    e(
+        "TC004",
+        "An operation in the evidence cannot become an OpenAPI operation: its HTTP method is \
+         not supported, or its path template repeats a placeholder name.",
+        "Use an OpenAPI HTTP method and make the path placeholder names unique.",
+    ),
+    e(
+        "TC005",
+        "An evidence source id is not an opaque identifier; it looks like a file name or a URL.",
+        "Use an opaque alphanumeric source id, never a file name or URL.",
+    ),
+    e(
+        "TC006",
+        "A structural schema in the evidence uses a keyword the import does not support. \
+         References and value-bearing annotations are not imported.",
+        "Use structural fields only, or keep the declaration in the original OpenAPI document.",
+    ),
+    e(
+        "TC007",
+        "A reviewed override points into a body schema or parameter with a numeric parameter \
+         index, which changes when parameters are added or reordered.",
+        "Use `/paths/` body schema pointers or stable `parameter_schema_pointer` keys.",
+    ),
+    e(
         "TG0101",
         "An input named in tungsten.yml or on the command line could not be read: the file \
          does not exist, is a directory, or is not readable by the current user.",
@@ -84,6 +243,51 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
          overlay can add both) to make the intent explicit and silence the diagnostic.",
     ),
     e(
+        "TG0120",
+        "A remote input URL contains credentials, a query or fragment, or its acquisition policy is invalid. Authentication belongs in headers, never source identifiers.",
+        "Supply an HTTP(S) document URL and --input-header or newline-separated TUNGSTEN_INPUT_HEADERS. Choose either --offline or --refresh-inputs.",
+    ),
+    e(
+        "TG0121",
+        "Fetching an input failed, returned a non-success HTTP status, exceeded 8 MiB or did not finish within 30 seconds. Redirects are refused so credentials cannot cross origins.",
+        "Check network access, trusted TLS certificates and authentication. Pass the final document URL explicitly. Use --offline to reuse a verified pin.",
+    ),
+    e(
+        "TG0122",
+        "Downloaded or cached bytes differ from their SHA256 pin, or a converted import no longer matches its original remote source.",
+        "Review upstream changes before --refresh-inputs. Converted inputs require re-import into a fresh project and renewed review. Use --offline for the existing pin; restore corrupted cache bytes from a trusted copy.",
+    ),
+    e(
+        "TG0123",
+        "The .tungsten-inputs cache has no usable pin, contains a symlink or invalid file, or cannot be written safely.",
+        "Fetch once online and retain both source.lock.json and its content file for offline use. Inspect permissions and unexpected cache entries before retrying. Partial *.pending writes from an interrupted fetch are discarded by the next online run; a held acquire.lock means another run is fetching the same source.",
+    ),
+    e(
+        "TG0130",
+        "The Git input reference has an unsupported transport, URL credentials, query, invalid ref or unsafe subpath. Git authentication stays in the credential helper or environment.",
+        "Use git+https://host/owner/repository@ref#path. Local hermetic inputs may use git+file:///absolute/repository@ref#path. Do not put secrets in the reference.",
+    ),
+    e(
+        "TG0131",
+        "Git could not start, acquire the repository or resolve the ref to one commit. Raw Git stderr is discarded so credential helpers and servers cannot leak credentials into diagnostics.",
+        "Install Git, verify access and credentials, and use a full refs/heads/... or refs/tags/... name when branch/tag names conflict. Use --offline with a previously verified pin.",
+    ),
+    e(
+        "TG0132",
+        "Git acquisition exceeded its time, file, byte or process-output budget, or encountered a symlink, submodule or unsafe repository path. Only regular files are materialized and nothing is checked out or executed.",
+        "Narrow #subpath to the contract directory, select a smaller repository, or acquire a single document over HTTP(S).",
+    ),
+    e(
+        "TG0133",
+        "The Git source lock or its materialized files are missing, invalid, modified, symlinked or not writable. Every reused content file is SHA256-verified.",
+        "Restore the pinned cache from a trusted copy or re-import into a fresh project. Retain .tungsten-inputs with the same access controls as the original source for offline use. Partial *.pending entries from an interrupted fetch are discarded by the next online run; a held acquire.lock means another run is fetching the same source.",
+    ),
+    e(
+        "TG0134",
+        "Discovery found zero or multiple supported documents under the selected repository subpath. Tungsten lists candidates and does not choose one implicitly.",
+        "Append #path to select exactly one OpenAPI, Swagger, Postman, HAR, saved request or JSON Schema endpoint manifest document.",
+    ),
+    e(
         "TG0201",
         "A `$ref` points at a location that does not exist: the JSON Pointer names a missing \
          member, or the referenced file has no such path.",
@@ -136,9 +340,12 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
         "A `oneOf` or `anyOf` has no discriminator, so a value's variant can only be found by \
          trying the candidates in order at runtime. The order is deterministic (most \
          constrained first), but sniffing is slower and can pick the wrong variant when \
-         candidates overlap.",
+         candidates overlap. A union of exactly two candidates where one is a plain string, \
+         array or map (`X` or its id, `X` or a list of `X`) is reported as info instead of a \
+         warning: the two are told apart by JSON kind, so `--strict` does not fail on it.",
         "Add a `discriminator` with a property every variant declares as a `const` or single \
-         enum value.",
+         enum value. `tungsten check` prints a repeated code a few times and then a count; \
+         `--all-warnings` prints all of them and `--json` always lists every one.",
     ),
     e(
         "TG0302",
@@ -280,13 +487,23 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
          through a custom transport.",
     ),
     e(
+        "TG0510",
+        "A Path Item combines `$ref` with fields written beside it, and the referenced item \
+         defines the same field: an operation, `summary`, `description`, `servers`, or a \
+         parameter with the same `name` and `in`. Fields only one side defines are merged. \
+         OpenAPI leaves the conflicting ones undefined; tungsten lets the field beside the \
+         `$ref` win, and the message names both pointers.",
+        "Define the field on one side only, or drop it from the shared item.",
+    ),
+    e(
         "TG0530",
         "A success response declares the `text/event-stream` media type without a schema, so \
          the SDK cannot type or check the events of the stream. Each event's `data` is still \
          decoded as JSON and handed to the caller as an untyped value.",
-        "Declare the schema of one event under the media type (usually a `oneOf` tagged by a \
-         `type` property). Name a `data` value that ends the stream, if there is one, with \
-         `x-tungsten-stream-done`.",
+        "Declare the schema of one event under the media type. Use a discriminator only if \
+         it exists inside the JSON data; the SSE event name is separate. A raw data sentinel \
+         can be declared with `x-tungsten-stream-done`. See the typed Python SSE recipe at \
+         https://github.com/pboachie/tungsten/tree/release/0.1.3/examples/typed-sse.",
     ),
     e(
         "TG0531",
@@ -489,6 +706,22 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
          written.",
         "Remove the symlink from the output directory. If the path is under `.tungsten/`, \
          the emitter is at fault: report it.",
+    ),
+    e(
+        "TG0705",
+        "The project was imported from a Postman collection or another source whose operations \
+         carry an enforced import policy (the runtime must apply it to every call), and a \
+         configured target cannot apply it. Only the typescript, python, rust, mcp, webmcp and \
+         docs targets declare that support, and an external emitter declares it with \
+         `import_policy` in its `--describe` response; generating any other target would \
+         discard the policy. During input conversion, init refuses unsupported built-in \
+         targets before saving the converted input or project manifests. During generation \
+         of an existing project, tungsten refuses that target alone; other targets are \
+         still written, unless `--strict` asks for all or none.",
+        "Generate only supported targets: remove the unsupported target from tungsten.yml, or \
+         add a supported one with `tungsten init --resume --add-targets typescript,python` \
+         (any of typescript, python, rust, mcp, webmcp, docs), then run `tungsten generate` \
+         again.",
     ),
     e(
         "TG0710",
@@ -829,6 +1062,26 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
          codes, so look the emitter's code up in the emitter's documentation.",
     ),
     e(
+        "TG0807",
+        "A target in tungsten.yml declares `external`, and tungsten was told not to start \
+         external emitters (`--no-external` or `TUNGSTEN_NO_EXTERNAL=1`), so its command was \
+         not run and the target is skipped. Nothing is generated, compared or reported for it; \
+         the diagnostic is informational and does not fail the run.",
+        "This is the intended result for CI that validates a manifest it does not trust. Run \
+         without the option, on a manifest you trust, to emit or check the target.",
+    ),
+    e(
+        "TG0808",
+        "An external target was selected for a project with imported-operation policy, \
+         but its protocol-1 --describe response omitted `import_policy` or set it to false. \
+         The emitter is not run and no files are written for that target. Other supported \
+         targets are still processed. Built-in targets without this capability use TG0705.",
+        "Use an emitter that declares `import_policy: true` and enforces the imported \
+         metadata, or select a supported TypeScript, Python, Rust, MCP, WebMCP or docs \
+         target. Do not remove policy metadata merely to bypass this check. Protocol-1 \
+         emitters remain compatible with projects that have no imported-operation policy.",
+    ),
+    e(
         "TG0901",
         "A target's output directory differs from what `tungsten generate` would write now: \
          a generated file is missing or has other content, a file of the previous \
@@ -867,6 +1120,41 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
          decision or live in tungsten.yml; the count is reported once per code.",
         "Use `tungsten explain` on the code for its usual fix, for example declare the \
          pagination under `pagination` in tungsten.yml.",
+    ),
+    e(
+        "TG0930",
+        "`tungsten check --audit-contracts` found a success response whose JSON media type \
+         declares no `schema`, so any JSON value is accepted and the generated SDK types \
+         the value as any. The message names the operation, the status and the media type; \
+         the second location is the operation that answers it. Default runs are unchanged: \
+         the audit runs only with the flag or `--require-contracts`, which fails on audit \
+         findings alone. `--strict` fails on these and every other warning.",
+        "Declare a schema for the media type, in the spec or in a reviewed overlay listed \
+         under `overlays` in tungsten.yml, or acknowledge the gap with \
+         `x-tungsten-reviewed-contract` on the media-type entry when any value really is \
+         accepted.",
+    ),
+    e(
+        "TG0931",
+        "`tungsten check --audit-contracts` found a success response schema that is a \
+         free-form object: `type: object` with no properties and an open or unconstrained \
+         `additionalProperties`, so the generated type is a plain mapping of any values (a \
+         `dict[str, Any]`). A typed map, a record with properties, a response without a \
+         JSON body and a non-JSON media type are not findings; a schema marked \
+         `x-tungsten-reviewed-contract` counts as reviewed. See TG0930 for how the audit \
+         is run and enforced.",
+        "Declare the properties the server really answers with, named response models or \
+         their union, in the spec or a reviewed overlay, or acknowledge the free-form \
+         shape with `x-tungsten-reviewed-contract` when it is intentional.",
+    ),
+    e(
+        "TG0932",
+        "The opt-in response-contract audit reached its schema traversal budget. Its \
+         findings are incomplete. This warning fails --require-contracts or --strict, so an \
+         incomplete audit cannot silently satisfy that quality gate.",
+        "Split the input into smaller projects and audit each one. Reuse named schemas \
+         for shared contracts. The audit follows references and nested shapes iteratively \
+         and reports each weak source node only once.",
     ),
     e(
         "TG1010",
@@ -962,6 +1250,53 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
         "Give every variant a named schema and a discriminator mapping value.",
     ),
     e(
+        "TG1030",
+        "An option of the `kotlin` target in tungsten.yml is not valid: `group` and `package` \
+         must be dotted package names usable in Kotlin and Java (no keywords), `artifact` an \
+         artifact name, `version` and `runtime` versions such as 1.2.3, `runtime_path` and \
+         `java_runtime_path` non-empty paths. The generator uses the option's default instead.",
+        "Fix the option under `targets.kotlin` in tungsten.yml, or remove it to keep the default.",
+    ),
+    e(
+        "TG1031",
+        "The Kotlin SDK has no native type for this schema (an allOf whose members cannot be \
+         merged into one data class, or an enum whose values mix JSON types), so the typed \
+         value is the Java runtime's JSON value (`Any?`: JsonObject, List, String, Long, \
+         Double, Boolean or null). The runtime still validates it against the schema.",
+        "Merge the allOf members into one object, or give the enum values a single type, if a \
+         typed Kotlin model is wanted.",
+    ),
+    e(
+        "TG1032",
+        "A macro of the agent manifest is not in the canonical form the SDK runtimes run \
+         (steps over callable operations, references to $input or earlier steps, a known step \
+         kind), so the Kotlin SDK does not include it; the TypeScript SDK reports the same \
+         macro as TG0710.",
+        "Fix the macro in agent.yml at the pointer the diagnostic names.",
+    ),
+    e(
+        "TG1033",
+        "The Kotlin SDK runs on the Java runtime, which sends an OpenID Connect scheme as a \
+         bearer token. It does not run discovery or obtain tokens itself.",
+        "Configure the scheme with `AuthCredential.secret(token)` holding an access token you \
+         obtained from the provider.",
+    ),
+    e(
+        "TG1034",
+        "The operation answers different JSON bodies depending on the exact status, so the \
+         typed function's result is the runtime's JSON value; the result's metadata carries \
+         the status that tells them apart.",
+        "Read `meta().status()` of the result and decode the body with the matching model's \
+         `fromJson`.",
+    ),
+    e(
+        "TG1035",
+        "The union declares a discriminator, but at least one variant has no tag value or is \
+         not a named type, so the Kotlin SDK cannot pick the variant by its tag: it decodes \
+         the variants in the plan's order and takes the first that fits.",
+        "Give every variant a named schema and a discriminator mapping value.",
+    ),
+    e(
         "TG1060",
         "An option of the `ruby` target is not valid (a `gem` that is not a lowercase gem name, \
          a `module` that is not a Ruby constant path or names a core class or the runtime's \
@@ -1005,6 +1340,110 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
          in order and decodes the first that accepts the value.",
         "Give every variant a `discriminator.mapping` entry or a `const` tag property.",
     ),
+    e(
+        "TG1070",
+        "An option of the `dart` target is not valid (a `package` that is not a pub package \
+         name or is a Dart keyword or `tungsten_runtime`, a `version` that is not a semantic \
+         version, a `runtime` that is not a pub version constraint, or an empty \
+         `runtime_path`), so its default is used.",
+        "Fix the option under `targets.dart` in tungsten.yml.",
+    ),
+    e(
+        "TG1071",
+        "A schema has no Dart type: an `allOf` that cannot be merged into one record (a member \
+         is not a record, has typed extra members, or two members share a wire name) or an \
+         enum that is not an enum of strings or of integers (mixed JSON types, numbers or \
+         booleans). The Dart SDK types it as its JSON value (`Object?`), which the runtime \
+         still validates against the schema.",
+        "Restructure the schema (records with distinct properties, an enum of strings or \
+         integers), or accept the JSON value.",
+    ),
+    e(
+        "TG1072",
+        "A macro of agent.yml is not in the canonical form the SDKs run (an unknown step kind \
+         or operation, a reference to no earlier step, an invalid `as`, `until` or budget). The \
+         Dart SDK leaves it out; the other operations are generated as usual.",
+        "Fix the macro in agent.yml; the message names the offending member.",
+    ),
+    e(
+        "TG1073",
+        "The API declares an OpenID Connect security scheme. The Dart SDK sends the configured \
+         credential as a bearer token and does not run discovery or obtain tokens itself.",
+        "Obtain the token yourself and pass it in `ClientOptions.auth` under the scheme's name.",
+    ),
+    e(
+        "TG1074",
+        "An operation answers different JSON bodies depending on the status. The Dart SDK's \
+         typed result for it is the JSON value (`Object?`); the runtime validates it against \
+         the body of the status that arrived.",
+        "Nothing to fix; read `meta.status` of the result to tell the bodies apart.",
+    ),
+    e(
+        "TG1075",
+        "A union has a discriminator, but one of its variants has no tag value or is not a \
+         named type, so the Dart SDK cannot pick the variant by the tag. It tries the variants \
+         in order and decodes the first that accepts the value.",
+        "Give every variant a `discriminator.mapping` entry or a `const` tag property.",
+    ),
+    e(
+        "TG1080",
+        "An option of the `fsharp` target in tungsten.yml is not valid: `package_id` must be a \
+         NuGet package id, `namespace` a dotted F# namespace (no F# or C# keywords), `version` \
+         and `runtime` versions such as 1.2.3, `runtime_path` and `csharp_runtime_path` \
+         non-empty paths. The generator uses the option's default instead.",
+        "Fix the option under `targets.fsharp` in tungsten.yml, or remove it to keep the default.",
+    ),
+    e(
+        "TG1081",
+        "The F# SDK has no native type for this schema (an allOf whose members cannot be merged \
+         into one record, or an enum whose values mix JSON types), so the typed value is the \
+         .NET runtime's `JsonNode`. The runtime still validates it against the schema.",
+        "Merge the allOf members into one object, or give the enum values a single type, if a \
+         typed F# model is wanted.",
+    ),
+    e(
+        "TG1082",
+        "A macro of the agent manifest is not in the canonical form the SDK runtimes run \
+         (steps over callable operations, references to $input or earlier steps, a known step \
+         kind), so the F# SDK does not include it; the TypeScript SDK reports the same macro as \
+         TG0710.",
+        "Fix the macro in agent.yml at the pointer the diagnostic names.",
+    ),
+    e(
+        "TG1083",
+        "The F# SDK runs on the .NET runtime, which sends an OpenID Connect scheme as a bearer \
+         token. It does not run discovery or obtain tokens itself.",
+        "Configure the scheme with `Credential.Secret(token)` holding an access token you \
+         obtained from the provider.",
+    ),
+    e(
+        "TG1084",
+        "The operation answers different JSON bodies depending on the exact status, so the typed \
+         method's result is the runtime's `JsonNode`; the result's `Meta.Status` tells them \
+         apart.",
+        "Read `Meta.Status` of the result and decode the body with the matching model's \
+         `fromJson`.",
+    ),
+    e(
+        "TG1085",
+        "The union declares a discriminator, but at least one variant has no tag value or is not \
+         a named type, so the F# SDK cannot pick the variant by its tag: it decodes the variants \
+         in the plan's order and takes the first that fits.",
+        "Give every variant a named schema and a discriminator mapping value.",
+    ),
+    e(
+        "TG1201",
+        "A saved cURL command or `.http` request given to `tungsten init` cannot be imported. \
+         Requests are parsed as data and never executed, so anything that needs a shell, a \
+         file or an environment is refused: compound commands, expansions, unsupported flags, \
+         file bodies or headers, unbound `{{variables}}`, credentials in the URL, headers or \
+         query, a non-JSON body, an input over the size limit, or a missing or mismatched \
+         `--route` template. The message names the first problem.",
+        "Save exactly one request. For cURL use `curl` (or `curl.exe` in PowerShell) with \
+         --request, --header, --url and inline JSON data only, and pass the trusted path \
+         template with `--route`. Bind every `{{variable}}` of a `.http` file explicitly and \
+         describe authentication in an endpoint manifest instead of the request.",
+    ),
 ];
 
 /// The extended explanation of a code, if one exists.
@@ -1017,6 +1456,13 @@ pub(crate) fn explanation(code: &str) -> Option<&'static Explanation> {
 
 /// The code range a diagnostic belongs to.
 pub(crate) fn area(code: &str) -> &'static str {
+    match code.get(..2) {
+        Some("GO") => return "Go emitter (GOxxx)",
+        Some("HR") => return "HAR import (HRxxx)",
+        Some("PM") => return "Postman import (PMxxx)",
+        Some("TC") => return "request-contract checks (TCxxx)",
+        _ => {}
+    }
     match code.get(..4) {
         Some("TG01") => "parsing and input limits (TG01xx)",
         Some("TG02") => "references and cycles (TG02xx)",
@@ -1027,7 +1473,8 @@ pub(crate) fn area(code: &str) -> &'static str {
         Some("TG07") => "emitter limits (TG07xx)",
         Some("TG08") => "external emitters (TG08xx)",
         Some("TG09") => "staleness and CI (TG09xx)",
-        Some("TG10") => "SDK emitters: Java, C#, Kotlin, Swift, PHP, Ruby, Dart (TG10xx)",
+        Some("TG10") => "SDK emitters: Java, C#, Kotlin, Swift, PHP, Ruby, Dart, F# (TG10xx)",
+        Some("TG12") => "request import: saved cURL and .http (TG12xx)",
         _ => "unassigned range",
     }
 }
