@@ -387,6 +387,8 @@ func (c *ClientCore) classifyResponse(cctx *callContext, p *prepared, outcome at
 		HasValue: decoded.has,
 		Raw:      decoded.value,
 		Meta:     ResponseMeta{Status: status, Headers: headers, RequestID: requestID, Attempts: attempts},
+		body:     decoded.body,
+		bodyInfo: decoded.info,
 	}}, nil
 }
 

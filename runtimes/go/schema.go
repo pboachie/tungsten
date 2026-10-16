@@ -84,29 +84,54 @@ type SchemaField struct {
 // Validate implements Validator.
 func (s *Schema) Validate(value any) []Issue {
 	v := validation{}
-	v.check(s, value, nil)
+	v.check(s, value)
 	out := append(v.structure, v.constraints...)
 	return append(out, v.unknown...)
+}
+
+// seg is one segment of the path being checked: a member name or, with
+// index true, an array index. The path is kept unboxed while walking and
+// turned into PathSegments only for an issue.
+type seg struct {
+	name  string
+	n     int
+	index bool
 }
 
 type validation struct {
 	structure   []Issue
 	constraints []Issue
 	unknown     []Issue
+	// path is the path of the value being checked, pushed and popped as
+	// the walk descends.
+	path []seg
 }
 
-func withSeg(path []PathSegment, seg PathSegment) []PathSegment {
-	out := make([]PathSegment, len(path), len(path)+1)
-	copy(out, path)
-	return append(out, seg)
+// at is the current path as the segments of an issue.
+func (v *validation) at() []PathSegment {
+	if len(v.path) == 0 {
+		return nil
+	}
+	out := make([]PathSegment, len(v.path))
+	for i, s := range v.path {
+		if s.index {
+			out[i] = s.n
+		} else {
+			out[i] = s.name
+		}
+	}
+	return out
 }
 
-func (v *validation) bad(path []PathSegment, message string) {
-	v.structure = append(v.structure, Issue{Path: path, Message: message})
+func (v *validation) push(s seg) { v.path = append(v.path, s) }
+func (v *validation) pop()       { v.path = v.path[:len(v.path)-1] }
+
+func (v *validation) bad(message string) {
+	v.structure = append(v.structure, Issue{Path: v.at(), Message: message})
 }
 
-func (v *validation) limit(path []PathSegment, message string) {
-	v.constraints = append(v.constraints, Issue{Path: path, Message: message})
+func (v *validation) limit(message string) {
+	v.constraints = append(v.constraints, Issue{Path: v.at(), Message: message})
 }
 
 func describeValue(value any) string {
@@ -187,93 +212,95 @@ func boundText(f float64) string {
 	return JSNumber(f)
 }
 
-func (v *validation) check(s *Schema, value any, path []PathSegment) {
+func (v *validation) check(s *Schema, value any) {
 	if s == nil {
 		return
 	}
 	switch s.Kind {
 	case "", "any":
 	case "never":
-		v.bad(path, "no value is allowed here")
+		v.bad("no value is allowed here")
 	case "nullable":
 		if value != nil {
-			v.check(s.Inner, value, path)
+			v.check(s.Inner, value)
 		}
 	case "string":
 		text, ok := value.(string)
 		if !ok {
-			v.bad(path, "expected a string, found "+describeValue(value))
+			v.bad("expected a string, found " + describeValue(value))
 			return
 		}
-		v.stringLimits(s, text, path)
+		v.stringLimits(s, text)
 	case "binary":
 		if _, ok := BinaryOf(value); ok {
 			return
 		}
 		if _, ok := value.(string); !ok {
-			v.bad(path, "expected binary data, found "+describeValue(value))
+			v.bad("expected binary data, found " + describeValue(value))
 		}
 	case "boolean":
 		if _, ok := value.(bool); !ok {
-			v.bad(path, "expected a boolean, found "+describeValue(value))
+			v.bad("expected a boolean, found " + describeValue(value))
 		}
 	case "integer":
 		n, ok := value.(int64)
 		if !ok {
 			if f, isFloat := value.(float64); isFloat {
-				v.bad(path, "expected an integer, found "+JSNumber(f))
+				v.bad("expected an integer, found " + JSNumber(f))
 			} else {
-				v.bad(path, "expected an integer, found "+describeValue(value))
+				v.bad("expected an integer, found " + describeValue(value))
 			}
 			return
 		}
 		switch s.Bits {
 		case 32:
 			if n < math.MinInt32 || n > math.MaxInt32 {
-				v.bad(path, "expected a 32-bit integer")
+				v.bad("expected a 32-bit integer")
 				return
 			}
 		}
-		v.numberLimits(s, float64(n), path)
+		v.numberLimits(s, float64(n))
 	case "number":
 		f, ok := asFloat(value)
 		if !ok {
-			v.bad(path, "expected a number, found "+describeValue(value))
+			v.bad("expected a number, found " + describeValue(value))
 			return
 		}
-		v.numberLimits(s, f, path)
+		v.numberLimits(s, f)
 	case "enum":
 		for _, allowed := range s.Values {
 			if deepEqual(allowed, value) {
 				return
 			}
 		}
-		v.bad(path, "must be one of "+JSONText(s.Values))
+		v.bad("must be one of " + JSONText(s.Values))
 	case "const":
 		if len(s.Values) > 0 && !deepEqual(s.Values[0], value) {
-			v.bad(path, "must be "+JSONText(s.Values[0]))
+			v.bad("must be " + JSONText(s.Values[0]))
 		}
 	case "array":
 		list, ok := value.([]any)
 		if !ok {
-			v.bad(path, "expected an array, found "+describeValue(value))
+			v.bad("expected an array, found " + describeValue(value))
 			return
 		}
 		for i, item := range list {
-			v.check(s.Items, item, withSeg(path, i))
+			v.push(seg{n: i, index: true})
+			v.check(s.Items, item)
+			v.pop()
 		}
 		n := int64(len(list))
 		if s.MinItems != nil && n < *s.MinItems {
-			v.limit(path, fmt.Sprintf("must have at least %d items", *s.MinItems))
+			v.limit(fmt.Sprintf("must have at least %d items", *s.MinItems))
 		}
 		if s.MaxItems != nil && n > *s.MaxItems {
-			v.limit(path, fmt.Sprintf("must have at most %d items", *s.MaxItems))
+			v.limit(fmt.Sprintf("must have at most %d items", *s.MaxItems))
 		}
 		if s.Unique {
 			for i := range list {
 				for j := 0; j < i; j++ {
 					if deepEqual(list[i], list[j]) {
-						v.limit(path, "items must be unique")
+						v.limit("items must be unique")
 						return
 					}
 				}
@@ -282,103 +309,124 @@ func (v *validation) check(s *Schema, value any, path []PathSegment) {
 	case "map":
 		obj, ok := value.(*Object)
 		if !ok {
-			v.bad(path, "expected an object, found "+describeValue(value))
+			v.bad("expected an object, found " + describeValue(value))
 			return
 		}
 		for _, k := range obj.keys {
-			v.check(s.Items, obj.vals[k], withSeg(path, k))
+			v.push(seg{name: k})
+			v.check(s.Items, obj.vals[k])
+			v.pop()
 		}
 	case "object":
 		obj, ok := value.(*Object)
 		if !ok {
-			v.bad(path, "expected an object, found "+describeValue(value))
+			v.bad("expected an object, found " + describeValue(value))
 			return
 		}
-		v.object(s, obj, path)
+		v.object(s, obj)
 	case "union":
-		v.union(s, value, path)
+		v.union(s, value)
 	case "all":
 		for _, member := range s.Variants {
-			v.check(member, value, path)
+			v.check(member, value)
 		}
 	case "limits":
 		// Constraints written on a field, next to its type: they apply to the
 		// value's own kind.
 		switch t := value.(type) {
 		case string:
-			v.stringLimits(s, t, path)
+			v.stringLimits(s, t)
 		case int64, float64:
 			f, _ := asFloat(t)
-			v.numberLimits(s, f, path)
+			v.numberLimits(s, f)
 		}
 	default:
-		v.bad(path, "unknown schema kind "+s.Kind)
+		v.bad("unknown schema kind " + s.Kind)
 	}
 }
 
-func (v *validation) stringLimits(s *Schema, text string, path []PathSegment) {
-	n := int64(utf8.RuneCountInString(text))
-	if s.MinLength != nil && n < *s.MinLength {
-		v.limit(path, fmt.Sprintf("must have at least %d characters", *s.MinLength))
-	}
-	if s.MaxLength != nil && n > *s.MaxLength {
-		v.limit(path, fmt.Sprintf("must have at most %d characters", *s.MaxLength))
+func (v *validation) stringLimits(s *Schema, text string) {
+	if s.MinLength != nil || s.MaxLength != nil {
+		n := int64(utf8.RuneCountInString(text))
+		if s.MinLength != nil && n < *s.MinLength {
+			v.limit(fmt.Sprintf("must have at least %d characters", *s.MinLength))
+		}
+		if s.MaxLength != nil && n > *s.MaxLength {
+			v.limit(fmt.Sprintf("must have at most %d characters", *s.MaxLength))
+		}
 	}
 	if re := s.compiled(); re != nil && !re.MatchString(text) {
-		v.limit(path, "must match the pattern /"+s.Pattern+"/")
+		v.limit("must match the pattern /" + s.Pattern + "/")
 	}
-	if re, ok := formatPatterns()[s.Format]; ok && !re.MatchString(text) {
-		v.limit(path, "must be a valid "+s.Format)
+	if s.Format != "" {
+		if re, ok := formatPatterns()[s.Format]; ok && !re.MatchString(text) {
+			v.limit("must be a valid " + s.Format)
+		}
 	}
 }
 
-func (v *validation) numberLimits(s *Schema, f float64, path []PathSegment) {
+func (v *validation) numberLimits(s *Schema, f float64) {
 	if s.Minimum != nil && f < *s.Minimum {
-		v.limit(path, "must be at least "+boundText(*s.Minimum))
+		v.limit("must be at least " + boundText(*s.Minimum))
 	}
 	if s.Maximum != nil && f > *s.Maximum {
-		v.limit(path, "must be at most "+boundText(*s.Maximum))
+		v.limit("must be at most " + boundText(*s.Maximum))
 	}
 	if s.ExclusiveMinimum != nil && f <= *s.ExclusiveMinimum {
-		v.limit(path, "must be greater than "+boundText(*s.ExclusiveMinimum))
+		v.limit("must be greater than " + boundText(*s.ExclusiveMinimum))
 	}
 	if s.ExclusiveMaximum != nil && f >= *s.ExclusiveMaximum {
-		v.limit(path, "must be less than "+boundText(*s.ExclusiveMaximum))
+		v.limit("must be less than " + boundText(*s.ExclusiveMaximum))
 	}
 	if s.MultipleOf != nil && *s.MultipleOf != 0 {
 		q := f / *s.MultipleOf
 		if math.Abs(q-math.Round(q)) > 1e-9*math.Max(math.Abs(q), 1) {
-			v.limit(path, "must be a multiple of "+boundText(*s.MultipleOf))
+			v.limit("must be a multiple of " + boundText(*s.MultipleOf))
 		}
 	}
 }
 
-func (v *validation) object(s *Schema, obj *Object, path []PathSegment) {
-	known := make(map[string]bool, len(s.Fields))
-	for _, f := range s.Fields {
-		known[f.Name] = true
+// knownField reports whether the object schema declares the member.
+func knownField(s *Schema, name string) bool {
+	for i := range s.Fields {
+		if s.Fields[i].Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func (v *validation) object(s *Schema, obj *Object) {
+	for i := range s.Fields {
+		f := &s.Fields[i]
 		value, present := obj.Get(f.Name)
-		at := withSeg(path, f.Name)
+		v.push(seg{name: f.Name})
 		switch {
 		case !present:
 			if f.Required {
-				v.bad(at, "missing required member "+f.Name)
+				v.bad("missing required member " + f.Name)
 			}
 		case value == nil && f.Nullable:
 		default:
-			v.check(f.Schema, value, at)
+			v.check(f.Schema, value)
 		}
+		v.pop()
+	}
+	if s.Extra == nil && s.Additional != "closed" {
+		return
 	}
 	for _, k := range obj.keys {
-		if known[k] {
+		if knownField(s, k) {
 			continue
 		}
+		v.push(seg{name: k})
 		switch {
 		case s.Extra != nil:
-			v.check(s.Extra, obj.vals[k], withSeg(path, k))
+			v.check(s.Extra, obj.vals[k])
 		case s.Additional == "closed":
-			v.unknown = append(v.unknown, Issue{Path: withSeg(path, k), Message: "unknown member " + k})
+			v.unknown = append(v.unknown, Issue{Path: v.at(), Message: "unknown member " + k})
 		}
+		v.pop()
 	}
 }
 
@@ -387,26 +435,30 @@ func accepts(s *Schema, value any) bool {
 	return len(s.Validate(value)) == 0
 }
 
-func (v *validation) union(s *Schema, value any, path []PathSegment) {
+func (v *validation) union(s *Schema, value any) {
 	if s.Tag != "" {
 		obj, ok := value.(*Object)
 		if !ok {
-			v.bad(path, "expected an object, found "+describeValue(value))
+			v.bad("expected an object, found " + describeValue(value))
 			return
 		}
 		tag, present := obj.Get(s.Tag)
 		text, isText := tag.(string)
 		if !present || !isText {
-			v.bad(withSeg(path, s.Tag), "missing the discriminator "+s.Tag)
+			v.push(seg{name: s.Tag})
+			v.bad("missing the discriminator " + s.Tag)
+			v.pop()
 			return
 		}
 		for i, t := range s.Tags {
 			if t == text && i < len(s.Variants) {
-				v.check(s.Variants[i], value, path)
+				v.check(s.Variants[i], value)
 				return
 			}
 		}
-		v.bad(withSeg(path, s.Tag), "must be one of "+JSONText(stringsToAny(s.Tags)))
+		v.push(seg{name: s.Tag})
+		v.bad("must be one of " + JSONText(stringsToAny(s.Tags)))
+		v.pop()
 		return
 	}
 	for _, variant := range s.Variants {
@@ -414,7 +466,7 @@ func (v *validation) union(s *Schema, value any, path []PathSegment) {
 			return
 		}
 	}
-	v.bad(path, "does not match any variant")
+	v.bad("does not match any variant")
 }
 
 func stringsToAny(list []string) []any {

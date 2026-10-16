@@ -4,10 +4,14 @@ package tungsten
 
 import (
 	"context"
+	"encoding"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
+	"sync"
+	"time"
 )
 
 // Dispatch is implemented by every generated client. It lets drivers that
@@ -122,6 +126,78 @@ func mismatchError(operation, prefix string, m *mismatch, root any, meta Respons
 	}
 }
 
+// decodeDirect decodes the wire text of a JSON body straight into out,
+// without re-serializing the decoded value; false when the text is not
+// available, when it would decode differently from JSONText(Raw) (a
+// negative zero, which the values lose; a type that keeps the raw text of
+// a non-verbatim body), or when it does not decode (the caller then
+// decodes the value, whose error is the one reported).
+func decodeDirect(outcome *Outcome, out any) bool {
+	if outcome.body == nil || outcome.bodyInfo.negZero {
+		return false
+	}
+	if !outcome.bodyInfo.verbatim && keepsRawText(reflect.TypeOf(out).Elem()) {
+		return false
+	}
+	return json.Unmarshal(outcome.body, out) == nil
+}
+
+var (
+	rawTextTypes      sync.Map // reflect.Type -> bool
+	rawMessageType    = reflect.TypeFor[json.RawMessage]()
+	jsonNumberType    = reflect.TypeFor[json.Number]()
+	timeType          = reflect.TypeFor[time.Time]()
+	unmarshalerType   = reflect.TypeFor[json.Unmarshaler]()
+	textUnmarshalerTy = reflect.TypeFor[encoding.TextUnmarshaler]()
+	ownPackage        = reflect.TypeFor[Object]().PkgPath()
+)
+
+// keepsRawText reports whether a value of the type can hold, or decode
+// depending on, the exact JSON text it was read from (json.RawMessage,
+// json.Number, an Unmarshaler of another package), so that decoding the
+// wire text and decoding JSONText(Raw) could differ. The answer is cached
+// by type.
+func keepsRawText(t reflect.Type) bool {
+	if cached, ok := rawTextTypes.Load(t); ok {
+		return cached.(bool)
+	}
+	answer := keepsRawTextWalk(t, map[reflect.Type]bool{})
+	rawTextTypes.Store(t, answer)
+	return answer
+}
+
+func keepsRawTextWalk(t reflect.Type, seen map[reflect.Type]bool) bool {
+	if seen[t] {
+		return false
+	}
+	seen[t] = true
+	switch t {
+	case rawMessageType, jsonNumberType:
+		return true
+	case timeType:
+		return false
+	}
+	// The Unmarshalers of this package (Object, Binary, Patch) read the
+	// text as ParseJSON does; any other one is taken to depend on it.
+	if t.PkgPath() != ownPackage && (t.Implements(unmarshalerType) || reflect.PointerTo(t).Implements(unmarshalerType) ||
+		t.Implements(textUnmarshalerTy) || reflect.PointerTo(t).Implements(textUnmarshalerTy)) {
+		return true
+	}
+	switch t.Kind() {
+	case reflect.Pointer, reflect.Slice, reflect.Array:
+		return keepsRawTextWalk(t.Elem(), seen)
+	case reflect.Map:
+		return keepsRawTextWalk(t.Key(), seen) || keepsRawTextWalk(t.Elem(), seen)
+	case reflect.Struct:
+		for i := 0; i < t.NumField(); i++ {
+			if keepsRawTextWalk(t.Field(i).Type, seen) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // Decode turns a dynamic outcome into a typed one. A missing body decodes
 // as JSON null. A body that does not decode is UNEXPECTED_RESPONSE, with
 // the body as Partial.
@@ -130,8 +206,12 @@ func Decode[T any](operation string, outcome *Outcome, err error) (*Response[T],
 		return nil, err
 	}
 	var value T
-	if m := decodeMismatch(outcome.Value, &value); m != nil {
-		return nil, mismatchError(operation, "", m, outcome.Value, outcome.Meta)
+	if !decodeDirect(outcome, &value) {
+		var zero T
+		value = zero
+		if m := decodeMismatch(outcome.Value, &value); m != nil {
+			return nil, mismatchError(operation, "", m, outcome.Value, outcome.Meta)
+		}
 	}
 	return &Response[T]{Value: value, HasValue: outcome.HasValue, Raw: outcome.Value, Meta: outcome.Meta, Verification: outcome.Verification}, nil
 }
@@ -139,9 +219,14 @@ func Decode[T any](operation string, outcome *Outcome, err error) (*Response[T],
 // DecodePage types the items of a page the same way.
 func DecodePage[T any](operation string, page *Response[Page[any]]) (*Response[Page[T]], error) {
 	items := make([]T, len(page.Value.Items))
-	for i, item := range page.Value.Items {
-		if m := decodeMismatch(item, &items[i]); m != nil {
-			return nil, mismatchError(operation, fmt.Sprintf(".items[%d]", i), m, item, page.Meta)
+	// One decode of the whole list; the items are decoded one by one only
+	// to report which one did not decode.
+	if json.Unmarshal([]byte(JSONText(page.Value.Items)), &items) != nil || len(items) != len(page.Value.Items) {
+		items = make([]T, len(page.Value.Items))
+		for i, item := range page.Value.Items {
+			if m := decodeMismatch(item, &items[i]); m != nil {
+				return nil, mismatchError(operation, fmt.Sprintf(".items[%d]", i), m, item, page.Meta)
+			}
 		}
 	}
 	return &Response[Page[T]]{
