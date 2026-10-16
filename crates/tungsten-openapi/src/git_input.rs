@@ -382,10 +382,26 @@ impl Git {
         }
     }
 
-    /// Reap a child whose output is complete. Its stdout has closed, so this is
-    /// a blocking wait for an exiting process rather than a polling loop.
-    fn finish(child: &mut Child) -> Result<(), Diagnostic> {
-        let status = child.wait().map_err(|_| cache_error())?;
+    /// Reap after output is complete, retaining the acquisition deadline.
+    /// Closing stdout does not guarantee that the process has exited.
+    fn finish(&self, child: &mut Child) -> Result<(), Diagnostic> {
+        let status = loop {
+            let Some(remaining) = DEADLINE
+                .checked_sub(self.started.elapsed())
+                .filter(|remaining| !remaining.is_zero())
+            else {
+                stop(child);
+                return Err(budget_error());
+            };
+            match child.try_wait() {
+                Ok(Some(status)) => break status,
+                Ok(None) => std::thread::sleep(remaining.min(Duration::from_millis(10))),
+                Err(_) => {
+                    stop(child);
+                    return Err(cache_error());
+                }
+            }
+        };
         if !status.success() {
             return Err(error(
                 "TG0131",
@@ -416,7 +432,7 @@ impl Git {
                 "narrow #subpath or use a smaller repository",
             ));
         };
-        Self::finish(&mut child)?;
+        self.finish(&mut child)?;
         if watch_store {
             store_size(&self.repository)?;
         }
@@ -472,7 +488,7 @@ impl Git {
         }
         // End of input: cat-file exits after answering every request.
         drop(stdin);
-        Self::finish(&mut child)
+        self.finish(&mut child)
     }
 
     fn resolve(&self, source: &Source) -> Result<String, Diagnostic> {
@@ -638,6 +654,11 @@ pub fn acquire(text: &str, project: &Path, options: &Options) -> Result<PathBuf,
     let key = format!("{}@{}#{}", source.url, source.reference, source.scope);
     let dir = git_root.join(hash(key.as_bytes()));
     directory(&dir)?;
+    // Observe the pin only while holding the online transaction lock. A
+    // concurrent acquisition may have committed a pin before this run starts.
+    let _lock = (!options.offline)
+        .then(|| SourceLock::acquire(&dir, "TG0133"))
+        .transpose()?;
     let lock = dir.join("source.lock.json");
     if std::fs::symlink_metadata(&lock).is_ok() {
         let pin: Pin =
@@ -649,9 +670,6 @@ pub fn acquire(text: &str, project: &Path, options: &Options) -> Result<PathBuf,
     } else if options.offline {
         return Err(cache_error());
     }
-    // Held until the pin is committed; also clears scratch repositories and
-    // partial writes left by an interrupted run.
-    let _lock = SourceLock::acquire(&dir, "TG0133")?;
     let repository = pending_path(&dir, "fetch");
     // Exclusive creation: never run Git through a pre-existing config or symlink.
     std::fs::create_dir(&repository).map_err(|_| {

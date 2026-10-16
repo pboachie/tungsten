@@ -396,6 +396,12 @@ pub fn acquire(source: &str, project: &Path, options: &Options) -> Result<PathBu
     directory(&root)?;
     let dir = root.join(hash(url.as_str().as_bytes()));
     directory(&dir)?;
+    // Pin inspection and its possible replacement belong to the same online
+    // transaction. A process paused before taking the lock must not reuse an
+    // earlier observation that no pin existed. Offline readers never mutate.
+    let _lock = (!options.offline)
+        .then(|| SourceLock::acquire(&dir, "TG0123"))
+        .transpose()?;
     let lock = dir.join("source.lock.json");
     let pin = match std::fs::symlink_metadata(&lock) {
         Ok(_) => {
@@ -435,9 +441,6 @@ pub fn acquire(source: &str, project: &Path, options: &Options) -> Result<PathBu
         }
         return Ok(path);
     }
-    // Held until the pin is committed; also clears partial writes from a run
-    // that was interrupted before it could clean up.
-    let _lock = SourceLock::acquire(&dir, "TG0123")?;
     let agent = ureq::Agent::config_builder()
         .timeout_global(Some(Duration::from_secs(30)))
         .timeout_connect(Some(Duration::from_secs(10)))
