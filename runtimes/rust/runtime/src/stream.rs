@@ -690,7 +690,7 @@ impl ClientCore {
         let prepared = self
             .prepare(op, &args, &opts, Purpose::Call, None, None)
             .await?;
-        let start = match self.send_with(&prepared, &opts, true).await? {
+        let start = match self.send_with(&prepared, &opts, true, None).await? {
             Sent::Stream(start) => start,
             Sent::Response(response, _) => {
                 let content_type = response.meta.headers.get("content-type").cloned();

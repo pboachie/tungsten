@@ -310,13 +310,21 @@ export function validHeaderValue(value: string): boolean {
   return HEADER_VALUE.test(value);
 }
 
+interface HeaderEntry {
+  name: string;
+  value: string;
+  secret: boolean;
+  /** Set once the name and value passed the header check; a new value resets it. */
+  checked: boolean;
+}
+
 /** Case-insensitive header collection that remembers which values are
  * secrets, so previews and middleware see them redacted. */
 export class HeaderBag {
-  readonly #entries = new Map<string, { name: string; value: string; secret: boolean }>();
+  readonly #entries = new Map<string, HeaderEntry>();
 
   set(name: string, value: string, secret = false): void {
-    this.#entries.set(name.toLowerCase(), { name, value, secret });
+    this.#entries.set(name.toLowerCase(), { name, value, secret, checked: false });
   }
 
   get(name: string): string | undefined {
@@ -331,11 +339,19 @@ export class HeaderBag {
     return this.#entries.get(name.toLowerCase())?.secret ?? false;
   }
 
+  /** The headers in insertion order, as set. */
+  entries(): IterableIterator<HeaderEntry> {
+    return this.#entries.values();
+  }
+
   /** Plain record; secret values replaced by `<redacted>` when `redact`. */
   toRecord(redact: boolean): Record<string, string> {
     const out: Record<string, string> = {};
     for (const { name, value, secret } of this.#entries.values()) {
-      Object.defineProperty(out, name, { value: redact && secret ? REDACTED : value, enumerable: true, configurable: true, writable: true });
+      const shown = redact && secret ? REDACTED : value;
+      // A header named __proto__ must become an own property, not the prototype.
+      if (name === "__proto__") Object.defineProperty(out, name, { value: shown, enumerable: true, configurable: true, writable: true });
+      else out[name] = shown;
     }
     return out;
   }

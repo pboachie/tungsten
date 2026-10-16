@@ -4,6 +4,7 @@
 //! exact paths, and the validators the descriptors hand to the runtime.
 //! Not part of the SDK's API.
 
+use std::any::Any;
 use std::fmt::{self, Display};
 use std::ops::ControlFlow;
 use std::sync::{Arc, LazyLock};
@@ -735,7 +736,8 @@ impl<T: DeserializeOwned + Serialize + 'static> Validator for Typed<T> {
             return Validation::Invalid(issues);
         }
         if !self.request {
-            return Validation::Valid(value.clone());
+            // The runtime keeps the wire body; the judged value is not copied.
+            return Validation::Valid(Value::Null);
         }
         match serde_json::to_value(&decoded) {
             Ok(normalized) => Validation::Valid(normalized),
@@ -744,6 +746,15 @@ impl<T: DeserializeOwned + Serialize + 'static> Validator for Typed<T> {
                 message: e.to_string(),
             }]),
         }
+    }
+
+    /// A body the runtime decoded as `T` passes when `T`'s checks pass: a
+    /// member the schema does not allow cannot have decoded.
+    fn check_decoded(&self, value: &dyn Any) -> Option<Vec<Issue>> {
+        let decoded = value.downcast_ref::<T>()?;
+        let mut checker = Checker::new();
+        (self.check)(decoded, &mut checker);
+        Some(checker.finish())
     }
 }
 
