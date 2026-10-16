@@ -143,6 +143,7 @@ abstract final class _Transport {
     required int timeoutMs,
     bool stream = false,
     int? idleMs,
+    int? maxResponseBytes,
   }) async {
     final started = monotonicMs();
     int left() => math.max(timeoutMs - (monotonicMs() - started), 1);
@@ -193,8 +194,11 @@ abstract final class _Transport {
           request.headers.set(HttpHeaders.acceptHeader, '*/*');
         }
         if (multipartType != null) {
-          request.headers
-              .set('Content-Type', multipartType, preserveHeaderCase: true);
+          request.headers.set(
+            'Content-Type',
+            multipartType,
+            preserveHeaderCase: true,
+          );
         }
         if (data != null) {
           request.contentLength = data.length;
@@ -208,8 +212,9 @@ abstract final class _Transport {
       }
       final HttpClientResponse response;
       try {
-        response =
-            await request.close().timeout(Duration(milliseconds: left()));
+        response = await request.close().timeout(
+              Duration(milliseconds: left()),
+            );
       } on TimeoutException {
         request.abort();
         return const _Outcome(_Kind.timeout);
@@ -230,7 +235,20 @@ abstract final class _Transport {
           stream: _EventBody(client, response, idleMs ?? timeoutMs),
         );
       }
-      final (bytes, failure) = await _readBody(response, left());
+      if (maxResponseBytes != null &&
+          response.contentLength > maxResponseBytes) {
+        return _Outcome(
+          _Kind.response,
+          status: status,
+          headers: responseHeaders,
+          bodyFailure: 'oversized',
+        );
+      }
+      final (bytes, failure) = await _readBody(
+        response,
+        left(),
+        maxResponseBytes,
+      );
       return _Outcome(
         _Kind.response,
         status: status,
@@ -246,6 +264,7 @@ abstract final class _Transport {
   static Future<(List<int>, String?)> _readBody(
     Stream<List<int>> response,
     int leftMs,
+    int? maximum,
   ) {
     final done = Completer<(List<int>, String?)>();
     final out = BytesBuilder(copy: false);
@@ -256,7 +275,16 @@ abstract final class _Transport {
       done.complete((const <int>[], 'timeout'));
     });
     sub = response.listen(
-      out.add,
+      (chunk) {
+        if (done.isCompleted) return;
+        if (maximum != null && out.length + chunk.length > maximum) {
+          timer.cancel();
+          unawaited(sub.cancel());
+          done.complete((const <int>[], 'oversized'));
+          return;
+        }
+        out.add(chunk);
+      },
       onError: (Object _) {
         if (done.isCompleted) return;
         timer.cancel();

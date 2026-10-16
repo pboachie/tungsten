@@ -110,6 +110,7 @@ final class ClientCore {
         _randomFn = options.random,
         _tokenStore = options.tokenStore ?? MemoryTokenStore(),
         _timeoutMs = _positiveMs(options.timeout) ?? defaultTimeoutMs,
+        maxResponseBytes = options.maxResponseBytes,
         maxEventBytes = _positive(options.maxEventBytes) ?? 1024 * 1024,
         maxCollectBytes = _positive(options.maxCollectBytes) ?? 4 * 1024 * 1024,
         maxCollectMs = _positiveMs(options.maxCollect) ?? 60000,
@@ -166,6 +167,9 @@ final class ClientCore {
 
   /// The base URL requests go to (empty when none is configured).
   late final String baseUrl;
+
+  /// Maximum buffered response bytes, or null when unlimited.
+  final int? maxResponseBytes;
 
   /// The largest event of a stream, in UTF-8 bytes.
   final int maxEventBytes;
@@ -253,8 +257,10 @@ final class ClientCore {
     final op = _resolve(operation);
     if (op is Err<Object?>) return op.cast<T>();
     final d = op as OperationDescriptor;
-    final result =
-        await _guard(d.id, () => _callWith(d, args, options, null, null));
+    final result = await _guard(
+      d.id,
+      () => _callWith(d, args, options, null, null),
+    );
     return _typed(result, d.id, decode);
   }
 
@@ -318,7 +324,8 @@ final class ClientCore {
         .param('operation')
         .expected('an operation id of this SDK')
         .remedy(
-            'This SDK has no operation $shown; check the id. Nothing was sent.')
+          'This SDK has no operation $shown; check the id. Nothing was sent.',
+        )
         .err<Object?>();
   }
 
@@ -390,10 +397,18 @@ final class ClientCore {
       final l = tiers[op.isMutation ? 'mutating' : 'read_only'];
       if (l is Map) {
         max = _Util.bounded(l['max'], max, 0, 100).floor();
-        baseMs = _Util.bounded(l['base_ms'], baseMs, 0, _Util.maxSafeInteger)
-            .toDouble();
-        maxMs = _Util.bounded(l['max_ms'], maxMs, 0, _Util.maxSafeInteger)
-            .toDouble();
+        baseMs = _Util.bounded(
+          l['base_ms'],
+          baseMs,
+          0,
+          _Util.maxSafeInteger,
+        ).toDouble();
+        maxMs = _Util.bounded(
+          l['max_ms'],
+          maxMs,
+          0,
+          _Util.maxSafeInteger,
+        ).toDouble();
         final j = l['jitter'];
         if (j is String && j.isNotEmpty) jitter = j;
         final h = l['honor_retry_after'];
@@ -413,7 +428,7 @@ final class ClientCore {
       baseMs: baseMs,
       maxMs: maxMs,
       jitter: jitter,
-      honor: honor
+      honor: honor,
     );
   }
 
@@ -522,8 +537,10 @@ final class ClientCore {
   ) {
     final shown =
         identical(value, unset) ? null : _Helpers.redactBelow(op, path, value);
-    final received =
-        _Util.envelopeValue(shown, _Helpers.sensitiveArg(op, path));
+    final received = _Util.envelopeValue(
+      shown,
+      _Helpers.sensitiveArg(op, path),
+    );
     return _Stop(
       _diag(op.id, 'VALIDATION_FAILED')
           .param(_Helpers.argumentPath(op, path))
@@ -772,14 +789,13 @@ final class ClientCore {
       value = unset;
     }
     if (value is Map<String, Object?>) return value;
-    final names = [
-      for (final p in op.argumentParams.take(3)) '${p.name}: ...',
-    ];
+    final names = [for (final p in op.argumentParams.take(3)) '${p.name}: ...'];
     throw _Stop(
       _diag(op.id, 'VALIDATION_FAILED')
           .param('args')
-          .received(_Util.envelopeValue(
-              identical(value, unset) ? null : value, false))
+          .received(
+            _Util.envelopeValue(identical(value, unset) ? null : value, false),
+          )
           .expected('an object of named arguments')
           .remedy(
             'Pass the arguments of ${op.id} as one object of JSON values, e.g. {${names.join(', ')}}.',
@@ -813,6 +829,17 @@ final class ClientCore {
     _Claim? claim,
   ) async {
     _checkDescriptor(op);
+    final limit = opts.maxResponseBytes ?? maxResponseBytes;
+    if (limit != null && (limit <= 0 || limit > 9007199254740991)) {
+      throw _Stop(
+        _diag(op.id, 'VALIDATION_FAILED')
+            .param('maxResponseBytes')
+            .remedy(
+              'maxResponseBytes must be a positive safe integer; nothing was sent.',
+            )
+            .err<Object?>(),
+      );
+    }
     register([op]);
     final args = _normalizeArgs(op, rawArgs);
     if (_Util.nestsDeeper(args, _Util.maxArgDepth)) {
@@ -827,8 +854,14 @@ final class ClientCore {
     _validateArgs(op, args, purpose == _Purpose.macroPreview);
     _checkKey(op, opts, purpose);
     if (purpose == _Purpose.call && claim == null) {
-      final err =
-          _confirmed(op.id, op.id, 'preview(...)', op.safety, args, opts);
+      final err = _confirmed(
+        op.id,
+        op.id,
+        'preview(...)',
+        op.safety,
+        args,
+        opts,
+      );
       if (err != null) throw _Stop(err);
     }
     final method = op.method;
@@ -992,7 +1025,10 @@ final class ClientCore {
   }
 
   Object? _displayValue(
-      OperationDescriptor op, ParamDescriptor p, Object? value) {
+    OperationDescriptor op,
+    ParamDescriptor p,
+    Object? value,
+  ) {
     if (_Helpers.sensitiveArg(op, [p.name]) || _Util.looksSensitive(p.wire)) {
       return redacted;
     }
@@ -1038,7 +1074,8 @@ final class ClientCore {
         _diag(op.id, 'TRANSPORT_FAILED')
             .retrying('never')
             .remedy(
-                'No base URL is configured: set ClientOptions.baseUrl. Nothing was sent.')
+              'No base URL is configured: set ClientOptions.baseUrl. Nothing was sent.',
+            )
             .err<Object?>(),
       );
     }
@@ -1084,8 +1121,10 @@ final class ClientCore {
           missing ??= p;
           return '{$inner}';
         }
-        displayed[inner] =
-            _Serialize.pathParam(p, _displayValue(op, p, args[p.name]));
+        displayed[inner] = _Serialize.pathParam(
+          p,
+          _displayValue(op, p, args[p.name]),
+        );
         return _Serialize.pathParam(p, args[p.name]);
       });
       if (unknown != null) {
@@ -1145,8 +1184,10 @@ final class ClientCore {
           ? ''
           : (built.contains('?') ? '&' : '?') + list.join('&');
       full = root + built + join(parts);
-      final displayedPath = op.path
-          .replaceAllMapped(placeholder, (m) => displayed[m[1]!] ?? m[0]!);
+      final displayedPath = op.path.replaceAllMapped(
+        placeholder,
+        (m) => displayed[m[1]!] ?? m[0]!,
+      );
       display = root + displayedPath + join(shown);
     }
     if (!_validBaseUrl(full)) throw _badBase(op);
@@ -1363,7 +1404,10 @@ final class ClientCore {
   /// (url, shown url) of a read's redirect that stays on the request's
   /// origin, with the auth query re-applied; null otherwise.
   (String, String)? _redirectTarget(
-      _Prepared p, String from, String? location) {
+    _Prepared p,
+    String from,
+    String? location,
+  ) {
     if (location == null || location.isEmpty) return null;
     try {
       final base = Uri.parse(from);
@@ -1371,12 +1415,16 @@ final class ClientCore {
       if (!_sameOrigin(base, target) || target.userInfo.isNotEmpty) {
         return null;
       }
-      final sent =
-          _withQuery(target.toString(), p.authQuery, const [], replace: false);
+      final sent = _withQuery(
+        target.toString(),
+        p.authQuery,
+        const [],
+        replace: false,
+      );
       final display = _displayOverrideUrl(p.op, p.args, sent);
       return (
         sent,
-        _withQuery(display, const [], p.hiddenQuery, replace: true)
+        _withQuery(display, const [], p.hiddenQuery, replace: true),
       );
     } on FormatException {
       return null;
@@ -1413,6 +1461,7 @@ final class ClientCore {
             timeoutMs: timeout,
             stream: stream,
             idleMs: stream ? idleTimeoutMs : null,
+            maxResponseBytes: opts.maxResponseBytes ?? maxResponseBytes,
           );
       var outcome = await sendOnce();
       final pageUrls = <String>{_PageState.urlKey(target)};
@@ -1420,7 +1469,9 @@ final class ClientCore {
       // never follows one.
       if (!mutation && !_redirectsDisabled) {
         for (var i = 0; i < maxRedirects; i++) {
-          if (outcome.kind != _Kind.response || !_redirect(outcome.status)) {
+          if (outcome.kind != _Kind.response ||
+              outcome.bodyFailure == 'oversized' ||
+              !_redirect(outcome.status)) {
             break;
           }
           final next = _redirectTarget(p, target, outcome.headers['location']);
@@ -1454,8 +1505,13 @@ final class ClientCore {
         attempts: attempts,
         check: check,
       );
-      final (result, streamed) =
-          _classifyResponse(ctx, p, outcome, rctx, timeout);
+      final (result, streamed) = _classifyResponse(
+        ctx,
+        p,
+        outcome,
+        rctx,
+        timeout,
+      );
       if (streamed != null) return (null, streamed);
       if (result is Ok<Object?>) {
         p.pageState
@@ -1590,6 +1646,23 @@ final class ClientCore {
     final hint = verifyOp is Map
         ? 'Call ${verifyOp['operation']} to read the current state.'
         : null;
+    if (outcome.bodyFailure == 'oversized') {
+      return (
+        _diag(op.id, 'UNEXPECTED_RESPONSE')
+            .code('RESPONSE_TOO_LARGE')
+            .status(status)
+            .requestId(rid)
+            .retrying('never')
+            .next(hint)
+            .attempts(attempts)
+            .remedy(
+              'Response exceeded maxResponseBytes and was abandoned. '
+              '${mutation ? "The call may have taken effect; inspect API state before retrying." : "The read is incomplete."}',
+            )
+            .err<Object?>(),
+        null,
+      );
+    }
     if (success && outcome.body == null) {
       final failure = outcome.bodyFailure == 'timeout' ? 'timeout' : 'broken';
       if (!mutation) {
@@ -1688,11 +1761,14 @@ final class ClientCore {
         final kept = mutation && mode == ValidateResponses.strict
             ? " The decoded body is in the result's partial; store any value shown only once from it before anything else."
             : '';
-        final shown =
-            _Util.redactPaths(decoded.value, op.sensitiveResponseFields);
+        final shown = _Util.redactPaths(
+          decoded.value,
+          op.sensitiveResponseFields,
+        );
         final received = _Util.getPath(shown, issue.path);
-        final sensitive =
-            issue.path.any((s) => s is String && _Util.looksSensitive(s));
+        final sensitive = issue.path.any(
+          (s) => s is String && _Util.looksSensitive(s),
+        );
         problem = _diag(op.id, 'UNEXPECTED_RESPONSE')
             .status(status)
             .requestId(rid)
@@ -1757,11 +1833,11 @@ final class ClientCore {
     if (hook is Map<String, Object?> &&
         _str(hook['operation']).isNotEmpty &&
         _Classify.verifyCallable(hook)) {
-      final scope = <String, Object?>{
-        'args': _Helpers.withWireNames(op, args),
-      };
-      final evaluated =
-          Expr.evaluate(hook['args'] ?? <String, Object?>{}, scope);
+      final scope = <String, Object?>{'args': _Helpers.withWireNames(op, args)};
+      final evaluated = Expr.evaluate(
+        hook['args'] ?? <String, Object?>{},
+        scope,
+      );
       final call = _str(hook['operation']) + _Util.withArguments(evaluated);
       final lost = <String>[];
       final expect = hook['expect'] is Map
@@ -1886,9 +1962,7 @@ final class ClientCore {
     final note = _str(op.agent['remediation_note']);
     if (note.isNotEmpty) effects.add(note);
     if (conf is Map && _list(conf['summary_fields']).isNotEmpty) {
-      final fields = [
-        for (final f in _list(conf['summary_fields'])) '$f={$f}',
-      ];
+      final fields = [for (final f in _list(conf['summary_fields'])) '$f={$f}'];
       effects.add(
         _Helpers.interpolate('Arguments: ${fields.join(', ')}.', p.args, op),
       );
@@ -1913,7 +1987,13 @@ final class ClientCore {
     switch (op._preview['mode']) {
       case 'header':
         final dry = await _prepare(
-            op, rawArgs, opts, _Purpose.serverPreview, null, null);
+          op,
+          rawArgs,
+          opts,
+          _Purpose.serverPreview,
+          null,
+          null,
+        );
         final answer = await _sendRequest(dry, opts);
         if (answer is Err<Object?>) return answer;
         final ok = answer as Ok<Object?>;
@@ -1928,7 +2008,8 @@ final class ClientCore {
           return _diag(op.id, 'VALIDATION_FAILED')
               .param('operation')
               .expected(
-                  'the preview operation $name registered with the client')
+                'the preview operation $name registered with the client',
+              )
               .remedy(
                 'Register $name (ClientCore.register) so preview() can call it; nothing was sent.',
               )
@@ -1984,7 +2065,8 @@ final class ClientCore {
         );
       }
       await Future<void>.delayed(
-          Duration(milliseconds: math.max(intervalMs, 0)));
+        Duration(milliseconds: math.max(intervalMs, 0)),
+      );
     }
   }
 
@@ -2048,8 +2130,9 @@ final class ClientCore {
     );
   }
 
-  static Map<String, Object?> _unresolved() =>
-      <String, Object?>{r'$tungsten_unresolved': true};
+  static Map<String, Object?> _unresolved() => <String, Object?>{
+        r'$tungsten_unresolved': true,
+      };
 
   /// References resolved; one that does not resolve equals nothing a
   /// response can hold.

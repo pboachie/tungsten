@@ -266,6 +266,16 @@ values as `JsonNode`, OpenID Connect as a bearer token, no CLI or MCP).
 
 ### Fixed
 
+- Restore Python environment proxy and `NO_PROXY` routing while retaining
+  socket-level attempt deadlines on direct and proxied connections.
+- Isolate Git input commands from project configuration and inherited Git
+  environment overrides; terminate the complete process tree on budget failure.
+- Restrict input authentication headers to explicitly selected URLs or an
+  explicitly scoped origin, so manifests cannot redirect credentials.
+- Add Dart `maxResponseBytes` limits with bounded buffering and no automatic
+  replay after an oversized response, including failed and redirected requests.
+- Hash-lock release bundle validation dependencies and restrict installer
+  attestation verification to the release workflow.
 - Preserve Go response decoding semantics for duplicate JSON members, large
   integers and dynamic values modified before typed decoding.
 - Close Python transport sockets when TLS setup fails or its deadline expires.

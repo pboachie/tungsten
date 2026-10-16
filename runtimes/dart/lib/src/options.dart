@@ -126,15 +126,19 @@ final class _PartsCredential extends Credential {
 }
 
 final class _ClientCredentials extends Credential {
-  const _ClientCredentials(
-      {required this.clientId, required this.clientSecret});
+  const _ClientCredentials({
+    required this.clientId,
+    required this.clientSecret,
+  });
 
   final String clientId;
   final String clientSecret;
 
   @override
-  Object _form() =>
-      <String, String?>{'client_id': clientId, 'client_secret': clientSecret};
+  Object _form() => <String, String?>{
+        'client_id': clientId,
+        'client_secret': clientSecret,
+      };
 }
 
 final class _AuthorizationCodeCredential extends Credential {
@@ -247,6 +251,7 @@ final class ClientOptions {
     this.onDiagnostic,
     this.headers = const {},
     this.maxEventBytes,
+    this.maxResponseBytes,
     this.maxCollectBytes,
     this.maxCollect,
     this.maxReconnects,
@@ -293,6 +298,10 @@ final class ClientOptions {
 
   /// The largest event of a stream, in UTF-8 bytes (1 MiB).
   final int? maxEventBytes;
+
+  /// Maximum buffered response bytes; null leaves the size unlimited.
+  /// Must be a positive safe integer. SSE uses [maxEventBytes] instead.
+  final int? maxResponseBytes;
 
   /// The most event JSON [EventStream.collect] keeps (4 MiB).
   final int? maxCollectBytes;
@@ -349,6 +358,7 @@ final class CallOptions {
     this.timeout,
     this.verify = false,
     this.headers = const {},
+    this.maxResponseBytes,
   });
 
   /// Required for caller-owned operations that persist a key: generate it
@@ -367,6 +377,9 @@ final class CallOptions {
 
   /// Run the operation's verification hook after a success.
   final bool verify;
+
+  /// Overrides the client's buffered response limit for this call.
+  final int? maxResponseBytes;
 
   /// Sent with this call.
   final Map<String, String> headers;
@@ -392,6 +405,7 @@ final class CallOptions {
         refuseConfirmYes: refuseConfirmYes,
         timeout: timeout,
         verify: verify ?? this.verify,
+        maxResponseBytes: maxResponseBytes,
         headers: headers ?? this.headers,
       );
 

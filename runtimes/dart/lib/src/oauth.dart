@@ -258,7 +258,9 @@ extension _OAuth on ClientCore {
       return (
         null,
         _TokenFailure(
-            'Cannot refresh the OAuth2 token for $scheme: $why.', false),
+          'Cannot refresh the OAuth2 token for $scheme: $why.',
+          false,
+        ),
       );
     }
     final refresh = stored.refreshToken ?? '';
@@ -274,12 +276,14 @@ extension _OAuth on ClientCore {
     }
     final url = _str(flow['refresh_url'] ?? flow['token_url']);
     final (renewed, failure) = await _tokenRequest(
-      scheme,
-      url,
-      client,
-      [('grant_type', 'refresh_token'), ('refresh_token', refresh)],
-      refresh,
-    );
+        scheme,
+        url,
+        client,
+        [
+          ('grant_type', 'refresh_token'),
+          ('refresh_token', refresh),
+        ],
+        refresh);
     try {
       if (failure != null) {
         if (failure.rejected) await _tokenStore.delete(scheme);
@@ -323,6 +327,7 @@ extension _OAuth on ClientCore {
       headers: headers,
       body: body,
       timeoutMs: _tokenTimeoutMs,
+      maxResponseBytes: 1024 * 1024,
     );
     if (out.kind != _Kind.response || out.body == null) {
       return (
@@ -333,8 +338,11 @@ extension _OAuth on ClientCore {
         ),
       );
     }
-    final decoded =
-        _Classify.decodeBody(out.body!, out.headers, 'application/json');
+    final decoded = _Classify.decodeBody(
+      out.body!,
+      out.headers,
+      'application/json',
+    );
     if (out.status < 200 || out.status > 299) {
       final code = _Util.getPathStr(decoded.value, 'error');
       final named = code is String && RegExp(r'^[a-z_]{1,40}$').hasMatch(code)
@@ -424,6 +432,7 @@ extension _OAuth on ClientCore {
       ],
       body: _Encoded(empty: false, bytes: utf8.encode(form.join('&'))),
       timeoutMs: _tokenTimeoutMs,
+      maxResponseBytes: 1024 * 1024,
     );
     if (out.kind != _Kind.response || out.body == null) {
       return (
@@ -437,8 +446,11 @@ extension _OAuth on ClientCore {
         'The OAuth2 token endpoint for ${sat.name} answered HTTP ${out.status}; check client_id, client_secret and scopes.',
       );
     }
-    final decoded =
-        _Classify.decodeBody(out.body!, out.headers, 'application/json');
+    final decoded = _Classify.decodeBody(
+      out.body!,
+      out.headers,
+      'application/json',
+    );
     final token = _Util.getPathStr(decoded.value, 'access_token');
     if (token is! String || token.isEmpty) {
       return (

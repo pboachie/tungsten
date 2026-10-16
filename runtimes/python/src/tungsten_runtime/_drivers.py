@@ -87,12 +87,28 @@ def _no_cookies() -> CookieJar:
 
 
 def sync_http(transport: object) -> httpx.Client:
-    return httpx.Client(
-        transport=transport if isinstance(transport, httpx.BaseTransport) else _DeadlineTransport(),
+    return _DeadlineClient(
+        transport=transport if isinstance(transport, httpx.BaseTransport) else None,
         follow_redirects=False,
         cookies=_no_cookies(),
         timeout=None,
     )
+
+
+class _DeadlineClient(httpx.Client):
+    """Keep httpx's proxy/NO_PROXY routing, with deadlines on every route."""
+
+    def _init_transport(self, *args: Any, **kwargs: Any) -> httpx.BaseTransport:
+        # HTTPX 0.27 passes app=None and orders its factory parameters
+        # differently from 0.28. Keep upstream ownership of custom transports.
+        if kwargs.get("transport") is not None or kwargs.get("app") is not None:
+            return super()._init_transport(*args, **kwargs)
+        kwargs.pop("transport", None)
+        kwargs.pop("app", None)
+        return _DeadlineTransport(*args, **kwargs)
+
+    def _init_proxy_transport(self, proxy: httpx.Proxy, *args: Any, **kwargs: Any) -> httpx.BaseTransport:
+        return _DeadlineTransport(*args, proxy=proxy, **kwargs)
 
 
 async def _before_deadline(work: Awaitable[T], deadline: float | None) -> T:
@@ -255,21 +271,12 @@ class _DeadlineTransport(httpx.HTTPTransport):
     deadline ends it. Closing the transport shuts down the sockets other
     threads are blocked in, so they return at once."""
 
-    def __init__(self) -> None:
-        context = httpx.create_ssl_context()
-        super().__init__(verify=context)
-        self._pool.close()  # httpx's pool, replaced by one on the deadline-aware backend
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
         self._sockets = _Sockets()
-        # httpx's default limits (100 connections, 20 kept alive for 5 s), HTTP/1.1.
-        self._pool = httpcore.ConnectionPool(
-            ssl_context=context,
-            max_connections=100,
-            max_keepalive_connections=20,
-            keepalive_expiry=5.0,
-            http1=True,
-            http2=False,
-            network_backend=_DeadlineBackend(self._sockets),
-        )
+        # Preserve httpx's direct, HTTP(S) or SOCKS pool, TLS configuration and
+        # limits. No connection exists yet; every new socket uses this backend.
+        self._pool._network_backend = _DeadlineBackend(self._sockets)
         # Closes the pool of a transport that is dropped (its client never
         # closed), so its sockets are released cleanly; close() detaches it.
         self._finalizer = weakref.finalize(self, _close_pool, self._pool)

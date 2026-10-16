@@ -223,7 +223,11 @@ verify_attestation() {
   fi
   reason='gh is not installed'
   if have gh && gh attestation --help >"$work/attestation-help.log" 2>&1; then
-    if ! gh attestation verify "$1" --repo "$repo" >"$work/attestation-out.log" 2>"$work/attestation-error.log"; then
+    gh --version >"$work/gh-version.log" 2>&1 \
+      || die "cannot determine GitHub CLI version; update to 2.102.0 or newer"
+    awk 'NR == 1 { split($3,v,"."); ok = ($1 == "gh" && $2 == "version" && $3 ~ /^[0-9]+\.[0-9]+\.[0-9]+$/ && (v[1] > 2 || (v[1] == 2 && v[2] >= 102))) } END { exit !ok }' "$work/gh-version.log" \
+      || die "GitHub CLI 2.102.0 or newer is required for exact workflow attestation verification"
+    if ! gh attestation verify "$1" --repo "$repo" --signer-workflow "$repo/.github/workflows/release.yml" >"$work/attestation-out.log" 2>"$work/attestation-error.log"; then
       tail -n 8 "$work/attestation-error.log" >&2
       die "the build attestation could not be verified; nothing was installed"
     fi

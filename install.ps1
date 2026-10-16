@@ -150,7 +150,12 @@ try {
             }
         }
         if ($usable) {
-            $verifyCode = Invoke-GhAttestation @('attestation', 'verify', $zip, '--repo', $repo) $attestationOut $attestationError
+            $versionCode = Invoke-GhAttestation @('--version') $attestationOut $attestationError
+            $versionLine = Get-Content -LiteralPath $attestationOut -TotalCount 1
+            if ($versionCode -ne 0 -or $versionLine -notmatch '^gh version (\d+\.\d+\.\d+)(?: |$)' -or [version]$Matches[1] -lt [version]'2.102.0') {
+                Fail 'GitHub CLI 2.102.0 or newer is required for exact workflow attestation verification'
+            }
+            $verifyCode = Invoke-GhAttestation @('attestation', 'verify', $zip, '--repo', $repo, '--signer-workflow', "$repo/.github/workflows/release.yml") $attestationOut $attestationError
             if ($verifyCode -ne 0) {
                 Get-Content -LiteralPath $attestationError -Tail 8 | ForEach-Object { Write-Host $_ }
                 Fail "the build attestation of $asset could not be verified; nothing was installed"

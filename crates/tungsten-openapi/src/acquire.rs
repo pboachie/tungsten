@@ -22,8 +22,10 @@ const LOCK_LIMIT: usize = 32 * 1024;
 pub struct Options {
     pub offline: bool,
     pub refresh: bool,
-    /// Repeatable `Name: value` headers; supplied only to the requested origin.
+    /// `Name: value` for explicit sources, or `[https://host] Name: value`.
     pub headers: Vec<String>,
+    /// URLs explicitly selected by the caller, never URLs read from a manifest.
+    pub header_sources: Vec<String>,
 }
 
 impl std::fmt::Debug for Options {
@@ -32,6 +34,7 @@ impl std::fmt::Debug for Options {
             .field("offline", &self.offline)
             .field("refresh", &self.refresh)
             .field("headers", &self.headers.len())
+            .field("header_sources", &self.header_sources.len())
             .finish()
     }
 }
@@ -375,6 +378,32 @@ pub fn acquire(source: &str, project: &Path, options: &Options) -> Result<PathBu
     // headers so credentials cannot change the request destination or message.
     let mut headers = Vec::new();
     for header in &options.headers {
+        let (header, allowed) = if let Some(scoped) = header.strip_prefix('[') {
+            let (origin, header) = scoped
+                .split_once("] ")
+                .or_else(|| scoped.split_once("]\t"))
+                .ok_or_else(invalid)?;
+            let origin = Url::parse(origin).map_err(|_| invalid())?;
+            if !matches!(origin.scheme(), "http" | "https")
+                || origin.host_str().is_none()
+                || !origin.username().is_empty()
+                || origin.password().is_some()
+                || origin.path() != "/"
+                || origin.query().is_some()
+                || origin.fragment().is_some()
+            {
+                return Err(invalid());
+            }
+            (header.trim_start(), origin.origin() == url.origin())
+        } else {
+            (
+                header.as_str(),
+                options
+                    .header_sources
+                    .iter()
+                    .any(|explicit| explicit == source),
+            )
+        };
         let (name, value) = header.split_once(':').ok_or_else(invalid)?;
         let name =
             ureq::http::HeaderName::from_bytes(name.trim().as_bytes()).map_err(|_| invalid())?;
@@ -389,7 +418,9 @@ pub fn acquire(source: &str, project: &Path, options: &Options) -> Result<PathBu
                 "supply authentication or content-negotiation headers only",
             ));
         }
-        headers.push((name, value));
+        if allowed {
+            headers.push((name, value));
+        }
     }
     std::fs::create_dir_all(project).map_err(|_| cache_error())?;
     let root = project.join(".tungsten-inputs");
