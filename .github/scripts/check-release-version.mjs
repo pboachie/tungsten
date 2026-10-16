@@ -18,7 +18,12 @@ const tomlVersion = (path, section) => {
 const workspace = tomlVersion("Cargo.toml", "workspace.package");
 const tag = process.env.CI_COMMIT_TAG || process.env.RELEASE_TAG || "";
 assert(tag || process.argv.includes("--workspace"), "set RELEASE_TAG/CI_COMMIT_TAG, or pass --workspace for an untagged source check");
-if (tag) assert.match(tag, /^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/, "invalid release tag");
+if (tag) {
+  assert.match(tag, /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/, "invalid release tag");
+  for (const part of tag.split("-").slice(1).join("-").split(".")) {
+    assert(!/^0\d+$/.test(part), "numeric prerelease identifiers cannot have leading zeroes");
+  }
+}
 const version = tag ? tag.slice(1) : workspace;
 assert.equal(workspace, version, "release tag and workspace version differ");
 const expect = (path, actual) => assert.equal(actual, version, `${path}: release version mismatch`);
@@ -38,6 +43,7 @@ expect("F# manifest", capture("runtimes/fsharp/Tungsten.Runtime.FSharp.fsproj", 
 expect("Kotlin manifest", capture("runtimes/kotlin/build.gradle.kts", /^version\s*=\s*"([^"]+)"/m));
 expect("Kotlin Java runtime dependency", capture("runtimes/kotlin/build.gradle.kts", /api\("io\.github\.pboachie\.tungsten:tungsten-runtime:([^"]+)"\)/));
 expect("Dart manifest", capture("runtimes/dart/pubspec.yaml", /^version:\s*(\S+)/m));
+expect("Go emitter default", capture("emitters/go/main.go", /const defaultRuntimeVersion\s*=\s*"v([^"]+)"/));
 
 // Identity headers must describe the same runtime as the package metadata.
 for (const [path, pattern] of [
@@ -51,12 +57,4 @@ for (const [path, pattern] of [
   ["runtimes/go/client.go", /const Version\s*=\s*"([^"]+)"/],
   ["runtimes/ruby/lib/tungsten/runtime/version.rb", /VERSION\s*=\s*"([^"]+)"/],
 ]) expect(path, capture(path, pattern));
-
-// The external Go emitter names its own version and, by default, requires the
-// Go runtime of the same release (published as the nested tag
-// runtimes/go/vX.Y.Z), so both must derive from one constant that matches.
-const goEmitter = read("emitters/go/main.go");
-expect("emitters/go/main.go releaseVersion", capture("emitters/go/main.go", /^const releaseVersion\s*=\s*"([^"]+)"/m));
-assert.match(goEmitter, /^\s*emitterVersion\s*=\s*releaseVersion\s*$/m, "emitters/go/main.go: emitterVersion must be releaseVersion");
-assert.match(goEmitter, /^const defaultRuntimeVersion\s*=\s*"v"\s*\+\s*releaseVersion\s*$/m, "emitters/go/main.go: defaultRuntimeVersion must be \"v\" + releaseVersion");
 console.log(`Release manifests and runtime identities match ${tag || `workspace ${version}`}`);

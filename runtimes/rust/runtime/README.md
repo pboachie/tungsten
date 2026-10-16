@@ -1,9 +1,15 @@
 # tungsten-runtime (Rust)
 
+## Registry status
+
+Registry installation is currently unavailable. The 0.1.3 compiler is an
+unreleased source candidate; use runtime source matching your compiler and
+generated SDK. This library does not install the Tungsten compiler.
+
 ## Install from source
 
-Requires Rust 1.88 or newer. Until a matching crates.io release is available,
-use a local dependency (adjust the checkout path):
+Requires Rust 1.88 or newer. Use `v0.1.2` source for stable 0.1.2, or the matching
+0.1.3 candidate checkout. Configure a local dependency (adjust the path):
 
 ```toml
 [dependencies]

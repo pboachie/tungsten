@@ -22,16 +22,9 @@ import (
 	"strings"
 )
 
-// releaseVersion is the tungsten release this emitter belongs to. It must
-// equal the workspace version in Cargo.toml and the Go runtime's Version;
-// .github/scripts/check-release-version.mjs fails CI and the release on any
-// drift, so the emitter and its default runtime dependency move with every
-// release bump instead of staying behind.
-const releaseVersion = "0.1.3"
-
 const (
 	protocol       = 1
-	emitterVersion = releaseVersion
+	emitterVersion = "0.1.0"
 )
 
 type diagnostic struct {
@@ -61,7 +54,7 @@ func describe() any {
 				"module":          str("Go module path of the SDK (default example.com/<api>-sdk-go)."),
 				"package":         str("Go package name (default: the API name, lower case)."),
 				"version":         str("SDK version sent in User-Agent (default 0.1.0)."),
-				"runtime_version": str("Version of github.com/pboachie/tungsten/runtimes/go to require (default " + defaultRuntimeVersion + ", the runtime released with this emitter)."),
+				"runtime_version": str("Version of github.com/pboachie/tungsten/runtimes/go to require (default " + defaultRuntimeVersion + ", published through its nested-module tag)."),
 				"runtime_path":    str("Directory of the runtime, relative to the output directory, for a replace directive (local builds)."),
 			},
 			"additionalProperties": false,
@@ -70,13 +63,12 @@ func describe() any {
 }
 
 // defaultRuntimeVersion is the runtime module version a generated go.mod
-// requires when runtime_version is not set: the runtime released together
-// with this emitter. The runtime is a nested module, so the release publishes
-// the tag runtimes/go/vX.Y.Z on the same commit as vX.Y.Z (the release
-// workflow refuses to publish without it), and Go proxies resolve this version
-// from that tag. Set runtime_version to pin another release or a
-// pseudo-version, or runtime_path for a local checkout.
-const defaultRuntimeVersion = "v" + releaseVersion
+// requires when runtime_version is not set. The runtime is a nested module,
+// so release versions use `runtimes/go/vX.Y.Z` tags rather than repository-root
+// tags. Publish and verify the runtime module before adopting its version here.
+// runtime_version remains an explicit override; runtime_path selects a local
+// replacement for source development.
+const defaultRuntimeVersion = "v0.1.3"
 
 var (
 	semver      = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$`)

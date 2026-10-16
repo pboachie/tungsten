@@ -177,7 +177,9 @@ impl Uses {
             imports.add("collections.abc", a);
         }
         for t in &self.typing {
-            let module = if plan.python_compat && matches!(*t, "NotRequired" | "TypeAliasType") {
+            let module = if (plan.python_310 && *t == "NotRequired")
+                || (plan.python_compat && *t == "TypeAliasType")
+            {
                 "typing_extensions"
             } else {
                 "typing"
