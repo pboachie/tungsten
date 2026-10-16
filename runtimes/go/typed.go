@@ -66,7 +66,7 @@ func CallTyped[T any](ctx context.Context, core *ClientCore, op *OperationDescri
 		return nil, ArgumentsError(op.ID, err)
 	}
 	out, err := core.Call(ctx, op, args, opts)
-	return Decode[T](op.ID, out, err)
+	return decodeOutcome[T](op.ID, out, err, true)
 }
 
 // PreviewTyped encodes a request struct and previews the operation.

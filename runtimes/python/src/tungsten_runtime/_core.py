@@ -1355,7 +1355,6 @@ class Engine:
         retries = self._retry_options(op)
         mutation = is_mutation(op)
         protected = has_replay_protection(op, prepared.key)
-        check = self._outcome_check(op, prepared.args) if mutation and not protected else None
         timeout_ms = self._timeout(opts)
         attempts = 0
         while True:
@@ -1419,6 +1418,20 @@ class Engine:
                     )
                 )
                 hops += 1
+            # The read that shows whether an unprotected mutation took effect
+            # is only needed to explain an unknown outcome or a failure, so
+            # it is looked up (over the whole registry) only then.
+            check = (
+                self._outcome_check(op, prepared.args)
+                if mutation
+                and not protected
+                and not (
+                    isinstance(outcome, Answered)
+                    and outcome.body is not None
+                    and 200 <= outcome.status <= 299
+                )
+                else None
+            )
             call_ctx = CallContext(self.api, op, prepared.key, prepared.key_header, attempts, check)
             answer = yield from self._classify(call_ctx, prepared, outcome, ctx, timeout_ms)
             result = answer.result

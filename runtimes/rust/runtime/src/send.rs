@@ -11,10 +11,11 @@ use url::Url;
 
 use crate::auth::{BoxFuture, OAuthClient, TokenSource};
 use crate::classify::{
-    CallContext, OutcomeCheck, UnknownFields, change_of, classify_error, decode_body, is_mutation,
-    match_response, outcome_unknown, request_id_of, verify_callable,
+    CallContext, OutcomeCheck, UnknownFields, change_of, classify_error, decode_body, is_json_body,
+    is_mutation, match_response, outcome_unknown, request_id_of, verify_callable,
 };
 use crate::client::{CachedToken, ClientCore};
+use crate::dispatch::BodySink;
 use crate::envelope::{Diag, scrub_diagnostic};
 use crate::expr::{describe_predicate, evaluate_expr, resolve_ref};
 use crate::helpers::{sent_arguments, with_arguments, with_wire_names};
@@ -86,16 +87,20 @@ impl ClientCore {
         prepared: &Prepared<'_>,
         opts: &CallOptions,
     ) -> Step<Response<Option<Value>>> {
-        self.send_tracked(prepared, opts, &mut String::new()).await
+        self.send_tracked(prepared, opts, &mut String::new(), None)
+            .await
     }
 
+    /// Send; a typed call passes the `sink` that takes a JSON success body
+    /// straight from its bytes, and the response's value is then `None`.
     pub(crate) async fn send_tracked(
         &self,
         prepared: &Prepared<'_>,
         opts: &CallOptions,
         request_url: &mut String,
+        sink: Option<&mut (dyn BodySink + '_)>,
     ) -> Step<Response<Option<Value>>> {
-        match self.send_with(prepared, opts, false).await? {
+        match self.send_with(prepared, opts, false, sink).await? {
             Sent::Response(response, url) => {
                 *request_url = url;
                 Ok(response)
@@ -119,6 +124,7 @@ impl ClientCore {
         prepared: &Prepared<'_>,
         opts: &CallOptions,
         stream: bool,
+        mut sink: Option<&mut (dyn BodySink + '_)>,
     ) -> Step<Sent> {
         let op = prepared.op;
         let retries = self.retry_options(op);
@@ -241,7 +247,14 @@ impl ClientCore {
                 attempts,
                 check: check.as_ref(),
             };
-            let error = match self.classify_response(&call_ctx, prepared, outcome, &ctx, timeout) {
+            let error = match self.classify_response(
+                &call_ctx,
+                prepared,
+                outcome,
+                &ctx,
+                timeout,
+                sink.as_deref_mut(),
+            ) {
                 Ok(mut sent) => {
                     if let Sent::Response(_, ref mut effective) = sent {
                         *effective = url;
@@ -327,6 +340,7 @@ impl ClientCore {
         outcome: AttemptOutcome,
         ctx: &RequestContext,
         timeout: Duration,
+        sink: Option<&mut (dyn BodySink + '_)>,
     ) -> Step<Sent> {
         let op = prepared.op;
         let mutation = is_mutation(op);
@@ -528,12 +542,31 @@ impl ClientCore {
             )));
         }
 
-        let decoded = decode_body(
-            &bytes,
-            &headers,
-            declared.and_then(|d| d.media_type.as_deref()),
-        );
         let mode = self.inner.validate_responses;
+        let declared_media = declared.and_then(|d| d.media_type.as_deref());
+        // A typed call takes a JSON body straight from its bytes, judged by
+        // the response validator unless validation is off. A body it does
+        // not take (not JSON, does not decode, does not pass) goes the JSON
+        // way below, which reports it exactly as a dynamic call would.
+        if let Some(sink) = sink
+            && is_json_body(&bytes, &headers, declared_media)
+            && sink.take(&bytes, mode != ValidateResponses::Off)
+        {
+            return Ok(Sent::Response(
+                Response {
+                    value: None,
+                    meta: ResponseMeta {
+                        status,
+                        headers,
+                        request_id,
+                        attempts,
+                    },
+                    verification: None,
+                },
+                String::new(),
+            ));
+        }
+        let decoded = decode_body(&bytes, &headers, declared_media);
         let sensitive = &op.agent.sensitive_response_fields;
         let after_effect = if mutation {
             " The call took effect; do not repeat it."

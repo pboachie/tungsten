@@ -191,6 +191,18 @@ values as `JsonNode`, OpenID Connect as a bearer token, no CLI or MCP).
 
 ### Changed
 
+- Runtime performance. Successful responses are decoded once instead of
+  several times: the Go runtime parses the body in one pass and unmarshals the
+  original bytes into the typed result, and generated Rust SDKs call the new
+  `Client::call_typed`, which deserializes the body bytes straight into the
+  result type and builds the generic JSON value only when it is needed. The
+  Python sync client runs on httpx's own transport with socket-level attempt
+  deadlines instead of a background event-loop thread, and declares `sniffio`.
+  The TypeScript runtime does less work preparing each request. Error
+  envelopes, validation modes and timeout semantics are unchanged.
+- Avoid unnecessary request argument copies in the Rust runtime and defer
+  TypeScript middleware header lookup allocation until a header changes.
+
 - Document released 0.1.2 compiler/runtime pins for npm, Python, Maven, NuGet
   and RubyGems consumers, plus matching-source Rust SDK/CLI and Go installation,
   independently from the unpublished 0.1.3 candidate.
@@ -254,6 +266,9 @@ values as `JsonNode`, OpenID Connect as a bearer token, no CLI or MCP).
 
 ### Fixed
 
+- Preserve Go response decoding semantics for duplicate JSON members, large
+  integers and dynamic values modified before typed decoding.
+- Close Python transport sockets when TLS setup fails or its deadline expires.
 - The Axum source-declaration importer accepts long `Router::new().route(..)`
   builder chains; routers with 19 or more chained routes no longer fail the
   lexical expression budget. Chains are walked iteratively, and only chains over

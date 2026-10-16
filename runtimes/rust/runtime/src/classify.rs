@@ -3,6 +3,7 @@
 //! diagnostic envelopes, including the unknown-outcome case and the
 //! resolution of the remediation table.
 
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 
 use serde_json::Value;
@@ -89,9 +90,42 @@ pub struct DecodedBody {
     pub bad_line: usize,
 }
 
-fn decode_text(bytes: &[u8]) -> String {
+/// The body as text, without a BOM; borrowed when it is valid UTF-8.
+fn decode_text(bytes: &[u8]) -> Cow<'_, str> {
     let bytes = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(bytes);
-    String::from_utf8_lossy(bytes).into_owned()
+    String::from_utf8_lossy(bytes)
+}
+
+/// The media type a body is decoded as: the announced one, else the one the
+/// descriptor declares (lowercased, possibly with parameters), else "".
+fn body_media(headers: &BTreeMap<String, String>, declared: Option<&str>) -> (String, String) {
+    let announced = media_type_of(headers);
+    let media = if announced.is_empty() {
+        declared.unwrap_or("").to_lowercase()
+    } else {
+        announced.clone()
+    };
+    (announced, media)
+}
+
+/// Whether [`decode_body`] would parse this body as one JSON text (not JSON
+/// Lines, not text or bytes): announced or declared JSON, or an unannounced
+/// body that looks like JSON. The typed call path decodes such a body
+/// straight into the SDK's type.
+pub(crate) fn is_json_body(
+    bytes: &[u8],
+    headers: &BTreeMap<String, String>,
+    declared: Option<&str>,
+) -> bool {
+    if bytes.is_empty() {
+        return false;
+    }
+    let (_, media) = body_media(headers, declared);
+    is_json_media(&media)
+        || (media.is_empty() && {
+            let text = decode_text(bytes);
+            text.trim_start().starts_with(['[', '{'])
+        })
 }
 
 pub fn decode_body(
@@ -99,7 +133,7 @@ pub fn decode_body(
     headers: &BTreeMap<String, String>,
     declared: Option<&str>,
 ) -> DecodedBody {
-    let announced = media_type_of(headers);
+    let (announced, media) = body_media(headers, declared);
     // An empty body is no body, unless the server says it is JSON Lines:
     // then it is no lines.
     if bytes.is_empty() && !is_jsonl_media(&announced) {
@@ -112,11 +146,6 @@ pub fn decode_body(
             bad_line: 0,
         };
     }
-    let media = if announced.is_empty() {
-        declared.unwrap_or("").to_lowercase()
-    } else {
-        announced.clone()
-    };
     let plain = |value: Value| DecodedBody {
         value: Some(value),
         json: false,
@@ -144,7 +173,7 @@ pub fn decode_body(
                 }
                 Err(_) => {
                     return DecodedBody {
-                        value: Some(Value::String(raw)),
+                        value: Some(Value::String(raw.into_owned())),
                         json: false,
                         invalid_json: true,
                         empty: false,
@@ -178,7 +207,7 @@ pub fn decode_body(
                 bad_line: 0,
             },
             Err(_) => DecodedBody {
-                value: Some(Value::String(raw)),
+                value: Some(Value::String(raw.into_owned())),
                 json: false,
                 invalid_json: true,
                 empty: false,
@@ -208,7 +237,7 @@ pub fn decode_body(
                 bad_line: 0,
             };
         }
-        return plain(Value::String(raw));
+        return plain(Value::String(raw.into_owned()));
     }
     plain(serde_json::to_value(Binary::new(bytes)).unwrap_or(Value::Null))
 }
