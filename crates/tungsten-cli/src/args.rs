@@ -76,7 +76,7 @@ pub(crate) struct Cli {
     #[arg(long, global = true)]
     pub refresh_inputs: bool,
     /// Header for a URL typed on the command line; for manifest URLs use
-    /// [https://host] Name: value to restrict it to that origin. Not Git authentication.
+    /// [https://api.example.com] Name: value to restrict it to that origin. Not Git authentication.
     /// Environment values are newline-separated. Prefer the environment for secrets.
     #[arg(
         long,
