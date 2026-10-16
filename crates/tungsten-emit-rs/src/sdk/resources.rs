@@ -325,11 +325,11 @@ fn write_method(
             w.indent();
             op_lines(w, &konst);
             w.line("let args = s::args(&request);");
-            w.line("let outcome = client.core.call(op, args, opts).await;");
             if shape.by_status.is_some() {
+                w.line("let outcome = client.core.call(op, args, opts).await;");
                 w.line("decode_by_status(&op.id, outcome)");
             } else {
-                w.line("decode(&op.id, outcome)");
+                w.line("client.core.call_typed(op, args, opts).await");
             }
         }
     }

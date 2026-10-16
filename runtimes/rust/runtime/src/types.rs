@@ -491,9 +491,9 @@ pub enum PathSegment {
 pub enum Validation {
     /// Request validators: the normalized, JSON-ready arguments object (keys
     /// are argument names; absent optionals are not keys; binary values are
-    /// the [`crate::Binary`] form). Response and page-item validators: the
-    /// value that was checked (the runtime keeps the decoded wire body, not
-    /// this value).
+    /// the [`crate::Binary`] form). Response and page-item validators: not
+    /// read (the runtime keeps the decoded wire body); generated validators
+    /// answer `Value::Null` rather than copy the body.
     Valid(Value),
     Invalid(Vec<Issue>),
 }
@@ -504,6 +504,18 @@ pub enum Validation {
 /// running the type's constraint checks, so issue paths are exact.
 pub trait Validator: Send + Sync + fmt::Debug {
     fn validate(&self, value: &Value) -> Validation;
+
+    /// Judge a body the runtime already decoded into the validator's type
+    /// (the typed call path decodes the body bytes straight into the SDK's
+    /// type, so the JSON form is never built when the body is valid): the
+    /// issues [`Validator::validate`] would report for its JSON form, none
+    /// when it is valid, or `None` when `value` is not of the validator's
+    /// type. The default judges nothing, so the runtime judges the JSON form
+    /// instead.
+    fn check_decoded(&self, value: &dyn std::any::Any) -> Option<Vec<Issue>> {
+        let _ = value;
+        None
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
