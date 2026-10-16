@@ -203,26 +203,18 @@ impl File<'_> {
         }
     }
 
-    fn router_root(&self, expr: &Expr) -> bool {
-        match expr {
-            Expr::MethodCall(call)
-                if [
-                    "route",
-                    "with_state",
-                    "layer",
-                    "route_layer",
-                    "nest",
-                    "merge",
-                ]
-                .contains(&call.method.to_string().as_str()) =>
-            {
-                self.router_root(&call.receiver)
+    fn router_root(&self, mut expr: &Expr) -> bool {
+        // Walk builder chains iteratively; their length is bounded only by the
+        // lexical chain budget, not by this function's stack use.
+        loop {
+            match expr {
+                Expr::MethodCall(call) if router_builder(call) => expr = &call.receiver,
+                Expr::Paren(paren) => expr = &paren.expr,
+                Expr::Call(call) => {
+                    return matches!(&*call.func, Expr::Path(path) if self.canonical(&path.path) == "axum::Router::new");
+                }
+                _ => return false,
             }
-            Expr::Paren(expr) => self.router_root(&expr.expr),
-            Expr::Call(call) => {
-                matches!(&*call.func, Expr::Path(path) if self.canonical(&path.path) == "axum::Router::new")
-            }
-            _ => false,
         }
     }
 
@@ -445,6 +437,38 @@ fn unknown_function_attribute(attributes: &[syn::Attribute]) -> bool {
     })
 }
 
+/// Start of an expression, matching `expr.span().start()`, without
+/// serializing postfix chains recursively (their length is only lexically
+/// bounded). Other expression kinds keep the flat lexical token budget.
+fn expression_start(mut expr: &Expr) -> Span {
+    loop {
+        let (attributes, inner) = match expr {
+            Expr::MethodCall(call) => (&call.attrs, &*call.receiver),
+            Expr::Field(field) => (&field.attrs, &*field.base),
+            Expr::Await(wait) => (&wait.attrs, &*wait.base),
+            _ => return expr.span(),
+        };
+        if let Some(attribute) = attributes.first() {
+            return attribute.pound_token.span;
+        }
+        expr = inner;
+    }
+}
+
+/// Builder methods that keep a chain anchored at `Router::new()`.
+fn router_builder(call: &syn::ExprMethodCall) -> bool {
+    [
+        "route",
+        "with_state",
+        "layer",
+        "route_layer",
+        "nest",
+        "merge",
+    ]
+    .iter()
+    .any(|name| call.method == name)
+}
+
 fn http_method(method: &str) -> bool {
     [
         "get", "post", "put", "patch", "delete", "head", "options", "trace",
@@ -525,7 +549,9 @@ impl Routes<'_, '_> {
         });
     }
 
-    fn route(&mut self, call: &syn::ExprMethodCall) {
+    /// `rooted` is whether `call.receiver` is a builder chain anchored at
+    /// `Router::new()`, computed once per chain by the visitor.
+    fn route(&mut self, call: &syn::ExprMethodCall, rooted: bool) {
         let mut notes = BTreeSet::new();
         let conditional_route = self.conditional || conditional(&call.attrs);
         if conditional_route {
@@ -555,7 +581,7 @@ impl Routes<'_, '_> {
         if unsupported_path {
             notes.insert(SourceNote::UnsupportedPath);
         }
-        let anchored = !self.scope_shadowed && self.file.router_root(&call.receiver);
+        let anchored = !self.scope_shadowed && rooted;
         if !anchored {
             notes.insert(SourceNote::RouterFlow);
         }
@@ -809,29 +835,80 @@ impl Routes<'_, '_> {
     }
 }
 
-impl<'ast> Visit<'ast> for Routes<'_, '_> {
-    fn visit_expr(&mut self, expr: &'ast Expr) {
+impl Routes<'_, '_> {
+    /// Count one visited expression; false once AST or route budgets overflow.
+    fn enter(&mut self) -> bool {
         self.nodes += 1;
         if self.nodes > self.limits.max_nodes
             || self.output.report.routes.len() > self.limits.max_operations
         {
             self.overflow = true;
-            return;
+            return false;
         }
-        visit::visit_expr(self, expr);
+        true
     }
-    fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
+
+    /// `start` is where the whole call expression begins, as `call.span()`
+    /// would report it without re-serializing the receiver chain.
+    fn link(&mut self, call: &syn::ExprMethodCall, rooted: bool, start: Span) {
         match call.method.to_string().as_str() {
-            "route" => self.route(call),
-            "nest" | "merge" => self.note(call.span(), SourceNote::NestedRouter),
+            "route" => self.route(call, rooted),
+            "nest" | "merge" => self.note(start, SourceNote::NestedRouter),
             "nest_service" => self.note(call.method.span(), SourceNote::NestedRouter),
             "route_service" | "fallback" | "fallback_service" => {
                 self.note(call.method.span(), SourceNote::UnsupportedHandler)
             }
-            "layer" | "route_layer" => self.note(call.span(), SourceNote::UnknownMiddlewareAuth),
+            "layer" | "route_layer" => self.note(start, SourceNote::UnknownMiddlewareAuth),
             _ => {}
         }
-        visit::visit_expr_method_call(self, call);
+    }
+}
+
+impl<'ast> Visit<'ast> for Routes<'_, '_> {
+    fn visit_expr(&mut self, expr: &'ast Expr) {
+        if self.enter() {
+            visit::visit_expr(self, expr);
+        }
+    }
+    fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
+        // Builder chains nest left in the AST (`a.b().c()` holds `a.b()` as
+        // its receiver). Unroll them iteratively so chain length does not add
+        // visitor recursion; each link is visited as `visit_expr` would.
+        let mut chain = vec![call];
+        let mut receiver = &*call.receiver;
+        while let Expr::MethodCall(inner) = receiver {
+            if !self.enter() {
+                return;
+            }
+            chain.push(inner);
+            receiver = &inner.receiver;
+        }
+        // Anchoring is resolved once per chain, innermost link first, instead
+        // of walking back to the root from every link.
+        let mut rooted = self.file.router_root(receiver);
+        let mut start = expression_start(receiver);
+        let mut anchors = Vec::with_capacity(chain.len());
+        for link in chain.iter().rev() {
+            if let Some(attribute) = link.attrs.first() {
+                start = attribute.pound_token.span;
+            }
+            anchors.push((rooted, start));
+            rooted = rooted && router_builder(link);
+        }
+        for (link, (rooted, start)) in chain.into_iter().zip(anchors.into_iter().rev()) {
+            self.link(link, rooted, start);
+            for attribute in &link.attrs {
+                self.visit_attribute(attribute);
+            }
+            self.visit_ident(&link.method);
+            if let Some(turbofish) = &link.turbofish {
+                self.visit_angle_bracketed_generic_arguments(turbofish);
+            }
+            for argument in &link.args {
+                self.visit_expr(argument);
+            }
+        }
+        self.visit_expr(receiver);
     }
     fn visit_expr_if(&mut self, expr: &'ast syn::ExprIf) {
         let prior = self.conditional;
@@ -900,10 +977,19 @@ pub fn import(files: &[SourceFile<'_>], limits: &Limits) -> Result<AxumImport, D
         ));
     }
     for file in files {
-        if !lex::bounded(file.text, limits.max_depth.min(32), limits.max_nodes) {
-            return Err(failure(
-                "Source token nesting or expression budget exceeded; split the inventory.",
-            ));
+        match lex::bounded(file.text, limits.max_depth.min(32), limits.max_nodes) {
+            Ok(()) => {}
+            Err(lex::Exceeded::Chain) => {
+                return Err(failure(&format!(
+                    "Source method chain exceeds {} links; split the router chain or inventory.",
+                    lex::MAX_CHAIN_LINKS
+                )));
+            }
+            Err(lex::Exceeded::Expression) => {
+                return Err(failure(
+                    "Source token nesting or expression budget exceeded; split the inventory.",
+                ));
+            }
         }
     }
     let files: Vec<_> = files
@@ -1044,7 +1130,15 @@ fn import_inner(files: &[SourceFile<'_>], limits: &Limits) -> Result<AxumImport,
         for item in &parsed.items {
             match item {
                 Item::Macro(item) => routes.note(item.span(), SourceNote::MacroNotExpanded),
-                Item::Mod(item) => routes.note(item.span(), SourceNote::NestedRouter),
+                Item::Mod(item) => {
+                    let start = match (item.attrs.first(), &item.vis, &item.unsafety) {
+                        (Some(attribute), _, _) => attribute.pound_token.span,
+                        (None, syn::Visibility::Inherited, Some(unsafety)) => unsafety.span,
+                        (None, syn::Visibility::Inherited, None) => item.mod_token.span,
+                        (None, visibility, _) => visibility.span(),
+                    };
+                    routes.note(start, SourceNote::NestedRouter)
+                }
                 _ => {}
             }
         }

@@ -260,7 +260,7 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
     e(
         "TG0123",
         "The .tungsten-inputs cache has no usable pin, contains a symlink or invalid file, or cannot be written safely.",
-        "Fetch once online and retain both source.lock.json and its content file for offline use. Inspect permissions and unexpected cache entries before retrying.",
+        "Fetch once online and retain both source.lock.json and its content file for offline use. Inspect permissions and unexpected cache entries before retrying. Partial *.pending writes from an interrupted fetch are discarded by the next online run; a held acquire.lock means another run is fetching the same source.",
     ),
     e(
         "TG0130",
@@ -280,7 +280,7 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
     e(
         "TG0133",
         "The Git source lock or its materialized files are missing, invalid, modified, symlinked or not writable. Every reused content file is SHA256-verified.",
-        "Restore the pinned cache from a trusted copy or re-import into a fresh project. Retain .tungsten-inputs with the same access controls as the original source for offline use.",
+        "Restore the pinned cache from a trusted copy or re-import into a fresh project. Retain .tungsten-inputs with the same access controls as the original source for offline use. Partial *.pending entries from an interrupted fetch are discarded by the next online run; a held acquire.lock means another run is fetching the same source.",
     ),
     e(
         "TG0134",

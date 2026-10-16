@@ -254,6 +254,25 @@ values as `JsonNode`, OpenID Connect as a bearer token, no CLI or MCP).
 
 ### Fixed
 
+- The Axum source-declaration importer accepts long `Router::new().route(..)`
+  builder chains; routers with 19 or more chained routes no longer fail the
+  lexical expression budget. Chains are walked iteratively, and only chains over
+  4096 links fail, with a dedicated diagnostic.
+- Interrupting a remote HTTP(S) or Git input fetch no longer wedges the
+  `.tungsten-inputs` cache. Pins, content and Git tree files are written to unique
+  scratch names and renamed into place; the next online run holds a per-source
+  `acquire.lock`, discards abandoned `*.pending` entries and restores truncated
+  content-addressed files. Cache write, cleanup and lock-contention errors now
+  name the affected path and how to recover.
+- Remote inputs: `--input-header`/`TUNGSTEN_INPUT_HEADERS` values sent to a
+  plain `http://` URL on a non-loopback host now print a warning (once per
+  origin, never echoing header names or values); use `https://` for
+  authenticated inputs. Redirects stay refused, so headers never cross origins.
+- Git inputs read every selected file through one `git cat-file --batch`
+  process and wait on Git without polling, so large subpaths acquire much
+  faster. Timeouts stop Git through the standard library instead of an
+  external `kill`/`taskkill` binary, and Git now shares tungsten's process
+  group so an interrupt also ends an in-flight fetch.
 - Release bundles include the Homebrew formula, winget archive and distribution
   checksums before publication, supporting GitHub immutable releases. Container
   distribution verifies the sealed assets and no longer uploads release assets.
