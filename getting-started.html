@@ -258,8 +258,8 @@ review and protect the cache and lock files together.</p>
 <div class="table-wrapper"><table><thead><tr><th>Target</th><th>Emits</th><th>Minimum toolchain</th><th>Runtime and installation</th></tr></thead><tbody>
 <tr><td><code>typescript</code></td><td>Typed SDK, <code>Result</code> values, Zod validation</td><td>Node 22</td><td><code>@elysra/tungsten-runtime</code>: matching npm package or built source</td></tr>
 <tr><td><code>python</code></td><td>Sync and async SDK, Pydantic v2 or dataclass models</td><td>Python 3.12 by default; <a href="#python-interpreter-compatibility">opt-in 3.10/3.11</a></td><td>PyPI runtime for a matching published release, or matching <code>runtimes/python</code> source</td></tr>
-<tr><td><code>rust</code></td><td>Async SDK (serde, reqwest) and optional generated CLI</td><td>Rust 1.88</td><td>Matching source paths to <code>runtimes/rust/runtime</code> and, for a CLI, <code>runtimes/rust/cli-kit</code>; see <a href="https://github.com/pboachie/tungsten/blob/07b85f0031f6/runtimes/rust/README.md">installation</a></td></tr>
-<tr><td><code>go</code> (external)</td><td>Models, resources, typed client, pagination and stream helpers</td><td>Go 1.22</td><td>Build <code>tungsten-emit-go</code> from <code>emitters/go</code>; use <code>runtime_path</code> to matching <code>runtimes/go</code> source; see <a href="https://github.com/pboachie/tungsten/blob/07b85f0031f6/runtimes/go/README.md">module status</a></td></tr>
+<tr><td><code>rust</code></td><td>Async SDK (serde, reqwest) and optional generated CLI</td><td>Rust 1.88</td><td>Matching source paths to <code>runtimes/rust/runtime</code> and, for a CLI, <code>runtimes/rust/cli-kit</code>; see <a href="https://github.com/pboachie/tungsten/blob/a759633f665d/runtimes/rust/README.md">installation</a></td></tr>
+<tr><td><code>go</code> (external)</td><td>Models, resources, typed client, pagination and stream helpers</td><td>Go 1.22</td><td>Build <code>tungsten-emit-go</code> from <code>emitters/go</code>; use <code>runtime_path</code> to matching <code>runtimes/go</code> source; see <a href="https://github.com/pboachie/tungsten/blob/a759633f665d/runtimes/go/README.md">module status</a></td></tr>
 <tr><td><code>java</code></td><td>Java SDK</td><td>Java 17 and Maven</td><td>Use <code>runtime_path</code> to matching <code>runtimes/java</code> source</td></tr>
 <tr><td><code>kotlin</code> (<code>kt</code>)</td><td>Kotlin/JVM SDK (data classes, sealed interfaces, blocking functions returning <code>Result</code>)</td><td>Java 17 and Gradle</td><td>Use <code>runtime_path</code> to matching <code>runtimes/kotlin</code>; it builds on the Java runtime in <code>runtimes/java</code> (<code>java_runtime_path</code>)</td></tr>
 <tr><td><code>csharp</code> (<code>cs</code>)</td><td>C# SDK</td><td>.NET 10</td><td>Use <code>runtime_path</code> to matching <code>runtimes/csharp</code>, referencing <code>Tungsten.Runtime.csproj</code></td></tr>
@@ -279,7 +279,7 @@ independently versioned non-npm runtime sources. Use the matching source checkou
 when a registry artifact is unavailable: source version metadata does not prove publication. Published 0.1.2 packages are available for npm, Python, Java,
 C# and Ruby; use the explicit <a href="#released-012-consumers">released-consumer overrides</a>
 below. Rust still uses matching source. Go also has a
-<a href="https://github.com/pboachie/tungsten/blob/07b85f0031f6/runtimes/go/README.md">matching-source route</a> for stable consumers. Its optional
+<a href="https://github.com/pboachie/tungsten/blob/a759633f665d/runtimes/go/README.md">matching-source route</a> for stable consumers. Its optional
 candidate <code>v0.1.3</code> module has a verified Apache-2.0 archive; the older stable-commit
 pseudo-version's archive notice differs, as explained in that guide.
 Target <code>runtime_path</code> values resolve from the generated package or crate
@@ -301,8 +301,8 @@ compiler and runtime source until that release's packages are published.</p>
 <pre><code class="language-powershell">irm https://raw.githubusercontent.com/pboachie/tungsten/main/install.ps1 | iex        # Windows
 </code></pre>
 <p>Pass <code>--version v0.1.2</code> to <code>install.sh</code> (or <code>-Version v0.1.2</code> to <code>install.ps1</code>) to pin a release, and <code>--dir</code> (<code>-InstallDir</code>) to choose the target directory.</p>
-<p>See <a href="https://github.com/pboachie/tungsten/blob/07b85f0031f6/install.sh"><code>install.sh --help</code></a> or <code>Get-Help ./install.ps1 -Full</code>
-(<a href="https://github.com/pboachie/tungsten/blob/07b85f0031f6/install.ps1">PowerShell script</a>) for environment variables and exit codes.
+<p>See <a href="https://github.com/pboachie/tungsten/blob/a759633f665d/install.sh"><code>install.sh --help</code></a> or <code>Get-Help ./install.ps1 -Full</code>
+(<a href="https://github.com/pboachie/tungsten/blob/a759633f665d/install.ps1">PowerShell script</a>) for environment variables and exit codes.
 Both installers check whether <code>gh attestation</code> is usable before verification.
 Without it they explain that only the checksum was verified; set
 <code>TUNGSTEN_REQUIRE_ATTESTATION=1</code> to require provenance verification. A failed
@@ -328,7 +328,7 @@ gh attestation verify tungsten.rb --repo pboachie/tungsten
 <p>The <code>irm … | iex</code> form cannot pass <code>-Init</code>. Run the downloaded script as a script block instead, or save it and run <code>.\install.ps1 -Init</code>:</p>
 <pre><code class="language-powershell">&amp; ([scriptblock]::Create((irm https://raw.githubusercontent.com/pboachie/tungsten/main/install.ps1))) -Init
 </code></pre>
-<p>Or build from source, with Rust 1.95 or newer (the repository pins 1.97.0 in <a href="https://github.com/pboachie/tungsten/blob/07b85f0031f6/rust-toolchain.toml"><code>rust-toolchain.toml</code></a> for development):</p>
+<p>Or build from source, with Rust 1.95 or newer (the repository pins 1.97.0 in <a href="https://github.com/pboachie/tungsten/blob/a759633f665d/rust-toolchain.toml"><code>rust-toolchain.toml</code></a> for development):</p>
 <pre><code class="language-sh">git clone https://github.com/pboachie/tungsten
 cd tungsten
 git checkout release/0.1.3                 # 0.1.3 source candidate
@@ -361,9 +361,9 @@ runtime imports do not generate a client or call an API.</p>
 as in the quickstart below; published 0.1.2 packages do not satisfy dependencies
 on 0.1.3 runtime capabilities. Rust registry installation is currently unavailable.
 Go supports matching stable source; its qualified <code>v0.1.3</code> module is an optional
-candidate dependency, not a compiler release. See the <a href="https://github.com/pboachie/tungsten/blob/07b85f0031f6/runtimes/rust/README.md">Rust source installation</a> and
-<a href="https://github.com/pboachie/tungsten/blob/07b85f0031f6/runtimes/go/README.md">Go installation options</a>. Runtime libraries do not install
-the Tungsten compiler. The <a href="https://github.com/pboachie/tungsten/blob/07b85f0031f6/examples/README.md">runnable gallery</a>
+candidate dependency, not a compiler release. See the <a href="https://github.com/pboachie/tungsten/blob/a759633f665d/runtimes/rust/README.md">Rust source installation</a> and
+<a href="https://github.com/pboachie/tungsten/blob/a759633f665d/runtimes/go/README.md">Go installation options</a>. Runtime libraries do not install
+the Tungsten compiler. The <a href="https://github.com/pboachie/tungsten/blob/a759633f665d/examples/README.md">runnable gallery</a>
 shows complete installation and first-use flows for each output.</p>
 <h3 id="released-012-consumers"><a class="header" href="#released-012-consumers">Released 0.1.2 consumers</a></h3>
 <p>Keep the compiler and generated clients on the released route when deploying
@@ -385,7 +385,7 @@ build it. Build the TypeScript SDK before the adapters that reference it.
 The released compiler's native runtime defaults predate the newly published
 0.1.2 packages, so keep the Java, C# and Ruby overrides explicit. Registry
 consumers use those packages without a runtime source checkout.</p>
-<p>The <a href="https://github.com/pboachie/tungsten/blob/07b85f0031f6/runtimes/rust/README.md#released-012-sdk-and-cli">stable Rust source recipe</a>
+<p>The <a href="https://github.com/pboachie/tungsten/blob/a759633f665d/runtimes/rust/README.md#released-012-sdk-and-cli">stable Rust source recipe</a>
 uses the unchanged <code>v0.1.2</code> checkout for both Rust crates while registry
 installation remains unavailable. This source route does not require a 0.1.3
 upgrade. The candidate compiler and its new features continue to require
@@ -393,7 +393,7 @@ matching candidate runtime source; Python 3.10/3.11 output belongs to that
 candidate route. Generated SDK compatibility still needs qualification against
 your own API and deployment.</p>
 <p>For Go, build the external emitter from <code>v0.1.2</code> and set <code>runtime_path</code> to that
-checkout's <code>runtimes/go</code>; the <a href="https://github.com/pboachie/tungsten/blob/07b85f0031f6/runtimes/go/README.md#released-012-compiler-and-emitter">stable Go recipe</a>
+checkout's <code>runtimes/go</code>; the <a href="https://github.com/pboachie/tungsten/blob/a759633f665d/runtimes/go/README.md#released-012-compiler-and-emitter">stable Go recipe</a>
 retains its Apache source/license context and avoids the old pseudo-version
 ZIP's inherited repository-root notice.</p>
 <h2 id="quickstart"><a class="header" href="#quickstart">Quickstart</a></h2>
@@ -476,17 +476,17 @@ the idle timeout after successful headers. Custom transports must cooperate;
 uninterruptible callbacks retain capacity until completion and late results are
 rejected, without a hard settlement deadline. OS resolver cancellation depends on
 the platform.</p>
-<p>More examples: the <a href="https://github.com/pboachie/tungsten/blob/07b85f0031f6/examples/README.md">runnable example gallery</a> covers first
+<p>More examples: the <a href="https://github.com/pboachie/tungsten/blob/a759633f665d/examples/README.md">runnable example gallery</a> covers first
 SDKs, supported input routes, local mocks, destructive confirmation and CI/surface
-review workflows. <a href="https://github.com/pboachie/tungsten/blob/07b85f0031f6/examples/typed-sse/README.md">Typed Python SSE</a> shows how to
+review workflows. <a href="https://github.com/pboachie/tungsten/blob/a759633f665d/examples/typed-sse/README.md">Typed Python SSE</a> shows how to
 declare or overlay an incomplete stream response and consume named events with
-sync/async cleanup. <a href="https://github.com/pboachie/tungsten/blob/07b85f0031f6/examples/response-contract-audit/README.md">Response-contract quality</a>
+sync/async cleanup. <a href="https://github.com/pboachie/tungsten/blob/a759633f665d/examples/response-contract-audit/README.md">Response-contract quality</a>
 shows the opt-in audit and reviewed schema overlays without inferring guaranteed
-types. <a href="https://github.com/pboachie/tungsten/blob/07b85f0031f6/examples/showcase/README.md">Tungsten on six public APIs</a>
+types. <a href="https://github.com/pboachie/tungsten/blob/a759633f665d/examples/showcase/README.md">Tungsten on six public APIs</a>
 uses the public OpenAPI descriptions of Stripe, GitHub, Twilio, OpenAI, Kubernetes
 and Discord to show diagnostics, MCP listing sizes and generated SDK code in
 TypeScript, Python and Rust, reproducible with one script. The
-<a href="https://github.com/pboachie/tungsten/blob/07b85f0031f6/examples/external-emitter-markdown">external Markdown emitter</a> shows how to
+<a href="https://github.com/pboachie/tungsten/blob/a759633f665d/examples/external-emitter-markdown">external Markdown emitter</a> shows how to
 write an external emitter.</p>
 <p>An <code>external:</code> target in <code>tungsten.yml</code> names a command that tungsten starts as a process, unsandboxed and with your privileges. It runs on every command that produces output in memory, not only on a writing <code>generate</code>: <code>generate --dry-run</code> and <code>--check</code>, <code>check --ci</code>, <code>diff</code> and <code>report</code> run it too (plain <code>check</code> and <code>ir dump</code> do not). A CI job that runs <code>tungsten check --ci</code> on pull requests therefore executes whatever the pull request puts in <code>tungsten.yml</code>. Pass <code>--no-external</code> or set <code>TUNGSTEN_NO_EXTERNAL=1</code> to skip external targets (reported as TG0807) when the manifest is not trusted.</p>
 <h3 id="python-interpreter-compatibility"><a class="header" href="#python-interpreter-compatibility">Python interpreter compatibility</a></h3>
@@ -516,8 +516,8 @@ part of the coordinated release.</p>
 <p>Repository layout: <code>crates/</code> is the compiler (AGPL-3.0-only); <code>runtimes/ts</code>, <code>runtimes/mcp</code>, <code>runtimes/webmcp</code>, <code>runtimes/python</code>, <code>runtimes/rust</code>, <code>runtimes/go</code>, <code>runtimes/java</code>, <code>runtimes/kotlin</code>, <code>runtimes/csharp</code>, <code>runtimes/fsharp</code>, <code>runtimes/dart</code> and <code>runtimes/ruby</code> contain the libraries generated code depends on (Apache-2.0).</p>
 <h2 id="licensing"><a class="header" href="#licensing">Licensing</a></h2>
 <ul>
-<li>The compiler (<code>crates/</code>) is licensed under <a href="https://github.com/pboachie/tungsten/blob/07b85f0031f6/LICENSE">AGPL-3.0-only</a>.</li>
-<li>The runtime libraries that generated code depends on (<code>runtimes/</code>) and the external Go emitter (<code>emitters/go</code>) are licensed under <a href="https://github.com/pboachie/tungsten/blob/07b85f0031f6/runtimes/LICENSE">Apache-2.0</a>.</li>
+<li>The compiler (<code>crates/</code>) is licensed under <a href="https://github.com/pboachie/tungsten/blob/a759633f665d/LICENSE">AGPL-3.0-only</a>.</li>
+<li>The runtime libraries that generated code depends on (<code>runtimes/</code>) and the external Go emitter (<code>emitters/go</code>) are licensed under <a href="https://github.com/pboachie/tungsten/blob/a759633f665d/runtimes/LICENSE">Apache-2.0</a>.</li>
 <li>Output generated by tungsten is not a work covered by the AGPL and carries no licence from tungsten. The owner of the API description chooses the licence of the generated code.</li>
 </ul>
 

@@ -1,0 +1,422 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Versioned results - tungsten</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="Documentation for tungsten, the agent-native SDK generator and MCP compiler">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon.svg">
+        <link rel="shortcut icon" href="favicon.png">
+        <link rel="stylesheet" href="css/variables.css">
+        <link rel="stylesheet" href="css/general.css">
+        <link rel="stylesheet" href="css/chrome.css">
+        <link rel="stylesheet" href="css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="highlight-css" href="highlight.css">
+        <link rel="stylesheet" id="tomorrow-night-css" href="tomorrow-night.css">
+        <link rel="stylesheet" id="ayu-highlight-css" href="ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "";
+            const default_light_theme = "light";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "searchindex.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="toc.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+            </noscript>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">tungsten</h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/pboachie/tungsten" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <i class="fa fa-spinner fa-spin"></i>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="versioned-runtime-benchmark-results"><a class="header" href="#versioned-runtime-benchmark-results">Versioned runtime benchmark results</a></h1>
+<p><strong>0.1.2 → 0.1.3 candidate a759633</strong></p>
+<p>These are measured builds; a candidate label does not indicate a published release.</p>
+<p><a href="runtime-benchmarks.html">Methodology and limitations</a> · <a href="assets/runtime-benchmarks.json">Download comparison data</a></p>
+<h2 id="environment-and-measurement-identity"><a class="header" href="#environment-and-measurement-identity">Environment and measurement identity</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Setting</th><th>Baseline</th><th>Candidate</th></tr></thead><tbody>
+<tr><td>Build label</td><td>0.1.2</td><td>0.1.3 candidate a759633</td></tr>
+<tr><td>Run ID (UTC)</td><td>20261016T040947598235Z</td><td>20261016T054430377302Z</td></tr>
+<tr><td>Public source commit (12 characters)</td><td><a href="https://github.com/pboachie/tungsten/commit/1a0ee4def654">https://github.com/pboachie/tungsten/commit/1a0ee4def654</a></td><td><a href="https://github.com/pboachie/tungsten/commit/a759633f665d">https://github.com/pboachie/tungsten/commit/a759633f665d</a></td></tr>
+<tr><td>cpu</td><td>AMD EPYC 9V74 80-Core Processor</td><td>AMD EPYC 9V74 80-Core Processor</td></tr>
+<tr><td>kernel</td><td>6.18.44</td><td>6.18.44</td></tr>
+<tr><td>machine</td><td>x86_64</td><td>x86_64</td></tr>
+<tr><td>go</td><td>go version go1.24.13 linux/amd64</td><td>go version go1.24.13 linux/amd64</td></tr>
+<tr><td>node</td><td>v24.19.0</td><td>v24.19.0</td></tr>
+<tr><td>python</td><td>Python 3.13.5</td><td>Python 3.13.5</td></tr>
+<tr><td>rustc</td><td>rustc 1.97.0 (2d8144b78 2026-07-07)</td><td>rustc 1.97.0 (2d8144b78 2026-07-07)</td></tr>
+<tr><td>seed</td><td>20261016</td><td>20261016</td></tr>
+<tr><td>reps</td><td>5</td><td>5</td></tr>
+<tr><td>server_cpu</td><td>0</td><td>0</td></tr>
+<tr><td>client_cpu</td><td>2</td><td>2</td></tr>
+<tr><td>cold_runs</td><td>30</td><td>30</td></tr>
+</tbody></table>
+</div>
+<p><strong>Interrupted measurement:</strong> 0.1.2 retains 181 of 550 latency cells from run 20261016T030147Z. The remaining cells and all cold starts were measured after recovery. Recorded environment settings, tracked source and client artifact hashes were verified unchanged. The pause can still introduce temporal drift; compare control clients and ranges before attributing changes to a version.</p>
+<p>The interrupted segment did not save a server binary hash; server source was unchanged, and the recovered segment records its server binary hash.</p>
+<p><strong>Interrupted measurement:</strong> 0.1.3 candidate a759633 retains 431 of 550 latency cells from run 20261016T045207Z. The remaining cells and all cold starts were measured after recovery. Recorded environment settings, tracked source and client artifact hashes were verified unchanged. The pause can still introduce temporal drift; compare control clients and ranges before attributing changes to a version.</p>
+<p>The interrupted segment did not save a server binary hash; server source was unchanged, and the recovered segment records its server binary hash.</p>
+<h2 id="version-comparison-every-tungsten-scenario"><a class="header" href="#version-comparison-every-tungsten-scenario">Version comparison: every Tungsten scenario</a></h2>
+<p>Latency is in microseconds: <strong>median [minimum–maximum repetition median]; p99</strong>. The p99 shown is the median of per-repetition p99s. Change is (candidate / baseline − 1) × 100%; negative is faster. All cells, including regressions, are retained. Changes within run-to-run variation are inconclusive.</p>
+<h3 id="typescript-node"><a class="header" href="#typescript-node">TypeScript (Node)</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Client / scenario</th><th style="text-align: right">Baseline</th><th style="text-align: right">Candidate</th><th style="text-align: right">Median change</th></tr></thead><tbody>
+<tr><td><code>tungsten</code> / <code>get_item</code></td><td style="text-align: right">1,379.0 [1,353.7–1,397.9]; 2,777.1</td><td style="text-align: right">1,348.7 [1,340.9–1,363.2]; 2,570.1</td><td style="text-align: right">-2.2%</td></tr>
+<tr><td><code>tungsten</code> / <code>create_item</code></td><td style="text-align: right">1,472.0 [1,462.5–1,479.1]; 3,261.2</td><td style="text-align: right">1,469.9 [1,447.7–1,484.2]; 3,388.6</td><td style="text-align: right">-0.1%</td></tr>
+<tr><td><code>tungsten</code> / <code>list_10</code></td><td style="text-align: right">1,373.8 [1,372.7–1,387.5]; 2,934.4</td><td style="text-align: right">1,396.5 [1,357.6–1,401.9]; 2,891.7</td><td style="text-align: right">+1.7%</td></tr>
+<tr><td><code>tungsten</code> / <code>list_100</code></td><td style="text-align: right">1,512.2 [1,502.3–1,540.8]; 4,714.3</td><td style="text-align: right">1,523.1 [1,497.3–1,549.8]; 4,297.5</td><td style="text-align: right">+0.7%</td></tr>
+<tr><td><code>tungsten</code> / <code>list_1000</code></td><td style="text-align: right">2,977.9 [2,930.5–3,050.5]; 14,718.5</td><td style="text-align: right">3,016.3 [2,956.1–3,061.5]; 14,582.8</td><td style="text-align: right">+1.3%</td></tr>
+<tr><td><code>tungsten-novalidate</code> / <code>get_item</code></td><td style="text-align: right">1,365.9 [1,345.1–1,384.5]; 2,700.3</td><td style="text-align: right">1,348.0 [1,336.2–1,361.5]; 2,741.1</td><td style="text-align: right">-1.3%</td></tr>
+<tr><td><code>tungsten-novalidate</code> / <code>create_item</code></td><td style="text-align: right">1,464.7 [1,458.7–1,470.1]; 3,477.4</td><td style="text-align: right">1,445.8 [1,431.8–1,469.6]; 3,257.1</td><td style="text-align: right">-1.3%</td></tr>
+<tr><td><code>tungsten-novalidate</code> / <code>list_10</code></td><td style="text-align: right">1,368.9 [1,360.2–1,380.0]; 2,919.5</td><td style="text-align: right">1,371.9 [1,356.9–1,377.7]; 2,799.5</td><td style="text-align: right">+0.2%</td></tr>
+<tr><td><code>tungsten-novalidate</code> / <code>list_100</code></td><td style="text-align: right">1,495.3 [1,490.4–1,520.9]; 8,798.4</td><td style="text-align: right">1,488.1 [1,465.4–1,507.8]; 8,671.1</td><td style="text-align: right">-0.5%</td></tr>
+<tr><td><code>tungsten-novalidate</code> / <code>list_1000</code></td><td style="text-align: right">2,642.2 [2,568.9–2,666.5]; 10,846.4</td><td style="text-align: right">2,627.4 [2,581.8–2,651.5]; 11,451.5</td><td style="text-align: right">-0.6%</td></tr>
+</tbody></table>
+</div>
+<h3 id="python"><a class="header" href="#python">Python</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Client / scenario</th><th style="text-align: right">Baseline</th><th style="text-align: right">Candidate</th><th style="text-align: right">Median change</th></tr></thead><tbody>
+<tr><td><code>tungsten</code> / <code>get_item</code></td><td style="text-align: right">1,008.6 [976.1–1,091.2]; 1,599.4</td><td style="text-align: right">489.5 [467.6–520.0]; 1,007.6</td><td style="text-align: right">-51.5%</td></tr>
+<tr><td><code>tungsten</code> / <code>create_item</code></td><td style="text-align: right">1,264.1 [1,200.2–1,294.4]; 2,066.0</td><td style="text-align: right">644.3 [608.5–750.2]; 1,190.9</td><td style="text-align: right">-49.0%</td></tr>
+<tr><td><code>tungsten</code> / <code>list_10</code></td><td style="text-align: right">1,062.4 [1,046.9–1,126.5]; 1,659.1</td><td style="text-align: right">551.4 [541.9–648.4]; 1,071.9</td><td style="text-align: right">-48.1%</td></tr>
+<tr><td><code>tungsten</code> / <code>list_100</code></td><td style="text-align: right">1,610.3 [1,589.9–1,671.2]; 2,398.6</td><td style="text-align: right">1,065.6 [949.7–1,089.1]; 1,344.4</td><td style="text-align: right">-33.8%</td></tr>
+<tr><td><code>tungsten</code> / <code>list_1000</code></td><td style="text-align: right">6,080.3 [5,967.6–6,322.1]; 19,109.7</td><td style="text-align: right">5,198.7 [4,929.8–5,504.2]; 16,674.0</td><td style="text-align: right">-14.5%</td></tr>
+<tr><td><code>tungsten-async</code> / <code>get_item</code></td><td style="text-align: right">739.9 [661.3–769.3]; 1,238.5</td><td style="text-align: right">778.1 [688.1–781.1]; 1,246.2</td><td style="text-align: right">+5.2%</td></tr>
+<tr><td><code>tungsten-async</code> / <code>create_item</code></td><td style="text-align: right">968.5 [882.4–994.7]; 1,524.5</td><td style="text-align: right">837.5 [827.2–940.7]; 1,506.1</td><td style="text-align: right">-13.5%</td></tr>
+<tr><td><code>tungsten-async</code> / <code>list_10</code></td><td style="text-align: right">765.9 [728.0–845.2]; 1,335.6</td><td style="text-align: right">722.4 [718.4–828.2]; 1,267.7</td><td style="text-align: right">-5.7%</td></tr>
+<tr><td><code>tungsten-async</code> / <code>list_100</code></td><td style="text-align: right">1,212.6 [1,141.6–1,249.6]; 1,671.0</td><td style="text-align: right">1,140.2 [1,122.7–1,241.3]; 2,041.7</td><td style="text-align: right">-6.0%</td></tr>
+<tr><td><code>tungsten-async</code> / <code>list_1000</code></td><td style="text-align: right">5,736.2 [5,464.1–5,954.0]; 18,880.1</td><td style="text-align: right">5,741.7 [5,506.3–6,200.5]; 17,841.9</td><td style="text-align: right">+0.1%</td></tr>
+<tr><td><code>tungsten-validate-off</code> / <code>get_item</code></td><td style="text-align: right">1,080.9 [988.7–1,091.0]; 2,311.0</td><td style="text-align: right">471.3 [469.8–577.1]; 938.3</td><td style="text-align: right">-56.4%</td></tr>
+<tr><td><code>tungsten-validate-off</code> / <code>create_item</code></td><td style="text-align: right">1,269.3 [1,163.1–1,289.1]; 1,897.4</td><td style="text-align: right">629.8 [597.8–741.2]; 1,149.3</td><td style="text-align: right">-50.4%</td></tr>
+<tr><td><code>tungsten-validate-off</code> / <code>list_10</code></td><td style="text-align: right">1,078.1 [994.9–1,102.3]; 1,809.8</td><td style="text-align: right">506.0 [479.9–608.3]; 1,085.4</td><td style="text-align: right">-53.1%</td></tr>
+<tr><td><code>tungsten-validate-off</code> / <code>list_100</code></td><td style="text-align: right">1,160.2 [1,146.4–1,286.6]; 1,808.3</td><td style="text-align: right">653.0 [633.0–800.6]; 1,153.8</td><td style="text-align: right">-43.7%</td></tr>
+<tr><td><code>tungsten-validate-off</code> / <code>list_1000</code></td><td style="text-align: right">2,872.7 [2,762.8–3,038.7]; 3,701.2</td><td style="text-align: right">2,265.6 [2,140.4–2,326.3]; 2,646.9</td><td style="text-align: right">-21.1%</td></tr>
+</tbody></table>
+</div>
+<h3 id="rust"><a class="header" href="#rust">Rust</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Client / scenario</th><th style="text-align: right">Baseline</th><th style="text-align: right">Candidate</th><th style="text-align: right">Median change</th></tr></thead><tbody>
+<tr><td><code>tungsten</code> / <code>get_item</code></td><td style="text-align: right">63.9 [63.3–73.5]; 138.5</td><td style="text-align: right">55.7 [55.4–60.6]; 125.2</td><td style="text-align: right">-12.8%</td></tr>
+<tr><td><code>tungsten</code> / <code>create_item</code></td><td style="text-align: right">89.8 [86.5–97.1]; 196.0</td><td style="text-align: right">68.1 [67.6–68.2]; 154.9</td><td style="text-align: right">-24.2%</td></tr>
+<tr><td><code>tungsten</code> / <code>list_10</code></td><td style="text-align: right">121.6 [120.9–125.8]; 190.0</td><td style="text-align: right">65.1 [63.7–80.7]; 163.4</td><td style="text-align: right">-46.5%</td></tr>
+<tr><td><code>tungsten</code> / <code>list_100</code></td><td style="text-align: right">773.4 [682.0–815.9]; 902.2</td><td style="text-align: right">169.0 [165.6–194.6]; 275.7</td><td style="text-align: right">-78.1%</td></tr>
+<tr><td><code>tungsten</code> / <code>list_1000</code></td><td style="text-align: right">6,333.7 [6,296.7–6,380.4]; 8,682.9</td><td style="text-align: right">1,094.6 [1,047.9–1,167.7]; 1,402.3</td><td style="text-align: right">-82.7%</td></tr>
+<tr><td><code>tungsten-novalidate</code> / <code>get_item</code></td><td style="text-align: right">56.2 [55.0–62.5]; 126.4</td><td style="text-align: right">55.7 [55.4–60.3]; 135.5</td><td style="text-align: right">-1.0%</td></tr>
+<tr><td><code>tungsten-novalidate</code> / <code>create_item</code></td><td style="text-align: right">71.4 [70.0–73.5]; 162.7</td><td style="text-align: right">66.5 [66.1–67.1]; 146.3</td><td style="text-align: right">-6.8%</td></tr>
+<tr><td><code>tungsten-novalidate</code> / <code>list_10</code></td><td style="text-align: right">107.2 [106.7–113.0]; 186.0</td><td style="text-align: right">63.0 [62.2–63.5]; 127.7</td><td style="text-align: right">-41.2%</td></tr>
+<tr><td><code>tungsten-novalidate</code> / <code>list_100</code></td><td style="text-align: right">441.2 [435.0–451.3]; 686.0</td><td style="text-align: right">161.1 [156.9–163.4]; 418.4</td><td style="text-align: right">-63.5%</td></tr>
+<tr><td><code>tungsten-novalidate</code> / <code>list_1000</code></td><td style="text-align: right">3,443.3 [3,295.8–3,546.6]; 3,770.8</td><td style="text-align: right">1,034.1 [953.5–1,104.5]; 1,525.2</td><td style="text-align: right">-70.0%</td></tr>
+</tbody></table>
+</div>
+<h3 id="go"><a class="header" href="#go">Go</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Client / scenario</th><th style="text-align: right">Baseline</th><th style="text-align: right">Candidate</th><th style="text-align: right">Median change</th></tr></thead><tbody>
+<tr><td><code>tungsten</code> / <code>get_item</code></td><td style="text-align: right">98.1 [96.1–100.4]; 229.6</td><td style="text-align: right">85.2 [81.2–88.0]; 207.0</td><td style="text-align: right">-13.1%</td></tr>
+<tr><td><code>tungsten</code> / <code>create_item</code></td><td style="text-align: right">114.6 [113.5–131.0]; 269.0</td><td style="text-align: right">101.7 [97.9–108.1]; 248.9</td><td style="text-align: right">-11.2%</td></tr>
+<tr><td><code>tungsten</code> / <code>list_10</code></td><td style="text-align: right">240.7 [235.7–252.6]; 494.9</td><td style="text-align: right">124.8 [120.7–132.1]; 321.4</td><td style="text-align: right">-48.2%</td></tr>
+<tr><td><code>tungsten</code> / <code>list_100</code></td><td style="text-align: right">1,953.5 [1,824.6–1,992.3]; 2,765.8</td><td style="text-align: right">742.2 [701.9–817.2]; 1,297.7</td><td style="text-align: right">-62.0%</td></tr>
+<tr><td><code>tungsten</code> / <code>list_1000</code></td><td style="text-align: right">20,983.6 [20,755.5–22,262.1]; 28,847.0</td><td style="text-align: right">7,485.5 [7,129.2–7,546.6]; 9,888.9</td><td style="text-align: right">-64.3%</td></tr>
+<tr><td><code>tungsten-novalidate</code> / <code>get_item</code></td><td style="text-align: right">96.4 [93.5–100.3]; 220.9</td><td style="text-align: right">80.7 [79.8–82.5]; 181.1</td><td style="text-align: right">-16.3%</td></tr>
+<tr><td><code>tungsten-novalidate</code> / <code>create_item</code></td><td style="text-align: right">112.3 [111.7–113.2]; 272.7</td><td style="text-align: right">97.7 [94.6–103.9]; 230.0</td><td style="text-align: right">-13.0%</td></tr>
+<tr><td><code>tungsten-novalidate</code> / <code>list_10</code></td><td style="text-align: right">220.2 [215.9–246.9]; 453.6</td><td style="text-align: right">122.8 [120.8–132.2]; 310.1</td><td style="text-align: right">-44.3%</td></tr>
+<tr><td><code>tungsten-novalidate</code> / <code>list_100</code></td><td style="text-align: right">1,695.3 [1,640.8–1,722.7]; 2,655.5</td><td style="text-align: right">693.0 [618.4–743.1]; 1,252.5</td><td style="text-align: right">-59.1%</td></tr>
+<tr><td><code>tungsten-novalidate</code> / <code>list_1000</code></td><td style="text-align: right">19,361.2 [19,168.2–20,009.0]; 24,135.6</td><td style="text-align: right">6,654.9 [6,558.7–6,709.4]; 8,828.6</td><td style="text-align: right">-65.6%</td></tr>
+</tbody></table>
+</div>
+<h2 id="remaining-gaps-against-matched-clients"><a class="header" href="#remaining-gaps-against-matched-clients">Remaining gaps against matched clients</a></h2>
+<p>For each language, the table identifies the largest candidate median ratio against a non-Tungsten client in the same validated or typed tier. Ratios above 1 mean Tungsten is slower. This deliberately shows weak spots; it is not an aggregate score. Python async is also included in this search.</p>
+<div class="table-wrapper"><table><thead><tr><th>Language</th><th>Tungsten client</th><th>Matched client</th><th>Scenario</th><th style="text-align: right">Tungsten / matched</th></tr></thead><tbody>
+<tr><td>TypeScript (Node)</td><td><code>tungsten-novalidate</code></td><td><code>fetch-raw</code></td><td><code>create_item</code></td><td style="text-align: right">1.07×</td></tr>
+<tr><td>Python</td><td><code>tungsten-async</code></td><td><code>httpx-pydantic</code></td><td><code>get_item</code></td><td style="text-align: right">3.03×</td></tr>
+<tr><td>Rust</td><td><code>tungsten</code></td><td><code>reqwest-serde-validated</code></td><td><code>create_item</code></td><td style="text-align: right">1.69×</td></tr>
+<tr><td>Go</td><td><code>tungsten-novalidate</code></td><td><code>oapi-codegen</code></td><td><code>list_1000</code></td><td style="text-align: right">2.05×</td></tr>
+</tbody></table>
+</div>
+<h2 id="complete-candidate-results-by-work-tier"><a class="header" href="#complete-candidate-results-by-work-tier">Complete candidate results by work tier</a></h2>
+<p>Same microsecond format as above. All comparator measurements are from the candidate run. Summary statistics for both runs are included in the download.</p>
+<h3 id="typescript-node-candidate"><a class="header" href="#typescript-node-candidate">TypeScript (Node): candidate</a></h3>
+<h4 id="validated"><a class="header" href="#validated">Validated</a></h4>
+<div class="table-wrapper"><table><thead><tr><th>Client</th><th style="text-align: right"><code>get_item</code></th><th style="text-align: right"><code>create_item</code></th><th style="text-align: right"><code>list_10</code></th><th style="text-align: right"><code>list_100</code></th><th style="text-align: right"><code>list_1000</code></th></tr></thead><tbody>
+<tr><td><code>tungsten</code></td><td style="text-align: right">1,348.7 [1,340.9–1,363.2]; 2,570.1</td><td style="text-align: right">1,469.9 [1,447.7–1,484.2]; 3,388.6</td><td style="text-align: right">1,396.5 [1,357.6–1,401.9]; 2,891.7</td><td style="text-align: right">1,523.1 [1,497.3–1,549.8]; 4,297.5</td><td style="text-align: right">3,016.3 [2,956.1–3,061.5]; 14,582.8</td></tr>
+<tr><td><code>fetch-zod</code></td><td style="text-align: right">1,300.5 [1,294.1–1,316.7]; 2,191.3</td><td style="text-align: right">1,376.9 [1,375.8–1,390.1]; 2,887.1</td><td style="text-align: right">1,335.3 [1,306.8–1,351.4]; 2,249.5</td><td style="text-align: right">1,487.4 [1,456.2–1,507.5]; 4,684.6</td><td style="text-align: right">2,926.5 [2,822.4–2,955.5]; 5,915.7</td></tr>
+</tbody></table>
+</div>
+<h4 id="typed"><a class="header" href="#typed">Typed</a></h4>
+<div class="table-wrapper"><table><thead><tr><th>Client</th><th style="text-align: right"><code>get_item</code></th><th style="text-align: right"><code>create_item</code></th><th style="text-align: right"><code>list_10</code></th><th style="text-align: right"><code>list_100</code></th><th style="text-align: right"><code>list_1000</code></th></tr></thead><tbody>
+<tr><td><code>tungsten-novalidate</code></td><td style="text-align: right">1,348.0 [1,336.2–1,361.5]; 2,741.1</td><td style="text-align: right">1,445.8 [1,431.8–1,469.6]; 3,257.1</td><td style="text-align: right">1,371.9 [1,356.9–1,377.7]; 2,799.5</td><td style="text-align: right">1,488.1 [1,465.4–1,507.8]; 8,671.1</td><td style="text-align: right">2,627.4 [2,581.8–2,651.5]; 11,451.5</td></tr>
+<tr><td><code>openapi-fetch</code></td><td style="text-align: right">1,314.2 [1,301.7–1,333.5]; 2,159.6</td><td style="text-align: right">1,396.1 [1,375.7–1,426.3]; 2,962.9</td><td style="text-align: right">1,313.4 [1,306.4–1,328.6]; 2,574.1</td><td style="text-align: right">1,420.2 [1,412.2–1,451.4]; 6,500.0</td><td style="text-align: right">2,542.0 [2,481.0–2,588.3]; 9,201.4</td></tr>
+<tr><td><code>fetch-raw</code></td><td style="text-align: right">1,296.4 [1,285.3–1,310.8]; 1,985.0</td><td style="text-align: right">1,354.1 [1,343.0–1,374.4]; 2,695.4</td><td style="text-align: right">1,319.7 [1,307.1–1,331.0]; 2,457.0</td><td style="text-align: right">1,412.1 [1,402.3–1,430.7]; 6,212.5</td><td style="text-align: right">2,563.8 [2,498.3–2,594.7]; 9,474.6</td></tr>
+</tbody></table>
+</div>
+<h3 id="python-candidate"><a class="header" href="#python-candidate">Python: candidate</a></h3>
+<h4 id="validated-1"><a class="header" href="#validated-1">Validated</a></h4>
+<div class="table-wrapper"><table><thead><tr><th>Client</th><th style="text-align: right"><code>get_item</code></th><th style="text-align: right"><code>create_item</code></th><th style="text-align: right"><code>list_10</code></th><th style="text-align: right"><code>list_100</code></th><th style="text-align: right"><code>list_1000</code></th></tr></thead><tbody>
+<tr><td><code>tungsten</code></td><td style="text-align: right">489.5 [467.6–520.0]; 1,007.6</td><td style="text-align: right">644.3 [608.5–750.2]; 1,190.9</td><td style="text-align: right">551.4 [541.9–648.4]; 1,071.9</td><td style="text-align: right">1,065.6 [949.7–1,089.1]; 1,344.4</td><td style="text-align: right">5,198.7 [4,929.8–5,504.2]; 16,674.0</td></tr>
+<tr><td><code>tungsten-async</code></td><td style="text-align: right">778.1 [688.1–781.1]; 1,246.2</td><td style="text-align: right">837.5 [827.2–940.7]; 1,506.1</td><td style="text-align: right">722.4 [718.4–828.2]; 1,267.7</td><td style="text-align: right">1,140.2 [1,122.7–1,241.3]; 2,041.7</td><td style="text-align: right">5,741.7 [5,506.3–6,200.5]; 17,841.9</td></tr>
+<tr><td><code>httpx-pydantic</code></td><td style="text-align: right">256.5 [249.1–258.0]; 568.0</td><td style="text-align: right">345.5 [317.0–403.1]; 759.1</td><td style="text-align: right">409.6 [360.9–489.0]; 877.9</td><td style="text-align: right">766.9 [745.2–903.6]; 1,088.9</td><td style="text-align: right">5,060.3 [5,010.5–5,327.0]; 14,216.3</td></tr>
+</tbody></table>
+</div>
+<h4 id="typed-1"><a class="header" href="#typed-1">Typed</a></h4>
+<div class="table-wrapper"><table><thead><tr><th>Client</th><th style="text-align: right"><code>get_item</code></th><th style="text-align: right"><code>create_item</code></th><th style="text-align: right"><code>list_10</code></th><th style="text-align: right"><code>list_100</code></th><th style="text-align: right"><code>list_1000</code></th></tr></thead><tbody>
+<tr><td><code>openapi-python-client</code></td><td style="text-align: right">264.8 [258.9–278.7]; 632.9</td><td style="text-align: right">315.1 [308.8–438.2]; 654.5</td><td style="text-align: right">486.6 [375.5–501.7]; 804.6</td><td style="text-align: right">751.5 [730.4–852.3]; 1,179.9</td><td style="text-align: right">4,346.8 [4,330.7–4,498.8]; 10,739.3</td></tr>
+<tr><td><code>httpx-typed</code></td><td style="text-align: right">246.8 [236.9–253.9]; 546.5</td><td style="text-align: right">310.4 [291.7–340.6]; 722.1</td><td style="text-align: right">348.7 [327.8–385.2]; 664.2</td><td style="text-align: right">725.7 [602.4–738.7]; 1,062.7</td><td style="text-align: right">3,088.9 [2,987.6–3,098.2]; 8,216.7</td></tr>
+</tbody></table>
+</div>
+<h4 id="untyped"><a class="header" href="#untyped">Untyped</a></h4>
+<div class="table-wrapper"><table><thead><tr><th>Client</th><th style="text-align: right"><code>get_item</code></th><th style="text-align: right"><code>create_item</code></th><th style="text-align: right"><code>list_10</code></th><th style="text-align: right"><code>list_100</code></th><th style="text-align: right"><code>list_1000</code></th></tr></thead><tbody>
+<tr><td><code>tungsten-validate-off</code></td><td style="text-align: right">471.3 [469.8–577.1]; 938.3</td><td style="text-align: right">629.8 [597.8–741.2]; 1,149.3</td><td style="text-align: right">506.0 [479.9–608.3]; 1,085.4</td><td style="text-align: right">653.0 [633.0–800.6]; 1,153.8</td><td style="text-align: right">2,265.6 [2,140.4–2,326.3]; 2,646.9</td></tr>
+<tr><td><code>httpx-raw</code></td><td style="text-align: right">234.5 [233.7–248.1]; 544.3</td><td style="text-align: right">289.1 [283.1–411.6]; 669.1</td><td style="text-align: right">307.2 [294.9–360.9]; 669.0</td><td style="text-align: right">466.2 [463.1–476.1]; 820.0</td><td style="text-align: right">1,922.5 [1,772.3–1,983.9]; 2,206.7</td></tr>
+</tbody></table>
+</div>
+<h3 id="rust-candidate"><a class="header" href="#rust-candidate">Rust: candidate</a></h3>
+<h4 id="validated-2"><a class="header" href="#validated-2">Validated</a></h4>
+<div class="table-wrapper"><table><thead><tr><th>Client</th><th style="text-align: right"><code>get_item</code></th><th style="text-align: right"><code>create_item</code></th><th style="text-align: right"><code>list_10</code></th><th style="text-align: right"><code>list_100</code></th><th style="text-align: right"><code>list_1000</code></th></tr></thead><tbody>
+<tr><td><code>tungsten</code></td><td style="text-align: right">55.7 [55.4–60.6]; 125.2</td><td style="text-align: right">68.1 [67.6–68.2]; 154.9</td><td style="text-align: right">65.1 [63.7–80.7]; 163.4</td><td style="text-align: right">169.0 [165.6–194.6]; 275.7</td><td style="text-align: right">1,094.6 [1,047.9–1,167.7]; 1,402.3</td></tr>
+<tr><td><code>reqwest-serde-validated</code></td><td style="text-align: right">38.1 [36.1–38.9]; 117.8</td><td style="text-align: right">40.2 [39.1–48.1]; 114.7</td><td style="text-align: right">50.1 [48.6–60.3]; 128.8</td><td style="text-align: right">136.6 [134.9–158.3]; 280.1</td><td style="text-align: right">966.1 [889.8–992.5]; 1,429.2</td></tr>
+</tbody></table>
+</div>
+<h4 id="typed-2"><a class="header" href="#typed-2">Typed</a></h4>
+<div class="table-wrapper"><table><thead><tr><th>Client</th><th style="text-align: right"><code>get_item</code></th><th style="text-align: right"><code>create_item</code></th><th style="text-align: right"><code>list_10</code></th><th style="text-align: right"><code>list_100</code></th><th style="text-align: right"><code>list_1000</code></th></tr></thead><tbody>
+<tr><td><code>tungsten-novalidate</code></td><td style="text-align: right">55.7 [55.4–60.3]; 135.5</td><td style="text-align: right">66.5 [66.1–67.1]; 146.3</td><td style="text-align: right">63.0 [62.2–63.5]; 127.7</td><td style="text-align: right">161.1 [156.9–163.4]; 418.4</td><td style="text-align: right">1,034.1 [953.5–1,104.5]; 1,525.2</td></tr>
+<tr><td><code>progenitor</code></td><td style="text-align: right">41.1 [39.5–44.1]; 114.6</td><td style="text-align: right">46.4 [42.3–50.1]; 120.3</td><td style="text-align: right">54.8 [52.7–60.3]; 110.2</td><td style="text-align: right">140.7 [138.2–161.6]; 244.1</td><td style="text-align: right">1,086.6 [992.2–1,121.4]; 1,322.5</td></tr>
+<tr><td><code>reqwest-serde</code></td><td style="text-align: right">35.8 [35.5–57.3]; 120.8</td><td style="text-align: right">42.9 [39.7–48.3]; 117.4</td><td style="text-align: right">46.8 [46.5–48.3]; 110.0</td><td style="text-align: right">126.1 [124.3–145.8]; 244.5</td><td style="text-align: right">925.0 [876.5–985.6]; 1,181.4</td></tr>
+</tbody></table>
+</div>
+<h3 id="go-candidate"><a class="header" href="#go-candidate">Go: candidate</a></h3>
+<h4 id="validated-3"><a class="header" href="#validated-3">Validated</a></h4>
+<div class="table-wrapper"><table><thead><tr><th>Client</th><th style="text-align: right"><code>get_item</code></th><th style="text-align: right"><code>create_item</code></th><th style="text-align: right"><code>list_10</code></th><th style="text-align: right"><code>list_100</code></th><th style="text-align: right"><code>list_1000</code></th></tr></thead><tbody>
+<tr><td><code>tungsten</code></td><td style="text-align: right">85.2 [81.2–88.0]; 207.0</td><td style="text-align: right">101.7 [97.9–108.1]; 248.9</td><td style="text-align: right">124.8 [120.7–132.1]; 321.4</td><td style="text-align: right">742.2 [701.9–817.2]; 1,297.7</td><td style="text-align: right">7,485.5 [7,129.2–7,546.6]; 9,888.9</td></tr>
+<tr><td><code>nethttp-json-validated</code></td><td style="text-align: right">59.9 [58.4–64.7]; 159.3</td><td style="text-align: right">63.1 [62.0–64.0]; 144.9</td><td style="text-align: right">113.4 [113.0–120.6]; 241.3</td><td style="text-align: right">516.4 [486.4–604.9]; 892.0</td><td style="text-align: right">4,950.0 [4,828.3–5,041.6]; 6,981.8</td></tr>
+</tbody></table>
+</div>
+<h4 id="typed-3"><a class="header" href="#typed-3">Typed</a></h4>
+<div class="table-wrapper"><table><thead><tr><th>Client</th><th style="text-align: right"><code>get_item</code></th><th style="text-align: right"><code>create_item</code></th><th style="text-align: right"><code>list_10</code></th><th style="text-align: right"><code>list_100</code></th><th style="text-align: right"><code>list_1000</code></th></tr></thead><tbody>
+<tr><td><code>tungsten-novalidate</code></td><td style="text-align: right">80.7 [79.8–82.5]; 181.1</td><td style="text-align: right">97.7 [94.6–103.9]; 230.0</td><td style="text-align: right">122.8 [120.8–132.2]; 310.1</td><td style="text-align: right">693.0 [618.4–743.1]; 1,252.5</td><td style="text-align: right">6,654.9 [6,558.7–6,709.4]; 8,828.6</td></tr>
+<tr><td><code>oapi-codegen</code></td><td style="text-align: right">59.3 [58.9–68.8]; 144.8</td><td style="text-align: right">64.2 [61.2–75.0]; 153.2</td><td style="text-align: right">100.8 [95.9–102.5]; 220.9</td><td style="text-align: right">399.4 [392.9–487.0]; 717.3</td><td style="text-align: right">3,244.9 [3,180.7–3,476.0]; 4,245.3</td></tr>
+<tr><td><code>nethttp-json</code></td><td style="text-align: right">57.7 [55.9–96.9]; 177.7</td><td style="text-align: right">65.7 [59.7–97.0]; 158.2</td><td style="text-align: right">100.1 [92.8–113.4]; 217.2</td><td style="text-align: right">411.4 [389.7–472.3]; 707.9</td><td style="text-align: right">3,251.6 [3,207.4–3,275.2]; 4,387.8</td></tr>
+</tbody></table>
+</div>
+<h2 id="cold-start"><a class="header" href="#cold-start">Cold start</a></h2>
+<p>Milliseconds from process spawn through one completed read and process exit; 30 runs per cell. Brackets show minimum–maximum, not a confidence interval. These include interpreter startup and imports.</p>
+<div class="table-wrapper"><table><thead><tr><th>Language / client</th><th style="text-align: right">Baseline median [range]</th><th style="text-align: right">Candidate median [range]</th></tr></thead><tbody>
+<tr><td>TypeScript (Node) / <code>tungsten</code></td><td style="text-align: right">149.66 [140.57–197.71]</td><td style="text-align: right">147.41 [141.78–188.24]</td></tr>
+<tr><td>TypeScript (Node) / <code>fetch-zod</code></td><td style="text-align: right">130.78 [125.08–172.58]</td><td style="text-align: right">131.22 [125.84–164.35]</td></tr>
+<tr><td>TypeScript (Node) / <code>tungsten-novalidate</code></td><td style="text-align: right">148.14 [140.72–167.59]</td><td style="text-align: right">147.31 [141.37–194.04]</td></tr>
+<tr><td>TypeScript (Node) / <code>openapi-fetch</code></td><td style="text-align: right">73.16 [68.95–81.07]</td><td style="text-align: right">73.67 [70.50–103.66]</td></tr>
+<tr><td>TypeScript (Node) / <code>fetch-raw</code></td><td style="text-align: right">71.00 [66.72–98.69]</td><td style="text-align: right">70.11 [67.22–89.58]</td></tr>
+<tr><td>Python / <code>tungsten</code></td><td style="text-align: right">248.49 [233.38–284.20]</td><td style="text-align: right">216.76 [206.88–247.29]</td></tr>
+<tr><td>Python / <code>tungsten-async</code></td><td style="text-align: right">249.35 [230.26–274.88]</td><td style="text-align: right">250.47 [239.90–295.02]</td></tr>
+<tr><td>Python / <code>httpx-pydantic</code></td><td style="text-align: right">185.91 [172.88–207.34]</td><td style="text-align: right">184.41 [177.23–220.37]</td></tr>
+<tr><td>Python / <code>openapi-python-client</code></td><td style="text-align: right">138.22 [131.27–161.02]</td><td style="text-align: right">136.03 [130.93–166.49]</td></tr>
+<tr><td>Python / <code>httpx-typed</code></td><td style="text-align: right">124.02 [117.37–149.54]</td><td style="text-align: right">123.37 [117.72–157.49]</td></tr>
+<tr><td>Python / <code>tungsten-validate-off</code></td><td style="text-align: right">248.17 [233.77–303.55]</td><td style="text-align: right">215.88 [207.51–281.53]</td></tr>
+<tr><td>Python / <code>httpx-raw</code></td><td style="text-align: right">124.00 [116.35–138.64]</td><td style="text-align: right">123.65 [116.50–168.25]</td></tr>
+<tr><td>Rust / <code>tungsten</code></td><td style="text-align: right">3.63 [2.81–5.30]</td><td style="text-align: right">3.60 [2.53–5.94]</td></tr>
+<tr><td>Rust / <code>reqwest-serde-validated</code></td><td style="text-align: right">3.59 [2.84–4.66]</td><td style="text-align: right">3.57 [2.73–4.23]</td></tr>
+<tr><td>Rust / <code>tungsten-novalidate</code></td><td style="text-align: right">3.31 [2.36–4.11]</td><td style="text-align: right">3.22 [2.41–4.93]</td></tr>
+<tr><td>Rust / <code>progenitor</code></td><td style="text-align: right">2.91 [2.19–3.59]</td><td style="text-align: right">2.94 [2.13–4.56]</td></tr>
+<tr><td>Rust / <code>reqwest-serde</code></td><td style="text-align: right">3.09 [2.44–4.96]</td><td style="text-align: right">3.04 [2.35–5.23]</td></tr>
+<tr><td>Go / <code>tungsten</code></td><td style="text-align: right">5.01 [3.28–6.35]</td><td style="text-align: right">5.17 [3.40–9.55]</td></tr>
+<tr><td>Go / <code>nethttp-json-validated</code></td><td style="text-align: right">4.27 [3.11–7.02]</td><td style="text-align: right">4.09 [2.83–6.12]</td></tr>
+<tr><td>Go / <code>tungsten-novalidate</code></td><td style="text-align: right">5.26 [3.53–5.70]</td><td style="text-align: right">4.64 [3.11–5.95]</td></tr>
+<tr><td>Go / <code>oapi-codegen</code></td><td style="text-align: right">4.32 [2.90–5.28]</td><td style="text-align: right">4.02 [2.90–5.75]</td></tr>
+<tr><td>Go / <code>nethttp-json</code></td><td style="text-align: right">4.07 [2.53–6.06]</td><td style="text-align: right">3.98 [2.71–4.93]</td></tr>
+</tbody></table>
+</div>
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="runtime-benchmarks.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="changelog.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="runtime-benchmarks.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="changelog.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr.min.js"></script>
+        <script src="mark.min.js"></script>
+        <script src="searcher.js"></script>
+
+        <script src="clipboard.min.js"></script>
+        <script src="highlight.js"></script>
+        <script src="book.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+
+    </div>
+    </body>
+</html>

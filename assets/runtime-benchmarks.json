@@ -1,0 +1,2064 @@
+{
+  "baseline": {
+    "recovery": {
+      "reused_cells": 181,
+      "total_cells": 550,
+      "original_run_id": "20261016T030147Z",
+      "original_server_hash_recorded": false
+    },
+    "label": "0.1.2",
+    "run_id": "20261016T040947598235Z",
+    "public_source_commit_short": "1a0ee4def654",
+    "environment": {
+      "cpu": "AMD EPYC 9V74 80-Core Processor",
+      "kernel": "6.18.44",
+      "machine": "x86_64",
+      "go": "go version go1.24.13 linux/amd64",
+      "node": "v24.19.0",
+      "python": "Python 3.13.5",
+      "rustc": "rustc 1.97.0 (2d8144b78 2026-07-07)"
+    },
+    "settings": {
+      "seed": 20261016,
+      "reps": 5,
+      "scale": 1.0,
+      "server_cpu": 0,
+      "client_cpu": 2,
+      "scenarios": {
+        "get_item": [
+          5000,
+          1000
+        ],
+        "create_item": [
+          5000,
+          1000
+        ],
+        "list_10": [
+          5000,
+          1000
+        ],
+        "list_100": [
+          2000,
+          400
+        ],
+        "list_1000": [
+          300,
+          60
+        ]
+      },
+      "min_warmup": {
+        "ts": 10000
+      },
+      "cold_runs": 30
+    },
+    "tiers": {
+      "ts/tungsten": "validated",
+      "ts/fetch-zod": "validated",
+      "ts/tungsten-novalidate": "typed",
+      "ts/openapi-fetch": "typed",
+      "ts/fetch-raw": "typed",
+      "py/tungsten": "validated",
+      "py/tungsten-async": "validated",
+      "py/httpx-pydantic": "validated",
+      "py/openapi-python-client": "typed",
+      "py/httpx-typed": "typed",
+      "py/tungsten-validate-off": "untyped",
+      "py/httpx-raw": "untyped",
+      "rs/tungsten": "validated",
+      "rs/reqwest-serde-validated": "validated",
+      "rs/tungsten-novalidate": "typed",
+      "rs/progenitor": "typed",
+      "rs/reqwest-serde": "typed",
+      "go/tungsten": "validated",
+      "go/nethttp-json-validated": "validated",
+      "go/tungsten-novalidate": "typed",
+      "go/oapi-codegen": "typed",
+      "go/nethttp-json": "typed"
+    },
+    "latency": {
+      "ts": {
+        "get_item": {
+          "tungsten": {
+            "median_ns": 1378987.0,
+            "median_min_ns": 1353650.0,
+            "median_max_ns": 1397884.5,
+            "p99_ns": 2777132.0,
+            "reps": 5
+          },
+          "fetch-zod": {
+            "median_ns": 1307226.0,
+            "median_min_ns": 1293041.0,
+            "median_max_ns": 1309700.0,
+            "p99_ns": 2371145.0,
+            "reps": 5
+          },
+          "tungsten-novalidate": {
+            "median_ns": 1365933.0,
+            "median_min_ns": 1345086.5,
+            "median_max_ns": 1384480.0,
+            "p99_ns": 2700349.0,
+            "reps": 5
+          },
+          "openapi-fetch": {
+            "median_ns": 1312294.5,
+            "median_min_ns": 1289862.0,
+            "median_max_ns": 1322059.0,
+            "p99_ns": 2180315.0,
+            "reps": 5
+          },
+          "fetch-raw": {
+            "median_ns": 1294233.0,
+            "median_min_ns": 1289100.0,
+            "median_max_ns": 1300177.0,
+            "p99_ns": 2033790.0,
+            "reps": 5
+          }
+        },
+        "create_item": {
+          "tungsten": {
+            "median_ns": 1471999.0,
+            "median_min_ns": 1462510.5,
+            "median_max_ns": 1479089.0,
+            "p99_ns": 3261160.0,
+            "reps": 5
+          },
+          "fetch-zod": {
+            "median_ns": 1371712.0,
+            "median_min_ns": 1361556.5,
+            "median_max_ns": 1390439.0,
+            "p99_ns": 2610427.0,
+            "reps": 5
+          },
+          "tungsten-novalidate": {
+            "median_ns": 1464728.0,
+            "median_min_ns": 1458724.5,
+            "median_max_ns": 1470131.5,
+            "p99_ns": 3477442.0,
+            "reps": 5
+          },
+          "openapi-fetch": {
+            "median_ns": 1392021.5,
+            "median_min_ns": 1385512.0,
+            "median_max_ns": 1421497.5,
+            "p99_ns": 3013370.0,
+            "reps": 5
+          },
+          "fetch-raw": {
+            "median_ns": 1365016.5,
+            "median_min_ns": 1357750.5,
+            "median_max_ns": 1377575.0,
+            "p99_ns": 3100228.0,
+            "reps": 5
+          }
+        },
+        "list_10": {
+          "tungsten": {
+            "median_ns": 1373819.5,
+            "median_min_ns": 1372678.0,
+            "median_max_ns": 1387525.5,
+            "p99_ns": 2934445.0,
+            "reps": 5
+          },
+          "fetch-zod": {
+            "median_ns": 1326925.5,
+            "median_min_ns": 1313581.0,
+            "median_max_ns": 1340121.0,
+            "p99_ns": 2532944.0,
+            "reps": 5
+          },
+          "tungsten-novalidate": {
+            "median_ns": 1368917.5,
+            "median_min_ns": 1360214.0,
+            "median_max_ns": 1380018.5,
+            "p99_ns": 2919512.0,
+            "reps": 5
+          },
+          "openapi-fetch": {
+            "median_ns": 1314892.5,
+            "median_min_ns": 1305925.5,
+            "median_max_ns": 1341892.5,
+            "p99_ns": 2926572.0,
+            "reps": 5
+          },
+          "fetch-raw": {
+            "median_ns": 1311927.5,
+            "median_min_ns": 1303401.0,
+            "median_max_ns": 1327141.0,
+            "p99_ns": 2495779.0,
+            "reps": 5
+          }
+        },
+        "list_100": {
+          "tungsten": {
+            "median_ns": 1512193.0,
+            "median_min_ns": 1502289.0,
+            "median_max_ns": 1540835.5,
+            "p99_ns": 4714322.0,
+            "reps": 5
+          },
+          "fetch-zod": {
+            "median_ns": 1466541.0,
+            "median_min_ns": 1447337.5,
+            "median_max_ns": 1497146.0,
+            "p99_ns": 4268966.0,
+            "reps": 5
+          },
+          "tungsten-novalidate": {
+            "median_ns": 1495308.0,
+            "median_min_ns": 1490366.5,
+            "median_max_ns": 1520940.5,
+            "p99_ns": 8798426.0,
+            "reps": 5
+          },
+          "openapi-fetch": {
+            "median_ns": 1438885.5,
+            "median_min_ns": 1422882.0,
+            "median_max_ns": 1444614.0,
+            "p99_ns": 6627873.0,
+            "reps": 5
+          },
+          "fetch-raw": {
+            "median_ns": 1419877.0,
+            "median_min_ns": 1409072.0,
+            "median_max_ns": 1434529.0,
+            "p99_ns": 6480507.0,
+            "reps": 5
+          }
+        },
+        "list_1000": {
+          "tungsten": {
+            "median_ns": 2977873.0,
+            "median_min_ns": 2930537.5,
+            "median_max_ns": 3050489.0,
+            "p99_ns": 14718538.0,
+            "reps": 5
+          },
+          "fetch-zod": {
+            "median_ns": 2897019.0,
+            "median_min_ns": 2816916.0,
+            "median_max_ns": 3008232.0,
+            "p99_ns": 4540955.0,
+            "reps": 5
+          },
+          "tungsten-novalidate": {
+            "median_ns": 2642164.0,
+            "median_min_ns": 2568866.5,
+            "median_max_ns": 2666524.5,
+            "p99_ns": 10846405.0,
+            "reps": 5
+          },
+          "openapi-fetch": {
+            "median_ns": 2525582.5,
+            "median_min_ns": 2508045.5,
+            "median_max_ns": 2568561.0,
+            "p99_ns": 9390539.0,
+            "reps": 5
+          },
+          "fetch-raw": {
+            "median_ns": 2528537.0,
+            "median_min_ns": 2496930.5,
+            "median_max_ns": 2573753.5,
+            "p99_ns": 10015875.0,
+            "reps": 5
+          }
+        }
+      },
+      "py": {
+        "get_item": {
+          "tungsten": {
+            "median_ns": 1008628.0,
+            "median_min_ns": 976149.5,
+            "median_max_ns": 1091154.0,
+            "p99_ns": 1599431.0,
+            "reps": 5
+          },
+          "tungsten-async": {
+            "median_ns": 739887.5,
+            "median_min_ns": 661342.5,
+            "median_max_ns": 769271.0,
+            "p99_ns": 1238471.0,
+            "reps": 5
+          },
+          "httpx-pydantic": {
+            "median_ns": 260868.5,
+            "median_min_ns": 249552.0,
+            "median_max_ns": 314187.5,
+            "p99_ns": 664877.0,
+            "reps": 5
+          },
+          "openapi-python-client": {
+            "median_ns": 256191.5,
+            "median_min_ns": 247899.5,
+            "median_max_ns": 298258.5,
+            "p99_ns": 615986.0,
+            "reps": 5
+          },
+          "httpx-typed": {
+            "median_ns": 239216.0,
+            "median_min_ns": 239011.5,
+            "median_max_ns": 299896.0,
+            "p99_ns": 542447.0,
+            "reps": 5
+          },
+          "tungsten-validate-off": {
+            "median_ns": 1080884.0,
+            "median_min_ns": 988693.0,
+            "median_max_ns": 1090969.5,
+            "p99_ns": 2310958.0,
+            "reps": 5
+          },
+          "httpx-raw": {
+            "median_ns": 236783.0,
+            "median_min_ns": 232371.0,
+            "median_max_ns": 276121.0,
+            "p99_ns": 544110.0,
+            "reps": 5
+          }
+        },
+        "create_item": {
+          "tungsten": {
+            "median_ns": 1264143.0,
+            "median_min_ns": 1200174.0,
+            "median_max_ns": 1294399.0,
+            "p99_ns": 2066037.0,
+            "reps": 5
+          },
+          "tungsten-async": {
+            "median_ns": 968488.5,
+            "median_min_ns": 882352.0,
+            "median_max_ns": 994667.0,
+            "p99_ns": 1524451.0,
+            "reps": 5
+          },
+          "httpx-pydantic": {
+            "median_ns": 319184.5,
+            "median_min_ns": 315764.5,
+            "median_max_ns": 327626.5,
+            "p99_ns": 696364.0,
+            "reps": 5
+          },
+          "openapi-python-client": {
+            "median_ns": 313571.0,
+            "median_min_ns": 308588.0,
+            "median_max_ns": 412306.0,
+            "p99_ns": 692729.0,
+            "reps": 5
+          },
+          "httpx-typed": {
+            "median_ns": 315053.0,
+            "median_min_ns": 293296.0,
+            "median_max_ns": 316425.5,
+            "p99_ns": 752196.0,
+            "reps": 5
+          },
+          "tungsten-validate-off": {
+            "median_ns": 1269301.0,
+            "median_min_ns": 1163120.0,
+            "median_max_ns": 1289070.0,
+            "p99_ns": 1897429.0,
+            "reps": 5
+          },
+          "httpx-raw": {
+            "median_ns": 301252.5,
+            "median_min_ns": 272896.0,
+            "median_max_ns": 309685.0,
+            "p99_ns": 691156.0,
+            "reps": 5
+          }
+        },
+        "list_10": {
+          "tungsten": {
+            "median_ns": 1062362.0,
+            "median_min_ns": 1046889.0,
+            "median_max_ns": 1126526.5,
+            "p99_ns": 1659109.0,
+            "reps": 5
+          },
+          "tungsten-async": {
+            "median_ns": 765931.0,
+            "median_min_ns": 728035.0,
+            "median_max_ns": 845227.5,
+            "p99_ns": 1335553.0,
+            "reps": 5
+          },
+          "httpx-pydantic": {
+            "median_ns": 494677.0,
+            "median_min_ns": 362127.5,
+            "median_max_ns": 501692.5,
+            "p99_ns": 811954.0,
+            "reps": 5
+          },
+          "openapi-python-client": {
+            "median_ns": 460742.5,
+            "median_min_ns": 364155.0,
+            "median_max_ns": 496460.0,
+            "p99_ns": 804954.0,
+            "reps": 5
+          },
+          "httpx-typed": {
+            "median_ns": 343665.0,
+            "median_min_ns": 338698.0,
+            "median_max_ns": 358347.0,
+            "p99_ns": 769382.0,
+            "reps": 5
+          },
+          "tungsten-validate-off": {
+            "median_ns": 1078111.0,
+            "median_min_ns": 994938.0,
+            "median_max_ns": 1102335.0,
+            "p99_ns": 1809781.0,
+            "reps": 5
+          },
+          "httpx-raw": {
+            "median_ns": 308363.5,
+            "median_min_ns": 284258.0,
+            "median_max_ns": 358567.5,
+            "p99_ns": 671046.0,
+            "reps": 5
+          }
+        },
+        "list_100": {
+          "tungsten": {
+            "median_ns": 1610287.5,
+            "median_min_ns": 1589907.5,
+            "median_max_ns": 1671151.5,
+            "p99_ns": 2398606.0,
+            "reps": 5
+          },
+          "tungsten-async": {
+            "median_ns": 1212557.0,
+            "median_min_ns": 1141563.0,
+            "median_max_ns": 1249632.0,
+            "p99_ns": 1671017.0,
+            "reps": 5
+          },
+          "httpx-pydantic": {
+            "median_ns": 880004.0,
+            "median_min_ns": 752196.0,
+            "median_max_ns": 901500.0,
+            "p99_ns": 1172363.0,
+            "reps": 5
+          },
+          "openapi-python-client": {
+            "median_ns": 752356.5,
+            "median_min_ns": 727324.0,
+            "median_max_ns": 879523.0,
+            "p99_ns": 1238190.0,
+            "reps": 5
+          },
+          "httpx-typed": {
+            "median_ns": 725321.0,
+            "median_min_ns": 599656.5,
+            "median_max_ns": 745651.5,
+            "p99_ns": 1028952.0,
+            "reps": 5
+          },
+          "tungsten-validate-off": {
+            "median_ns": 1160210.5,
+            "median_min_ns": 1146425.5,
+            "median_max_ns": 1286592.0,
+            "p99_ns": 1808318.0,
+            "reps": 5
+          },
+          "httpx-raw": {
+            "median_ns": 465274.0,
+            "median_min_ns": 456496.5,
+            "median_max_ns": 609536.0,
+            "p99_ns": 832964.0,
+            "reps": 5
+          }
+        },
+        "list_1000": {
+          "tungsten": {
+            "median_ns": 6080284.5,
+            "median_min_ns": 5967587.0,
+            "median_max_ns": 6322075.0,
+            "p99_ns": 19109725.0,
+            "reps": 5
+          },
+          "tungsten-async": {
+            "median_ns": 5736223.0,
+            "median_min_ns": 5464065.0,
+            "median_max_ns": 5954012.5,
+            "p99_ns": 18880077.0,
+            "reps": 5
+          },
+          "httpx-pydantic": {
+            "median_ns": 5128850.5,
+            "median_min_ns": 5074769.5,
+            "median_max_ns": 5164292.0,
+            "p99_ns": 14663459.0,
+            "reps": 5
+          },
+          "openapi-python-client": {
+            "median_ns": 4456306.0,
+            "median_min_ns": 4391926.5,
+            "median_max_ns": 4543950.0,
+            "p99_ns": 10992911.0,
+            "reps": 5
+          },
+          "httpx-typed": {
+            "median_ns": 3067695.0,
+            "median_min_ns": 2976821.5,
+            "median_max_ns": 3315535.0,
+            "p99_ns": 8373089.0,
+            "reps": 5
+          },
+          "tungsten-validate-off": {
+            "median_ns": 2872663.0,
+            "median_min_ns": 2762821.5,
+            "median_max_ns": 3038677.0,
+            "p99_ns": 3701241.0,
+            "reps": 5
+          },
+          "httpx-raw": {
+            "median_ns": 1817712.0,
+            "median_min_ns": 1788885.5,
+            "median_max_ns": 1845773.5,
+            "p99_ns": 2553314.0,
+            "reps": 5
+          }
+        }
+      },
+      "rs": {
+        "get_item": {
+          "tungsten": {
+            "median_ns": 63934.0,
+            "median_min_ns": 63323.0,
+            "median_max_ns": 73488.0,
+            "p99_ns": 138544.0,
+            "reps": 5
+          },
+          "reqwest-serde-validated": {
+            "median_ns": 38772.0,
+            "median_min_ns": 36203.0,
+            "median_max_ns": 73538.0,
+            "p99_ns": 104975.0,
+            "reps": 5
+          },
+          "tungsten-novalidate": {
+            "median_ns": 56203.0,
+            "median_min_ns": 54991.0,
+            "median_max_ns": 62452.0,
+            "p99_ns": 126395.0,
+            "reps": 5
+          },
+          "progenitor": {
+            "median_ns": 40329.0,
+            "median_min_ns": 39838.0,
+            "median_max_ns": 50925.0,
+            "p99_ns": 115329.0,
+            "reps": 5
+          },
+          "reqwest-serde": {
+            "median_ns": 46459.0,
+            "median_min_ns": 35092.0,
+            "median_max_ns": 50740.0,
+            "p99_ns": 112956.0,
+            "reps": 5
+          }
+        },
+        "create_item": {
+          "tungsten": {
+            "median_ns": 89812.0,
+            "median_min_ns": 86457.0,
+            "median_max_ns": 97063.0,
+            "p99_ns": 196038.0,
+            "reps": 5
+          },
+          "reqwest-serde-validated": {
+            "median_ns": 41426.0,
+            "median_min_ns": 40750.0,
+            "median_max_ns": 51666.0,
+            "p99_ns": 119235.0,
+            "reps": 5
+          },
+          "tungsten-novalidate": {
+            "median_ns": 71425.0,
+            "median_min_ns": 70003.0,
+            "median_max_ns": 73518.0,
+            "p99_ns": 162669.0,
+            "reps": 5
+          },
+          "progenitor": {
+            "median_ns": 50584.0,
+            "median_min_ns": 42102.0,
+            "median_max_ns": 51000.0,
+            "p99_ns": 101870.0,
+            "reps": 5
+          },
+          "reqwest-serde": {
+            "median_ns": 39889.0,
+            "median_min_ns": 37745.0,
+            "median_max_ns": 54735.5,
+            "p99_ns": 90343.0,
+            "reps": 5
+          }
+        },
+        "list_10": {
+          "tungsten": {
+            "median_ns": 121578.0,
+            "median_min_ns": 120918.0,
+            "median_max_ns": 125845.0,
+            "p99_ns": 190010.0,
+            "reps": 5
+          },
+          "reqwest-serde-validated": {
+            "median_ns": 48411.0,
+            "median_min_ns": 47710.0,
+            "median_max_ns": 56874.0,
+            "p99_ns": 105736.0,
+            "reps": 5
+          },
+          "tungsten-novalidate": {
+            "median_ns": 107242.5,
+            "median_min_ns": 106667.0,
+            "median_max_ns": 113031.0,
+            "p99_ns": 185953.0,
+            "reps": 5
+          },
+          "progenitor": {
+            "median_ns": 58426.0,
+            "median_min_ns": 53739.0,
+            "median_max_ns": 63328.5,
+            "p99_ns": 138493.0,
+            "reps": 5
+          },
+          "reqwest-serde": {
+            "median_ns": 49087.5,
+            "median_min_ns": 47079.0,
+            "median_max_ns": 61750.5,
+            "p99_ns": 111844.0,
+            "reps": 5
+          }
+        },
+        "list_100": {
+          "tungsten": {
+            "median_ns": 773362.0,
+            "median_min_ns": 682017.5,
+            "median_max_ns": 815929.0,
+            "p99_ns": 902236.0,
+            "reps": 5
+          },
+          "reqwest-serde-validated": {
+            "median_ns": 132625.0,
+            "median_min_ns": 129134.5,
+            "median_max_ns": 138659.0,
+            "p99_ns": 245490.0,
+            "reps": 5
+          },
+          "tungsten-novalidate": {
+            "median_ns": 441194.0,
+            "median_min_ns": 435025.0,
+            "median_max_ns": 451268.5,
+            "p99_ns": 685968.0,
+            "reps": 5
+          },
+          "progenitor": {
+            "median_ns": 140882.0,
+            "median_min_ns": 136411.0,
+            "median_max_ns": 145418.5,
+            "p99_ns": 242707.0,
+            "reps": 5
+          },
+          "reqwest-serde": {
+            "median_ns": 129440.5,
+            "median_min_ns": 127422.5,
+            "median_max_ns": 148814.0,
+            "p99_ns": 217540.0,
+            "reps": 5
+          }
+        },
+        "list_1000": {
+          "tungsten": {
+            "median_ns": 6333696.0,
+            "median_min_ns": 6296746.5,
+            "median_max_ns": 6380445.5,
+            "p99_ns": 8682895.0,
+            "reps": 5
+          },
+          "reqwest-serde-validated": {
+            "median_ns": 935069.5,
+            "median_min_ns": 923478.0,
+            "median_max_ns": 1010706.5,
+            "p99_ns": 1154137.0,
+            "reps": 5
+          },
+          "tungsten-novalidate": {
+            "median_ns": 3443347.0,
+            "median_min_ns": 3295820.0,
+            "median_max_ns": 3546561.5,
+            "p99_ns": 3770763.0,
+            "reps": 5
+          },
+          "progenitor": {
+            "median_ns": 1069332.5,
+            "median_min_ns": 1048932.5,
+            "median_max_ns": 1193134.0,
+            "p99_ns": 1491343.0,
+            "reps": 5
+          },
+          "reqwest-serde": {
+            "median_ns": 933177.0,
+            "median_min_ns": 857099.5,
+            "median_max_ns": 1059994.0,
+            "p99_ns": 1184211.0,
+            "reps": 5
+          }
+        }
+      },
+      "go": {
+        "get_item": {
+          "tungsten": {
+            "median_ns": 98139.0,
+            "median_min_ns": 96101.5,
+            "median_max_ns": 100447.5,
+            "p99_ns": 229588.0,
+            "reps": 5
+          },
+          "nethttp-json-validated": {
+            "median_ns": 61150.0,
+            "median_min_ns": 58551.0,
+            "median_max_ns": 76793.0,
+            "p99_ns": 130182.0,
+            "reps": 5
+          },
+          "tungsten-novalidate": {
+            "median_ns": 96407.0,
+            "median_min_ns": 93487.5,
+            "median_max_ns": 100327.0,
+            "p99_ns": 220855.0,
+            "reps": 5
+          },
+          "oapi-codegen": {
+            "median_ns": 61606.0,
+            "median_min_ns": 58010.5,
+            "median_max_ns": 67794.0,
+            "p99_ns": 165343.0,
+            "reps": 5
+          },
+          "nethttp-json": {
+            "median_ns": 57254.5,
+            "median_min_ns": 55361.0,
+            "median_max_ns": 67204.0,
+            "p99_ns": 129381.0,
+            "reps": 5
+          }
+        },
+        "create_item": {
+          "tungsten": {
+            "median_ns": 114568.0,
+            "median_min_ns": 113517.0,
+            "median_max_ns": 131038.0,
+            "p99_ns": 269016.0,
+            "reps": 5
+          },
+          "nethttp-json-validated": {
+            "median_ns": 65086.0,
+            "median_min_ns": 60654.0,
+            "median_max_ns": 74800.0,
+            "p99_ns": 134378.0,
+            "reps": 5
+          },
+          "tungsten-novalidate": {
+            "median_ns": 112330.5,
+            "median_min_ns": 111714.0,
+            "median_max_ns": 113171.5,
+            "p99_ns": 272731.0,
+            "reps": 5
+          },
+          "oapi-codegen": {
+            "median_ns": 62607.5,
+            "median_min_ns": 60539.0,
+            "median_max_ns": 74490.0,
+            "p99_ns": 147938.0,
+            "reps": 5
+          },
+          "nethttp-json": {
+            "median_ns": 60398.0,
+            "median_min_ns": 59537.0,
+            "median_max_ns": 64615.0,
+            "p99_ns": 149029.0,
+            "reps": 5
+          }
+        },
+        "list_10": {
+          "tungsten": {
+            "median_ns": 240714.0,
+            "median_min_ns": 235746.5,
+            "median_max_ns": 252596.5,
+            "p99_ns": 494887.0,
+            "reps": 5
+          },
+          "nethttp-json-validated": {
+            "median_ns": 111994.5,
+            "median_min_ns": 111158.5,
+            "median_max_ns": 114313.0,
+            "p99_ns": 237670.0,
+            "reps": 5
+          },
+          "tungsten-novalidate": {
+            "median_ns": 220219.0,
+            "median_min_ns": 215898.0,
+            "median_max_ns": 246888.0,
+            "p99_ns": 453617.0,
+            "reps": 5
+          },
+          "oapi-codegen": {
+            "median_ns": 107258.0,
+            "median_min_ns": 97458.0,
+            "median_max_ns": 115915.5,
+            "p99_ns": 235406.0,
+            "reps": 5
+          },
+          "nethttp-json": {
+            "median_ns": 93167.0,
+            "median_min_ns": 91059.0,
+            "median_max_ns": 103708.0,
+            "p99_ns": 256638.0,
+            "reps": 5
+          }
+        },
+        "list_100": {
+          "tungsten": {
+            "median_ns": 1953517.0,
+            "median_min_ns": 1824627.0,
+            "median_max_ns": 1992263.5,
+            "p99_ns": 2765836.0,
+            "reps": 5
+          },
+          "nethttp-json-validated": {
+            "median_ns": 488087.5,
+            "median_min_ns": 482519.0,
+            "median_max_ns": 591310.0,
+            "p99_ns": 847466.0,
+            "reps": 5
+          },
+          "tungsten-novalidate": {
+            "median_ns": 1695287.0,
+            "median_min_ns": 1640802.5,
+            "median_max_ns": 1722688.0,
+            "p99_ns": 2655514.0,
+            "reps": 5
+          },
+          "oapi-codegen": {
+            "median_ns": 413893.5,
+            "median_min_ns": 397990.0,
+            "median_max_ns": 469234.5,
+            "p99_ns": 661372.0,
+            "reps": 5
+          },
+          "nethttp-json": {
+            "median_ns": 396788.0,
+            "median_min_ns": 383143.0,
+            "median_max_ns": 477772.5,
+            "p99_ns": 700780.0,
+            "reps": 5
+          }
+        },
+        "list_1000": {
+          "tungsten": {
+            "median_ns": 20983577.5,
+            "median_min_ns": 20755482.5,
+            "median_max_ns": 22262099.5,
+            "p99_ns": 28846957.0,
+            "reps": 5
+          },
+          "nethttp-json-validated": {
+            "median_ns": 4920850.5,
+            "median_min_ns": 4844422.0,
+            "median_max_ns": 4971038.0,
+            "p99_ns": 5978699.0,
+            "reps": 5
+          },
+          "tungsten-novalidate": {
+            "median_ns": 19361192.0,
+            "median_min_ns": 19168209.5,
+            "median_max_ns": 20008957.0,
+            "p99_ns": 24135583.0,
+            "reps": 5
+          },
+          "oapi-codegen": {
+            "median_ns": 3170611.0,
+            "median_min_ns": 3118445.0,
+            "median_max_ns": 3194956.5,
+            "p99_ns": 4463293.0,
+            "reps": 5
+          },
+          "nethttp-json": {
+            "median_ns": 3232702.5,
+            "median_min_ns": 3221232.0,
+            "median_max_ns": 3249517.0,
+            "p99_ns": 4256199.0,
+            "reps": 5
+          }
+        }
+      }
+    },
+    "cold_start": {
+      "ts/tungsten": {
+        "median_ns": 149661790.0,
+        "min_ns": 140570421,
+        "max_ns": 197711064,
+        "runs": 30
+      },
+      "ts/fetch-zod": {
+        "median_ns": 130777268.5,
+        "min_ns": 125079241,
+        "max_ns": 172578401,
+        "runs": 30
+      },
+      "ts/tungsten-novalidate": {
+        "median_ns": 148142568.5,
+        "min_ns": 140722669,
+        "max_ns": 167593478,
+        "runs": 30
+      },
+      "ts/openapi-fetch": {
+        "median_ns": 73162793.5,
+        "min_ns": 68953483,
+        "max_ns": 81071176,
+        "runs": 30
+      },
+      "ts/fetch-raw": {
+        "median_ns": 70995814.0,
+        "min_ns": 66716701,
+        "max_ns": 98691817,
+        "runs": 30
+      },
+      "py/tungsten": {
+        "median_ns": 248492331.0,
+        "min_ns": 233380885,
+        "max_ns": 284201106,
+        "runs": 30
+      },
+      "py/tungsten-async": {
+        "median_ns": 249349714.0,
+        "min_ns": 230261083,
+        "max_ns": 274884272,
+        "runs": 30
+      },
+      "py/httpx-pydantic": {
+        "median_ns": 185908920.5,
+        "min_ns": 172882232,
+        "max_ns": 207344159,
+        "runs": 30
+      },
+      "py/openapi-python-client": {
+        "median_ns": 138220382.5,
+        "min_ns": 131265065,
+        "max_ns": 161018196,
+        "runs": 30
+      },
+      "py/httpx-typed": {
+        "median_ns": 124024382.0,
+        "min_ns": 117368095,
+        "max_ns": 149537063,
+        "runs": 30
+      },
+      "py/tungsten-validate-off": {
+        "median_ns": 248172288.5,
+        "min_ns": 233767529,
+        "max_ns": 303550390,
+        "runs": 30
+      },
+      "py/httpx-raw": {
+        "median_ns": 123998790.5,
+        "min_ns": 116347663,
+        "max_ns": 138637529,
+        "runs": 30
+      },
+      "rs/tungsten": {
+        "median_ns": 3631008.0,
+        "min_ns": 2810672,
+        "max_ns": 5297818,
+        "runs": 30
+      },
+      "rs/reqwest-serde-validated": {
+        "median_ns": 3587634.0,
+        "min_ns": 2837162,
+        "max_ns": 4658339,
+        "runs": 30
+      },
+      "rs/tungsten-novalidate": {
+        "median_ns": 3305314.0,
+        "min_ns": 2359989,
+        "max_ns": 4112076,
+        "runs": 30
+      },
+      "rs/progenitor": {
+        "median_ns": 2910082.5,
+        "min_ns": 2189608,
+        "max_ns": 3586937,
+        "runs": 30
+      },
+      "rs/reqwest-serde": {
+        "median_ns": 3093217.5,
+        "min_ns": 2444374,
+        "max_ns": 4958700,
+        "runs": 30
+      },
+      "go/tungsten": {
+        "median_ns": 5006506.0,
+        "min_ns": 3276627,
+        "max_ns": 6353481,
+        "runs": 30
+      },
+      "go/nethttp-json-validated": {
+        "median_ns": 4266872.5,
+        "min_ns": 3106938,
+        "max_ns": 7018738,
+        "runs": 30
+      },
+      "go/tungsten-novalidate": {
+        "median_ns": 5261565.5,
+        "min_ns": 3530470,
+        "max_ns": 5699519,
+        "runs": 30
+      },
+      "go/oapi-codegen": {
+        "median_ns": 4323356.0,
+        "min_ns": 2903970,
+        "max_ns": 5284499,
+        "runs": 30
+      },
+      "go/nethttp-json": {
+        "median_ns": 4074675.0,
+        "min_ns": 2529088,
+        "max_ns": 6056072,
+        "runs": 30
+      }
+    }
+  },
+  "candidate": {
+    "recovery": {
+      "reused_cells": 431,
+      "total_cells": 550,
+      "original_run_id": "20261016T045207Z",
+      "original_server_hash_recorded": false
+    },
+    "label": "0.1.3 candidate a759633",
+    "run_id": "20261016T054430377302Z",
+    "public_source_commit_short": "a759633f665d",
+    "environment": {
+      "cpu": "AMD EPYC 9V74 80-Core Processor",
+      "kernel": "6.18.44",
+      "machine": "x86_64",
+      "go": "go version go1.24.13 linux/amd64",
+      "node": "v24.19.0",
+      "python": "Python 3.13.5",
+      "rustc": "rustc 1.97.0 (2d8144b78 2026-07-07)"
+    },
+    "settings": {
+      "seed": 20261016,
+      "reps": 5,
+      "scale": 1.0,
+      "server_cpu": 0,
+      "client_cpu": 2,
+      "scenarios": {
+        "get_item": [
+          5000,
+          1000
+        ],
+        "create_item": [
+          5000,
+          1000
+        ],
+        "list_10": [
+          5000,
+          1000
+        ],
+        "list_100": [
+          2000,
+          400
+        ],
+        "list_1000": [
+          300,
+          60
+        ]
+      },
+      "min_warmup": {
+        "ts": 10000
+      },
+      "cold_runs": 30
+    },
+    "tiers": {
+      "ts/tungsten": "validated",
+      "ts/fetch-zod": "validated",
+      "ts/tungsten-novalidate": "typed",
+      "ts/openapi-fetch": "typed",
+      "ts/fetch-raw": "typed",
+      "py/tungsten": "validated",
+      "py/tungsten-async": "validated",
+      "py/httpx-pydantic": "validated",
+      "py/openapi-python-client": "typed",
+      "py/httpx-typed": "typed",
+      "py/tungsten-validate-off": "untyped",
+      "py/httpx-raw": "untyped",
+      "rs/tungsten": "validated",
+      "rs/reqwest-serde-validated": "validated",
+      "rs/tungsten-novalidate": "typed",
+      "rs/progenitor": "typed",
+      "rs/reqwest-serde": "typed",
+      "go/tungsten": "validated",
+      "go/nethttp-json-validated": "validated",
+      "go/tungsten-novalidate": "typed",
+      "go/oapi-codegen": "typed",
+      "go/nethttp-json": "typed"
+    },
+    "latency": {
+      "ts": {
+        "get_item": {
+          "tungsten": {
+            "median_ns": 1348670.5,
+            "median_min_ns": 1340886.5,
+            "median_max_ns": 1363229.0,
+            "p99_ns": 2570124.0,
+            "reps": 5
+          },
+          "fetch-zod": {
+            "median_ns": 1300472.0,
+            "median_min_ns": 1294123.0,
+            "median_max_ns": 1316741.0,
+            "p99_ns": 2191271.0,
+            "reps": 5
+          },
+          "tungsten-novalidate": {
+            "median_ns": 1347971.0,
+            "median_min_ns": 1336229.5,
+            "median_max_ns": 1361527.0,
+            "p99_ns": 2741059.0,
+            "reps": 5
+          },
+          "openapi-fetch": {
+            "median_ns": 1314167.0,
+            "median_min_ns": 1301693.5,
+            "median_max_ns": 1333510.5,
+            "p99_ns": 2159624.0,
+            "reps": 5
+          },
+          "fetch-raw": {
+            "median_ns": 1296381.0,
+            "median_min_ns": 1285319.0,
+            "median_max_ns": 1310828.5,
+            "p99_ns": 1984988.0,
+            "reps": 5
+          }
+        },
+        "create_item": {
+          "tungsten": {
+            "median_ns": 1469936.0,
+            "median_min_ns": 1447718.0,
+            "median_max_ns": 1484152.0,
+            "p99_ns": 3388591.0,
+            "reps": 5
+          },
+          "fetch-zod": {
+            "median_ns": 1376911.0,
+            "median_min_ns": 1375783.0,
+            "median_max_ns": 1390063.0,
+            "p99_ns": 2887104.0,
+            "reps": 5
+          },
+          "tungsten-novalidate": {
+            "median_ns": 1445781.0,
+            "median_min_ns": 1431844.0,
+            "median_max_ns": 1469565.0,
+            "p99_ns": 3257144.0,
+            "reps": 5
+          },
+          "openapi-fetch": {
+            "median_ns": 1396072.5,
+            "median_min_ns": 1375733.0,
+            "median_max_ns": 1426282.0,
+            "p99_ns": 2962856.0,
+            "reps": 5
+          },
+          "fetch-raw": {
+            "median_ns": 1354135.5,
+            "median_min_ns": 1343005.5,
+            "median_max_ns": 1374386.0,
+            "p99_ns": 2695433.0,
+            "reps": 5
+          }
+        },
+        "list_10": {
+          "tungsten": {
+            "median_ns": 1396498.0,
+            "median_min_ns": 1357641.0,
+            "median_max_ns": 1401921.0,
+            "p99_ns": 2891672.0,
+            "reps": 5
+          },
+          "fetch-zod": {
+            "median_ns": 1335313.0,
+            "median_min_ns": 1306755.0,
+            "median_max_ns": 1351357.0,
+            "p99_ns": 2249542.0,
+            "reps": 5
+          },
+          "tungsten-novalidate": {
+            "median_ns": 1371881.5,
+            "median_min_ns": 1356905.0,
+            "median_max_ns": 1377660.0,
+            "p99_ns": 2799525.0,
+            "reps": 5
+          },
+          "openapi-fetch": {
+            "median_ns": 1313415.5,
+            "median_min_ns": 1306395.5,
+            "median_max_ns": 1328558.0,
+            "p99_ns": 2574094.0,
+            "reps": 5
+          },
+          "fetch-raw": {
+            "median_ns": 1319685.5,
+            "median_min_ns": 1307136.5,
+            "median_max_ns": 1331027.0,
+            "p99_ns": 2456954.0,
+            "reps": 5
+          }
+        },
+        "list_100": {
+          "tungsten": {
+            "median_ns": 1523149.0,
+            "median_min_ns": 1497331.5,
+            "median_max_ns": 1549844.0,
+            "p99_ns": 4297518.0,
+            "reps": 5
+          },
+          "fetch-zod": {
+            "median_ns": 1487381.5,
+            "median_min_ns": 1456170.5,
+            "median_max_ns": 1507486.0,
+            "p99_ns": 4684647.0,
+            "reps": 5
+          },
+          "tungsten-novalidate": {
+            "median_ns": 1488107.5,
+            "median_min_ns": 1465374.0,
+            "median_max_ns": 1507751.5,
+            "p99_ns": 8671127.0,
+            "reps": 5
+          },
+          "openapi-fetch": {
+            "median_ns": 1420198.0,
+            "median_min_ns": 1412191.5,
+            "median_max_ns": 1451404.0,
+            "p99_ns": 6500027.0,
+            "reps": 5
+          },
+          "fetch-raw": {
+            "median_ns": 1412110.5,
+            "median_min_ns": 1402301.5,
+            "median_max_ns": 1430713.0,
+            "p99_ns": 6212453.0,
+            "reps": 5
+          }
+        },
+        "list_1000": {
+          "tungsten": {
+            "median_ns": 3016298.5,
+            "median_min_ns": 2956085.0,
+            "median_max_ns": 3061536.0,
+            "p99_ns": 14582847.0,
+            "reps": 5
+          },
+          "fetch-zod": {
+            "median_ns": 2926472.0,
+            "median_min_ns": 2822369.0,
+            "median_max_ns": 2955485.0,
+            "p99_ns": 5915697.0,
+            "reps": 5
+          },
+          "tungsten-novalidate": {
+            "median_ns": 2627433.0,
+            "median_min_ns": 2581790.5,
+            "median_max_ns": 2651488.5,
+            "p99_ns": 11451474.0,
+            "reps": 5
+          },
+          "openapi-fetch": {
+            "median_ns": 2542027.0,
+            "median_min_ns": 2480957.5,
+            "median_max_ns": 2588345.5,
+            "p99_ns": 9201366.0,
+            "reps": 5
+          },
+          "fetch-raw": {
+            "median_ns": 2563789.0,
+            "median_min_ns": 2498267.0,
+            "median_max_ns": 2594709.5,
+            "p99_ns": 9474578.0,
+            "reps": 5
+          }
+        }
+      },
+      "py": {
+        "get_item": {
+          "tungsten": {
+            "median_ns": 489529.5,
+            "median_min_ns": 467582.0,
+            "median_max_ns": 520034.5,
+            "p99_ns": 1007611.0,
+            "reps": 5
+          },
+          "tungsten-async": {
+            "median_ns": 778054.0,
+            "median_min_ns": 688051.5,
+            "median_max_ns": 781089.0,
+            "p99_ns": 1246182.0,
+            "reps": 5
+          },
+          "httpx-pydantic": {
+            "median_ns": 256522.0,
+            "median_min_ns": 249131.0,
+            "median_max_ns": 258015.0,
+            "p99_ns": 567995.0,
+            "reps": 5
+          },
+          "openapi-python-client": {
+            "median_ns": 264849.0,
+            "median_min_ns": 258901.0,
+            "median_max_ns": 278659.5,
+            "p99_ns": 632931.0,
+            "reps": 5
+          },
+          "httpx-typed": {
+            "median_ns": 246798.0,
+            "median_min_ns": 236858.0,
+            "median_max_ns": 253928.5,
+            "p99_ns": 546503.0,
+            "reps": 5
+          },
+          "tungsten-validate-off": {
+            "median_ns": 471268.0,
+            "median_min_ns": 469816.0,
+            "median_max_ns": 577128.0,
+            "p99_ns": 938299.0,
+            "reps": 5
+          },
+          "httpx-raw": {
+            "median_ns": 234459.5,
+            "median_min_ns": 233693.5,
+            "median_max_ns": 248135.0,
+            "p99_ns": 544311.0,
+            "reps": 5
+          }
+        },
+        "create_item": {
+          "tungsten": {
+            "median_ns": 644267.0,
+            "median_min_ns": 608499.0,
+            "median_max_ns": 750168.0,
+            "p99_ns": 1190941.0,
+            "reps": 5
+          },
+          "tungsten-async": {
+            "median_ns": 837466.5,
+            "median_min_ns": 827246.0,
+            "median_max_ns": 940652.5,
+            "p99_ns": 1506054.0,
+            "reps": 5
+          },
+          "httpx-pydantic": {
+            "median_ns": 345483.0,
+            "median_min_ns": 317026.0,
+            "median_max_ns": 403103.0,
+            "p99_ns": 759126.0,
+            "reps": 5
+          },
+          "openapi-python-client": {
+            "median_ns": 315108.5,
+            "median_min_ns": 308809.0,
+            "median_max_ns": 438209.0,
+            "p99_ns": 654542.0,
+            "reps": 5
+          },
+          "httpx-typed": {
+            "median_ns": 310436.5,
+            "median_min_ns": 291663.5,
+            "median_max_ns": 340635.5,
+            "p99_ns": 722092.0,
+            "reps": 5
+          },
+          "tungsten-validate-off": {
+            "median_ns": 629831.0,
+            "median_min_ns": 597809.0,
+            "median_max_ns": 741229.5,
+            "p99_ns": 1149319.0,
+            "reps": 5
+          },
+          "httpx-raw": {
+            "median_ns": 289095.0,
+            "median_min_ns": 283126.0,
+            "median_max_ns": 411650.0,
+            "p99_ns": 669054.0,
+            "reps": 5
+          }
+        },
+        "list_10": {
+          "tungsten": {
+            "median_ns": 551380.5,
+            "median_min_ns": 541907.0,
+            "median_max_ns": 648418.0,
+            "p99_ns": 1071936.0,
+            "reps": 5
+          },
+          "tungsten-async": {
+            "median_ns": 722432.0,
+            "median_min_ns": 718446.0,
+            "median_max_ns": 828212.5,
+            "p99_ns": 1267713.0,
+            "reps": 5
+          },
+          "httpx-pydantic": {
+            "median_ns": 409597.0,
+            "median_min_ns": 360865.0,
+            "median_max_ns": 488994.0,
+            "p99_ns": 877920.0,
+            "reps": 5
+          },
+          "openapi-python-client": {
+            "median_ns": 486646.0,
+            "median_min_ns": 375502.0,
+            "median_max_ns": 501682.5,
+            "p99_ns": 804582.0,
+            "reps": 5
+          },
+          "httpx-typed": {
+            "median_ns": 348743.0,
+            "median_min_ns": 327752.0,
+            "median_max_ns": 385226.0,
+            "p99_ns": 664167.0,
+            "reps": 5
+          },
+          "tungsten-validate-off": {
+            "median_ns": 506044.0,
+            "median_min_ns": 479915.5,
+            "median_max_ns": 608309.5,
+            "p99_ns": 1085436.0,
+            "reps": 5
+          },
+          "httpx-raw": {
+            "median_ns": 307181.5,
+            "median_min_ns": 294863.5,
+            "median_max_ns": 360920.5,
+            "p99_ns": 669034.0,
+            "reps": 5
+          }
+        },
+        "list_100": {
+          "tungsten": {
+            "median_ns": 1065566.0,
+            "median_min_ns": 949686.0,
+            "median_max_ns": 1089111.0,
+            "p99_ns": 1344396.0,
+            "reps": 5
+          },
+          "tungsten-async": {
+            "median_ns": 1140231.0,
+            "median_min_ns": 1122700.5,
+            "median_max_ns": 1241344.5,
+            "p99_ns": 2041692.0,
+            "reps": 5
+          },
+          "httpx-pydantic": {
+            "median_ns": 766872.0,
+            "median_min_ns": 745206.0,
+            "median_max_ns": 903629.0,
+            "p99_ns": 1088921.0,
+            "reps": 5
+          },
+          "openapi-python-client": {
+            "median_ns": 751535.0,
+            "median_min_ns": 730433.5,
+            "median_max_ns": 852283.0,
+            "p99_ns": 1179865.0,
+            "reps": 5
+          },
+          "httpx-typed": {
+            "median_ns": 725682.0,
+            "median_min_ns": 602426.0,
+            "median_max_ns": 738681.0,
+            "p99_ns": 1062722.0,
+            "reps": 5
+          },
+          "tungsten-validate-off": {
+            "median_ns": 652985.0,
+            "median_min_ns": 632990.5,
+            "median_max_ns": 800627.0,
+            "p99_ns": 1153826.0,
+            "reps": 5
+          },
+          "httpx-raw": {
+            "median_ns": 466210.0,
+            "median_min_ns": 463055.5,
+            "median_max_ns": 476140.0,
+            "p99_ns": 819956.0,
+            "reps": 5
+          }
+        },
+        "list_1000": {
+          "tungsten": {
+            "median_ns": 5198708.0,
+            "median_min_ns": 4929756.5,
+            "median_max_ns": 5504221.5,
+            "p99_ns": 16674033.0,
+            "reps": 5
+          },
+          "tungsten-async": {
+            "median_ns": 5741711.5,
+            "median_min_ns": 5506254.5,
+            "median_max_ns": 6200495.5,
+            "p99_ns": 17841939.0,
+            "reps": 5
+          },
+          "httpx-pydantic": {
+            "median_ns": 5060299.5,
+            "median_min_ns": 5010476.0,
+            "median_max_ns": 5326961.0,
+            "p99_ns": 14216279.0,
+            "reps": 5
+          },
+          "openapi-python-client": {
+            "median_ns": 4346845.0,
+            "median_min_ns": 4330741.5,
+            "median_max_ns": 4498848.5,
+            "p99_ns": 10739342.0,
+            "reps": 5
+          },
+          "httpx-typed": {
+            "median_ns": 3088941.0,
+            "median_min_ns": 2987647.5,
+            "median_max_ns": 3098185.0,
+            "p99_ns": 8216659.0,
+            "reps": 5
+          },
+          "tungsten-validate-off": {
+            "median_ns": 2265570.5,
+            "median_min_ns": 2140401.5,
+            "median_max_ns": 2326335.0,
+            "p99_ns": 2646921.0,
+            "reps": 5
+          },
+          "httpx-raw": {
+            "median_ns": 1922497.0,
+            "median_min_ns": 1772345.5,
+            "median_max_ns": 1983922.0,
+            "p99_ns": 2206654.0,
+            "reps": 5
+          }
+        }
+      },
+      "rs": {
+        "get_item": {
+          "tungsten": {
+            "median_ns": 55742.0,
+            "median_min_ns": 55417.0,
+            "median_max_ns": 60579.0,
+            "p99_ns": 125214.0,
+            "reps": 5
+          },
+          "reqwest-serde-validated": {
+            "median_ns": 38076.0,
+            "median_min_ns": 36093.5,
+            "median_max_ns": 38867.0,
+            "p99_ns": 117833.0,
+            "reps": 5
+          },
+          "tungsten-novalidate": {
+            "median_ns": 55651.5,
+            "median_min_ns": 55366.5,
+            "median_max_ns": 60299.0,
+            "p99_ns": 135539.0,
+            "reps": 5
+          },
+          "progenitor": {
+            "median_ns": 41081.0,
+            "median_min_ns": 39523.5,
+            "median_max_ns": 44110.0,
+            "p99_ns": 114619.0,
+            "reps": 5
+          },
+          "reqwest-serde": {
+            "median_ns": 35843.0,
+            "median_min_ns": 35492.5,
+            "median_max_ns": 57274.0,
+            "p99_ns": 120807.0,
+            "reps": 5
+          }
+        },
+        "create_item": {
+          "tungsten": {
+            "median_ns": 68120.0,
+            "median_min_ns": 67624.5,
+            "median_max_ns": 68210.0,
+            "p99_ns": 154927.0,
+            "reps": 5
+          },
+          "reqwest-serde-validated": {
+            "median_ns": 40199.0,
+            "median_min_ns": 39077.0,
+            "median_max_ns": 48146.0,
+            "p99_ns": 114679.0,
+            "reps": 5
+          },
+          "tungsten-novalidate": {
+            "median_ns": 66548.0,
+            "median_min_ns": 66077.0,
+            "median_max_ns": 67108.0,
+            "p99_ns": 146285.0,
+            "reps": 5
+          },
+          "progenitor": {
+            "median_ns": 46353.5,
+            "median_min_ns": 42292.0,
+            "median_max_ns": 50063.0,
+            "p99_ns": 120287.0,
+            "reps": 5
+          },
+          "reqwest-serde": {
+            "median_ns": 42908.0,
+            "median_min_ns": 39663.0,
+            "median_max_ns": 48321.0,
+            "p99_ns": 117362.0,
+            "reps": 5
+          }
+        },
+        "list_10": {
+          "tungsten": {
+            "median_ns": 65085.0,
+            "median_min_ns": 63724.0,
+            "median_max_ns": 80654.0,
+            "p99_ns": 163450.0,
+            "reps": 5
+          },
+          "reqwest-serde-validated": {
+            "median_ns": 50099.0,
+            "median_min_ns": 48636.5,
+            "median_max_ns": 60268.5,
+            "p99_ns": 128769.0,
+            "reps": 5
+          },
+          "tungsten-novalidate": {
+            "median_ns": 63022.0,
+            "median_min_ns": 62181.0,
+            "median_max_ns": 63463.0,
+            "p99_ns": 127738.0,
+            "reps": 5
+          },
+          "progenitor": {
+            "median_ns": 54790.0,
+            "median_min_ns": 52693.0,
+            "median_max_ns": 60349.0,
+            "p99_ns": 110152.0,
+            "reps": 5
+          },
+          "reqwest-serde": {
+            "median_ns": 46838.0,
+            "median_min_ns": 46503.5,
+            "median_max_ns": 48271.0,
+            "p99_ns": 110011.0,
+            "reps": 5
+          }
+        },
+        "list_100": {
+          "tungsten": {
+            "median_ns": 169038.5,
+            "median_min_ns": 165633.0,
+            "median_max_ns": 194596.0,
+            "p99_ns": 275675.0,
+            "reps": 5
+          },
+          "reqwest-serde-validated": {
+            "median_ns": 136561.0,
+            "median_min_ns": 134928.0,
+            "median_max_ns": 158338.0,
+            "p99_ns": 280062.0,
+            "reps": 5
+          },
+          "tungsten-novalidate": {
+            "median_ns": 161062.0,
+            "median_min_ns": 156870.5,
+            "median_max_ns": 163390.0,
+            "p99_ns": 418405.0,
+            "reps": 5
+          },
+          "progenitor": {
+            "median_ns": 140727.0,
+            "median_min_ns": 138223.0,
+            "median_max_ns": 161642.5,
+            "p99_ns": 244089.0,
+            "reps": 5
+          },
+          "reqwest-serde": {
+            "median_ns": 126060.5,
+            "median_min_ns": 124262.5,
+            "median_max_ns": 145809.0,
+            "p99_ns": 244460.0,
+            "reps": 5
+          }
+        },
+        "list_1000": {
+          "tungsten": {
+            "median_ns": 1094578.5,
+            "median_min_ns": 1047880.5,
+            "median_max_ns": 1167651.5,
+            "p99_ns": 1402282.0,
+            "reps": 5
+          },
+          "reqwest-serde-validated": {
+            "median_ns": 966150.0,
+            "median_min_ns": 889818.0,
+            "median_max_ns": 992479.0,
+            "p99_ns": 1429221.0,
+            "reps": 5
+          },
+          "tungsten-novalidate": {
+            "median_ns": 1034140.0,
+            "median_min_ns": 953451.5,
+            "median_max_ns": 1104474.0,
+            "p99_ns": 1525192.0,
+            "reps": 5
+          },
+          "progenitor": {
+            "median_ns": 1086607.5,
+            "median_min_ns": 992213.5,
+            "median_max_ns": 1121363.0,
+            "p99_ns": 1322529.0,
+            "reps": 5
+          },
+          "reqwest-serde": {
+            "median_ns": 924959.5,
+            "median_min_ns": 876543.5,
+            "median_max_ns": 985624.0,
+            "p99_ns": 1181386.0,
+            "reps": 5
+          }
+        }
+      },
+      "go": {
+        "get_item": {
+          "tungsten": {
+            "median_ns": 85245.0,
+            "median_min_ns": 81220.0,
+            "median_max_ns": 87969.0,
+            "p99_ns": 206964.0,
+            "reps": 5
+          },
+          "nethttp-json-validated": {
+            "median_ns": 59923.0,
+            "median_min_ns": 58355.5,
+            "median_max_ns": 64695.0,
+            "p99_ns": 159345.0,
+            "reps": 5
+          },
+          "tungsten-novalidate": {
+            "median_ns": 80688.5,
+            "median_min_ns": 79837.0,
+            "median_max_ns": 82536.0,
+            "p99_ns": 181076.0,
+            "reps": 5
+          },
+          "oapi-codegen": {
+            "median_ns": 59327.0,
+            "median_min_ns": 58947.0,
+            "median_max_ns": 68811.0,
+            "p99_ns": 144783.0,
+            "reps": 5
+          },
+          "nethttp-json": {
+            "median_ns": 57700.0,
+            "median_min_ns": 55877.0,
+            "median_max_ns": 96857.0,
+            "p99_ns": 177701.0,
+            "reps": 5
+          }
+        },
+        "create_item": {
+          "tungsten": {
+            "median_ns": 101694.5,
+            "median_min_ns": 97904.0,
+            "median_max_ns": 108114.0,
+            "p99_ns": 248856.0,
+            "reps": 5
+          },
+          "nethttp-json-validated": {
+            "median_ns": 63053.0,
+            "median_min_ns": 62041.0,
+            "median_max_ns": 64039.0,
+            "p99_ns": 144913.0,
+            "reps": 5
+          },
+          "tungsten-novalidate": {
+            "median_ns": 97694.0,
+            "median_min_ns": 94639.5,
+            "median_max_ns": 103852.5,
+            "p99_ns": 229958.0,
+            "reps": 5
+          },
+          "oapi-codegen": {
+            "median_ns": 64244.0,
+            "median_min_ns": 61250.0,
+            "median_max_ns": 75015.0,
+            "p99_ns": 153165.0,
+            "reps": 5
+          },
+          "nethttp-json": {
+            "median_ns": 65656.5,
+            "median_min_ns": 59748.0,
+            "median_max_ns": 97048.0,
+            "p99_ns": 158162.0,
+            "reps": 5
+          }
+        },
+        "list_10": {
+          "tungsten": {
+            "median_ns": 124783.0,
+            "median_min_ns": 120748.0,
+            "median_max_ns": 132109.5,
+            "p99_ns": 321382.0,
+            "reps": 5
+          },
+          "nethttp-json-validated": {
+            "median_ns": 113436.5,
+            "median_min_ns": 112986.5,
+            "median_max_ns": 120622.5,
+            "p99_ns": 241345.0,
+            "reps": 5
+          },
+          "tungsten-novalidate": {
+            "median_ns": 122765.5,
+            "median_min_ns": 120752.5,
+            "median_max_ns": 132204.5,
+            "p99_ns": 310146.0,
+            "reps": 5
+          },
+          "oapi-codegen": {
+            "median_ns": 100778.0,
+            "median_min_ns": 95861.0,
+            "median_max_ns": 102480.5,
+            "p99_ns": 220935.0,
+            "reps": 5
+          },
+          "nethttp-json": {
+            "median_ns": 100117.5,
+            "median_min_ns": 92781.0,
+            "median_max_ns": 113372.0,
+            "p99_ns": 217229.0,
+            "reps": 5
+          }
+        },
+        "list_100": {
+          "tungsten": {
+            "median_ns": 742161.0,
+            "median_min_ns": 701932.0,
+            "median_max_ns": 817216.5,
+            "p99_ns": 1297708.0,
+            "reps": 5
+          },
+          "nethttp-json-validated": {
+            "median_ns": 516364.0,
+            "median_min_ns": 486395.0,
+            "median_max_ns": 604889.0,
+            "p99_ns": 891971.0,
+            "reps": 5
+          },
+          "tungsten-novalidate": {
+            "median_ns": 693008.5,
+            "median_min_ns": 618429.0,
+            "median_max_ns": 743113.0,
+            "p99_ns": 1252461.0,
+            "reps": 5
+          },
+          "oapi-codegen": {
+            "median_ns": 399377.0,
+            "median_min_ns": 392938.0,
+            "median_max_ns": 486971.0,
+            "p99_ns": 717294.0,
+            "reps": 5
+          },
+          "nethttp-json": {
+            "median_ns": 411375.0,
+            "median_min_ns": 389738.0,
+            "median_max_ns": 472329.5,
+            "p99_ns": 707871.0,
+            "reps": 5
+          }
+        },
+        "list_1000": {
+          "tungsten": {
+            "median_ns": 7485518.5,
+            "median_min_ns": 7129226.0,
+            "median_max_ns": 7546624.0,
+            "p99_ns": 9888887.0,
+            "reps": 5
+          },
+          "nethttp-json-validated": {
+            "median_ns": 4950017.0,
+            "median_min_ns": 4828348.5,
+            "median_max_ns": 5041616.5,
+            "p99_ns": 6981775.0,
+            "reps": 5
+          },
+          "tungsten-novalidate": {
+            "median_ns": 6654934.0,
+            "median_min_ns": 6558742.0,
+            "median_max_ns": 6709363.0,
+            "p99_ns": 8828579.0,
+            "reps": 5
+          },
+          "oapi-codegen": {
+            "median_ns": 3244940.0,
+            "median_min_ns": 3180651.0,
+            "median_max_ns": 3476019.5,
+            "p99_ns": 4245281.0,
+            "reps": 5
+          },
+          "nethttp-json": {
+            "median_ns": 3251555.5,
+            "median_min_ns": 3207425.5,
+            "median_max_ns": 3275190.0,
+            "p99_ns": 4387840.0,
+            "reps": 5
+          }
+        }
+      }
+    },
+    "cold_start": {
+      "ts/tungsten": {
+        "median_ns": 147414016.0,
+        "min_ns": 141782505,
+        "max_ns": 188237685,
+        "runs": 30
+      },
+      "ts/fetch-zod": {
+        "median_ns": 131220705.0,
+        "min_ns": 125843389,
+        "max_ns": 164345894,
+        "runs": 30
+      },
+      "ts/tungsten-novalidate": {
+        "median_ns": 147306746.0,
+        "min_ns": 141372841,
+        "max_ns": 194044242,
+        "runs": 30
+      },
+      "ts/openapi-fetch": {
+        "median_ns": 73672521.0,
+        "min_ns": 70501810,
+        "max_ns": 103657115,
+        "runs": 30
+      },
+      "ts/fetch-raw": {
+        "median_ns": 70108008.5,
+        "min_ns": 67218237,
+        "max_ns": 89577377,
+        "runs": 30
+      },
+      "py/tungsten": {
+        "median_ns": 216760177.0,
+        "min_ns": 206879157,
+        "max_ns": 247293926,
+        "runs": 30
+      },
+      "py/tungsten-async": {
+        "median_ns": 250470714.5,
+        "min_ns": 239902504,
+        "max_ns": 295017294,
+        "runs": 30
+      },
+      "py/httpx-pydantic": {
+        "median_ns": 184406894.5,
+        "min_ns": 177228123,
+        "max_ns": 220371906,
+        "runs": 30
+      },
+      "py/openapi-python-client": {
+        "median_ns": 136025779.0,
+        "min_ns": 130934029,
+        "max_ns": 166489023,
+        "runs": 30
+      },
+      "py/httpx-typed": {
+        "median_ns": 123366827.5,
+        "min_ns": 117724392,
+        "max_ns": 157487931,
+        "runs": 30
+      },
+      "py/tungsten-validate-off": {
+        "median_ns": 215883095.0,
+        "min_ns": 207505197,
+        "max_ns": 281530612,
+        "runs": 30
+      },
+      "py/httpx-raw": {
+        "median_ns": 123648161.0,
+        "min_ns": 116495954,
+        "max_ns": 168251663,
+        "runs": 30
+      },
+      "rs/tungsten": {
+        "median_ns": 3600040.0,
+        "min_ns": 2533374,
+        "max_ns": 5937409,
+        "runs": 30
+      },
+      "rs/reqwest-serde-validated": {
+        "median_ns": 3572529.5,
+        "min_ns": 2727940,
+        "max_ns": 4226954,
+        "runs": 30
+      },
+      "rs/tungsten-novalidate": {
+        "median_ns": 3224530.5,
+        "min_ns": 2408331,
+        "max_ns": 4931320,
+        "runs": 30
+      },
+      "rs/progenitor": {
+        "median_ns": 2942025.5,
+        "min_ns": 2128650,
+        "max_ns": 4564270,
+        "runs": 30
+      },
+      "rs/reqwest-serde": {
+        "median_ns": 3038259.5,
+        "min_ns": 2352969,
+        "max_ns": 5230210,
+        "runs": 30
+      },
+      "go/tungsten": {
+        "median_ns": 5167216.0,
+        "min_ns": 3397865,
+        "max_ns": 9554776,
+        "runs": 30
+      },
+      "go/nethttp-json-validated": {
+        "median_ns": 4091885.5,
+        "min_ns": 2826556,
+        "max_ns": 6121679,
+        "runs": 30
+      },
+      "go/tungsten-novalidate": {
+        "median_ns": 4638309.5,
+        "min_ns": 3107858,
+        "max_ns": 5947859,
+        "runs": 30
+      },
+      "go/oapi-codegen": {
+        "median_ns": 4024702.0,
+        "min_ns": 2901305,
+        "max_ns": 5754670,
+        "runs": 30
+      },
+      "go/nethttp-json": {
+        "median_ns": 3978689.0,
+        "min_ns": 2711737,
+        "max_ns": 4932611,
+        "runs": 30
+      }
+    }
+  }
+}

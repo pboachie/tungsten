@@ -1,0 +1,321 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Runtime benchmarks - tungsten</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="Documentation for tungsten, the agent-native SDK generator and MCP compiler">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon.svg">
+        <link rel="shortcut icon" href="favicon.png">
+        <link rel="stylesheet" href="css/variables.css">
+        <link rel="stylesheet" href="css/general.css">
+        <link rel="stylesheet" href="css/chrome.css">
+        <link rel="stylesheet" href="css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="highlight-css" href="highlight.css">
+        <link rel="stylesheet" id="tomorrow-night-css" href="tomorrow-night.css">
+        <link rel="stylesheet" id="ayu-highlight-css" href="ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "";
+            const default_light_theme = "light";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "searchindex.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="toc.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+            </noscript>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">tungsten</h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/pboachie/tungsten" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <i class="fa fa-spinner fa-spin"></i>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="runtime-benchmarks"><a class="header" href="#runtime-benchmarks">Runtime benchmarks</a></h1>
+<p>These benchmarks measure generated SDK request latency in TypeScript (Node),
+Python, Rust and Go against the same small HTTP API. They include hand-written
+clients and another generator in each language. See the
+<a href="runtime-benchmark-results.html">versioned results</a> for measurements and remaining
+performance gaps.</p>
+<h2 id="what-is-measured"><a class="header" href="#what-is-measured">What is measured</a></h2>
+<p>A local HTTP/1.1 server serves precomputed JSON over keep-alive connections.
+Clients make sequential calls to read one item, create one item, or list 10,
+100 or 1,000 items. Each item is approximately 300 bytes. The server and client
+run on separate pinned CPUs. Calls include HTTP transport, decoding, validation
+where enabled, and identical checks of the returned IDs and list lengths.
+Client construction and warm-up are outside the timed region.</p>
+<p>Each client/scenario runs in five independent processes, in a randomized,
+interleaved order with a recorded seed. Tables show the median of the five
+per-process medians, their minimum–maximum range, and the median of the five
+per-process p99s. The range is run-to-run variation, not a confidence interval.
+Small changes and overlapping ranges should not be treated as established wins.</p>
+<div class="table-wrapper"><table><thead><tr><th>Scenario</th><th style="text-align: right">Timed calls per process</th><th style="text-align: right">Warm-up calls per process</th></tr></thead><tbody>
+<tr><td>Read one item</td><td style="text-align: right">5,000</td><td style="text-align: right">1,000</td></tr>
+<tr><td>Create one item</td><td style="text-align: right">5,000</td><td style="text-align: right">1,000</td></tr>
+<tr><td>List 10</td><td style="text-align: right">5,000</td><td style="text-align: right">1,000</td></tr>
+<tr><td>List 100</td><td style="text-align: right">2,000</td><td style="text-align: right">400</td></tr>
+<tr><td>List 1,000</td><td style="text-align: right">300</td><td style="text-align: right">60</td></tr>
+</tbody></table>
+</div>
+<p>Every TypeScript scenario instead receives at least 10,000 warm-up calls to
+reach V8's optimized execution tier. Cold start is measured separately: median
+wall time of 30 fresh processes, from spawn through one successful read to exit,
+including imports and client construction. This is not just SDK initialization.</p>
+<h2 id="compare-equal-work"><a class="header" href="#compare-equal-work">Compare equal work</a></h2>
+<p>Comparisons are restricted to the same language and work tier. A smaller
+latency is better. There is no combined score or cross-language ranking.</p>
+<div class="table-wrapper"><table><thead><tr><th>Tier</th><th>Work performed</th><th>Tungsten configuration</th></tr></thead><tbody>
+<tr><td>Validated</td><td>HTTP, typed result, request checks and default response schema checks</td><td>Default response validation</td></tr>
+<tr><td>Typed</td><td>HTTP and typed result, without response schema checks</td><td>Response validation off in TypeScript, Rust and Go</td></tr>
+<tr><td>Untyped</td><td>HTTP and generic decoded JSON</td><td>Python response validation off; lower bound only</td></tr>
+</tbody></table>
+</div>
+<p>TypeScript types are compile-time only: a JSON type assertion is the typed
+baseline. Python with validation off returns dictionaries, so it has no
+Tungsten entry in the typed tier. Untyped clients receive no competitive ratio.
+Python sync and async results use sequential calls; they do not measure async
+throughput under concurrency.</p>
+<p>Within a language, clients share the transport library/version, 30-second
+timeout, connection reuse, optimized build settings and result assertions.
+No call retries or redirects in this workload. Default garbage collection stays
+enabled. Tungsten retains its normal argument checks, headers, response
+metadata, deadline handling and retry bookkeeping even when response validation
+is disabled.</p>
+<h2 id="remaining-differences"><a class="header" href="#remaining-differences">Remaining differences</a></h2>
+<ul>
+<li>TypeScript uses global fetch for all clients. The validated hand-written
+client uses matching Zod checks; openapi-fetch and the typed hand-written
+client omit runtime argument validation.</li>
+<li>Python uses httpx. The validated hand-written client uses matching strict
+Pydantic checks. openapi-python-client constructs attrs models and parses
+timestamps; the hand-written typed client uses slotted dataclasses and keeps
+timestamps as strings. Tungsten keeps timestamps as strings too.</li>
+<li>Rust uses reqwest and a current-thread Tokio runtime. Progenitor parses
+timestamps into date-time objects while Tungsten keeps strings. Tungsten
+retains unknown fields and returns response metadata; the hand-written
+baseline returns its model directly. Progenitor 0.11.2 is used to match the
+reqwest 0.12 transport family. Its generator receives the same schema with
+only the OpenAPI version marker changed from 3.1.0 to 3.0.3.</li>
+<li>Go uses net/http. oapi-codegen uses time.Time and float32 where Tungsten uses
+strings and float64. Its typed integer decoder rejects integral JSON floats
+that the validated clients accept. oapi-codegen 2.7.2 is used for Go 1.24
+compatibility. Tungsten eagerly retains its ordered <code>Raw</code> response for API
+compatibility. A lazy representation is proposed for a future 0.2.0 API
+review; it is not part of this candidate.</li>
+</ul>
+<p>Hand-written validated clients match checks for this schema, not every feature
+of a complete SDK. Invalid responses are absent: default warn-mode behavior
+and fail-fast behavior therefore do not diverge during measurement.</p>
+<h2 id="limits"><a class="header" href="#limits">Limits</a></h2>
+<p>These are loopback, successful-request microbenchmarks for one schema. They do
+not predict Internet latency, concurrent throughput, streaming, memory use,
+error handling or all API schemas. No TLS handshake or remote service work is
+included. Cold-start process costs and steady-state request costs answer
+different questions. Version comparisons use the same client and scenario;
+third-party comparisons use the same work tier. Candidate builds are explicitly
+labelled and do not imply that a version has been released.</p>
+<p>For the initial 0.1.2 comparison, the release tag contains a Rust runtime whose
+package version is 0.1.0. The candidate runtime package is 0.1.3. This is the
+only difference between the two benchmark Cargo lockfiles; third-party Rust
+dependency versions are unchanged. The shared lockfile hash consequently differs
+for every Rust client, including the control clients.</p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="runtime-distribution.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="runtime-benchmark-results.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="runtime-distribution.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="runtime-benchmark-results.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr.min.js"></script>
+        <script src="mark.min.js"></script>
+        <script src="searcher.js"></script>
+
+        <script src="clipboard.min.js"></script>
+        <script src="highlight.js"></script>
+        <script src="book.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+
+    </div>
+    </body>
+</html>
