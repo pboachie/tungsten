@@ -2,14 +2,16 @@
 """Run flows (``_effects``): the synchronous driver performs effects with
 ``httpx.Client`` and ``time.sleep``, the asynchronous one with
 ``httpx.AsyncClient`` and ``asyncio.sleep``. One HTTP attempt has a
-deadline covering native socket I/O and the body; redirects are never followed
-by httpx; failures are classified by whether the request can have reached
-the server. Synchronous custom transports remain on the caller's thread:
-their callbacks must cooperate with timeouts, since Python cannot safely
-interrupt arbitrary blocking code. Late custom results are rejected only
-after the work and cleanup finish. Async cancellation likewise waits for
-cleanup; non-cooperative callbacks and OS DNS resolution are not hard
-real-time guarantees."""
+deadline covering native socket I/O and the body: the synchronous transport
+bounds every socket operation by it on the caller's thread (no helper
+thread), the asynchronous one cancels the attempt. Redirects are never
+followed by httpx; failures are classified by whether the request can have
+reached the server. Synchronous custom transports remain on the caller's
+thread with httpx's per-phase timeouts: their callbacks must cooperate with
+timeouts, since Python cannot safely interrupt arbitrary blocking code. Late
+custom results are rejected only after the work and cleanup finish. Async
+cancellation likewise waits for cleanup; non-cooperative callbacks and OS DNS
+resolution are not hard real-time guarantees."""
 
 from __future__ import annotations
 
@@ -23,12 +25,12 @@ import sys
 import threading
 import time
 import weakref
-from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Iterator
-from concurrent.futures import CancelledError
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Iterator
 from dataclasses import dataclass, replace
 from http.cookiejar import CookieJar, DefaultCookiePolicy
 from typing import Any, Literal, TypeVar, cast
 
+import httpcore
 import httpx
 
 from ._effects import (
@@ -86,7 +88,7 @@ def _no_cookies() -> CookieJar:
 
 def sync_http(transport: object) -> httpx.Client:
     return httpx.Client(
-        transport=transport if isinstance(transport, httpx.BaseTransport) else _NativeSyncTransport(),
+        transport=transport if isinstance(transport, httpx.BaseTransport) else _DeadlineTransport(),
         follow_redirects=False,
         cookies=_no_cookies(),
         timeout=None,
@@ -103,253 +105,224 @@ async def _before_deadline(work: Awaitable[T], deadline: float | None) -> T:
         raise httpx.ReadTimeout("The attempt deadline expired") from None
 
 
-class _NativeSyncTransport(httpx.BaseTransport):
-    """Public HTTPX transport bridge: cancellable native I/O for sync callers.
+class _Deadline(threading.local):
+    """The attempt deadline (``time.monotonic()``) of the request the current
+    thread is sending or reading, or None. A request runs on one thread, from
+    its first socket write to the end of its body, so the socket layer below
+    finds its deadline here."""
 
-    One owned loop/client retains connection pooling and HTTPX's proxy/TLS
-    defaults. A caller waits for cancellation and response cleanup, not just a
-    timer notification. Custom sync transports are not moved to another thread:
-    arbitrary blocking Python callbacks cannot safely be forcibly interrupted.
-    """
+    until: float | None = None
+
+
+_DEADLINE = _Deadline()
+
+
+def _bounded(timeout: float | None, expired: type[httpcore.TimeoutException]) -> float | None:
+    """A socket operation's timeout: httpx's phase timeout, cut to the time
+    left before the attempt deadline; it raises once that has passed."""
+    until = _DEADLINE.until
+    if until is None:
+        return timeout
+    left = until - time.monotonic()
+    if left <= 0:
+        raise expired("The attempt deadline expired")
+    return left if timeout is None or left < timeout else timeout
+
+
+class _Sockets:
+    """The open sockets of one transport, so closing it can end the reads
+    other threads are blocked in. Shared by the backend and its streams, which
+    therefore never reference the transport: a dropped transport is collected
+    and its finalizer closes the pool."""
+
+    __slots__ = ("_lock", "_streams")
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._loop: asyncio.AbstractEventLoop | None = None
-        self._thread: threading.Thread | None = None
-        self._client: httpx.AsyncClient | None = None
-        # Stops the loop thread and closes the pool of a transport that is
-        # dropped (its client never closed); close() detaches it.
-        self._finalizer: weakref.finalize[..., Any] | None = None
-        self._closed = False
-        self._stopped = threading.Event()
-        self._responses: set[httpx.Response] = set()
-        self._response_closers: dict[httpx.Response, asyncio.Task[None]] = {}
+        self._streams: set[_DeadlineStream] = set()
 
-    def _start(self) -> asyncio.AbstractEventLoop:
-        # Caller holds _lock through submission, so close cannot stop the loop
-        # between accepting a coroutine and scheduling it.
-        if self._closed:
-            raise RuntimeError("The transport is closed")
-        if self._loop is None:
-            loop = asyncio.new_event_loop()
-            self._loop = loop
-            # The pool belongs to the loop; the finalizer references only
-            # the loop, its thread and the pool, never the transport.
-            self._client = async_http(None)
-
-            def serve() -> None:
-                asyncio.set_event_loop(loop)
-                try:
-                    loop.run_forever()
-                finally:
-                    loop.run_until_complete(loop.shutdown_asyncgens())
-                    loop.run_until_complete(loop.shutdown_default_executor())
-                    loop.close()
-
-            self._thread = threading.Thread(target=serve, name="tungsten-http", daemon=True)
-            self._thread.start()
-            self._finalizer = weakref.finalize(self, _abandon_loop, loop, self._thread, self._client)
-        return self._loop
-
-    def _on_loop(self) -> bool:
-        return self._thread is not None and threading.current_thread() is self._thread
-
-    def run(self, work: Coroutine[Any, Any, T]) -> T:
-        if self._on_loop():
-            work.close()
-            raise RuntimeError("a synchronous call cannot run on the transport's own loop thread")
-        try:
-            with self._lock:
-                pending = asyncio.run_coroutine_threadsafe(work, self._start())
-        except Exception:
-            work.close()
-            raise
-        return pending.result()
-
-    def cleanup(self, work: Coroutine[Any, Any, None]) -> None:
-        if self._on_loop():
-            # A response finalized on the loop thread (garbage collection can
-            # run there) cannot wait for the loop; shutdown joins its cleanup.
-            with self._lock:
-                if self._closed or self._loop is None:
-                    work.close()
-                else:
-                    self._loop.create_task(work)
-            return
+    def track(self, stream: _DeadlineStream) -> None:
         with self._lock:
-            if self._closed:
-                work.close()
-                pending = None
-            else:
-                pending = asyncio.run_coroutine_threadsafe(work, self._start())
-        if pending is not None:
-            try:
-                pending.result()
-                return
-            except CancelledError:
-                pass  # Shutdown has taken ownership of response cleanup.
-        self._stopped.wait()
+            self._streams.add(stream)
 
-    async def close_response(self, response: httpx.Response) -> None:
-        closing = self._response_closers.get(response)
-        if closing is None:
-            closing = asyncio.create_task(response.aclose())
-            self._response_closers[response] = closing
-        # Once response cleanup starts, shutdown must join it, not cancel it.
-        await asyncio.shield(closing)
-        self._responses.discard(response)
-        self._response_closers.pop(response, None)
-
-    def notify(self, callback: Callable[[], None]) -> None:
+    def forget(self, stream: _DeadlineStream) -> None:
         with self._lock:
-            if not self._closed and self._loop is not None:
-                self._loop.call_soon_threadsafe(callback)
+            self._streams.discard(stream)
 
-    async def _send(self, request: httpx.Request, deadline: float | None) -> httpx.Response:
-        if self._client is None:
-            raise RuntimeError("The transport is closed")
-        # A fresh Request avoids consuming an outer sync-only request stream
-        # on the async loop. Headers, URL and timeout extensions stay exact.
-        inner = httpx.Request(
-            request.method,
-            request.url,
-            headers=request.headers,
-            content=request.content,
-            extensions=request.extensions,
+    def interrupt(self) -> None:
+        with self._lock:
+            streams = list(self._streams)
+        for stream in streams:
+            stream.interrupt()
+
+    def __len__(self) -> int:
+        with self._lock:
+            return len(self._streams)
+
+
+class _DeadlineStream(httpcore.NetworkStream):
+    """A socket whose every operation ends by the attempt deadline."""
+
+    __slots__ = ("_inner", "_sockets")
+
+    def __init__(self, inner: httpcore.NetworkStream, sockets: _Sockets) -> None:
+        self._inner = inner
+        self._sockets = sockets
+        sockets.track(self)
+
+    def read(self, max_bytes: int, timeout: float | None = None) -> bytes:
+        return self._inner.read(max_bytes, _bounded(timeout, httpcore.ReadTimeout))
+
+    def write(self, buffer: bytes, timeout: float | None = None) -> None:
+        self._inner.write(buffer, _bounded(timeout, httpcore.WriteTimeout))
+
+    def close(self) -> None:
+        self._sockets.forget(self)
+        self._inner.close()
+
+    def start_tls(
+        self,
+        ssl_context: ssl.SSLContext,
+        server_hostname: str | None = None,
+        timeout: float | None = None,
+    ) -> httpcore.NetworkStream:
+        bounded = _bounded(timeout, httpcore.ConnectTimeout)
+        upgraded = self._inner.start_tls(ssl_context, server_hostname, bounded)
+        self._sockets.forget(self)
+        return _DeadlineStream(upgraded, self._sockets)
+
+    def get_extra_info(self, info: str) -> Any:
+        return self._inner.get_extra_info(info)
+
+    def interrupt(self) -> None:
+        """End an operation another thread is blocked in: shut the socket
+        down (a socket closed from another thread does not wake it)."""
+        sock = self._inner.get_extra_info("socket")
+        if isinstance(sock, socket.socket):
+            with contextlib.suppress(OSError):
+                sock.shutdown(socket.SHUT_RDWR)
+
+
+class _DeadlineBackend(httpcore.NetworkBackend):
+    """httpcore's own blocking sockets, each wrapped to honour the deadline."""
+
+    __slots__ = ("_inner", "_sockets")
+
+    def __init__(self, sockets: _Sockets) -> None:
+        self._inner = httpcore.SyncBackend()
+        self._sockets = sockets
+
+    def connect_tcp(
+        self,
+        host: str,
+        port: int,
+        timeout: float | None = None,
+        local_address: str | None = None,
+        socket_options: Iterable[tuple[Any, ...]] | None = None,
+    ) -> httpcore.NetworkStream:
+        timeout = _bounded(timeout, httpcore.ConnectTimeout)
+        stream = self._inner.connect_tcp(host, port, timeout, local_address, socket_options)
+        return _DeadlineStream(stream, self._sockets)
+
+    def connect_unix_socket(
+        self,
+        path: str,
+        timeout: float | None = None,
+        socket_options: Iterable[tuple[Any, ...]] | None = None,
+    ) -> httpcore.NetworkStream:
+        timeout = _bounded(timeout, httpcore.ConnectTimeout)
+        stream = self._inner.connect_unix_socket(path, timeout, socket_options)
+        return _DeadlineStream(stream, self._sockets)
+
+    def sleep(self, seconds: float) -> None:
+        self._inner.sleep(seconds)
+
+
+class _DeadlineTransport(httpx.HTTPTransport):
+    """httpx's synchronous transport (its connection pool, TLS defaults and
+    error mapping) whose sockets honour an attempt deadline: every socket
+    operation of a request carrying ``tungsten_deadline`` waits at most until
+    that instant, through the connect, TLS, write, headers and body phases,
+    whatever the per-phase timeouts allow. Nothing runs on another thread: a
+    blocked call spends its time in a socket wait, and that is where the
+    deadline ends it. Closing the transport shuts down the sockets other
+    threads are blocked in, so they return at once."""
+
+    def __init__(self) -> None:
+        context = httpx.create_ssl_context()
+        super().__init__(verify=context)
+        self._pool.close()  # httpx's pool, replaced by one on the deadline-aware backend
+        self._sockets = _Sockets()
+        # httpx's default limits (100 connections, 20 kept alive for 5 s), HTTP/1.1.
+        self._pool = httpcore.ConnectionPool(
+            ssl_context=context,
+            max_connections=100,
+            max_keepalive_connections=20,
+            keepalive_expiry=5.0,
+            http1=True,
+            http2=False,
+            network_backend=_DeadlineBackend(self._sockets),
         )
-        response = await _before_deadline(self._client.send(inner, stream=True), deadline)
-        self._responses.add(response)
-        return response
+        # Closes the pool of a transport that is dropped (its client never
+        # closed), so its sockets are released cleanly; close() detaches it.
+        self._finalizer = weakref.finalize(self, _close_pool, self._pool)
 
     def handle_request(self, request: httpx.Request) -> httpx.Response:
-        request.read()
         deadline = cast(float | None, request.extensions.get("tungsten_deadline"))
-        response = self.run(self._send(request, deadline))
+        local = _DEADLINE
+        local.until = deadline
+        try:
+            response = super().handle_request(request)
+        finally:
+            local.until = None
+        if deadline is None:
+            return response
         if (
             request.extensions.get("tungsten_stream")
             and 200 <= response.status_code <= 299
             and _is_event_stream(response)
         ):
-            deadline = None  # After SSE headers, the configured idle timeout applies.
-        body = _NativeSyncBody(self, response, deadline)
-        return httpx.Response(
-            response.status_code,
-            headers=response.headers,
-            stream=body,
-            extensions={**response.extensions, "tungsten_interrupt": body.interrupt},
-        )
-
-    async def _shutdown(self) -> None:
-        current = asyncio.current_task()
-        tasks = [
-            task
-            for task in asyncio.all_tasks()
-            if task is not current and task not in self._response_closers.values()
-        ]
-        for task in tasks:
-            task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
-        for response in list(self._responses):
-            await self.close_response(response)
-        await asyncio.gather(*self._response_closers.values())
-        self._response_closers.clear()
-        if self._client is not None:
-            await self._client.aclose()
+            return response  # After SSE headers, the configured idle timeout applies.
+        response.stream = _DeadlineBody(response.stream, deadline)
+        return response
 
     def close(self) -> None:
-        with self._lock:
-            first = not self._closed
-            self._closed = True
-            loop, thread = self._loop, self._thread
-            if self._finalizer is not None:
-                self._finalizer.detach()
-        if not first:
-            self._stopped.wait()
-            return
-        try:
-            if loop is not None and thread is not None:
-                try:
-                    asyncio.run_coroutine_threadsafe(self._shutdown(), loop).result()
-                finally:
-                    loop.call_soon_threadsafe(loop.stop)
-                    thread.join()
-        finally:
-            self._stopped.set()
+        self._sockets.interrupt()
+        self._finalizer.detach()
+        super().close()
 
 
-def _abandon_loop(
-    loop: asyncio.AbstractEventLoop, thread: threading.Thread, client: httpx.AsyncClient
-) -> None:
-    """Release a dropped transport's loop thread: cancel its work, close the
-    pool, stop the loop (whose thread then closes it). Runs when the
-    transport is garbage collected without close(), or at interpreter exit;
-    it waits for the thread unless it runs on that thread itself."""
-
-    async def release() -> None:
-        current = asyncio.current_task()
-        tasks = [task for task in asyncio.all_tasks() if task is not current]
-        for task in tasks:
-            task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
-        await client.aclose()
-
-    def stop(_: object) -> None:
-        with contextlib.suppress(RuntimeError):
-            loop.call_soon_threadsafe(loop.stop)
-
-    try:
-        asyncio.run_coroutine_threadsafe(release(), loop).add_done_callback(stop)
-    except RuntimeError:
-        return  # The loop is already closed.
-    if threading.current_thread() is not thread:
-        thread.join(5)
+def _close_pool(pool: httpcore.ConnectionPool) -> None:
+    with contextlib.suppress(Exception):
+        pool.close()
 
 
-class _NativeSyncBody(httpx.SyncByteStream):
-    def __init__(self, transport: _NativeSyncTransport, response: httpx.Response, deadline: float | None):
-        self._transport = transport
-        self._response = response
+class _DeadlineBody(httpx.SyncByteStream):
+    """The body of a response, read under its request's deadline."""
+
+    __slots__ = ("_deadline", "_inner")
+
+    def __init__(self, inner: httpx.SyncByteStream | httpx.AsyncByteStream, deadline: float) -> None:
+        self._inner = inner
         self._deadline = deadline
-        self._chunks = response.aiter_raw()
-        self._reading: asyncio.Task[Any] | None = None
-        self._interrupted = threading.Event()
-
-    async def _next(self) -> bytes:
-        if self._interrupted.is_set():
-            raise httpx.ReadError("The response was interrupted")
-        self._reading = asyncio.current_task()
-        try:
-            return await _before_deadline(anext(self._chunks), self._deadline)
-        except asyncio.CancelledError:
-            raise httpx.ReadError("The response was interrupted") from None
-        finally:
-            self._reading = None
 
     def __iter__(self) -> Iterator[bytes]:
+        local = _DEADLINE
+        chunks = iter(cast(httpx.SyncByteStream, self._inner))
         while True:
+            local.until = self._deadline
             try:
-                yield self._transport.run(self._next())
-            except StopAsyncIteration:
+                chunk = next(chunks)
+            except StopIteration:
                 return
-
-    def interrupt(self) -> None:
-        self._interrupted.set()
-
-        def cancel() -> None:
-            if self._reading is not None:
-                self._reading.cancel()
-
-        self._transport.notify(cancel)
-
-    async def _close(self) -> None:
-        reading = self._reading
-        if reading is not None:
-            reading.cancel()
-            await asyncio.gather(reading, return_exceptions=True)
-        await self._transport.close_response(self._response)
+            finally:
+                local.until = None
+            yield chunk
 
     def close(self) -> None:
-        self._transport.cleanup(self._close())
+        close = getattr(self._inner, "close", None)
+        if callable(close):
+            close()
 
 
 def async_http(transport: object) -> httpx.AsyncClient:
@@ -453,7 +426,11 @@ def _request(
 
 
 def _headers(response: httpx.Response) -> dict[str, str]:
-    return {name.lower(): ", ".join(response.headers.get_list(name)) for name in response.headers}
+    """Headers by lower-case name; repeated names joined with ``, ``."""
+    out: dict[str, str] = {}
+    for name, value in response.headers.multi_items():
+        out[name] = value if name not in out else f"{out[name]}, {value}"
+    return out
 
 
 def _deadline(req: AttemptRequest) -> tuple[float, float]:
@@ -579,11 +556,10 @@ class SyncStream:
     def interrupt(self) -> None:
         """End a read another thread is blocked in: shut the socket down (a
         response closed from another thread does not wake it)."""
-        interrupt = self.response.extensions.get("tungsten_interrupt")
-        if callable(interrupt):
-            interrupt()
-            return
         network = self.response.extensions.get("network_stream")
+        if isinstance(network, _DeadlineStream):
+            network.interrupt()
+            return
         sock = network.get_extra_info("socket") if network is not None else None
         if sock is not None:
             with contextlib.suppress(OSError):

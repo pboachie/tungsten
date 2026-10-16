@@ -14,6 +14,7 @@ keywords = ["openapi", "sdk", "agents", "mcp", "tungsten"]
 requires-python = ">=3.10"
 dependencies = [
   "httpx>=0.27,<1",
+  "sniffio>=1.3",
   'async-timeout>=4.0.3,<6; python_version < "3.11"',
   "typing_extensions>=4.6",
 ]
