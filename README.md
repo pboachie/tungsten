@@ -50,7 +50,11 @@ fresh project and another operation review. Their `source_url` and
 
 For authentication, repeat `--input-header 'Authorization: Bearer ...'`, or set
 `TUNGSTEN_INPUT_HEADERS` to newline-separated `Name: value` headers to keep
-secrets out of command history. Header values are excluded from pins and fetch
+secrets out of command history. Unscoped headers apply only to the exact URL
+typed on the command line. For URLs in a manifest, scope each header to an
+origin: `--input-header '[https://api.example.com] Authorization: Bearer ...'`.
+The scheme, host and effective port must match; redirects remain refused.
+Header values are excluded from pins and fetch
 diagnostics. URLs must have no credentials, query or fragment. Downloads are
 limited to 8 MiB and 30 seconds; redirects are refused. Remote references are
 still blocked, including relative references from a remote OpenAPI document.

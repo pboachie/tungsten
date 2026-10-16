@@ -75,7 +75,8 @@ pub(crate) struct Cli {
     /// Converted imports require init into a fresh project to change sources.
     #[arg(long, global = true)]
     pub refresh_inputs: bool,
-    /// Header for HTTP document downloads only (repeatable; not Git authentication).
+    /// Header for a URL typed on the command line; for manifest URLs use
+    /// [https://host] Name: value to restrict it to that origin. Not Git authentication.
     /// Environment values are newline-separated. Prefer the environment for secrets.
     #[arg(
         long,
@@ -83,7 +84,7 @@ pub(crate) struct Cli {
         env = "TUNGSTEN_INPUT_HEADERS",
         hide_env_values = true,
         value_delimiter = '\n',
-        value_name = "NAME: VALUE"
+        value_name = "[ORIGIN] NAME: VALUE"
     )]
     pub input_header: Vec<String>,
     /// Print exactly one JSON document on stdout.

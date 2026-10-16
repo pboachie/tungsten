@@ -63,6 +63,7 @@ from ._effects import (
 )
 
 T = TypeVar("T")
+_DEFAULT_HTTP_LIMITS = httpx.Limits()
 
 
 if sys.version_info >= (3, 11):
@@ -87,12 +88,52 @@ def _no_cookies() -> CookieJar:
 
 
 def sync_http(transport: object) -> httpx.Client:
-    return httpx.Client(
-        transport=transport if isinstance(transport, httpx.BaseTransport) else _DeadlineTransport(),
+    return _DeadlineClient(
+        transport=transport if isinstance(transport, httpx.BaseTransport) else None,
         follow_redirects=False,
         cookies=_no_cookies(),
         timeout=None,
     )
+
+
+class _DeadlineClient(httpx.Client):
+    """Keep httpx's proxy/NO_PROXY routing, with deadlines on every route."""
+
+    def _init_transport(
+        self,
+        verify: ssl.SSLContext | str | bool = True,
+        cert: Any = None,
+        trust_env: bool = True,
+        http1: bool = True,
+        http2: bool = False,
+        limits: httpx.Limits = _DEFAULT_HTTP_LIMITS,
+        transport: httpx.BaseTransport | None = None,
+    ) -> httpx.BaseTransport:
+        if transport is not None:
+            return transport
+        return _DeadlineTransport(
+            verify=verify, cert=cert, trust_env=trust_env, http1=http1, http2=http2, limits=limits
+        )
+
+    def _init_proxy_transport(
+        self,
+        proxy: httpx.Proxy,
+        verify: ssl.SSLContext | str | bool = True,
+        cert: Any = None,
+        trust_env: bool = True,
+        http1: bool = True,
+        http2: bool = False,
+        limits: httpx.Limits = _DEFAULT_HTTP_LIMITS,
+    ) -> httpx.BaseTransport:
+        return _DeadlineTransport(
+            proxy=proxy,
+            verify=verify,
+            cert=cert,
+            trust_env=trust_env,
+            http1=http1,
+            http2=http2,
+            limits=limits,
+        )
 
 
 async def _before_deadline(work: Awaitable[T], deadline: float | None) -> T:
@@ -255,21 +296,12 @@ class _DeadlineTransport(httpx.HTTPTransport):
     deadline ends it. Closing the transport shuts down the sockets other
     threads are blocked in, so they return at once."""
 
-    def __init__(self) -> None:
-        context = httpx.create_ssl_context()
-        super().__init__(verify=context)
-        self._pool.close()  # httpx's pool, replaced by one on the deadline-aware backend
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
         self._sockets = _Sockets()
-        # httpx's default limits (100 connections, 20 kept alive for 5 s), HTTP/1.1.
-        self._pool = httpcore.ConnectionPool(
-            ssl_context=context,
-            max_connections=100,
-            max_keepalive_connections=20,
-            keepalive_expiry=5.0,
-            http1=True,
-            http2=False,
-            network_backend=_DeadlineBackend(self._sockets),
-        )
+        # Preserve httpx's direct, HTTP(S) or SOCKS pool, TLS configuration and
+        # limits. No connection exists yet; every new socket uses this backend.
+        self._pool._network_backend = _DeadlineBackend(self._sockets)
         # Closes the pool of a transport that is dropped (its client never
         # closed), so its sockets are released cleanly; close() detaches it.
         self._finalizer = weakref.finalize(self, _close_pool, self._pool)

@@ -5,10 +5,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Component, Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
+use process_wrap::std::{ChildWrapper, CommandWrap};
 use serde::{Deserialize, Serialize};
 use tungsten_core::{Diagnostic, SourceId};
 use url::Url;
@@ -199,9 +200,30 @@ impl Drop for Git {
     }
 }
 
-/// Kill a Git process with the standard library, so no external `kill` or
-/// `taskkill` binary is needed. Git's helpers (remote transports, index-pack)
-/// talk to it over pipes and exit once those pipes close.
+/// Own the complete Git process tree, including transports with closed pipes.
+struct Child(Box<dyn ChildWrapper>);
+
+impl std::ops::Deref for Child {
+    type Target = dyn ChildWrapper;
+    fn deref(&self) -> &Self::Target {
+        self.0.as_ref()
+    }
+}
+
+impl std::ops::DerefMut for Child {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.0.as_mut()
+    }
+}
+
+impl Drop for Child {
+    fn drop(&mut self) {
+        let _ = self.start_kill();
+        let _ = self.wait();
+    }
+}
+
+/// Kill and reap the group (Unix) or Job Object (Windows), never just Git.
 fn stop(child: &mut Child) {
     let _ = child.kill();
     let _ = child.wait();
@@ -298,7 +320,21 @@ impl Git {
             ));
         }
         let mut command = Command::new("git");
+        // Do not discover an editor/project repository or inherit Git command
+        // configuration from the parent. User-level credential configuration
+        // remains available, but the working tree never supplies Git config.
+        for (key, _) in std::env::vars_os() {
+            if key
+                .to_string_lossy()
+                .to_ascii_uppercase()
+                .starts_with("GIT_")
+            {
+                command.env_remove(key);
+            }
+        }
         command
+            .current_dir(&self.hooks)
+            .env("GIT_CEILING_DIRECTORIES", &self.repository)
             .args([
                 "-c",
                 "protocol.allow=never",
@@ -328,14 +364,19 @@ impl Git {
             .stdin(if stdin { Stdio::piped() } else { Stdio::null() })
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
-        // Git stays in the caller's process group, so an interrupt that ends
-        // tungsten also ends an in-flight fetch instead of orphaning it.
+        let mut command = CommandWrap::from(command);
+        #[cfg(unix)]
+        command.wrap(process_wrap::std::ProcessGroup::leader());
         #[cfg(windows)]
         {
-            use std::os::windows::process::CommandExt;
-            command.creation_flags(0x08000000);
+            // JobObject creates the process suspended, assigns it, then resumes
+            // it: no helper can escape between spawn and job assignment.
+            command.wrap(process_wrap::std::CreationFlags(
+                windows::Win32::System::Threading::CREATE_NO_WINDOW,
+            ));
+            command.wrap(process_wrap::std::JobObject);
         }
-        command.spawn().map_err(|_| {
+        command.spawn().map(Child).map_err(|_| {
             error(
                 "TG0131",
                 "cannot start Git for input acquisition",
@@ -414,7 +455,7 @@ impl Git {
 
     fn run(&self, args: &[&str], limit: usize, watch_store: bool) -> Result<Vec<u8>, Diagnostic> {
         let mut child = self.spawn(args, false)?;
-        let Some(stdout) = child.stdout.take() else {
+        let Some(stdout) = child.stdout().take() else {
             stop(&mut child);
             return Err(cache_error());
         };
@@ -453,7 +494,7 @@ impl Git {
             return Ok(());
         }
         let mut child = self.spawn(&["--git-dir", repo, "cat-file", "--batch"], true)?;
-        let (Some(mut stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) else {
+        let (Some(mut stdin), Some(stdout)) = (child.stdin().take(), child.stdout().take()) else {
             stop(&mut child);
             return Err(cache_error());
         };
@@ -682,6 +723,7 @@ pub fn acquire(text: &str, project: &Path, options: &Options) -> Result<PathBuf,
             "use a writable project directory, then retry",
         )
     })?;
+    let repository = std::path::absolute(repository).map_err(|_| cache_error())?;
     let hooks = repository.join("empty-hooks");
     std::fs::create_dir(&hooks).map_err(|_| cache_error())?;
     let git = Git {

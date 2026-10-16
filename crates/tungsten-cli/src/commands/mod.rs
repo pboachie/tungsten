@@ -29,11 +29,30 @@ use crate::args::{Cli, Command, IrCommand, OverlayCommand};
 use crate::{CliEnv, Report};
 
 pub(crate) fn dispatch(cli: &Cli, env: &CliEnv) -> Report {
+    let source = match &cli.command {
+        Command::Check(args) => Some(args.input.path.as_path()),
+        Command::Ir {
+            command: IrCommand::Dump(args),
+        } => Some(args.input.path.as_path()),
+        Command::Init(args) => args.from.as_deref(),
+        Command::Generate(args) => Some(args.input.path.as_path()),
+        Command::Mock(args) => Some(args.input.path.as_path()),
+        Command::Report(args) => Some(args.input.path.as_path()),
+        Command::Diff(args) => Some(args.input.path.as_path()),
+        Command::Overlay {
+            command: OverlayCommand::Suggest(args),
+        } => Some(args.input.path.as_path()),
+        _ => None,
+    };
     tungsten_openapi::acquire::with_options(
         tungsten_openapi::acquire::Options {
             offline: cli.offline,
             refresh: cli.refresh_inputs,
             headers: cli.input_header.clone(),
+            header_sources: source
+                .into_iter()
+                .map(|path| path.to_string_lossy().into_owned())
+                .collect(),
         },
         || dispatch_with_inputs(cli, env),
     )
