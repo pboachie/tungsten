@@ -129,11 +129,11 @@ func mismatchError(operation, prefix string, m *mismatch, root any, meta Respons
 // decodeDirect decodes the wire text of a JSON body straight into out,
 // without re-serializing the decoded value; false when the text is not
 // available, when it would decode differently from JSONText(Raw) (a
-// negative zero, which the values lose; a type that keeps the raw text of
+// negative zero, repeated members, or rounded integers; a type that keeps the raw text of
 // a non-verbatim body), or when it does not decode (the caller then
 // decodes the value, whose error is the one reported).
 func decodeDirect(outcome *Outcome, out any) bool {
-	if outcome.body == nil || outcome.bodyInfo.negZero {
+	if outcome.body == nil || outcome.bodyInfo.negZero || outcome.bodyInfo.changedValue {
 		return false
 	}
 	if !outcome.bodyInfo.verbatim && keepsRawText(reflect.TypeOf(out).Elem()) {
@@ -202,11 +202,17 @@ func keepsRawTextWalk(t reflect.Type, seen map[reflect.Type]bool) bool {
 // as JSON null. A body that does not decode is UNEXPECTED_RESPONSE, with
 // the body as Partial.
 func Decode[T any](operation string, outcome *Outcome, err error) (*Response[T], error) {
+	return decodeOutcome[T](operation, outcome, err, false)
+}
+
+// Only CallTyped can use the original bytes: a caller of Decode may have
+// changed the dynamic value since the response was received.
+func decodeOutcome[T any](operation string, outcome *Outcome, err error, direct bool) (*Response[T], error) {
 	if err != nil {
 		return nil, err
 	}
 	var value T
-	if !decodeDirect(outcome, &value) {
+	if !direct || !decodeDirect(outcome, &value) {
 		var zero T
 		value = zero
 		if m := decodeMismatch(outcome.Value, &value); m != nil {

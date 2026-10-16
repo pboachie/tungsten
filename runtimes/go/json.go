@@ -160,6 +160,8 @@ type parseInfo struct {
 	// whitespace, canonical escapes and number texts, no repeated member.
 	verbatim bool
 	negZero  bool
+	// changedValue requires decoding the normalized value even for ordinary types.
+	changedValue bool
 }
 
 // ParseJSON parses one JSON document. Object members keep their order;
@@ -383,6 +385,7 @@ func (p *parser) object(depth int) (any, error) {
 		if _, dup := obj.vals[k]; dup {
 			// A repeated member keeps its first place and its last value.
 			p.info.verbatim = false
+			p.info.changedValue = true
 		} else {
 			obj.keys = append(obj.keys, k)
 		}
@@ -625,6 +628,8 @@ func (p *parser) number() (any, error) {
 			}
 			return n, nil
 		}
+		// Integers outside int64 are rounded through float64 in Raw.
+		p.info.changedValue = true
 	}
 	v, err := parseNumber(lit)
 	if err != nil {

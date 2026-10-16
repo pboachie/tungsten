@@ -184,8 +184,8 @@ type Response[T any] struct {
 	Meta         ResponseMeta
 	Verification *Verification
 	// body is the JSON text Raw was parsed from, when the body was JSON,
-	// and bodyInfo what the parser noticed about it; Decode reads the text
-	// directly into the typed value.
+	// and bodyInfo what the parser noticed about it; CallTyped can read
+	// the text directly before the dynamic value is exposed to callers.
 	body     []byte
 	bodyInfo parseInfo
 }

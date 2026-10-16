@@ -186,8 +186,15 @@ class _DeadlineStream(httpcore.NetworkStream):
         server_hostname: str | None = None,
         timeout: float | None = None,
     ) -> httpcore.NetworkStream:
-        bounded = _bounded(timeout, httpcore.ConnectTimeout)
-        upgraded = self._inner.start_tls(ssl_context, server_hostname, bounded)
+        try:
+            bounded = _bounded(timeout, httpcore.ConnectTimeout)
+            upgraded = self._inner.start_tls(ssl_context, server_hostname, bounded)
+        except BaseException:
+            # The pool does not own this stream until TLS succeeds. Release it
+            # even when the deadline expires before the handshake starts.
+            with contextlib.suppress(Exception):
+                self.close()
+            raise
         self._sockets.forget(self)
         return _DeadlineStream(upgraded, self._sockets)
 

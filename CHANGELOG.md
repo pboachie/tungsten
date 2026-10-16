@@ -191,6 +191,9 @@ values as `JsonNode`, OpenID Connect as a bearer token, no CLI or MCP).
 
 ### Changed
 
+- Avoid unnecessary request argument copies in the Rust runtime and defer
+  TypeScript middleware header lookup allocation until a header changes.
+
 - Document released 0.1.2 compiler/runtime pins for npm, Python, Maven, NuGet
   and RubyGems consumers, plus matching-source Rust SDK/CLI and Go installation,
   independently from the unpublished 0.1.3 candidate.
@@ -253,6 +256,10 @@ values as `JsonNode`, OpenID Connect as a bearer token, no CLI or MCP).
 - Dependency audit: source-less `Cargo.lock` entries must be workspace members, and `[patch]`/`[replace]` tables in Cargo manifests are rejected.
 
 ### Fixed
+
+- Preserve Go response decoding semantics for duplicate JSON members, large
+  integers and dynamic values modified before typed decoding.
+- Close Python transport sockets when TLS setup fails or its deadline expires.
 
 - Release bundles include the Homebrew formula, winget archive and distribution
   checksums before publication, supporting GitHub immutable releases. Container

@@ -1549,10 +1549,12 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
       }
     }
     if (!isRecord(ctx.headers)) return real;
-    const lower = new Map(Object.keys(real).map((k) => [k.toLowerCase(), k]));
+    let lower: Map<string, string> | undefined;
     for (const [name, value] of Object.entries(ctx.headers)) {
       if (typeof value !== "string" || value === REDACTED || shown[name] === value) continue;
       if (!validHeaderName(name) || !validHeaderValue(value)) continue;
+      // Observers usually leave headers unchanged; index only when applying an edit.
+      lower ??= new Map(Object.keys(real).map((k) => [k.toLowerCase(), k]));
       const existing = lower.get(name.toLowerCase());
       if (existing !== undefined && prepared.headers.isSecret(existing)) continue;
       if (existing !== undefined) delete real[existing];
