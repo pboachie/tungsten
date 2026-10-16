@@ -324,10 +324,68 @@ def dependency_tables(manifest, workspace=None):
     return result
 
 
+def check_rust_lock(files, name, version, runtime_checksum):
+    """Bind packaged internal dependencies to the companion runtime archive."""
+    if "Cargo.lock" not in files:
+        raise ValueError("crate must include its packaged Cargo.lock")
+    lock = tomllib.loads(files["Cargo.lock"].decode())
+    if (
+        type(lock.get("version")) is not int
+        or lock["version"] not in (3, 4)
+        or set(lock) != {"version", "package"}
+        or not isinstance(lock["package"], list)
+    ):
+        raise ValueError("unsupported crate lockfile format or dependency override")
+    internal = {}
+    registry = "registry+https://github.com/rust-lang/crates.io-index"
+    expected = {name} | ({"tungsten-runtime"} if name == "tungsten-cli-kit" else set())
+    for package in lock["package"]:
+        if not isinstance(package, dict) or not isinstance(package.get("name"), str):
+            raise ValueError("invalid crate lockfile package")
+        package_name = package["name"]
+        if package_name.startswith("tungsten-"):
+            if package_name not in expected or package_name in internal:
+                raise ValueError("duplicate or unexpected internal lockfile package")
+            internal[package_name] = package
+            if package.get("version") != version:
+                raise ValueError("internal lockfile version differs from release")
+            fields = {"name", "version", "dependencies"}
+            if package_name != name:
+                fields |= {"source", "checksum"}
+                if (
+                    package.get("source") != registry
+                    or package.get("checksum") != runtime_checksum
+                ):
+                    raise ValueError("locked runtime source or companion checksum differs")
+            if not set(package) <= fields:
+                raise ValueError("internal lockfile package has unexpected source or fields")
+        dependencies = package.get("dependencies", [])
+        if not isinstance(dependencies, list) or any(
+            not isinstance(dependency, str) for dependency in dependencies
+        ):
+            raise ValueError("invalid crate lockfile dependencies")
+        edges = [value for value in dependencies if value.startswith("tungsten-")]
+        if package_name == "tungsten-cli-kit":
+            allowed = {
+                "tungsten-runtime",
+                f"tungsten-runtime {version}",
+                f"tungsten-runtime {version} ({registry})",
+            }
+            if len(edges) != 1 or edges[0] not in allowed:
+                raise ValueError("CLI-kit lockfile runtime dependency differs")
+        elif edges:
+            raise ValueError("unexpected internal lockfile dependency")
+    if set(internal) != expected:
+        raise ValueError("crate lockfile is missing an internal package")
+
+
 def check_rust(directory, version):
     workspace = tomllib.loads(
         native.regular(ROOT / "runtimes/rust/Cargo.toml").decode()
     )["workspace"]
+    runtime_checksum = hashlib.sha256(
+        native.regular(directory / f"tungsten-runtime-{version}.crate")
+    ).hexdigest()
     for name, member in (
         ("tungsten-runtime", "runtime"),
         ("tungsten-cli-kit", "cli-kit"),
@@ -339,6 +397,7 @@ def check_rust(directory, version):
         if any(not key.startswith(prefix) for key in archive):
             raise ValueError("crate archive has unexpected root")
         files = {key.removeprefix(prefix): data for key, data in archive.items()}
+        check_rust_lock(files, name, version, runtime_checksum)
         manifest = tomllib.loads(files["Cargo.toml"].decode())
         package = manifest["package"]
         if (
