@@ -65,7 +65,8 @@ Git inputs use `git+https://host/owner/repository@ref#path` in `init --from`,
 compiler paths or OpenAPI manifest inputs. A branch or tag resolves to exactly
 one commit, which is fetched shallowly into a disposable bare repository. No
 checkout, hooks, submodules or repository code runs. Git supplies private-source
-credentials through its configured helper or environment; `--input-header`
+credentials through trusted user or system configuration. Project Git config
+and inherited `GIT_*` overrides are ignored. `--input-header`
 applies only to HTTP document downloads. Local repositories for offline workflows
 and hermetic validation use `git+file:///absolute/repository@ref#path`.
 
