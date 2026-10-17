@@ -37,13 +37,16 @@ pub(super) fn build(directory: &Path, runtime: Option<&Path>) -> Result<(), Stri
         &["-m", "venv", ".venv"],
         directory,
         Duration::from_secs(60),
-    )?;
+    )
+    .map_err(|error| format!("Python virtual environment creation: {error}"))?;
     let python = python(directory);
     let python = python
         .to_str()
         .ok_or("Python environment path is not UTF-8")?;
     // Wheel-only downloads avoid arbitrary dependency build hooks. The generated
     // package and explicitly supplied runtime use the known installed backend.
+    // Resolve the local runtime's declared dependencies too: the bootstrap set
+    // need not include every dependency of the supplied runtime.
     execute(
         python,
         &[
@@ -58,7 +61,8 @@ pub(super) fn build(directory: &Path, runtime: Option<&Path>) -> Result<(), Stri
         ],
         directory,
         Duration::from_secs(180),
-    )?;
+    )
+    .map_err(|error| format!("Python bootstrap dependency installation: {error}"))?;
     if let Some(runtime) = runtime {
         let runtime = std::path::absolute(runtime).map_err(|_| "cannot resolve Python runtime")?;
         execute(
@@ -68,13 +72,14 @@ pub(super) fn build(directory: &Path, runtime: Option<&Path>) -> Result<(), Stri
                 "pip",
                 "install",
                 "--disable-pip-version-check",
-                "--no-deps",
+                "--only-binary=:all:",
                 "--no-build-isolation",
                 runtime.to_str().ok_or("Python runtime path is not UTF-8")?,
             ],
             directory,
             Duration::from_secs(90),
-        )?;
+        )
+        .map_err(|error| format!("Python local runtime installation: {error}"))?;
     } else {
         execute(
             python,
@@ -88,7 +93,8 @@ pub(super) fn build(directory: &Path, runtime: Option<&Path>) -> Result<(), Stri
             ],
             directory,
             Duration::from_secs(180),
-        )?;
+        )
+        .map_err(|error| format!("Python registry runtime installation: {error}"))?;
     }
     execute(
         python,
@@ -104,6 +110,7 @@ pub(super) fn build(directory: &Path, runtime: Option<&Path>) -> Result<(), Stri
         directory,
         Duration::from_secs(90),
     )
+    .map_err(|error| format!("Python generated package installation: {error}"))
 }
 
 pub(super) fn run(directory: &Path, base_url: &str, operation_id: &str) -> Result<(), String> {
@@ -118,6 +125,7 @@ pub(super) fn run(directory: &Path, base_url: &str, operation_id: &str) -> Resul
         directory,
         Duration::from_secs(20),
     )
+    .map_err(|error| format!("Python local example execution: {error}"))
 }
 
 const LOCAL_CALL: &str = r#"
