@@ -266,6 +266,9 @@ values as `JsonNode`, OpenID Connect as a bearer token, no CLI or MCP).
 
 ### Fixed
 
+- Python local setup installs the supplied runtime's declared dependencies using
+  wheels and identifies the failing setup phase without changing its deadlines.
+
 - Keep the Rust runtime's HMAC and SHA-256 dependencies on compatible digest
   APIs after dependency updates, preserving its declared minimum Rust version.
 - Restore Python environment proxy and `NO_PROXY` routing while retaining
