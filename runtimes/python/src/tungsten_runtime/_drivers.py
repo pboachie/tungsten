@@ -276,7 +276,10 @@ class _DeadlineTransport(httpx.HTTPTransport):
         self._sockets = _Sockets()
         # Preserve httpx's direct, HTTP(S) or SOCKS pool, TLS configuration and
         # limits. No connection exists yet; every new socket uses this backend.
-        self._pool._network_backend = _DeadlineBackend(self._sockets)
+        # httpx exposes no backend hook. Keep this intentional httpcore
+        # integration exception local; assignment types remain checked.
+        backend = _DeadlineBackend(self._sockets)
+        self._pool._network_backend = backend  # pyright: ignore[reportPrivateUsage]
         # Closes the pool of a transport that is dropped (its client never
         # closed), so its sockets are released cleanly; close() detaches it.
         self._finalizer = weakref.finalize(self, _close_pool, self._pool)

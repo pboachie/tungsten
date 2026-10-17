@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Cryptographic building blocks for hand-written SDK extensions.
 
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 
 /// Compute HMAC-SHA256 over exact bytes. The key and message are never serialized.
