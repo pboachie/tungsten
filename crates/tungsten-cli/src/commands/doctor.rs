@@ -135,43 +135,56 @@ pub(crate) fn run(args: &DoctorArgs, env: &CliEnv) -> Report {
                 purpose: "Go SDK emitter".into(),
             });
         }
-        let python_minimum = config
-            .targets
-            .get("python")
-            .and_then(|options| options.get("python_version"))
-            .and_then(|value| value.as_str())
-            .filter(|version| matches!(*version, "3.10" | "3.11" | "3.12"))
-            .and_then(version_pair)
-            .unwrap_or((3, 12));
+        let mut requirements = std::collections::BTreeMap::new();
+        for (name, options) in &config.targets {
+            if has(name)
+                && let Some(target) = tungsten_config::capabilities::target(name)
+            {
+                for requirement in target.prerequisites {
+                    requirements.insert(requirement.tool, requirement.for_options(options));
+                }
+            }
+        }
+        // The conventional external Go emitter retains its existing special
+        // case; arbitrary external targets never inherit built-in requirements.
         for (name, required, minimum) in [
-            ("node", javascript, Some((22, 0))),
-            ("npm", javascript, None),
-            ("python3", has("python"), Some(python_minimum)),
-            ("cargo", has("rust"), Some((1, 88))),
-            ("rustc", has("rust"), Some((1, 88))),
-            ("java", has("java"), Some((17, 0))),
-            ("mvn", has("java"), None),
-            ("dotnet", has("csharp"), Some((10, 0))),
-            ("ruby", has("ruby"), Some((3, 3))),
-            ("bundle", has("ruby"), None),
-            ("go", go.is_some(), Some((1, 22))),
+            ("go", go.is_some(), Some([1, 22])),
             ("tungsten-emit-go", go_emitter, None),
         ] {
-            if !required {
-                continue;
+            if required {
+                requirements.insert(
+                    name,
+                    tungsten_config::capabilities::ToolRequirement {
+                        tool: name,
+                        minimum,
+                        maximum_exclusive: None,
+                        minimum_option: None,
+                    },
+                );
+            }
+        }
+        for (name, prerequisite) in requirements {
+            if !tools.iter().any(|tool| tool.name == name) {
+                let exe = find_executable(name, &search_path);
+                tools.push(ToolReport {
+                    name: name.into(),
+                    found: exe.is_some(),
+                    version: exe
+                        .as_deref()
+                        .and_then(|exe| tool_version(exe, version_arg(name))),
+                    purpose: "configured target prerequisite".into(),
+                });
             }
             let tool = tools.iter_mut().find(|tool| tool.name == name).unwrap();
             let supported = tool.found
-                && minimum.is_none_or(|minimum| {
-                    tool.version
-                        .as_deref()
-                        .and_then(version_pair)
-                        .is_some_and(|v| v >= minimum)
-                });
-            let requirement = minimum.map_or_else(
-                || "installed".into(),
-                |(major, minor)| format!(">={major}.{minor}"),
-            );
+                && ((prerequisite.minimum.is_none() && prerequisite.maximum_exclusive.is_none())
+                    || {
+                        tool.version
+                            .as_deref()
+                            .and_then(version_pair)
+                            .is_some_and(|(major, minor)| prerequisite.accepts([major, minor]))
+                    });
+            let requirement = prerequisite.description();
             tool.purpose = format!(
                 "required {requirement} for configured targets; {}",
                 if supported {
@@ -320,7 +333,7 @@ pub(crate) fn parse_version(text: &str) -> Option<String> {
     })
 }
 
-fn version_pair(version: &str) -> Option<(u64, u64)> {
+fn version_pair(version: &str) -> Option<(u32, u32)> {
     let mut parts = version.split('.');
     Some((parts.next()?.parse().ok()?, parts.next()?.parse().ok()?))
 }

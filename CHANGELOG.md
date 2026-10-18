@@ -21,6 +21,10 @@ changes.
 
 ### Added
 
+- Add an offline `capabilities` query and JSON Schema for built-in target
+  declarations. Share target aliases, imported-operation policy support and
+  consumer prerequisites with configuration and doctor; include Kotlin, F#
+  and Dart prerequisites without inferring qualification or published packages.
 - Add a manual Windows release-video example with exact-release provenance,
   multiple input workflows, local narration, real terminal recording, chapters,
   compact review MP4s and a reusable source and evidence package.

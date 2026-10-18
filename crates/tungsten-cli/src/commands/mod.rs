@@ -2,6 +2,7 @@
 //! One module per command. Each returns a [`Report`]; none writes to the
 //! output streams.
 
+mod capabilities;
 pub(crate) mod check;
 pub(crate) mod diff;
 pub(crate) mod doctor;
@@ -68,6 +69,7 @@ fn dispatch_with_inputs(cli: &Cli, env: &CliEnv) -> Report {
         Command::Schema(args) => schema::run(args),
         Command::Init(args) => wizard::run(args, cli.json, env),
         Command::Doctor(args) => doctor::run(args, env),
+        Command::Capabilities(args) => capabilities::run(args),
         Command::Emitters(args) => emitters::run(args, env, cli.no_external),
         Command::Generate(args) => generate::run(args, env, cli.no_external),
         Command::Mock(args) => mock::start(args),

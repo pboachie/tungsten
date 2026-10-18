@@ -20,6 +20,7 @@
 //! [`parse_yaml`] and [`deserialize_manifest`] report `TG0601` and
 //! `TG0602` the same way for any manifest type.
 
+pub mod capabilities;
 pub mod pointer;
 mod source;
 mod strict;
