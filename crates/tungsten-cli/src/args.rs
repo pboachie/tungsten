@@ -125,6 +125,7 @@ impl Cli {
             Command::Schema(_) => CommandName::Schema,
             Command::Init(_) => CommandName::Init,
             Command::Doctor(_) => CommandName::Doctor,
+            Command::Capabilities(_) => CommandName::Capabilities,
             Command::Emitters(_) => CommandName::Emitters,
             Command::Generate(_) => CommandName::Generate,
             Command::Mock(_) => CommandName::Mock,
@@ -155,6 +156,8 @@ pub(crate) enum Command {
     Init(Box<InitArgs>),
     /// Report installed tools and optionally check project prerequisites.
     Doctor(DoctorArgs),
+    /// Query built-in target declarations without executing tools or emitters.
+    Capabilities(CapabilitiesArgs),
     /// List the external emitters (`tungsten-emit-<name>`) that can be
     /// run, with the protocol and version each reports.
     Emitters(EmittersArgs),
@@ -185,6 +188,12 @@ pub(crate) struct LspArgs {
     /// Default: the tungsten.yml of the editor's workspace folder.
     #[arg(long, value_name = "PATH")]
     pub config: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct CapabilitiesArgs {
+    /// Limit the catalog to one target id or CLI alias.
+    pub target: Option<String>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -408,6 +417,8 @@ pub enum SchemaName {
     SdkDescriptors,
     /// Transport-neutral tools and scoped groups.
     ToolCatalog,
+    /// Built-in target capability declarations, independent of qualification.
+    Capabilities,
 }
 
 #[derive(Debug, Clone, Args)]

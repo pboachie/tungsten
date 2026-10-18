@@ -82,6 +82,8 @@ pub enum CommandName {
     Init,
     #[serde(rename = "doctor")]
     Doctor,
+    #[serde(rename = "capabilities")]
+    Capabilities,
     #[serde(rename = "emitters")]
     Emitters,
     #[serde(rename = "generate")]
@@ -182,6 +184,7 @@ pub enum CommandResult {
     Schema(SchemaResult),
     Init(InitResult),
     Doctor(DoctorResult),
+    Capabilities(tungsten_config::capabilities::CapabilityCatalog),
     Emitters(EmittersResult),
     Generate(GenerateResult),
     Mock(MockResult),
@@ -985,13 +988,14 @@ pub struct DiagnosticGroup {
 }
 
 /// Which `$defs` entry describes `result` for each command.
-const RESULT_DEFS: [(CommandName, &str); 12] = [
+const RESULT_DEFS: [(CommandName, &str); 13] = [
     (CommandName::Check, "CheckResult"),
     (CommandName::IrDump, "IrDumpResult"),
     (CommandName::Explain, "ExplainResult"),
     (CommandName::Schema, "SchemaResult"),
     (CommandName::Init, "InitResult"),
     (CommandName::Doctor, "DoctorResult"),
+    (CommandName::Capabilities, "CapabilityCatalog"),
     (CommandName::Emitters, "EmittersResult"),
     (CommandName::Generate, "GenerateResult"),
     (CommandName::Mock, "MockResult"),
