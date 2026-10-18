@@ -308,6 +308,9 @@ pub(crate) struct DiffArgs {
 pub(crate) struct MockArgs {
     #[command(flatten)]
     pub input: InputArgs,
+    /// Load a versioned JSON scenario before serving; no commands are executed.
+    #[arg(long, value_name = "FILE")]
+    pub scenario: Option<PathBuf>,
     /// Port on 127.0.0.1 to listen on; 0 picks a free port.
     #[arg(long, default_value_t = 0)]
     pub port: u16,

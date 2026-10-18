@@ -11,6 +11,10 @@ changes.
 
 ### Added
 
+- Load bounded, non-executable JSON scenarios with `tungsten mock --scenario`.
+  Reuse existing response and fault controls, and read a value-free report of
+  total calls, per-operation/status counts and unconsumed responses.
+
 - Automate Maven Central, NuGet and RubyGems publication alongside npm, PyPI
   and crates.io after an approved release tag. Verify package identity, source
   and checksums before credentials, and compare public downloads with the tested

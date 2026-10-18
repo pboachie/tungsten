@@ -3,6 +3,7 @@
 //! printed once the server listens; [`crate::run`] then keeps serving until
 //! stdin closes (or the process is interrupted) and shuts the server down.
 
+use std::io::Read;
 use std::net::SocketAddr;
 
 use tungsten_mock::{MockOptions, MockServer};
@@ -70,8 +71,34 @@ pub(crate) fn start(args: &MockArgs) -> Report {
         max_idempotent_responses: args.max_idempotent_responses,
         ..MockOptions::default()
     };
-    let server = match MockServer::start(ir, opts) {
+    let started = if let Some(path) = &args.scenario {
+        let bytes = (|| -> std::io::Result<Vec<u8>> {
+            let mut bytes = Vec::new();
+            std::fs::File::open(path)?
+                .take(tungsten_mock::MAX_SCENARIO_BYTES as u64 + 1)
+                .read_to_end(&mut bytes)?;
+            Ok(bytes)
+        })();
+        match bytes {
+            Ok(bytes) => MockServer::start_with_scenario(ir, opts, &bytes),
+            Err(e) => {
+                return report.failed(
+                    exit::USAGE,
+                    CliError::new(ErrorKind::Io, format!("cannot read scenario file: {e}")),
+                );
+            }
+        }
+    } else {
+        MockServer::start(ir, opts)
+    };
+    let server = match started {
         Ok(server) => server,
+        Err(e) if e.kind() == std::io::ErrorKind::InvalidInput && args.scenario.is_some() => {
+            return report.failed(
+                exit::USAGE,
+                CliError::new(ErrorKind::Usage, format!("cannot load saved scenario: {e}")),
+            );
+        }
         Err(e) => {
             return report.failed(
                 exit::INTERNAL,
@@ -108,6 +135,9 @@ pub(crate) fn start(args: &MockArgs) -> Report {
         ),
         args.seed,
     );
+    if args.scenario.is_some() {
+        report.human.push_str("  saved scenario loaded; GET /__tungsten/scenario after the integration finishes to check assertions\n");
+    }
     report.result = Some(CommandResult::Mock(MockResult {
         base_url,
         enabled_gates,

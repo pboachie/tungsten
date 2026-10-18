@@ -64,6 +64,7 @@ struct Stored {
 
 #[derive(Debug, Default)]
 struct Inner {
+    scenario: Option<crate::scenario::Progress>,
     /// Sorted by arrival sequence number; at most `max_calls`.
     calls: VecDeque<(u64, RecordedCall)>,
     programs: BTreeMap<String, VecDeque<Program>>,
@@ -101,6 +102,9 @@ impl State {
     /// beyond the cap.
     pub fn record(&self, sequence: u64, call: RecordedCall) {
         let mut inner = lock(&self.inner);
+        if let Some(scenario) = &mut inner.scenario {
+            scenario.record(&call);
+        }
         let at = inner.calls.partition_point(|(s, _)| *s < sequence);
         inner.calls.insert(at, (sequence, call));
         while inner.calls.len() > self.max_calls {
@@ -118,6 +122,24 @@ impl State {
 
     pub fn reset(&self) {
         *lock(&self.inner) = Inner::default();
+    }
+
+    /// Populate a new state before its server is bound or exposed to callers.
+    pub fn install_scenario(&self, prepared: crate::scenario::Prepared) {
+        self.queue(prepared.programs);
+        lock(&self.inner).scenario = Some(crate::scenario::Progress::new(prepared.expect));
+    }
+
+    pub fn scenario_report(&self) -> Option<crate::ScenarioReport> {
+        let inner = lock(&self.inner);
+        let remaining = inner
+            .programs
+            .values()
+            .flatten()
+            .fold(0_u64, |total, program| {
+                total.saturating_add(program.remaining)
+            });
+        inner.scenario.as_ref().map(|s| s.report(remaining))
     }
 
     pub fn queue(&self, programs: Vec<(String, Program)>) {

@@ -30,10 +30,11 @@ const DEFAULT_TIMEOUT_MS: u64 = 30_000;
 /// client instead of a reset.
 const DRAIN_LIMIT: usize = 4 * 1024 * 1024;
 const CONTROL_PREFIX: &str = "/__tungsten/";
-const CONTROL_PATHS: [(&str, &str); 3] = [
+const CONTROL_PATHS: [(&str, &str); 4] = [
     ("/__tungsten/calls", "GET"),
     ("/__tungsten/reset", "POST"),
     ("/__tungsten/program", "POST"),
+    ("/__tungsten/scenario", "GET"),
 ];
 /// Response headers the mock never copies from the IR.
 const RESERVED_HEADERS: [&str; 4] = [
@@ -984,6 +985,10 @@ fn control(state: &State, method: &str, path: &str, body: Result<Vec<u8>, BodyEr
         );
     }
     let reply = match path {
+        "/__tungsten/scenario" => match state.scenario_report() {
+            Some(report) => Reply::json(200, &serde_json::json!(report)),
+            None => Reply::text(404, "no saved scenario is loaded"),
+        },
         "/__tungsten/calls" => {
             let calls: Vec<Value> = state
                 .calls()
@@ -1033,7 +1038,7 @@ fn parse_programs(model: &Model, bytes: &[u8]) -> Result<Vec<(String, Program)>,
         .collect()
 }
 
-fn parse_program(model: &Model, item: &Value) -> Result<(String, Program), String> {
+pub(crate) fn parse_program(model: &Model, item: &Value) -> Result<(String, Program), String> {
     let Some(object) = item.as_object() else {
         return Err("a program must be a JSON object".into());
     };

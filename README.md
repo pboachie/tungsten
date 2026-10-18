@@ -480,13 +480,75 @@ tungsten [--json] <command>
 | `ir dump` | Write the IR as JSON (`--out`, `--compact`) |
 | `explain` | Explain a diagnostic code (`TG0201`), an operation or a type |
 | `schema` | Print a JSON Schema: `tungsten`, `agent`, `ir`, `cli-output`, `external-emitter`, `sdk-descriptors`, `tool-catalog` |
-| `mock` | Serve a mock of the API from the IR (`--port`, `--seed`, `--gate`) |
+| `mock` | Serve a mock of the API from the IR (`--port`, `--seed`, `--gate`, `--scenario`) |
 | `report` | Coverage, safety matrix, token budgets and diagnostics, as text, JSON or one static HTML file (`--html`); only configured targets run, `--all-targets` runs every known emitter |
 | `diff` | Show regeneration changes; `--semver` classifies the API surface, `--migration` adds upgrade actions and runtime requirement review |
 | `lsp` | Serve diagnostics, completion, hover, go-to-definition and symbols for `tungsten.yml`, `agent.yml` and overlays to an editor over stdio (`--config`) |
 | `doctor` | Report external tools; pass a project path and `--strict` to fail when its required tools are missing or too old |
 
 With `--json`, stdout carries exactly one JSON document described by `tungsten schema cli-output` (`lsp` speaks the language server protocol on stdio instead). Color is used only on a terminal and never when `NO_COLOR` is set.
+
+### Saved mock scenarios
+
+`tungsten mock . --scenario retry.json --port 0` validates a saved scenario
+against the project's callable operations, then starts a fresh loopback server
+with its responses queued. The listening URL is printed in the normal report
+(`result.base_url` with `--json`). Each process owns its port and mock state.
+Files never run commands or expand environment variables. Launch your
+integration separately, explicitly point it at that URL, and give it a deadline.
+
+For an operation named `openapi.listPets`, this version 1 JSON file expects a
+rate limit followed by one successful retry (replace the operation with one in
+your project):
+
+```json
+{
+  "version": 1,
+  "programs": [
+    {"operation": "openapi.listPets", "status": 429, "headers": {"Retry-After": "0"}},
+    {"operation": "openapi.listPets", "status": 200, "body": []}
+  ],
+  "expect": {
+    "total_calls": 2,
+    "calls": [
+      {"operation": "openapi.listPets", "status": 429, "count": 1},
+      {"operation": "openapi.listPets", "status": 200, "count": 1}
+    ]
+  }
+}
+```
+
+After the integration has finished and no calls are in flight, fetch
+`GET /__tungsten/scenario`. HTTP 200 means the report was read: **assert its
+`passed` field**, which is true only when the total and every listed count match
+and all queued responses were consumed. `calls` in the report follows the
+file's assertion order; omitting an assertion's `status` counts every call of
+that operation. Status `0` counts dropped connections. Counts remain accurate
+even when `--max-recorded-calls` evicts request payloads. Reports contain counts
+only, without operation names, credentials or bodies. A snapshot can change
+when another request arrives; it does not stop the server or prove provider
+effects. In particular, a recorded write is not proof of an applied write.
+
+Programs use the existing `/__tungsten/program` controls: `status` (200–599),
+optional JSON `body`, string-valued `headers`, `times`, error `code`, and
+`cut_after` bytes; or `inject` with optional `times`. For malformed JSON, use a
+string body and an `application/json` header. For stream interruption, use
+`inject: "drop-mid-stream"` or a stream string body with `cut_after`. For a lost
+write response, use `inject: "drop-after-write"`; the mock's existing validation
+and idempotency behavior still applies. `inject: "reset"` is unsupported in a
+program because it acts before routing. Unknown fields and unsupported controls
+are rejected before the port is bound.
+
+Version 1 limits each file to 1 MiB, 256 programs, 256 call assertions, 10,000
+programmed calls and at most 10,000 expected total calls. Timeout/stall injection
+holds cannot exceed 30 seconds. These are input limits, not an overall run
+deadline. Keep scenarios synthetic: bodies and headers are served as written,
+and the separate `/__tungsten/calls` endpoint still exposes recorded data.
+Stop the server with Ctrl-C or close its stdin when done. Existing
+`POST /__tungsten/reset` clears responses, recordings and scenario assertions;
+restart with the same file to rerun it. Without a loaded scenario the assertion
+endpoint returns 404. Automatic integration process launching, final exit-code
+assertions and effect-count assertions are not part of this initial workflow.
 
 ### Editor support
 
