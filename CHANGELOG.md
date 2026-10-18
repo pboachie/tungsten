@@ -9,12 +9,28 @@ changes.
 
 ## [Unreleased]
 
+### Breaking
+
+- Caller-supplied confirmation-token keys now require at least 32 bytes across
+  all runtime families. Empty or shorter keys fail client/options construction
+  with a configuration error; omitting the key still generates a random key
+  per client. Replace short keys with at least 32 cryptographically random bytes,
+  or remove the override. Keys are copied at construction so later mutation of
+  a caller's buffer cannot change the client's signing key. Rotating a key
+  invalidates existing previews; request a new preview before confirming.
+
 ### Added
 
 - Add an offline `capabilities` query and JSON Schema for built-in target
   declarations. Share target aliases, imported-operation policy support and
   consumer prerequisites with configuration and doctor; include Kotlin, F#
   and Dart prerequisites without inferring qualification or published packages.
+- Add a manual Windows release-video example with exact-release provenance,
+  multiple input workflows, local narration, real terminal recording, chapters,
+  compact review MP4s and a reusable source and evidence package.
+- Add a gated JSR source-publication route for the core TypeScript runtime
+  starting at 0.2.0, with artifact verification and OIDC provenance. Publication
+  still requires the release checks and an explicit maintainer switch.
 
 - Automate Maven Central, NuGet and RubyGems publication alongside npm, PyPI
   and crates.io after an approved release tag. Verify package identity, source

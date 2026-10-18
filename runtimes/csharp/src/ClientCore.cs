@@ -116,7 +116,11 @@ public sealed partial class ClientCore
         middleware = options.Middleware ?? System.Array.Empty<IMiddleware>();
         validateResponses = options.ValidateResponses ?? ValidateResponses.Warn;
         onDiagnostic = options.OnDiagnostic;
-        confirmationKey = options.ConfirmationKey is { Length: > 0 } key ? key : Util.RandomBytes(32);
+        if (options.ConfirmationKey is { Length: < 32 })
+        {
+            throw new ClientConfigException("ConfirmationKey must contain at least 32 bytes; omit it to generate a random key");
+        }
+        confirmationKey = options.ConfirmationKey is { } key ? (byte[])key.Clone() : Util.RandomBytes(32);
         http = options.HttpClient ?? SharedHttp.Value;
         nowFn = options.Now;
         randomFn = options.Random;

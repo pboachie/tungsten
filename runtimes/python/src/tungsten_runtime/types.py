@@ -658,6 +658,8 @@ class ClientOptions:
     validate_responses: Literal["off", "warn", "strict"] = "warn"
     on_diagnostic: Callable[[Diagnostic], None] | None = None
     headers: Mapping[str, str] = field(default_factory=dict[str, str])
+    #: At least 32 cryptographically random bytes, copied at construction.
+    #: Shorter keys raise ValueError. None generates a random per-client key.
     confirmation_key: bytes | None = None
     operations: Sequence[OperationDescriptor] = ()
     macros: Sequence[MacroDescriptor] = ()

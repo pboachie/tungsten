@@ -55,7 +55,8 @@ module Tungsten
     # - `max_event_bytes` (1 MiB), `max_collect_bytes` (4 MiB), `max_collect_ms`
     #   (60 s), `max_reconnects` (3), `reconnect_max_ms` (30 s),
     #   `idle_timeout_ms` (none): event streams;
-    # - `confirmation_key`: signs confirmation tokens (random per client);
+    # - `confirmation_key`: at least 32 cryptographically random bytes, copied;
+    #   shorter keys fail construction (nil generates a random per-client key);
     # - `now` (epoch milliseconds) and `random` (in [0, 1)): callables for tests.
     ClientOptions = Data.define(
       :redirects, :base_url, :auth, :token_store, :timeout_ms, :retries, :idempotency_store, :middleware,

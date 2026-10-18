@@ -489,10 +489,20 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     let store: IdempotencyStore | undefined;
     let key: Uint8Array | undefined;
     try {
+      const configured = this.options.confirmationKey;
+      if (configured !== undefined) {
+        if (!(configured instanceof Uint8Array)) {
+          throw new TypeError();
+        }
+        key = new Uint8Array(configured);
+        if (key.byteLength < 32) throw new TypeError();
+      }
+    } catch {
+      throw new TypeError("confirmationKey must be a Uint8Array containing at least 32 bytes; omit it to generate a random key");
+    }
+    try {
       const candidate = this.options.idempotencyStore;
       if (isRecord(candidate) && typeof candidate.get === "function" && typeof candidate.put === "function") store = candidate;
-      const configured = this.options.confirmationKey;
-      if (configured instanceof Uint8Array && configured.byteLength > 0) key = configured;
       if (Array.isArray(this.options.operations)) this.register(...this.options.operations);
     } catch {
       // Unreadable options: keep the defaults; calls report the problem.

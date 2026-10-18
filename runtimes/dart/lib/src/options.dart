@@ -318,7 +318,8 @@ final class ClientOptions {
   /// The silence after which a stream is idle (none).
   final Duration? idleTimeout;
 
-  /// Signs confirmation tokens (random per client).
+  /// Signs confirmation tokens with at least 32 cryptographically random bytes,
+  /// copied at construction. Shorter keys fail construction; null generates a key.
   final List<int>? confirmationKey;
 
   /// The clock, in epoch milliseconds (tests).
