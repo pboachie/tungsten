@@ -7,6 +7,27 @@
 use schemars::JsonSchema;
 use serde::Serialize;
 
+/// Component-owned schema declaration. An absent declaration is unknown,
+/// rather than a claim that a target has no options.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TargetOptionSchema {
+    TypeScript,
+}
+
+impl TargetOptionSchema {
+    pub fn json_schema(self) -> serde_json::Value {
+        match self {
+            Self::TypeScript => crate::target_options::typescript_json_schema(),
+        }
+    }
+}
+
+impl Serialize for TargetOptionSchema {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.json_schema().serialize(serializer)
+    }
+}
+
 /// Increment for incompatible changes to the query contract.
 pub const VERSION: u32 = 1;
 
@@ -89,6 +110,9 @@ pub struct TargetCapability {
     pub runtime_family: Option<&'static str>,
     pub imported_operation_policy: bool,
     pub prerequisites: &'static [ToolRequirement],
+    /// Supported raw values. The component retains its diagnostic/fallback policy.
+    #[schemars(with = "Option<std::collections::BTreeMap<String, serde_json::Value>>")]
+    pub options_schema: Option<TargetOptionSchema>,
     pub qualification: EvidenceState,
     pub artifact_availability: EvidenceState,
     pub platform_qualification: EvidenceState,
@@ -101,17 +125,20 @@ const JS: &[ToolRequirement] = &[
 const DOTNET: &[ToolRequirement] = &[ToolRequirement::new("dotnet", Some([10, 0]))];
 
 macro_rules! targets {
-    ($(($id:literal, $aliases:expr, $source:ident, $family:expr, $policy:literal, $tools:expr)),* $(,)?) => {
+    ($(($id:literal, $aliases:expr, $source:ident, $family:expr, $policy:literal, $tools:expr $(, $schema:expr)?)),* $(,)?) => {
         /// Target ids accepted in a manifest; aliases are CLI-only.
         pub const KNOWN_TARGETS: &[&str] = &[$($id),*];
         pub const TARGETS: &[TargetCapability] = &[$(TargetCapability {
             id: $id, aliases: $aliases, source_support: SourceSupport::$source,
             runtime_family: $family, imported_operation_policy: $policy,
             prerequisites: $tools, qualification: EvidenceState::Unknown,
+            options_schema: targets!(@schema $($schema)?),
             artifact_availability: EvidenceState::Unknown,
             platform_qualification: EvidenceState::Unknown,
         }),*];
-    }
+    };
+    (@schema $schema:expr) => { $schema };
+    (@schema) => { None };
 }
 
 targets! {
@@ -138,7 +165,7 @@ targets! {
     ("rust", &["rs"], BuiltInEmitter, Some("rust"), true, &[
         ToolRequirement::new("cargo", Some([1, 88])), ToolRequirement::new("rustc", Some([1, 88])),
     ]),
-    ("typescript", &["ts"], BuiltInEmitter, Some("typescript"), true, JS),
+    ("typescript", &["ts"], BuiltInEmitter, Some("typescript"), true, JS, Some(TargetOptionSchema::TypeScript)),
     ("webmcp", &[], BuiltInEmitter, Some("typescript"), true, JS),
 }
 

@@ -24,6 +24,7 @@ pub mod capabilities;
 pub mod pointer;
 mod source;
 mod strict;
+pub mod target_options;
 mod validate;
 mod yaml;
 

@@ -562,6 +562,15 @@ tested combination or published package. External emitters are not inspected by
 this command. Fields may be added within version 1; consumers should reject
 unknown major contract versions before interpreting them.
 
+The TypeScript declaration also includes `options_schema`, a JSON Schema for
+supported raw `package`, `version`, `runtime`, `runtime_path` and `dependencies`
+values. The `ts` alias returns the same declaration. Other targets report null
+until their option schemas are declared. This does not change generation policy:
+invalid TypeScript scalars still produce TG0711 warnings and use defaults;
+invalid custom dependencies produce errors. Unknown keys remain ignored, and
+defaults that depend on the compiled API remain in the emitter. This is an
+option declaration, not profile loading or stricter manifest validation.
+
 ### Editor support
 
 `tungsten lsp` is a language server for `tungsten.yml`, `agent.yml` and the overlay files a project lists. It checks the project with the same compiler as `tungsten check` and shows the same `TG` diagnostics on their source lines. Unsaved JSON/YAML manifests, specs, overlays and local references participate in the same source snapshot, including new files in an existing input directory. Closing a buffer restores its disk contents; file watchers pick up saved changes and deletions. File-size limits and local-reference confinement still apply. The selected project's `.tungsten-inputs` acquisition cache is reserved for verified disk content: buffers cannot replace or extend a pinned Git tree, while explicitly selected local overlays outside the cache remain editable. It completes keys, enumerated values and the operation ids, gates and clusters of the compiled project; shows field documentation, operation signatures and diagnostic explanations on hover; jumps from an operation id to its place in the OpenAPI document; and outlines the manifests. The workspace is the directory of `tungsten.yml` (found from the editor's workspace folder, or given with `--config <path>`); one project is served per process.

@@ -21,6 +21,11 @@ changes.
 
 ### Added
 
+
+- Declare the existing TypeScript target options and supported-value schema in
+  the shared capability contract. Keep emitter defaults and TG0711 fallback
+  behavior compatible while configuration and generation share validation.
+
 - Load bounded, non-executable JSON scenarios with `tungsten mock --scenario`.
   Reuse existing response and fault controls, and read a value-free report of
   total calls, per-operation/status counts and unconsumed responses.

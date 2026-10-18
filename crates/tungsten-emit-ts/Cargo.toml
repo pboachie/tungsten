@@ -22,6 +22,7 @@ doctest = false
 testing = []
 
 [dependencies]
+tungsten-config.workspace = true
 tungsten-core.workspace = true
 tungsten-ir.workspace = true
 tungsten-emit.workspace = true
