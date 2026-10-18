@@ -432,8 +432,9 @@ export interface ClientOptions {
    * with a failure whose `code` is `STREAM_IDLE`. Default: the per-attempt
    * `timeoutMs`, which ends the stream without a reconnect. */
   idleTimeoutMs?: number;
-  /** Overrides the key used to sign confirmation tokens. Default: random
-   * per client instance. */
+  /** Overrides the key used to sign confirmation tokens. Supply at least 32
+   * cryptographically random bytes; shorter keys fail construction. The key
+   * is copied. Default: random per client instance. */
   confirmationKey?: Uint8Array;
   /** Operations the core can resolve by id: verification hooks, endpoint
    * previews and macro steps. Operations passed to `call` are added too. */

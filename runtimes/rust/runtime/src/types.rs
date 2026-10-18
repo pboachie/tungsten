@@ -876,8 +876,9 @@ pub struct ClientOptions {
     /// whose `code` is `STREAM_IDLE`. `None`: the per-attempt `timeout`,
     /// which ends the stream without a reconnect.
     pub idle_timeout: Option<Duration>,
-    /// Overrides the key used to sign confirmation tokens. Default: random
-    /// per client instance.
+    /// Overrides the key used to sign confirmation tokens. Supply at least 32
+    /// cryptographically random bytes; shorter keys fail construction.
+    /// Default: random per client instance.
     pub confirmation_key: Option<Vec<u8>>,
     /// Operations the core can resolve by id: verification hooks, endpoint
     /// previews and macro steps.

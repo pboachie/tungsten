@@ -93,12 +93,17 @@ func NewClientCore(api *APIDescriptor, options ClientOptions) (*ClientCore, erro
 		return nil, &ConfigError{Message: "the base URL is not a valid absolute http(s) URL without credentials"}
 	}
 	key := options.ConfirmationKey
-	if len(key) == 0 {
+	if key != nil && len(key) < 32 {
+		return nil, &ConfigError{Message: "ConfirmationKey must contain at least 32 bytes; omit it to generate a random key"}
+	}
+	if key == nil {
 		random, ok := randomBytes(32)
 		if !ok {
 			return nil, &ConfigError{Message: "no source of randomness for the confirmation key"}
 		}
 		key = random
+	} else {
+		key = append([]byte(nil), key...)
 	}
 	maximum := options.MaxResponseBytes
 	if maximum != nil {

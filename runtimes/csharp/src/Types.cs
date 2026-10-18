@@ -593,7 +593,10 @@ public sealed record ClientOptions
     /// silent stream, without a reconnect.
     /// </summary>
     public TimeSpan? IdleTimeout { get; init; }
-    /// <summary>Signs confirmation tokens; default random per client.</summary>
+    /// <summary>
+    /// Signs confirmation tokens with at least 32 cryptographically random bytes, copied
+    /// at construction. Shorter keys fail construction; null generates a per-client key.
+    /// </summary>
     public byte[]? ConfirmationKey { get; init; }
     /// <summary>
     /// Used for every request; it must not follow redirects. Default: a client without redirects,

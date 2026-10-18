@@ -88,7 +88,10 @@ public final class ClientOptions {
         idleTimeout = b.idleTimeout != null && !b.idleTimeout.isNegative() && !b.idleTimeout.isZero()
                 ? (b.idleTimeout.toMillis() < 1 ? Duration.ofMillis(1) : b.idleTimeout)
                 : null;
-        confirmationKey = b.confirmationKey != null && b.confirmationKey.length > 0
+        if (b.confirmationKey != null && b.confirmationKey.length < 32) {
+            throw new IllegalArgumentException("confirmationKey must contain at least 32 bytes; omit it to generate a random key");
+        }
+        confirmationKey = b.confirmationKey != null
                 ? b.confirmationKey.clone()
                 : Text.randomBytes(32);
         sslSocketFactory = b.sslSocketFactory;
@@ -304,7 +307,10 @@ public final class ClientOptions {
             return this;
         }
 
-        /** The key confirmation tokens are signed with; random per client by default. */
+        /**
+         * The key confirmation tokens are signed with: at least 32 cryptographically
+         * random bytes, copied. Shorter keys fail build(); null generates a key.
+         */
         public Builder confirmationKey(byte[] value) {
             confirmationKey = value == null ? null : value.clone();
             return this;
