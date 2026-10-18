@@ -9,6 +9,16 @@ changes.
 
 ## [Unreleased]
 
+### Breaking
+
+- Caller-supplied confirmation-token keys now require at least 32 bytes across
+  all runtime families. Empty or shorter keys fail client/options construction
+  with a configuration error; omitting the key still generates a random key
+  per client. Replace short keys with at least 32 cryptographically random bytes,
+  or remove the override. Keys are copied at construction so later mutation of
+  a caller's buffer cannot change the client's signing key. Rotating a key
+  invalidates existing previews; request a new preview before confirming.
+
 ### Added
 
 - Automate Maven Central, NuGet and RubyGems publication alongside npm, PyPI

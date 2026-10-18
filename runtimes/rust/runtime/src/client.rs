@@ -170,8 +170,13 @@ impl ClientCore {
                 .map_err(|e| config_error(format!("the HTTP client could not be built: {e}")))?,
         };
         let confirmation_key = match options.confirmation_key.clone() {
-            Some(key) if !key.is_empty() => key,
-            _ => random_bytes::<32>()
+            Some(key) if key.len() >= 32 => key,
+            Some(_) => {
+                return Err(config_error(
+                    "confirmation_key must contain at least 32 bytes; omit it to generate a random key",
+                ));
+            }
+            None => random_bytes::<32>()
                 .ok_or_else(|| config_error("no source of randomness for the confirmation key"))?
                 .to_vec(),
         };

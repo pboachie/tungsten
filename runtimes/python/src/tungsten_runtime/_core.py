@@ -360,10 +360,12 @@ class Engine:
         store: object = self.options.idempotency_store
         get, put = _hook(store, "get"), _hook(store, "put")
         self.store: object = store if callable(get) and callable(put) else MemoryIdempotencyStore()
-        key = self.options.confirmation_key
-        self.confirmation_key: bytes = (
-            bytes(key) if isinstance(key, bytes | bytearray) and len(key) > 0 else random_bytes(32)
-        )
+        key = cast(object, self.options.confirmation_key)
+        if key is not None and (not isinstance(key, bytes | bytearray) or len(key) < 32):
+            raise ValueError(
+                "confirmation_key must contain at least 32 bytes; omit it to generate a random key"
+            )
+        self.confirmation_key: bytes = bytes(key) if key is not None else random_bytes(32)
         operations: object = self.options.operations
         if is_array(operations):
             self.register(*cast(Sequence[OperationDescriptor], operations))
