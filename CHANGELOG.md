@@ -18,6 +18,12 @@ changes.
   or remove the override. Keys are copied at construction so later mutation of
   a caller's buffer cannot change the client's signing key. Rotating a key
   invalidates existing previews; request a new preview before confirming.
+- Ordinary OpenAPI `x-agent-safety` annotations cannot lower the built-in HTTP-method
+  tier without an explicit `agent.yml` tools safety override (TG0615). Spec-origin
+  `x-agent-preview: none` on operations with side effects keeps a safe default
+  preview unless a tools entry explicitly removes it (TG0616). Both warnings fail
+  strict checks and generation. Move intentional policy reductions into the matching
+  tools entry and regenerate affected SDKs and agent manifests together.
 
 ### Added
 
