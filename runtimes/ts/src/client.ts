@@ -491,10 +491,11 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     try {
       const configured = this.options.confirmationKey;
       if (configured !== undefined) {
-        if (!(configured instanceof Uint8Array) || configured.byteLength < 32) {
+        if (!(configured instanceof Uint8Array)) {
           throw new TypeError();
         }
         key = new Uint8Array(configured);
+        if (key.byteLength < 32) throw new TypeError();
       }
     } catch {
       throw new TypeError("confirmationKey must be a Uint8Array containing at least 32 bytes; omit it to generate a random key");
