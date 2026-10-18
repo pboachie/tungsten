@@ -11,6 +11,9 @@ changes.
 
 ### Added
 
+- Add a manual Windows release-video example with exact-release provenance,
+  multiple input workflows, local narration, real terminal recording, chapters,
+  compact review MP4s and a reusable source and evidence package.
 - Add a gated JSR source-publication route for the core TypeScript runtime
   starting at 0.2.0, with artifact verification and OIDC provenance. Publication
   still requires the release checks and an explicit maintainer switch.
