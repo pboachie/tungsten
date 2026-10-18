@@ -107,7 +107,8 @@ pub(crate) fn prepare(model: &Model, bytes: &[u8]) -> Result<Prepared, String> {
 }
 
 /// One count comparison. Assertion indexes refer to `expect.calls` in the file.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+#[schemars(deny_unknown_fields)]
 pub struct CountReport {
     pub expected: u64,
     pub actual: u64,
@@ -126,7 +127,8 @@ impl CountReport {
 
 /// A snapshot of scenario assertions, excluding request/response data and IDs.
 /// Read after the integration is quiescent: this does not stop in-flight calls.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+#[schemars(deny_unknown_fields)]
 pub struct ScenarioReport {
     pub version: u32,
     pub passed: bool,

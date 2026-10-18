@@ -45,13 +45,14 @@ pub(crate) struct Running {
 impl Running {
     /// Stop accepting, close every connection and wait for the thread; the
     /// listening socket is closed when this returns.
-    pub fn stop(mut self) {
+    pub fn stop(mut self) -> bool {
         if let Some(stop) = self.stop.take() {
             let _ = stop.send(());
         }
         if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
+            return thread.join().is_ok();
         }
+        true
     }
 }
 
@@ -90,7 +91,15 @@ async fn serve(listener: TcpListener, state: Arc<State>, mut stopped: oneshot::R
             _ = &mut stopped => return,
             accepted = listener.accept() => match accepted {
                 Ok((stream, _)) => {
-                    tokio::spawn(connection(stream, state.clone()));
+                    // Refuse before spawning a task or reading a request body:
+                    // runner admission never creates an unbounded waiter queue.
+                    if let Some(lease) = state.admit_connection() {
+                        let state = state.clone();
+                        tokio::spawn(async move {
+                            let _lease = lease;
+                            connection(stream, state).await;
+                        });
+                    }
                 }
                 Err(_) => tokio::time::sleep(ACCEPT_BACKOFF).await,
             },
@@ -103,9 +112,28 @@ async fn connection(stream: TcpStream, state: Arc<State>) {
     let service = service_fn(move |req| {
         let state = state.clone();
         async move {
+            let control = req.uri().path().starts_with(handler::CONTROL_PREFIX);
+            if state.runner_owned() && control && req.method() != hyper::Method::GET {
+                state.reject_control();
+                return Err(ConnectionDropped);
+            }
+            let completion = if control {
+                None
+            } else {
+                let Some(call) = state.admit_call() else {
+                    return Err(ConnectionDropped);
+                };
+                Some(call)
+            };
+            let head = req.method() == hyper::Method::HEAD;
             match handler::handle(state, req).await {
-                Outcome::Reply(reply) => Ok(reply.into_response()),
-                Outcome::Drop => Err(ConnectionDropped),
+                Outcome::Reply(reply) => Ok(reply.into_response(completion, head)),
+                Outcome::Drop => {
+                    if let Some(call) = completion {
+                        call.complete();
+                    }
+                    Err(ConnectionDropped)
+                }
             }
         }
     });

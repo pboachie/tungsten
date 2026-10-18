@@ -28,6 +28,10 @@ changes.
 - Declare the existing TypeScript target options and supported-value schema in
   the shared capability contract. Keep emitter defaults and TG0711 fallback
   behavior compatible while configuration and generation share validation.
+- Validate saved mock scenarios portably and explicitly run integration argv on
+  Linux with a run-phase deadline, cancellation, owned process-group cleanup,
+  final exit/call-count assertions and a value-free JSON report. The run budget
+  begins after compilation and validation; call counts do not prove effects.
 
 - Load bounded, non-executable JSON scenarios with `tungsten mock --scenario`.
   Reuse existing response and fault controls, and read a value-free report of

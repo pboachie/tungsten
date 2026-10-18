@@ -21,7 +21,7 @@ fn main() -> ExitCode {
     };
     let mut stdout = std::io::stdout().lock();
     let mut stderr = std::io::stderr().lock();
-    let mut code = tungsten_cli::run(args, &mut stdout, &mut stderr, &env);
+    let mut code = tungsten_cli::run_binary(args, &mut stdout, &mut stderr, &env);
     if stdout.flush().is_err() && code == exit::OK {
         code = exit::INTERNAL;
     }

@@ -484,6 +484,7 @@ tungsten [--json] <command>
 | `explain` | Explain a diagnostic code (`TG0201`), an operation or a type |
 | `schema` | Print a JSON Schema: `tungsten`, `agent`, `ir`, `cli-output`, `external-emitter`, `sdk-descriptors`, `tool-catalog` |
 | `mock` | Serve a mock of the API from the IR (`--port`, `--seed`, `--gate`, `--scenario`) |
+| `scenario validate` / `scenario run` | Validate a saved scenario, or run explicit integration argv with exit and call-count assertions (Linux run) |
 | `report` | Coverage, safety matrix, token budgets and diagnostics, as text, JSON or one static HTML file (`--html`); only configured targets run, `--all-targets` runs every known emitter |
 | `diff` | Show regeneration changes; `--semver` classifies the API surface, `--migration` adds upgrade actions and runtime requirement review |
 | `lsp` | Serve diagnostics, completion, hover, go-to-definition and symbols for `tungsten.yml`, `agent.yml` and overlays to an editor over stdio (`--config`) |
@@ -498,8 +499,9 @@ With `--json`, stdout carries exactly one JSON document described by `tungsten s
 against the project's callable operations, then starts a fresh loopback server
 with its responses queued. The listening URL is printed in the normal report
 (`result.base_url` with `--json`). Each process owns its port and mock state.
-Files never run commands or expand environment variables. Launch your
-integration separately, explicitly point it at that URL, and give it a deadline.
+Files never run commands or expand environment variables. You can launch your
+integration separately and point it at that URL, or use the explicit runner
+below to manage its lifetime and assert the final result.
 
 For an operation named `openapi.listPets`, this version 1 JSON file expects a
 rate limit followed by one successful retry (replace the operation with one in
@@ -551,8 +553,58 @@ and the separate `/__tungsten/calls` endpoint still exposes recorded data.
 Stop the server with Ctrl-C or close its stdin when done. Existing
 `POST /__tungsten/reset` clears responses, recordings and scenario assertions;
 restart with the same file to rerun it. Without a loaded scenario the assertion
-endpoint returns 404. Automatic integration process launching, final exit-code
-assertions and effect-count assertions are not part of this initial workflow.
+endpoint returns 404. These manual-server controls remain available for local
+exploration; the runner keeps its loaded responses and assertions immutable.
+
+Validate without binding a server or launching a process on any platform:
+
+```sh
+tungsten scenario validate . --scenario retry.json
+```
+
+On Linux (including WSL), run your integration explicitly:
+
+```sh
+tungsten --json scenario run . --scenario retry.json --timeout-ms 30000 --expect-exit 0 -- python3 integration.py
+```
+
+The integration reads its URL from `TUNGSTEN_MOCK_BASE_URL`. Arguments after
+`--` are passed directly to the named executable. There is no implicit shell;
+commands cannot be supplied by the saved file. An interpreter such as `python3`
+runs only when explicitly named by the caller. Other platforms reject `run`
+before input acquisition, port binding or process creation; `validate` remains
+portable.
+
+The run-phase deadline starts after compilation and scenario validation. It
+covers server startup, process execution, cleanup and final assertions; a small
+part of that budget is reserved for cleanup. It does not bound input acquisition
+or compilation. The runner owns a fresh loopback port and process group, stops
+its server before reading final counts, and fails on cancellation, timeout,
+cleanup failure, unfinished admitted requests, unexpected exit or unmet counts.
+Request completion tracks server-side handler and response-body generation,
+independently of when a call was counted; it does not prove transport delivery.
+The binary handles SIGINT/SIGTERM for this run; library callers supply explicit
+cancellation instead of installing signal handlers. The Linux binary refuses an
+unreadable or malformed `/proc/self/status` and observable ignored/caught SIGCHLD
+dispositions before acquiring inputs or creating a server or child. Embeddings
+must exclusively reap their runner children, avoid auto-reap dispositions and
+keep SIGCHLD disposition stable; the binary preflight does not establish these
+conditions for a concurrent embedding or inspect every `SA_NOCLDWAIT` setting.
+Process groups cover ordinary
+descendants, not processes that deliberately leave the group. Signal delivery
+and leader reaping do not prove that every descendant has settled, and this is
+not a sandbox.
+
+Runner connections are capped at 32 before request bodies are read, bodies at
+1 MiB, and admitted API calls at 10,000 (`--max-calls` can lower that limit).
+Excess admission or attempts to mutate control state fail the run. Request
+payloads are not retained. Child stdin, stdout and stderr are disconnected; the
+machine report includes stable status and counts without child output, argv,
+PID, port or timing. `result.run.passed` requires the expected exit code (default
+0), matching counts and consumed responses. The command exits 0 only on success;
+run assertion/cancellation failures exit 1. Count assertions still do not prove
+provider effects, including applied writes or exactly-once behavior.
+
 `capabilities` returns contract version 1: target ids/aliases, source implementation,
 runtime family, imported-operation policy support and local consumer prerequisites.
 The same declarations drive target aliases and `doctor --strict`, including Kotlin's
