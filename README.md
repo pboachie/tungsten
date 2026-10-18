@@ -597,10 +597,11 @@ not a sandbox.
 
 Runner connections are capped at 32 before request bodies are read, bodies at
 1 MiB, and admitted API calls at 10,000 (`--max-calls` can lower that limit).
-Excess admission or attempts to mutate control state fail the run. Request
-payloads are not retained. Child stdin, stdout and stderr are disconnected; the
-machine report includes stable status and counts without child output, argv,
-PID, port or timing. `result.run.passed` requires the expected exit code (default
+Excess admission or attempts to mutate control state fail the run. Recorded-call
+payloads are not retained; the bounded 64-entry idempotency cache can retain
+request fingerprints (including body bytes) and responses. Child stdin, stdout
+and stderr are disconnected. The machine report includes stable status and
+counts without child output, argv, PID, port or timing. `result.run.passed` requires the expected exit code (default
 0), matching counts and consumed responses. The command exits 0 only on success;
 run assertion/cancellation failures exit 1. Count assertions still do not prove
 provider effects, including applied writes or exactly-once behavior.
