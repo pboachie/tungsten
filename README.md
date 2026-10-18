@@ -123,7 +123,7 @@ All conversion routes share these limits: setup inputs are bounded (8 MiB, with 
 | `fsharp` (`fs`) | F# SDK (records, discriminated unions, `Task` of `Result`) | .NET 10 | Use `runtime_path` to matching `runtimes/fsharp`; it references the .NET runtime in `runtimes/csharp` (`csharp_runtime_path`) |
 | `dart` | Dart SDK (final model classes, sealed unions, `Future` methods returning `Result`, `Stream` pages) | Dart 3.6 | Use `runtime_path` to matching `runtimes/dart` (`tungsten_runtime`, a `dart:io` package) |
 | `ruby` (`rb`) | Ruby SDK | Ruby 3.3 and Bundler | Use `runtime_path` to matching `runtimes/ruby` source |
-| `mcp` | MCP server over stdio or Streamable HTTP, discrete or progressive | Node 22 | `@elysra/tungsten-mcp`: matching npm package or built source |
+| `mcp` | MCP server over stdio or Streamable HTTP, discrete or progressive | Node 22.13+; Node 23 needs 23.2+ | `@elysra/tungsten-mcp`: matching npm package or built source |
 | `webmcp` | Browser ESM package with tool manifest and registration helper | Node 22 to build; compatible browser to run | `@elysra/tungsten-webmcp` and the generated TypeScript SDK |
 | `docs` | `llms.txt`, `llms-full.txt`, `tools.json`, README | None beyond the compiler | No runtime dependency |
 
@@ -226,6 +226,9 @@ output you use. These package versions were verified on October 15, 2026;
 Node 22+ is required for TypeScript/MCP, Python needs 3.12+, Java needs 17+,
 C# needs .NET 10, and Ruby needs 3.3+. Run Python installation commands in an
 activated virtual environment.
+
+For current source builds, MCP servers require Node 22.13+ (Node 23 requires
+23.2+); TypeScript SDKs and WebMCP build tooling retain their Node 22 prerequisite.
 
 | Output | Runtime package | Install the published runtime |
 |---|---|---|

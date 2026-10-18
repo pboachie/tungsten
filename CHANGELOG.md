@@ -305,6 +305,10 @@ values as `JsonNode`, OpenID Connect as a bearer token, no CLI or MCP).
 
 - Check profile-derived TypeScript prerequisites in project `doctor`, and refuse
   invalid manifests or bounded profiles before running tool version probes.
+- Correct the MCP runtime and generated server prerequisite to Node.js 22.13+
+  (23.2+ on the Node.js 23 line), matching the module API used by its import
+  graph. Keep doctor prerequisites for every configured target so a linked SDK
+  cannot hide the stricter MCP floor.
 
 - Python local setup installs the supplied runtime's declared dependencies using
   wheels and identifies the failing setup phase without changing its deadlines.

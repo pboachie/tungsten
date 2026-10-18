@@ -44,6 +44,23 @@ pub fn parse_version(text: &str) -> Option<String> {
     crate::commands::doctor::parse_version(text)
 }
 
+pub fn doctor_requirements(
+    requirements: Vec<tungsten_config::capabilities::ToolRequirement>,
+) -> Result<
+    Vec<(
+        tungsten_config::capabilities::ToolRequirement,
+        Vec<[u32; 2]>,
+    )>,
+    String,
+> {
+    crate::commands::doctor::aggregate_requirements(requirements).map(|requirements| {
+        requirements
+            .into_values()
+            .map(|r| (r.bounds, r.excluded_versions))
+            .collect()
+    })
+}
+
 pub fn relative_path(target: &Path, base: &Path) -> Option<PathBuf> {
     crate::commands::init::relative_path(target, base)
 }

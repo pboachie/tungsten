@@ -61,7 +61,7 @@ pub(crate) fn package_json(ir: &Ir, opts: &Options) -> String {
         "type": "module",
         "bin": bin,
         "files": files,
-        "engines": { "node": ">=22" },
+        "engines": { "node": "^22.13.0 || >=23.2.0" },
         "scripts": {
             "build": "tsc -p tsconfig.json",
             "typecheck": "tsc -p tsconfig.json --noEmit",
@@ -396,7 +396,9 @@ pub(crate) fn readme(ir: &Ir, opts: &Options, manifest: &McpManifest, budget: &B
         opts.sdk_package
     ));
 
-    out.push_str("## Run\n\n");
+    out.push_str(
+        "## Run\n\nRequires Node.js 22.13 or newer; Node.js 23 requires 23.2 or newer.\n\n",
+    );
     out.push_str(&format!(
         "```sh\nnpm install\nnpm run build\nnode dist/server.js    # or `{bin}` once installed\n```\n\n\
          The server speaks MCP over stdio by default. `node dist/server.js --http 3000` serves \

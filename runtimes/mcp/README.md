@@ -10,7 +10,7 @@ Expose a generated API over stdio or Streamable HTTP. The runtime supports discr
 npm install @elysra/tungsten-mcp @elysra/tungsten-runtime
 ```
 
-Requires Node.js 22 or newer. This is an ES module package with TypeScript declarations. The core runtime is a peer dependency. The MCP SDK and QuickJS implementation are installed as dependencies.
+Requires Node.js 22.13 or newer; Node.js 23 requires 23.2 or newer. The root import uses Node's `module.stripTypeScriptTypes` API, including when the optional sandbox is disabled. This is an ES module package with TypeScript declarations. The core runtime is a peer dependency. The MCP SDK and QuickJS implementation are installed as dependencies.
 
 ## Generate and run a server
 
