@@ -313,6 +313,9 @@ values as `JsonNode`, OpenID Connect as a bearer token, no CLI or MCP).
   (23.2+ on the Node.js 23 line), matching the module API used by its import
   graph. Keep doctor prerequisites for every configured target so a linked SDK
   cannot hide the stricter MCP floor.
+- `tungsten emitters --no-external` and `TUNGSTEN_NO_EXTERNAL=1` now skip
+  PATH-based descriptor probes as well as manifest commands. The inspection
+  result reports that discovery is disabled instead of claiming no emitters exist.
 
 - Python local setup installs the supplied runtime's declared dependencies using
   wheels and identifies the failing setup phase without changing its deadlines.

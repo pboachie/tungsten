@@ -1066,7 +1066,9 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
         "A target in tungsten.yml declares `external`, and tungsten was told not to start \
          external emitters (`--no-external` or `TUNGSTEN_NO_EXTERNAL=1`), so its command was \
          not run and the target is skipped. Nothing is generated, compared or reported for it; \
-         the diagnostic is informational and does not fail the run.",
+         the diagnostic is informational and does not fail the run. `emitters` discovery \
+         is also disabled, including descriptor probes of programs on PATH; an empty \
+         inspection result does not mean no emitters are installed.",
         "This is the intended result for CI that validates a manifest it does not trust. Run \
          without the option, on a manifest you trust, to emit or check the target.",
     ),

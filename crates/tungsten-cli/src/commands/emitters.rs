@@ -10,6 +10,7 @@
 
 use std::fmt::Write as _;
 
+use tungsten_core::Diagnostic;
 use tungsten_emit::external::{self, Command};
 
 use crate::args::EmittersArgs;
@@ -66,26 +67,34 @@ pub(crate) fn run(args: &EmittersArgs, env: &CliEnv, no_external: bool) -> Repor
             ));
         }
     }
-    for found in external::discover(&search_path) {
-        if emitters.iter().any(|e| e.name == found.name) {
-            continue;
-        }
-        let command = Command {
-            program: found.path,
-            args: vec![],
-            display: format!("{}{}", external::EXECUTABLE_PREFIX, found.name),
-        };
-        let display = command.display.clone();
-        emitters.push(inspect(
-            &found.name,
-            EmitterSource::Path,
-            Ok(command),
-            display,
-            &cwd,
+    if no_external {
+        report.diagnostics.push(Diagnostic::info(
+            "TG0807",
+            "external emitter discovery is disabled (--no-external or TUNGSTEN_NO_EXTERNAL); \
+             PATH emitters were not probed",
         ));
+    } else {
+        for found in external::discover(&search_path) {
+            if emitters.iter().any(|e| e.name == found.name) {
+                continue;
+            }
+            let command = Command {
+                program: found.path,
+                args: vec![],
+                display: format!("{}{}", external::EXECUTABLE_PREFIX, found.name),
+            };
+            let display = command.display.clone();
+            emitters.push(inspect(
+                &found.name,
+                EmitterSource::Path,
+                Ok(command),
+                display,
+                &cwd,
+            ));
+        }
     }
     let result = EmittersResult { emitters };
-    report.human = human(&result);
+    report.human = human(&result, no_external);
     report.result = Some(CommandResult::Emitters(result));
     report
 }
@@ -127,12 +136,16 @@ fn inspect(
     entry
 }
 
-fn human(result: &EmittersResult) -> String {
+fn human(result: &EmittersResult, disabled: bool) -> String {
     let mut out = format!(
         "tungsten {} · external emitters (protocol {})\n",
         tungsten_build::TUNGSTEN_VERSION,
         external::PROTOCOL
     );
+    if disabled {
+        out.push_str("  discovery disabled: external emitter descriptions were not queried\n");
+        return out;
+    }
     if result.emitters.is_empty() {
         out.push_str("  none found: put `tungsten-emit-<name>` on PATH, or declare `external` on a target in tungsten.yml\n");
         return out;
