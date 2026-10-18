@@ -266,6 +266,10 @@ values as `JsonNode`, OpenID Connect as a bearer token, no CLI or MCP).
 
 ### Fixed
 
+- `tungsten emitters --no-external` and `TUNGSTEN_NO_EXTERNAL=1` now skip
+  PATH-based descriptor probes as well as manifest commands. The inspection
+  result reports that discovery is disabled instead of claiming no emitters exist.
+
 - Python local setup installs the supplied runtime's declared dependencies using
   wheels and identifies the failing setup phase without changing its deadlines.
 

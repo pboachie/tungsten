@@ -410,6 +410,11 @@ write an external emitter.
 
 An `external:` target in `tungsten.yml` names a command that tungsten starts as a process, unsandboxed and with your privileges. It runs on every command that produces output in memory, not only on a writing `generate`: `generate --dry-run` and `--check`, `check --ci`, `diff` and `report` run it too (plain `check` and `ir dump` do not). A CI job that runs `tungsten check --ci` on pull requests therefore executes whatever the pull request puts in `tungsten.yml`. Pass `--no-external` or set `TUNGSTEN_NO_EXTERNAL=1` to skip external targets (reported as TG0807) when the manifest is not trusted.
 
+The same opt-out disables `tungsten emitters` discovery, including `--describe`
+probes of executables on PATH. Its empty result means discovery was disabled;
+it does not establish that no emitters are installed. Without the opt-out,
+discovery executes those programs and requires the same trust as generation.
+
 ## Browser WebMCP
 
 Add a browser target alongside your TypeScript SDK:

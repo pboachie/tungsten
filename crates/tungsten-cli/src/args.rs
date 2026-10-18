@@ -95,7 +95,8 @@ pub(crate) struct Cli {
     /// --ci`, `diff` and `report`, with your privileges and with whatever
     /// the manifest says; pass it (or set TUNGSTEN_NO_EXTERNAL=1) when the
     /// manifest is not trusted, for example on a pull request in CI. Such
-    /// targets are reported as skipped (TG0807).
+    /// targets are reported as skipped (TG0807). Also disables `emitters`
+    /// discovery, including descriptor probes of programs on PATH.
     #[arg(
         long,
         global = true,
