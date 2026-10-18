@@ -11,6 +11,10 @@ changes.
 
 ### Added
 
+- Add a manual Windows release-video example with exact-release provenance,
+  multiple input workflows, local narration, real terminal recording, chapters,
+  compact review MP4s and a reusable source and evidence package.
+
 - Automate Maven Central, NuGet and RubyGems publication alongside npm, PyPI
   and crates.io after an approved release tag. Verify package identity, source
   and checksums before credentials, and compare public downloads with the tested
