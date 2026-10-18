@@ -11,6 +11,10 @@ changes.
 
 ### Added
 
+- Add a gated JSR source-publication route for the core TypeScript runtime
+  starting at 0.2.0, with artifact verification and OIDC provenance. Publication
+  still requires the release checks and an explicit maintainer switch.
+
 - Automate Maven Central, NuGet and RubyGems publication alongside npm, PyPI
   and crates.io after an approved release tag. Verify package identity, source
   and checksums before credentials, and compare public downloads with the tested
