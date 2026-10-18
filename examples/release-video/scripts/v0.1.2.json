@@ -1,0 +1,142 @@
+{
+  "version": "v0.1.2",
+  "voice": "am_fenrir",
+  "speed": 0.96,
+  "contents_seconds": 16,
+  "intro": "This walkthrough covers the full released capability list, several input formats, and the generated outputs. Use the chapter timestamps to jump to the part you need. Everything stays in a local review workflow.",
+  "chapters": [
+    {
+      "title": "Version, languages and input-to-output matrix",
+      "minimum": 48,
+      "narration": [
+        "Tungsten is not tied to Git, and its output is broader than three languages. This is the published version zero point one point two, checked against its release archive and exact source tag. Native OpenAPI supports TypeScript, Python, Rust, Java, C sharp, Ruby, and Go through an external emitter.",
+        "The Rust command line, MCP server, browser WebMCP adapter, and documentation are different outputs, not extra SDK languages. WebMCP is experimental. In this release, imported formats support the TypeScript, Python and Rust family plus agent adapters and docs. Java, C sharp, Ruby and external Go refuse imported contracts rather than silently dropping their policy."
+      ],
+      "commands": [
+        "tungsten --version",
+        "python demo.py inventory capabilities.json"
+      ]
+    },
+    {
+      "title": "Git retrieval and ordinary local files",
+      "minimum": 38,
+      "narration": [
+        "Git is only one way to obtain a source file. Here we clone the real public Zero Text repository and record its commit. This compiler does not ingest a remote Git or HTTP URL itself. Retrieval happens first, then Tungsten reads the local contract.",
+        "A file already on your machine needs no Git command at all. The next command uses an ordinary local OpenAPI file. JSON and YAML are supported, with OpenAPI three point zero and three point one. Remote references are outside this release, so keep referenced files inside the permitted local input roots."
+      ],
+      "commands": [
+        "git clone --depth 1 --progress https://github.com/pboachie/zrotext.git repo",
+        "git -C repo fetch --depth 1 origin 84bfeee59f57f7cbdac00f4fbe3f567d36c5e57c",
+        "git -C repo checkout --detach 84bfeee59f57f7cbdac00f4fbe3f567d36c5e57c",
+        "git -C repo rev-parse HEAD",
+        "python demo.py copy-local repo examples/local-openapi31.json",
+        "tungsten init --from examples/openapi30.yaml --dir yaml-local --targets docs --generate --no-interactive"
+      ]
+    },
+    {
+      "title": "Native OpenAPI and all seven SDK languages",
+      "minimum": 58,
+      "narration": [
+        "Now use the real Zero Text OpenAPI three point one contract. Its implementation markers distinguish current routes, planned routes, and a default-off gate. We keep those distinctions. The project configuration selects all seven SDK languages, rather than suggesting the first three are the only choices.",
+        "Go is an external emitter built from this same release source. Selecting a Go target does not install that emitter for you. Rust also produces command-line source. Generation writes ten configured target directories, including MCP, experimental WebMCP and docs. These files are real output, while a generated file alone does not prove its runtime is installed or its live API accepts calls."
+      ],
+      "commands": [
+        "tungsten init --from examples/local-openapi31.json --dir native --name zrotext --targets 'typescript,python,rust,java,csharp,ruby,mcp,webmcp,docs' --no-interactive",
+        "python demo.py configure repo native settings.json",
+        "tungsten check native",
+        "tungsten emitters native",
+        "tungsten generate native",
+        "python demo.py summary native"
+      ]
+    },
+    {
+      "title": "Postman and Swagger imports",
+      "minimum": 55,
+      "narration": [
+        "Postman Collection two point one is a structural input, not a script runner. This example exports one read-only route from the real Zero Text contract into a collection. It invents no saved response. Tungsten normalizes it and keeps an import report, so missing authentication, response shapes and operation safety remain explicit review items.",
+        "Swagger two is another accepted document format. This unchanged minimal example comes from the OpenAPI Initiative public examples. Converted operations carry imported-contract policy. For every import, review its report, origin, authentication and inferred types before live use. The generated client is not evidence that a captured or declared request is safe to send."
+      ],
+      "commands": [
+        "tungsten init --from examples/zrotext.postman_collection.json --dir postman --targets 'typescript,python,rust,mcp,docs' --generate --no-interactive",
+        "python demo.py imported postman",
+        "tungsten init --from examples/swagger2.json --dir swagger --targets docs --generate --no-interactive",
+        "python demo.py imported swagger"
+      ]
+    },
+    {
+      "title": "Saved cURL and HTTP request files",
+      "minimum": 44,
+      "narration": [
+        "A saved curl command can be parsed as data. The command text is never executed as a shell script. You provide an explicit route template, so literal identifiers are not guessed into an API design. This example describes the public httpbin JSON endpoint; import sends no request to it.",
+        "HTTP request files work through the same idea, using dot H T T P or dot rest files. Provide a route template for each request in order. These inputs are useful starting evidence, not a complete contract. Notice that both examples normalize into local OpenAPI files which the rest of the compiler can inspect."
+      ],
+      "commands": [
+        "python demo.py show examples/public-get.curl",
+        "tungsten init --from examples/public-get.curl --route '/json' --dir curl-input --targets docs --generate --no-interactive",
+        "python demo.py imported curl-input",
+        "tungsten init --from examples/public-get.http --route '/json' --dir http-input --targets docs --generate --no-interactive",
+        "python demo.py imported http-input"
+      ]
+    },
+    {
+      "title": "HAR, endpoint manifests and manual examples",
+      "minimum": 55,
+      "narration": [
+        "HAR one point two can preserve observations from real traffic. This small capture contains one actual read-only request to a public JSON endpoint, with no cookies or private headers. The importer requires a reviewed origin and path mapping. Observations of one response do not establish every response the service might return.",
+        "An endpoint manifest combines explicit HTTP routing with JSON Schema twenty twenty twelve models. A standalone model cannot discover routes. There is also a manual path: declare the method and endpoint, then optionally provide request or response examples. Here the response example is the actual retained public response, never an invented success payload. All three routes still require appropriate review before live use."
+      ],
+      "commands": [
+        "tungsten init --from examples/public-get.har --har-origin https://httpbin.org --har-paths examples/har-paths.json --dir har-input --targets docs --generate --no-interactive",
+        "python demo.py imported har-input",
+        "tungsten init --from examples/endpoints.json --dir endpoints-input --targets docs --generate --no-interactive",
+        "tungsten init --method get --endpoint '/json' --response-example examples/httpbin-response.json --dir manual-input --targets docs --generate --no-interactive",
+        "python demo.py manual manual-input"
+      ]
+    },
+    {
+      "title": "Build checks, generated CLI and MCP catalog",
+      "minimum": 60,
+      "narration": [
+        "Generation and execution are separate checks. This run builds the generated TypeScript SDK, the MCP server, and the Go SDK against matching runtime sources or pinned released packages. Python, Rust, Java, C sharp and Ruby source is generated here; do not read that as an all-language build claim.",
+        "The Rust CLI is shown as source because this machine has no Rust toolchain. The generated MCP server can still list its real tool catalog over local standard input and output. Listing tools needs no gateway credential and invokes no API operation. We never start a mock service or send an SMS. Live service acceptance remains a separate test."
+      ],
+      "commands": [
+        "npm.cmd --prefix native/generated/typescript ci --offline --ignore-scripts --no-audit --no-fund --cache npm-cache",
+        "npm.cmd --prefix native/generated/typescript run build",
+        "npm.cmd --prefix native/generated/mcp ci --offline --ignore-scripts --no-audit --no-fund --cache npm-cache",
+        "npm.cmd --prefix native/generated/mcp run build",
+        "go -C native/generated/go build ./...",
+        "python demo.py cli native",
+        "node list_tools.mjs native"
+      ]
+    },
+    {
+      "title": "Experimental WebMCP and generated documentation",
+      "minimum": 38,
+      "narration": [
+        "The browser WebMCP package is an experimental adapter alongside the TypeScript SDK. Generation is demonstrated, but browser availability and integration need their own capability checks. This is not a cross-browser conformance result. Keep the browser feature visibly separate from the conventional server-side MCP output.",
+        "The docs target writes machine-oriented files such as L L M S dot text and a tool catalog. Those are documentation artifacts, not another SDK language. The same intermediate representation keeps the generated descriptions connected to the selected API surface, including planned and gated behavior."
+      ],
+      "commands": [
+        "tungsten generate native --target webmcp --check",
+        "python demo.py webmcp native",
+        "tungsten generate native --target docs --check",
+        "python demo.py docs native"
+      ]
+    },
+    {
+      "title": "Verification and rerunning for the next release",
+      "minimum": 45,
+      "narration": [
+        "Finish with the regeneration check and retain the diagnostics. This contract has one warning because conditional schema constraints are not modeled. The pipeline records real exit codes, exact source and binary hashes, input provenance, a terminal session, voice choice, captions and the final chapter times.",
+        "For another release, run the manual entry point with a new exact version and run name. The audit fetches that release and tag, and refuses a changed capability profile until it is reviewed. It never reuses old footage as new execution. Rendering and quality checks produce a local review package and chapter list. There is no unattended publishing step, persistent permission grant, or paid API use."
+      ],
+      "commands": [
+        "tungsten generate native --check",
+        "python demo.py boundaries",
+        "python release_video.py --help",
+        "python demo.py rerun"
+      ]
+    }
+  ]
+}

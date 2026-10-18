@@ -339,6 +339,7 @@ validation parity or live acceptance.
 
 Additional examples have their own runners and prerequisites:
 
+- [Manual release-video walkthrough](release-video/README.md): version-audited Windows terminal recording, local narration, chapters and review-only delivery artifacts.
 - [Six public APIs](showcase/README.md): pinned specifications and regenerated showcase.
 - [External Markdown emitter](external-emitter-markdown/README.md): implement the emitter protocol.
 - [Typed Python SSE](typed-sse/README.md): declare and consume named streams with explicit cleanup.
