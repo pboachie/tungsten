@@ -64,7 +64,12 @@ module Tungsten
         @middleware = Array(o.middleware)
         @validate_responses = %w[warn strict off].include?(o.validate_responses.to_s) ? o.validate_responses.to_s : "warn"
         @on_diagnostic = o.on_diagnostic
-        @confirmation_key = o.confirmation_key.to_s.empty? ? SecureRandom.random_bytes(32) : o.confirmation_key.to_s.b
+        key = o.confirmation_key
+        copied_key = String.new(key, encoding: Encoding::BINARY) if key.is_a?(String)
+        if !key.nil? && (copied_key.nil? || copied_key.bytesize < 32)
+          raise ConfigError, "confirmation_key must contain at least 32 bytes; omit it to generate a random key"
+        end
+        @confirmation_key = copied_key || SecureRandom.random_bytes(32)
         @now_fn = o.now
         @random_fn = o.random
         @token_store = o.token_store || MemoryTokenStore.new

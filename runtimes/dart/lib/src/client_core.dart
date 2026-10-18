@@ -102,10 +102,7 @@ final class ClientCore {
         _middleware = [...options.middleware],
         _validateResponses = options.validateResponses,
         _onDiagnostic = options.onDiagnostic,
-        _confirmationKey =
-            options.confirmationKey == null || options.confirmationKey!.isEmpty
-                ? _Util.randomBytes(32)
-                : [...options.confirmationKey!],
+        _confirmationKey = _configuredConfirmationKey(options.confirmationKey),
         _nowFn = options.now,
         _randomFn = options.random,
         _tokenStore = options.tokenStore ?? MemoryTokenStore(),
@@ -142,6 +139,16 @@ final class ClientCore {
   /// Generated clients call this when the API forbids redirects, so they
   /// build only against a runtime that honours the policy.
   static void requireRedirectPolicyV1() {}
+
+  static List<int> _configuredConfirmationKey(List<int>? key) {
+    if (key == null) return _Util.randomBytes(32);
+    if (key.length < 32 || key.any((byte) => byte < 0 || byte > 255)) {
+      throw const ClientConfigException(
+        'confirmationKey must contain at least 32 bytes; omit it to generate a random key',
+      );
+    }
+    return [...key];
+  }
 
   /// Same-origin redirects one read follows.
   static const int maxRedirects = 5;

@@ -739,7 +739,8 @@ type ClientOptions struct {
 	// error whose code is STREAM_IDLE. Zero: the per-attempt Timeout ends a
 	// silent stream, without a reconnect.
 	IdleTimeout time.Duration
-	// ConfirmationKey signs confirmation tokens; default random per client.
+	// ConfirmationKey signs confirmation tokens. Supply at least 32 cryptographically
+	// random bytes; shorter non-nil keys fail construction. Copied; nil generates a key.
 	ConfirmationKey []byte
 	// Operations the client resolves by id: verification hooks, endpoint
 	// previews and macro steps.
