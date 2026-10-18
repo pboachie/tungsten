@@ -183,12 +183,13 @@ jobs:
       # The release notes are the tagged CHANGELOG section, never the pull
       # request list: a release page must carry the breaking changes and
       # migration notes. A real release fails on a missing, empty or undated
-      # section; a dry run prints the notes it would publish (the Unreleased
-      # section when the checkout has no section for a dry-run version).
+      # section. A tagless dry run previews Unreleased first, then the dated
+      # workspace version after its notes have moved out of Unreleased.
       - name: Extract the release notes from CHANGELOG.md
         env:
           VERSION: ${{ steps.plan.outputs.version }}
           RELEASE: ${{ steps.plan.outputs.release }}
+          REF_TYPE: ${{ github.ref_type }}
         run: |
           if python3 .github/scripts/release_notes.py --changelog CHANGELOG.md --version "$VERSION" --output release-notes/release-notes.md; then
             echo "--- release notes for $VERSION ---"
@@ -198,8 +199,17 @@ jobs:
               echo "a release needs a dated CHANGELOG section for $VERSION" >&2
               exit 1
             fi
-            echo "no CHANGELOG section for $VERSION (dry run); the Unreleased notes a release would ship:"
-            python3 .github/scripts/release_notes.py --changelog CHANGELOG.md --version Unreleased
+            echo "no CHANGELOG section for $VERSION (dry run); checking Unreleased notes:"
+            if ! python3 .github/scripts/release_notes.py --changelog CHANGELOG.md --version Unreleased --output release-notes/release-notes.md; then
+              if [ "$REF_TYPE" != branch ]; then
+                echo "only a tagless dry run may preview the declared workspace version" >&2
+                exit 1
+              fi
+              workspace_version=$(python3 -c 'import pathlib,tomllib; print(tomllib.loads(pathlib.Path("Cargo.toml").read_text())["workspace"]["package"]["version"])')
+              echo "Unreleased notes unavailable; previewing dated workspace version $workspace_version:"
+              python3 .github/scripts/release_notes.py --changelog CHANGELOG.md --version "$workspace_version" --output release-notes/release-notes.md
+            fi
+            cat release-notes/release-notes.md
           fi
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

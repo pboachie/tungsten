@@ -9,6 +9,8 @@ changes.
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-10-17
+
 ### Added
 
 - Automate Maven Central, NuGet and RubyGems publication alongside npm, PyPI
