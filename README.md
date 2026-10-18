@@ -479,14 +479,27 @@ tungsten [--json] <command>
 | `generate` | Generate every configured target (`--target`, `--dry-run`, `--check`, `--force`, `--strict`) |
 | `ir dump` | Write the IR as JSON (`--out`, `--compact`) |
 | `explain` | Explain a diagnostic code (`TG0201`), an operation or a type |
-| `schema` | Print a JSON Schema: `tungsten`, `agent`, `ir`, `cli-output`, `external-emitter`, `sdk-descriptors`, `tool-catalog` |
+| `schema` | Print a JSON Schema: `tungsten`, `agent`, `ir`, `cli-output`, `external-emitter`, `sdk-descriptors`, `tool-catalog`, `capabilities` |
 | `mock` | Serve a mock of the API from the IR (`--port`, `--seed`, `--gate`) |
 | `report` | Coverage, safety matrix, token budgets and diagnostics, as text, JSON or one static HTML file (`--html`); only configured targets run, `--all-targets` runs every known emitter |
 | `diff` | Show regeneration changes; `--semver` classifies the API surface, `--migration` adds upgrade actions and runtime requirement review |
 | `lsp` | Serve diagnostics, completion, hover, go-to-definition and symbols for `tungsten.yml`, `agent.yml` and overlays to an editor over stdio (`--config`) |
 | `doctor` | Report external tools; pass a project path and `--strict` to fail when its required tools are missing or too old |
+| `capabilities` | Query built-in target declarations without running tools or emitters; optionally select a target id or alias, such as `capabilities py --json` |
 
 With `--json`, stdout carries exactly one JSON document described by `tungsten schema cli-output` (`lsp` speaks the language server protocol on stdio instead). Color is used only on a terminal and never when `NO_COLOR` is set.
+
+`capabilities` returns contract version 1: target ids/aliases, source implementation,
+runtime family, imported-operation policy support and local consumer prerequisites.
+The same declarations drive target aliases and `doctor --strict`, including Kotlin's
+Java/Gradle tools, F#'s .NET SDK and Dart's `>=3.6 <4.0` SDK. Python's default
+minimum is 3.12; `doctor` resolves the declared `python_version` option for 3.10
+or 3.11 projects. Prerequisites describe local builds, not compiler execution or
+browser runtime support. Qualification, platform qualification and artifact
+availability are explicitly `unknown`: these source records do not prove a
+tested combination or published package. External emitters are not inspected by
+this command. Fields may be added within version 1; consumers should reject
+unknown major contract versions before interpreting them.
 
 ### Editor support
 

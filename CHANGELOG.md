@@ -11,6 +11,11 @@ changes.
 
 ### Added
 
+- Add an offline `capabilities` query and JSON Schema for built-in target
+  declarations. Share target aliases, imported-operation policy support and
+  consumer prerequisites with configuration and doctor; include Kotlin, F#
+  and Dart prerequisites without inferring qualification or published packages.
+
 - Automate Maven Central, NuGet and RubyGems publication alongside npm, PyPI
   and crates.io after an approved release tag. Verify package identity, source
   and checksums before credentials, and compare public downloads with the tested

@@ -62,10 +62,7 @@ pub fn emitter(id: &str) -> Option<&'static dyn Emitter> {
 /// operations come from Postman, cURL, `.http` or HAR input; an external
 /// emitter opts in through `import_policy` in its `--describe` response.
 pub(crate) fn serves_import_policy(id: &str) -> bool {
-    matches!(
-        id,
-        "typescript" | "python" | "rust" | "mcp" | "webmcp" | "docs"
-    )
+    tungsten_config::capabilities::target(id).is_some_and(|target| target.imported_operation_policy)
 }
 
 /// The refusal of target `name` for a project with imported-operation
@@ -114,16 +111,7 @@ pub fn tool_names(id: &str, ir: &Ir) -> BTreeMap<String, String> {
 /// The target id for a name given on the command line: the ids themselves
 /// and the short forms `ts`, `py`, `rs`, `cs`, `fs`, `kt` and `rb`.
 pub fn canonical(name: &str) -> &str {
-    match name {
-        "ts" => "typescript",
-        "py" => "python",
-        "rs" => "rust",
-        "cs" => "csharp",
-        "fs" => "fsharp",
-        "kt" => "kotlin",
-        "rb" => "ruby",
-        other => other,
-    }
+    tungsten_config::capabilities::target(name).map_or(name, |target| target.id)
 }
 
 /// The configuration of target `name`: its options from `tungsten.yml`
