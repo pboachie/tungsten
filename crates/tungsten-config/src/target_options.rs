@@ -33,6 +33,52 @@ pub struct TypeScriptOptions {
 }
 
 impl TypeScriptOptions {
+    /// Strict reusable defaults. Values share the legacy validator, while
+    /// diagnostics omit user values and carry pointers relative to this object.
+    pub fn parse_profile(value: &serde_json::Value) -> (Self, Diagnostics) {
+        let mut diagnostics = Diagnostics::new();
+        let error = |pointer: &str, message: &str| {
+            Diagnostic::error("TG0602", message).at("", pointer, None)
+        };
+        let Some(fields) = value.as_object() else {
+            diagnostics.push(error("", "profile TypeScript defaults must be a mapping"));
+            return (Self::default(), diagnostics);
+        };
+        for (key, value) in fields {
+            let at = crate::pointer::child("", key);
+            if !["package", "version", "runtime", "dependencies"].contains(&key.as_str()) {
+                diagnostics.push(error(
+                    &at,
+                    "unsupported field in TypeScript profile defaults",
+                ));
+                continue;
+            }
+            if key == "dependencies" {
+                if let Some(entries) = value.as_object() {
+                    for (name, version) in entries {
+                        let (_, checked) =
+                            Self::parse(&serde_json::json!({"dependencies": {name: version}}));
+                        if !checked.is_empty() {
+                            diagnostics.push(error(
+                                &crate::pointer::child(&at, name),
+                                "invalid profile dependency declaration",
+                            ));
+                        }
+                    }
+                } else {
+                    diagnostics.push(error(&at, "profile dependencies must be a mapping"));
+                }
+            } else {
+                let (_, checked) = Self::parse(&serde_json::json!({key: value}));
+                if !checked.is_empty() {
+                    diagnostics.push(error(&at, "invalid TypeScript profile default"));
+                }
+            }
+        }
+        let (options, _) = Self::parse(value);
+        (options, diagnostics)
+    }
+
     /// Parse declarations using the existing scalar-fallback/dependency-error policy.
     pub fn parse(value: &serde_json::Value) -> (Self, Diagnostics) {
         let mut diags = Diagnostics::new();
@@ -89,6 +135,17 @@ impl TypeScriptOptions {
 pub fn typescript_json_schema() -> serde_json::Value {
     let mut schema = schemars::schema_for!(TypeScriptOptions).to_value();
     schema["additionalProperties"] = true.into();
+    schema
+}
+
+/// Strict profile subset of the same supported-value schema.
+pub fn typescript_profile_json_schema() -> serde_json::Value {
+    let mut schema = typescript_json_schema();
+    schema["properties"]
+        .as_object_mut()
+        .expect("option properties")
+        .remove("runtime_path");
+    schema["additionalProperties"] = false.into();
     schema
 }
 

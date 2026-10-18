@@ -21,6 +21,9 @@ changes.
 
 ### Added
 
+- Compose bounded local TypeScript profiles for package, version, runtime and
+  dependency defaults. Retain authored provenance through the compiler driver,
+  strict profile diagnostics and existing manifest fallback behavior.
 
 - Declare the existing TypeScript target options and supported-value schema in
   the shared capability contract. Keep emitter defaults and TG0711 fallback

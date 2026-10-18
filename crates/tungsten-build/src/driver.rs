@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! File-level compilation driver shared by the CLI and the test harness.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use tungsten_agent::{DEFAULT_AGENT_MANIFEST, ParsedAgentManifest};
+use tungsten_config::profiles::{
+    self, CapturedProfile, Declaration, EffectiveConfiguration, ProfileSource, SourceKind,
+};
 use tungsten_config::{ManifestSource, ParsedManifest, TungstenConfig};
 use tungsten_core::{Diagnostic, Diagnostics, Digest};
 use tungsten_ir::Ir;
@@ -68,6 +71,9 @@ impl CompileOptions {
 #[derive(Debug)]
 pub struct Compiled {
     pub config: Option<TungstenConfig>,
+    /// Supported declarations and authored provenance, before emitter defaults.
+    /// This in-memory result is not an authorization or replayable manifest.
+    pub effective: Option<EffectiveConfiguration>,
     pub workspace: Workspace,
     pub ir: Option<Ir>,
     /// All diagnostics (manifest, frontend, builder), sorted.
@@ -275,6 +281,7 @@ fn failed(
     diagnostics.sort();
     Compiled {
         config,
+        effective: None,
         workspace,
         ir: None,
         diagnostics,
@@ -332,12 +339,161 @@ fn attach_spec_spans(workspace: &Workspace, diagnostics: &mut Diagnostics) {
 
 /// Compile a configuration that already passed validation.
 fn compile_validated(
+    mut config: TungstenConfig,
+    base_dir: &Path,
+    manifest: Option<Manifest<'_>>,
+    agent: Option<AgentInput>,
+    mut diagnostics: Diagnostics,
+    opts: &CompileOptions,
+) -> Compiled {
+    let (file, identity, digest, kind) = manifest.as_ref().map_or_else(
+        || {
+            (
+                DEFAULT_MANIFEST_NAME.to_string(),
+                base_dir.join(DEFAULT_MANIFEST_NAME),
+                None,
+                SourceKind::Invocation,
+            )
+        },
+        |manifest| {
+            (
+                manifest.name.clone(),
+                opts.load
+                    .sources
+                    .canonical_path(&base_dir.join(&manifest.name))
+                    .unwrap_or_else(|| {
+                        tungsten_openapi::SourceProvider::identity(&base_dir.join(&manifest.name))
+                    }),
+                Some(Digest::of(manifest.source.text().as_bytes())),
+                SourceKind::Project,
+            )
+        },
+    );
+    let project = Declaration {
+        kind,
+        identity,
+        file,
+        pointer: "/targets/typescript".into(),
+        digest,
+    };
+    let manifest_source = manifest.as_ref().map(|m| m.source);
+    let mut occupied = BTreeSet::from([project.file.clone()]);
+    if let Some(agent) = &agent {
+        occupied.insert(agent.name.clone());
+    }
+    for input in &config.inputs {
+        occupied.insert(input.spec.clone());
+    }
+    for overlay in config
+        .inputs
+        .iter()
+        .flat_map(|input| &input.overlays)
+        .chain(&config.overlays)
+    {
+        occupied.insert(overlay.clone());
+    }
+    let composition =
+        profiles::compose(&mut config, base_dir, project.clone(), &ProfileReads(opts));
+    let mut collision = composition
+        .sources
+        .iter()
+        .any(|profile| !occupied.insert(profile.source.name().into()));
+    if collision {
+        diagnostics.push(profile_name_collision(&project));
+    } else {
+        diagnostics.extend(composition.diagnostics);
+    }
+    let mut compiled = if diagnostics.has_errors() || opts.load.cancellation.is_cancelled() {
+        failed(Some(config), diagnostics, manifest.as_ref())
+    } else {
+        compile_prepared(
+            config,
+            base_dir,
+            manifest,
+            agent,
+            diagnostics,
+            opts,
+            &composition.sources,
+        )
+    };
+    // Reference/overlay loaders can introduce additional display names not
+    // spelled directly in the manifest. Refuse a collision before returning IR.
+    if !collision
+        && composition.sources.iter().any(|profile| {
+            compiled
+                .workspace
+                .sources
+                .files()
+                .iter()
+                .any(|source| source.name == profile.source.name())
+        })
+    {
+        collision = true;
+        let mut diagnostic = profile_name_collision(&project);
+        if let Some(source) = manifest_source
+            && let Some(file) = compiled
+                .workspace
+                .sources
+                .files()
+                .iter()
+                .find(|file| file.name == project.file)
+        {
+            diagnostic.labels[0].span = source.span(file.id, "/profiles");
+        }
+        compiled.diagnostics.push(diagnostic);
+        compiled.ir = None;
+    }
+    for profile in composition.sources.iter().filter(|_| !collision) {
+        let id = compiled
+            .workspace
+            .sources
+            .add(profile.source.name(), profile.source.text());
+        profile.source.attach_spans(id, &mut compiled.diagnostics);
+    }
+    if !collision && !opts.load.cancellation.is_cancelled() {
+        compiled.effective = composition.effective;
+    }
+    compiled.diagnostics.sort();
+    if let Some(ir) = &mut compiled.ir {
+        ir.diagnostics = compiled.diagnostics.0.clone();
+    }
+    compiled
+}
+
+fn profile_name_collision(project: &Declaration) -> Diagnostic {
+    Diagnostic::error("TG0602", "portable profile source name conflicts with another compilation input; rename the profile or input")
+        .at(&project.file, "/profiles", None)
+}
+
+struct ProfileReads<'a>(&'a CompileOptions);
+
+impl ProfileSource for ProfileReads<'_> {
+    fn canonical_root(&self, path: &Path) -> Option<PathBuf> {
+        self.canonical_path(path).filter(|root| root.is_dir())
+    }
+    fn canonical_path(&self, path: &Path) -> Option<PathBuf> {
+        self.0.load.sources.canonical_path(path)
+    }
+    fn read(&self, path: &Path, max_bytes: usize) -> Result<(String, Digest), Diagnostic> {
+        self.0.load.sources.read(
+            path,
+            &path.display().to_string(),
+            max_bytes.min(self.0.load.max_bytes),
+        )
+    }
+    fn is_cancelled(&self) -> bool {
+        self.0.load.cancellation.is_cancelled()
+    }
+}
+
+fn compile_prepared(
     config: TungstenConfig,
     base_dir: &Path,
     manifest: Option<Manifest<'_>>,
     agent: Option<AgentInput>,
     mut diagnostics: Diagnostics,
     opts: &CompileOptions,
+    profiles: &[CapturedProfile],
 ) -> Compiled {
     let resolve = |p: &str| -> PathBuf { base_dir.join(p) };
     if opts.load.cancellation.is_cancelled() {
@@ -417,6 +573,7 @@ fn compile_validated(
     if opts.load.cancellation.is_cancelled() {
         return Compiled {
             config: Some(config),
+            effective: None,
             workspace,
             ir: None,
             diagnostics,
@@ -424,6 +581,9 @@ fn compile_validated(
     }
 
     let mut input_digests = BTreeMap::new();
+    for profile in profiles {
+        input_digests.insert(profile.source.name().into(), profile.digest.clone());
+    }
     if let Some(m) = &manifest {
         input_digests.insert(m.name.clone(), Digest::of(m.source.text().as_bytes()));
     }
@@ -485,6 +645,7 @@ fn compile_validated(
         if opts.load.cancellation.is_cancelled() {
             return Compiled {
                 config: Some(config),
+                effective: None,
                 workspace,
                 ir: None,
                 diagnostics,
@@ -501,6 +662,7 @@ fn compile_validated(
         if opts.load.cancellation.is_cancelled() {
             return Compiled {
                 config: Some(config),
+                effective: None,
                 workspace,
                 ir: None,
                 diagnostics,
@@ -526,6 +688,7 @@ fn compile_validated(
     }
     Compiled {
         config: Some(config),
+        effective: None,
         workspace,
         ir,
         diagnostics,

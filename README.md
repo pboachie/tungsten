@@ -569,7 +569,59 @@ until their option schemas are declared. This does not change generation policy:
 invalid TypeScript scalars still produce TG0711 warnings and use defaults;
 invalid custom dependencies produce errors. Unknown keys remain ignored, and
 defaults that depend on the compiled API remain in the emitter. This is an
-option declaration, not profile loading or stricter manifest validation.
+option declaration; existing project target validation remains compatible.
+
+### Local TypeScript profiles
+
+Select ordered local defaults in `tungsten.yml`:
+
+```yaml
+profiles:
+  - path: profiles/sdk.yml
+    root: profiles
+```
+
+Both selection paths are relative to the project manifest; `root` is an explicit
+existing include directory. A profile outside the project may be deliberately
+selected with relative `../` paths. Absolute, drive-relative and rooted Windows
+paths are refused. Profile v1 is a YAML or JSON mapping:
+
+```yaml
+tungsten_profile: 1
+includes: [base.yml]
+targets:
+  typescript:
+    package: '@example/sdk'
+    version: '1.0.0'
+    runtime: '^0.1.3'
+    dependencies:
+      yaml: '^2'
+```
+
+Includes resolve relative to their declaring profile and remain inside the
+selected root after symlink resolution. Traverse selections/includes left to
+right, depth first, applying parents before their child and each canonical file
+once at its first encounter. Every reused graph path still checks confinement
+and depth. Limits per compilation are 1 MiB per file, 16 MiB of unique captured
+bytes, 64 identities/selections, 256 include edges and depth eight (roots at zero).
+Profile reads use the shared source provider, including unsaved local files in
+existing directories, and capture each identity once for that compilation.
+
+Scalars override individually; dependency maps merge by package name. Explicit
+project fields take precedence. Missing fields and empty dependency maps add
+nothing; profile nulls and unknown fields are errors, with no deletion syntax.
+The `ts` alias is accepted inside profiles, but declaring both aliases is an
+error. Profiles cannot set project identity, inputs, agent/tools, executables,
+output directories or `runtime_path`. Existing project invalid/null target
+values keep their TG0711 warning/fallback or dependency-error behavior.
+
+The compiler driver returns typed declarations and winning/shadowed authored
+origins in memory; emitter defaults still depend on the compiled API. Profile
+source/digest names are portable (`profile[0]/base.yml`), while physical identity
+stays in provenance for confinement. A name collision with another compilation
+input is an error. This result is not a replayable approval
+document. Profile-specific CLI inspection, LSP navigation, protected policy and
+setup presets remain follow-up work.
 
 ### Editor support
 
