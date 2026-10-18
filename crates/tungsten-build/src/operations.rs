@@ -94,6 +94,9 @@ pub(crate) fn build_namespace(
     let ns = config.namespace.as_str();
     let mut skeletons = enumerate(cx, input);
     for sk in &skeletons {
+        if cx.ws.is_cancelled() {
+            break;
+        }
         filter::report_excluded(
             cx,
             &format!("{ns}.{}", sk.local_id),
@@ -111,6 +114,9 @@ pub(crate) fn build_namespace(
     // The envelope of rpc variants is built once and shared.
     let mut envelope: Option<(RefTarget, BuiltOp)> = None;
     for sk in &skeletons {
+        if cx.ws.is_cancelled() {
+            break;
+        }
         let built = match (&sk.rpc, &config.rpc_unflatten) {
             (Some(variant), Some(rpc)) => {
                 let base = match &envelope {
@@ -147,6 +153,9 @@ fn enumerate(cx: &mut Ctx<'_>, input: &NamespaceInput) -> Vec<Skeleton> {
     };
     let mut out = vec![];
     for path in paths.keys() {
+        if cx.ws.is_cancelled() {
+            break;
+        }
         let Some(entry) = PathItem::resolve(cx, &child(&paths_at, path)) else {
             continue;
         };

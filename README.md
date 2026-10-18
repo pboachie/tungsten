@@ -564,7 +564,16 @@ unknown major contract versions before interpreting them.
 
 ### Editor support
 
-`tungsten lsp` is a language server for `tungsten.yml`, `agent.yml` and the overlay files a project lists. It checks the project with the same compiler as `tungsten check` and shows the same `TG` diagnostics on the YAML lines they belong to, including unsaved changes to the two manifests (specs and overlays are re-read when saved). It completes keys, enumerated values and the operation ids, gates and clusters of the compiled project; shows field documentation, operation signatures and diagnostic explanations on hover; jumps from an operation id to its place in the OpenAPI document; and outlines the manifests. The workspace is the directory of `tungsten.yml` (found from the editor's workspace folder, or given with `--config <path>`); one project is served per process.
+`tungsten lsp` is a language server for `tungsten.yml`, `agent.yml` and the overlay files a project lists. It checks the project with the same compiler as `tungsten check` and shows the same `TG` diagnostics on their source lines. Unsaved JSON/YAML manifests, specs, overlays and local references participate in the same source snapshot, including new files in an existing input directory. Closing a buffer restores its disk contents; file watchers pick up saved changes and deletions. File-size limits and local-reference confinement still apply. It completes keys, enumerated values and the operation ids, gates and clusters of the compiled project; shows field documentation, operation signatures and diagnostic explanations on hover; jumps from an operation id to its place in the OpenAPI document; and outlines the manifests. The workspace is the directory of `tungsten.yml` (found from the editor's workspace folder, or given with `--config <path>`); one project is served per process.
+
+Edits retain the existing debounce and one active analysis worker. A newer edit
+cancels obsolete work cooperatively between compiler phases and during reference,
+operation and component traversals; obsolete results do not replace diagnostics
+or the last accepted navigation index. Diagnostics for open files carry their
+document version, and older change notifications are ignored. An in-progress read,
+parse or indivisible compiler pass finishes before the next cancellation check;
+this is not a hard execution deadline. No persistent analysis cache is introduced.
+
 
 Visual Studio Code needs a generic language client extension, for example [Generic LSP Client](https://marketplace.visualstudio.com/items?itemName=llllvvuu.llllvvuu-glspc). In `settings.json`:
 

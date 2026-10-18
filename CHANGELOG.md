@@ -24,6 +24,11 @@ changes.
 - Load bounded, non-executable JSON scenarios with `tungsten mock --scenario`.
   Reuse existing response and fault controls, and read a value-free report of
   total calls, per-operation/status counts and unconsumed responses.
+- Analyze unsaved JSON/YAML specs, overlays and local references through the
+  shared compiler source provider. Keep buffer spans and navigation consistent,
+  and cancel obsolete editor analysis while retaining debounce and stale-result
+  protection.
+
 - Add an offline `capabilities` query and JSON Schema for built-in target
   declarations. Share target aliases, imported-operation policy support and
   consumer prerequisites with configuration and doctor; include Kotlin, F#

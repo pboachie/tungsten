@@ -2,7 +2,7 @@
 //! File-level compilation driver shared by the CLI and the test harness.
 
 use std::collections::BTreeMap;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 use tungsten_agent::{DEFAULT_AGENT_MANIFEST, ParsedAgentManifest};
 use tungsten_config::{ManifestSource, ParsedManifest, TungstenConfig};
@@ -43,42 +43,24 @@ fn on_compile_stack<T: Send>(f: impl FnOnce() -> T + Send) -> T {
     }
 }
 
-/// The override for `path`: an exact key, else a key naming the same file
-/// once `.` and `..` segments are resolved.
-fn override_text<'a>(opts: &'a CompileOptions, path: &Path) -> Option<&'a String> {
-    fn lexical(path: &Path) -> PathBuf {
-        let mut out = PathBuf::new();
-        for c in path.components() {
-            match c {
-                Component::CurDir => {}
-                Component::ParentDir => {
-                    if !out.pop() {
-                        out.push("..");
-                    }
-                }
-                other => out.push(other.as_os_str()),
-            }
-        }
-        out
-    }
-    opts.overrides.get(path).or_else(|| {
-        let want = lexical(path);
-        opts.overrides
-            .iter()
-            .find(|(k, _)| lexical(k) == want)
-            .map(|(_, v)| v)
-    })
-}
-
 #[derive(Debug, Clone, Default)]
 pub struct CompileOptions {
     pub load: LoadOptions,
-    /// Text that replaces the contents of a file on disk, keyed by the path
-    /// the compiler would read: the manifest as given to
-    /// [`compile_project`], and the agent manifest as that path's directory
-    /// joined with its name. Lets an editor check unsaved buffers. Only the
-    /// two manifests are consulted; specs and overlays are read from disk.
+    /// Unsaved local text keyed by path. Manifests, specs, overlays and local
+    /// references share the same source provider and normal loading limits.
+    /// Acquisition pins and reference confinement remain independently enforced.
     pub overrides: BTreeMap<PathBuf, String>,
+}
+
+impl CompileOptions {
+    fn snapshot(&self) -> Self {
+        let mut options = self.clone();
+        options.load.sources = options
+            .load
+            .sources
+            .with_overrides(std::mem::take(&mut options.overrides));
+        options
+    }
 }
 
 /// Result of a compilation. `ir` is `None` when loading or the manifest
@@ -110,17 +92,32 @@ impl Compiled {
 /// ([`tungsten_agent::apply`]). An agent manifest with errors stops the
 /// compilation before the build, like a manifest with errors.
 pub fn compile_project(manifest: &Path, opts: &CompileOptions) -> Compiled {
-    on_compile_stack(|| compile_project_here(manifest, opts))
+    let opts = opts.snapshot();
+    on_compile_stack(|| compile_project_here(manifest, &opts))
 }
 
 fn compile_project_here(manifest: &Path, opts: &CompileOptions) -> Compiled {
+    if opts.load.cancellation.is_cancelled() {
+        return failed(None, Diagnostics::new(), None);
+    }
     let ParsedManifest {
         config,
         mut diagnostics,
         source,
-    } = match override_text(opts, manifest) {
-        Some(text) => tungsten_config::parse_with_source(&manifest.display().to_string(), text),
-        None => tungsten_config::load_with_source(manifest),
+    } = match opts.load.sources.read(
+        manifest,
+        &manifest.display().to_string(),
+        opts.load.max_bytes,
+    ) {
+        Ok((text, _)) => tungsten_config::parse_with_source(&manifest.display().to_string(), &text),
+        Err(error) => {
+            let mut parsed =
+                tungsten_config::parse_with_source(&manifest.display().to_string(), "");
+            parsed.config = None;
+            parsed.diagnostics =
+                Diagnostics(vec![error.at(manifest.display().to_string(), "", None)]);
+            parsed
+        }
     };
     let name = manifest
         .file_name()
@@ -159,7 +156,7 @@ fn agent_manifest(
         }),
         None if implicit => {
             let path = base.join(DEFAULT_AGENT_MANIFEST);
-            (path.is_file() || override_text(opts, &path).is_some()).then(|| AgentInput {
+            (path.is_file() || opts.load.sources.text(&path).is_some()).then(|| AgentInput {
                 name: DEFAULT_AGENT_MANIFEST.to_string(),
                 path,
             })
@@ -180,6 +177,7 @@ struct AgentInput {
 /// manifest is read: the spec's `x-agent-*` extensions and the defaults
 /// apply.
 pub fn compile_spec(spec: &Path, opts: &CompileOptions) -> Compiled {
+    let opts = &opts.snapshot();
     let source = spec.to_string_lossy();
     if tungsten_openapi::acquire::is_remote(&source) {
         // Do not derive names from an unvalidated URL: a query or malformed
@@ -231,7 +229,8 @@ pub fn compile_config(
     manifest: Option<(&str, &[u8])>,
     opts: &CompileOptions,
 ) -> Compiled {
-    on_compile_stack(|| compile_config_here(config, base_dir, manifest, opts))
+    let opts = opts.snapshot();
+    on_compile_stack(|| compile_config_here(config, base_dir, manifest, &opts))
 }
 
 fn compile_config_here(
@@ -341,9 +340,23 @@ fn compile_validated(
     opts: &CompileOptions,
 ) -> Compiled {
     let resolve = |p: &str| -> PathBuf { base_dir.join(p) };
-    let agent = agent.map(|a| match override_text(opts, &a.path) {
-        Some(text) => tungsten_agent::parse_str(&a.name, text),
-        None => tungsten_agent::load_as(&a.path, &a.name),
+    if opts.load.cancellation.is_cancelled() {
+        return failed(Some(config), diagnostics, manifest.as_ref());
+    }
+    let agent = agent.map(|a| {
+        match opts
+            .load
+            .sources
+            .read(&a.path, &a.name, opts.load.max_bytes)
+        {
+            Ok((text, _)) => tungsten_agent::parse_str(&a.name, &text),
+            Err(error) => {
+                let mut parsed = tungsten_agent::parse_str(&a.name, "");
+                parsed.manifest = None;
+                parsed.diagnostics = Diagnostics(vec![error.at(&a.name, "", None)]);
+                parsed
+            }
+        }
     });
     if let Some(a) = &agent {
         diagnostics.extend(a.diagnostics.clone());
@@ -369,6 +382,9 @@ fn compile_validated(
         base_dir.to_path_buf()
     };
     for input in &config.inputs {
+        if opts.load.cancellation.is_cancelled() {
+            return failed(Some(config), diagnostics, manifest.as_ref());
+        }
         if let Some(source) = &input.source_url {
             // A converted artifact must remain tied to the raw bytes from which
             // it was reviewed. Refreshing only the pin would silently retain an
@@ -398,6 +414,14 @@ fn compile_validated(
     }
     let mut workspace = tungsten_openapi::load(&entries, &load);
     diagnostics.extend(std::mem::take(&mut workspace.diagnostics));
+    if opts.load.cancellation.is_cancelled() {
+        return Compiled {
+            config: Some(config),
+            workspace,
+            ir: None,
+            diagnostics,
+        };
+    }
 
     let mut input_digests = BTreeMap::new();
     if let Some(m) = &manifest {
@@ -458,6 +482,14 @@ fn compile_validated(
             manifest_name,
         );
         diagnostics.extend(out.diagnostics);
+        if opts.load.cancellation.is_cancelled() {
+            return Compiled {
+                config: Some(config),
+                workspace,
+                ir: None,
+                diagnostics,
+            };
+        }
         let mut ir = out.ir;
         let (agent_manifest, agent_name) = match &agent {
             Some(a) => (a.manifest.as_ref(), a.name.as_str()),
@@ -466,6 +498,14 @@ fn compile_validated(
         let mut found = tungsten_agent::apply(&mut ir, agent_manifest, agent_name);
         attach_spec_spans(&workspace, &mut found);
         diagnostics.extend(found);
+        if opts.load.cancellation.is_cancelled() {
+            return Compiled {
+                config: Some(config),
+                workspace,
+                ir: None,
+                diagnostics,
+            };
+        }
         if config.types.prune_unreferenced {
             crate::prune::prune_unreferenced(&mut ir, &mut diagnostics);
         }
@@ -478,6 +518,9 @@ fn compile_validated(
         attach_agent_manifest(&mut workspace, a, &mut diagnostics);
     }
     diagnostics.sort();
+    if opts.load.cancellation.is_cancelled() {
+        ir = None;
+    }
     if let Some(ir) = &mut ir {
         ir.diagnostics = diagnostics.0.clone();
     }
