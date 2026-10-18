@@ -8,9 +8,8 @@
 //! all the files in it:
 //!
 //! - diagnostics are the compiler's own, with their `TG` codes, placed on
-//!   the YAML spans the frontend keeps; unsaved buffers of the two
-//!   manifests are what gets checked, while specs and overlays are read
-//!   from disk (so they update on save);
+//!   JSON/YAML spans the frontend keeps; manifests, specs, overlays and local
+//!   references use unsaved buffers over the same bounded disk reader;
 //! - completion offers the keys of each manifest from its published JSON
 //!   Schema, enum values, and from the compiled project the operation ids,
 //!   gates, clusters and security schemes the manifest can refer to;
@@ -24,7 +23,8 @@
 //! diagnostics and an index with one small entry per operation, so memory
 //! does not grow with the size of the specs. Edits are debounced, one
 //! compilation runs at a time, and a result that an edit has overtaken is
-//! discarded instead of published.
+//! cancelled cooperatively and discarded instead of published. The current
+//! read, parse or indivisible pass finishes before its next checkpoint.
 //!
 //! The README of the repository shows how to start it from Visual Studio Code
 //! and Neovim.

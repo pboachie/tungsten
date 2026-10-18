@@ -16,7 +16,7 @@ use lsp_types::{
 use tungsten_build::{CompileOptions, Compiled, compile_project};
 use tungsten_core::{Diagnostic as Tg, Severity, SourceId};
 use tungsten_ir::{Ir, OperationStatus};
-use tungsten_openapi::Workspace;
+use tungsten_openapi::{CancellationToken, Workspace};
 
 use crate::position::LineIndex;
 use crate::uri::{normalize, path_to_uri};
@@ -79,12 +79,20 @@ pub struct Analysis {
 
 /// Compile the project whose manifest is `manifest`, with `overrides` as
 /// the text of unsaved buffers.
-pub fn analyze(manifest: &Path, overrides: BTreeMap<PathBuf, String>) -> Analysis {
-    let opts = CompileOptions {
+pub fn analyze(
+    manifest: &Path,
+    overrides: BTreeMap<PathBuf, String>,
+    cancellation: CancellationToken,
+) -> Option<Analysis> {
+    let mut opts = CompileOptions {
         overrides,
         ..CompileOptions::default()
     };
+    opts.load.cancellation = cancellation.clone();
     let compiled = compile_project(manifest, &opts);
+    if cancellation.is_cancelled() {
+        return None;
+    }
     let base = manifest.parent().map(normalize).unwrap_or_default();
     let manifest_name = manifest
         .file_name()
@@ -111,14 +119,14 @@ pub fn analyze(manifest: &Path, overrides: BTreeMap<PathBuf, String>) -> Analysi
         .workspace
         .documents
         .iter()
-        .map(|d| normalize(&base.join(&d.name)))
+        .filter_map(|d| d.path().map(normalize))
         .collect();
     out.diagnostics = map_diagnostics(&compiled, &base, &manifest_name, &out.manifest);
     out.index = compiled
         .ir
         .as_ref()
         .map(|ir| index(ir, &compiled.workspace, &base));
-    out
+    (!cancellation.is_cancelled()).then_some(out)
 }
 
 fn severity(s: Severity) -> DiagnosticSeverity {
@@ -314,9 +322,9 @@ fn op_info(
         .find(|d| d.name == op.source.file)
         .and_then(|doc| {
             let span = doc.span(&op.source.pointer)?;
-            let path = normalize(&base.join(&doc.name));
-            let uri = path_to_uri(&path)?;
             let file = ws.sources.get(span.source);
+            let path = normalize(&base.join(&file.name));
+            let uri = path_to_uri(&path)?;
             let line_end = file
                 .text
                 .get(span.start as usize..)
