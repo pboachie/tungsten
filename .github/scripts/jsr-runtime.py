@@ -150,7 +150,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("operation", choices=["eligible", "stage", "verify", "preflight", "registry"])
     parser.add_argument("--source", type=Path, default=Path.cwd())
-    parser.add_argument("--directory", type=Path, default=Path("jsr-dist"))
+    parser.add_argument("--directory", type=Path, default=Path("target/jsr-dist"))
     parser.add_argument("--source-sha")
     parser.add_argument("--version")
     args = parser.parse_args()

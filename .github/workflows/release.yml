@@ -994,7 +994,7 @@ jobs:
           PUBLIC_SHA: ${{ github.sha }}
         run: python3 .github/scripts/jsr-runtime.py stage --source-sha "$PUBLIC_SHA"
       - name: Validate the JSR graph, types and publication inventory without uploading
-        working-directory: jsr-dist/package
+        working-directory: target/jsr-dist/package
         run: deno publish --dry-run
       - name: Ensure validation did not change the frozen artifact
         env:
@@ -1003,7 +1003,7 @@ jobs:
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: jsr-runtime-dist
-          path: jsr-dist/
+          path: target/jsr-dist/
           if-no-files-found: error
           retention-days: 14
 
@@ -1030,7 +1030,7 @@ jobs:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: jsr-runtime-dist
-          path: jsr-dist
+          path: target/jsr-dist
       - name: Verify the frozen version, source identity and registry absence before publishing
         env:
           PUBLIC_SHA: ${{ github.sha }}
@@ -1039,7 +1039,7 @@ jobs:
       # Deno obtains the linked repository's short-lived GitHub OIDC token and
       # emits provenance automatically. No token or no-provenance fallback.
       - name: Publish the checked source artifact with GitHub OIDC provenance
-        working-directory: jsr-dist/package
+        working-directory: target/jsr-dist/package
         run: deno publish
       - name: Verify every public registry file against the checked artifact
         env:
