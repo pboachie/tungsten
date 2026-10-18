@@ -21,6 +21,9 @@ changes.
 
 ### Added
 
+- Load bounded, non-executable JSON scenarios with `tungsten mock --scenario`.
+  Reuse existing response and fault controls, and read a value-free report of
+  total calls, per-operation/status counts and unconsumed responses.
 - Add an offline `capabilities` query and JSON Schema for built-in target
   declarations. Share target aliases, imported-operation policy support and
   consumer prerequisites with configuration and doctor; include Kotlin, F#

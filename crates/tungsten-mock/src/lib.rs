@@ -174,7 +174,12 @@
 //!   pairs as two-element arrays, the body as an array of bytes) plus
 //!   `body_text`, the body as a string when it is UTF-8, else `null`.
 //! - `POST /__tungsten/reset`: `204`; clears the recorded calls, the queued
-//!   programs and the stored idempotent responses.
+//!   programs, stored idempotent responses and saved scenario assertions.
+//! - `GET /__tungsten/scenario`: `200` with a count-only [`ScenarioReport`]
+//!   when started with [`MockServer::start_with_scenario`], otherwise `404`.
+//!   HTTP success does not mean assertions passed: inspect `passed` after
+//!   the integration has stopped making requests. Counts include calls whose
+//!   payloads were evicted, but represent observations, not applied effects.
 //! - `POST /__tungsten/program`: queues scripted responses. The body is one
 //!   object or an array of objects `{operation, status, body?, headers?,
 //!   times?, code?, cut_after?}` or `{operation, inject, times?}`: `operation` is a
@@ -213,6 +218,8 @@ mod pattern;
 mod reply;
 mod route;
 mod rules;
+mod scenario;
+pub use scenario::{CountReport, MAX_SCENARIO_BYTES, ScenarioReport};
 mod server;
 mod state;
 mod validate;
@@ -293,6 +300,23 @@ pub struct MockServer {
 }
 
 impl MockServer {
+    /// Validate a bounded JSON scenario and preload its programs before binding
+    /// a fresh server. No commands are executed. Invalid input is an
+    /// `InvalidInput` error with value-free diagnostics; binding errors retain
+    /// their IO kind. Each server has independent scenario and mock state.
+    pub fn start_with_scenario(ir: Ir, opts: MockOptions, bytes: &[u8]) -> std::io::Result<Self> {
+        let model = model::Model::new(ir, &opts);
+        let prepared = scenario::prepare(&model, bytes)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
+        let state = Arc::new(state::State::new(
+            model,
+            opts.max_recorded_calls,
+            opts.max_idempotent_responses,
+        ));
+        state.install_scenario(prepared);
+        Self::bind(state, opts.addr)
+    }
+
     /// Start serving `ir` on a background thread. Returns once the address
     /// is bound; binding errors are returned here.
     pub fn start(ir: Ir, opts: MockOptions) -> std::io::Result<MockServer> {
@@ -301,7 +325,11 @@ impl MockServer {
             opts.max_recorded_calls,
             opts.max_idempotent_responses,
         ));
-        let (addr, running) = server::spawn(opts.addr, state.clone())?;
+        Self::bind(state, opts.addr)
+    }
+
+    fn bind(state: Arc<state::State>, addr: SocketAddr) -> std::io::Result<Self> {
+        let (addr, running) = server::spawn(addr, state.clone())?;
         Ok(MockServer {
             addr,
             state,
@@ -324,8 +352,15 @@ impl MockServer {
         self.state.calls()
     }
 
+    /// Value-free assertion snapshot for a saved scenario, or `None` after
+    /// reset or when started without one. Counts survive recorded-call eviction.
+    pub fn scenario_report(&self) -> Option<ScenarioReport> {
+        self.state.scenario_report()
+    }
+
     /// Clear recorded calls, programmed responses and stored idempotent
-    /// responses.
+    /// responses and saved scenario assertions. Restart with the same scenario
+    /// to rerun it from a fresh state.
     pub fn reset(&self) {
         self.state.reset();
     }
