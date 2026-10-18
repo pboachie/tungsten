@@ -81,6 +81,7 @@ struct Root {
 
 struct Loader<'o> {
     opts: &'o LoadOptions,
+    disk: crate::SourceProvider,
     ws: Workspace,
     /// The directory of every entry document, in entry order.
     roots: Vec<Root>,
@@ -101,6 +102,7 @@ impl<'o> Loader<'o> {
     fn new(opts: &'o LoadOptions) -> Self {
         Self {
             opts,
+            disk: crate::SourceProvider::default(),
             ws: Workspace {
                 cancellation: opts.cancellation.clone(),
                 ..Workspace::default()
@@ -173,9 +175,10 @@ impl<'o> Loader<'o> {
             self.read(&entry.path, name, None)?
         };
         let lexical = absolute(&entry.path);
-        if let (Some(dir), Some(canonical)) =
-            (lexical.parent(), self.opts.sources.canonical_path(&lexical))
-            && let Some(canonical_dir) = canonical.parent()
+        if let (Some(dir), Some(canonical)) = (
+            lexical.parent(),
+            self.sources(&lexical).canonical_path(&lexical),
+        ) && let Some(canonical_dir) = canonical.parent()
             && !self.roots.iter().any(|r| r.canonical == canonical_dir)
         {
             let display = match name.rfind('/') {
@@ -294,7 +297,7 @@ impl<'o> Loader<'o> {
     /// Read a file under the size limit. Problems are reported at `site`
     /// when the file was referenced, otherwise at the file itself.
     fn read(&mut self, path: &Path, name: &str, site: Option<&Site>) -> Option<(String, Digest)> {
-        match self.opts.sources.read(path, name, self.opts.max_bytes) {
+        match self.sources(path).read(path, name, self.opts.max_bytes) {
             Ok(read) => Some(read),
             Err(d) => {
                 match site {
@@ -303,6 +306,20 @@ impl<'o> Loader<'o> {
                 }
                 None
             }
+        }
+    }
+
+    /// Acquired bytes and their complete pinned reference tree are disk-only.
+    /// Check physical identities too, including a new file's existing parent,
+    /// so an alias or unsaved dependency cannot bypass acquisition verification.
+    fn sources(&self, path: &Path) -> &crate::SourceProvider {
+        let cache = self.opts.acquisition_root.join(".tungsten-inputs");
+        if absolute(path).starts_with(absolute(&cache))
+            || crate::SourceProvider::key(path).starts_with(crate::SourceProvider::key(&cache))
+        {
+            &self.disk
+        } else {
+            &self.opts.sources
         }
     }
 
@@ -522,7 +539,7 @@ impl<'o> Loader<'o> {
             self.report(at, outside());
             return None;
         }
-        let Some(canonical) = self.opts.sources.canonical_path(&lexical) else {
+        let Some(canonical) = self.sources(&lexical).canonical_path(&lexical) else {
             self.report(
                 at,
                 Diagnostic::error(

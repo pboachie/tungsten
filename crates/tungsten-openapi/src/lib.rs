@@ -57,6 +57,8 @@ pub enum SpecVersion {
 #[derive(Debug, Clone)]
 pub struct LoadOptions {
     /// Local disk/buffer source snapshot, shared with the compilation driver.
+    /// The selected acquisition root's `.tungsten-inputs` cache is disk-only;
+    /// buffers cannot replace acquired bytes or extend a pinned reference tree.
     pub sources: SourceProvider,
     /// Cancellation is cooperative; discard a cancelled workspace.
     pub cancellation: CancellationToken,

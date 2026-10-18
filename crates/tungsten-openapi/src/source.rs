@@ -53,7 +53,7 @@ impl SourceProvider {
         self.overrides.get(&Self::key(path)).map(String::as_str)
     }
 
-    fn key(path: &Path) -> PathBuf {
+    pub(crate) fn key(path: &Path) -> PathBuf {
         let path = Self::identity(path);
         std::fs::canonicalize(&path)
             .ok()
