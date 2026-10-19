@@ -563,6 +563,8 @@ public sealed record ClientOptions
     public IReadOnlyDictionary<string, Credential>? Auth { get; init; }
     /// <summary>Holds the tokens of authorizationCode schemes. Default: in memory, per client.</summary>
     public ITokenStore? TokenStore { get; init; }
+    /// <summary>Separate code/refresh response cap; null inherits 64 KiB. Must be a positive safe integer.</summary>
+    public long? MaxOAuthTokenResponseBytes { get; init; }
     /// <summary>The per-attempt timeout (default 30 s).</summary>
     public TimeSpan? Timeout { get; init; }
     /// <summary>Overrides the API's per-tier retry defaults, for every tier.</summary>

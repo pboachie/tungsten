@@ -68,6 +68,92 @@ literal IPv4 `127/8`, and IPv6 `::1`. Subdomains, unspecified addresses and
 IPv4-mapped IPv6 addresses require the explicit override. DNS resolution does not
 grant an exception. Anonymous HTTP requests remain supported.
 
+## Browser OAuth authorization
+
+In unreleased 0.2.0, `OAuthFlow.AuthorizationUrl` synchronously returns a
+`Result<AuthorizationAttempt>` with a URL, opaque handle and lifetime. Supply
+`AuthorizationUrlParams.SessionBinding` from the owning authenticated session or
+callback listener, explicitly qualify provider S256 support, and choose
+`IssuerDefense.IssuerResponse(issuer)` or
+`IssuerDefense.DistinctRedirect(qualification)`. The issuer-response strategy
+requires the exact decoded `iss` on every callback, including denial. The
+distinct-redirect strategy requires an application qualification that its redirect
+isolates this issuer; missing `iss` never selects a fallback. Provider/listener
+qualification belongs to the application.
+
+```csharp
+var flow = client.OAuth("user");
+var started = flow.AuthorizationUrl(new AuthorizationUrlParams
+{
+    SessionBinding = sessionBinding,
+    S256Supported = true,
+    IssuerDefense = IssuerDefense.IssuerResponse(qualifiedIssuer),
+});
+if (started is Result<AuthorizationAttempt>.Ok ok)
+{
+    // Open ok.Value.Url; retain its handle with this listener/session.
+    // Capture the complete callback URL from that listener.
+    var completed = await flow.ExchangeCodeAsync(new ExchangeCodeParams
+    {
+        AttemptHandle = ok.Value.AttemptHandle,
+        CallbackUrl = callbackUrl,
+        SessionBinding = sessionBinding,
+    }, cancellationToken);
+    // Handle completed as a runtime Result; never blindly repeat a consumed code.
+}
+```
+
+The runtime generates private state/S256 PKCE and captures immutable client,
+issuer/endpoints, redirect, scopes/resource/audience and account context per
+attempt. Completion validates the full callback and atomically claims one token
+exchange. Invalid unrelated callbacks do not consume valid attempts. Denial or an
+exchange failure consumes its attempt. Begin a new attempt after ambiguous
+exchange outcomes. `Pkce()` is a low-level utility; the managed default creates
+its own pair. Legacy integrations must explicitly select
+`LowLevelAuthorizationUrl` / `LowLevelExchangeCodeAsync` and their separately
+named parameter types; they own state/PKCE, callback and lifecycle protections.
+
+Each client admits at most 32 pending/exchanging attempts, including begin work
+until it settles. Ten-minute expiry uses monotonic elapsed time and an owned
+timer. Captured input strings are limited to 32 KiB UTF-8, scopes/extras to 64
+entries each, and raw/decoded callbacks to 16 KiB and 64 parameters. Duplicate or
+malformed callback fields and protected endpoint/extra fields refuse.
+`CancelAuthorization` and cancellation tokens invalidate owned attempts;
+claimed work keeps its admission until actual transport/store settlement.
+Timers and cancellation registrations are removed on cleanup. Removing references
+does not promise physical zeroization. Do not log URLs, callbacks, handles,
+session bindings, verifiers or tokens.
+
+`Logout` invalidates attempts before local store work; it does not revoke tokens
+remotely. Reads and late token results are fenced by logout generation. A separate
+credential-mutation epoch prevents old refresh success/rejection from replacing
+or deleting a newer login, including when token strings repeat. Concurrent
+completed logins select credentials at successful store commits. Refresh tasks
+retain one of 32 owned slots until settlement even if every waiter cancels;
+custom transports that ignore cancellation can delay settlement. Code/refresh
+responses settling after the configured transport timeout are refused before
+credentials change, including credential-rejecting responses. This monotonic
+response deadline does not force synchronous custom-store work to finish.
+
+Managed begin and default refresh require `IFencedTokenStore`. Its predicates
+must run exactly once against the current token at the final serialized
+mutation, without speculation, retry or a gap before write/removal. Predicates
+advance managed epochs. Return true only for a committed mutation and retain the
+prior token when a write fails; a predicate followed by failed commit can
+conservatively invalidate an old refresh. Runtime token-store calls occur outside
+the attempt-state lock. `MemoryTokenStore` supplies this per-client contract;
+shared multi-account persistence needs separate partitioning and qualification.
+External/direct and low-level writes bypass managed epochs. Coordinate external
+credential replacement through logout and a new session, and avoid concurrent
+mutation of application-owned descriptor/credential collections.
+
+Code/refresh responses default to 64 KiB. Set the separate
+`ClientOptions.MaxOAuthTokenResponseBytes` to a positive safe integer for larger
+providers; null inherits the default. This bounds accepted response bytes, not
+decoder allocations, total invocation memory or client-credentials responses.
+The runtime and delegated F# consumers require .NET 10; changing helper APIs does
+not lower their target or establish installed-package/provider acceptance.
+
 ## Limits
 
 In unreleased 0.2.0, ordinary buffered responses default to **4 MiB (4,194,304 bytes) per response**.

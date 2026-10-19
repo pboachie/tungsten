@@ -11,6 +11,13 @@ changes.
 
 ### Breaking
 
+- C# browser OAuth helpers now create managed S256/state authorization attempts.
+  Qualify issuer defense and bind the owning session/listener, retain the returned
+  handle, and pass the full callback URL to `ExchangeCodeAsync`. F# clients use
+  the same core helper. Legacy primitives require explicitly named low-level
+  methods/types. Managed begin and refresh require `IFencedTokenStore`; separate
+  `MaxOAuthTokenResponseBytes` controls code/refresh bodies (64 KiB by default).
+
 - Rust browser OAuth helpers now require managed S256/state attempts with an
   explicit qualified issuer defense and owning session/listener binding.
   `authorization_url` returns a handle and URL inside Tokio; `exchange_code`

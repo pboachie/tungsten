@@ -63,6 +63,7 @@ public sealed partial class ClientCore
     private readonly Func<long>? nowFn;
     private readonly Func<double>? randomFn;
     private readonly ITokenStore tokenStore;
+    private readonly long maxOAuthTokenResponseBytes;
     private readonly RuntimeIdentity identity = RuntimeIdentity.CSharp;
 
     private readonly ConcurrentDictionary<string, OperationDescriptor> registry = new(StringComparer.Ordinal);
@@ -127,6 +128,7 @@ public sealed partial class ClientCore
         nowFn = options.Now;
         randomFn = options.Random;
         tokenStore = options.TokenStore ?? new MemoryTokenStore();
+        maxOAuthTokenResponseBytes = options.MaxOAuthTokenResponseBytes ?? OAuthAttemptRules.DefaultTokenResponseBytes;
         if (operations is not null)
         {
             Register(operations);

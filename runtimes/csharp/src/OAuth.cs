@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Threading;
@@ -32,16 +32,46 @@ public interface ITokenStore
     void Delete(string scheme);
 }
 
-/// <summary>The default token store: in memory, per client.</summary>
-public sealed class MemoryTokenStore : ITokenStore
+/// <summary>
+/// Managed token-store capability. Invoke each predicate exactly once against the current
+/// token at the final serialized mutation, with no speculation, retry or gap before write/removal.
+/// Predicates change a managed session epoch. Return true only for a committed mutation;
+/// failed writes must retain the prior token. A predicate followed by a failed commit may
+/// conservatively invalidate old refresh work. Direct/low-level writes bypass managed fences.
+/// </summary>
+public interface IFencedTokenStore : ITokenStore
 {
-    private readonly ConcurrentDictionary<string, StoredToken> tokens = new(StringComparer.Ordinal);
+    bool SetIfCurrent(string scheme, StoredToken token, Func<StoredToken?, bool> current);
+    bool DeleteIfCurrent(string scheme, Func<StoredToken?, bool> current);
+}
 
-    public StoredToken? Get(string scheme) => tokens.TryGetValue(scheme, out var t) ? t : null;
+/// <summary>The default token store: in memory, per client.</summary>
+public sealed class MemoryTokenStore : IFencedTokenStore
+{
+    private readonly object gate = new();
+    private readonly Dictionary<string, StoredToken> tokens = new(StringComparer.Ordinal);
 
-    public void Set(string scheme, StoredToken token) => tokens[scheme] = token;
-
-    public void Delete(string scheme) => tokens.TryRemove(scheme, out _);
+    public StoredToken? Get(string scheme) { lock (gate) return tokens.GetValueOrDefault(scheme); }
+    public void Set(string scheme, StoredToken token) { lock (gate) tokens[scheme] = token; }
+    public void Delete(string scheme) { lock (gate) tokens.Remove(scheme); }
+    public bool SetIfCurrent(string scheme, StoredToken token, Func<StoredToken?, bool> current)
+    {
+        lock (gate)
+        {
+            if (!current(tokens.GetValueOrDefault(scheme))) return false;
+            tokens[scheme] = token;
+            return true;
+        }
+    }
+    public bool DeleteIfCurrent(string scheme, Func<StoredToken?, bool> current)
+    {
+        lock (gate)
+        {
+            if (!current(tokens.GetValueOrDefault(scheme))) return false;
+            tokens.Remove(scheme);
+            return true;
+        }
+    }
 }
 
 /// <summary>A PKCE pair (RFC 7636, S256). The verifier is a secret until the exchange.</summary>
@@ -67,8 +97,8 @@ public sealed record Pkce(string Verifier, string Challenge)
 /// <summary>What ExchangeCode and Refresh report: no secrets.</summary>
 public sealed record TokenInfo(string Scheme, long? ExpiresAt, string? Scope, bool Refreshable);
 
-/// <summary>The parameters of <see cref="OAuthFlow.AuthorizationUrl"/>.</summary>
-public sealed record AuthorizationUrlParams
+/// <summary>The parameters of <see cref="OAuthFlow.LowLevelAuthorizationUrl"/>.</summary>
+public sealed record LowLevelAuthorizationUrlParams
 {
     /// <summary>Defaults to the redirect_uri of the scheme's credential.</summary>
     public string? RedirectUri { get; init; }
@@ -78,22 +108,27 @@ public sealed record AuthorizationUrlParams
     public string? CodeChallenge { get; init; }
     /// <summary>Extra query parameters, added in key order; they never override the others.</summary>
     public IReadOnlyDictionary<string, string>? Extra { get; init; }
+    public override string ToString() => "LowLevelAuthorizationUrlParams { .. }";
 }
 
-/// <summary>The parameters of <see cref="OAuthFlow.ExchangeCodeAsync"/>.</summary>
-public sealed record ExchangeCodeParams
+/// <summary>The parameters of <see cref="OAuthFlow.LowLevelExchangeCodeAsync"/>.</summary>
+public sealed record LowLevelExchangeCodeParams
 {
     public string Code { get; init; } = "";
     public string? RedirectUri { get; init; }
     public string? CodeVerifier { get; init; }
+    public override string ToString() => "LowLevelExchangeCodeParams { .. }";
 }
 
-internal sealed record CodeClient(string ClientId, string ClientSecret, string RedirectUri);
+internal sealed record CodeClient(string ClientId, string ClientSecret, string RedirectUri)
+{
+    public override string ToString() => "CodeClient { .. }";
+}
 
 internal sealed record TokenFailure(string Message, bool Rejected);
 
 /// <summary>The OAuth2 helpers of one scheme (authorization code with PKCE), as generated clients expose them. Failures are AUTH_FAILED envelopes.</summary>
-public sealed class OAuthFlow
+public sealed partial class OAuthFlow
 {
     private readonly ClientCore core;
 
@@ -114,11 +149,11 @@ public sealed class OAuthFlow
     private static Result<T> Fail<T>(string operation, string remediation) =>
         new Result<T>.Err(new TungstenError(new Diag(operation, Category.AuthFailed).Remedy(remediation).Build()));
 
-    /// <summary>A fresh pair: pass Challenge to the authorization URL and keep Verifier for the exchange.</summary>
+    /// <summary>A low-level PKCE utility. Managed AuthorizationUrl generates its own private pair.</summary>
     public Pkce Pkce() => Runtime.Pkce.Generate();
 
     /// <summary>The URL to send the user to.</summary>
-    public Result<string> AuthorizationUrl(AuthorizationUrlParams p)
+    public Result<string> LowLevelAuthorizationUrl(LowLevelAuthorizationUrlParams p)
     {
         var operation = Operation("authorizationUrl");
         var (flow, reason) = core.CodeFlow(Scheme);
@@ -139,7 +174,7 @@ public sealed class OAuthFlow
         return new Result<string>.Ok(BuildAuthorizationUrl(flow, client.ClientId, redirect, p)) { Meta = ResponseMeta.Local() };
     }
 
-    internal static string BuildAuthorizationUrl(AuthorizationCodeFlow flow, string clientId, string redirect, AuthorizationUrlParams p)
+    internal static string BuildAuthorizationUrl(AuthorizationCodeFlow flow, string clientId, string redirect, LowLevelAuthorizationUrlParams p)
     {
         var scope = string.Join(" ", p.Scopes ?? flow.Scopes);
         var fields = new List<(string, string)> { ("response_type", "code"), ("client_id", clientId), ("redirect_uri", redirect) };
@@ -174,7 +209,7 @@ public sealed class OAuthFlow
     }
 
     /// <summary>Trades the code from the redirect for tokens, stored for later calls.</summary>
-    public async Task<Result<TokenInfo>> ExchangeCodeAsync(ExchangeCodeParams p, CancellationToken cancellationToken = default)
+    public async Task<Result<TokenInfo>> LowLevelExchangeCodeAsync(LowLevelExchangeCodeParams p, CancellationToken cancellationToken = default)
     {
         var operation = Operation("exchangeCode");
         var (flow, reason) = core.CodeFlow(Scheme);
@@ -235,14 +270,6 @@ public sealed partial class ClientCore
     /// <summary>Tokens expiring within this many milliseconds count as expired.</summary>
     public const long ExpirySkewMs = 30000;
 
-    /// <summary>Serializes the refreshes of one scheme; Generation counts completed ones.</summary>
-    private sealed class RefreshGate
-    {
-        public readonly SemaphoreSlim Lock = new(1, 1);
-        public long Generation;
-    }
-
-    private readonly ConcurrentDictionary<string, RefreshGate> oauthGates = new(StringComparer.Ordinal);
     private readonly SemaphoreSlim clientCredentialsLock = new(1, 1);
     private readonly Dictionary<string, (string Token, long ExpiresAt)> clientCredentialsTokens = new(StringComparer.Ordinal);
 
@@ -252,8 +279,9 @@ public sealed partial class ClientCore
     internal static string FormBody(IEnumerable<(string K, string V)> fields) =>
         string.Join("&", fields.Select(f => Serialize.PercentEncode(f.K) + "=" + Serialize.PercentEncode(f.V)));
 
-    private static bool IsErrorCode(string code) =>
-        code.Length >= 1 && code.Length <= 40 && code.All(c => c == '_' || (c >= 'a' && c <= 'z'));
+    private static bool IsErrorCode(string code) => code is
+        "invalid_request" or "invalid_client" or "invalid_grant" or "unauthorized_client"
+        or "unsupported_grant_type" or "invalid_scope" or "server_error" or "temporarily_unavailable";
 
     internal (AuthorizationCodeFlow? Flow, string Reason) CodeFlow(string scheme)
     {
@@ -292,121 +320,11 @@ public sealed partial class ClientCore
         return (new CodeClient(id, Value("client_secret", "clientSecret"), Value("redirect_uri", "redirectUri")), "");
     }
 
-    internal StoredToken? ReadToken(string scheme)
-    {
-        var t = tokenStore.Get(scheme);
-        return t is null || t.AccessToken.Length == 0 ? null : t;
-    }
-
-    /// <summary>The access token to send: the stored one, refreshed first when it expires within ExpirySkewMs (or force).</summary>
-    internal async Task<(string? Token, string? Problem)> StoredTokenAsync(string scheme, bool force, CancellationToken ct)
-    {
-        var (token, failure) = await StoredTokenInnerAsync(scheme, force, ct).ConfigureAwait(false);
-        return failure is not null ? (null, failure.Message) : (token, null);
-    }
-
-    internal async Task<(string? Token, TokenFailure? Failure)> StoredTokenInnerAsync(string scheme, bool force, CancellationToken ct)
-    {
-        var missing = new TokenFailure($"No OAuth2 token is stored for {scheme}; send the user to OAuthFlow.AuthorizationUrl, then call ExchangeCodeAsync with the code, or put a token in ClientOptions.TokenStore.", false);
-        var stored = ReadToken(scheme);
-        if (stored is null)
-        {
-            return (null, missing);
-        }
-        bool fresh = stored.ExpiresAt is null || stored.ExpiresAt > Now() + ExpirySkewMs;
-        if (fresh && !force)
-        {
-            return (stored.AccessToken, null);
-        }
-        var gate = oauthGates.GetOrAdd(scheme, _ => new RefreshGate());
-        long seen = Interlocked.Read(ref gate.Generation);
-        await gate.Lock.WaitAsync(ct).ConfigureAwait(false);
-        try
-        {
-            if (Interlocked.Read(ref gate.Generation) != seen)
-            {
-                var t = ReadToken(scheme);
-                return t is null ? (null, missing) : (t.AccessToken, null);
-            }
-            var current = ReadToken(scheme);
-            if (current is null)
-            {
-                return (null, missing);
-            }
-            var (token, failure) = await RefreshStoredAsync(scheme, current, force, ct).ConfigureAwait(false);
-            if (failure is not null)
-            {
-                return (null, failure);
-            }
-            Interlocked.Increment(ref gate.Generation);
-            return (token, null);
-        }
-        finally
-        {
-            gate.Lock.Release();
-        }
-    }
-
-    /// <summary>Forces a refresh after a 401 when the stored token has a refresh token.</summary>
-    internal async Task<string?> RefreshAfterRejectionAsync(string scheme, string rejected, CancellationToken ct)
-    {
-        var stored = ReadToken(scheme);
-        if (stored is null)
-        {
-            return null;
-        }
-        if (stored.AccessToken != rejected)
-        {
-            return stored.AccessToken;
-        }
-        if (string.IsNullOrEmpty(stored.RefreshToken))
-        {
-            return null;
-        }
-        var (token, problem) = await StoredTokenAsync(scheme, true, ct).ConfigureAwait(false);
-        return problem is null ? token : null;
-    }
-
-    private async Task<(string? Token, TokenFailure? Failure)> RefreshStoredAsync(string scheme, StoredToken stored, bool force, CancellationToken ct)
-    {
-        var (flow, reason) = CodeFlow(scheme);
-        if (flow is null)
-        {
-            return (null, new TokenFailure($"Cannot refresh the OAuth2 token for {scheme}: {reason}.", false));
-        }
-        var (client, why) = CodeClientOf(scheme);
-        if (client is null)
-        {
-            return (null, new TokenFailure($"Cannot refresh the OAuth2 token for {scheme}: {why}.", false));
-        }
-        if (string.IsNullOrEmpty(stored.RefreshToken))
-        {
-            var what = "has no refresh token";
-            if (!force)
-            {
-                what = "expired and " + what;
-            }
-            return (null, new TokenFailure($"The OAuth2 token for {scheme} {what}; authorize again with OAuthFlow.AuthorizationUrl and ExchangeCodeAsync.", false));
-        }
-        var url = string.IsNullOrEmpty(flow.RefreshUrl) ? flow.TokenUrl ?? "" : flow.RefreshUrl;
-        var fields = new List<(string, string)> { ("grant_type", "refresh_token"), ("refresh_token", stored.RefreshToken) };
-        var (renewed, failure) = await TokenRequestAsync(scheme, url, client, fields, stored.RefreshToken, ct).ConfigureAwait(false);
-        if (failure is not null || renewed is null)
-        {
-            if (failure?.Rejected == true)
-            {
-                tokenStore.Delete(scheme);
-            }
-            return (null, failure);
-        }
-        tokenStore.Set(scheme, renewed);
-        return (renewed.AccessToken, null);
-    }
-
     private TimeSpan TokenAttemptTimeout() => timeout < TimeSpan.FromMilliseconds(1) ? TimeSpan.FromMilliseconds(1) : timeout;
 
     internal async Task<(StoredToken? Token, TokenFailure? Failure)> TokenRequestAsync(string scheme, string url, CodeClient client, List<(string, string)> fields, string? previous, CancellationToken ct)
     {
+        if (!OAuthAttemptRules.ValidTokenLimit(maxOAuthTokenResponseBytes)) return (null, new TokenFailure("The OAuth token response limit must be a positive safe integer.", false));
         if (InsecureHttp(url)) return (null, new TokenFailure(InsecureHttpAuth, false));
         var headers = new List<HeaderEntry>
         {
@@ -423,19 +341,28 @@ public sealed partial class ClientCore
         {
             all.Add(("client_id", client.ClientId));
         }
+        var tokenTimeout = TokenAttemptTimeout();
+        var tokenStarted = Stopwatch.GetTimestamp();
+        TokenFailure? LateTokenResponse() => ct.IsCancellationRequested || Stopwatch.GetElapsedTime(tokenStarted) >= tokenTimeout
+            ? new("The OAuth token response was canceled or exceeded its deadline; authorize again.", false) : null;
         var outcome = await Transport.AttemptAsync(http, new AttemptRequest
         {
             Url = url,
+            MaxResponseBytes = maxOAuthTokenResponseBytes,
             Method = "POST",
             Headers = headers,
             Body = new Payload { Bytes = Util.Utf8.GetBytes(FormBody(all)) },
-            Timeout = TokenAttemptTimeout(),
+            Timeout = tokenTimeout,
         }, ct).ConfigureAwait(false);
+        // A custom handler/body may ignore cancellation and settle late. Keep owning
+        // that work, but never publish its late success or credential-rejecting error.
+        if (LateTokenResponse() is TokenFailure late) return (null, late);
         if (outcome.Kind != OutcomeKind.Response || !outcome.BodyOk)
         {
             return (null, new TokenFailure($"The OAuth2 token endpoint for {scheme} could not be reached; check network access and the token URL.", false));
         }
         var decoded = DecodedBody.Decode(outcome.Body ?? System.Array.Empty<byte>(), outcome.Headers, "application/json");
+        if (LateTokenResponse() is TokenFailure decodedLate) return (null, decodedLate);
         if (outcome.Status < 200 || outcome.Status > 299)
         {
             var named = "";
@@ -465,6 +392,7 @@ public sealed partial class ClientCore
         }
         var tokenType = StringAt("token_type");
         var scope = StringAt("scope");
+        if (LateTokenResponse() is TokenFailure parsedLate) return (null, parsedLate);
         return (new StoredToken
         {
             AccessToken = access,
