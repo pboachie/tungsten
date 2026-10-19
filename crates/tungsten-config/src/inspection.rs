@@ -17,6 +17,8 @@ pub struct ConfigurationInspection {
     pub targets: Vec<InspectedTarget>,
     /// Portable opaque source identities, with captured content digests.
     pub profiles: Vec<InspectedProfile>,
+    /// Host restrictions, never replayable authority or executable approval.
+    pub policy: tungsten_core::policy::PolicyInspection,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
@@ -204,6 +206,7 @@ pub fn inspect(
     (
         ConfigurationInspection {
             configuration_version: 1,
+            policy: tungsten_core::policy::PolicyInspection::absent(),
             targets,
             profiles: effective
                 .profiles

@@ -35,7 +35,11 @@ pub fn inspect_project(manifest: &Path, options: &CompileOptions) -> InspectedPr
     let mut diagnostics = loaded.parsed.diagnostics;
     let configuration = match (loaded.parsed.config.as_ref(), loaded.effective.as_ref()) {
         (Some(config), Some(effective)) => {
-            let (configuration, checked) = tungsten_config::inspection::inspect(config, effective);
+            let (mut configuration, checked) =
+                tungsten_config::inspection::inspect(config, effective);
+            if let Some(policy) = &options.policy {
+                configuration.policy = policy.inspection();
+            }
             diagnostics.extend(checked);
             Some(configuration)
         }
@@ -100,6 +104,11 @@ pub fn inspect_project(manifest: &Path, options: &CompileOptions) -> InspectedPr
     let manifest_schema = TungstenConfig::json_schema();
     let profile_schema = tungsten_config::profiles::json_schema();
     for diagnostic in &mut diagnostics.0 {
+        // Shared policy diagnostics contain only fixed text, opaque ordinals,
+        // known pointers and digests. Do not erase their protected provenance.
+        if matches!(diagnostic.code.as_str(), "TG0809" | "TG0810" | "TG0811") {
+            continue;
+        }
         // Parse/semantic diagnostics can include arbitrary invalid values,
         // unknown keys, filenames or credential-bearing input URLs.
         let (message, help) = match diagnostic.code.as_str() {

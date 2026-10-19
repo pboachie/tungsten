@@ -19,6 +19,7 @@ mod explain_table;
 mod html;
 mod input;
 pub mod output;
+mod policy;
 pub mod render;
 mod stats;
 pub mod targets;
@@ -74,6 +75,10 @@ impl std::fmt::Debug for ServeUntil {
 /// deterministic under test.
 #[derive(Debug, Clone, Default)]
 pub struct CliEnv {
+    /// Explicitly selected immutable context for this invocation. The CLI
+    /// intersects its optional selection; projects/editor overrides cannot
+    /// replace it. Recapture/revalidate selections for each new invocation.
+    pub policy: Option<Arc<tungsten_core::policy::InvocationPolicy>>,
     /// Whether stderr is an interactive terminal.
     pub is_tty: bool,
     /// Whether color is disabled (the `NO_COLOR` convention).
@@ -154,7 +159,11 @@ impl Report {
 /// The server owns the process streams, so the binary calls this before it
 /// locks them for [`run`].
 pub fn lsp(args: &[OsString]) -> Option<i32> {
-    match args::Cli::try_parse_from(args).ok()?.command {
+    let cli = args::Cli::try_parse_from(args).ok()?;
+    if cli.policy.is_some() || cli.policy_digest.is_some() {
+        return None;
+    }
+    match cli.command {
         args::Command::Lsp(lsp) => Some(commands::lsp::serve(&lsp)),
         _ => None,
     }
@@ -227,6 +236,17 @@ fn run_inner(
         Ok(cli) => cli,
         Err(err) => return usage_error(&err, wants_json(&args), color, stdout, stderr),
     };
+    let selected_env = match policy::select(&cli, env) {
+        Ok(selected) => selected,
+        Err(report) => {
+            return if cli.json {
+                emit_json(*report, stdout)
+            } else {
+                emit_human(*report, color, stdout, stderr)
+            };
+        }
+    };
+    let env = &selected_env;
     #[cfg(target_os = "linux")]
     let signals = if _binary_signals
         && matches!(

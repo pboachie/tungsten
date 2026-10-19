@@ -225,16 +225,16 @@ pub const PROTOCOL: u32 = 1;
 pub const EXECUTABLE_PREFIX: &str = "tungsten-emit-";
 
 /// Default `timeout_ms`.
-pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60);
+pub use tungsten_core::policy::DEFAULT_TIMEOUT;
 
 /// Default `max_output_bytes`.
-pub const DEFAULT_MAX_OUTPUT_BYTES: usize = 64 * 1024 * 1024;
+pub use tungsten_core::policy::DEFAULT_MAX_OUTPUT_BYTES;
 
 /// Most files one run may return.
 pub const MAX_FILES: usize = 10_000;
 
 /// Time allowed for `--describe`.
-pub const DESCRIBE_TIMEOUT: Duration = Duration::from_secs(5);
+pub use tungsten_core::policy::DESCRIBE_TIMEOUT;
 
 /// A resolved command: the program and its fixed arguments.
 #[derive(Debug, Clone, PartialEq, Eq)]

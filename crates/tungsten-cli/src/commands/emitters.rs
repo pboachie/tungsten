@@ -11,6 +11,7 @@
 use std::fmt::Write as _;
 
 use tungsten_core::Diagnostic;
+use tungsten_core::policy::{ExternalOperation, InvocationPolicy, RequestedExternalLimits};
 use tungsten_emit::external::{self, Command};
 
 use crate::args::EmittersArgs;
@@ -22,6 +23,10 @@ use crate::{CliEnv, Report, exit, input, targets};
 
 pub(crate) fn run(args: &EmittersArgs, env: &CliEnv, no_external: bool) -> Report {
     let mut report = Report::new(CommandName::Emitters);
+    let policy = env
+        .policy
+        .as_deref()
+        .expect("dispatch selected invocation policy");
     let mut emitters: Vec<EmitterReport> = vec![];
     let search_path = env
         .search_path
@@ -30,9 +35,13 @@ pub(crate) fn run(args: &EmittersArgs, env: &CliEnv, no_external: bool) -> Repor
         .unwrap_or_default();
     let mut cwd = std::path::PathBuf::from(".");
     if let Some(path) = &args.path {
-        let mut compiled = input::compile(path);
+        let mut compiled = input::compile_with_policy(path, env.policy.clone());
         report.diagnostics = compiled.diagnostics.0.clone();
         report.sources = std::mem::take(&mut compiled.workspace.sources);
+        if compiled.has_errors() {
+            report.exit = exit::FAILED;
+            return report;
+        }
         let Some(config) = &compiled.config else {
             report.exit = exit::FAILED;
             return report;
@@ -50,6 +59,15 @@ pub(crate) fn run(args: &EmittersArgs, env: &CliEnv, no_external: bool) -> Repor
                     .push(targets::external_skipped(name, &project.manifest));
                 continue;
             }
+            let requested = RequestedExternalLimits {
+                timeout_ms: target.timeout_ms,
+                max_output_bytes: target.max_output_bytes,
+            };
+            if let Err(diagnostic) = policy.resolve(requested, ExternalOperation::Describe) {
+                report.exit = exit::FAILED;
+                report.diagnostics.push(diagnostic);
+                return report;
+            }
             let located = external::locate(
                 name,
                 target.command.as_deref(),
@@ -64,6 +82,8 @@ pub(crate) fn run(args: &EmittersArgs, env: &CliEnv, no_external: bool) -> Repor
                     .command
                     .unwrap_or_else(|| format!("{}{name}", external::EXECUTABLE_PREFIX)),
                 &cwd,
+                policy,
+                requested,
             ));
         }
     }
@@ -74,6 +94,12 @@ pub(crate) fn run(args: &EmittersArgs, env: &CliEnv, no_external: bool) -> Repor
              PATH emitters were not probed",
         ));
     } else {
+        // No PATH scan or descriptor probe is performed under denial.
+        if let Err(diagnostic) = policy.allow_execution() {
+            report.exit = exit::FAILED;
+            report.diagnostics.push(diagnostic);
+            return report;
+        }
         for found in external::discover(&search_path) {
             if emitters.iter().any(|e| e.name == found.name) {
                 continue;
@@ -90,6 +116,8 @@ pub(crate) fn run(args: &EmittersArgs, env: &CliEnv, no_external: bool) -> Repor
                 Ok(command),
                 display,
                 &cwd,
+                policy,
+                RequestedExternalLimits::default(),
             ));
         }
     }
@@ -106,6 +134,8 @@ fn inspect(
     located: Result<Command, tungsten_core::Diagnostic>,
     command: String,
     cwd: &std::path::Path,
+    policy: &InvocationPolicy,
+    requested: RequestedExternalLimits,
 ) -> EmitterReport {
     let mut entry = EmitterReport {
         name: name.to_string(),
@@ -117,7 +147,7 @@ fn inspect(
         has_options_schema: false,
         message: None,
     };
-    let described = located.and_then(|c| external::describe(name, &c, cwd));
+    let described = located.and_then(|c| external::describe(name, &c, cwd, policy, requested));
     match described {
         Ok(d) => {
             entry.protocol = Some(d.protocol);

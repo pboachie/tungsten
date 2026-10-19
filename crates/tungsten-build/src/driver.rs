@@ -49,6 +49,10 @@ fn on_compile_stack<T: Send>(f: impl FnOnce() -> T + Send) -> T {
 #[derive(Debug, Clone, Default)]
 pub struct CompileOptions {
     pub load: LoadOptions,
+    /// Host-selected context for this invocation, outside editable sources.
+    /// Compiled and prepared results never retain this authority. A caller must
+    /// explicitly select/revalidate a context for each later execution.
+    pub policy: Option<std::sync::Arc<tungsten_core::policy::InvocationPolicy>>,
     /// Unsaved local text keyed by path. Manifests, specs, overlays and local
     /// references share the same source provider and normal loading limits.
     /// Acquisition pins and reference confinement remain independently enforced.
@@ -172,6 +176,9 @@ pub fn load_project_configuration(
             &opts,
         );
         parsed.diagnostics.extend(composition.diagnostics);
+        if !parsed.diagnostics.has_errors() {
+            validate_external_constraints(&config, &opts, &mut parsed.diagnostics);
+        }
         profile_sources = composition.sources;
         if !parsed.diagnostics.has_errors() && !opts.load.cancellation.is_cancelled() {
             parsed.config = Some(config);
@@ -402,6 +409,16 @@ fn attach_spec_spans(workspace: &Workspace, diagnostics: &mut Diagnostics) {
     }
 }
 
+fn validate_external_constraints(
+    config: &TungstenConfig,
+    opts: &CompileOptions,
+    diagnostics: &mut Diagnostics,
+) {
+    if let Some(policy) = &opts.policy {
+        diagnostics.extend(tungsten_config::execution_policy::validate(config, policy));
+    }
+}
+
 /// Compile a configuration that already passed validation.
 fn compile_validated(
     mut config: TungstenConfig,
@@ -420,6 +437,9 @@ fn compile_validated(
         opts,
     );
     diagnostics.extend(composition.diagnostics);
+    if !diagnostics.has_errors() {
+        validate_external_constraints(&config, opts, &mut diagnostics);
+    }
     let mut compiled = if diagnostics.has_errors() || opts.load.cancellation.is_cancelled() {
         failed(Some(config), diagnostics, manifest.as_ref())
     } else {

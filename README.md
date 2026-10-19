@@ -441,6 +441,73 @@ write an external emitter.
 
 An `external:` target in `tungsten.yml` names a command that tungsten starts as a process, unsandboxed and with your privileges. It runs on every command that produces output in memory, not only on a writing `generate`: `generate --dry-run` and `--check`, `check --ci`, `diff` and `report` run it too (plain `check` and `ir dump` do not). A CI job that runs `tungsten check --ci` on pull requests therefore executes whatever the pull request puts in `tungsten.yml`. Pass `--no-external` or set `TUNGSTEN_NO_EXTERNAL=1` to skip external targets (reported as TG0807) when the manifest is not trusted.
 
+Hosts can explicitly select stricter external-emitter constraints with both
+`--policy PATH` and `--policy-digest blake3:<64 lowercase hex digits>`. First review
+a local JSON document, for example:
+
+```json
+{"tungsten_policy":1,"external":{"deny":true,"timeout_ms":10000,"max_output_bytes":1048576}}
+```
+
+Run `tungsten policy digest PATH` separately to validate and hash those exact
+bytes; it prints the core BLAKE3 digest and writes no files. Execution never
+creates or updates a pin. A relative policy path resolves against invocation cwd.
+There is no automatic discovery, environment selection, include, interpolation,
+URL fetch or replay from exported configuration. Selected symlink/reparse entries,
+nonregular files and unsupported local namespaces are refused. Capture reads one
+regular handle once, with a 64 KiB byte limit and nesting limit eight; strict JSON
+rejects duplicate/unknown members, null, trailing data and empty constraints.
+`deny` is a boolean; timeout is 1..=3,600,000 ms and output is 1..=2^40 bytes,
+subject to platform representation. Missing constraints add no restriction.
+
+| Command | Supplied execution policy |
+| --- | --- |
+| `generate` (write, check, dry-run), `check` (including CI), `report`, `diff`, `emitters` | Capture and enforce before external run/descriptor probes |
+| `config` | Capture and inspect, without acquiring API inputs or running tools |
+| `policy digest` | Reject execution-policy flags; validate/hash only its named file |
+| `doctor`, `init`/wizard, `scenario`, `lsp`, `mock`, `ir`, `overlay`, `explain`, `capabilities`, `schema`, any unlisted command | Reject supplied policy before reads or command effects |
+| `--help`, `--version` | Parser-owned; no policy read |
+
+Embedding hosts select immutable `CapturedPolicy` documents with expected digests,
+then a fresh `InvocationPolicy` for each invocation. `CliEnv.policy` intersects
+the CLI selection instead of replacing it; `CompileOptions.policy` stays outside
+editor overrides. At most 16 submitted documents and 1 MiB of captured bytes are
+accepted, counting duplicates. Denials combine by OR and ceilings by minimum;
+`false` or a weaker later document cannot undo a restriction. Config inspection
+reports opaque `policy[N]` sources, exact digests, known pointers and all contributing
+constraints, including ties, without physical paths or replayable authority.
+Absent policy retains existing behavior and is reported as `absent`; a permissive
+selection is never approval. Prepared IR does not retain a fallback context.
+Long-lived hosts must explicitly recapture/revalidate pins for new invocations.
+
+Library callers must migrate `external::run` and `external::describe` to supply
+`&InvocationPolicy` and raw `RequestedExternalLimits`; a precomputed `Limits`
+cannot substitute for context. Select `InvocationPolicy::absent()` explicitly
+only when legacy behavior is intended. Keep missing/default requested values as
+`None`, rather than converting them to explicit defaults that could exceed a
+protected ceiling. Exhaustive `CliEnv`/`CompileOptions` literals also need their
+new optional `policy` field (or `..Default::default()`).
+
+Explicit project timeout/output values above a protected ceiling fail (TG0810)
+before input acquisition or external descriptor negotiation. Missing/null project
+limits use existing defaults, then clamp to the ceiling. Descriptor probes use
+their own 5 s/1 MiB defaults, also clamped. Generation requests advertise the
+effective output cap. Denied execution is TG0811 and fails the requested operation;
+`--no-external` remains an independent unconditional TG0807 skip. Invalid captures
+or mismatched pins are TG0809. `tungsten schema execution-policy` publishes the
+strict document shape.
+
+These are per-external-operation limits, not whole-command time or heap limits.
+The exact pinned capture is authoritative for that invocation; canonical paths
+are local provenance, not replacement-safe executable identity. Restrictions do
+not verify parent symlinks/junctions, mounts or mapped-volume locality; a selected
+regular file can reside on network-backed storage, and OS file operations are not
+hard real-time bounded. They do
+not approve executables, minimize inherited environment, revoke running work,
+protect acquisition Git/providers, doctor tools, setup/package managers or
+scenario subprocesses, or isolate filesystem/network access. Policies do not
+establish a sandbox.
+
 External emission and `--describe` own a Unix process group or Windows Job Object.
 Leader exit, timeout and output overflow trigger group/job termination and leader
 reaping. `timeout_ms` includes process launch, pipe work and cleanup; one quarter,
@@ -752,8 +819,9 @@ The compiler driver returns typed declarations and winning/shadowed authored
 origins in memory; emitter defaults still depend on the compiled API. Profile
 source/digest names are portable (`profile[0]/base.yml`), while physical identity
 stays in provenance for confinement. A name collision with another compilation
-input is an error. This result is not a replayable approval document. LSP
-navigation, protected policy and setup presets remain follow-up work.
+input is an error. This result is not a replayable approval document. Dedicated
+profile navigation and setup presets remain follow-up work. Hosts can select the
+external-emitter restrictions described above; executable approval remains separate.
 
 Inspect the supported effective configuration without compiling API inputs:
 

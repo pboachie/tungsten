@@ -23,12 +23,13 @@ mod ir;
 pub(crate) mod lsp;
 pub(crate) mod mock;
 pub(crate) mod overlay;
+mod policy;
 pub(crate) mod report;
 pub(crate) mod scenario;
 mod schema;
 mod wizard;
 
-use crate::args::{Cli, Command, IrCommand, OverlayCommand};
+use crate::args::{Cli, Command, IrCommand, OverlayCommand, PolicyCommand};
 use crate::{CliEnv, Report};
 
 pub(crate) fn dispatch(
@@ -81,7 +82,10 @@ fn dispatch_with_inputs(
         Command::Init(args) => wizard::run(args, cli.json, env),
         Command::Doctor(args) => doctor::run(args, env),
         Command::Capabilities(args) => capabilities::run(args),
-        Command::Config(args) => config::run(args),
+        Command::Config(args) => config::run(args, env),
+        Command::Policy {
+            command: PolicyCommand::Digest(args),
+        } => policy::digest(args),
         Command::Emitters(args) => emitters::run(args, env, cli.no_external),
         Command::Generate(args) => generate::run(args, env, cli.no_external),
         Command::Mock(args) => mock::start(args),

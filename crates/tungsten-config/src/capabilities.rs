@@ -214,6 +214,38 @@ pub fn target(name: &str) -> Option<&'static TargetCapability> {
 pub struct CapabilityCatalog {
     pub capability_version: u32,
     pub targets: Vec<TargetCapability>,
+    pub execution_policy: ExecutionPolicyCapability,
+}
+
+/// Source contract only; this is neither a policy selection nor approval.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ExecutionPolicyCapability {
+    pub policy_version: u32,
+    pub document_schema: String,
+    pub enforcing_commands: Vec<String>,
+    pub inspection_commands: Vec<String>,
+    pub digest_command: String,
+    pub unlisted_commands: String,
+    pub max_document_bytes: usize,
+    pub max_documents: usize,
+    pub max_capture_bytes: usize,
+}
+
+pub fn execution_policy() -> ExecutionPolicyCapability {
+    ExecutionPolicyCapability {
+        policy_version: 1,
+        document_schema: "execution-policy".into(),
+        enforcing_commands: ["generate", "check", "report", "diff", "emitters"]
+            .map(String::from)
+            .to_vec(),
+        inspection_commands: vec!["config".into()],
+        digest_command: "policy digest".into(),
+        unlisted_commands: "reject supplied execution policy before effects".into(),
+        max_document_bytes: tungsten_core::policy::MAX_DOCUMENT_BYTES,
+        max_documents: tungsten_core::policy::MAX_DOCUMENTS,
+        max_capture_bytes: tungsten_core::policy::MAX_CAPTURE_BYTES,
+    }
 }
 
 /// The independent query schema is also embedded in the CLI output schema.

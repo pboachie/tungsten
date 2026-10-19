@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use tungsten_build::Compiled;
+use tungsten_core::policy::{ExternalOperation, InvocationPolicy, RequestedExternalLimits};
 use tungsten_core::{Diagnostic, Diagnostics, Severity};
 use tungsten_emit::external;
 use tungsten_emit::{
@@ -37,6 +38,7 @@ pub(crate) enum Mode {
 /// Where a project's targets live: the manifest's directory and the name
 /// diagnostics use for the manifest.
 pub(crate) struct Project {
+    pub policy: Arc<InvocationPolicy>,
     pub base_dir: PathBuf,
     pub manifest: String,
     /// Where external emitters are looked up: the environment's search
@@ -81,6 +83,12 @@ impl Project {
                 .unwrap_or_else(|| tungsten_build::DEFAULT_MANIFEST_NAME.to_string()),
         };
         Project {
+            // Central dispatch selects even the explicitly absent context.
+            // PreparedGeneration never retains this per-invocation authority.
+            policy: env
+                .policy
+                .clone()
+                .expect("dispatch selected invocation policy"),
             base_dir: if tungsten_openapi::acquire::is_remote(&path.to_string_lossy()) {
                 PathBuf::from(".")
             } else {
@@ -231,12 +239,23 @@ fn emit_external(
     external: &tungsten_config::ExternalTarget,
 ) -> Emitted {
     let name = cfg.name.clone();
-    let mut limits = external::Limits::default();
-    if let Some(ms) = external.timeout_ms {
-        limits.timeout = std::time::Duration::from_millis(ms);
-    }
-    if let Some(bytes) = external.max_output_bytes {
-        limits.max_output_bytes = usize::try_from(bytes).unwrap_or(usize::MAX);
+    let requested = RequestedExternalLimits {
+        timeout_ms: external.timeout_ms,
+        max_output_bytes: external.max_output_bytes,
+    };
+    // Check before command lookup or option/request serialization as well as at
+    // the mandatory library gate. No project value can replace the host context.
+    if let Err(diagnostic) = project.policy.resolve(requested, ExternalOperation::Run) {
+        return Emitted {
+            cfg,
+            // None denotes an unsupported/skipped target to the shared writer.
+            // Preserve errors, failed status and strict destination withholding
+            // exactly as for every other external-emitter failure.
+            files: Some(FileSet::new()),
+            diagnostics: Diagnostics(vec![diagnostic]),
+            tools: BTreeMap::new(),
+            external_skipped: false,
+        };
     }
     let options: serde_json::Map<String, serde_json::Value> = cfg
         .options
@@ -256,7 +275,13 @@ fn emit_external(
         &project.search_path,
     ) {
         Ok(command) if has_import_policy(ir) => {
-            match external::describe(&name, &command, &project.working_dir()) {
+            match external::describe(
+                &name,
+                &command,
+                &project.working_dir(),
+                &project.policy,
+                requested,
+            ) {
                 Ok(d) if d.import_policy == Some(true) => {
                     out = external::run(
                         &name,
@@ -264,7 +289,8 @@ fn emit_external(
                         serde_json::Value::Object(options),
                         ir,
                         &project.working_dir(),
-                        limits,
+                        &project.policy,
+                        requested,
                     );
                 }
                 Ok(_) => out
@@ -280,7 +306,8 @@ fn emit_external(
                 serde_json::Value::Object(options),
                 ir,
                 &project.working_dir(),
-                limits,
+                &project.policy,
+                requested,
             );
         }
         Err(d) => out.diagnostics.push(d),
@@ -553,7 +580,7 @@ pub(crate) fn exit_code(diagnostics: &[Diagnostic], outcome: &Outcome) -> i32 {
 }
 
 pub(crate) fn run(args: &GenerateArgs, env: &CliEnv, no_external: bool) -> Report {
-    let mut compiled = input::compile(&args.input.path);
+    let mut compiled = input::compile_with_policy(&args.input.path, env.policy.clone());
     let mut report = Report::new(CommandName::Generate);
     report.diagnostics = compiled.diagnostics.0.clone();
     report.sources = std::mem::take(&mut compiled.workspace.sources);

@@ -11,6 +11,13 @@ changes.
 
 ### Breaking
 
+- Rust compiler-library embedders now pass an invocation policy and raw optional
+  external limits to `external::run` and `external::describe`. Select a context
+  for each invocation, using `InvocationPolicy::absent()` only for deliberate
+  legacy behavior. Preserve missing limits as `None` so protected ceilings can
+  clamp defaults. Exhaustive `CliEnv` and `CompileOptions` literals must include
+  their new policy fields.
+
 - Java browser OAuth helpers now create managed S256/state authorization attempts.
   Qualify issuer defense, bind the owning session/listener and pass the returned
   handle plus full callback URL to code exchange. Kotlin delegates to the same
@@ -99,6 +106,10 @@ changes.
   no longer permits an implicit fallback.
 
 ### Added
+
+- Add explicitly pinned host policies for external emitters, with strict bounded
+  capture, intersected deny/resource ceilings, pure policy digests and redacted
+  inspection. Unsupported commands reject supplied policy before effects.
 
 - Inspect supported effective configuration with `tungsten config`, including
   typed defaults/fallback policy and winning/shadowed authored origins. Plain

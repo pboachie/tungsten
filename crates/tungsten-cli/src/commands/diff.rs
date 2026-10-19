@@ -45,7 +45,7 @@ pub(crate) struct DiffOptions {
 }
 
 pub(crate) fn run(args: &DiffArgs, env: &CliEnv, no_external: bool) -> Report {
-    let mut compiled = input::compile(&args.input.path);
+    let mut compiled = input::compile_with_policy(&args.input.path, env.policy.clone());
     let mut report = Report::new(CommandName::Diff);
     report.diagnostics = compiled.diagnostics.0.clone();
     report.sources = std::mem::take(&mut compiled.workspace.sources);
