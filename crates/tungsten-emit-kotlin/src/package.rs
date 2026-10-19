@@ -119,13 +119,29 @@ impl Ctx<'_> {
             "val client = {client}(\n    ClientOptions.builder()\n"
         ));
         if let Some(scheme) = self.ir.auth.first() {
-            s.push_str(&format!(
-                "        .auth(\"{}\", AuthCredential.secret(System.getenv(\"API_TOKEN\")))\n",
-                scheme.name()
-            ));
+            if scheme.authorization_code().is_some() {
+                s.push_str(&format!(
+                    "        .auth({}, AuthCredential.parts(mapOf(\n\
+                     \x20               \"flow\" to \"authorizationCode\",\n\
+                     \x20               \"client_id\" to requireNotNull(System.getenv(\"OAUTH_CLIENT_ID\")),\n\
+                     \x20               \"redirect_uri\" to requireNotNull(System.getenv(\"OAUTH_REDIRECT_URI\")),\n\
+                     \x20       )))\n",
+                    lit(scheme.name())
+                ));
+            } else {
+                s.push_str(&format!(
+                    "        .auth({}, AuthCredential.secret(System.getenv(\"API_TOKEN\")))\n",
+                    lit(scheme.name())
+                ));
+            }
         }
         s.push_str("        .build(),\n)\n");
-        if let Some((accessor, member)) = self.first_call() {
+        let browser_auth = self
+            .ir
+            .auth
+            .first()
+            .is_some_and(|scheme| scheme.authorization_code().is_some());
+        if let Some((accessor, member)) = self.first_call().filter(|_| !browser_auth) {
             s.push_str(&format!("client.{accessor}.{member}()\n"));
             s.push_str("    .onError { System.err.println(it.toJson()) } // the error envelope\n");
             s.push_str(
@@ -133,6 +149,33 @@ impl Ctx<'_> {
             );
         }
         s.push_str("```\n\n");
+        if browser_auth {
+            s.push_str("Set `OAUTH_CLIENT_ID` and `OAUTH_REDIRECT_URI` to your registered application's client ID and exact redirect URI before constructing the client. Public clients omit `client_secret`; confidential clients supply it through application-owned secure configuration. Complete the managed authorization below before calling authenticated operations.\n\n");
+        }
+        if let Some(scheme) = self
+            .ir
+            .auth
+            .iter()
+            .find(|s| s.authorization_code().is_some())
+        {
+            s.push_str(&format!(
+                "## Managed OAuth authorization\n\n\
+                 Configure `{}` with `AuthCredential.parts` containing `flow: \"authorizationCode\"`, `client_id` and `redirect_uri`. Qualify the provider's S256 support and issuer response before enabling them. Supply an unpredictable owning listener/session binding, the qualified issuer URL, and the full callback received by that listener.\n\n\
+                 ```kotlin\n\
+                 val flow = client.oauth({})\n\
+                 val started = flow.authorizationUrl(OAuthFlow.AuthorizationParams.builder()\n\
+                 \x20       .sessionBinding(sessionBinding).s256Supported(true)\n\
+                 \x20       .issuerDefense(OAuthFlow.IssuerDefense.issuerResponse(issuer))\n\
+                 \x20       .build()).getOrThrow()\n\
+                 // Open started.url() in the browser; retain its handle with this listener.\n\
+                 val completed = flow.exchangeCode(OAuthFlow.ExchangeParams(\n\
+                 \x20       started.attemptHandle(), callbackUrl, sessionBinding))\n\
+                 ```\n\n\
+                 Check the exchange result before authenticated calls. Accepted callbacks are consumed once; invalid, canceled, expired or logged-out attempts cannot exchange again. Use `cancelAuthorization(handle, sessionBinding)` or `logout()` for local cleanup. `TokenStore.Memory` is the per-client default; custom managed stores require the atomic `TokenStore.Fenced` contract. Shared persistent stores and real providers/listeners need separate qualification. Handles, callbacks, bindings and tokens must stay out of logs.\n\n",
+                scheme.name(),
+                lit(scheme.name())
+            ));
+        }
         s.push_str("Every call returns the runtime's `Result`: `Result.Ok` with the typed value and the response metadata, or `Result.Err` with the error envelope (`Diagnostic`: category, remediation, retryable, ...). Nothing throws for API or transport failures; `getOrThrow()`, `fold` and `onError` are the Kotlin layer's extensions.\n\n");
         s.push_str("- Request classes are data classes with named, defaulted parameters: members that are null on the wire are `Patch<T>` (`Patch.Unset`, `Patch.Null`, `Patch.of(value)`), every other member is `T?`.\n");
         s.push_str("- Destructive and irreversible operations need `CallOptions.builder().confirm(...)`: a token from the operation's `preview...` function, or `Confirm.YES` for destructive ones.\n");
