@@ -481,9 +481,16 @@ func (f *OAuthFlow) ExchangeCode(ctx context.Context, in ExchangeCodeParams) (To
 		return refuse()
 	}
 	callerDone := ctx.Done()
-	deadline := time.Now().Add(c.tokenAttemptTimeout())
-	if caller, ok := ctx.Deadline(); ok && caller.Before(deadline) {
-		deadline = caller
+	started := time.Now()
+	deadline := started.Add(c.tokenAttemptTimeout())
+	if caller, ok := ctx.Deadline(); ok {
+		// Parsed/rounded caller Times can lack monotonic data. Interpret that
+		// bound once against the captured start, preserving our earlier budget
+		// and never rebasing it after a context callback or other work.
+		ownedCaller := started.Add(caller.Sub(started))
+		if ownedCaller.Before(deadline) {
+			deadline = ownedCaller
+		}
 	}
 	// Cancellation is bridged outside oauth.mu; the owned context has no custom
 	// parent cancellation callbacks to execute while a store predicate holds it.
