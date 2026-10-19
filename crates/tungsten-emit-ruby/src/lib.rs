@@ -75,13 +75,41 @@ impl Emitter for RubyEmitter {
         }
         diags
     }
+
+    fn uses_sdk_plan(&self) -> bool {
+        true
+    }
+
+    fn supports_prepared(&self, ir: &Ir, plan: &SdkPlan<'_>) -> Diagnostics {
+        notes_prepared(ir, plan)
+    }
+
+    fn emit_prepared(
+        &self,
+        ir: &Ir,
+        plan: &SdkPlan<'_>,
+        cfg: &TargetConfig,
+        out: &mut FileSet,
+    ) -> Diagnostics {
+        let (opts, mut diags) = Options::resolve(ir, cfg);
+        for (path, text) in generate_prepared(ir, plan, &opts) {
+            if let Err(e) = out.add(path, text) {
+                diags.push(Diagnostic::error("TG0701", format!("ruby target: {e}")));
+            }
+        }
+        diags
+    }
 }
 
 /// Every file of the gem: (path relative to the target directory,
 /// contents), in a deterministic order.
 pub fn generate(ir: &Ir, opts: &Options) -> Vec<(String, String)> {
     let (plan, _) = SdkPlan::new(ir);
-    let g = context::Gen::new(&plan, opts);
+    generate_prepared(ir, &plan, opts)
+}
+
+fn generate_prepared(_ir: &Ir, plan: &SdkPlan<'_>, opts: &Options) -> Vec<(String, String)> {
+    let g = context::Gen::new(plan, opts);
     let mut files = package::files(&g);
     files.extend(models::files(&g));
     files.extend(sdk::files(&g));
@@ -91,6 +119,10 @@ pub fn generate(ir: &Ir, opts: &Options) -> Vec<(String, String)> {
 /// TG1061 to TG1065 for an IR (see the crate documentation).
 fn notes(ir: &Ir) -> Diagnostics {
     let (plan, _) = SdkPlan::new(ir);
+    notes_prepared(ir, &plan)
+}
+
+fn notes_prepared(ir: &Ir, plan: &SdkPlan<'_>) -> Diagnostics {
     let mut diags = Diagnostics::new();
     for t in plan.types.values() {
         match &t.kind {

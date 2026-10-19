@@ -268,6 +268,14 @@ values as `JsonNode`, OpenID Connect as a bearer token, no CLI or MCP).
   files, including invalid profiles, while preserving portable compiler and
   configuration-inspection source names.
 
+- Reuse immutable SDK structure across support checks and emission for Java,
+  Kotlin, C#, F#, Dart and Ruby. Generation stages one target's bytes at a time
+  with bounded output metadata before applying files, preserving strict
+  diagnostic withholding and custom-file ownership. Reports discard target
+  bytes after collecting their results. Application errors and cooperative
+  cancellation describe completed file writes/removals; output remains
+  nontransactional across files and directories.
+
 - Runtime performance. Successful responses are decoded once instead of
   several times: the Go runtime parses the body in one pass and unmarshals the
   original bytes into the typed result, and generated Rust SDKs call the new

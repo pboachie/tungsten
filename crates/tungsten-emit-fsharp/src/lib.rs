@@ -167,6 +167,30 @@ impl Emitter for FSharpEmitter {
         }
         diags
     }
+
+    fn uses_sdk_plan(&self) -> bool {
+        true
+    }
+
+    fn supports_prepared(&self, ir: &Ir, plan: &SdkPlan<'_>) -> Diagnostics {
+        notes(ir, plan)
+    }
+
+    fn emit_prepared(
+        &self,
+        ir: &Ir,
+        plan: &SdkPlan<'_>,
+        cfg: &TargetConfig,
+        out: &mut FileSet,
+    ) -> Diagnostics {
+        let (opts, mut diags) = Options::resolve(ir, cfg);
+        for (path, text) in generate_prepared(ir, plan, &opts) {
+            if let Err(e) = out.add(path, text) {
+                diags.push(Diagnostic::error("TG0701", format!("fsharp target: {e}")));
+            }
+        }
+        diags
+    }
 }
 
 /// What every part of the generator reads: the IR, its plan and F# names,
@@ -410,8 +434,12 @@ fn descriptor_document(plan: &SdkPlan<'_>, names: &NameMap, opts: &Options) -> S
 /// Every file of the SDK (its notes come from `supports`).
 pub fn generate(ir: &Ir, opts: &Options) -> Vec<(String, String)> {
     let (plan, _) = SdkPlan::new(ir);
-    let names = Namer::new(&plan).names(Target::CSharp, &namer_options());
-    let ctx = context(ir, &plan, &names, opts);
+    generate_prepared(ir, &plan, opts)
+}
+
+fn generate_prepared(ir: &Ir, plan: &SdkPlan<'_>, opts: &Options) -> Vec<(String, String)> {
+    let names = Namer::new(plan).names(Target::CSharp, &namer_options());
+    let ctx = context(ir, plan, &names, opts);
     // The F# sources of the SDK, one part per generator module, in any
     // order: [`compile_order`] places them.
     let parts: Vec<Vec<(String, String)>> =
@@ -424,7 +452,7 @@ pub fn generate(ir: &Ir, opts: &Options) -> Vec<(String, String)> {
     files.push(("README.md".into(), ctx.readme()));
     files.push((
         "tungsten-descriptors.json".into(),
-        descriptor_document(&plan, &names, opts),
+        descriptor_document(plan, &names, opts),
     ));
     files.push(("custom/README.md".into(), ctx.custom_readme()));
     files.sort();
