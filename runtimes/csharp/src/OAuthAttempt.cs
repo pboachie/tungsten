@@ -139,6 +139,7 @@ internal static class OAuthAttemptRules
     }
     internal static void Endpoint(string value, bool redirect = false)
     {
+        Require(value.Length <= MaxCaptureBytes && Utf8.GetByteCount(value) <= MaxCaptureBytes);
         Require(Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.UserInfo.Length == 0 && !value.Contains('#'));
         int query = value.IndexOf('?');
         if (redirect) Require(query < 0);
