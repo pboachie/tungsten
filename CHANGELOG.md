@@ -394,6 +394,10 @@ values as `JsonNode`, OpenID Connect as a bearer token, no CLI or MCP).
 
 ### Fixed
 
+- TypeScript, Python and Rust authorization-code and refresh diagnostics include
+  only recognized OAuth token error labels. Arbitrary provider error strings
+  are omitted even when they contain only lowercase letters and underscores.
+
 - Windows Git input acquisition uses an exclusively created local temporary
   repository, avoiding Git working-directory and pack-file limits caused by
   deeply nested project caches. Verified project pins and offline reuse retain

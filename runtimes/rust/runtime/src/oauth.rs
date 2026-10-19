@@ -335,7 +335,16 @@ fn text(value: Option<&String>) -> Option<String> {
 }
 
 fn is_error_code(code: &str) -> bool {
-    (1..=40).contains(&code.len()) && code.bytes().all(|b| b == b'_' || b.is_ascii_lowercase())
+    // Provider-supplied labels can contain secrets even when they look like codes.
+    matches!(
+        code,
+        "invalid_request"
+            | "invalid_client"
+            | "invalid_grant"
+            | "unauthorized_client"
+            | "unsupported_grant_type"
+            | "invalid_scope"
+    )
 }
 
 impl ClientCore {
