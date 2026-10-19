@@ -298,7 +298,9 @@ fn create_windows_scratch(
     if !local_disk_path(&scratch_parent)
         || !scratch_supported(&repository)
         || repository.file_name().is_none()
-        || repository.parent().and_then(|parent| std::fs::canonicalize(parent).ok())
+        || repository
+            .parent()
+            .and_then(|parent| std::fs::canonicalize(parent).ok())
             != Some(scratch_parent.clone())
     {
         return Err(scratch_error());
@@ -319,7 +321,10 @@ fn create_windows_scratch(
         started,
         repository,
         hooks,
-        owned_scratch: WindowsScratch { parent: scratch_parent, child },
+        owned_scratch: WindowsScratch {
+            parent: scratch_parent,
+            child,
+        },
     };
     // Ownership is established before setup; errors release only this child.
     std::fs::create_dir(&git.hooks).map_err(|_| scratch_error())?;
@@ -340,7 +345,11 @@ pub mod __testing {
         child: &std::path::Path,
     ) -> Result<(), tungsten_core::Diagnostic> {
         let parent = std::fs::canonicalize(root).map_err(|_| super::scratch_error())?;
-        drop(super::create_windows_scratch(child.to_path_buf(), parent, std::time::Instant::now())?);
+        drop(super::create_windows_scratch(
+            child.to_path_buf(),
+            parent,
+            std::time::Instant::now(),
+        )?);
         Ok(())
     }
 }
@@ -870,14 +879,21 @@ pub fn acquire(text: &str, project: &Path, options: &Options) -> Result<PathBuf,
         std::fs::create_dir(&repository).map_err(|_| {
             error(
                 "TG0133",
-                &format!("cannot create the Git scratch repository: {}", repository.display()),
+                &format!(
+                    "cannot create the Git scratch repository: {}",
+                    repository.display()
+                ),
                 "use a writable project directory, then retry",
             )
         })?;
         let repository = std::path::absolute(repository).map_err(|_| cache_error())?;
         let hooks = repository.join("empty-hooks");
         std::fs::create_dir(&hooks).map_err(|_| cache_error())?;
-        Git { started, repository, hooks }
+        Git {
+            started,
+            repository,
+            hooks,
+        }
     };
     let resolved = git.resolve(&source)?;
     let repo = git.repository.to_string_lossy().into_owned();
