@@ -46,7 +46,9 @@ grant an exception. Anonymous HTTP requests remain supported.
 
 In unreleased 0.2.0, `OAuthFlow::authorization_url` begins a managed attempt and
 returns an `AuthorizationAttempt` with a URL, opaque handle and lifetime. Call it
-inside Tokio so the runtime owns expiry cleanup. Supply a nonempty
+inside a Tokio runtime with time enabled so the expiry task can run; the
+presence of a current runtime handle alone does not prove that capability.
+Supply a nonempty
 `AuthorizationUrlParams::session_binding` owned by your callback listener/session,
 qualify provider S256 support with `s256_supported: true`, and select an explicit
 `IssuerDefense`. `IssuerResponse` requires the provider's exact decoded `iss` in

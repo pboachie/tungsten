@@ -365,7 +365,7 @@ pub(crate) fn readme(
              ```rust\n\
              use tungsten_runtime::{{AuthorizationUrlParams, ExchangeCodeParams, IssuerDefense}};\n\n\
              let flow = client.oauth({scheme});\n\
-             // Run inside Tokio; derive session_binding from the owning listener/session.\n\
+             // Use Tokio with time enabled; derive session_binding from the owning listener/session.\n\
              // issuer must exactly match the provider's qualified authorization-response iss value.\n\
              let started = flow.authorization_url(&AuthorizationUrlParams {{\n    \
                  session_binding: session_binding.clone(),\n    \

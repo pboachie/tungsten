@@ -760,13 +760,15 @@ impl OAuthFlow {
         format!("oauth.{}.{helper}", self.scheme)
     }
 
-    /// Begin a managed S256 attempt. Call inside a Tokio runtime so expiry cleanup is owned.
+    /// Begin a managed S256 attempt inside a Tokio runtime with time enabled.
+    /// The application must enable time so the owned expiry task can run;
+    /// a current runtime handle alone does not establish that capability.
     pub fn authorization_url(
         &self,
         params: &AuthorizationUrlParams,
     ) -> Result<AuthorizationAttempt, Error> {
         let refuse = || {
-            ClientCore::oauth_error(&self.operation("authorizationUrl"), "Cannot begin authorization: qualify S256 and issuer defense, supply a session binding, valid bounded endpoints and a fenced token store inside a Tokio runtime; protected fields are reserved.".to_owned())
+            ClientCore::oauth_error(&self.operation("authorizationUrl"), "Cannot begin authorization: qualify S256 and issuer defense, supply a session binding, valid bounded endpoints and a fenced token store inside a Tokio runtime with time enabled; protected fields are reserved.".to_owned())
         };
         let flow = self.core.code_flow(&self.scheme).map_err(|_| refuse())?;
         let client = self.core.code_client(&self.scheme).map_err(|_| refuse())?;
