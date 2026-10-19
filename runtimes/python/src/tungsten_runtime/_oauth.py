@@ -973,7 +973,15 @@ class OAuthSession:
 
 
 def _is_error_code(code: str) -> bool:
-    return 1 <= len(code) <= 40 and all(c == "_" or "a" <= c <= "z" for c in code)
+    # Provider-supplied labels can contain secrets even when they look like codes.
+    return code in {
+        "invalid_request",
+        "invalid_client",
+        "invalid_grant",
+        "unauthorized_client",
+        "unsupported_grant_type",
+        "invalid_scope",
+    }
 
 
 def _info(scheme: str, token: StoredToken) -> TokenInfo:
