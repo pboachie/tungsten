@@ -11,6 +11,15 @@ changes.
 
 ### Breaking
 
+- Rust browser OAuth helpers now require managed S256/state attempts with an
+  explicit qualified issuer defense and owning session/listener binding.
+  `authorization_url` returns a handle and URL inside Tokio; `exchange_code`
+  accepts that handle, the full callback URL and the same binding. Legacy
+  primitives require `low_level_authorization_url`/`low_level_exchange_code`.
+  Managed begin and refresh require atomic fenced custom stores. Code/refresh
+  responses default to 64 KiB, configurable with the separate validated
+  `max_oauth_token_response_bytes` option.
+
 - TypeScript and Python browser OAuth authorization-code helpers now create
   managed S256 PKCE/state attempts. Supply an authenticated session/listener
   binding and an explicit qualified issuer defense, retain the returned handle,

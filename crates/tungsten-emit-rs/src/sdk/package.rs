@@ -358,23 +358,31 @@ pub(crate) fn readme(
             "## Sign in with OAuth2 (authorization code)\n\n\
              `{name}` has an authorization-code flow. Configure its credential as \
              `Credential::Parts` with `flow = \"authorizationCode\"`, `client_id`, `redirect_uri` and, for a \
-             confidential client, `client_secret`; send the user to the authorization URL and exchange the code \
-             they come back with. Tokens are kept in `ClientOptions::token_store` (in memory by default), \
+             confidential client, `client_secret`. Qualify provider S256 support and issuer defense, \
+             then bind each attempt to the owning callback listener/session. Tokens are kept in \
+             `ClientOptions::token_store` (in memory by default), \
              sent on every call, refreshed before they expire and once after a 401.\n\n\
              ```rust\n\
-             use tungsten_runtime::{{AuthorizationUrlParams, ExchangeCodeParams}};\n\n\
+             use tungsten_runtime::{{AuthorizationUrlParams, ExchangeCodeParams, IssuerDefense}};\n\n\
              let flow = client.oauth({scheme});\n\
-             let pkce = flow.pkce()?;\n\
-             let url = flow.authorization_url(&AuthorizationUrlParams {{\n    \
-                 state: Some(state),\n    \
-                 code_challenge: Some(pkce.challenge.clone()),\n    \
+             // Run inside Tokio; derive session_binding from the owning listener/session.\n\
+             // issuer must exactly match the provider's qualified authorization-response iss value.\n\
+             let started = flow.authorization_url(&AuthorizationUrlParams {{\n    \
+                 session_binding: session_binding.clone(),\n    \
+                 s256_supported: true,\n    \
+                 issuer_defense: Some(IssuerDefense::IssuerResponse {{ issuer }}),\n    \
                  ..Default::default()\n}})?;\n\
-             // Redirect the user to `url`; the server sends them back with ?code=...\n\
+             // Open started.url; keep its handle with this listener. Capture the full callback URL.\n\
              flow.exchange_code(&ExchangeCodeParams {{\n    \
-                 code,\n    \
-                 code_verifier: Some(pkce.verifier.clone()),\n    \
-                 ..Default::default()\n}}).await?;\n\
-             ```\n\n",
+                 attempt_handle: started.attempt_handle,\n    \
+                 callback_url,\n    \
+                 session_binding,\n}}).await?;\n\
+             ```\n\n\
+             The runtime generates state and S256 PKCE and claims each callback once. A provider without \
+             an authorization-response issuer requires an explicitly qualified distinct redirect strategy; \
+             missing `iss` never selects that fallback. Cancellation and expiry require a new attempt. \
+             The `low_level_authorization_url` and `low_level_exchange_code` methods are explicit escapes \
+             for integrations that own these protections.\n\n",
             scheme = string_lit(name),
         ));
     }
