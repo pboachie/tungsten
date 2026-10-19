@@ -1102,6 +1102,21 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
          emitters remain compatible with projects that have no imported-operation policy.",
     ),
     e(
+        "TG0809",
+        "A deliberately selected host policy could not be captured, exceeded the strict byte/document/nesting bounds, was not valid strict JSON, or did not match its exact lowercase BLAKE3 pin. Physical paths and authored values are omitted. No external emitter is started.",
+        "Use a regular local non-symlink policy and separately review `tungsten policy digest PATH`. Execution never updates the pin automatically. Policy limits do not grant executable approval or isolation.",
+    ),
+    e(
+        "TG0810",
+        "An explicit external target timeout/output value exceeds a protected ceiling, or cannot be represented on this platform. Missing/null target values keep existing defaults and are clamped. All tying protected sources remain in provenance.",
+        "Lower the project declaration to the host ceiling. A project/profile cannot weaken host restrictions. Descriptor negotiation is subject to the same preflight.",
+    ),
+    e(
+        "TG0811",
+        "The invocation's selected host policy denies external emitter execution. Runs, imported-policy descriptor negotiation and PATH descriptor discovery are refused before execution. This is a failure, distinct from the unconditional informational --no-external skip.",
+        "Select built-in targets or obtain a deliberately reviewed host policy. A permissive policy is not executable approval, environment isolation or a sandbox.",
+    ),
+    e(
         "TG0901",
         "A target's output directory differs from what `tungsten generate` would write now: \
          a generated file is missing or has other content, a file of the previous \

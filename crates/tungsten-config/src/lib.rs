@@ -21,6 +21,7 @@
 //! `TG0602` the same way for any manifest type.
 
 pub mod capabilities;
+pub mod execution_policy;
 pub mod inspection;
 pub mod pointer;
 pub mod profiles;

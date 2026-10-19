@@ -69,6 +69,18 @@ const LONG_HELP: &str = concat!(examples_text!(), exit_codes_text!());
     color = ColorChoice::Never
 )]
 pub(crate) struct Cli {
+    /// Select one reviewed local strict JSON external-emitter policy (requires
+    /// --policy-digest). Supported: generate (all modes), check (including CI),
+    /// report, diff, emitters and pure config inspection. policy digest and all
+    /// other commands reject supplied policy before reads or effects. No approval,
+    /// environment isolation, acquisition protection or sandbox is conferred.
+    /// Parent links/mounts and volume/network locality are not verified.
+    #[arg(long, global = true, requires = "policy_digest", value_name = "PATH")]
+    pub policy: Option<PathBuf>,
+    /// Exact blake3: plus 64 lowercase hex digits of the reviewed policy bytes.
+    /// Obtain it separately with `tungsten policy digest PATH`.
+    #[arg(long, global = true, requires = "policy", value_name = "DIGEST")]
+    pub policy_digest: Option<String>,
     /// Reuse verified HTTP/Git input pins and cached files without network access.
     #[arg(long, global = true, conflicts_with = "refresh_inputs")]
     pub offline: bool,
@@ -130,6 +142,7 @@ impl Cli {
             Command::Doctor(_) => CommandName::Doctor,
             Command::Capabilities(_) => CommandName::Capabilities,
             Command::Config(_) => CommandName::Config,
+            Command::Policy { .. } => CommandName::PolicyDigest,
             Command::Emitters(_) => CommandName::Emitters,
             Command::Generate(_) => CommandName::Generate,
             Command::Mock(_) => CommandName::Mock,
@@ -165,6 +178,11 @@ pub(crate) enum Command {
     Capabilities(CapabilitiesArgs),
     /// Explain supported effective configuration without compiling or running tools.
     Config(ConfigArgs),
+    /// Explicit host policy utilities; never approves or runs executables.
+    Policy {
+        #[command(subcommand)]
+        command: PolicyCommand,
+    },
     /// List the external emitters (`tungsten-emit-<name>`) that can be
     /// run, with the protocol and version each reports.
     Emitters(EmittersArgs),
@@ -223,6 +241,18 @@ pub(crate) enum OverlayCommand {
     /// Suggest an Overlay 1.0 document whose actions fix diagnostics
     /// (a missing or repeated operationId) without changing the IR.
     Suggest(SuggestArgs),
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum PolicyCommand {
+    /// Purely validate/hash a bounded local strict JSON policy for review.
+    /// Rejects execution-policy flags; never writes files or grants authority.
+    Digest(PolicyDigestArgs),
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct PolicyDigestArgs {
+    pub path: PathBuf,
 }
 
 #[derive(Debug, Subcommand)]
@@ -469,6 +499,8 @@ pub enum SchemaName {
     CliOutput,
     /// The documents of the external emitter protocol.
     ExternalEmitter,
+    /// Strict host-selected external execution constraints, never approval.
+    ExecutionPolicy,
     /// The SDK descriptor document (tungsten_emit::sdk::descriptors).
     SdkDescriptors,
     /// Transport-neutral tools and scoped groups.

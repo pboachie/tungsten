@@ -62,5 +62,5 @@ clap.workspace = true
 [lints]
 workspace = true
 
-[target.'cfg(target_os = "linux")'.dependencies]
-nix = { version = "=0.31.3", default-features = false, features = ["signal", "process"] }
+[target.'cfg(unix)'.dependencies]
+nix = { version = "=0.31.3", default-features = false, features = ["signal", "process", "fs"] }

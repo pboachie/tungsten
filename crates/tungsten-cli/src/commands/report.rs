@@ -47,7 +47,7 @@ const BUCKET: usize = 100;
 const LAST_BUCKET: usize = 600;
 
 pub(crate) fn run(args: &ReportArgs, env: &CliEnv, no_external: bool) -> Report {
-    let mut compiled = input::compile(&args.input.path);
+    let mut compiled = input::compile_with_policy(&args.input.path, env.policy.clone());
     let mut report = Report::new(CommandName::Report);
     let sources = std::mem::take(&mut compiled.workspace.sources);
     let mut diagnostics = compiled.diagnostics.0.clone();

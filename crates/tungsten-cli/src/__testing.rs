@@ -22,6 +22,7 @@ pub fn generate_with_staging_limits(
         manifest: tungsten_build::DEFAULT_MANIFEST_NAME.into(),
         search_path: Default::default(),
         no_external: true,
+        policy: std::sync::Arc::new(tungsten_core::policy::InvocationPolicy::absent()),
     };
     let outcome = run_targets_with_limits(
         compiled,

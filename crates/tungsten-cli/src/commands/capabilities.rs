@@ -22,6 +22,7 @@ pub(crate) fn run(args: &CapabilitiesArgs) -> Report {
     let result = CapabilityCatalog {
         capability_version: capabilities::VERSION,
         targets,
+        execution_policy: capabilities::execution_policy(),
     };
     report.human = format!(
         "tungsten target capabilities (contract {})\n",

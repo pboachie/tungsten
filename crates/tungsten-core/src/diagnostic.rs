@@ -489,6 +489,18 @@ pub mod codes {
             "TG0808",
             "external emitter does not declare imported-operation policy enforcement",
         ),
+        (
+            "TG0809",
+            "selected host policy is invalid or does not match its digest",
+        ),
+        (
+            "TG0810",
+            "external target constraints exceed a protected ceiling or are invalid",
+        ),
+        (
+            "TG0811",
+            "external execution is denied by the selected host policy",
+        ),
         ("TG0901", "generated output is stale relative to its inputs"),
         (
             "TG0902",

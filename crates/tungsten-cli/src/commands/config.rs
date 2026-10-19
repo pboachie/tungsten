@@ -10,7 +10,7 @@ use crate::args::ConfigArgs;
 use crate::output::{CliError, CommandName, CommandResult, ErrorKind};
 use crate::{Report, exit, input};
 
-pub(crate) fn run(args: &ConfigArgs) -> Report {
+pub(crate) fn run(args: &ConfigArgs, env: &crate::CliEnv) -> Report {
     let mut report = Report::new(CommandName::Config);
     let manifest =
         match input::resolve(&args.path) {
@@ -28,7 +28,10 @@ pub(crate) fn run(args: &ConfigArgs) -> Report {
         };
     let mut inspected = tungsten_build::inspection::inspect_project(
         &manifest,
-        &tungsten_build::CompileOptions::default(),
+        &tungsten_build::CompileOptions {
+            policy: env.policy.clone(),
+            ..Default::default()
+        },
     );
     if args.strict {
         for diagnostic in &mut inspected.diagnostics.0 {
@@ -58,6 +61,19 @@ fn human(configuration: &ConfigurationInspection) -> String {
     );
     for profile in &configuration.profiles {
         let _ = writeln!(text, "  {} digest {}", profile.source, profile.digest);
+    }
+    let policy = &configuration.policy;
+    let _ = writeln!(
+        text,
+        "  policy: {:?}; deny: {}; timeout_ms: {:?}; max_output_bytes: {:?}",
+        policy.state, policy.deny, policy.timeout_ms, policy.max_output_bytes
+    );
+    for origin in &policy.constraints {
+        let _ = writeln!(
+            text,
+            "    {}#{} digest {} ({:?})",
+            origin.source, origin.pointer, origin.digest, origin.value
+        );
     }
     for target in &configuration.targets {
         let _ = writeln!(text, "  {}: {:?}", target.target, target.status);
