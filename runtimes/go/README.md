@@ -171,6 +171,8 @@ custom stores/transports must honor their own resource and settlement contracts.
 Client-credentials, device authorization and persistent/multi-account adapters
 retain their separate contracts. Removing secret references is not physical
 zeroization; never log raw attempt fields, callbacks or tokens.
+Code/refresh failures may name the six standard OAuth token-endpoint error codes;
+unknown provider error text and descriptions are excluded from diagnostics.
 
 Applications intentionally owning the protocol use `LowLevelAuthorizationURL`
 with `LowLevelAuthorizationURLParams` and `LowLevelExchangeCode` with

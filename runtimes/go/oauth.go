@@ -259,17 +259,15 @@ type tokenFailure struct {
 	rejected bool
 }
 
-func isErrorCode(code string) bool {
-	if len(code) < 1 || len(code) > 40 {
-		return false
+func isOAuthTokenError(code string) bool {
+	// Syntax alone cannot establish that provider-controlled text is public:
+	// a reflected credential can consist entirely of lowercase letters. Only
+	// the finite RFC 6749 token-endpoint error codes belong in diagnostics.
+	switch code {
+	case "invalid_request", "invalid_client", "invalid_grant", "unauthorized_client", "unsupported_grant_type", "invalid_scope":
+		return true
 	}
-	for i := 0; i < len(code); i++ {
-		c := code[i]
-		if c != '_' && (c < 'a' || c > 'z') {
-			return false
-		}
-	}
-	return true
+	return false
 }
 
 func (c *ClientCore) codeFlow(scheme string) (*AuthorizationCodeFlow, string) {
@@ -362,7 +360,7 @@ func (c *ClientCore) tokenRequest(ctx context.Context, scheme, url string, clien
 	if out.status < 200 || out.status > 299 {
 		named := ""
 		if v, ok := getPathStr(decoded.value, decoded.has, "error"); ok {
-			if code, isText := v.(string); isText && isErrorCode(code) {
+			if code, isText := v.(string); isText && isOAuthTokenError(code) {
 				named = " (" + code + ")"
 			}
 		}
