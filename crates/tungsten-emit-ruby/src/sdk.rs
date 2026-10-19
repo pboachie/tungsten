@@ -502,7 +502,7 @@ fn client(g: &Gen<'_, '_>) -> String {
         w.blank();
         comment(
             w,
-            "The OAuth2 authorization-code helpers of an auth scheme (`authorization_url`, `exchange_code`, `refresh`, `pkce`).\n\n@return [Tungsten::Runtime::OAuthFlow]",
+            "Managed OAuth2 authorization: `authorization_url` owns state/S256 and returns an attempt; `exchange_code` requires its handle, full callback URL and owning session binding. `refresh`, `cancel_authorization` and `logout` use fenced session state. Explicit primitive escapes are `low_level_authorization_url`, `low_level_exchange_code`, `low_level_refresh`; `pkce` is a primitive utility.\n\n@return [Tungsten::Runtime::OAuthFlow]",
         );
         w.line("def oauth(scheme) = @core.oauth(scheme)");
         w.dedent();

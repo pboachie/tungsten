@@ -72,6 +72,106 @@ literal IPv4 `127/8`, and IPv6 `::1`. Subdomains, unspecified addresses and
 IPv4-mapped IPv6 addresses require the explicit override. DNS resolution does not
 grant an exception. Anonymous HTTP requests remain supported.
 
+## Managed OAuth authorization
+
+In unreleased 0.2.0, `client.oauth(scheme).authorization_url` begins a managed
+authorization attempt. Configure the scheme with `flow: "authorizationCode"`,
+`client_id`, `redirect_uri`, and a `client_secret` only when the provider requires
+one. Qualify the provider's S256 support and issuer response before enabling them:
+
+```ruby
+flow = client.oauth("browser") # Use the generated API's scheme name.
+binding = SecureRandom.hex(32) # Keep with the owning session or callback listener.
+started = flow.authorization_url(
+  session_binding: binding,
+  s256_supported: true,
+  issuer_defense: Tungsten::Runtime::IssuerDefense.issuer_response("https://issuer.example")
+)
+raise "Authorization could not begin" unless started.ok?
+attempt = started.value
+# Open attempt.url in the browser. Retain attempt.attempt_handle with binding.
+# callback_url is the full URL received by that same owning listener.
+completed = flow.exchange_code(
+  attempt_handle: attempt.attempt_handle,
+  callback_url: callback_url,
+  session_binding: binding
+)
+raise "Authorization did not complete" unless completed.ok?
+# Authenticated generated calls can now use the selected token.
+```
+
+Each attempt owns fresh cryptographic state and an S256 verifier. It captures
+immutable copies of the issuer defense, endpoints, client, redirect, scopes,
+resource, audience, account context and extra parameters. Managed completion
+requires the handle, owning binding and full callback URL; it rejects duplicate
+fields, malformed escapes, redirect or issuer mismatches, and replay before a
+token request. Registered redirect text must match exactly, including any
+registered query values. HTTP(S) redirects need a host; qualified absolute app
+schemes are supported. Endpoint and extra parameters cannot override protected
+OAuth fields. Descriptor or credential changes invalidate captured work.
+
+`IssuerDefense.distinct_redirect(qualification)` is an explicit alternative for
+an application that has qualified a redirect unique to that issuer/client.
+The qualification is an application assertion; the runtime cannot establish
+provider support or discover issuer metadata. An invalid callback or binding
+leaves an otherwise valid attempt available; a validated denial consumes it.
+Cancel with `cancel_authorization(attempt_handle: ..., session_binding: ...)`.
+Attempts expire after ten minutes of monotonic time. One owned expiry thread per
+active client releases idle attempts and exits when there are no live deadlines.
+Cancel attempts and call `logout` when their owning session ends.
+
+One client admits at most 32 attempts and 32 active token/read/refresh/cleanup
+owners, including waiting refresh followers. An in-flight attempt retains its
+slot through synchronous transport/store settlement after cancellation or expiry.
+There are at most 32 captured authorization-code scheme names; changing the set
+requires a new client. Captured configuration is limited to 32 KiB of UTF-8 text,
+with at most 64 scopes and 64 extra fields. A callback is limited to 16 KiB and
+64 fields. Limits are checked before collection copies and URL decoding. Ruby
+objects, URL/form encoding and parser copies add overhead beyond those budgets.
+
+Code and refresh responses default to 64 KiB. Set the positive safe integer
+`max_oauth_token_response_bytes` client option for a provider needing a different
+finite cap. Each stored token string and metadata string is bounded separately
+by that cap, so retaining a previous refresh token does not reduce the new access
+token allowance. Token bodies, HTTP decoding and JSON parsing can allocate more
+than the accepted byte cap. The monotonic token job deadline covers admitted
+reads, dispatch and final store predicates. A custom synchronous hook that
+ignores its deadline may block its owner until it settles; it cannot authorize
+a late token send or final mutation after a known expired deadline.
+
+`refresh` and automatic refresh share fenced work. `logout` fences the local
+generation before cleanup, invalidates pending attempts, and deselects stored
+credentials even if cleanup fails or has no admission slot. A separate mutation
+epoch prevents older refresh success or rejection from replacing or deleting a
+newer login, even when token strings are identical. Independent login attempts
+remain usable; the last successfully committed completion selects credentials.
+A cancel/logout winning the final pre-dispatch gate sends nothing. After that
+gate a request may reach the provider; persistence remains fenced. Logout does
+not revoke provider tokens or promise physical zeroization of Ruby strings.
+
+The default `MemoryTokenStore` supplies atomic `set_if_current(scheme, token)`
+and `delete_if_current(scheme)` methods. A custom managed store must implement
+both, yield its current `StoredToken` to the supplied predicate **exactly once**
+at the final serialized mutation, and commit without an intervening wait. The
+predicate may advance a session epoch: speculative checks, retries, or calling
+it before an asynchronous operation are invalid. Return `true` only after the
+mutation commits. If a write fails after the predicate, preserve the old token;
+older refresh work may be conservatively invalidated. No store or application
+callbacks run under the manager lock. A store committing then holding its return
+can still cause the caller to report failure after cancellation or a deadline;
+that does not roll back a completed commit. Shared multi-account adapters need
+their own partitioning and coordination; per-client memory behavior does not
+qualify them.
+
+Migration: primitive URL/code/verifier calls are now explicitly named
+`low_level_authorization_url`, `low_level_exchange_code` and `low_level_refresh`.
+Those escapes leave state, PKCE, issuer, callback validation, replay and store
+coordination to the caller. `pkce` remains a primitive utility; managed begin
+generates its own pair. Direct store `set`/`delete` and low-level methods bypass
+managed epochs and must not be mixed into managed session guarantees. Helpers,
+options and token holders redact `inspect`/`to_s`; URLs, handles, callback URLs
+and bindings are still secrets when explicitly accessed and must not be logged.
+
 ## Limits
 
 In unreleased 0.2.0, ordinary buffered responses default to **4 MiB (4,194,304 bytes) per response**.
