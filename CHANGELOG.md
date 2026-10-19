@@ -403,6 +403,12 @@ values as `JsonNode`, OpenID Connect as a bearer token, no CLI or MCP).
 
 ### Fixed
 
+- Java generated usage now imports its resolved resource type and infers the
+  response type. Dispatch request decoding also imports resolved resource types,
+  so valid package prefixes such as `client.generated` cannot be shadowed by the
+  dispatch client's field. Java and Kotlin authorization-code examples configure
+  the managed OAuth flow explicitly.
+
 - TypeScript, Python and Rust authorization-code and refresh diagnostics include
   only recognized OAuth token error labels. Arbitrary provider error strings
   are omitted even when they contain only lowercase letters and underscores.
