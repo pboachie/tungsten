@@ -86,7 +86,14 @@ class TokenStore(Protocol):
     def set_if_current(
         self, scheme: str, token: StoredToken, current: Callable[[StoredToken | None], bool]
     ) -> bool:
-        """Check current stored token and predicate atomically with the final write."""
+        """Invoke once at the final serialized mutation against the current token.
+
+        The callback advances session epochs: no speculative call, retry or await
+        gap before mutation. Report True only after commit; failed writes preserve
+        the old token and return False/raise. An epoch advance before commit failure
+        may conservatively invalidate older refresh work. Direct/low-level store
+        writes do not participate in this managed-session guarantee.
+        """
         ...
 
     def delete_if_current(self, scheme: str, current: Callable[[StoredToken | None], bool]) -> bool: ...
@@ -266,6 +273,8 @@ class OAuthSession:
         )
         self._attempts: dict[str, PendingAuthorization] = {}
         self._generations: dict[str, int] = {}
+        self._token_epochs: dict[str, int] = {}
+        self._refresh_owners: set[tuple[str, int, int]] = set()
         self._logging_out: dict[str, int] = {}
         self._attempt_lock = threading.RLock()
         self._monotonic: Callable[[], float] = lambda: time.monotonic() * 1000
@@ -310,6 +319,14 @@ class OAuthSession:
 
     def _generation(self, scheme: str) -> int:
         return self._generations.get(scheme, 0)
+
+    def _token_epoch(self, scheme: str) -> int:
+        return self._token_epochs.get(scheme, 0)
+
+    def _mutated_token(self, scheme: str) -> int:
+        epoch = self._token_epoch(scheme) + 1
+        self._token_epochs[scheme] = epoch
+        return epoch
 
     def _fenced_store(self) -> bool:
         return all(
@@ -580,11 +597,22 @@ class OAuthSession:
             if not self._current(pending):
                 return refuse()
 
+            committed_epochs: list[int] = []
+
             def fence(_current: StoredToken | None) -> bool:
-                return self._current(pending)
+                with self._attempt_lock:
+                    if not self._current(pending):
+                        return False
+                    committed_epochs.append(self._mutated_token(scheme))
+                    return True
 
             accepted = yield from invoke(self._method("set_if_current"), scheme, stored, fence)
-            if accepted is not True or not self._current(pending):
+            if (
+                accepted is not True
+                or not self._current(pending)
+                or not committed_epochs
+                or self._token_epoch(scheme) != committed_epochs[-1]
+            ):
                 return refuse()
             return OAuthOk(_info(scheme, stored))
         except Exception:
@@ -726,7 +754,10 @@ class OAuthSession:
         """The access token to send: the stored one, refreshed first when it
         expires within ``EXPIRY_SKEW_MS`` (or ``force``). Raises ``TokenError``
         whose text is shown in the AUTH_FAILED envelope."""
+        generation, token_epoch = self._generation(scheme), self._token_epoch(scheme)
         stored = yield from self._read(scheme)
+        if generation != self._generation(scheme) or token_epoch != self._token_epoch(scheme):
+            raise TokenError("OAuth session changed; authorize again.")
         if stored is None:
             raise TokenError(
                 f"No OAuth2 token is stored for {scheme}; begin with authorization_url(), then call "
@@ -735,9 +766,9 @@ class OAuthSession:
         fresh = stored.expires_at is None or stored.expires_at > self._now() + EXPIRY_SKEW_MS
         if fresh and not force:
             return stored.access_token
-        generation = self._generation(scheme)
         token = yield from shared(
-            f"oauth2:refresh:{generation}:{scheme}", lambda: self._refresh_stored(scheme, force, generation)
+            f"oauth2:refresh:{generation}:{token_epoch}:{scheme}",
+            lambda: self._refresh_stored(scheme, force, generation, token_epoch),
         )
         return token
 
@@ -766,21 +797,42 @@ class OAuthSession:
 
     def _read(self, scheme: str) -> Flow[StoredToken | None]:
         generation = self._generation(scheme)
+        token_epoch = self._token_epoch(scheme)
         try:
             if self._logging_out.get(scheme, 0):
                 raise TokenError("OAuth session changed; authorize again.")
             stored = yield from invoke(self._method("get"), scheme)
-            if self._logging_out.get(scheme, 0) or generation != self._generation(scheme):
+            if (
+                self._logging_out.get(scheme, 0)
+                or generation != self._generation(scheme)
+                or token_epoch != self._token_epoch(scheme)
+            ):
                 raise TokenError("OAuth session changed; authorize again.")
         except Exception:
             raise TokenError(f"The token store failed while reading the token for {scheme}.") from None
         return stored if isinstance(stored, StoredToken) and stored.access_token != "" else None
 
-    def _refresh_stored(self, scheme: str, force: bool, generation: int) -> Flow[str]:
+    def _refresh_stored(self, scheme: str, force: bool, generation: int, token_epoch: int) -> Flow[str]:
+        identity = (scheme, generation, token_epoch)
+        with self._attempt_lock:
+            if len(self._refresh_owners) >= MAX_ATTEMPTS:
+                raise TokenError("OAuth refresh capacity is exhausted; wait for an owned refresh to settle.")
+            self._refresh_owners.add(identity)
+        try:
+            return (yield from self._refresh_stored_owned(scheme, force, generation, token_epoch))
+        finally:
+            with self._attempt_lock:
+                self._refresh_owners.discard(identity)
+
+    def _refresh_stored_owned(self, scheme: str, force: bool, generation: int, token_epoch: int) -> Flow[str]:
         if not self._fenced_store():
             raise TokenError("OAuth refresh requires an atomic fenced token store.")
         stored = yield from self._read(scheme)
-        if generation != self._generation(scheme) or self._logging_out.get(scheme, 0):
+        if (
+            generation != self._generation(scheme)
+            or self._logging_out.get(scheme, 0)
+            or token_epoch != self._token_epoch(scheme)
+        ):
             raise TokenError("OAuth session changed; authorize again.")
         if stored is None:
             raise TokenError(f"No OAuth2 token is stored for {scheme}.")
@@ -807,7 +859,7 @@ class OAuthSession:
                     yield from invoke(
                         self._method("delete_if_current"),
                         scheme,
-                        self._refresh_fence(scheme, generation, stored),
+                        self._refresh_fence(scheme, generation, token_epoch, stored),
                     )
             raise
         try:
@@ -815,9 +867,13 @@ class OAuthSession:
                 self._method("set_if_current"),
                 scheme,
                 renewed,
-                self._refresh_fence(scheme, generation, stored),
+                self._refresh_fence(scheme, generation, token_epoch, stored),
             )
-            if accepted is not True or generation != self._generation(scheme):
+            if (
+                accepted is not True
+                or generation != self._generation(scheme)
+                or self._token_epoch(scheme) != token_epoch + 1
+            ):
                 raise TokenError("OAuth session changed; authorize again.")
         except Exception:
             raise TokenError(
@@ -826,17 +882,21 @@ class OAuthSession:
         return renewed.access_token
 
     def _refresh_fence(
-        self, scheme: str, generation: int, previous: StoredToken
+        self, scheme: str, generation: int, token_epoch: int, previous: StoredToken
     ) -> Callable[[StoredToken | None], bool]:
         def current(stored: StoredToken | None) -> bool:
             with self._attempt_lock:
-                return (
+                valid = (
                     self._generation(scheme) == generation
+                    and self._token_epoch(scheme) == token_epoch
                     and not self._logging_out.get(scheme, 0)
                     and stored is not None
                     and stored.access_token == previous.access_token
                     and stored.refresh_token == previous.refresh_token
                 )
+                if valid:
+                    self._mutated_token(scheme)
+                return valid
 
         return current
 

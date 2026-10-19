@@ -117,12 +117,20 @@ Secret references are removed; Python does not guarantee physical zeroization.
 Custom managed token stores must implement `set_if_current(scheme, token,
 predicate)` and `delete_if_current(scheme, predicate)` synchronously or
 asynchronously as appropriate. Pass the currently stored token to the predicate
-and evaluate it atomically with the final write/removal. Checking before an
-awaited write is insufficient. Managed begin/default refresh refuse unsupported
+and invoke it exactly once at the final serialized write/removal. The callback
+advances the session's credential-mutation epoch; speculative checks, retries or
+an await between callback and mutation violate the contract. Return True only
+after commit; failed mutations preserve the old token and return False/raise.
+A callback followed by commit failure can conservatively invalidate older refresh
+work. Managed begin/default refresh refuse unsupported
 stores. The default memory store implements the contract across threads.
 The guarantee is per client/session; shared multi-account partitioning and
 persistent adapters need separate qualification. Concurrent completed logins
-select the last successful completion; an old refresh cannot replace it.
+select the last successful token-store commit; an old refresh cannot replace it,
+even if the provider reissues identical token strings. External/low-level store
+writes bypass the managed epoch; log out and begin a new managed session when
+replacing credentials outside these helpers. Refresh flights are keyed by epoch
+and limited to 32 owned jobs, retained until settlement.
 
 Code/refresh token responses default to 65,536 decoded bytes. Set the separate
 positive safe-integer `ClientOptions.max_oauth_token_response_bytes` for a

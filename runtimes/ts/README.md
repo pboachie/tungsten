@@ -162,13 +162,20 @@ references; physical memory zeroization is not guaranteed.
 The default `MemoryTokenStore` implements atomic fencing. A custom managed store
 must implement both `setIfCurrent(scheme, token, predicate)` and
 `deleteIfCurrent(scheme, predicate)`, passing its currently stored token to the
-predicate and checking it atomically with the final write/removal. Checking
-before an awaited write is insufficient. Default refresh also requires these
-capabilities and compares the previous token identity. Unsupported stores fail
+predicate exactly once at the final serialized write/removal. The callback
+advances a private credential-mutation epoch; speculative checks, retries and an
+await between callback and mutation violate the contract. Return true only after
+commit; on failure retain the previous token and return false or throw. A failed
+commit after callback may conservatively invalidate older refresh work. Default
+refresh compares both token identity and mutation epoch. Unsupported stores fail
 closed. These are per-client session guarantees; shared multi-account storage,
 partitioning, remote revocation and persistent transactions require a separate
 application adapter. Concurrent completed logins select the last successful
-completion; an old refresh cannot replace a newer login.
+token-store commit; an old refresh cannot replace a newer login, even when the
+provider reissues identical token strings. Ordinary external/low-level store
+writes bypass the managed epoch; use logout and a new managed session when
+replacing credentials outside these helpers. Refresh flights are keyed by epoch
+and limited to 32 owned jobs, retained until settlement.
 
 Code/refresh response bodies default to 65,536 bytes, independently of ordinary
 API call limits. `ClientOptions.maxOAuthTokenResponseBytes` accepts a positive

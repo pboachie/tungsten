@@ -40,11 +40,14 @@ export interface TokenStore {
   get(scheme: string): Promise<StoredToken | undefined>;
   set(scheme: string, token: StoredToken): Promise<void>;
   delete(scheme: string): Promise<void>;
-  /** Managed capability: evaluate the fence atomically with the final write.
-   * Never call set() first and check afterward. Persistent adapters must implement
-   * this inside their own transaction, without yielding between check and write. */
+  /** Managed capability: invoke the predicate exactly once at the final serialized
+   * mutation, against the current token. It advances private session epochs: no
+   * speculative checks/retries or await gap before the write are permitted. Return
+   * true only after commit. On failure preserve the old token and return false/throw;
+   * the already advanced epoch may conservatively invalidate older refresh work.
+   * Direct/low-level store writes are outside this managed-session guarantee. */
   setIfCurrent?(scheme: string, token: StoredToken, isCurrent: (stored: StoredToken | undefined) => boolean): Promise<boolean>;
-  /** Atomically inspect the currently stored token and conditionally remove it. */
+  /** Same exactly-once final-mutation callback contract as setIfCurrent. */
   deleteIfCurrent?(scheme: string, isCurrent: (stored: StoredToken | undefined) => boolean): Promise<boolean>;
 }
 
@@ -196,6 +199,7 @@ export class OAuthSession {
   readonly #inflight = new Map<string, Promise<string>>();
   readonly #attempts = new Map<string, PendingAuthorization>();
   readonly #generations = new Map<string, number>();
+  readonly #tokenEpochs = new Map<string, number>();
   readonly #loggingOut = new Map<string, number>();
 
   constructor(deps: OAuthDeps) {
@@ -240,6 +244,8 @@ export class OAuthSession {
   }
 
   #generation(scheme: string): number { return this.#generations.get(scheme) ?? 0; }
+  #tokenEpoch(scheme: string): number { return this.#tokenEpochs.get(scheme) ?? 0; }
+  #mutatedToken(scheme: string): void { this.#tokenEpochs.set(scheme, this.#tokenEpoch(scheme) + 1); }
   #monotonic(): number { return this.#deps.monotonicNow?.() ?? performance.now(); }
   #fencedStore(): boolean { return typeof this.store.setIfCurrent === "function" && typeof this.store.deleteIfCurrent === "function"; }
 
@@ -377,8 +383,14 @@ export class OAuthSession {
       if (!this.#current(record)) return refuse();
       const fields: Array<[string, string]> = [["grant_type", "authorization_code"], ["code", code], ["redirect_uri", record.redirectUri], ["code_verifier", verifier]];
       const stored = await this.#tokenRequest(scheme, record.tokenUrl, { clientId: record.clientId, clientSecret: record.clientSecret, redirectUri: record.redirectUri }, fields, undefined, record.controller.signal);
-      if (!this.#current(record) || !await this.store.setIfCurrent!(scheme, stored, () => this.#current(record))) return refuse();
-      if (!this.#current(record)) return refuse();
+      let committedEpoch: number | undefined;
+      if (!this.#current(record) || !await this.store.setIfCurrent!(scheme, stored, () => {
+        if (!this.#current(record)) return false;
+        this.#mutatedToken(scheme);
+        committedEpoch = this.#tokenEpoch(scheme);
+        return true;
+      })) return refuse();
+      if (!this.#current(record) || this.#tokenEpoch(scheme) !== committedEpoch) return refuse();
       return { ok: true, value: info(scheme, stored) };
     } catch { return this.#failure(operation, "Authorization exchange did not complete. The code may have been consumed; begin a new authorization attempt."); }
     finally {
@@ -470,8 +482,9 @@ export class OAuthSession {
    * {@link TokenError} whose text is shown in the AUTH_FAILED envelope. */
   async token(scheme: string, force = false): Promise<string> {
     const generation = this.#generation(scheme);
+    const tokenEpoch = this.#tokenEpoch(scheme);
     const stored = await this.#read(scheme);
-    if (generation !== this.#generation(scheme)) throw new TokenError("OAuth session changed; authorize again.");
+    if (generation !== this.#generation(scheme) || tokenEpoch !== this.#tokenEpoch(scheme)) throw new TokenError("OAuth session changed; authorize again.");
     if (!stored) {
       throw new TokenError(
         `No OAuth2 token is stored for ${scheme}; begin with authorizationUrl(), then call exchangeCode() with its attempt handle, full callback URL and session binding, or put a token in ClientOptions.tokenStore.`,
@@ -479,10 +492,11 @@ export class OAuthSession {
     }
     const fresh = stored.expiresAt === undefined || stored.expiresAt > this.#deps.now() + EXPIRY_SKEW_MS;
     if (fresh && !force) return stored.accessToken;
-    const flightKey = `${generation}:${scheme}`;
+    const flightKey = `${generation}:${tokenEpoch}:${scheme}`;
     const running = this.#inflight.get(flightKey);
     if (running) return running;
-    const flight = this.#refreshStored(scheme, stored, force, generation);
+    if (this.#inflight.size >= MAX_AUTHORIZATION_ATTEMPTS) throw new TokenError("OAuth refresh capacity is exhausted; wait for an owned refresh to settle.");
+    const flight = this.#refreshStored(scheme, stored, force, generation, tokenEpoch);
     this.#inflight.set(flightKey, flight);
     try {
       return await flight;
@@ -496,8 +510,9 @@ export class OAuthSession {
   async refreshAfterRejection(scheme: string, rejected: string): Promise<string | null> {
     let stored: StoredToken | undefined;
     const generation = this.#generation(scheme);
+    const tokenEpoch = this.#tokenEpoch(scheme);
     try { stored = await this.#read(scheme); } catch { return null; }
-    if (generation !== this.#generation(scheme)) return null;
+    if (generation !== this.#generation(scheme) || tokenEpoch !== this.#tokenEpoch(scheme)) return null;
     if (!stored) return null;
     // Another call already replaced the rejected token.
     if (stored.accessToken !== rejected) return stored.accessToken;
@@ -511,17 +526,18 @@ export class OAuthSession {
 
   async #read(scheme: string): Promise<StoredToken | undefined> {
     const generation = this.#generation(scheme);
+    const tokenEpoch = this.#tokenEpoch(scheme);
     try {
       if (this.#loggingOut.has(scheme)) throw new Error();
       const stored = await this.store.get(scheme);
-      if (this.#loggingOut.has(scheme) || generation !== this.#generation(scheme)) throw new Error();
+      if (this.#loggingOut.has(scheme) || generation !== this.#generation(scheme) || tokenEpoch !== this.#tokenEpoch(scheme)) throw new Error();
       return isRecord(stored) && typeof stored.accessToken === "string" && stored.accessToken !== "" ? stored : undefined;
     } catch {
       throw new TokenError(`The token store failed while reading the token for ${scheme}.`);
     }
   }
 
-  async #refreshStored(scheme: string, stored: StoredToken, force: boolean, generation: number): Promise<string> {
+  async #refreshStored(scheme: string, stored: StoredToken, force: boolean, generation: number, tokenEpoch: number): Promise<string> {
     if (!this.#fencedStore()) throw new TokenError("OAuth refresh requires an atomic fenced token store.");
     const flow = this.flowOf(scheme);
     const client = this.#client(scheme);
@@ -546,7 +562,11 @@ export class OAuthSession {
       if (error instanceof TokenError && error.rejected && this.#generation(scheme) === generation) {
         // The server no longer accepts the refresh token: forget the tokens.
         try {
-          await this.store.deleteIfCurrent!(scheme, current => this.#generation(scheme) === generation && current?.accessToken === stored.accessToken && current?.refreshToken === stored.refreshToken);
+          await this.store.deleteIfCurrent!(scheme, current => {
+            if (this.#generation(scheme) !== generation || this.#tokenEpoch(scheme) !== tokenEpoch || current?.accessToken !== stored.accessToken || current?.refreshToken !== stored.refreshToken) return false;
+            this.#mutatedToken(scheme);
+            return true;
+          });
         } catch {
           // The failure below is what the caller needs.
         }
@@ -554,9 +574,13 @@ export class OAuthSession {
       throw error;
     }
     try {
-      if (this.#generation(scheme) !== generation) throw new TokenError("OAuth session changed; authorize again.");
-      if (!await this.store.setIfCurrent!(scheme, next, current => this.#generation(scheme) === generation && !this.#loggingOut.has(scheme) && current?.accessToken === stored.accessToken && current?.refreshToken === stored.refreshToken)) throw new TokenError("OAuth session changed; authorize again.");
-      if (this.#generation(scheme) !== generation) throw new TokenError("OAuth session changed; authorize again.");
+      if (this.#generation(scheme) !== generation || this.#tokenEpoch(scheme) !== tokenEpoch) throw new TokenError("OAuth session changed; authorize again.");
+      if (!await this.store.setIfCurrent!(scheme, next, current => {
+        if (this.#generation(scheme) !== generation || this.#loggingOut.has(scheme) || this.#tokenEpoch(scheme) !== tokenEpoch || current?.accessToken !== stored.accessToken || current?.refreshToken !== stored.refreshToken) return false;
+        this.#mutatedToken(scheme);
+        return true;
+      })) throw new TokenError("OAuth session changed; authorize again.");
+      if (this.#generation(scheme) !== generation || this.#tokenEpoch(scheme) !== tokenEpoch + 1) throw new TokenError("OAuth session changed; authorize again.");
     } catch {
       throw new TokenError(`The token store failed while saving the refreshed token for ${scheme}.`);
     }
