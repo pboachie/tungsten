@@ -1006,7 +1006,7 @@ pub struct DiagnosticGroup {
 }
 
 /// Which `$defs` entry describes `result` for each command.
-const RESULT_DEFS: [(CommandName, &str); 13] = [
+const RESULT_DEFS: &[(CommandName, &str)] = &[
     (CommandName::Check, "CheckResult"),
     (CommandName::IrDump, "IrDumpResult"),
     (CommandName::Explain, "ExplainResult"),
