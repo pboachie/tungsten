@@ -178,10 +178,11 @@ final class OAuthInputs {
         }
         require(uri.isAbsolute() && uri.getRawUserInfo() == null && uri.getPort() <= 65535);
         int query = value.indexOf('?');
+        boolean http = "http".equalsIgnoreCase(uri.getScheme()) || "https".equalsIgnoreCase(uri.getScheme());
+        if (http) require(uri.getHost() != null && !uri.getHost().isEmpty());
         if (redirect) require(query < 0);
         else {
-            require(("http".equalsIgnoreCase(uri.getScheme()) || "https".equalsIgnoreCase(uri.getScheme()))
-                    && uri.getHost() != null && !uri.getHost().isEmpty());
+            require(http);
             if (query >= 0) {
                 for (String key : fields(value.substring(query + 1)).keySet()) require(!PROTECTED.contains(key));
             }

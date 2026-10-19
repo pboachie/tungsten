@@ -182,6 +182,13 @@ final class Transport {
         /** Releases the connection; a blocked read ends as lost. */
         void close() {
             closed = true;
+            closeSocket();
+            queue.clear();
+            queue.offer(new IOException("closed"));
+        }
+
+        /** Also closes an attached raw/TLS socket when connect throws before returning it. */
+        void closeSocket() {
             Socket s = socket;
             if (s != null) {
                 try {
@@ -190,8 +197,6 @@ final class Transport {
                     // closing is best effort
                 }
             }
-            queue.clear();
-            queue.offer(new IOException("closed"));
         }
     }
 
@@ -638,7 +643,8 @@ final class Transport {
                 }
             } finally {
                 try {
-                    if (socket != null) {
+                    if (settlement != null) body.closeSocket();
+                    else if (socket != null) {
                         try {
                             socket.close();
                         } catch (IOException ignored) {
