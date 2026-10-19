@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" role="img"><title>Tungsten v0.1.2 walkthrough: One API. SDKs, CLI, MCP.</title><rect width="100%" height="100%" fill="#F8F7F2"/>
+<rect x="0" y="0" width="12" height="720" rx="0" fill="#4F46E5"/>
+<polyline points="64,176 1216,176" fill="none" stroke="#DDDCD2" stroke-width="1"/>
+<image x="58" y="49" width="360.0" height="96.0" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzNjAgOTYiIHdpZHRoPSIzNjAiIGhlaWdodD0iOTYiIHJvbGU9ImltZyIgYXJpYS1sYWJlbGxlZGJ5PSJ0Ij4KICA8dGl0bGUgaWQ9InQiPnR1bmdzdGVuPC90aXRsZT4KICA8c3R5bGU+CiAgICAubWFyayB7IGZpbGw6ICM0ZjQ2ZTU7IH0KICAgIC5nbHlwaCB7IGZpbGw6IG5vbmU7IHN0cm9rZTogI2ZmZmZmZjsgc3Ryb2tlLXdpZHRoOiA3OyBzdHJva2UtbGluZWNhcDogcm91bmQ7IHN0cm9rZS1saW5lam9pbjogcm91bmQ7IH0KICAgIC53b3JkIHsgZmlsbDogIzYzNjZmMTsgZm9udDogNzAwIDQ0cHggdWktc2Fucy1zZXJpZiwgc3lzdGVtLXVpLCAtYXBwbGUtc3lzdGVtLCAiU2Vnb2UgVUkiLCBIZWx2ZXRpY2EsIEFyaWFsLCBzYW5zLXNlcmlmOyBsZXR0ZXItc3BhY2luZzogLTFweDsgfQogIDwvc3R5bGU+CiAgPHJlY3QgY2xhc3M9Im1hcmsiIHg9IjQiIHk9IjgiIHdpZHRoPSI4MCIgaGVpZ2h0PSI4MCIgcng9IjE4Ii8+CiAgPHBhdGggY2xhc3M9ImdseXBoIiBkPSJNMjAgMjggTDMwIDY4IEw0NCA0MCBMNTggNjggTDY4IDI4Ii8+CiAgPHRleHQgY2xhc3M9IndvcmQiIHg9IjEwMCIgeT0iNjQiPnR1bmdzdGVuPC90ZXh0Pgo8L3N2Zz4K"/>
+<rect x="1038" y="65" width="178" height="52" rx="26" fill="#EEEDF9"/>
+<text x="1068" y="100" fill="#4F46E5" font-family="Segoe UI, Arial, sans-serif" font-size="28" font-weight="700" letter-spacing="0">v0.1.2</text>
+<text x="64" y="227" fill="#4F46E5" font-family="Segoe UI, Arial, sans-serif" font-size="17" font-weight="700" letter-spacing="1.8">A REAL TERMINAL WALKTHROUGH</text>
+<text x="58" y="330" fill="#20231C" font-family="Segoe UI, Arial, sans-serif" font-size="76" font-weight="700" letter-spacing="0">One API.</text>
+<text x="58" y="420" fill="#20231C" font-family="Segoe UI, Arial, sans-serif" font-size="76" font-weight="700" letter-spacing="0">SDKs, CLI, MCP.</text>
+<text x="64" y="531" fill="#20231C" font-family="Segoe UI, Arial, sans-serif" font-size="27" font-weight="700" letter-spacing="0">Native OpenAPI: 7 SDK languages</text>
+<text x="64" y="577" fill="#62665C" font-family="Segoe UI, Arial, sans-serif" font-size="25" font-weight="400" letter-spacing="0">Imported SDK targets: TypeScript / Python / Rust</text>
+<polyline points="64,620 1216,620" fill="none" stroke="#DDDCD2" stroke-width="1"/>
+<text x="64" y="669" fill="#62665C" font-family="Segoe UI, Arial, sans-serif" font-size="23" font-weight="400" letter-spacing="0">pboachie.github.io/tungsten</text>
+<text x="1060" y="669" fill="#4F46E5" font-family="Segoe UI, Arial, sans-serif" font-size="15" font-weight="700" letter-spacing="1">WALKTHROUGH</text>
+</svg>
