@@ -107,6 +107,8 @@ final class ClientCore {
         _nowFn = options.now,
         _randomFn = options.random,
         _tokenStore = options.tokenStore ?? MemoryTokenStore(),
+        _maxOAuthTokenResponseBytes = options.maxOAuthTokenResponseBytes ??
+            defaultMaxOAuthTokenResponseBytes,
         _timeoutMs = _positiveMs(options.timeout) ?? defaultTimeoutMs,
         maxResponseBytes = options.maxResponseBytes ?? 4 * 1024 * 1024,
         maxEventBytes = _positive(options.maxEventBytes) ?? 1024 * 1024,
@@ -248,6 +250,7 @@ final class ClientCore {
   final int Function()? _nowFn;
   final double Function()? _randomFn;
   final TokenStore _tokenStore;
+  final int _maxOAuthTokenResponseBytes;
   final int _timeoutMs;
   late final bool _redirectsDisabled;
   final Map<String, OperationDescriptor> _registry = {};
@@ -255,7 +258,11 @@ final class ClientCore {
   final Map<String, (String?, int)> _usedTokens = {};
   final Map<String, (String, String, int)> _ccTokens = {};
   final Map<String, Future<(String?, String?)>> _ccFlights = {};
-  final Map<String, Future<_TokenOutcome>> _refreshes = {};
+  final Map<String, _OAuthPending> _oauthAttempts = {};
+  final Map<String, _OAuthVersion> _oauthVersions = {};
+  final Set<_OAuthOwner> _oauthOwners = {};
+  final Map<(String, int, int), _OAuthRefresh> _oauthRefreshes = {};
+  int _oauthWaiters = 0;
   static final math.Random _jitter = math.Random();
 
   static int? _positive(int? value) =>

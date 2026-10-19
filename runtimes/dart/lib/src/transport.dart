@@ -144,14 +144,24 @@ abstract final class _Transport {
     bool stream = false,
     int? idleMs,
     int? maxResponseBytes,
+    OAuthCancellation? oauthCancellation,
+    int? oauthDeadline,
   }) async {
     final started = monotonicMs();
+    final ownedDeadline = oauthDeadline ?? started + timeoutMs;
     int left() => math.max(timeoutMs - (monotonicMs() - started), 1);
     final client = HttpClient()
       ..autoUncompress = false
       ..userAgent = null
       ..connectionTimeout = Duration(milliseconds: timeoutMs);
     var handedOff = false;
+    var oauthClosed = false;
+    void closeOAuth() {
+      if (oauthClosed) return;
+      oauthClosed = true;
+      client.close(force: true);
+    }
+
     try {
       final Uri uri;
       try {
@@ -161,9 +171,15 @@ abstract final class _Transport {
       }
       final HttpClientRequest request;
       try {
-        request = await client
-            .openUrl(method, uri)
-            .timeout(Duration(milliseconds: left()));
+        final opened = client.openUrl(method, uri);
+        request = oauthCancellation == null
+            ? await opened.timeout(Duration(milliseconds: left()))
+            : await _oauthPhase(
+                opened,
+                ownedDeadline,
+                oauthCancellation,
+                closeOAuth,
+              );
       } on TimeoutException {
         return const _Outcome(_Kind.timeout);
       } catch (e) {
@@ -212,9 +228,13 @@ abstract final class _Transport {
       }
       final HttpClientResponse response;
       try {
-        response = await request.close().timeout(
-              Duration(milliseconds: left()),
-            );
+        final closed = request.close();
+        response = oauthCancellation == null
+            ? await closed.timeout(Duration(milliseconds: left()))
+            : await _oauthPhase(closed, ownedDeadline, oauthCancellation, () {
+                request.abort();
+                closeOAuth();
+              });
       } on TimeoutException {
         request.abort();
         return const _Outcome(_Kind.timeout);
@@ -246,11 +266,15 @@ abstract final class _Transport {
           bodyFailure: 'oversized',
         );
       }
-      final (bytes, failure) = await _readBody(
-        response,
-        left(),
-        maxResponseBytes,
-      );
+      final (bytes, failure) = oauthCancellation == null
+          ? await _readBody(response, left(), maxResponseBytes)
+          : await _readOAuthBody(
+              response,
+              ownedDeadline,
+              maxResponseBytes,
+              oauthCancellation,
+              closeOAuth,
+            );
       return _Outcome(
         _Kind.response,
         status: status,
@@ -259,8 +283,112 @@ abstract final class _Transport {
         bodyFailure: failure,
       );
     } finally {
-      if (!handedOff) client.close(force: true);
+      if (!handedOff) {
+        if (oauthCancellation == null) {
+          client.close(force: true);
+        } else {
+          closeOAuth();
+        }
+      }
     }
+  }
+
+  /// Cancellation/deadline aborts the connection, but never treats the timeout
+  /// of an await as settlement of the original future. Admission stays owned.
+  static Future<T> _oauthPhase<T>(
+    Future<T> work,
+    int deadline,
+    OAuthCancellation cancellation,
+    void Function() abort,
+  ) async {
+    var expired = false;
+    void stop() {
+      expired = true;
+      try {
+        abort();
+      } catch (_) {
+        // A custom close error never escapes a timer/cancellation callback.
+      }
+    }
+
+    final timer = Timer(
+      Duration(milliseconds: math.max(0, deadline - monotonicMs())),
+      stop,
+    );
+    final detach = cancellation._listen(stop);
+    try {
+      final result = await work;
+      if (expired || cancellation.isCanceled || monotonicMs() >= deadline) {
+        throw TimeoutException('OAuth deadline exceeded');
+      }
+      return result;
+    } finally {
+      timer.cancel();
+      detach();
+    }
+  }
+
+  static Future<(List<int>, String?)> _readOAuthBody(
+    Stream<List<int>> response,
+    int deadline,
+    int? maximum,
+    OAuthCancellation cancellation,
+    void Function() abort,
+  ) {
+    final done = Completer<(List<int>, String?)>();
+    final out = BytesBuilder(copy: false);
+    late final StreamSubscription<List<int>> sub;
+    Timer? timer;
+    void Function()? detach;
+    var finishing = false;
+    Future<void> fail(String reason) async {
+      if (finishing) return;
+      finishing = true;
+      timer?.cancel();
+      detach?.call();
+      try {
+        abort();
+      } catch (_) {
+        // Continue settling the owned subscription even if a custom close fails.
+      }
+      try {
+        await sub.cancel();
+      } catch (_) {
+        // A failed cancellation still settles its returned future.
+      }
+      done.complete((const <int>[], reason));
+    }
+
+    sub = response.listen(
+      (chunk) {
+        if (finishing) return;
+        if (cancellation.isCanceled || monotonicMs() >= deadline) {
+          unawaited(fail('timeout'));
+        } else if (maximum != null && out.length + chunk.length > maximum) {
+          unawaited(fail('oversized'));
+        } else {
+          out.add(chunk);
+        }
+      },
+      onError: (Object _) => unawaited(fail('broken')),
+      onDone: () {
+        if (finishing) return;
+        if (cancellation.isCanceled || monotonicMs() >= deadline) {
+          unawaited(fail('timeout'));
+          return;
+        }
+        finishing = true;
+        timer?.cancel();
+        detach?.call();
+        done.complete((out.takeBytes(), null));
+      },
+    );
+    timer = Timer(
+      Duration(milliseconds: math.max(0, deadline - monotonicMs())),
+      () => unawaited(fail('timeout')),
+    );
+    detach = cancellation._listen(() => unawaited(fail('timeout')));
+    return done.future;
   }
 
   static Future<(List<int>, String?)> _readBody(

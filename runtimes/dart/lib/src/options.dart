@@ -244,6 +244,7 @@ final class ClientOptions {
     this.redirects,
     this.auth = const {},
     this.tokenStore,
+    this.maxOAuthTokenResponseBytes,
     this.timeout,
     this.retries,
     this.idempotencyStore,
@@ -279,6 +280,10 @@ final class ClientOptions {
 
   /// Where authorization-code tokens live (memory by default).
   final TokenStore? tokenStore;
+
+  /// Authorization-code/refresh response bytes (64 KiB by default). Must be a
+  /// positive integer no larger than 1 MiB; independent of ordinary responses.
+  final int? maxOAuthTokenResponseBytes;
 
   /// The per-attempt timeout (30 s).
   final Duration? timeout;

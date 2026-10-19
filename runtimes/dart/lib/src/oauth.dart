@@ -21,17 +21,17 @@ final class Pkce {
   static String challengeOf(String verifier) =>
       _Util.base64url(crypto.sha256.convert(ascii.encode(verifier)).bytes);
 
-  /// The code verifier, passed to [OAuthFlow.exchangeCode].
+  /// The code verifier, passed to [OAuthFlow.lowLevelExchangeCode].
   final String verifier;
 
-  /// The code challenge, passed to [OAuthFlow.authorizationUrl].
+  /// The code challenge, passed to [OAuthFlow.lowLevelAuthorizationUrl].
   final String challenge;
 
   @override
-  String toString() => 'Pkce(challenge: $challenge)';
+  String toString() => 'Pkce($redacted)';
 }
 
-/// What [OAuthFlow.exchangeCode] and [OAuthFlow.refresh] report: no
+/// What [OAuthFlow.lowLevelExchangeCode] and [OAuthFlow.refresh] report: no
 /// secrets.
 final class TokenInfo {
   /// Token facts.
@@ -55,8 +55,7 @@ final class TokenInfo {
   final bool refreshable;
 
   @override
-  String toString() =>
-      'TokenInfo(scheme: $scheme, expiresAt: $expiresAt, scope: $scope, refreshable: $refreshable)';
+  String toString() => 'TokenInfo($redacted, refreshable: $refreshable)';
 }
 
 /// The authorization-code helpers of one OAuth2 scheme
@@ -72,19 +71,76 @@ final class OAuthFlow {
   /// The store the tokens go to.
   TokenStore get tokenStore => _core._tokenStore;
 
-  /// A fresh PKCE pair: pass its challenge to [authorizationUrl] and keep
-  /// its verifier for [exchangeCode].
+  /// Explicit low-level PKCE primitive; managed authorization generates its own.
   Pkce pkce() => Pkce.generate();
 
-  /// The URL to send the user to.
-  Result<String> authorizationUrl({
+  /// Begin a managed S256/state attempt bound to the owning browser/listener.
+  Result<AuthorizationAttempt> authorizationUrl({
+    required String sessionBinding,
+    required IssuerDefense issuerDefense,
+    required bool s256Supported,
+    String? redirectUri,
+    List<String>? scopes,
+    String? resource,
+    String? audience,
+    String? accountContext,
+    Map<String, String> extra = const {},
+    OAuthCancellation? cancellation,
+  }) =>
+      _core._beginAuthorization(
+        scheme,
+        sessionBinding: sessionBinding,
+        issuerDefense: issuerDefense,
+        s256Supported: s256Supported,
+        redirectUri: redirectUri,
+        scopes: scopes,
+        resource: resource,
+        audience: audience,
+        accountContext: accountContext,
+        extra: extra,
+        cancellation: cancellation,
+      );
+
+  /// Validate and consume one full callback. A claimed code is never retried.
+  Future<Result<TokenInfo>> exchangeCode({
+    required String attemptHandle,
+    required String callbackUrl,
+    required String sessionBinding,
+    OAuthCancellation? cancellation,
+  }) =>
+      _core._completeAuthorization(
+        scheme,
+        attemptHandle,
+        callbackUrl,
+        sessionBinding,
+        cancellation,
+      );
+
+  /// Invalidate an attempt; claimed work keeps admission until settlement.
+  Result<void> cancelAuthorization(
+    String attemptHandle,
+    String sessionBinding,
+  ) =>
+      _core._cancelAuthorization(scheme, attemptHandle, sessionBinding);
+
+  /// Synchronously invalidate this scheme's pending authorization and token
+  /// work and dispose its attempt timers. Claimed work retains admission until
+  /// settlement. Stored credentials are not deleted; use [logout] for that.
+  void cancelAllAuthorization() => _core._cancelAllOAuth(scheme);
+
+  /// Invalidate local attempts/credentials before attempting store removal.
+  /// This does not revoke remote provider tokens.
+  Future<Result<void>> logout() => _core._logoutOAuth(scheme);
+
+  /// Explicit compatibility primitive: caller owns PKCE, state and issuer checks.
+  Result<String> lowLevelAuthorizationUrl({
     String? redirectUri,
     List<String>? scopes,
     String? state,
     String? codeChallenge,
     Map<String, String> extra = const {},
   }) =>
-      _core._authorizationUrl(
+      _core._lowLevelAuthorizationUrl(
         scheme,
         redirectUri: redirectUri,
         scopes: scopes,
@@ -93,22 +149,16 @@ final class OAuthFlow {
         extra: extra,
       );
 
-  /// Trades the code from the redirect for tokens, stored for later calls.
-  Future<Result<TokenInfo>> exchangeCode({
+  /// Explicit unbound exchange; it bypasses managed credential epochs.
+  Future<Result<TokenInfo>> lowLevelExchangeCode({
     required String code,
     String? redirectUri,
     String? codeVerifier,
   }) =>
-      _core._exchangeCode(
-        scheme,
-        code: code,
-        redirectUri: redirectUri,
-        codeVerifier: codeVerifier,
-      );
+      _core._lowLevelExchange(scheme, code, redirectUri, codeVerifier);
 
-  /// Refreshes the stored token now (calls refresh it on their own when it
-  /// expires).
-  Future<Result<TokenInfo>> refresh() => _core._refreshNow(scheme);
+  /// Refresh the managed stored token now, with generation/epoch fencing.
+  Future<Result<TokenInfo>> refresh() => _core._managedRefresh(scheme);
 }
 
 final class _TokenFailure {
@@ -125,8 +175,6 @@ final class _CodeClient {
   final String secret;
   final String redirect;
 }
-
-typedef _TokenOutcome = (String?, _TokenFailure?);
 
 extension _OAuth on ClientCore {
   static int _realNow() => DateTime.now().millisecondsSinceEpoch;
@@ -146,22 +194,6 @@ extension _OAuth on ClientCore {
     return (null, 'the API descriptor defines no scheme named $scheme');
   }
 
-  (_CodeClient?, String?) _codeClient(String scheme) {
-    final cred = _credential(scheme);
-    if (cred is! Map<String, String?> || cred['flow'] != 'authorizationCode') {
-      return (
-        null,
-        'auth.$scheme must be Credential.authorizationCode(clientId: ..., clientSecret: ..., redirectUri: ...)',
-      );
-    }
-    final id = cred['client_id'] ?? '';
-    if (id.isEmpty) return (null, 'auth.$scheme needs a client_id');
-    return (
-      _CodeClient(id, cred['client_secret'] ?? '', cred['redirect_uri'] ?? ''),
-      null,
-    );
-  }
-
   static Err<T> _oauthError<T>(String operation, String remediation) =>
       _diag(operation, 'AUTH_FAILED').remedy(remediation).err<T>();
 
@@ -170,228 +202,7 @@ extension _OAuth on ClientCore {
     false,
   );
 
-  Future<StoredToken?> _readToken(String scheme) async {
-    final t = await _tokenStore.get(scheme);
-    return t != null && t.accessToken.isNotEmpty ? t : null;
-  }
-
-  _TokenFailure _missing(String scheme) => _TokenFailure(
-        'No OAuth2 token is stored for $scheme; send the user to authorizationUrl(), then call exchangeCode() '
-        'with the code, or put a token in ClientOptions.tokenStore.',
-        false,
-      );
-
-  /// (token, null) or (null, remediation).
-  Future<(String?, String?)> _storedToken(String scheme, bool force) async {
-    final (token, failure) = await _storedTokenInner(scheme, force);
-    return failure != null ? (null, failure.message) : (token, null);
-  }
-
-  Future<_TokenOutcome> _storedTokenInner(String scheme, bool force) async {
-    final StoredToken? stored;
-    try {
-      stored = await _readToken(scheme);
-    } catch (_) {
-      return (null, _storeFailed);
-    }
-    if (stored == null) return (null, _missing(scheme));
-    final expires = stored.expiresAt;
-    final fresh = expires == null || expires > now + _expirySkewMs;
-    if (fresh && !force) return (stored.accessToken, null);
-    // One refresh per scheme at a time: callers that find it running wait
-    // for its result instead of spending the refresh token again.
-    final running = _refreshes[scheme];
-    if (running != null) return running;
-    final flight = _refreshFlight(scheme, force);
-    _refreshes[scheme] = flight;
-    try {
-      return await flight;
-    } finally {
-      _refreshes.removeWhere((k, v) => k == scheme && identical(v, flight));
-    }
-  }
-
-  Future<_TokenOutcome> _refreshFlight(String scheme, bool force) async {
-    final StoredToken? current;
-    try {
-      current = await _readToken(scheme);
-    } catch (_) {
-      return (null, _storeFailed);
-    }
-    if (current == null) return (null, _missing(scheme));
-    return _refreshStored(scheme, current, force);
-  }
-
-  /// The refreshed token after a 401 when the stored token has a refresh
-  /// token (or another call already replaced it), else null.
-  Future<String?> _refreshAfterRejection(String scheme, String rejected) async {
-    final StoredToken? stored;
-    try {
-      stored = await _readToken(scheme);
-    } catch (_) {
-      return null;
-    }
-    if (stored == null) return null;
-    if (stored.accessToken != rejected) return stored.accessToken;
-    if ((stored.refreshToken ?? '').isEmpty) return null;
-    final (token, problem) = await _storedToken(scheme, true);
-    return problem == null ? token : null;
-  }
-
-  Future<_TokenOutcome> _refreshStored(
-    String scheme,
-    StoredToken stored,
-    bool force,
-  ) async {
-    final (flow, reason) = _codeFlow(scheme);
-    if (flow == null) {
-      return (
-        null,
-        _TokenFailure(
-          'Cannot refresh the OAuth2 token for $scheme: $reason.',
-          false,
-        ),
-      );
-    }
-    final (client, why) = _codeClient(scheme);
-    if (client == null) {
-      return (
-        null,
-        _TokenFailure(
-          'Cannot refresh the OAuth2 token for $scheme: $why.',
-          false,
-        ),
-      );
-    }
-    final refresh = stored.refreshToken ?? '';
-    if (refresh.isEmpty) {
-      final state = '${force ? '' : 'expired and '}has no refresh token';
-      return (
-        null,
-        _TokenFailure(
-          'The OAuth2 token for $scheme $state; authorize again with authorizationUrl() and exchangeCode().',
-          false,
-        ),
-      );
-    }
-    final url = _str(flow['refresh_url'] ?? flow['token_url']);
-    final (renewed, failure) = await _tokenRequest(
-        scheme,
-        url,
-        client,
-        [
-          ('grant_type', 'refresh_token'),
-          ('refresh_token', refresh),
-        ],
-        refresh);
-    try {
-      if (failure != null) {
-        if (failure.rejected) await _tokenStore.delete(scheme);
-        return (null, failure);
-      }
-      await _tokenStore.set(scheme, renewed!);
-    } catch (_) {
-      return (null, _storeFailed);
-    }
-    return (renewed.accessToken, null);
-  }
-
   int get _tokenTimeoutMs => math.max(_timeoutMs, 1);
-
-  Future<(StoredToken?, _TokenFailure?)> _tokenRequest(
-    String scheme,
-    String url,
-    _CodeClient client,
-    List<(String, String)> fields,
-    String previous,
-  ) async {
-    final headers = <(String, String)>[
-      ('Content-Type', 'application/x-www-form-urlencoded'),
-      ('Accept', 'application/json'),
-    ];
-    if (_insecureHttp(url))
-      return (null, _TokenFailure(ClientCore._insecureHttpAuth, false));
-    final all = [...fields];
-    if (client.secret.isEmpty) {
-      all.add(('client_id', client.id));
-    } else {
-      final basic = base64Encode(
-        utf8.encode(
-          '${_Serialize.percentEncode(client.id)}:${_Serialize.percentEncode(client.secret)}',
-        ),
-      );
-      headers.add(('Authorization', 'Basic $basic'));
-    }
-    final body = _Encoded(empty: false, bytes: utf8.encode(_formBody(all)));
-    final out = await _Transport.attempt(
-      url: url,
-      method: 'POST',
-      headers: headers,
-      body: body,
-      timeoutMs: _tokenTimeoutMs,
-      maxResponseBytes: 1024 * 1024,
-    );
-    if (out.kind != _Kind.response || out.body == null) {
-      return (
-        null,
-        _TokenFailure(
-          'The OAuth2 token endpoint for $scheme could not be reached; check network access and the token URL.',
-          false,
-        ),
-      );
-    }
-    final decoded = _Classify.decodeBody(
-      out.body!,
-      out.headers,
-      'application/json',
-    );
-    if (out.status < 200 || out.status > 299) {
-      final code = _Util.getPathStr(decoded.value, 'error');
-      final named = code is String && RegExp(r'^[a-z_]{1,40}$').hasMatch(code)
-          ? ' ($code)'
-          : '';
-      return (
-        null,
-        _TokenFailure(
-          'The OAuth2 token endpoint for $scheme answered HTTP ${out.status}$named; check the code or refresh token, client credentials and redirect URI.',
-          out.status >= 400 && out.status <= 499,
-        ),
-      );
-    }
-    String text(String path) {
-      final v = _Util.getPathStr(decoded.value, path);
-      return v is String ? v : '';
-    }
-
-    final access = text('access_token');
-    if (access.isEmpty) {
-      return (
-        null,
-        _TokenFailure(
-          'The OAuth2 token endpoint for $scheme returned no access_token.',
-          false,
-        ),
-      );
-    }
-    var refresh = text('refresh_token');
-    if (refresh.isEmpty) refresh = previous;
-    final expiresIn = _Util.getPathStr(decoded.value, 'expires_in');
-    final expires = expiresIn is num && expiresIn.isFinite
-        ? now + (math.max(expiresIn, 0) * 1000).truncate()
-        : null;
-    final type = text('token_type');
-    final scope = text('scope');
-    return (
-      StoredToken(
-        accessToken: access,
-        refreshToken: refresh.isEmpty ? null : refresh,
-        expiresAt: expires,
-        tokenType: type.isEmpty ? null : type,
-        scope: scope.isEmpty ? null : scope,
-      ),
-      null,
-    );
-  }
 
   /// An OAuth2 client-credentials token, fetched once per scheme and cached
   /// until 30 s before it expires. Concurrent calls share one request
@@ -469,10 +280,7 @@ extension _OAuth on ClientCore {
     return (token, null);
   }
 
-  static String _oauthOperation(String scheme, String helper) =>
-      'oauth.$scheme.$helper';
-
-  Result<String> _authorizationUrl(
+  Result<String> _lowLevelAuthorizationUrl(
     String scheme, {
     String? redirectUri,
     List<String>? scopes,
@@ -480,116 +288,54 @@ extension _OAuth on ClientCore {
     String? codeChallenge,
     Map<String, String> extra = const {},
   }) {
-    final operation = _oauthOperation(scheme, 'authorizationUrl');
-    final (flow, reason) = _codeFlow(scheme);
-    if (flow == null) {
-      return _oauthError(
-        operation,
-        'Cannot build an authorization URL: $reason.',
-      );
-    }
-    final (client, why) = _codeClient(scheme);
-    if (client == null) {
-      return _oauthError(operation, 'Cannot build an authorization URL: $why.');
-    }
-    final redirect =
-        (redirectUri ?? '').isEmpty ? client.redirect : redirectUri!;
-    if (redirect.isEmpty) {
-      return _oauthError(
-        operation,
-        'Pass redirectUri, or set redirectUri in auth.$scheme; the authorization URL needs one.',
-      );
-    }
-    final scope =
-        (scopes ?? [for (final s in _list(flow['scopes'])) '$s']).join(' ');
-    final fields = <(String, String)>[
-      ('response_type', 'code'),
-      ('client_id', client.id),
-      ('redirect_uri', redirect),
-      if (scope.isNotEmpty) ('scope', scope),
-      if ((state ?? '').isNotEmpty) ('state', state!),
-      if ((codeChallenge ?? '').isNotEmpty) ...[
-        ('code_challenge', codeChallenge!),
-        ('code_challenge_method', 'S256'),
-      ],
-    ];
-    final reserved = [for (final (k, _) in fields) k];
-    final keys = extra.keys.toList()..sort();
-    for (final k in keys) {
-      if (!reserved.contains(k)) fields.add((k, extra[k]!));
-    }
-    final base = _str(flow['authorization_url']);
-    final sep = base.contains('?')
-        ? (base.endsWith('?') || base.endsWith('&') ? '' : '&')
-        : '?';
-    return Ok(base + sep + _formBody(fields), meta: ResponseMeta.local);
-  }
-
-  Future<Result<TokenInfo>> _exchangeCode(
-    String scheme, {
-    required String code,
-    String? redirectUri,
-    String? codeVerifier,
-  }) async {
-    final operation = _oauthOperation(scheme, 'exchangeCode');
-    final (flow, reason) = _codeFlow(scheme);
-    if (flow == null) {
-      return _oauthError(operation, 'Cannot exchange the code: $reason.');
-    }
-    final (client, why) = _codeClient(scheme);
-    if (client == null) {
-      return _oauthError(operation, 'Cannot exchange the code: $why.');
-    }
-    if (code.isEmpty) {
-      return _oauthError(
-        operation,
-        'Pass the authorization code the server redirected back with as code.',
-      );
-    }
-    final redirect =
-        (redirectUri ?? '').isEmpty ? client.redirect : redirectUri!;
-    if (redirect.isEmpty) {
-      return _oauthError(
-        operation,
-        'Pass redirectUri, or set redirectUri in auth.$scheme; it must equal the one used for the authorization URL.',
-      );
-    }
-    final fields = <(String, String)>[
-      ('grant_type', 'authorization_code'),
-      ('code', code),
-      ('redirect_uri', redirect),
-      if ((codeVerifier ?? '').isNotEmpty) ('code_verifier', codeVerifier!),
-    ];
-    final (stored, failure) = await _tokenRequest(
-      scheme,
-      _str(flow['token_url']),
-      client,
-      fields,
-      '',
-    );
-    if (failure != null) return _oauthError(operation, failure.message);
+    final owner = _reserveOAuth(scheme);
+    if (owner == null) return _oauthFail('lowLevelAuthorizationUrl');
     try {
-      await _tokenStore.set(scheme, stored!);
+      final budget = _OAuthBudget();
+      final config = _captureOAuth(scheme, budget, managed: false);
+      final redirect = budget.take(redirectUri ?? config.client.redirect);
+      _oauthEndpoint(redirect, redirect: true);
+      final requested = scopes == null ? config.scopes : budget.strings(scopes);
+      budget.take(state ?? '');
+      budget.take(codeChallenge ?? '');
+      final fields = <(String, String)>[
+        ('response_type', 'code'),
+        ('client_id', config.client.id),
+        ('redirect_uri', redirect),
+        if (requested.isNotEmpty) ('scope', requested.join(' ')),
+        if (state != null && state.isNotEmpty) ('state', state),
+        if (codeChallenge != null && codeChallenge.isNotEmpty) ...[
+          ('code_challenge', codeChallenge),
+          ('code_challenge_method', 'S256'),
+        ],
+      ];
+      var count = 0;
+      final ownedExtra = <String, String>{};
+      for (final e in extra.entries) {
+        if (++count > 64) throw const _OAuthInvalid();
+        budget.take(e.key);
+        budget.take(e.value);
+        if (_oauthReserved.contains(e.key)) throw const _OAuthInvalid();
+        ownedExtra[e.key] = e.value;
+      }
+      final keys = ownedExtra.keys.toList()..sort();
+      for (final k in keys) {
+        fields.add((k, ownedExtra[k]!));
+      }
+      if (!owner.live || !_sameOAuth(config) || !owner.live)
+        throw const _OAuthInvalid();
+      final base = config.authorization;
+      final separator = !base.contains('?')
+          ? '?'
+          : (base.endsWith('?') || base.endsWith('&') ? '' : '&');
+      return Ok('$base$separator${_formBody(fields)}',
+          meta: ResponseMeta.local);
     } catch (_) {
-      return _oauthError(operation, _storeFailed.message);
+      return _oauthFail(
+          'lowLevelAuthorizationUrl', _OAuthSession._invalidConfig);
+    } finally {
+      _oauthOwners.remove(owner);
     }
-    return Ok(_tokenInfo(scheme, stored), meta: ResponseMeta.local);
-  }
-
-  Future<Result<TokenInfo>> _refreshNow(String scheme) async {
-    final operation = _oauthOperation(scheme, 'refresh');
-    final (_, failure) = await _storedTokenInner(scheme, true);
-    if (failure != null) return _oauthError(operation, failure.message);
-    final StoredToken? stored;
-    try {
-      stored = await _readToken(scheme);
-    } catch (_) {
-      return _oauthError(operation, _storeFailed.message);
-    }
-    if (stored == null) {
-      return _oauthError(operation, 'No token is stored for $scheme.');
-    }
-    return Ok(_tokenInfo(scheme, stored), meta: ResponseMeta.local);
   }
 
   static TokenInfo _tokenInfo(String scheme, StoredToken token) => TokenInfo(
