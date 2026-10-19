@@ -110,6 +110,8 @@ public sealed partial class ClientCore
             return new(null, new($"The OAuth2 token for {scheme} {what}; begin a new managed authorization attempt.", false));
         }
         var url = string.IsNullOrEmpty(flow.RefreshUrl) ? flow.TokenUrl ?? "" : flow.RefreshUrl;
+        try { OAuthAttemptRules.Endpoint(url); }
+        catch (Exception) { return new(null, new("OAuth refresh requires a valid endpoint without protected query fields.", false)); }
         var fields = new List<(string, string)> { ("grant_type", "refresh_token"), ("refresh_token", previous.RefreshToken) };
         // The job owns its transport deadline and admission until actual settlement, even if all waiters leave.
         var (renewed, failure) = await TokenRequestAsync(scheme, url, client, fields, previous.RefreshToken, CancellationToken.None).ConfigureAwait(false);

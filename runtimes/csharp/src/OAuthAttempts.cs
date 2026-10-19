@@ -155,6 +155,11 @@ public sealed partial class ClientCore
         OAuthAttemptRules.Endpoint(tokenUrl!);
         OAuthAttemptRules.Endpoint(redirect!, true);
         OAuthAttemptRules.Require(!InsecureHttp(authorizationUrl!) && !InsecureHttp(tokenUrl!));
+        if (!string.IsNullOrEmpty(refreshUrl))
+        {
+            OAuthAttemptRules.Endpoint(refreshUrl);
+            OAuthAttemptRules.Require(!InsecureHttp(refreshUrl));
+        }
         if (p.Resource is not null) extra.Add("resource", p.Resource);
         if (p.Audience is not null) extra.Add("audience", p.Audience);
         var pkce = Pkce.Generate();
