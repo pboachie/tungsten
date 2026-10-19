@@ -455,6 +455,8 @@ class OAuthSession:
                 )
                 qualified_endpoint(authorization)
                 qualified_endpoint(token_url)
+                if refresh_url is not None:
+                    qualified_endpoint(refresh_url)
                 qualified_endpoint(redirect, redirect=True)
                 if any(
                     insecure_http(url, getattr(self._options, "allow_insecure_http", False))
@@ -850,6 +852,12 @@ class OAuthSession:
             )
         fields = [("grant_type", "refresh_token"), ("refresh_token", stored.refresh_token)]
         url = str_field(flow, "refresh_url") or str_field(flow, "token_url") or ""
+        try:
+            qualified_endpoint(url)
+        except Exception:
+            raise TokenError(
+                "Cannot refresh OAuth2 tokens: provide a valid endpoint without protected query fields."
+            ) from None
         try:
             renewed = yield from self._token_request(scheme, url, client, fields, stored.refresh_token)
         except TokenError as error:

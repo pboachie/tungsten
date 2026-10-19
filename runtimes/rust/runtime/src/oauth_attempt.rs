@@ -304,5 +304,8 @@ pub(crate) fn qualify(
     }
     qualified_endpoint(&flow.authorization_url, false)?;
     qualified_endpoint(&flow.token_url, false)?;
+    if let Some(refresh_url) = &flow.refresh_url {
+        qualified_endpoint(refresh_url, false)?;
+    }
     qualified_endpoint(redirect, true)
 }
