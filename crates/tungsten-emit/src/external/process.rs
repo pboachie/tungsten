@@ -207,7 +207,12 @@ struct OwnedChild {
 }
 
 impl OwnedChild {
-    #[cfg(unix)]
+    #[cfg(any(
+        target_os = "android",
+        target_os = "freebsd",
+        target_os = "haiku",
+        all(target_os = "linux", not(target_env = "uclibc"))
+    ))]
     fn observe(&mut self) -> io::Result<Option<Option<i32>>> {
         use nix::errno::Errno;
         use nix::sys::wait::{Id, WaitPidFlag, WaitStatus, waitid};
@@ -230,6 +235,48 @@ impl OwnedChild {
             }
             Err(e) => Err(e.into()),
         }
+    }
+
+    #[cfg(target_vendor = "apple")]
+    fn observe(&mut self) -> io::Result<Option<Option<i32>>> {
+        use rustix::io::Errno;
+        use rustix::process::{Pid, WaitId, WaitIdOptions, waitid};
+        let raw = i32::try_from(self.child.id()).map_err(io::Error::other)?;
+        let pid = Pid::from_raw(raw)
+            .ok_or_else(|| io::Error::other("invalid external child identity"))?;
+        // nix's safe waitid API is not available on Apple. Retain the same
+        // non-reaping ownership contract through rustix's safe Darwin wrapper.
+        match waitid(
+            WaitId::Pid(pid),
+            WaitIdOptions::EXITED | WaitIdOptions::NOHANG | WaitIdOptions::NOWAIT,
+        ) {
+            Ok(Some(status)) if status.exited() => Ok(Some(status.exit_status())),
+            Ok(Some(status)) if status.killed() || status.dumped() => Ok(Some(None)),
+            Ok(_) | Err(Errno::INTR) => Ok(None),
+            Err(Errno::CHILD) => {
+                self.armed = false;
+                Err(io::Error::other("external process child ownership lost"))
+            }
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    #[cfg(all(
+        unix,
+        not(any(
+            target_vendor = "apple",
+            target_os = "android",
+            target_os = "freebsd",
+            target_os = "haiku",
+            all(target_os = "linux", not(target_env = "uclibc"))
+        ))
+    ))]
+    fn observe(&mut self) -> io::Result<Option<Option<i32>>> {
+        self.armed = false;
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "non-reaping external process observation is unsupported on this platform",
+        ))
     }
 
     #[cfg(not(unix))]
@@ -514,6 +561,19 @@ pub(crate) fn run(
         ))
     })?;
     let execution_deadline = deadline - (limits.timeout / 4).min(Duration::from_secs(1));
+    if !cfg!(any(
+        windows,
+        target_vendor = "apple",
+        target_os = "android",
+        target_os = "freebsd",
+        target_os = "haiku",
+        all(target_os = "linux", not(target_env = "uclibc"))
+    )) {
+        return Err(Failure::Spawn(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "non-reaping external process observation is unsupported on this platform",
+        )));
+    }
     #[cfg(target_os = "linux")]
     {
         let mut status = Vec::new();
