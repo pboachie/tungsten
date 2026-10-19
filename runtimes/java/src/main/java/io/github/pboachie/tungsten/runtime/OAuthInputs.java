@@ -43,16 +43,18 @@ final class OAuthInputs {
         int count = 0;
         for (int i = 0; i < value.length(); i++) {
             char c = value.charAt(i);
-            if (c <= 0x7f) count++;
-            else if (c <= 0x7ff) count += 2;
+            int width;
+            if (c <= 0x7f) width = 1;
+            else if (c <= 0x7ff) width = 2;
             else if (Character.isHighSurrogate(c)) {
                 require(i + 1 < value.length() && Character.isLowSurrogate(value.charAt(++i)));
-                count += 4;
+                width = 4;
             } else {
                 require(!Character.isLowSurrogate(c));
-                count += 3;
+                width = 3;
             }
-            require(count <= limit);
+            require(width <= limit - count);
+            count += width;
         }
         return count;
     }

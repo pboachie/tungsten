@@ -132,8 +132,10 @@ exchange claim do. An ambiguous exchange requires a new attempt.
 Each client admits at most 32 pending/claimed attempts and 32 token-read/refresh
 owners or waiters. Attempts expire after ten monotonic minutes. Captured inputs
 share a 32 KiB UTF-8 budget, with at most 64 scopes and 64 extra fields; callbacks
-are at most 16 KiB with at most 64 fields. Refresh captures, including supplied
-token/client inputs, use the same input budget. Endpoints reject invalid Unicode,
+are at most 16 KiB with at most 64 fields. Refresh configuration/client captures
+use the same input budget; stored token strings are bounded separately by the
+configured token-response byte cap, so larger accepted tokens remain refreshable.
+Endpoints reject invalid Unicode,
 ASCII whitespace/control text, fragments and protected query fields before URI parsing.
 `cancelAuthorization(handle, binding)` invalidates one attempt; `logout()` fences
 local pending work before removing credentials. Neither revokes provider tokens.

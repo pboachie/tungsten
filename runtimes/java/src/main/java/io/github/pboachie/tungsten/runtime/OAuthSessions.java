@@ -287,8 +287,9 @@ final class OAuthSessions {
     private RefreshCapture captureRefresh(String scheme, TokenStore.StoredToken previous) {
         OAuthInputs.Budget budget = new OAuthInputs.Budget();
         budget.charge(scheme);
-        budget.charge(previous.accessToken());
-        budget.charge(previous.refreshToken());
+        long tokenBytes = core.options.maxOAuthTokenResponseBytes;
+        tokenBytes -= OAuthInputs.bytes(previous.accessToken(), (int) Math.min(tokenBytes, Integer.MAX_VALUE));
+        OAuthInputs.bytes(previous.refreshToken(), (int) Math.min(tokenBytes, Integer.MAX_VALUE));
         String[] reason = new String[1];
         ApiDescriptor.AuthorizationCode flow = auth.codeFlow(scheme, reason);
         Auth.CodeClient client = auth.codeClient(scheme, reason);
