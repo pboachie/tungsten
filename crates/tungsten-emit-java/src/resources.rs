@@ -695,10 +695,8 @@ impl Ctx<'_> {
         });
         let request = |info: &OpInfo| -> String {
             format!(
-                "{}.{}.{}",
-                self.resources_package(),
-                self.names.resources[info.resource].class,
-                info.request
+                "{}.{}",
+                self.names.resources[info.resource].class, info.request
             )
         };
         let cases = |w: &mut Writer,
@@ -802,21 +800,34 @@ impl Ctx<'_> {
         w.dedent();
         w.line("}");
         let body = w.finish();
-        let imports = used_imports(
-            vec![
-                runtime("CallOptions"),
-                runtime("ClientCore"),
-                runtime("EventStream"),
-                runtime("MacroDescriptor"),
-                runtime("OperationDescriptor"),
-                runtime("Page"),
-                runtime("PreviewResult"),
-                runtime("Result"),
-                runtime("Typed"),
-                "java.util.List".into(),
-            ],
-            &body,
-        );
+        let mut imports = vec![
+            runtime("CallOptions"),
+            runtime("ClientCore"),
+            runtime("EventStream"),
+            runtime("MacroDescriptor"),
+            runtime("OperationDescriptor"),
+            runtime("Page"),
+            runtime("PreviewResult"),
+            runtime("Result"),
+            runtime("Typed"),
+            "java.util.List".into(),
+        ];
+        // A qualified method reference in expression context can resolve its
+        // package's first segment as a field or parameter (for example client).
+        // Resource classes already have collision-resolved names; import them
+        // in type context and keep the request references local to those types.
+        let resources = infos
+            .iter()
+            .map(|info| {
+                format!(
+                    "{}.{}",
+                    self.resources_package(),
+                    self.names.resources[info.resource].class
+                )
+            })
+            .collect::<std::collections::BTreeSet<_>>();
+        imports.extend(resources);
+        let imports = used_imports(imports, &body);
         let mut f = java::file(self.ir, &self.opts.package, &imports);
         f.line(body.trim_end());
         f.finish()
