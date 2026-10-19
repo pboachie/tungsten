@@ -74,8 +74,10 @@ pub(crate) fn compile_with_policy(
     path: &Path,
     policy: Option<std::sync::Arc<tungsten_core::policy::InvocationPolicy>>,
 ) -> Compiled {
-    let mut opts = CompileOptions::default();
-    opts.policy = policy;
+    let mut opts = CompileOptions {
+        policy,
+        ..Default::default()
+    };
     opts.load.acquisition = tungsten_openapi::acquire::current_options();
     match resolve(path) {
         Ok(Input::Project(manifest)) => compile_project(&manifest, &opts),
