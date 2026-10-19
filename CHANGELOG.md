@@ -11,6 +11,15 @@ changes.
 
 ### Breaking
 
+- Go browser OAuth helpers now manage bounded, one-use S256/state attempts.
+  Qualify issuer defense, bind the owning session/listener, retain the attempt
+  handle and pass the full callback URL to `ExchangeCode`. Managed helpers
+  require a `FencedTokenStore`; application-owned protocol inputs move to
+  `LowLevelAuthorizationURL` and `LowLevelExchangeCode`. Code/refresh responses
+  default to 64 KiB through `MaxOAuthTokenResponseBytes`. Token jobs retain their
+  monotonic deadline and physical ownership through cleanup, and diagnostics
+  expose only recognized token-endpoint error labels.
+
 - C# browser OAuth helpers now create managed S256/state authorization attempts.
   Qualify issuer defense and bind the owning session/listener, retain the returned
   handle, and pass the full callback URL to `ExchangeCodeAsync`. F# clients use

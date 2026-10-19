@@ -22,35 +22,36 @@ const Version = "0.1.3"
 // envelope. It is safe for concurrent use. API and transport failures are
 // returned as *Error values carrying the envelope.
 type ClientCore struct {
-	allowInsecureHTTP bool
-	maxResponseBytes  *int64
-	redirectsDisabled bool
-	api               *APIDescriptor
-	auth              AuthConfig
-	headers           map[string]string
-	baseURL           string
-	timeout           time.Duration
-	maxEventBytes     int
-	maxCollectBytes   int
-	maxCollectTime    time.Duration
-	maxReconnects     int
-	reconnectMax      time.Duration
-	idleTimeout       time.Duration
-	retries           PartialRetry
-	store             IdempotencyStore
-	middleware        []Middleware
-	validateResponses ValidateResponses
-	onDiagnostic      func(*Diagnostic)
-	confirmationKey   []byte
-	http              *http.Client
-	nowFn             func() int64
-	randomFn          func() float64
-	tokenStore        TokenStore
+	allowInsecureHTTP          bool
+	maxResponseBytes           *int64
+	maxOAuthTokenResponseBytes int64
+	redirectsDisabled          bool
+	api                        *APIDescriptor
+	auth                       AuthConfig
+	headers                    map[string]string
+	baseURL                    string
+	timeout                    time.Duration
+	maxEventBytes              int
+	maxCollectBytes            int
+	maxCollectTime             time.Duration
+	maxReconnects              int
+	reconnectMax               time.Duration
+	idleTimeout                time.Duration
+	retries                    PartialRetry
+	store                      IdempotencyStore
+	middleware                 []Middleware
+	validateResponses          ValidateResponses
+	onDiagnostic               func(*Diagnostic)
+	confirmationKey            []byte
+	http                       *http.Client
+	nowFn                      func() int64
+	randomFn                   func() float64
+	tokenStore                 TokenStore
 
 	mu         sync.Mutex
 	registry   map[string]*OperationDescriptor
 	usedTokens map[string]usedToken
-	oauthGates map[string]*gate
+	oauth      oauthState
 	// keyMu makes "find or create the key of a logical call" atomic.
 	keyMu     sync.Mutex
 	ccMu      sync.Mutex
@@ -134,9 +135,12 @@ func NewClientCore(api *APIDescriptor, options ClientOptions) (*ClientCore, erro
 		tokenStore:        options.TokenStore,
 		registry:          map[string]*OperationDescriptor{},
 		usedTokens:        map[string]usedToken{},
-		oauthGates:        map[string]*gate{},
 		ccTokens:          map[string]cachedToken{},
 		ccFlights:         map[string]*ccFlight{},
+	}
+	c.maxOAuthTokenResponseBytes = defaultOAuthTokenResponseBytes
+	if options.MaxOAuthTokenResponseBytes != nil {
+		c.maxOAuthTokenResponseBytes = *options.MaxOAuthTokenResponseBytes
 	}
 	if c.auth == nil {
 		c.auth = AuthConfig{}

@@ -698,6 +698,9 @@ type ClientOptions struct {
 	AllowInsecureHTTP bool
 	// Ordinary-response byte cap; a positive safe integer. Nil inherits the 4 MiB default.
 	MaxResponseBytes *int64
+	// MaxOAuthTokenResponseBytes bounds each authorization-code/refresh response.
+	// Nil uses 64 KiB; require a positive safe integer. Separate from ordinary bodies.
+	MaxOAuthTokenResponseBytes *int64
 	// Redirects may tighten the API policy. The zero value inherits it.
 	Redirects RedirectPolicy
 	// BaseURL defaults to the first server.
