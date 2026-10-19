@@ -264,6 +264,10 @@ values as `JsonNode`, OpenID Connect as a bearer token, no CLI or MCP).
 
 ### Changed
 
+- Locate primary and related LSP profile diagnostics in their captured local
+  files, including invalid profiles, while preserving portable compiler and
+  configuration-inspection source names.
+
 - Runtime performance. Successful responses are decoded once instead of
   several times: the Go runtime parses the body in one pass and unmarshals the
   original bytes into the typed result, and generated Rust SDKs call the new

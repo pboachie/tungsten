@@ -9,7 +9,7 @@ use tungsten_config::profiles::{
     self, CapturedProfile, Declaration, EffectiveConfiguration, ProfileSource, SourceKind,
 };
 use tungsten_config::{ManifestSource, ParsedManifest, TungstenConfig};
-use tungsten_core::{Diagnostic, Diagnostics, Digest};
+use tungsten_core::{Diagnostic, Diagnostics, Digest, SourceId};
 use tungsten_ir::Ir;
 use tungsten_openapi::{LoadEntry, LoadOptions, Workspace};
 
@@ -74,6 +74,11 @@ pub struct Compiled {
     /// Supported declarations and authored provenance, before emitter defaults.
     /// This in-memory result is not an authorization or replayable manifest.
     pub effective: Option<EffectiveConfiguration>,
+    /// Physical identities of admitted captured profile sources, including
+    /// invalid profiles. Invocation-local editor metadata; never serialized
+    /// into the IR, portable provenance or configuration inspection exports.
+    /// Rejected source-name collisions receive no binding.
+    pub profile_sources: BTreeMap<SourceId, PathBuf>,
     pub workspace: Workspace,
     pub ir: Option<Ir>,
     /// All diagnostics (manifest, frontend, builder), sorted.
@@ -341,6 +346,7 @@ fn failed(
     Compiled {
         config,
         effective: None,
+        profile_sources: BTreeMap::new(),
         workspace,
         ir: None,
         diagnostics,
@@ -459,6 +465,7 @@ fn compile_validated(
             .workspace
             .sources
             .add(profile.source.name(), profile.source.text());
+        compiled.profile_sources.insert(id, profile.identity.clone());
         profile.source.attach_spans(id, &mut compiled.diagnostics);
     }
     if !collision && !opts.load.cancellation.is_cancelled() {
@@ -648,6 +655,7 @@ fn compile_prepared(
         return Compiled {
             config: Some(config),
             effective: None,
+            profile_sources: BTreeMap::new(),
             workspace,
             ir: None,
             diagnostics,
@@ -720,6 +728,7 @@ fn compile_prepared(
             return Compiled {
                 config: Some(config),
                 effective: None,
+                profile_sources: BTreeMap::new(),
                 workspace,
                 ir: None,
                 diagnostics,
@@ -737,6 +746,7 @@ fn compile_prepared(
             return Compiled {
                 config: Some(config),
                 effective: None,
+                profile_sources: BTreeMap::new(),
                 workspace,
                 ir: None,
                 diagnostics,
@@ -763,6 +773,7 @@ fn compile_prepared(
     Compiled {
         config: Some(config),
         effective: None,
+        profile_sources: BTreeMap::new(),
         workspace,
         ir,
         diagnostics,

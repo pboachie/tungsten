@@ -740,6 +740,11 @@ neither a replayable manifest nor evidence that generation or a consumer works.
 
 ### Editor support
 
+Diagnostics for selected local profiles point to the captured physical file,
+including invalid or unsaved included profiles outside the manifest directory.
+Compiler source names and exported configuration provenance remain portable.
+Dedicated profile completion and navigation remain follow-up work.
+
 `tungsten lsp` is a language server for `tungsten.yml`, `agent.yml` and the overlay files a project lists. It checks the project with the same compiler as `tungsten check` and shows the same `TG` diagnostics on their source lines. Unsaved JSON/YAML manifests, specs, overlays and local references participate in the same source snapshot, including new files in an existing input directory. Closing a buffer restores its disk contents; file watchers pick up saved changes and deletions. File-size limits and local-reference confinement still apply. The selected project's `.tungsten-inputs` acquisition cache is reserved for verified disk content: buffers cannot replace or extend a pinned Git tree, while explicitly selected local overlays outside the cache remain editable. It completes keys, enumerated values and the operation ids, gates and clusters of the compiled project; shows field documentation, operation signatures and diagnostic explanations on hover; jumps from an operation id to its place in the OpenAPI document; and outlines the manifests. The workspace is the directory of `tungsten.yml` (found from the editor's workspace folder, or given with `--config <path>`); one project is served per process.
 
 Edits retain the existing debounce and one active analysis worker. A newer edit
