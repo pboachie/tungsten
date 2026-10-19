@@ -819,8 +819,9 @@ The compiler driver returns typed declarations and winning/shadowed authored
 origins in memory; emitter defaults still depend on the compiled API. Profile
 source/digest names are portable (`profile[0]/base.yml`), while physical identity
 stays in provenance for confinement. A name collision with another compilation
-input is an error. This result is not a replayable approval document. LSP
-navigation, protected policy and setup presets remain follow-up work.
+input is an error. This result is not a replayable approval document. Dedicated
+profile navigation and setup presets remain follow-up work. Hosts can select the
+external-emitter restrictions described above; executable approval remains separate.
 
 Inspect the supported effective configuration without compiling API inputs:
 
