@@ -191,12 +191,166 @@ struct Git {
     started: Instant,
     repository: PathBuf,
     hooks: PathBuf,
+    #[cfg(windows)]
+    owned_scratch: WindowsScratch,
 }
 
 impl Drop for Git {
     fn drop(&mut self) {
         // Only this exclusively created, literal scratch directory is removed.
+        #[cfg(windows)]
+        {
+            let ordinary_directory = std::fs::symlink_metadata(&self.repository)
+                .is_ok_and(|meta| meta.file_type().is_dir() && !meta.file_type().is_symlink());
+            let resolved = std::fs::canonicalize(&self.repository).ok();
+            if !ordinary_directory
+                || resolved.as_ref() != Some(&self.owned_scratch.child)
+                || self.owned_scratch.child.parent() != Some(self.owned_scratch.parent.as_path())
+                || self.owned_scratch.child.file_name() != self.repository.file_name()
+            {
+                return;
+            }
+            let _ = std::fs::remove_dir_all(&self.owned_scratch.child);
+        }
+        #[cfg(not(windows))]
         let _ = std::fs::remove_dir_all(&self.repository);
+    }
+}
+
+#[cfg(windows)]
+struct WindowsScratch {
+    parent: PathBuf,
+    child: PathBuf,
+}
+
+#[cfg(windows)]
+fn scratch_error() -> Diagnostic {
+    error(
+        "TG0133",
+        "Git acquisition needs a usable local temporary directory with a shorter path",
+        "set TMP or TEMP to a writable local disk directory with a shorter path; existing project pins remain available with --offline",
+    )
+}
+
+// Git for Windows still has traditional path limits even when Rust can access
+// the project cache. Reserve the terminating NUL and a SHA-256 pack sidecar
+// plus its lock suffix. The empty-hooks cwd and Git's pack directories are
+// shorter than this final file path. This is a conservative scratch policy,
+// not a promise that every Git version or external helper supports long paths.
+#[cfg(windows)]
+const WINDOWS_SCRATCH_LIMIT: usize =
+    260 - 1 - ("/objects/pack/pack-".len() + 64 + ".promisor.lock".len());
+
+#[cfg(windows)]
+fn local_disk_path(path: &Path) -> bool {
+    use std::path::Prefix;
+    path.is_absolute()
+        && matches!(path.components().next(), Some(Component::Prefix(prefix))
+            if matches!(prefix.kind(), Prefix::Disk(_) | Prefix::VerbatimDisk(_)))
+}
+
+#[cfg(windows)]
+fn scratch_supported(repository: &Path) -> bool {
+    use std::os::windows::ffi::OsStrExt;
+    local_disk_path(repository)
+        && repository.to_str().is_some()
+        && repository.as_os_str().encode_wide().count() <= WINDOWS_SCRATCH_LIMIT
+}
+
+#[cfg(windows)]
+fn windows_scratch_root() -> Result<(PathBuf, PathBuf), Diagnostic> {
+    use std::ffi::OsString;
+    use std::path::Prefix;
+    let root = std::env::temp_dir();
+    // Reject network/device paths before filesystem access. Resolve aliases to
+    // a physical local disk directory before choosing the exclusive child.
+    if !local_disk_path(&root) {
+        return Err(scratch_error());
+    }
+    let canonical = std::fs::canonicalize(root).map_err(|_| scratch_error())?;
+    let mut parts = canonical.components();
+    let ordinary = match parts.next() {
+        Some(Component::Prefix(prefix)) => match prefix.kind() {
+            Prefix::VerbatimDisk(drive) => {
+                let mut ordinary = OsString::from(format!("{}:", char::from(drive)));
+                ordinary.push(parts.as_path().as_os_str());
+                PathBuf::from(ordinary)
+            }
+            Prefix::Disk(_) => canonical.clone(),
+            _ => return Err(scratch_error()),
+        },
+        _ => return Err(scratch_error()),
+    };
+    if !std::fs::symlink_metadata(&ordinary)
+        .is_ok_and(|meta| meta.file_type().is_dir() && !meta.file_type().is_symlink())
+    {
+        return Err(scratch_error());
+    }
+    Ok((ordinary, canonical))
+}
+
+#[cfg(windows)]
+fn create_windows_scratch(
+    repository: PathBuf,
+    scratch_parent: PathBuf,
+    started: Instant,
+) -> Result<Git, Diagnostic> {
+    if !local_disk_path(&scratch_parent)
+        || !scratch_supported(&repository)
+        || repository.file_name().is_none()
+        || repository
+            .parent()
+            .and_then(|parent| std::fs::canonicalize(parent).ok())
+            != Some(scratch_parent.clone())
+    {
+        return Err(scratch_error());
+    }
+    // A collision is always refused. Never adopt an earlier invocation's
+    // directory or install a cleanup guard for a pre-existing file or link.
+    std::fs::create_dir(&repository).map_err(|_| scratch_error())?;
+    let child = std::fs::canonicalize(&repository).map_err(|_| scratch_error())?;
+    if child.parent() != Some(scratch_parent.as_path())
+        || child.file_name() != repository.file_name()
+        || !std::fs::symlink_metadata(&repository)
+            .is_ok_and(|meta| meta.file_type().is_dir() && !meta.file_type().is_symlink())
+    {
+        return Err(scratch_error());
+    }
+    let hooks = repository.join("empty-hooks");
+    let git = Git {
+        started,
+        repository,
+        hooks,
+        owned_scratch: WindowsScratch {
+            parent: scratch_parent,
+            child,
+        },
+    };
+    // Ownership is established before setup; errors release only this child.
+    std::fs::create_dir(&git.hooks).map_err(|_| scratch_error())?;
+    Ok(git)
+}
+
+#[cfg(all(windows, feature = "testing"))]
+#[doc(hidden)]
+pub mod __testing {
+    /// The production scratch-path policy, without filesystem effects.
+    pub fn scratch_supported(path: &std::path::Path) -> bool {
+        super::scratch_supported(path)
+    }
+
+    /// Exercise the production exclusive creation/cleanup boundary without Git.
+    pub fn create_and_release_scratch(
+        root: &std::path::Path,
+        child: &std::path::Path,
+    ) -> Result<(), tungsten_core::Diagnostic> {
+        let parent = std::fs::canonicalize(root).map_err(|_| super::scratch_error())?;
+        drop(super::create_windows_scratch(
+            child.to_path_buf(),
+            parent,
+            std::time::Instant::now(),
+        )?);
+        Ok(())
     }
 }
 
@@ -711,25 +865,35 @@ pub fn acquire(text: &str, project: &Path, options: &Options) -> Result<PathBuf,
     } else if options.offline {
         return Err(cache_error());
     }
-    let repository = pending_path(&dir, "fetch");
-    // Exclusive creation: never run Git through a pre-existing config or symlink.
-    std::fs::create_dir(&repository).map_err(|_| {
-        error(
-            "TG0133",
-            &format!(
-                "cannot create the Git scratch repository: {}",
-                repository.display()
-            ),
-            "use a writable project directory, then retry",
-        )
-    })?;
-    let repository = std::path::absolute(repository).map_err(|_| cache_error())?;
-    let hooks = repository.join("empty-hooks");
-    std::fs::create_dir(&hooks).map_err(|_| cache_error())?;
-    let git = Git {
-        started: Instant::now(),
-        repository,
-        hooks,
+    let started = Instant::now();
+    #[cfg(windows)]
+    let (scratch_root, scratch_parent) = windows_scratch_root()?;
+    #[cfg(windows)]
+    let repository = pending_path(&scratch_root, "tungsten-git");
+    #[cfg(windows)]
+    let git = create_windows_scratch(repository, scratch_parent, started)?;
+    #[cfg(not(windows))]
+    let git = {
+        let repository = pending_path(&dir, "fetch");
+        // Exclusive creation: never run Git through a pre-existing config or symlink.
+        std::fs::create_dir(&repository).map_err(|_| {
+            error(
+                "TG0133",
+                &format!(
+                    "cannot create the Git scratch repository: {}",
+                    repository.display()
+                ),
+                "use a writable project directory, then retry",
+            )
+        })?;
+        let repository = std::path::absolute(repository).map_err(|_| cache_error())?;
+        let hooks = repository.join("empty-hooks");
+        std::fs::create_dir(&hooks).map_err(|_| cache_error())?;
+        Git {
+            started,
+            repository,
+            hooks,
+        }
     };
     let resolved = git.resolve(&source)?;
     let repo = git.repository.to_string_lossy().into_owned();

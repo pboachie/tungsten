@@ -31,6 +31,13 @@ changes.
   separate positive `maxOAuthTokenResponseBytes` owner option (native casing
   varies) for larger provider responses.
 
+- External emitters and descriptor probes use owned process groups or Job Objects
+  and request cleanup when their leader exits. The process timeout includes a
+  cleanup reserve (one quarter, at most one second). Incomplete cleanup or exhausted
+  worker capacity refuses output with TG0803. Keep emitter helpers within their
+  invocation and investigate remaining processes before retrying; these lifecycle
+  controls do not provide a sandbox or execution approval.
+
 - Ordinary buffered responses now default to 4 MiB per response across native
   runtimes. Omitted/null limits inherit that default; choose an explicit finite
   client/call limit for larger responses. Generated Rust CLIs expose
@@ -371,6 +378,10 @@ values as `JsonNode`, OpenID Connect as a bearer token, no CLI or MCP).
 
 ### Fixed
 
+- Windows Git input acquisition uses an exclusively created local temporary
+  repository, avoiding Git working-directory and pack-file limits caused by
+  deeply nested project caches. Verified project pins and offline reuse retain
+  their existing locations; unsupported temporary roots fail safely.
 - Check profile-derived TypeScript prerequisites in project `doctor`, and refuse
   invalid manifests or bounded profiles before running tool version probes.
 - Correct the MCP runtime and generated server prerequisite to Node.js 22.13+
