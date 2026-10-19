@@ -140,6 +140,9 @@ fn parse<T: serde::de::DeserializeOwned>(
 /// Run `command` for target `name` over `ir` with the target's `options`,
 /// in directory `cwd`. Never panics; every problem is a diagnostic and a
 /// failed run returns no files.
+/// The caller must select `policy` for this invocation, even when explicitly
+/// absent. Raw missing limits retain defaults and clamp; precomputed limits
+/// cannot replace the shared protected constraint gate.
 pub fn run(
     name: &str,
     command: &Command,
@@ -329,6 +332,8 @@ fn invalid_file(name: &str, path: &str, why: &str) -> Diagnostic {
 
 /// Ask `command` to describe itself (`--describe`). The error is the
 /// diagnostic that explains why it could not (TG0801 to TG0804).
+/// Requires the same invocation context and authored optional target limits as
+/// emission. Descriptor defaults remain independent and are clamped separately.
 pub fn describe(
     name: &str,
     command: &Command,

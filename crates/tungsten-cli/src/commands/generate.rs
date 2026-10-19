@@ -248,7 +248,10 @@ fn emit_external(
     if let Err(diagnostic) = project.policy.resolve(requested, ExternalOperation::Run) {
         return Emitted {
             cfg,
-            files: None,
+            // None denotes an unsupported/skipped target to the shared writer.
+            // Preserve errors, failed status and strict destination withholding
+            // exactly as for every other external-emitter failure.
+            files: Some(FileSet::new()),
             diagnostics: Diagnostics(vec![diagnostic]),
             tools: BTreeMap::new(),
             external_skipped: false,

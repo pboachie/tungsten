@@ -480,6 +480,14 @@ Absent policy retains existing behavior and is reported as `absent`; a permissiv
 selection is never approval. Prepared IR does not retain a fallback context.
 Long-lived hosts must explicitly recapture/revalidate pins for new invocations.
 
+Library callers must migrate `external::run` and `external::describe` to supply
+`&InvocationPolicy` and raw `RequestedExternalLimits`; a precomputed `Limits`
+cannot substitute for context. Select `InvocationPolicy::absent()` explicitly
+only when legacy behavior is intended. Keep missing/default requested values as
+`None`, rather than converting them to explicit defaults that could exceed a
+protected ceiling. Exhaustive `CliEnv`/`CompileOptions` literals also need their
+new optional `policy` field (or `..Default::default()`).
+
 Explicit project timeout/output values above a protected ceiling fail (TG0810)
 before input acquisition or external descriptor negotiation. Missing/null project
 limits use existing defaults, then clamp to the ceiling. Descriptor probes use
