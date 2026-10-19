@@ -919,10 +919,10 @@ impl OAuthFlow {
             if fields.get("state") != Some(&pending.state) {
                 return Err(refuse());
             }
-            if let Some(IssuerDefense::IssuerResponse { issuer }) = &pending.params.issuer_defense {
-                if fields.get("iss") != Some(issuer) {
-                    return Err(refuse());
-                }
+            if let Some(IssuerDefense::IssuerResponse { issuer }) = &pending.params.issuer_defense
+                && fields.get("iss") != Some(issuer)
+            {
+                return Err(refuse());
             }
             let (code, denied) = (fields.get("code"), fields.get("error"));
             if code.is_some() == denied.is_some()
