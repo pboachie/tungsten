@@ -108,32 +108,10 @@ fn compile_project_here(manifest: &Path, opts: &CompileOptions) -> Compiled {
     }
     let ParsedManifest {
         config,
-        mut diagnostics,
+        diagnostics,
         source,
-    } = match opts.load.sources.read(
-        manifest,
-        &manifest.display().to_string(),
-        opts.load.max_bytes,
-    ) {
-        Ok((text, _)) => tungsten_config::parse_with_source(&manifest.display().to_string(), &text),
-        Err(error) => {
-            let mut parsed =
-                tungsten_config::parse_with_source(&manifest.display().to_string(), "");
-            parsed.config = None;
-            parsed.diagnostics =
-                Diagnostics(vec![error.at(manifest.display().to_string(), "", None)]);
-            parsed
-        }
-    };
-    let name = manifest
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| DEFAULT_MANIFEST_NAME.to_string());
-    for label in diagnostics.0.iter_mut().flat_map(|d| d.labels.iter_mut()) {
-        if label.file == source.name() {
-            label.file = name.clone();
-        }
-    }
+    } = read_project_manifest(manifest, opts);
+    let name = manifest_name(manifest);
     let manifest_info = Manifest {
         name,
         source: &source,
@@ -144,6 +122,66 @@ fn compile_project_here(manifest: &Path, opts: &CompileOptions) -> Compiled {
     let base = manifest.parent().map(Path::to_path_buf).unwrap_or_default();
     let agent = agent_manifest(&config, &base, true, opts);
     compile_validated(config, &base, Some(manifest_info), agent, diagnostics, opts)
+}
+
+/// Load a project's manifest and bounded local profile defaults without
+/// compiling or acquiring inputs, loading agent content, or running tools.
+/// Raw project target values retain their legacy emitter fallback behavior.
+pub fn load_project_config(manifest: &Path, opts: &CompileOptions) -> ParsedManifest {
+    let opts = opts.snapshot();
+    if opts.load.cancellation.is_cancelled() {
+        return ParsedManifest {
+            config: None,
+            diagnostics: Diagnostics::new(),
+            source: tungsten_config::parse_with_source(&manifest_name(manifest), "").source,
+        };
+    }
+    let mut parsed = read_project_manifest(manifest, &opts);
+    if let Some(mut config) = parsed.config.take() {
+        let base = manifest.parent().unwrap_or(Path::new(""));
+        let manifest_info = Manifest {
+            name: manifest_name(manifest),
+            source: &parsed.source,
+        };
+        let agent = agent_manifest(&config, base, true, &opts);
+        let (composition, _, _) = compose_profiles(
+            &mut config,
+            base,
+            Some(&manifest_info),
+            agent.as_ref(),
+            &opts,
+        );
+        parsed.diagnostics.extend(composition.diagnostics);
+        if !parsed.diagnostics.has_errors() && !opts.load.cancellation.is_cancelled() {
+            parsed.config = Some(config);
+        }
+    }
+    parsed.diagnostics.sort();
+    parsed
+}
+
+fn manifest_name(manifest: &Path) -> String {
+    manifest
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| DEFAULT_MANIFEST_NAME.to_string())
+}
+
+fn read_project_manifest(manifest: &Path, opts: &CompileOptions) -> ParsedManifest {
+    let name = manifest_name(manifest);
+    match opts.load.sources.read(
+        manifest,
+        &manifest.display().to_string(),
+        opts.load.max_bytes,
+    ) {
+        Ok((text, _)) => tungsten_config::parse_with_source(&name, &text),
+        Err(error) => {
+            let mut parsed = tungsten_config::parse_with_source(&name, "");
+            parsed.config = None;
+            parsed.diagnostics = Diagnostics(vec![error.at(name, "", None)]);
+            parsed
+        }
+    }
 }
 
 /// Where the agent manifest of a project is: the `agent` key, else
@@ -346,63 +384,15 @@ fn compile_validated(
     mut diagnostics: Diagnostics,
     opts: &CompileOptions,
 ) -> Compiled {
-    let (file, identity, digest, kind) = manifest.as_ref().map_or_else(
-        || {
-            (
-                DEFAULT_MANIFEST_NAME.to_string(),
-                base_dir.join(DEFAULT_MANIFEST_NAME),
-                None,
-                SourceKind::Invocation,
-            )
-        },
-        |manifest| {
-            (
-                manifest.name.clone(),
-                opts.load
-                    .sources
-                    .canonical_path(&base_dir.join(&manifest.name))
-                    .unwrap_or_else(|| {
-                        tungsten_openapi::SourceProvider::identity(&base_dir.join(&manifest.name))
-                    }),
-                Some(Digest::of(manifest.source.text().as_bytes())),
-                SourceKind::Project,
-            )
-        },
-    );
-    let project = Declaration {
-        kind,
-        identity,
-        file,
-        pointer: "/targets/typescript".into(),
-        digest,
-    };
     let manifest_source = manifest.as_ref().map(|m| m.source);
-    let mut occupied = BTreeSet::from([project.file.clone()]);
-    if let Some(agent) = &agent {
-        occupied.insert(agent.name.clone());
-    }
-    for input in &config.inputs {
-        occupied.insert(input.spec.clone());
-    }
-    for overlay in config
-        .inputs
-        .iter()
-        .flat_map(|input| &input.overlays)
-        .chain(&config.overlays)
-    {
-        occupied.insert(overlay.clone());
-    }
-    let composition =
-        profiles::compose(&mut config, base_dir, project.clone(), &ProfileReads(opts));
-    let mut collision = composition
-        .sources
-        .iter()
-        .any(|profile| !occupied.insert(profile.source.name().into()));
-    if collision {
-        diagnostics.push(profile_name_collision(&project));
-    } else {
-        diagnostics.extend(composition.diagnostics);
-    }
+    let (composition, mut collision, project) = compose_profiles(
+        &mut config,
+        base_dir,
+        manifest.as_ref(),
+        agent.as_ref(),
+        opts,
+    );
+    diagnostics.extend(composition.diagnostics);
     let mut compiled = if diagnostics.has_errors() || opts.load.cancellation.is_cancelled() {
         failed(Some(config), diagnostics, manifest.as_ref())
     } else {
@@ -458,6 +448,69 @@ fn compile_validated(
         ir.diagnostics = compiled.diagnostics.0.clone();
     }
     compiled
+}
+
+fn compose_profiles(
+    config: &mut TungstenConfig,
+    base_dir: &Path,
+    manifest: Option<&Manifest<'_>>,
+    agent: Option<&AgentInput>,
+    opts: &CompileOptions,
+) -> (profiles::Composition, bool, Declaration) {
+    let (file, identity, digest, kind) = manifest.as_ref().map_or_else(
+        || {
+            (
+                DEFAULT_MANIFEST_NAME.to_string(),
+                base_dir.join(DEFAULT_MANIFEST_NAME),
+                None,
+                SourceKind::Invocation,
+            )
+        },
+        |manifest| {
+            (
+                manifest.name.clone(),
+                opts.load
+                    .sources
+                    .canonical_path(&base_dir.join(&manifest.name))
+                    .unwrap_or_else(|| {
+                        tungsten_openapi::SourceProvider::identity(&base_dir.join(&manifest.name))
+                    }),
+                Some(Digest::of(manifest.source.text().as_bytes())),
+                SourceKind::Project,
+            )
+        },
+    );
+    let project = Declaration {
+        kind,
+        identity,
+        file,
+        pointer: "/targets/typescript".into(),
+        digest,
+    };
+    let mut occupied = BTreeSet::from([project.file.clone()]);
+    if let Some(agent) = &agent {
+        occupied.insert(agent.name.clone());
+    }
+    for input in &config.inputs {
+        occupied.insert(input.spec.clone());
+    }
+    for overlay in config
+        .inputs
+        .iter()
+        .flat_map(|input| &input.overlays)
+        .chain(&config.overlays)
+    {
+        occupied.insert(overlay.clone());
+    }
+    let mut composition = profiles::compose(config, base_dir, project.clone(), &ProfileReads(opts));
+    let collision = composition
+        .sources
+        .iter()
+        .any(|profile| !occupied.insert(profile.source.name().into()));
+    if collision {
+        composition.diagnostics = Diagnostics(vec![profile_name_collision(&project)]);
+    }
+    (composition, collision, project)
 }
 
 fn profile_name_collision(project: &Declaration) -> Diagnostic {

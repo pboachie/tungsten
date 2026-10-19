@@ -42,6 +42,39 @@ const VERSION_TIMEOUT: Duration = Duration::from_secs(5);
 const POLL_INTERVAL: Duration = Duration::from_millis(10);
 
 pub(crate) fn run(args: &DoctorArgs, env: &CliEnv) -> Report {
+    let mut report = Report::new(CommandName::Doctor);
+    let project = args
+        .path
+        .as_deref()
+        .or_else(|| args.strict.then_some(Path::new(".")));
+    // Resolve and compose before any version subprocess. Invalid project or
+    // profile content must never cause discovered tools to execute.
+    let configured = if let Some(path) = project {
+        let manifest = match input::resolve(path) {
+            Ok(input::Input::Project(manifest)) => manifest,
+            _ => {
+                return report.failed(
+                    exit::FAILED,
+                    CliError::new(
+                        ErrorKind::Usage,
+                        "doctor requires a project directory or tungsten manifest",
+                    ),
+                );
+            }
+        };
+        let parsed = tungsten_build::driver::load_project_config(
+            &manifest,
+            &tungsten_build::CompileOptions::default(),
+        );
+        let Some(config) = parsed.config else {
+            report.diagnostics = parsed.diagnostics.0;
+            report.exit = exit::FAILED;
+            return report;
+        };
+        Some((manifest, config))
+    } else {
+        None
+    };
     let search_path = env
         .search_path
         .clone()
@@ -61,32 +94,8 @@ pub(crate) fn run(args: &DoctorArgs, env: &CliEnv) -> Report {
             }
         })
         .collect();
-    let mut report = Report::new(CommandName::Doctor);
-    let project = args
-        .path
-        .as_deref()
-        .or_else(|| args.strict.then_some(Path::new(".")));
     let mut failures = vec![];
-    if let Some(path) = project {
-        let manifest = match input::resolve(path) {
-            Ok(input::Input::Project(manifest)) => manifest,
-            _ => {
-                return report.failed(
-                    exit::FAILED,
-                    CliError::new(
-                        ErrorKind::Usage,
-                        "doctor requires a project directory or tungsten manifest",
-                    ),
-                );
-            }
-        };
-        let (config, diagnostics) = tungsten_config::load(&manifest);
-        if diagnostics.has_errors() || config.is_none() {
-            report.diagnostics = diagnostics.0;
-            report.exit = exit::FAILED;
-            return report;
-        }
-        let config = config.unwrap();
+    if let Some((manifest, config)) = configured {
         let has = |name: &str| {
             config.targets.get(name).is_some_and(|options| {
                 tungsten_config::external_target(options)

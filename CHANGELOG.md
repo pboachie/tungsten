@@ -303,6 +303,9 @@ values as `JsonNode`, OpenID Connect as a bearer token, no CLI or MCP).
 
 ### Fixed
 
+- Check profile-derived TypeScript prerequisites in project `doctor`, and refuse
+  invalid manifests or bounded profiles before running tool version probes.
+
 - Python local setup installs the supplied runtime's declared dependencies using
   wheels and identifies the failing setup phase without changing its deadlines.
 

@@ -615,6 +615,11 @@ error. Profiles cannot set project identity, inputs, agent/tools, executables,
 output directories or `runtime_path`. Existing project invalid/null target
 values keep their TG0711 warning/fallback or dependency-error behavior.
 
+Project `doctor` checks the same composed target configuration, including a
+TypeScript target introduced only by a profile. It validates the manifest and
+bounded profiles before probing tool versions; it does not compile or acquire
+API inputs, load agent content, or execute emitters.
+
 The compiler driver returns typed declarations and winning/shadowed authored
 origins in memory; emitter defaults still depend on the compiled API. Profile
 source/digest names are portable (`profile[0]/base.yml`), while physical identity
