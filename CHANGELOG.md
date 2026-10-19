@@ -371,9 +371,10 @@ values as `JsonNode`, OpenID Connect as a bearer token, no CLI or MCP).
 
 ### Fixed
 
-- TypeScript, Python and Rust managed OAuth helpers reject protected or malformed
-  refresh-endpoint queries before authorization begins and before default refresh
-  dispatch, including a changed endpoint or the token-endpoint fallback.
+- TypeScript, Python and Rust managed OAuth helpers cap endpoint text at 32 KiB
+  and reject malformed Unicode before URL parsing. Protected or malformed refresh
+  queries refuse before authorization begins and before default refresh dispatch,
+  including a changed endpoint or the token-endpoint fallback.
 
 - Check profile-derived TypeScript prerequisites in project `doctor`, and refuse
   invalid manifests or bounded profiles before running tool version probes.

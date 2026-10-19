@@ -227,6 +227,10 @@ pub(crate) fn callback_fields(query: &str) -> Result<BTreeMap<String, String>, (
 }
 
 pub(crate) fn qualified_endpoint(value: &str, redirect: bool) -> Result<(), ()> {
+    // &str guarantees valid UTF-8; admit its byte count before URL parsing.
+    if value.len() > MAX_CAPTURE_BYTES {
+        return Err(());
+    }
     let url = url::Url::parse(value).map_err(|_| ())?;
     if !url.username().is_empty() || url.password().is_some() || value.contains('#') {
         return Err(());
