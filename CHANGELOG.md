@@ -11,6 +11,20 @@ changes.
 
 ### Breaking
 
+- Ordinary buffered responses now default to 4 MiB per response across native
+  runtimes. Omitted/null limits inherit that default; choose an explicit finite
+  client/call limit for larger responses. Generated Rust CLIs expose
+  `--max-response-bytes`. Invalid effective limits fail before authentication,
+  storage or preview work. Overflow remains nonretryable and a write may have
+  taken effect. OAuth and successful SSE budgets remain separate.
+
+- Authenticated requests now require HTTPS by default across native runtimes,
+  including OAuth token endpoints. Local development on `localhost`, IPv4
+  `127/8` and IPv6 `::1` remains supported. Other HTTP targets return
+  `AUTH_FAILED` before credentials are dispatched. Migrate to HTTPS, or enable
+  the client's explicit `allowInsecureHttp` option (native casing varies) for
+  intentional insecure transport. MCP and WebMCP inherit their client's policy.
+
 - Caller-supplied confirmation-token keys now require at least 32 bytes across
   all runtime families. Empty or shorter keys fail client/options construction
   with a configuration error; omitting the key still generates a random key
@@ -18,12 +32,42 @@ changes.
   or remove the override. Keys are copied at construction so later mutation of
   a caller's buffer cannot change the client's signing key. Rotating a key
   invalidates existing previews; request a new preview before confirming.
+- Ordinary OpenAPI `x-agent-safety` annotations cannot lower the built-in HTTP-method
+  tier without an explicit `agent.yml` tools safety override (TG0615). Spec-origin
+  `x-agent-preview: none` on operations with side effects keeps a safe default
+  preview unless a tools entry explicitly removes it (TG0616). Both warnings fail
+  strict checks and generation. Move intentional policy reductions into the matching
+  tools entry and regenerate affected SDKs and agent manifests together.
+
+- Installers require official release provenance by default, including for
+  mirrors. Install GitHub CLI 2.102.0 or newer before running them. Verification
+  pins the repository, release workflow, issuer and requested tag; missing or
+  rejected attestations refuse installation. `TUNGSTEN_NO_ATTESTATION=1` is the
+  explicit, diagnosed checksum-only choice; `TUNGSTEN_REQUIRE_ATTESTATION=0`
+  no longer permits an implicit fallback.
 
 ### Added
+
+- Compose bounded local TypeScript profiles for package, version, runtime and
+  dependency defaults. Retain authored provenance through the compiler driver,
+  strict profile diagnostics and existing manifest fallback behavior.
+
+- Declare the existing TypeScript target options and supported-value schema in
+  the shared capability contract. Keep emitter defaults and TG0711 fallback
+  behavior compatible while configuration and generation share validation.
+- Validate saved mock scenarios portably and explicitly run integration argv on
+  Linux with a run-phase deadline, cancellation, owned process-group cleanup,
+  final exit/call-count assertions and a value-free JSON report. The run budget
+  begins after compilation and validation; call counts do not prove effects.
 
 - Load bounded, non-executable JSON scenarios with `tungsten mock --scenario`.
   Reuse existing response and fault controls, and read a value-free report of
   total calls, per-operation/status counts and unconsumed responses.
+- Analyze unsaved JSON/YAML specs, overlays and local references through the
+  shared compiler source provider. Keep buffer spans and navigation consistent,
+  and cancel obsolete editor analysis while retaining debounce and stale-result
+  protection.
+
 - Add an offline `capabilities` query and JSON Schema for built-in target
   declarations. Share target aliases, imported-operation policy support and
   consumer prerequisites with configuration and doctor; include Kotlin, F#
@@ -289,6 +333,16 @@ values as `JsonNode`, OpenID Connect as a bearer token, no CLI or MCP).
 - Dependency audit: source-less `Cargo.lock` entries must be workspace members, and `[patch]`/`[replace]` tables in Cargo manifests are rejected.
 
 ### Fixed
+
+- Check profile-derived TypeScript prerequisites in project `doctor`, and refuse
+  invalid manifests or bounded profiles before running tool version probes.
+- Correct the MCP runtime and generated server prerequisite to Node.js 22.13+
+  (23.2+ on the Node.js 23 line), matching the module API used by its import
+  graph. Keep doctor prerequisites for every configured target so a linked SDK
+  cannot hide the stricter MCP floor.
+- `tungsten emitters --no-external` and `TUNGSTEN_NO_EXTERNAL=1` now skip
+  PATH-based descriptor probes as well as manifest commands. The inspection
+  result reports that discovery is disabled instead of claiming no emitters exist.
 
 - Python local setup installs the supplied runtime's declared dependencies using
   wheels and identifies the failing setup phase without changing its deadlines.

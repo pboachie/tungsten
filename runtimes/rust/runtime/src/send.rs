@@ -820,6 +820,9 @@ impl ClientCore {
 
     /// Fetch (and cache) an OAuth2 client-credentials token.
     async fn oauth_token(&self, client: OAuthClient<'_>) -> std::result::Result<String, String> {
+        if crate::auth::insecure_http(client.token_url, self.inner.allow_insecure_http) {
+            return Err(crate::auth::INSECURE_HTTP_AUTH.to_owned());
+        }
         // Short map locks; only refreshes of this scheme wait for each other.
         let gate = {
             let mut gates = self.inner.oauth_refreshes.lock().await;

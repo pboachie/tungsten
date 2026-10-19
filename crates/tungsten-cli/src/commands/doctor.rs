@@ -11,6 +11,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use tungsten_config::capabilities::ToolRequirement;
 use tungsten_emit::external::find_executable;
 
 use crate::args::DoctorArgs;
@@ -42,6 +43,39 @@ const VERSION_TIMEOUT: Duration = Duration::from_secs(5);
 const POLL_INTERVAL: Duration = Duration::from_millis(10);
 
 pub(crate) fn run(args: &DoctorArgs, env: &CliEnv) -> Report {
+    let mut report = Report::new(CommandName::Doctor);
+    let project = args
+        .path
+        .as_deref()
+        .or_else(|| args.strict.then_some(Path::new(".")));
+    // Resolve and compose before any version subprocess. Invalid project or
+    // profile content must never cause discovered tools to execute.
+    let configured = if let Some(path) = project {
+        let manifest = match input::resolve(path) {
+            Ok(input::Input::Project(manifest)) => manifest,
+            _ => {
+                return report.failed(
+                    exit::FAILED,
+                    CliError::new(
+                        ErrorKind::Usage,
+                        "doctor requires a project directory or tungsten manifest",
+                    ),
+                );
+            }
+        };
+        let parsed = tungsten_build::driver::load_project_config(
+            &manifest,
+            &tungsten_build::CompileOptions::default(),
+        );
+        let Some(config) = parsed.config else {
+            report.diagnostics = parsed.diagnostics.0;
+            report.exit = exit::FAILED;
+            return report;
+        };
+        Some((manifest, config))
+    } else {
+        None
+    };
     let search_path = env
         .search_path
         .clone()
@@ -61,32 +95,8 @@ pub(crate) fn run(args: &DoctorArgs, env: &CliEnv) -> Report {
             }
         })
         .collect();
-    let mut report = Report::new(CommandName::Doctor);
-    let project = args
-        .path
-        .as_deref()
-        .or_else(|| args.strict.then_some(Path::new(".")));
     let mut failures = vec![];
-    if let Some(path) = project {
-        let manifest = match input::resolve(path) {
-            Ok(input::Input::Project(manifest)) => manifest,
-            _ => {
-                return report.failed(
-                    exit::FAILED,
-                    CliError::new(
-                        ErrorKind::Usage,
-                        "doctor requires a project directory or tungsten manifest",
-                    ),
-                );
-            }
-        };
-        let (config, diagnostics) = tungsten_config::load(&manifest);
-        if diagnostics.has_errors() || config.is_none() {
-            report.diagnostics = diagnostics.0;
-            report.exit = exit::FAILED;
-            return report;
-        }
-        let config = config.unwrap();
+    if let Some((manifest, config)) = configured {
         let has = |name: &str| {
             config.targets.get(name).is_some_and(|options| {
                 tungsten_config::external_target(options)
@@ -135,13 +145,13 @@ pub(crate) fn run(args: &DoctorArgs, env: &CliEnv) -> Report {
                 purpose: "Go SDK emitter".into(),
             });
         }
-        let mut requirements = std::collections::BTreeMap::new();
+        let mut requirements = Vec::new();
         for (name, options) in &config.targets {
             if has(name)
                 && let Some(target) = tungsten_config::capabilities::target(name)
             {
                 for requirement in target.prerequisites {
-                    requirements.insert(requirement.tool, requirement.for_options(options));
+                    requirements.push(requirement.for_options(options));
                 }
             }
         }
@@ -152,17 +162,26 @@ pub(crate) fn run(args: &DoctorArgs, env: &CliEnv) -> Report {
             ("tungsten-emit-go", go_emitter, None),
         ] {
             if required {
-                requirements.insert(
-                    name,
-                    tungsten_config::capabilities::ToolRequirement {
-                        tool: name,
-                        minimum,
-                        maximum_exclusive: None,
-                        minimum_option: None,
-                    },
-                );
+                requirements.push(ToolRequirement {
+                    tool: name,
+                    minimum,
+                    maximum_exclusive: None,
+                    minimum_option: None,
+                    excluded_versions: &[],
+                });
             }
         }
+        let requirements = match aggregate_requirements(requirements) {
+            Ok(requirements) => requirements,
+            Err(message) => {
+                report.exit = exit::FAILED;
+                report.human = format!("{message}\n");
+                report.error = Some(CliError::new(ErrorKind::Usage, message).with_help(
+                    "choose configured targets and options with overlapping tool requirements",
+                ));
+                return report;
+            }
+        };
         for (name, prerequisite) in requirements {
             if !tools.iter().any(|tool| tool.name == name) {
                 let exe = find_executable(name, &search_path);
@@ -177,14 +196,18 @@ pub(crate) fn run(args: &DoctorArgs, env: &CliEnv) -> Report {
             }
             let tool = tools.iter_mut().find(|tool| tool.name == name).unwrap();
             let supported = tool.found
-                && ((prerequisite.minimum.is_none() && prerequisite.maximum_exclusive.is_none())
+                && ((prerequisite.bounds.minimum.is_none()
+                    && prerequisite.bounds.maximum_exclusive.is_none()
+                    && prerequisite.excluded_versions.is_empty())
                     || {
                         tool.version
                             .as_deref()
                             .and_then(version_pair)
                             .is_some_and(|(major, minor)| prerequisite.accepts([major, minor]))
                     });
-            let requirement = prerequisite.description();
+            let requirement = prerequisite
+                .bounds
+                .description_with_exclusions(&prerequisite.excluded_versions);
             tool.purpose = format!(
                 "required {requirement} for configured targets; {}",
                 if supported {
@@ -247,6 +270,85 @@ pub(crate) fn run(args: &DoctorArgs, env: &CliEnv) -> Report {
         );
     }
     report
+}
+
+/// Intersect already option-resolved bounds, independent of target order.
+pub(crate) struct CombinedRequirement {
+    pub bounds: ToolRequirement,
+    pub excluded_versions: Vec<[u32; 2]>,
+}
+
+impl CombinedRequirement {
+    fn accepts(&self, version: [u32; 2]) -> bool {
+        self.bounds.accepts(version) && !self.excluded_versions.contains(&version)
+    }
+
+    fn has_available_version(&self) -> bool {
+        let mut first = self.bounds.minimum.unwrap_or([0, 0]);
+        while self.excluded_versions.contains(&first) {
+            if let Some(minor) = first[1].checked_add(1) {
+                first[1] = minor;
+            } else if let Some(major) = first[0].checked_add(1) {
+                first = [major, 0];
+            } else {
+                return false;
+            }
+        }
+        self.bounds
+            .maximum_exclusive
+            .is_none_or(|maximum| first < maximum)
+    }
+}
+
+pub(crate) fn aggregate_requirements(
+    requirements: impl IntoIterator<Item = ToolRequirement>,
+) -> Result<std::collections::BTreeMap<&'static str, CombinedRequirement>, String> {
+    let mut combined = std::collections::BTreeMap::<&str, CombinedRequirement>::new();
+    for mut requirement in requirements {
+        // The caller resolved each target's options before combining the bounds.
+        requirement.minimum_option = None;
+        let exclusions = requirement.excluded_versions;
+        requirement.excluded_versions = &[];
+        combined
+            .entry(requirement.tool)
+            .and_modify(|existing| {
+                existing.bounds.minimum = existing
+                    .bounds
+                    .minimum
+                    .into_iter()
+                    .chain(requirement.minimum)
+                    .max();
+                existing.bounds.maximum_exclusive = existing
+                    .bounds
+                    .maximum_exclusive
+                    .into_iter()
+                    .chain(requirement.maximum_exclusive)
+                    .min();
+                existing.excluded_versions.extend(exclusions);
+                existing.excluded_versions.sort_unstable();
+                existing.excluded_versions.dedup();
+            })
+            .or_insert_with(|| {
+                let mut excluded_versions = exclusions.to_vec();
+                excluded_versions.sort_unstable();
+                excluded_versions.dedup();
+                CombinedRequirement {
+                    bounds: requirement,
+                    excluded_versions,
+                }
+            });
+    }
+    for (tool, requirement) in &combined {
+        if !requirement.has_available_version() {
+            return Err(format!(
+                "configured targets have conflicting {tool} requirements: {} (no version satisfies all bounds)",
+                requirement
+                    .bounds
+                    .description_with_exclusions(&requirement.excluded_versions)
+            ));
+        }
+    }
+    Ok(combined)
 }
 
 fn human(tools: &[ToolReport]) -> String {

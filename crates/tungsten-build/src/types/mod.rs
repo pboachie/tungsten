@@ -229,6 +229,9 @@ impl<'a> TypeBuilder<'a> {
         // types never take a component's id.
         let mut registered = vec![];
         for key in keys {
+            if ws.is_cancelled() {
+                break;
+            }
             let target = RefTarget {
                 doc,
                 pointer: join_pointer("/components/schemas", key),
@@ -250,6 +253,9 @@ impl<'a> TypeBuilder<'a> {
         // the component's name: the component adopts it instead of
         // aliasing a second type of the same name.
         for id in &registered {
+            if ws.is_cancelled() {
+                break;
+            }
             if let Some(adopted) = self.adoptable(id) {
                 self.by_target.insert(adopted.clone(), id.clone());
                 let doc = ws
@@ -263,6 +269,9 @@ impl<'a> TypeBuilder<'a> {
             }
         }
         for id in registered {
+            if ws.is_cancelled() {
+                break;
+            }
             self.build_if_pending(&id);
         }
     }

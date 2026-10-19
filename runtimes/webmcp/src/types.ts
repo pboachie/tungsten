@@ -95,6 +95,8 @@ export type WebMcpBinaryResultOptions =
   | { mode: "download"; maxBytes: number; render: (input: { bytes: Uint8Array; mediaType: string; operation: string; signal: AbortSignal }) => Promise<WebMcpDownloadHandle> };
 
 export interface RegisterTungstenWebMcpOptions {
+  /** Outgoing credentials inherit this core's HTTPS policy. Intentional
+   * non-loopback HTTP requires allowInsecureHttp on its ClientOptions. */
   core: ClientCore;
   manifest: WebMcpManifest;
   macros?: Record<string, MacroDescriptor>;

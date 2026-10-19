@@ -218,7 +218,9 @@ mod pattern;
 mod reply;
 mod route;
 mod rules;
+mod runner;
 mod scenario;
+pub use runner::{RunCancellation, RunLimits, RunOptions, RunReason, RunReport, run_scenario};
 pub use scenario::{CountReport, MAX_SCENARIO_BYTES, ScenarioReport};
 mod server;
 mod state;
@@ -300,6 +302,32 @@ pub struct MockServer {
 }
 
 impl MockServer {
+    /// Validate without binding a socket or executing a command.
+    pub fn validate_scenario(ir: Ir, opts: MockOptions, bytes: &[u8]) -> std::io::Result<()> {
+        let model = model::Model::new(ir, &opts);
+        scenario::prepare(&model, bytes)
+            .map(|_| ())
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))
+    }
+
+    #[cfg(target_os = "linux")]
+    fn start_scenario_run(
+        ir: Ir,
+        mut opts: MockOptions,
+        bytes: &[u8],
+        limits: RunLimits,
+    ) -> std::io::Result<Self> {
+        opts.addr = SocketAddr::from(([127, 0, 0, 1], 0));
+        opts.max_recorded_calls = 0;
+        let model = model::Model::new(ir, &opts);
+        let prepared = scenario::prepare(&model, bytes)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
+        let state = Arc::new(
+            state::State::new(model, 0, opts.max_idempotent_responses).with_run_limits(limits),
+        );
+        state.install_scenario(prepared);
+        Self::bind(state, opts.addr)
+    }
     /// Validate a bounded JSON scenario and preload its programs before binding
     /// a fresh server. No commands are executed. Invalid input is an
     /// `InvalidInput` error with value-free diagnostics; binding errors retain
@@ -371,10 +399,19 @@ impl MockServer {
         self.stop();
     }
 
-    fn stop(&mut self) {
-        if let Some(running) = self.running.take() {
-            running.stop();
+    /// Cancel all connection work and join its runtime before reading counts.
+    pub fn shutdown_and_report(mut self) -> std::io::Result<Option<ScenarioReport>> {
+        if !self.stop() {
+            return Err(std::io::Error::other("mock server thread failed"));
         }
+        Ok(self.state.scenario_report())
+    }
+
+    fn stop(&mut self) -> bool {
+        if let Some(running) = self.running.take() {
+            return running.stop();
+        }
+        true
     }
 }
 
@@ -390,6 +427,44 @@ impl Drop for MockServer {
 pub mod __testing {
     use serde_json::Value;
     use tungsten_ir::{Ir, TypeRef};
+
+    #[cfg(target_os = "linux")]
+    pub fn runner_server(
+        ir: Ir,
+        bytes: &[u8],
+        limits: super::RunLimits,
+    ) -> std::io::Result<super::MockServer> {
+        super::MockServer::start_scenario_run(ir, super::MockOptions::default(), bytes, limits)
+    }
+
+    #[cfg(target_os = "linux")]
+    pub fn admitted_calls(server: &super::MockServer) -> u64 {
+        server.state.admitted_calls()
+    }
+
+    #[cfg(target_os = "linux")]
+    pub fn finish_runner(server: super::MockServer, report: super::RunReport) -> super::RunReport {
+        super::runner::finish(
+            server,
+            report,
+            std::time::Instant::now() + std::time::Duration::from_secs(1),
+            &super::RunCancellation::default(),
+        )
+    }
+
+    #[cfg(target_os = "linux")]
+    pub fn finish_runner_with_cancellation(
+        server: super::MockServer,
+        report: super::RunReport,
+        cancellation: &super::RunCancellation,
+    ) -> super::RunReport {
+        super::runner::finish(
+            server,
+            report,
+            std::time::Instant::now() + std::time::Duration::from_secs(1),
+            cancellation,
+        )
+    }
 
     use crate::MockOptions;
     use crate::generate::Generator;

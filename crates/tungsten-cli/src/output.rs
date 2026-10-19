@@ -90,6 +90,8 @@ pub enum CommandName {
     Generate,
     #[serde(rename = "mock")]
     Mock,
+    #[serde(rename = "scenario")]
+    Scenario,
     #[serde(rename = "report")]
     Report,
     #[serde(rename = "diff")]
@@ -188,6 +190,7 @@ pub enum CommandResult {
     Emitters(EmittersResult),
     Generate(GenerateResult),
     Mock(MockResult),
+    Scenario(ScenarioResult),
     Report(Box<ReportResult>),
     Diff(DiffResult),
     OverlaySuggest(OverlaySuggestResult),
@@ -316,6 +319,21 @@ pub struct MockResult {
     pub max_recorded_calls: usize,
     /// Cap on stored idempotent responses (`--max-idempotent-responses`).
     pub max_idempotent_responses: usize,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ScenarioAction {
+    Validate,
+    Run,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScenarioResult {
+    pub action: ScenarioAction,
+    pub validated: bool,
+    pub run: Option<tungsten_mock::RunReport>,
 }
 
 /// The `$ref` graph: schema nodes (every `$ref` target and every component
@@ -988,7 +1006,7 @@ pub struct DiagnosticGroup {
 }
 
 /// Which `$defs` entry describes `result` for each command.
-const RESULT_DEFS: [(CommandName, &str); 13] = [
+const RESULT_DEFS: &[(CommandName, &str)] = &[
     (CommandName::Check, "CheckResult"),
     (CommandName::IrDump, "IrDumpResult"),
     (CommandName::Explain, "ExplainResult"),
@@ -999,6 +1017,7 @@ const RESULT_DEFS: [(CommandName, &str); 13] = [
     (CommandName::Emitters, "EmittersResult"),
     (CommandName::Generate, "GenerateResult"),
     (CommandName::Mock, "MockResult"),
+    (CommandName::Scenario, "ScenarioResult"),
     (CommandName::Report, "ReportResult"),
     (CommandName::Diff, "DiffResult"),
     (CommandName::OverlaySuggest, "OverlaySuggestResult"),

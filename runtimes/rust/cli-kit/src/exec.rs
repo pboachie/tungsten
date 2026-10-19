@@ -494,6 +494,11 @@ fn call_options(m: &ArgMatches) -> Result<CallOptions, Fail> {
     }
     Ok(CallOptions {
         idempotency_key: key.map(str::to_string),
+        max_response_bytes: m
+            .try_get_one::<u64>("max-response-bytes")
+            .ok()
+            .flatten()
+            .copied(),
         verify: flag(m, "verify"),
         max_pages: m
             .try_get_one::<u32>("max-pages")

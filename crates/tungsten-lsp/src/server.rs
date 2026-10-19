@@ -5,7 +5,7 @@
 //! open buffers. Edits only move a deadline; when it passes and no
 //! compilation is running a new one starts, so a burst of keystrokes costs
 //! one compilation. A result that predates a later edit is not published
-//! (its index is still used for completion): the superseding compilation
+//! and its index is discarded: the superseding compilation
 //! starts right after it. Requests never wait for a compilation: they are
 //! answered from the buffer text and the last index.
 
@@ -27,6 +27,7 @@ use lsp_types::{
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
+use tungsten_openapi::CancellationToken;
 
 use crate::analysis::{Analysis, Index, analyze};
 use crate::complete::{Inputs, complete};
@@ -58,14 +59,19 @@ impl Default for Options {
 
 /// An open buffer.
 struct Doc {
+    version: i32,
     text: String,
     lines: LineIndex,
 }
 
 impl Doc {
-    fn new(text: String) -> Self {
+    fn new(text: String, version: i32) -> Self {
         let lines = LineIndex::new(&text);
-        Self { text, lines }
+        Self {
+            text,
+            lines,
+            version,
+        }
     }
 }
 
@@ -86,8 +92,17 @@ struct Server<'c> {
     generation: u64,
     deadline: Option<Instant>,
     running: bool,
+    cancellation: Option<CancellationToken>,
     done_tx: Sender<Done>,
     shutdown: bool,
+}
+
+impl Drop for Server<'_> {
+    fn drop(&mut self) {
+        if let Some(cancellation) = &self.cancellation {
+            cancellation.cancel();
+        }
+    }
 }
 
 /// Serve the language server protocol on the process's stdin and stdout.
@@ -134,6 +149,7 @@ pub fn serve(connection: &Connection, options: Options) -> Result<i32, String> {
         generation: 0,
         deadline: None,
         running: false,
+        cancellation: None,
         done_tx,
         shutdown: false,
     };
@@ -294,6 +310,9 @@ impl Server<'_> {
 
     /// Ask for a compilation after `delay` of quiet; edits keep pushing it.
     fn touch(&mut self, delay: Duration) {
+        if let Some(cancellation) = &self.cancellation {
+            cancellation.cancel();
+        }
         self.generation += 1;
         self.deadline = Some(Instant::now() + delay);
     }
@@ -306,20 +325,27 @@ impl Server<'_> {
         let overrides: BTreeMap<PathBuf, String> = self
             .docs
             .iter()
-            .filter(|(p, _)| is_yaml(p))
             .map(|(p, d)| (p.clone(), d.text.clone()))
             .collect();
         let generation = self.generation;
         let tx = self.done_tx.clone();
         self.running = true;
+        let cancellation = CancellationToken::default();
+        self.cancellation = Some(cancellation.clone());
         std::thread::spawn(move || {
-            let result = std::panic::catch_unwind(|| analyze(&manifest, overrides)).ok();
+            let result = std::panic::catch_unwind(|| analyze(&manifest, overrides, cancellation))
+                .ok()
+                .flatten();
             let _ = tx.send((generation, result));
         });
     }
 
     fn finished(&mut self, generation: u64, analysis: Option<Analysis>) -> Result<(), String> {
         self.running = false;
+        self.cancellation = None;
+        if self.shutdown || generation != self.generation {
+            return Ok(());
+        }
         let Some(analysis) = analysis else {
             self.log("the project check failed unexpectedly; see the server's stderr");
             return Ok(());
@@ -380,12 +406,14 @@ impl Server<'_> {
         }
         self.published = now;
         for (uri, diagnostics) in sends {
+            let version =
+                uri_to_path(&uri).and_then(|path| self.docs.get(&path).map(|doc| doc.version));
             self.notify(
                 "textDocument/publishDiagnostics",
                 PublishDiagnosticsParams {
                     uri,
                     diagnostics,
-                    version: None,
+                    version,
                 },
             )?;
         }
@@ -412,15 +440,18 @@ impl Server<'_> {
                     && let Some(path) = uri_to_path(&p.text_document.uri)
                 {
                     self.adopt(&path);
-                    self.docs.insert(path, Doc::new(p.text_document.text));
+                    self.docs.insert(
+                        path,
+                        Doc::new(p.text_document.text, p.text_document.version),
+                    );
                     self.touch(Duration::ZERO);
                 }
             }
             "textDocument/didChange" => {
                 if let Some(p) = parse::<DidChangeTextDocumentParams>(note.params)
                     && let Some(path) = uri_to_path(&p.text_document.uri)
+                    && self.change(&path, p.text_document.version, p.content_changes)
                 {
-                    self.change(&path, p.content_changes);
                     self.touch(self.opts.debounce);
                 }
             }
@@ -455,13 +486,21 @@ impl Server<'_> {
         }
     }
 
-    fn change(&mut self, path: &Path, changes: Vec<lsp_types::TextDocumentContentChangeEvent>) {
+    fn change(
+        &mut self,
+        path: &Path,
+        version: i32,
+        changes: Vec<lsp_types::TextDocumentContentChangeEvent>,
+    ) -> bool {
         let Some(doc) = self.docs.get_mut(path) else {
-            return;
+            return false;
         };
+        if version <= doc.version {
+            return false;
+        }
         for change in changes {
             match change.range {
-                None => *doc = Doc::new(change.text),
+                None => *doc = Doc::new(change.text, version),
                 Some(range) => {
                     let start = doc.lines.offset(range.start, &doc.text);
                     let end = doc.lines.offset(range.end, &doc.text).max(start);
@@ -470,6 +509,8 @@ impl Server<'_> {
                 }
             }
         }
+        doc.version = version;
+        true
     }
 
     fn kind_of(&self, path: &Path) -> Option<Kind> {
@@ -526,6 +567,9 @@ impl Server<'_> {
         match req.method.as_str() {
             "shutdown" => {
                 self.shutdown = true;
+                if let Some(cancellation) = &self.cancellation {
+                    cancellation.cancel();
+                }
                 self.reply(id, serde_json::Value::Null)
             }
             "textDocument/completion" => match parse::<CompletionParams>(req.params) {

@@ -29,7 +29,7 @@ const DEFAULT_TIMEOUT_MS: u64 = 30_000;
 /// Bytes read and discarded past the body limit, so the `413` reaches the
 /// client instead of a reset.
 const DRAIN_LIMIT: usize = 4 * 1024 * 1024;
-const CONTROL_PREFIX: &str = "/__tungsten/";
+pub(crate) const CONTROL_PREFIX: &str = "/__tungsten/";
 const CONTROL_PATHS: [(&str, &str); 4] = [
     ("/__tungsten/calls", "GET"),
     ("/__tungsten/reset", "POST"),

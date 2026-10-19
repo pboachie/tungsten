@@ -96,10 +96,30 @@ pub(crate) fn walk<'v>(
     value: &'v Value,
     pointer: &str,
     kind: Kind,
+    visit: impl FnMut(&Node<'v>) -> bool,
+) {
+    walk_cancellable(
+        value,
+        pointer,
+        kind,
+        &crate::CancellationToken::default(),
+        visit,
+    );
+}
+
+/// The same traversal, stopping rather than visiting more nodes after cancellation.
+pub(crate) fn walk_cancellable<'v>(
+    value: &'v Value,
+    pointer: &str,
+    kind: Kind,
+    cancellation: &crate::CancellationToken,
     mut visit: impl FnMut(&Node<'v>) -> bool,
 ) {
     let mut stack: Vec<(String, Kind, &'v Value)> = vec![(pointer.to_string(), kind, value)];
     while let Some((pointer, kind, value)) = stack.pop() {
+        if cancellation.is_cancelled() {
+            return;
+        }
         let Value::Object(map) = value else {
             continue;
         };

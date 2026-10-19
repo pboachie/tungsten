@@ -44,6 +44,28 @@ pub fn parse_version(text: &str) -> Option<String> {
     crate::commands::doctor::parse_version(text)
 }
 
+pub fn doctor_requirements(
+    requirements: Vec<tungsten_config::capabilities::ToolRequirement>,
+) -> Result<
+    Vec<(
+        tungsten_config::capabilities::ToolRequirement,
+        Vec<[u32; 2]>,
+    )>,
+    String,
+> {
+    crate::commands::doctor::aggregate_requirements(requirements).map(|requirements| {
+        requirements
+            .into_values()
+            .map(|r| (r.bounds, r.excluded_versions))
+            .collect()
+    })
+}
+
+#[cfg(target_os = "linux")]
+pub fn scenario_signal_drain(read: impl FnMut() -> std::io::Result<bool>) -> std::io::Result<bool> {
+    crate::commands::scenario::signals::drain(read)
+}
+
 pub fn relative_path(target: &Path, base: &Path) -> Option<PathBuf> {
     crate::commands::init::relative_path(target, base)
 }
@@ -86,4 +108,24 @@ pub fn report_tool_budgets(
     schema_budget: u32,
 ) -> Option<crate::output::ToolBudgets> {
     crate::commands::report::tool_budgets(files, schema_budget)
+}
+
+#[cfg(target_os = "linux")]
+pub fn scenario_child_reaping_status(status: &[u8]) -> std::io::Result<()> {
+    crate::commands::scenario::signals::child_reaping_status(status)
+}
+
+#[cfg(target_os = "linux")]
+pub fn scenario_signal_scope(f: impl FnOnce()) -> std::io::Result<()> {
+    let _signals = crate::commands::scenario::signals::Signals::capture()?;
+    f();
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+pub fn scenario_restore_pending_signal() -> std::io::Result<bool> {
+    let signals = crate::commands::scenario::signals::Signals::capture()?;
+    // raise targets this calling thread, whose prior mask is restored by RAII.
+    nix::sys::signal::raise(nix::sys::signal::Signal::SIGTERM)?;
+    signals.restore()
 }

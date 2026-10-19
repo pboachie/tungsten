@@ -33,6 +33,13 @@ responsible for authorization and server-side idempotency.
 
 ## Limits
 
+In unreleased 0.2.0, ordinary API responses inherit the Rust runtime's 4 MiB default. Set the global
+`--max-response-bytes BYTES` option to permit an intentionally larger finite
+response, for example `example-cli --max-response-bytes 8388608 things list`.
+The value must be a positive safe integer; zero is not an unlimited mode. The
+option applies to ordinary calls, previews, each page and verification reads;
+it does not configure OAuth responses or successful SSE collection budgets.
+
 File idempotency leases read their owner host from `/proc/sys/kernel/hostname`.
 That host field is empty off Linux; it is diagnostic information, not a
 cross-host exclusion guarantee. Applications own file-store permissions and

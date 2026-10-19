@@ -95,7 +95,8 @@ pub(crate) struct Cli {
     /// --ci`, `diff` and `report`, with your privileges and with whatever
     /// the manifest says; pass it (or set TUNGSTEN_NO_EXTERNAL=1) when the
     /// manifest is not trusted, for example on a pull request in CI. Such
-    /// targets are reported as skipped (TG0807).
+    /// targets are reported as skipped (TG0807). Also disables `emitters`
+    /// discovery, including descriptor probes of programs on PATH.
     #[arg(
         long,
         global = true,
@@ -129,6 +130,7 @@ impl Cli {
             Command::Emitters(_) => CommandName::Emitters,
             Command::Generate(_) => CommandName::Generate,
             Command::Mock(_) => CommandName::Mock,
+            Command::Scenario { .. } => CommandName::Scenario,
             Command::Report(_) => CommandName::Report,
             Command::Diff(_) => CommandName::Diff,
             Command::Overlay {
@@ -165,6 +167,11 @@ pub(crate) enum Command {
     Generate(GenerateArgs),
     /// Serve a mock of the API from the compiled IR.
     Mock(MockArgs),
+    /// Validate a saved mock scenario or run an explicitly selected integration.
+    Scenario {
+        #[command(subcommand)]
+        command: ScenarioCommand,
+    },
     /// Coverage, safety matrix, token budgets, diagnostics and changes
     /// since the last generation, as text, one static HTML file or JSON.
     Report(ReportArgs),
@@ -341,6 +348,40 @@ pub(crate) struct MockArgs {
     /// nothing.
     #[arg(long, value_name = "N", default_value_t = tungsten_mock::DEFAULT_MAX_IDEMPOTENT_RESPONSES)]
     pub max_idempotent_responses: usize,
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum ScenarioCommand {
+    /// Validate a saved JSON scenario without binding or executing commands.
+    Validate(ScenarioValidateArgs),
+    /// Load isolated mock state, execute explicit argv, and assert counts/exit.
+    Run(ScenarioRunArgs),
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct ScenarioValidateArgs {
+    #[command(flatten)]
+    pub input: InputArgs,
+    #[arg(long, value_name = "FILE")]
+    pub scenario: PathBuf,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct ScenarioRunArgs {
+    #[command(flatten)]
+    pub input: InputArgs,
+    #[arg(long, value_name = "FILE")]
+    pub scenario: PathBuf,
+    /// Run-phase budget including cleanup; compilation/validation precede it.
+    #[arg(long, default_value_t = 30_000, value_parser = clap::value_parser!(u64).range(20..=600_000))]
+    pub timeout_ms: u64,
+    #[arg(long, default_value_t = 0)]
+    pub expect_exit: u8,
+    #[arg(long, default_value_t = 10_000, value_parser = clap::value_parser!(u64).range(1..=10_000))]
+    pub max_calls: u64,
+    /// Executable and arguments after --. No shell interpolation is performed.
+    #[arg(last = true, required = true, num_args = 1.., value_name = "COMMAND")]
+    pub command: Vec<std::ffi::OsString>,
 }
 
 #[derive(Debug, Args)]

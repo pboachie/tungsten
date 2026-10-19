@@ -8,7 +8,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use serde_json::{Map, Value};
 use url::Url;
 
-use crate::auth::{AuthPlan, AuthResolution, is_safe_method, resolve_auth};
+use crate::auth::{
+    AuthPlan, AuthResolution, INSECURE_HTTP_AUTH, credential_header, insecure_http, is_safe_method,
+    resolve_auth_transport,
+};
 use crate::client::ClientCore;
 use crate::confirm::{CONFIRMATION_TTL_MS, TokenCheck, check_token, token_expiry};
 use crate::envelope::Diag;
@@ -647,7 +650,19 @@ impl ClientCore {
 
         let method = op.method;
         crate::verify::check_poll_deadline(&op.id)?;
-        let plan = match resolve_auth(&self.inner.api, op, &self.inner.auth, method, self).await {
+        let auth_target = url_override.unwrap_or(self.inner.base_url.as_deref().unwrap_or(""));
+        let credential_error = insecure_http(auth_target, self.inner.allow_insecure_http)
+            .then_some(INSECURE_HTTP_AUTH);
+        let plan = match resolve_auth_transport(
+            &self.inner.api,
+            op,
+            &self.inner.auth,
+            method,
+            self,
+            credential_error,
+        )
+        .await
+        {
             AuthResolution::Ok {
                 plan,
                 secrets,
@@ -691,6 +706,20 @@ impl ClientCore {
 
         let mut headers = HeaderBag::default();
         self.build_headers(op, &args, opts, &plan, &mut headers);
+        if insecure_http(&url, self.inner.allow_insecure_http)
+            && (!plan.headers.is_empty()
+                || !plan.cookies.is_empty()
+                || !plan.query.is_empty()
+                || headers.pairs().any(|(name, _)| {
+                    headers.is_secret(name) || credential_header(&self.inner.api, name, false)
+                }))
+        {
+            return Err(fail(
+                Diag::new(op.id.clone(), Category::AuthFailed)
+                    .remediation(INSECURE_HTTP_AUTH)
+                    .build(),
+            ));
+        }
 
         let params = arg_params(op);
         let param_names: Vec<&str> = params.iter().map(|p| p.name.as_str()).collect();
@@ -754,6 +783,22 @@ impl ClientCore {
             && let PreviewMode::Header { header, value } = &op.agent.preview
         {
             headers.set(header, value.clone(), false);
+        }
+
+        if insecure_http(&url, self.inner.allow_insecure_http)
+            && headers.pairs().any(|(name, value)| {
+                let preserved = key
+                    .as_deref()
+                    .is_some_and(|key| name.eq_ignore_ascii_case(&header) && value == key);
+                (headers.is_secret(name) && !preserved)
+                    || credential_header(&self.inner.api, name, preserved)
+            })
+        {
+            return Err(fail(
+                Diag::new(op.id.clone(), Category::AuthFailed)
+                    .remediation(INSECURE_HTTP_AUTH)
+                    .build(),
+            ));
         }
 
         for (name, value) in headers.to_map(false) {

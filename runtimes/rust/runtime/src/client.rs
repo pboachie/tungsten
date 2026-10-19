@@ -70,6 +70,7 @@ pub(crate) struct CachedToken {
 }
 
 pub(crate) struct Inner {
+    pub allow_insecure_http: bool,
     pub redirects_disabled: bool,
     pub api: Arc<ApiDescriptor>,
     pub auth: AuthConfig,
@@ -190,13 +191,14 @@ impl ClientCore {
             .unwrap_or_else(|| Arc::new(MemoryTokenStore::new()));
         let core = ClientCore {
             inner: Arc::new(Inner {
+                allow_insecure_http: options.allow_insecure_http,
                 redirects_disabled,
                 api: Arc::new(api),
                 auth: options.auth,
                 headers: options.headers,
                 base_url,
                 timeout: options.timeout,
-                max_response_bytes: options.max_response_bytes,
+                max_response_bytes: options.max_response_bytes.or(Some(4 * 1024 * 1024)),
                 max_event_bytes: options.max_event_bytes.max(1),
                 max_collect_bytes: options.max_collect_bytes.max(1),
                 max_collect_time: options.max_collect_time.max(Duration::from_millis(1)),

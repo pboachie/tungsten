@@ -23,13 +23,18 @@ pub(crate) mod lsp;
 pub(crate) mod mock;
 pub(crate) mod overlay;
 pub(crate) mod report;
+pub(crate) mod scenario;
 mod schema;
 mod wizard;
 
 use crate::args::{Cli, Command, IrCommand, OverlayCommand};
 use crate::{CliEnv, Report};
 
-pub(crate) fn dispatch(cli: &Cli, env: &CliEnv) -> Report {
+pub(crate) fn dispatch(
+    cli: &Cli,
+    env: &CliEnv,
+    cancellation: &tungsten_mock::RunCancellation,
+) -> Report {
     let source = match &cli.command {
         Command::Check(args) => Some(args.input.path.as_path()),
         Command::Ir {
@@ -38,6 +43,7 @@ pub(crate) fn dispatch(cli: &Cli, env: &CliEnv) -> Report {
         Command::Init(args) => args.from.as_deref(),
         Command::Generate(args) => Some(args.input.path.as_path()),
         Command::Mock(args) => Some(args.input.path.as_path()),
+        Command::Scenario { command } => Some(scenario::input(command)),
         Command::Report(args) => Some(args.input.path.as_path()),
         Command::Diff(args) => Some(args.input.path.as_path()),
         Command::Overlay {
@@ -55,11 +61,15 @@ pub(crate) fn dispatch(cli: &Cli, env: &CliEnv) -> Report {
                 .map(|path| path.to_string_lossy().into_owned())
                 .collect(),
         },
-        || dispatch_with_inputs(cli, env),
+        || dispatch_with_inputs(cli, env, cancellation),
     )
 }
 
-fn dispatch_with_inputs(cli: &Cli, env: &CliEnv) -> Report {
+fn dispatch_with_inputs(
+    cli: &Cli,
+    env: &CliEnv,
+    cancellation: &tungsten_mock::RunCancellation,
+) -> Report {
     match &cli.command {
         Command::Check(args) => check::run(args, env, cli.no_external),
         Command::Ir {
@@ -73,6 +83,7 @@ fn dispatch_with_inputs(cli: &Cli, env: &CliEnv) -> Report {
         Command::Emitters(args) => emitters::run(args, env, cli.no_external),
         Command::Generate(args) => generate::run(args, env, cli.no_external),
         Command::Mock(args) => mock::start(args),
+        Command::Scenario { command } => scenario::run(command, cancellation),
         Command::Report(args) => report::run(args, env, cli.no_external),
         Command::Diff(args) => diff::run(args, env, cli.no_external),
         Command::Overlay {

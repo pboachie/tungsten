@@ -29,7 +29,17 @@ from urllib.parse import urljoin, urlsplit
 
 import httpx
 
-from ._auth import AuthMissing, AuthPlan, OAuth2Client, TokenError, is_safe_method, resolve_auth
+from ._auth import (
+    INSECURE_HTTP_AUTH,
+    AuthMissing,
+    AuthPlan,
+    OAuth2Client,
+    TokenError,
+    credential_header,
+    insecure_http,
+    is_safe_method,
+    resolve_auth,
+)
 from ._classify import (
     CallContext,
     OutcomeCheck,
@@ -504,9 +514,11 @@ class Engine:
     def _timeout(self, opts: Mapping[str, object]) -> float:
         return bounded(_opt(opts, "timeout_ms"), bounded(self.options.timeout_ms, _DEFAULT_TIMEOUT_MS, 1), 1)
 
-    def _max_response_bytes(self, opts: Mapping[str, object]) -> int | None:
+    def _max_response_bytes(self, opts: Mapping[str, object]) -> int:
         value = opts.get("max_response_bytes")
-        return self.options.max_response_bytes if value is None else cast(int, value)
+        if value is None:
+            value = self.options.max_response_bytes
+        return 4 * 1024 * 1024 if value is None else cast(int, value)
 
     def _middleware(self) -> list[object]:
         middleware: object = self.options.middleware
@@ -833,9 +845,7 @@ class Engine:
         step: StepControl | None,
     ) -> Flow[Prepared | Err]:
         maximum = self._max_response_bytes(opts)
-        if maximum is not None and (
-            type(maximum) is not int or maximum < 1 or maximum > 9_007_199_254_740_991
-        ):
+        if type(maximum) is not int or maximum < 1 or maximum > 9_007_199_254_740_991:
             return _fail(
                 diagnostic(
                     safe_id(op),
@@ -925,6 +935,12 @@ class Engine:
             entries_of(configured_auth),
             method,
             self._token_source,
+            INSECURE_HTTP_AUTH
+            if insecure_http(
+                url_override if url_override is not None else self._base_url(),
+                self.options.allow_insecure_http,
+            )
+            else None,
         )
         if isinstance(auth, AuthMissing):
             return _fail(diagnostic(op_id, "AUTH_FAILED", remediation=auth.remediation))
@@ -948,6 +964,16 @@ class Engine:
 
         headers = HeaderBag()
         self._build_headers(op, args, opts, auth.plan, headers)
+        if insecure_http(url[0], self.options.allow_insecure_http) and (
+            auth.plan.headers
+            or auth.plan.cookies
+            or auth.plan.query
+            or any(
+                headers.is_secret(name) or credential_header(field(self.api, "auth"), name)
+                for name in headers.to_record(False)
+            )
+        ):
+            return _fail(diagnostic(op_id, "AUTH_FAILED", remediation=INSECURE_HTTP_AUTH))
 
         body = op["body"]
         try:
@@ -1307,6 +1333,8 @@ class Engine:
         return token
 
     def _fetch_token(self, client: OAuth2Client) -> Flow[str]:
+        if insecure_http(client.token_url, self.options.allow_insecure_http):
+            raise TokenError(INSECURE_HTTP_AUTH)
         name = client.scheme
         form = [("grant_type", "client_credentials")]
         if len(client.scopes) > 0:
@@ -1360,6 +1388,7 @@ class Engine:
         protected = has_replay_protection(op, prepared.key)
         timeout_ms = self._timeout(opts)
         attempts = 0
+        previous_mutation_failure: Answer | None = None
         while True:
             attempts += 1
             ctx = RequestContext(
@@ -1371,6 +1400,19 @@ class Engine:
                 body=prepared.observed_body,
             )
             headers = yield from self._before_request(ctx, prepared)
+            if insecure_http(prepared.url, self.options.allow_insecure_http) and any(
+                credential_header(
+                    field(self.api, "auth"),
+                    name,
+                    preserved_idempotency=prepared.key is not None
+                    and name.lower() == prepared.key_header.lower()
+                    and value == prepared.key,
+                )
+                for name, value in headers.items()
+            ):
+                return previous_mutation_failure or Answer(
+                    _fail(diagnostic(op["id"], "AUTH_FAILED", remediation=INSECURE_HTTP_AUTH))
+                )
             # Redirects are never followed by the HTTP client: it would forward
             # credential headers to another origin. A read follows same-origin
             # redirects here; a mutation follows none.
@@ -1465,6 +1507,8 @@ class Engine:
                     delay = rnd * ceiling
             for m in self._middleware():
                 yield from observe(_hook(m, "on_retry"), ctx, error)
+            if mutation:
+                previous_mutation_failure = done
             yield from sleep(delay)
 
     def _outcome_check(self, op: OperationDescriptor, args: Mapping[str, object]) -> OutcomeCheck | None:

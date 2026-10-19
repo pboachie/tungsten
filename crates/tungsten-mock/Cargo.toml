@@ -22,6 +22,7 @@ doctest = false
 testing = []
 
 [dependencies]
+schemars.workspace = true
 tungsten-ir.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -40,3 +41,7 @@ fancy-regex = "0.19"
 
 [lints]
 workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+process-wrap = { version = "=10.0.1", default-features = false, features = ["std", "process-group", "reset-sigmask"] }
+nix = { version = "=0.31.3", default-features = false, features = ["signal", "process"] }

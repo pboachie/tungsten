@@ -74,6 +74,7 @@ pub(crate) fn compile(path: &Path) -> Compiled {
         Ok(Input::Spec(spec)) => compile_spec(&spec, &opts),
         Err(diagnostic) => Compiled {
             config: None,
+            effective: None,
             workspace: Workspace::default(),
             ir: None,
             diagnostics: Diagnostics(vec![diagnostic]),

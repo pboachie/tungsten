@@ -6,7 +6,7 @@
 //! entry is dropped, so a long-running mock stays bounded.
 
 use std::collections::{BTreeMap, VecDeque};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use serde_json::Value;
@@ -80,6 +80,33 @@ pub(crate) struct State {
     max_calls: usize,
     max_idempotent: usize,
     inner: Mutex<Inner>,
+    run_limits: Option<crate::runner::RunLimits>,
+    admitted: AtomicU64,
+    completed: AtomicU64,
+    active: AtomicUsize,
+    exceeded: AtomicU8,
+}
+
+/// Held across handler work and response-body generation. Cancellation drops
+/// it without completing the admission, independently of observation counters.
+#[derive(Debug)]
+pub(crate) struct CallLease(Option<ArcState>);
+impl CallLease {
+    pub fn complete(self) {
+        if let Some(state) = self.0 {
+            state.completed.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+}
+
+pub(crate) struct ConnectionLease(Option<ArcState>);
+type ArcState = std::sync::Arc<State>;
+impl Drop for ConnectionLease {
+    fn drop(&mut self) {
+        if let Some(state) = &self.0 {
+            state.active.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
 }
 
 impl State {
@@ -90,7 +117,77 @@ impl State {
             max_calls,
             max_idempotent,
             inner: Mutex::new(Inner::default()),
+            run_limits: None,
+            admitted: AtomicU64::new(0),
+            completed: AtomicU64::new(0),
+            active: AtomicUsize::new(0),
+            exceeded: AtomicU8::new(0),
         }
+    }
+
+    #[cfg(target_os = "linux")]
+    pub fn with_run_limits(mut self, limits: crate::runner::RunLimits) -> Self {
+        self.run_limits = Some(limits);
+        self
+    }
+
+    pub fn runner_owned(&self) -> bool {
+        self.run_limits.is_some()
+    }
+    pub fn reject_control(&self) {
+        self.exceeded.fetch_or(4, Ordering::SeqCst);
+    }
+
+    pub fn admit_call(self: &ArcState) -> Option<CallLease> {
+        let Some(limits) = self.run_limits else {
+            return Some(CallLease(None));
+        };
+        if self
+            .admitted
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| {
+                (n < limits.calls).then_some(n + 1)
+            })
+            .is_ok()
+        {
+            Some(CallLease(Some(self.clone())))
+        } else {
+            self.exceeded.fetch_or(1, Ordering::SeqCst);
+            None
+        }
+    }
+
+    pub fn admit_connection(self: &ArcState) -> Option<ConnectionLease> {
+        let Some(limits) = self.run_limits else {
+            return Some(ConnectionLease(None));
+        };
+        if self
+            .active
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| {
+                (n < limits.connections).then_some(n + 1)
+            })
+            .is_ok()
+        {
+            Some(ConnectionLease(Some(self.clone())))
+        } else {
+            self.exceeded.fetch_or(2, Ordering::SeqCst);
+            None
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    pub fn run_limit_exceeded(&self) -> u8 {
+        self.exceeded.load(Ordering::SeqCst)
+    }
+    #[cfg(all(feature = "testing", target_os = "linux"))]
+    pub fn admitted_calls(&self) -> u64 {
+        self.admitted.load(Ordering::SeqCst)
+    }
+
+    #[cfg(target_os = "linux")]
+    pub fn unfinished_calls(&self) -> u64 {
+        self.admitted
+            .load(Ordering::SeqCst)
+            .saturating_sub(self.completed.load(Ordering::SeqCst))
     }
 
     /// The arrival number of a new request.

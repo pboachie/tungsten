@@ -461,6 +461,12 @@ impl ClientCore {
         fields: &[(&str, &str)],
         previous: Option<&str>,
     ) -> Result<StoredToken, TokenFailure> {
+        if crate::auth::insecure_http(url, self.inner.allow_insecure_http) {
+            return Err(TokenFailure {
+                message: crate::auth::INSECURE_HTTP_AUTH.to_owned(),
+                rejected: false,
+            });
+        }
         let mut headers = vec![
             (
                 "Content-Type".to_owned(),

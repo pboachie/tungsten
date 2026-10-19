@@ -523,6 +523,8 @@ jobs:
             } else { throw "Unexpected installer download: $requested" }
           }
           $dest = Join-Path $env:RUNNER_TEMP 'tungsten-installer-smoke'
+          # This local unpublished-archive fixture checks checksums, not published provenance.
+          $env:TUNGSTEN_NO_ATTESTATION = '1'
           & ./install.ps1 -Version $env:VERSION -InstallDir $dest -BaseUrl 'https://release.invalid'
           $expected = & "target/$env:TARGET/release/tungsten.exe" --version
           $actual = & "$dest/tungsten.exe" --version
@@ -550,9 +552,9 @@ jobs:
           if (Test-Path "$initRefused/tungsten.exe") { throw 'Installer ran -Init after refusing terminal input' }
       # Unix counterpart of the Windows installer smoke (issue #126): the real
       # install.sh installs this job's archive from a local mirror laid out like
-      # releases/download (<base>/<tag>/<asset> plus SHA256SUMS); with a custom
-      # TUNGSTEN_RELEASE_BASE_URL the gh attestation check is skipped, so the
-      # smoke stays offline. It runs for all six Unix targets (musl, gnu and
+      # releases/download (<base>/<tag>/<asset> plus SHA256SUMS); its explicit
+      # checksum-only opt-out keeps this unpublished-archive smoke offline.
+      # It runs for all six Unix targets (musl, gnu and
       # darwin; TUNGSTEN_LIBC=gnu selects the gnu archives), then repeats
       # against a tampered archive and must fail with exit 1 ("checksum
       # mismatch"), installing nothing. The --init cancellation path (exit 4)
@@ -592,6 +594,8 @@ jobs:
             run() { "$@"; }
           fi
           export TUNGSTEN_RELEASE_BASE_URL=http://127.0.0.1:8642
+          # This local unpublished-archive fixture checks checksums, not published provenance.
+          export TUNGSTEN_NO_ATTESTATION=1
           case "$TARGET" in *linux-gnu) export TUNGSTEN_LIBC=gnu ;; esac
           dest="$work/bin"
           run sh ./install.sh --version "$VERSION" --dir "$dest"

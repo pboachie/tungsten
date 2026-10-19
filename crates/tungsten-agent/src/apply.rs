@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! The agent transform: per operation, method defaults → inferred policy →
-//! `x-agent-*` extensions → the manifest's `tools` entry; then the
+//! `x-agent-*` extensions (subject to the method safety floor) → the
+//! manifest's `tools` entry; then the
 //! API-wide error policy, gates, macros and clusters.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -132,7 +133,30 @@ pub(crate) fn run(ir: &mut Ir, cfg: &AgentConfig, r: &mut Reporter<'_>) {
             let ext = exts.get(id).and_then(|e| e.safety);
             let declared = tool.or(ext).or_else(|| method_configured(cfg, op.method));
             let s = import_policy(op, tools.get(id).map(|(_, t)| *t)).map_or_else(
-                || declared.unwrap_or_else(|| OperationAgentMeta::default_for(op.method).safety),
+                || {
+                    let floor = OperationAgentMeta::default_for(op.method).safety;
+                    if tool.is_none() && ext.is_some_and(|safety| safety < floor) {
+                        Origin::Spec {
+                            file: op.source.file.clone(),
+                            pointer: op.source.pointer.clone(),
+                        }
+                        .warn(
+                            r,
+                            "TG0615",
+                            "safety",
+                            "",
+                            format!(
+                                "`x-agent-safety` on `{id}` lowers the HTTP-method safety tier; \
+                                 `{}` is used instead; declare an intentional lower `safety` \
+                                 in this operation's `agent.yml` tools entry",
+                                safety_name(floor)
+                            ),
+                        );
+                        floor
+                    } else {
+                        declared.unwrap_or(floor)
+                    }
+                },
                 // Saved review establishes a floor. A winning explicit policy
                 // may restrict it further; an inferred HTTP-method default
                 // must not undo a deliberate reviewed classification.
@@ -540,6 +564,26 @@ fn preview(
     let p = explicit.object();
     match p.mode {
         PreviewMode::Local => IrPreview::Local,
+        PreviewMode::None
+            if safety != Safety::ReadOnly && matches!(origin, Origin::Spec { .. }) =>
+        {
+            origin.warn(
+                r,
+                "TG0616",
+                "preview",
+                "",
+                format!(
+                    "`x-agent-preview: none` on `{}` removes preview from an operation with \
+                     side effects; a safe default preview is used instead; declare an intentional \
+                     `preview: none` in this operation's `agent.yml` tools entry",
+                    op.id.0
+                ),
+            );
+            match fallback() {
+                IrPreview::None => IrPreview::Local,
+                preview => preview,
+            }
+        }
         PreviewMode::None => IrPreview::None,
         PreviewMode::Header => IrPreview::Header {
             header: p.header.unwrap_or_default(),

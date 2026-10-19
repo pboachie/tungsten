@@ -9,6 +9,10 @@
 //! with side effects `caller_owned`, `persist_required`) > the manifest's
 //! `defaults` > the built-in method defaults
 //! (`OperationAgentMeta::default_for`).
+//! Ordinary spec extensions cannot lower the built-in method safety tier or
+//! remove preview from an operation with side effects. Either decision requires
+//! an explicit per-operation `tools` entry; imported operations retain their
+//! separate reviewed-policy floor.
 //!
 //! Loading reports, with pointer and line: YAML problems (TG0601), shape
 //! and rule violations (TG0602). [`apply`] reports, as warnings, references
@@ -16,7 +20,8 @@
 //! poll or pagination targets (TG0605), unknown error codes (TG0606),
 //! field paths that name nothing (TG0607), unknown gates (TG0608), macro
 //! adjustments (TG0609) and unknown or malformed `x-agent-*` extensions
-//! (TG0610, TG0611). A rule that cannot apply is dropped; the rest of the
+//! (TG0610, TG0611), and spec safety/preview downgrades (TG0615, TG0616).
+//! A rule that cannot apply is dropped; the rest of the
 //! manifest still applies.
 //!
 //! Stability: `load`, `parse_str`, `apply` and `json_schema` are shared by the

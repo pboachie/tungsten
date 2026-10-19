@@ -75,3 +75,11 @@ Browser support depends on the available WebMCP backend. No file-backed OAuth to
 ## License
 
 Apache-2.0. The Tungsten compiler is licensed separately under AGPL-3.0-only.
+
+## API credential transport
+
+The browser registration delegates API calls to its configured `ClientCore`, which
+requires HTTPS for credentials and OAuth token endpoints. For intentional
+non-loopback HTTP, set `allowInsecureHttp: true` in that core's `ClientOptions`.
+Loopback remains usable without an override; this option controls outgoing API
+requests. Prefer HTTPS when migrating existing authenticated HTTP targets.

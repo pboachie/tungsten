@@ -677,6 +677,24 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
          switches off (one entry per operation), or delete the `gates` entry.",
     ),
     e(
+        "TG0615",
+        "An ordinary OpenAPI operation's `x-agent-safety` is less cautious than its \
+         built-in HTTP-method tier. The compiler uses the method tier and reports a \
+         warning, which fails `check` and `generate` under `--strict`.",
+        "Review the operation's behavior. Remove or raise the spec annotation, or \
+         explicitly set `safety` in that operation's `agent.yml` tools entry to authorize \
+         a lower tier. Imported operations retain their separate reviewed-policy floor.",
+    ),
+    e(
+        "TG0616",
+        "An operation with side effects sets `x-agent-preview: none` in the spec. \
+         The compiler keeps a configured safe preview or uses local preview instead. \
+         This warning fails `check` and `generate` under `--strict`.",
+        "Keep a preview, or explicitly set `preview: none` in that operation's \
+         `agent.yml` tools entry after reviewing its behavior. A safety override \
+         that still has side effects does not also approve removing preview.",
+    ),
+    e(
         "TG0701",
         "A generated file could not be written to the target's output directory, for example \
          because the directory is read-only or a path component is a file.",
@@ -1066,7 +1084,9 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
         "A target in tungsten.yml declares `external`, and tungsten was told not to start \
          external emitters (`--no-external` or `TUNGSTEN_NO_EXTERNAL=1`), so its command was \
          not run and the target is skipped. Nothing is generated, compared or reported for it; \
-         the diagnostic is informational and does not fail the run.",
+         the diagnostic is informational and does not fail the run. `emitters` discovery \
+         is also disabled, including descriptor probes of programs on PATH; an empty \
+         inspection result does not mean no emitters are installed.",
         "This is the intended result for CI that validates a manifest it does not trust. Run \
          without the option, on a manifest you trust, to emit or check the target.",
     ),

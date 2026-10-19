@@ -334,6 +334,14 @@ pub mod codes {
             "agent.yml option not applied by this version; ignored",
         ),
         ("TG0614", "gates entry no operation is gated by"),
+        (
+            "TG0615",
+            "spec safety is below the HTTP-method default without a tools override",
+        ),
+        (
+            "TG0616",
+            "spec removes preview from an operation with side effects without a tools override",
+        ),
         ("TG0701", "generated output could not be written"),
         ("TG0702", "target has no emitter in this version; skipped"),
         (
