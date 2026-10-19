@@ -8,7 +8,10 @@ namespace Tungsten.Runtime;
 
 public sealed partial class ClientCore
 {
-    private sealed record OAuthRefreshResult(string? Token, TokenFailure? Failure, OAuthVersion? Committed = null);
+    private sealed record OAuthRefreshResult(string? Token, TokenFailure? Failure, OAuthVersion? Committed = null)
+    {
+        public override string ToString() => "OAuthRefreshResult { .. }";
+    }
     private sealed class OAuthRefreshFlight
     {
         internal readonly TaskCompletionSource<OAuthRefreshResult> Result = new(TaskCreationOptions.RunContinuationsAsynchronously);
