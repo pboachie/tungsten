@@ -48,6 +48,11 @@ changes.
 
 ### Added
 
+- Inspect supported effective configuration with `tungsten config`, including
+  typed defaults/fallback policy and winning/shadowed authored origins. Plain
+  text and JSON redact sensitive values and physical paths without compiling
+  inputs, probing tools or executing emitters.
+
 - Compose bounded local TypeScript profiles for package, version, runtime and
   dependency defaults. Retain authored provenance through the compiler driver,
   strict profile diagnostics and existing manifest fallback behavior.

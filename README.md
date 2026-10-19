@@ -703,9 +703,40 @@ The compiler driver returns typed declarations and winning/shadowed authored
 origins in memory; emitter defaults still depend on the compiled API. Profile
 source/digest names are portable (`profile[0]/base.yml`), while physical identity
 stays in provenance for confinement. A name collision with another compilation
-input is an error. This result is not a replayable approval
-document. Profile-specific CLI inspection, LSP navigation, protected policy and
-setup presets remain follow-up work.
+input is an error. This result is not a replayable approval document. LSP
+navigation, protected policy and setup presets remain follow-up work.
+
+Inspect the supported effective configuration without compiling API inputs:
+
+```sh
+tungsten config .
+tungsten config path/to/tungsten.yml --json
+tungsten config . --strict --json
+```
+
+The command validates the manifest and bounded local profiles through the same
+config-only loader as project doctor. It shows the winning and shadowed authored
+origins for each supported TypeScript option and custom dependency, its default
+and invalid-value policy, and `runtime_path` precedence over `runtime`. Package
+names derived from the compiled API remain unresolved. Static package/runtime
+defaults come from the shared option declaration. Targets without a typed option
+declaration are explicitly `unsupported_options`; external targets are
+`external_unverified`, with opaque ordinals in manifest order.
+
+Runtime specifiers, local runtime paths and dependency specifiers are always
+redacted by the option schema. Unknown settings, transport/auth content, physical
+paths, source excerpts and invalid authored values are omitted. Sources use
+`project` and `profile[n]` capture ordinals with profile content digests, so even
+profile filenames are not exported. These digests identify captured bytes, not
+publisher trust. Plain text and JSON carry the same explanation, without prompts,
+color, login, tool probes, input acquisition or emitter execution. Global input
+acquisition flags do not cause acquisition during inspection.
+
+Exit 0 means the inspected configuration has no errors; exit 1 means manifest,
+profile or supported-option errors, or warnings with `--strict`. Unsupported
+target markers are informational. Invalid scalar project options retain their
+warning/default policy; invalid custom dependencies fail. This inspection is
+neither a replayable manifest nor evidence that generation or a consumer works.
 
 ### Editor support
 

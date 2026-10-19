@@ -9,7 +9,7 @@ use tungsten_ir::Ir;
 use tungsten_ir::naming::{self, Case};
 
 /// Default `@elysra/tungsten-runtime` version range.
-pub const DEFAULT_RUNTIME_RANGE: &str = "^0.1.3";
+pub const DEFAULT_RUNTIME_RANGE: &str = tungsten_config::target_options::TYPESCRIPT_RUNTIME_RANGE;
 /// Zod version range of generated packages: `exactOptional()`, which keeps
 /// optional properties exact, exists since 4.3.0.
 pub const ZOD_RANGE: &str = "^4.3.0";
@@ -38,7 +38,9 @@ impl Options {
         let package = raw
             .package
             .unwrap_or_else(|| format!("{}-sdk", naming::to_case(&ir.api.name.words, Case::Kebab)));
-        let version = raw.version.unwrap_or_else(|| "0.1.0".to_string());
+        let version = raw.version.unwrap_or_else(|| {
+            tungsten_config::target_options::TYPESCRIPT_PACKAGE_VERSION.to_string()
+        });
         let runtime = match raw.runtime_path {
             Some(path) => format!("file:{path}"),
             None => raw

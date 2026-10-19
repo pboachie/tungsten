@@ -128,15 +128,30 @@ fn compile_project_here(manifest: &Path, opts: &CompileOptions) -> Compiled {
 /// compiling or acquiring inputs, loading agent content, or running tools.
 /// Raw project target values retain their legacy emitter fallback behavior.
 pub fn load_project_config(manifest: &Path, opts: &CompileOptions) -> ParsedManifest {
+    load_project_configuration(manifest, opts).parsed
+}
+
+/// Config-only capture including the authored provenance and profile sources.
+/// Inspection consumers must redact raw source/configuration content before export.
+pub fn load_project_configuration(
+    manifest: &Path,
+    opts: &CompileOptions,
+) -> crate::inspection::ProjectConfiguration {
     let opts = opts.snapshot();
     if opts.load.cancellation.is_cancelled() {
-        return ParsedManifest {
-            config: None,
-            diagnostics: Diagnostics::new(),
-            source: tungsten_config::parse_with_source(&manifest_name(manifest), "").source,
+        return crate::inspection::ProjectConfiguration {
+            parsed: ParsedManifest {
+                config: None,
+                diagnostics: Diagnostics::new(),
+                source: tungsten_config::parse_with_source(&manifest_name(manifest), "").source,
+            },
+            effective: None,
+            profile_sources: vec![],
         };
     }
     let mut parsed = read_project_manifest(manifest, &opts);
+    let mut effective = None;
+    let mut profile_sources = vec![];
     if let Some(mut config) = parsed.config.take() {
         let base = manifest.parent().unwrap_or(Path::new(""));
         let manifest_info = Manifest {
@@ -152,12 +167,18 @@ pub fn load_project_config(manifest: &Path, opts: &CompileOptions) -> ParsedMani
             &opts,
         );
         parsed.diagnostics.extend(composition.diagnostics);
+        profile_sources = composition.sources;
         if !parsed.diagnostics.has_errors() && !opts.load.cancellation.is_cancelled() {
             parsed.config = Some(config);
+            effective = composition.effective;
         }
     }
     parsed.diagnostics.sort();
-    parsed
+    crate::inspection::ProjectConfiguration {
+        parsed,
+        effective,
+        profile_sources,
+    }
 }
 
 fn manifest_name(manifest: &Path) -> String {
