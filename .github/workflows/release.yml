@@ -943,6 +943,8 @@ jobs:
           import json, pathlib, sys, tarfile
           version = sys.argv[1]
           names = ['@elysra/tungsten-runtime', '@elysra/tungsten-mcp', '@elysra/tungsten-webmcp']
+          # The MCP adapter's floor follows its node:module import graph.
+          engines = {names[0]: '>=22', names[1]: '^22.13.0 || >=23.2.0', names[2]: '>=22'}
           expected = {name.replace('@', '').replace('/', '-') + '-' + version + '.tgz' for name in names}
           if {path.name for path in pathlib.Path('.').glob('*.tgz')} != expected:
               raise SystemExit('unexpected npm archive inventory')
@@ -953,7 +955,7 @@ jobs:
                   if len(members) != 1 or not members[0].isfile() or members[0].size > 1048576:
                       raise SystemExit('unexpected npm package metadata')
                   manifest = json.load(archive.extractfile(members[0]))
-              if (manifest['name'], manifest['version'], manifest['license'], manifest['engines']['node']) != (name, version, 'Apache-2.0', '>=22'):
+              if (manifest['name'], manifest['version'], manifest['license'], manifest['engines']['node']) != (name, version, 'Apache-2.0', engines[name]):
                   raise SystemExit('npm archive identity or requirements differ from release')
               dependency = manifest.get('peerDependencies', {}).get(names[0])
               if name != names[0] and dependency != '^' + version:
