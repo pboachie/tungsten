@@ -33,12 +33,36 @@ func (t StoredToken) String() string {
 	return "StoredToken{" + Redacted + "}"
 }
 
+// GoString also redacts %#v formatting.
+func (t StoredToken) GoString() string { return t.String() }
+
+func cloneStoredToken(t StoredToken) StoredToken {
+	if t.ExpiresAt != nil {
+		at := *t.ExpiresAt
+		t.ExpiresAt = &at
+	}
+	return t
+}
+
 // TokenStore holds the tokens of the authorization-code schemes, by scheme
 // name. Implement it to persist tokens.
 type TokenStore interface {
 	Get(scheme string) (StoredToken, bool)
 	Set(scheme string, token StoredToken)
 	Delete(scheme string)
+}
+
+// FencedTokenStore is required for managed authorization and refresh. Each method
+// must invoke current exactly once inside the final serialized mutation, with a
+// snapshot of the actual current token. True commits immediately, with no gap,
+// retry or speculative predicate call; false preserves the previous token. The
+// predicate must not be retained. Return true only after that mutation commits.
+// A failed/panicking mutation must preserve the previous token. Implementations
+// must not call back into client operations while holding their store lock.
+type FencedTokenStore interface {
+	TokenStore
+	SetIfCurrent(scheme string, token StoredToken, current func(StoredToken, bool) bool) bool
+	DeleteIfCurrent(scheme string, current func(StoredToken, bool) bool) bool
 }
 
 // MemoryTokenStore is the default store: in memory, per client.
@@ -57,7 +81,7 @@ func (s *MemoryTokenStore) Get(scheme string) (StoredToken, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	t, ok := s.tokens[scheme]
-	return t, ok
+	return cloneStoredToken(t), ok
 }
 
 // Set implements TokenStore.
@@ -67,7 +91,7 @@ func (s *MemoryTokenStore) Set(scheme string, token StoredToken) {
 	if s.tokens == nil {
 		s.tokens = map[string]StoredToken{}
 	}
-	s.tokens[scheme] = token
+	s.tokens[scheme] = cloneStoredToken(token)
 }
 
 // Delete implements TokenStore.
@@ -75,6 +99,33 @@ func (s *MemoryTokenStore) Delete(scheme string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.tokens, scheme)
+}
+
+// SetIfCurrent atomically tests the actual token and conditionally replaces it.
+func (s *MemoryTokenStore) SetIfCurrent(scheme string, token StoredToken, current func(StoredToken, bool) bool) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	previous, ok := s.tokens[scheme]
+	if !current(cloneStoredToken(previous), ok) {
+		return false
+	}
+	if s.tokens == nil {
+		s.tokens = map[string]StoredToken{}
+	}
+	s.tokens[scheme] = cloneStoredToken(token)
+	return true
+}
+
+// DeleteIfCurrent atomically tests the actual token and conditionally removes it.
+func (s *MemoryTokenStore) DeleteIfCurrent(scheme string, current func(StoredToken, bool) bool) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	previous, ok := s.tokens[scheme]
+	if !current(cloneStoredToken(previous), ok) {
+		return false
+	}
+	delete(s.tokens, scheme)
+	return true
 }
 
 // PKCE is a PKCE pair (RFC 7636, S256). The verifier is a secret until the
@@ -89,6 +140,9 @@ const PKCEMethod = "S256"
 
 // String shows the challenge only.
 func (p PKCE) String() string { return "PKCE{Challenge: " + p.Challenge + "}" }
+
+// GoString never shows the verifier.
+func (p PKCE) GoString() string { return p.String() }
 
 // PKCEChallenge is base64url(SHA-256(ASCII(verifier))).
 func PKCEChallenge(verifier string) string {
@@ -115,8 +169,9 @@ type TokenInfo struct {
 	Refreshable bool
 }
 
-// AuthorizationURLParams are the parameters of AuthorizationURL.
-type AuthorizationURLParams struct {
+// LowLevelAuthorizationURLParams are application-owned protocol inputs. This
+// escape hatch provides no managed attempt, state/issuer validation or lifetime.
+type LowLevelAuthorizationURLParams struct {
 	// RedirectURI defaults to the redirect_uri of the scheme's credential.
 	RedirectURI string
 	// Scopes default to the flow's (nil); an empty non-nil list sends none.
@@ -128,12 +183,21 @@ type AuthorizationURLParams struct {
 	Extra map[string]string
 }
 
-// ExchangeCodeParams are the parameters of ExchangeCode.
-type ExchangeCodeParams struct {
+// LowLevelExchangeCodeParams are application-owned code/verifier inputs.
+type LowLevelExchangeCodeParams struct {
 	Code         string
 	RedirectURI  string
 	CodeVerifier string
 }
+
+func (p LowLevelAuthorizationURLParams) String() string {
+	return "LowLevelAuthorizationURLParams{" + Redacted + "}"
+}
+func (p LowLevelAuthorizationURLParams) GoString() string { return p.String() }
+func (p LowLevelExchangeCodeParams) String() string {
+	return "LowLevelExchangeCodeParams{" + Redacted + "}"
+}
+func (p LowLevelExchangeCodeParams) GoString() string { return p.String() }
 
 func formBody(fields []pair) string {
 	parts := make([]string, len(fields))
@@ -143,7 +207,7 @@ func formBody(fields []pair) string {
 	return strings.Join(parts, "&")
 }
 
-func buildAuthorizationURL(flow *AuthorizationCodeFlow, clientID, redirect string, p AuthorizationURLParams) string {
+func buildAuthorizationURL(flow *AuthorizationCodeFlow, clientID, redirect string, p LowLevelAuthorizationURLParams) string {
 	scopes := flow.Scopes
 	if p.Scopes != nil {
 		scopes = p.Scopes
@@ -195,24 +259,15 @@ type tokenFailure struct {
 	rejected bool
 }
 
-// gate serializes the refreshes of one scheme; generation counts completed
-// ones so a waiter can use the token another caller refreshed.
-type gate struct {
-	mu         sync.Mutex
-	generation uint64
-}
-
-func isErrorCode(code string) bool {
-	if len(code) < 1 || len(code) > 40 {
-		return false
+func isOAuthTokenError(code string) bool {
+	// Syntax alone cannot establish that provider-controlled text is public:
+	// a reflected credential can consist entirely of lowercase letters. Only
+	// the finite RFC 6749 token-endpoint error codes belong in diagnostics.
+	switch code {
+	case "invalid_request", "invalid_client", "invalid_grant", "unauthorized_client", "unsupported_grant_type", "invalid_scope":
+		return true
 	}
-	for i := 0; i < len(code); i++ {
-		c := code[i]
-		if c != '_' && (c < 'a' || c > 'z') {
-			return false
-		}
-	}
-	return true
+	return false
 }
 
 func (c *ClientCore) codeFlow(scheme string) (*AuthorizationCodeFlow, string) {
@@ -253,125 +308,6 @@ func oauthError(operation, remediation string) *Error {
 	return newDiag(operation, AuthFailed).remedy(remediation).err()
 }
 
-func (c *ClientCore) gateOf(scheme string) *gate {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	g, ok := c.oauthGates[scheme]
-	if !ok {
-		g = &gate{}
-		c.oauthGates[scheme] = g
-	}
-	return g
-}
-
-func (c *ClientCore) readToken(scheme string) (StoredToken, bool) {
-	t, ok := c.tokenStore.Get(scheme)
-	if !ok || t.AccessToken == "" {
-		return StoredToken{}, false
-	}
-	return t, true
-}
-
-// storedToken is the access token to send: the stored one, refreshed first
-// when it expires within ExpirySkewMs (or force). The problem is the text of
-// the AUTH_FAILED envelope.
-func (c *ClientCore) storedToken(ctx context.Context, scheme string, force bool) (string, string) {
-	token, failure := c.storedTokenInner(ctx, scheme, force)
-	if failure != nil {
-		return "", failure.message
-	}
-	return token, ""
-}
-
-func (c *ClientCore) storedTokenInner(ctx context.Context, scheme string, force bool) (string, *tokenFailure) {
-	missing := &tokenFailure{message: fmt.Sprintf("No OAuth2 token is stored for %s; send the user to authorization_url(), then call exchange_code() with the code, or put a token in ClientOptions.token_store.", scheme)}
-	stored, ok := c.readToken(scheme)
-	if !ok {
-		return "", missing
-	}
-	fresh := stored.ExpiresAt == nil || *stored.ExpiresAt > c.now()+ExpirySkewMs
-	if fresh && !force {
-		return stored.AccessToken, nil
-	}
-	g := c.gateOf(scheme)
-	c.mu.Lock()
-	seen := g.generation
-	c.mu.Unlock()
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	c.mu.Lock()
-	changed := g.generation != seen
-	c.mu.Unlock()
-	if changed {
-		t, ok := c.readToken(scheme)
-		if !ok {
-			return "", missing
-		}
-		return t.AccessToken, nil
-	}
-	current, ok := c.readToken(scheme)
-	if !ok {
-		return "", missing
-	}
-	token, failure := c.refreshStored(ctx, scheme, current, force)
-	if failure != nil {
-		return "", failure
-	}
-	c.mu.Lock()
-	g.generation++
-	c.mu.Unlock()
-	return token, nil
-}
-
-// refreshAfterRejection forces a refresh after a 401 when the stored token
-// has a refresh token.
-func (c *ClientCore) refreshAfterRejection(ctx context.Context, scheme, rejected string) (string, bool) {
-	stored, ok := c.readToken(scheme)
-	if !ok {
-		return "", false
-	}
-	if stored.AccessToken != rejected {
-		return stored.AccessToken, true
-	}
-	if stored.RefreshToken == "" {
-		return "", false
-	}
-	token, problem := c.storedToken(ctx, scheme, true)
-	return token, problem == ""
-}
-
-func (c *ClientCore) refreshStored(ctx context.Context, scheme string, stored StoredToken, force bool) (string, *tokenFailure) {
-	flow, reason := c.codeFlow(scheme)
-	if flow == nil {
-		return "", &tokenFailure{message: fmt.Sprintf("Cannot refresh the OAuth2 token for %s: %s.", scheme, reason)}
-	}
-	client, reason := c.codeClient(scheme)
-	if reason != "" {
-		return "", &tokenFailure{message: fmt.Sprintf("Cannot refresh the OAuth2 token for %s: %s.", scheme, reason)}
-	}
-	if stored.RefreshToken == "" {
-		why := "expired and has no refresh token"
-		if force {
-			why = "has no refresh token"
-		}
-		return "", &tokenFailure{message: fmt.Sprintf("The OAuth2 token for %s %s; authorize again with authorization_url() and exchange_code().", scheme, why)}
-	}
-	url := flow.RefreshURL
-	if url == "" {
-		url = flow.TokenURL
-	}
-	fields := []pair{{"grant_type", "refresh_token"}, {"refresh_token", stored.RefreshToken}}
-	renewed, failure := c.tokenRequest(ctx, scheme, url, client, fields, stored.RefreshToken)
-	if failure != nil {
-		if failure.rejected {
-			c.tokenStore.Delete(scheme)
-		}
-		return "", failure
-	}
-	c.tokenStore.Set(scheme, renewed)
-	return renewed.AccessToken, nil
-}
-
 func (c *ClientCore) tokenAttemptTimeout() time.Duration {
 	if c.timeout < time.Millisecond {
 		return time.Millisecond
@@ -380,6 +316,19 @@ func (c *ClientCore) tokenAttemptTimeout() time.Duration {
 }
 
 func (c *ClientCore) tokenRequest(ctx context.Context, scheme, url string, client codeClient, fields []pair, previous string) (StoredToken, *tokenFailure) {
+	if !validOAuthTokenLimit(c.maxOAuthTokenResponseBytes) {
+		return StoredToken{}, &tokenFailure{message: "The OAuth token response limit must be a positive safe integer."}
+	}
+	ctx, cancel := context.WithTimeout(ctx, c.tokenAttemptTimeout())
+	defer cancel()
+	expired := func() bool {
+		deadline, ok := ctx.Deadline()
+		return ctx.Err() != nil || (ok && !time.Now().Before(deadline))
+	}
+	late := &tokenFailure{message: "The OAuth token response was canceled or exceeded its deadline; authorize again."}
+	if expired() {
+		return StoredToken{}, late
+	}
 	if insecureHTTP(url, c.allowInsecureHTTP) {
 		return StoredToken{}, &tokenFailure{insecureHTTPAuth, false}
 	}
@@ -395,15 +344,23 @@ func (c *ClientCore) tokenRequest(ctx context.Context, scheme, url string, clien
 		all = append(all, pair{"client_id", client.clientID})
 	}
 	body := payload{bytes: []byte(formBody(all))}
-	out := attempt(ctx, c.http, attemptRequest{url: url, method: "POST", headers: headers, body: &body, timeout: c.tokenAttemptTimeout()})
+	out := attempt(ctx, c.http, attemptRequest{url: url, method: "POST", headers: headers, body: &body, timeout: c.tokenAttemptTimeout(), maxResponseBytes: &c.maxOAuthTokenResponseBytes})
+	// A custom transport/body may ignore cancellation or hold Close. Fence after
+	// its actual return, before decoding or treating a 4xx as token rejection.
+	if expired() {
+		return StoredToken{}, late
+	}
 	if out.kind != outcomeResponse || !out.bodyOK {
 		return StoredToken{}, &tokenFailure{message: fmt.Sprintf("The OAuth2 token endpoint for %s could not be reached; check network access and the token URL.", scheme)}
 	}
 	decoded := decodeBody(out.body, out.headers, "application/json")
+	if expired() {
+		return StoredToken{}, late
+	}
 	if out.status < 200 || out.status > 299 {
 		named := ""
 		if v, ok := getPathStr(decoded.value, decoded.has, "error"); ok {
-			if code, isText := v.(string); isText && isErrorCode(code) {
+			if code, isText := v.(string); isText && isOAuthTokenError(code) {
 				named = " (" + code + ")"
 			}
 		}
@@ -434,6 +391,9 @@ func (c *ClientCore) tokenRequest(ctx context.Context, scheme, url string, clien
 			at := c.now() + int64(math.Max(n, 0)*1000)
 			expires = &at
 		}
+	}
+	if expired() {
+		return StoredToken{}, late
 	}
 	return StoredToken{AccessToken: access, RefreshToken: refresh, ExpiresAt: expires, TokenType: stringAt("token_type"), Scope: stringAt("scope")}, nil
 }
@@ -544,8 +504,7 @@ func (f *OAuthFlow) operation(helper string) string {
 	return "oauth." + f.scheme + "." + helper
 }
 
-// PKCE returns a fresh pair: pass Challenge to AuthorizationURL and keep
-// Verifier for ExchangeCode.
+// PKCE returns a low-level pair. Managed AuthorizationURL creates and owns its own pair.
 func (f *OAuthFlow) PKCE() (PKCE, error) {
 	p, ok := GeneratePKCE()
 	if !ok {
@@ -554,8 +513,8 @@ func (f *OAuthFlow) PKCE() (PKCE, error) {
 	return p, nil
 }
 
-// AuthorizationURL is the URL to send the user to.
-func (f *OAuthFlow) AuthorizationURL(p AuthorizationURLParams) (string, error) {
+// LowLevelAuthorizationURL builds a URL with application-owned security inputs.
+func (f *OAuthFlow) LowLevelAuthorizationURL(p LowLevelAuthorizationURLParams) (string, error) {
 	operation := f.operation("authorizationUrl")
 	flow, reason := f.core.codeFlow(f.scheme)
 	if flow == nil {
@@ -575,9 +534,9 @@ func (f *OAuthFlow) AuthorizationURL(p AuthorizationURLParams) (string, error) {
 	return buildAuthorizationURL(flow, client.clientID, redirect, p), nil
 }
 
-// ExchangeCode trades the code from the redirect for tokens, stored for
-// later calls.
-func (f *OAuthFlow) ExchangeCode(ctx context.Context, p ExchangeCodeParams) (TokenInfo, error) {
+// LowLevelExchangeCode exchanges application-owned protocol inputs and stores
+// tokens without managed callback, generation or atomic-store guarantees.
+func (f *OAuthFlow) LowLevelExchangeCode(ctx context.Context, p LowLevelExchangeCodeParams) (TokenInfo, error) {
 	operation := f.operation("exchangeCode")
 	flow, reason := f.core.codeFlow(f.scheme)
 	if flow == nil {
@@ -609,20 +568,7 @@ func (f *OAuthFlow) ExchangeCode(ctx context.Context, p ExchangeCodeParams) (Tok
 	return tokenInfo(f.scheme, stored), nil
 }
 
-// Refresh refreshes the stored token now. Calls refresh on their own when
-// it expires.
-func (f *OAuthFlow) Refresh(ctx context.Context) (TokenInfo, error) {
-	operation := f.operation("refresh")
-	if _, failure := f.core.storedTokenInner(ctx, f.scheme, true); failure != nil {
-		return TokenInfo{}, oauthError(operation, failure.message)
-	}
-	stored, ok := f.core.readToken(f.scheme)
-	if !ok {
-		return TokenInfo{}, oauthError(operation, "No token is stored for "+f.scheme+".")
-	}
-	return tokenInfo(f.scheme, stored), nil
-}
-
 func tokenInfo(scheme string, t StoredToken) TokenInfo {
+	t = cloneStoredToken(t)
 	return TokenInfo{Scheme: scheme, ExpiresAt: t.ExpiresAt, Scope: t.Scope, Refreshable: t.RefreshToken != ""}
 }
