@@ -578,7 +578,7 @@ impl Ctx<'_> {
         let schemes = self.code_schemes();
         if !schemes.is_empty() {
             w.blank();
-            w.line("/** The authorization-code helpers of an OAuth2 scheme. */");
+            w.line("/** Managed S256/state attempts of an OAuth2 scheme; completion requires its handle, full callback and owning session binding. */");
             w.block("public OAuthFlow oauth(String scheme) {", "}", |w| {
                 w.line("return core.oauth(scheme);");
             });

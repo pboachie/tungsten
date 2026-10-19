@@ -54,8 +54,7 @@ final class Auth {
     static final long EXPIRY_SKEW_MS = 30000;
 
     private final ClientCore core;
-    private final Map<String, Object> gates = new HashMap<>();
-    private final Map<String, long[]> generations = new HashMap<>();
+    final OAuthSessions sessions;
     private final Object ccLock = new Object();
     private final Map<String, Cached> ccTokens = new HashMap<>();
 
@@ -63,6 +62,7 @@ final class Auth {
 
     Auth(ClientCore core) {
         this.core = core;
+        this.sessions = new OAuthSessions(core, this);
     }
 
     record PlanHeader(String name, String value, boolean secret) {}
@@ -479,7 +479,9 @@ final class Auth {
     record Failure(String message, boolean rejected) {}
 
     /** The client of an authorization-code flow, or the reason it is not configured. */
-    record CodeClient(String clientId, String clientSecret, String redirectUri) {}
+    record CodeClient(String clientId, String clientSecret, String redirectUri) {
+        @Override public String toString() { return "CodeClient{..}"; }
+    }
 
     ApiDescriptor.AuthorizationCode codeFlow(String scheme, String[] reason) {
         for (ApiDescriptor.AuthScheme s : core.api.auth()) {
@@ -511,32 +513,9 @@ final class Auth {
         return new CodeClient(id, cred.part("client_secret", "clientSecret"), cred.part("redirect_uri", "redirectUri"));
     }
 
-    private TokenStore.StoredToken readToken(String scheme) {
-        TokenStore.StoredToken t = core.tokenStore.get(scheme);
-        return t == null || t.accessToken() == null || t.accessToken().isEmpty() ? null : t;
-    }
-
-    private Object gateOf(String scheme) {
-        synchronized (gates) {
-            generations.computeIfAbsent(scheme, k -> new long[1]);
-            return gates.computeIfAbsent(scheme, k -> new Object());
-        }
-    }
-
-    private long generation(String scheme) {
-        synchronized (gates) {
-            return generations.computeIfAbsent(scheme, k -> new long[1])[0];
-        }
-    }
-
-    private void advance(String scheme) {
-        synchronized (gates) {
-            generations.computeIfAbsent(scheme, k -> new long[1])[0]++;
-        }
-    }
-
     /** A token, or why there is none. */
     record Token(String value, Failure failure) {
+        @Override public String toString() { return "Token{..}"; }
         static Token of(String value) {
             return new Token(value, null);
         }
@@ -547,86 +526,18 @@ final class Auth {
     }
 
     /** A token endpoint's answer: the token to store, or the failure. */
-    record TokenResult(TokenStore.StoredToken token, Failure failure) {}
+    record TokenResult(TokenStore.StoredToken token, Failure failure) {
+        @Override public String toString() { return "TokenResult{..}"; }
+    }
 
-    /** The stored access token, refreshed first when it expires within the skew (or force). */
+    /** Managed read/refresh with generation, mutation-epoch and physical-work fences. */
     Token storedToken(String scheme, boolean force) {
-        Token missing = Token.failed("No OAuth2 token is stored for " + scheme
-                + "; send the user to authorization_url(), then call exchange_code() with the code, or put a token in ClientOptions.token_store.");
-        TokenStore.StoredToken stored = readToken(scheme);
-        if (stored == null) {
-            return missing;
-        }
-        boolean fresh = stored.expiresAt() == null || stored.expiresAt() > core.now() + EXPIRY_SKEW_MS;
-        if (fresh && !force) {
-            return Token.of(stored.accessToken());
-        }
-        Object gate = gateOf(scheme);
-        long seen = generation(scheme);
-        synchronized (gate) {
-            if (generation(scheme) != seen) {
-                TokenStore.StoredToken t = readToken(scheme);
-                return t == null ? missing : Token.of(t.accessToken());
-            }
-            TokenStore.StoredToken current = readToken(scheme);
-            if (current == null) {
-                return missing;
-            }
-            Token r = refreshStored(scheme, current, force);
-            if (r.failure() == null) {
-                advance(scheme);
-            }
-            return r;
-        }
+        return sessions.storedToken(scheme, force);
     }
 
-    /** The token to resend with after a 401, or null. */
+    /** The token to resend once after a 401, or null. */
     String refreshAfterRejection(String scheme, String rejected) {
-        TokenStore.StoredToken stored = readToken(scheme);
-        if (stored == null) {
-            return null;
-        }
-        if (!stored.accessToken().equals(rejected)) {
-            return stored.accessToken();
-        }
-        if (stored.refreshToken() == null || stored.refreshToken().isEmpty()) {
-            return null;
-        }
-        Token token = storedToken(scheme, true);
-        return token.failure() == null ? token.value() : null;
-    }
-
-    private Token refreshStored(String scheme, TokenStore.StoredToken stored, boolean force) {
-        String[] reason = new String[1];
-        ApiDescriptor.AuthorizationCode flow = codeFlow(scheme, reason);
-        if (flow == null) {
-            return Token.failed("Cannot refresh the OAuth2 token for " + scheme + ": " + reason[0] + ".");
-        }
-        CodeClient client = codeClient(scheme, reason);
-        if (client == null) {
-            return Token.failed("Cannot refresh the OAuth2 token for " + scheme + ": " + reason[0] + ".");
-        }
-        if (stored.refreshToken() == null || stored.refreshToken().isEmpty()) {
-            String why = "has no refresh token";
-            if (!force) {
-                why = "expired and " + why;
-            }
-            return Token.failed("The OAuth2 token for " + scheme + " " + why
-                    + "; authorize again with authorization_url() and exchange_code().");
-        }
-        String url = flow.refreshUrl() != null && !flow.refreshUrl().isEmpty() ? flow.refreshUrl() : flow.tokenUrl();
-        List<Serialize.Pair> fields = List.of(
-                new Serialize.Pair("grant_type", "refresh_token"),
-                new Serialize.Pair("refresh_token", stored.refreshToken()));
-        TokenResult renewed = tokenRequest(scheme, url, client, fields, stored.refreshToken());
-        if (renewed.failure() != null) {
-            if (renewed.failure().rejected()) {
-                core.tokenStore.delete(scheme);
-            }
-            return new Token(null, renewed.failure());
-        }
-        core.tokenStore.set(scheme, renewed.token());
-        return Token.of(renewed.token().accessToken());
+        return sessions.refreshAfterRejection(scheme, rejected);
     }
 
     private Duration tokenTimeout() {
@@ -634,16 +545,8 @@ final class Auth {
     }
 
     private static boolean isErrorCode(String code) {
-        if (code.isEmpty() || code.length() > 40) {
-            return false;
-        }
-        for (int i = 0; i < code.length(); i++) {
-            char c = code.charAt(i);
-            if (c != '_' && (c < 'a' || c > 'z')) {
-                return false;
-            }
-        }
-        return true;
+        return java.util.Set.of("invalid_request", "invalid_client", "invalid_grant", "unauthorized_client",
+                "unsupported_grant_type", "invalid_scope", "temporarily_unavailable", "server_error").contains(code);
     }
 
     private static String stringAt(Object body, String path) {
@@ -653,6 +556,26 @@ final class Auth {
 
     /** Sends a form to a token endpoint. */
     TokenResult tokenRequest(String scheme, String url, CodeClient client, List<Serialize.Pair> fields, String previous) {
+        return tokenRequest(scheme, url, client, fields, previous, System.nanoTime(), Long.MAX_VALUE / 2);
+    }
+
+    TokenResult tokenRequest(String scheme, String url, CodeClient client, List<Serialize.Pair> fields, String previous, long ownerStarted, long ownerTimeout) {
+        long started = System.nanoTime();
+        try {
+            return tokenRequestOwned(scheme, url, client, fields, previous, started, ownerTimeout - (started - ownerStarted));
+        } catch (RuntimeException failure) {
+            return tokenJobFailure();
+        }
+    }
+
+    private static TokenResult tokenJobFailure() {
+        return new TokenResult(null, new Failure("The OAuth2 token job did not complete within its bounded response/deadline or could not be delivered; authorize again if a code may have been consumed.", false));
+    }
+
+    private TokenResult tokenRequestOwned(String scheme, String url, CodeClient client, List<Serialize.Pair> fields, String previous, long started, long ownerRemaining) {
+        long timeout = Math.min(OAuthInputs.timeoutNanos(tokenTimeout()), ownerRemaining);
+        OAuthInputs.require(timeout > 0);
+        OAuthInputs.require(OAuthInputs.tokenLimit(core.options.maxOAuthTokenResponseBytes));
         if (insecureHttp(url, core.options.allowInsecureHttp)) return new TokenResult(null, new Failure(INSECURE_HTTP_AUTH, false));
         List<Serialize.Header> headers = new ArrayList<>();
         headers.add(new Serialize.Header("Content-Type", "application/x-www-form-urlencoded", false));
@@ -664,14 +587,21 @@ final class Auth {
         } else {
             all.add(new Serialize.Pair("client_id", client.clientId()));
         }
-        Transport.Outcome out = Transport.attempt(core.http, new Transport.Request(url, "POST", headers,
-                Serialize.Payload.of(Text.utf8(formBody(all))), tokenTimeout(), false, null));
+        Serialize.Payload payload = Serialize.Payload.of(Text.utf8(formBody(all)));
+        long remaining = timeout - (System.nanoTime() - started);
+        if (Thread.currentThread().isInterrupted() || remaining <= 0) return tokenJobFailure();
+        Transport.Outcome out = Transport.oauthAttempt(core.http, new Transport.Request(url, "POST", headers,
+                payload, Duration.ofNanos(remaining), false, null, core.options.maxOAuthTokenResponseBytes));
+        // Socket factories/close and body work may ignore interruption. Check after actual settlement,
+        // before classifying either success or rejection (a late rejection must not delete a token).
+        if (Thread.currentThread().isInterrupted() || System.nanoTime() - started >= timeout) return tokenJobFailure();
         if (out.kind != Transport.Kind.RESPONSE || !out.bodyOk) {
             return new TokenResult(null, new Failure("The OAuth2 token endpoint for " + scheme
                     + " could not be reached; check network access and the token URL.", false));
         }
         Classify.Decoded decoded = Classify.decode(out.body, out.headers, "application/json");
         Object body = decoded.has ? decoded.value : Json.ABSENT;
+        if (System.nanoTime() - started >= timeout) return tokenJobFailure();
         if (out.status < 200 || out.status > 299) {
             String named = "";
             Object err = Json.at(body, "error");
@@ -696,6 +626,7 @@ final class Auth {
         }
         String type = stringAt(body, "token_type");
         String scope = stringAt(body, "scope");
+        if (System.nanoTime() - started >= timeout) return tokenJobFailure();
         return new TokenResult(new TokenStore.StoredToken(access, refresh == null || refresh.isEmpty() ? null : refresh, expires,
                 type.isEmpty() ? null : type, scope.isEmpty() ? null : scope), null);
     }

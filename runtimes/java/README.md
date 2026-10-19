@@ -98,6 +98,82 @@ token-store implementation when tokens must survive process restarts; protect
 stored credentials and avoid logging them. Registry publication and package
 availability are separate from building this source checkout.
 
+## Managed browser OAuth
+
+`client.oauth("scheme")` uses synchronous managed authorization attempts. Configure
+`AuthCredential.parts` with `flow: "authorizationCode"`, `client_id`, and optional
+`client_secret` and `redirect_uri`. Qualify the provider's S256 support and either
+its issuer response parameter or a distinct redirect/listener deployment that
+prevents issuer mix-up. A state value alone does not establish issuer identity.
+
+```java
+OAuthFlow oauth = client.oauth("code");
+var attempt = oauth.authorizationUrl(OAuthFlow.AuthorizationParams.builder()
+    .sessionBinding(owningListenerBinding)
+    .s256Supported(true) // qualify the provider before enabling this
+    .issuerDefense(OAuthFlow.IssuerDefense.issuerResponse("https://issuer.example"))
+    .build()).unwrap();
+// Retain the handle with this owning listener; open attempt.url() in the browser.
+var tokenInfo = oauth.exchangeCode(new OAuthFlow.ExchangeParams(
+    attempt.attemptHandle(), fullCallbackUrl, owningListenerBinding));
+```
+
+`IssuerDefense.distinctRedirect(qualification)` is the explicit alternative when
+an application has qualified an issuer-exclusive redirect/listener. Bind each
+attempt to its owning application session or listener using an unpredictable
+binding that other sessions cannot supply. The runtime generates and retains
+S256 verifier/state, captures the client, endpoints, redirect, scopes, resource,
+audience and account context, and accepts the full callback once. It rejects
+duplicate query fields, malformed UTF-8/percent encoding, fragments, redirect or
+issuer mismatches, and protected endpoint/extra query parameters before sending
+a code. Invalid callbacks do not consume a valid attempt; denial and an accepted
+exchange claim do. An ambiguous exchange requires a new attempt.
+
+Each client admits at most 32 pending/claimed attempts and 32 token-read/refresh
+owners or waiters. Attempts expire after ten monotonic minutes. Captured inputs
+share a 32 KiB UTF-8 budget, with at most 64 scopes and 64 extra fields; callbacks
+are at most 16 KiB with at most 64 fields. Refresh captures, including supplied
+token/client inputs, use the same input budget. Endpoints reject invalid Unicode,
+ASCII whitespace/control text, fragments and protected query fields before URI parsing.
+`cancelAuthorization(handle, binding)` invalidates one attempt; `logout()` fences
+local pending work before removing credentials. Neither revokes provider tokens.
+Claimed canceled/expired work retains admission until physical transport/store
+work settles. One lazy daemon expiry scheduler serves clients, removes canceled
+tasks, and holds only weak client/attempt references; applications do not dispose
+it. No per-attempt thread is created for expiry.
+
+The default `TokenStore.Memory` implements `TokenStore.Fenced`. Managed begin and
+refresh fail closed for legacy custom stores. A fenced adapter must evaluate its
+predicate exactly once at the final serialized write/removal, with no speculative
+checks, retries or wait gap. Predicates change the session mutation epoch; return
+true only after committing. Failed commits must preserve the previous token and
+may conservatively invalidate older refreshes. Logout generation is separate
+from the mutation epoch, so distinct pending logins can finish independently;
+the last successful login mutation selects credentials. Older refresh success or
+rejection cannot overwrite/remove a newer managed selection, even with identical
+token strings. Direct store writes and the low-level methods bypass these session
+guarantees. Shared persistent multi-account adapters require their own partitioning
+and qualification; per-client memory controls do not qualify those adapters.
+
+Code/refresh responses accept at most 64 KiB by default. Set
+`ClientOptions.builder().maxOAuthTokenResponseBytes(positiveSafeInteger)` for a
+supported override (maximum 2^53-1). This limits accepted response bytes, not peak
+heap, decoder allocation or external store buffering. Java charges admission
+before custom token reads, retains it through actual settlement, and fences
+dispatch and final managed store predicates/results with the configured monotonic
+token-job timeout. A custom socket/store can ignore cancellation and keep the
+synchronous call blocked; it cannot obtain a late managed commit. A store that
+committed before the deadline and then held its return can cause a failed result
+with a committed token; this is not a rollback guarantee. Ordinary requests and
+client-credentials transport semantics are separate from this OAuth-owned fence.
+
+Migrate primitive callers deliberately to `lowLevelAuthorizationUrl(...)` and
+`lowLevelExchangeCode(...)` only when the application owns PKCE, state, issuer,
+callback validation, one-shot consumption and store races. `pkce()` remains an
+explicit utility; managed begin creates its own verifier. There are no implicit
+primitive aliases under the managed method names. Keep handles, bindings,
+authorization URLs, callbacks and tokens out of application logs.
+
 ## License
 
 Apache-2.0; see the packaged LICENSE. The compiler is licensed separately

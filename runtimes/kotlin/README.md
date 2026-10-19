@@ -37,6 +37,37 @@ token-store implementation when tokens must survive process restarts; protect
 stored credentials and avoid logging them. Registry publication and package
 availability are separate from building this source checkout.
 
+## Managed browser OAuth
+
+Kotlin delegates OAuth to the synchronous Java core; see the Java runtime's
+managed OAuth contract for bounds, ownership, deadlines and custom-store rules.
+The Java 17 bytecode target is unchanged. `KotlinRuntime.options(...)` preserves
+the managed token-response byte override while selecting Kotlin identity.
+
+```kotlin
+val oauth = client.oauth("code")
+val attempt = oauth.authorizationUrl(OAuthFlow.AuthorizationParams.builder()
+    .sessionBinding(owningListenerBinding)
+    .s256Supported(true) // qualify provider S256 support first
+    .issuerDefense(OAuthFlow.IssuerDefense.issuerResponse("https://issuer.example"))
+    .build()).getOrThrow()
+// Keep the handle with this listener; open attempt.url() in the browser.
+val result = oauth.exchangeCode(OAuthFlow.ExchangeParams(
+    attempt.attemptHandle(), fullCallbackUrl, owningListenerBinding))
+```
+
+Use an issuer-exclusive qualified redirect/listener only through the explicit
+`IssuerDefense.distinctRedirect(...)` alternative. Managed completion requires
+the handle, full callback URL and owning binding; it generates S256/state itself
+and consumes an accepted exchange once. Cancellation and logout fence pending
+work, with admission retained until physical work settles. `TokenStore.Memory`
+is capable; custom managed stores must implement the Java `TokenStore.Fenced`
+final serialized predicate contract. Direct writes and explicit
+`lowLevelAuthorizationUrl(...)` / `lowLevelExchangeCode(...)` calls bypass
+managed session guarantees and require application-owned security controls.
+These runtime delegation rules do not by themselves qualify generated packages,
+shared persistent stores or registry publication.
+
 ## License
 
 Apache-2.0; see the packaged LICENSE. The compiler is licensed separately

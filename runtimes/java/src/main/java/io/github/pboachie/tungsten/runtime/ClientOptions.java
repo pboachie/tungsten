@@ -56,6 +56,7 @@ public final class ClientOptions {
     final Map<String, String> headers;
     final int maxEventBytes;
     final Long maxResponseBytes;
+    final long maxOAuthTokenResponseBytes;
     final int maxCollectBytes;
     final Duration maxCollectTime;
     final int maxReconnects;
@@ -83,6 +84,7 @@ public final class ClientOptions {
         headers = Collections.unmodifiableMap(new LinkedHashMap<>(b.headers));
         maxEventBytes = b.maxEventBytes > 0 ? b.maxEventBytes : DEFAULT_MAX_EVENT_BYTES;
         maxResponseBytes = b.maxResponseBytes;
+        maxOAuthTokenResponseBytes = b.maxOAuthTokenResponseBytes == null ? 65536L : b.maxOAuthTokenResponseBytes;
         maxCollectBytes = b.maxCollectBytes > 0 ? b.maxCollectBytes : DEFAULT_MAX_COLLECT_BYTES;
         maxCollectTime = positive(b.maxCollectTime, DEFAULT_MAX_COLLECT_TIME);
         maxReconnects = b.maxReconnects == null ? DEFAULT_MAX_RECONNECTS : Math.min(Math.max(b.maxReconnects, 0), 1000);
@@ -117,6 +119,7 @@ public final class ClientOptions {
         headers = o.headers;
         maxEventBytes = o.maxEventBytes;
         maxResponseBytes = o.maxResponseBytes;
+        maxOAuthTokenResponseBytes = o.maxOAuthTokenResponseBytes;
         maxCollectBytes = o.maxCollectBytes;
         maxCollectTime = o.maxCollectTime;
         maxReconnects = o.maxReconnects;
@@ -167,6 +170,7 @@ public final class ClientOptions {
         private final Map<String, String> headers = new LinkedHashMap<>();
         private int maxEventBytes;
         private Long maxResponseBytes;
+        private Long maxOAuthTokenResponseBytes;
         private int maxCollectBytes;
         private Duration maxCollectTime;
         private Integer maxReconnects;
@@ -272,6 +276,17 @@ public final class ClientOptions {
         public Builder maxResponseBytes(Long value) {
             maxResponseBytes = value;
             return this;
+        }
+
+        /** Separate code/refresh response cap; null inherits 64 KiB. Must be a positive safe integer. */
+        public Builder maxOAuthTokenResponseBytes(Long value) {
+            maxOAuthTokenResponseBytes = value;
+            return this;
+        }
+
+        /** Separate code/refresh response cap, in accepted response bytes. */
+        public Builder maxOAuthTokenResponseBytes(long value) {
+            return maxOAuthTokenResponseBytes(Long.valueOf(value));
         }
 
         /** The most JSON a stream collection keeps (4 MiB by default). */
