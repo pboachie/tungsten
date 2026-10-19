@@ -308,18 +308,23 @@ pub(crate) fn readme(
              `{name}` has an authorization-code flow. Configure the client with \
              `auth: {{ {key}: {{ flow: \"authorizationCode\", clientId, clientSecret, redirectUri }} }}` \
              (`clientSecret` is optional for a public client), send the user to the authorization URL \
-             and exchange the code they come back with. Tokens are kept in `ClientOptions.tokenStore` \
+             and validate their full callback through the managed attempt. Tokens are kept in `ClientOptions.tokenStore` \
              (in memory by default), sent on every call, refreshed before they expire and once after a 401.\n\n\
              ```ts\n\
-             const flow = client.oauth.{access};\n\
-             const pkce = await flow.pkce();\n\
-             const url = flow.authorizationUrl({{ state, codeChallenge: pkce.challenge }});\n\
-             // Redirect the user to url.value; the server sends them back with ?code=...\n\
-             await flow.exchangeCode({{ code, codeVerifier: pkce.verifier }});\n\
+             const flow = client.oauth{access};\n\
+             const started = await flow.authorizationUrl({{\n  \
+               sessionBinding, s256Supported: true,\n  \
+               issuerDefense: {{ kind: \"issuerResponse\", issuer }},\n\
+             }});\n\
+             if (!started.ok) throw new Error(started.error.remediation);\n\
+             // Open started.value.url in the browser; keep its handle in this session.\n\
+             await flow.exchangeCode({{\n  \
+               attemptHandle: started.value.attemptHandle, callbackUrl, sessionBinding,\n\
+             }});\n\
              ```\n\n",
             key = prop_key(name),
             access = if prop_key(name) == name {
-                name.to_string()
+                format!(".{name}")
             } else {
                 format!("[{}]", string_lit(name))
             },

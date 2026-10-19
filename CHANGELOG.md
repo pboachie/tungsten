@@ -11,6 +11,17 @@ changes.
 
 ### Breaking
 
+- TypeScript and Python browser OAuth authorization-code helpers now create
+  managed S256 PKCE/state attempts. Supply an authenticated session/listener
+  binding and an explicit qualified issuer defense, retain the returned handle,
+  and pass the full callback URL to code exchange. TypeScript authorization URL
+  creation is asynchronous. Legacy primitives require the separately named
+  `lowLevelAuthorizationUrl`/`lowLevelExchangeCode` methods (Python snake case).
+  Managed helpers and default refresh require atomic fenced custom-token-store
+  writes and deletions. Code/refresh token bodies default to 64 KiB; use the
+  separate positive `maxOAuthTokenResponseBytes` owner option (native casing
+  varies) for larger provider responses.
+
 - Ordinary buffered responses now default to 4 MiB per response across native
   runtimes. Omitted/null limits inherit that default; choose an explicit finite
   client/call limit for larger responses. Generated Rust CLIs expose

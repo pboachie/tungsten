@@ -900,15 +900,21 @@ pub(crate) fn readme(
              `auth={{{key}: {{\"flow\": \"authorizationCode\", \"client_id\": \"<client id>\", \
              \"client_secret\": \"<client secret>\", \"redirect_uri\": \"<redirect URI>\"}}}}` \
              (`client_secret` is optional for a public client), send the user to the authorization URL \
-             and exchange the code they come back with. Tokens are kept in `ClientOptions.token_store` \
+             and validate their full callback through the managed attempt. Tokens are kept in `ClientOptions.token_store` \
              (in memory by default), sent on every call, refreshed before they expire and once after a 401. \
-             The asynchronous client's helpers are awaited.\n\n\
+             The asynchronous client's exchange, refresh and logout helpers are awaited.\n\n\
              ```python\n\
+             from tungsten_runtime import IssuerDefense\n\n\
              flow = client.oauth[{key}]\n\
-             pkce = flow.pkce()\n\
-             url = flow.authorization_url(state=state, code_challenge=pkce.challenge)\n\
-             # Redirect the user to url.value; the server sends them back with ?code=...\n\
-             flow.exchange_code(code, code_verifier=pkce.verifier)\n\
+             started = flow.authorization_url(\n    \
+               session_binding=session_binding, s256_supported=True,\n    \
+               issuer_defense=IssuerDefense(\"issuerResponse\", issuer),\n\
+             )\n\
+             if not started.ok:\n    raise RuntimeError(started.error[\"remediation\"])\n\
+             # Open started.value.url in the browser; keep its handle in this session.\n\
+             flow.exchange_code(\n    \
+               started.value.attempt_handle, callback_url, session_binding=session_binding,\n\
+             )\n\
              ```\n\n",
             key = string_lit(name),
         ));

@@ -696,6 +696,9 @@ class ClientOptions:
     #: Ordinary-response byte cap (positive safe integer). None inherits the 4 MiB default.
     max_response_bytes: int | None = None
 
+    #: Separate code/refresh token response cap; positive safe integer, default 64 KiB.
+    max_oauth_token_response_bytes: int = 65_536
+
     #: Explicitly allows credentials over non-loopback HTTP, including OAuth.
     #: Default False: use HTTPS. localhost, 127/8 and ::1 work without opt-in.
     allow_insecure_http: bool = False
