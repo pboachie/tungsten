@@ -23,7 +23,7 @@ use tungsten_emit::{StaleReason, stale_files};
 use tungsten_ir::Ir;
 
 use crate::args::DiffArgs;
-use crate::commands::generate::{Emitted, Project, emit_target, select};
+use crate::commands::generate::{Emitted, Project, emit_target, prepare, select};
 use crate::output::{
     CommandName, CommandResult, DiffResult, DiffStatus, FileChange, FileDiff, MigrationAction,
     MigrationReport, SemverLevel, SemverReport, SnapshotState, SurfaceChange, TargetDiff,
@@ -63,8 +63,9 @@ pub(crate) fn run(args: &DiffArgs, env: &CliEnv, no_external: bool) -> Report {
         semver: args.semver || args.migration,
     };
     let mut changes = vec![];
+    let prepared = prepare(ir, &names);
     for name in &names {
-        let emitted = emit_target(&compiled, ir, &project, name);
+        let emitted = emit_target(&compiled, &prepared, &project, name, false);
         report
             .diagnostics
             .extend(emitted.diagnostics.0.iter().cloned());

@@ -84,6 +84,8 @@ pub enum CommandName {
     Doctor,
     #[serde(rename = "capabilities")]
     Capabilities,
+    #[serde(rename = "config")]
+    Config,
     #[serde(rename = "emitters")]
     Emitters,
     #[serde(rename = "generate")]
@@ -187,6 +189,7 @@ pub enum CommandResult {
     Init(InitResult),
     Doctor(DoctorResult),
     Capabilities(tungsten_config::capabilities::CapabilityCatalog),
+    Config(tungsten_config::inspection::ConfigurationInspection),
     Emitters(EmittersResult),
     Generate(GenerateResult),
     Mock(MockResult),
@@ -1014,6 +1017,7 @@ const RESULT_DEFS: &[(CommandName, &str)] = &[
     (CommandName::Init, "InitResult"),
     (CommandName::Doctor, "DoctorResult"),
     (CommandName::Capabilities, "CapabilityCatalog"),
+    (CommandName::Config, "ConfigurationInspection"),
     (CommandName::Emitters, "EmittersResult"),
     (CommandName::Generate, "GenerateResult"),
     (CommandName::Mock, "MockResult"),

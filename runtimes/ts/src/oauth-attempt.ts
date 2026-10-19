@@ -69,6 +69,19 @@ export function callbackFields(query: string): Map<string, string> {
 }
 
 export function qualifiedEndpoint(url: string, redirect = false): void {
+  if (typeof url !== "string" || url.length > MAX_AUTHORIZATION_ATTEMPT_BYTES) throw new Error();
+  // Count strict UTF-8 before URL can normalize malformed UTF-16 or allocate its parse.
+  let bytes = 0;
+  for (let i = 0; i < url.length; i++) {
+    const unit = url.charCodeAt(i);
+    if (unit >= 0xD800 && unit <= 0xDBFF) {
+      const low = url.charCodeAt(++i);
+      if (!(low >= 0xDC00 && low <= 0xDFFF)) throw new Error();
+      bytes += 4;
+    } else if (unit >= 0xDC00 && unit <= 0xDFFF) throw new Error();
+    else bytes += unit <= 0x7F ? 1 : unit <= 0x7FF ? 2 : 3;
+    if (bytes > MAX_AUTHORIZATION_ATTEMPT_BYTES) throw new Error();
+  }
   const parsed = new URL(url);
   if (parsed.username || parsed.password || parsed.hash || url.includes("#")) throw new Error();
   if (redirect) {

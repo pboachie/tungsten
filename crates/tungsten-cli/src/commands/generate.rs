@@ -12,7 +12,10 @@ use std::sync::Arc;
 use tungsten_build::Compiled;
 use tungsten_core::{Diagnostic, Diagnostics, Severity};
 use tungsten_emit::external;
-use tungsten_emit::{FileSet, TargetConfig, WriteOptions, stale_files, write_output};
+use tungsten_emit::{
+    FileSet, OutputStaging, PreparedGeneration, StagingLimits, TargetConfig, WriteOptions,
+    stale_files, write_output_with_cancel,
+};
 use tungsten_ir::Ir;
 
 use crate::args::GenerateArgs;
@@ -145,30 +148,33 @@ fn unsupported_import_policy(ir: &Ir, name: &str) -> bool {
         && !targets::serves_import_policy(name)
 }
 
-/// Run the emitter of target `name` over `ir` without touching the disk:
-/// the built-in one, or the external emitter its `tungsten.yml` entry
-/// declares.
-pub(crate) fn emit_target(compiled: &Compiled, ir: &Ir, project: &Project, name: &str) -> Emitted {
-    emit_target_live(compiled, ir, project, name, false)
+/// Prepare the compatible built-in plans needed by this target selection.
+pub(crate) fn prepare<'a>(ir: &'a Ir, names: &[String]) -> PreparedGeneration<'a> {
+    let emitters: Vec<_> = names
+        .iter()
+        .filter_map(|name| targets::emitter(name))
+        .collect();
+    PreparedGeneration::new(ir, &emitters)
 }
 
-/// [`emit_target`] for a run that writes: with `live`, the MCP target may
-/// call its embedding provider. Built-in emitters never touch a network or
-/// start a process. An `external` target does start its command, on every
-/// command that emits (`generate` in any mode, `check --ci`, `diff`,
-/// `report`), unless the project has external emitters off
-/// (`--no-external`).
-pub(crate) fn emit_target_live(
+/// Run a target with reusable immutable preparation. Live provider/external
+/// execution remains explicit and is never part of the prepared plan.
+pub(crate) fn emit_target(
     compiled: &Compiled,
-    ir: &Ir,
+    prepared: &PreparedGeneration<'_>,
     project: &Project,
     name: &str,
     live: bool,
 ) -> Emitted {
+    let ir = prepared.ir();
     let cfg = targets::target_config_for(compiled.config.as_ref(), name, &project.base_dir, live);
-    if unsupported_import_policy(ir, name) {
+    if compiled.workspace.is_cancelled() || unsupported_import_policy(ir, name) {
         let mut diagnostics = Diagnostics::new();
-        diagnostics.push(targets::import_policy_refusal(name));
+        diagnostics.push(if compiled.workspace.is_cancelled() {
+            Diagnostic::error("TG0701", "generation cancelled before target emission")
+        } else {
+            targets::import_policy_refusal(name)
+        });
         return Emitted {
             cfg,
             files: Some(FileSet::new()),
@@ -198,8 +204,15 @@ pub(crate) fn emit_target_live(
         };
     };
     let mut files = FileSet::new();
-    let mut diagnostics = emitter.supports(ir);
-    diagnostics.extend(emitter.emit(ir, &cfg, &mut files));
+    let mut diagnostics = prepared.supports(emitter);
+    if !compiled.workspace.is_cancelled() {
+        diagnostics.extend(prepared.emit(emitter, &cfg, &mut files));
+    } else {
+        diagnostics.push(Diagnostic::error(
+            "TG0701",
+            "generation cancelled before target emission",
+        ));
+    }
     Emitted {
         tools: targets::tool_names(name, ir),
         cfg,
@@ -300,6 +313,26 @@ pub(crate) fn run_targets(
     mode: Mode,
     strict: bool,
 ) -> Outcome {
+    run_targets_with_limits(
+        compiled,
+        ir,
+        project,
+        names,
+        mode,
+        strict,
+        StagingLimits::default(),
+    )
+}
+
+pub(crate) fn run_targets_with_limits(
+    compiled: &Compiled,
+    ir: &Ir,
+    project: &Project,
+    names: &[String],
+    mode: Mode,
+    strict: bool,
+    limits: StagingLimits,
+) -> Outcome {
     let mut outcome = Outcome {
         reports: vec![],
         diagnostics: vec![],
@@ -310,106 +343,185 @@ pub(crate) fn run_targets(
     let live = matches!(mode, Mode::Write { dry_run: false, .. });
     // The surface snapshot is written next to every target's manifest.
     let shared = matches!(mode, Mode::Write { .. }).then(|| Arc::new(ir.clone()));
-    let mut emitted: Vec<(&String, Emitted)> = names
-        .iter()
-        .map(|name| {
-            let mut e = emit_target_live(compiled, ir, project, name, live);
-            if strict && e.files.is_some() {
-                outcome.promoted += check::promote_warnings(&mut e.diagnostics.0);
-            }
-            (name, e)
-        })
-        .collect();
-    // A strict run writes every target or none; otherwise a target that
-    // fails (for example one refused for imported-operation policy) fails
-    // alone.
-    let withhold = strict
-        && matches!(mode, Mode::Write { .. })
-        && emitted.iter().any(|(_, e)| e.files.is_some() && e.failed());
-    for (name, e) in emitted.drain(..) {
-        let Emitted {
-            cfg,
-            files,
-            diagnostics,
-            tools,
-            external_skipped,
-        } = e;
-        let mut report = TargetReport {
-            target: name.clone(),
-            status: TargetStatus::Skipped,
-            out: cfg.out_dir.display().to_string(),
-            files: 0,
-            written: vec![],
-            unchanged: vec![],
-            removed: vec![],
-            preserved: vec![],
-            stale: vec![],
-        };
-        let Some(files) = files else {
-            outcome.diagnostics.push(if external_skipped {
-                targets::external_skipped(name, &project.manifest)
-            } else {
-                targets::not_implemented(name, &project.manifest)
-            });
-            outcome.reports.push(report);
-            continue;
-        };
-        report.files = files.len();
-        let failed = diagnostics.has_errors();
-        outcome.diagnostics.extend(diagnostics.0);
-        if failed {
-            report.status = TargetStatus::Failed;
-            outcome.reports.push(report);
+    let prepared = prepare(ir, names);
+    let preflight = matches!(mode, Mode::Write { .. });
+    let mut staging = None;
+    let mut pending = Vec::new();
+    for name in names {
+        let mut emitted = emit_target(compiled, &prepared, project, name, live);
+        if strict && emitted.files.is_some() {
+            outcome.promoted += check::promote_warnings(&mut emitted.diagnostics.0);
+        }
+        let count = emitted.files.as_ref().map_or(0, FileSet::len);
+        if !preflight {
+            finish_target(
+                compiled,
+                ir,
+                project,
+                name,
+                emitted,
+                count,
+                mode,
+                false,
+                shared.clone(),
+                &mut outcome,
+            );
             continue;
         }
-        if withhold {
-            report.status = TargetStatus::Withheld;
-            outcome.reports.push(report);
-            continue;
-        }
-        match mode {
-            Mode::Check => {
-                let stale = stale_files(&files, &cfg.out_dir);
-                report.status = if stale.is_empty() {
-                    TargetStatus::Fresh
-                } else {
-                    TargetStatus::Stale
+        // Keep only identities/diagnostics across targets. Strict preflight
+        // spools output outside every destination and runs each emitter once.
+        let files = emitted.files.as_mut().map(std::mem::take);
+        let staged = if !emitted.failed() {
+            files.and_then(|files| {
+                let area = match staging.as_mut() {
+                    Some(area) => area,
+                    None => match OutputStaging::new(limits) {
+                        Ok(area) => staging.insert(area),
+                        Err(d) => {
+                            emitted.diagnostics.extend(d);
+                            return None;
+                        }
+                    },
                 };
-                report.stale = stale.iter().map(|f| f.path.clone()).collect();
-                outcome
-                    .diagnostics
-                    .extend(stale.iter().map(|f| f.diagnostic(&cfg.out_dir)));
-            }
-            Mode::Write { dry_run, force } => {
-                let opts = WriteOptions {
-                    dry_run,
-                    force,
-                    generator: Some(ir.generator.clone()),
-                    ir: shared.clone(),
-                    tools,
-                };
-                match write_output(&files, &cfg.out_dir, &opts) {
-                    Ok(w) => {
-                        report.status = if dry_run {
-                            TargetStatus::DryRun
-                        } else {
-                            TargetStatus::Generated
-                        };
-                        report.written = w.written;
-                        report.unchanged = w.unchanged;
-                        report.removed = w.removed;
-                        report.preserved = w.preserved;
-                    }
+                match area.stage(files, || compiled.workspace.is_cancelled()) {
+                    Ok(staged) => Some(staged),
                     Err(d) => {
-                        report.status = classify(&d, &mut outcome);
-                        outcome.diagnostics.extend(d.0);
+                        emitted.diagnostics.extend(d);
+                        None
                     }
+                }
+            })
+        } else {
+            None
+        };
+        pending.push((name, emitted, staged, count));
+    }
+    let withhold = strict
+        && pending
+            .iter()
+            .any(|(_, e, _, _)| e.files.is_some() && e.failed());
+    for (name, mut emitted, staged, count) in pending {
+        if !withhold && let Some(staged) = staged {
+            match staged.load(|| compiled.workspace.is_cancelled()) {
+                Ok(files) => emitted.files = Some(files),
+                Err(d) => emitted.diagnostics.extend(d),
+            }
+        }
+        finish_target(
+            compiled,
+            ir,
+            project,
+            name,
+            emitted,
+            count,
+            mode,
+            withhold,
+            shared.clone(),
+            &mut outcome,
+        );
+    }
+    outcome
+}
+
+#[allow(clippy::too_many_arguments)]
+fn finish_target(
+    compiled: &Compiled,
+    ir: &Ir,
+    project: &Project,
+    name: &str,
+    emitted: Emitted,
+    count: usize,
+    mode: Mode,
+    withhold: bool,
+    shared: Option<Arc<Ir>>,
+    outcome: &mut Outcome,
+) {
+    let Emitted {
+        cfg,
+        files,
+        diagnostics,
+        tools,
+        external_skipped,
+    } = emitted;
+    let mut report = TargetReport {
+        target: name.to_string(),
+        status: TargetStatus::Skipped,
+        out: cfg.out_dir.display().to_string(),
+        files: 0,
+        written: vec![],
+        unchanged: vec![],
+        removed: vec![],
+        preserved: vec![],
+        stale: vec![],
+    };
+    let Some(files) = files else {
+        outcome.diagnostics.push(if external_skipped {
+            targets::external_skipped(name, &project.manifest)
+        } else {
+            targets::not_implemented(name, &project.manifest)
+        });
+        outcome.reports.push(report);
+        return;
+    };
+    report.files = count;
+    let failed = diagnostics.has_errors();
+    if diagnostics.iter().any(|d| d.code == "TG0701") {
+        outcome.io_failed = true;
+    }
+    outcome.diagnostics.extend(diagnostics.0);
+    if failed {
+        report.status = TargetStatus::Failed;
+        outcome.reports.push(report);
+        return;
+    }
+    if withhold {
+        report.status = TargetStatus::Withheld;
+        outcome.reports.push(report);
+        return;
+    }
+    match mode {
+        Mode::Check => {
+            let stale = stale_files(&files, &cfg.out_dir);
+            report.status = if stale.is_empty() {
+                TargetStatus::Fresh
+            } else {
+                TargetStatus::Stale
+            };
+            report.stale = stale.iter().map(|f| f.path.clone()).collect();
+            outcome
+                .diagnostics
+                .extend(stale.iter().map(|f| f.diagnostic(&cfg.out_dir)));
+        }
+        Mode::Write { dry_run, force } => {
+            let opts = WriteOptions {
+                dry_run,
+                force,
+                generator: Some(ir.generator.clone()),
+                ir: shared.clone(),
+                tools,
+            };
+            match write_output_with_cancel(&files, &cfg.out_dir, &opts, || {
+                compiled.workspace.is_cancelled()
+            }) {
+                Ok(w) => {
+                    report.status = if dry_run {
+                        TargetStatus::DryRun
+                    } else {
+                        TargetStatus::Generated
+                    };
+                    report.written = w.written;
+                    report.unchanged = w.unchanged;
+                    report.removed = w.removed;
+                    report.preserved = w.preserved;
+                }
+                Err(d) => {
+                    report.status = classify(&d, outcome);
+                    outcome.diagnostics.extend(d.0);
                 }
             }
         }
-        outcome.reports.push(report);
     }
-    outcome
+    outcome.reports.push(report);
 }
 
 /// The status of a target whose write failed with `d`, noting I/O failures

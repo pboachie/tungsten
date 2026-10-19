@@ -8,6 +8,39 @@ use tungsten_ir::Ir;
 
 use crate::output::{DiagnosticCounts, ExplainResult};
 
+/// Exercise bounded staging preflight with a private harness budget, without
+/// introducing process-global test overrides or user-facing configuration.
+pub fn generate_with_staging_limits(
+    compiled: &tungsten_build::Compiled,
+    base_dir: &Path,
+    names: &[String],
+    limits: tungsten_emit::StagingLimits,
+) -> (Vec<crate::output::TargetReport>, Vec<Diagnostic>) {
+    use crate::commands::generate::{Mode, Project, run_targets_with_limits};
+    let project = Project {
+        base_dir: base_dir.to_path_buf(),
+        manifest: tungsten_build::DEFAULT_MANIFEST_NAME.into(),
+        search_path: Default::default(),
+        no_external: true,
+    };
+    let outcome = run_targets_with_limits(
+        compiled,
+        compiled
+            .ir
+            .as_ref()
+            .expect("private harness supplies a valid IR"),
+        &project,
+        names,
+        Mode::Write {
+            dry_run: false,
+            force: false,
+        },
+        true,
+        limits,
+    );
+    (outcome.reports, outcome.diagnostics)
+}
+
 /// Codes with an extended explanation, in table order.
 pub fn explained_codes() -> Vec<&'static str> {
     crate::explain_table::EXPLANATIONS

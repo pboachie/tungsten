@@ -258,7 +258,7 @@ export class OAuthSession {
   #remove(handle: string, pending: PendingAuthorization): void {
     pending.verifier = undefined;
     pending.dispose();
-    this.#attempts.delete(handle);
+    if (this.#attempts.get(handle) === pending) this.#attempts.delete(handle);
   }
 
   #cancel(handle: string, pending: PendingAuthorization): void {
@@ -301,6 +301,7 @@ export class OAuthSession {
       const scopes = owned.scopes ?? ownedFlow.scopes;
       qualifiedEndpoint(ownedFlow.authorizationUrl);
       qualifiedEndpoint(ownedFlow.tokenUrl);
+      if (ownedFlow.refreshUrl !== null && ownedFlow.refreshUrl !== undefined) qualifiedEndpoint(ownedFlow.refreshUrl);
       qualifiedEndpoint(redirectUri, true);
       if (insecureHttp(ownedFlow.authorizationUrl, this.#deps.options.allowInsecureHttp) || insecureHttp(ownedFlow.tokenUrl, this.#deps.options.allowInsecureHttp)) return refuse();
       handle = randomAttemptSecret();
@@ -353,9 +354,14 @@ export class OAuthSession {
     this.#sweep();
     let pending: PendingAuthorization | undefined;
     let code: string | undefined;
+    let attemptHandle: string;
+    let signal: AbortSignal | undefined;
     try {
-      pending = this.#attempts.get(params.attemptHandle);
-      if (!pending || pending.claimed || pending.scheme !== scheme || params.sessionBinding !== pending.binding || params.signal?.aborted || !this.#current(pending)) return refuse();
+      // Caller-owned parameter objects may change while token/store work awaits.
+      attemptHandle = params.attemptHandle;
+      signal = params.signal;
+      pending = this.#attempts.get(attemptHandle);
+      if (!pending || pending.claimed || pending.scheme !== scheme || params.sessionBinding !== pending.binding || signal?.aborted || !this.#current(pending)) return refuse();
       const callback = params.callbackUrl;
       if (typeof callback !== "string" || callback.length > MAX_OAUTH_CALLBACK_BYTES || utf8(callback).byteLength > MAX_OAUTH_CALLBACK_BYTES || callback.includes("#")) return refuse();
       const question = callback.indexOf("?");
@@ -369,17 +375,17 @@ export class OAuthSession {
       // No await separates validation from this single-owner transition.
       pending.claimed = true;
       if (denied !== undefined) {
-        this.#remove(params.attemptHandle, pending);
+        this.#remove(attemptHandle, pending);
         return this.#failure(operation, "Authorization was denied. Begin a new attempt to authorize again.");
       }
     } catch { return refuse(); }
     const record = pending;
     const verifier = record.verifier;
     record.verifier = undefined;
-    if (code === undefined || verifier === undefined) { this.#remove(params.attemptHandle, record); return refuse(); }
-    const onAbort = () => this.#cancel(params.attemptHandle, record);
-    params.signal?.addEventListener("abort", onAbort, { once: true });
+    if (code === undefined || verifier === undefined) { this.#remove(attemptHandle, record); return refuse(); }
+    const onAbort = () => this.#cancel(attemptHandle, record);
     try {
+      signal?.addEventListener("abort", onAbort, { once: true });
       if (!this.#current(record)) return refuse();
       const fields: Array<[string, string]> = [["grant_type", "authorization_code"], ["code", code], ["redirect_uri", record.redirectUri], ["code_verifier", verifier]];
       const stored = await this.#tokenRequest(scheme, record.tokenUrl, { clientId: record.clientId, clientSecret: record.clientSecret, redirectUri: record.redirectUri }, fields, undefined, record.controller.signal);
@@ -394,8 +400,8 @@ export class OAuthSession {
       return { ok: true, value: info(scheme, stored) };
     } catch { return this.#failure(operation, "Authorization exchange did not complete. The code may have been consumed; begin a new authorization attempt."); }
     finally {
-      params.signal?.removeEventListener("abort", onAbort);
-      this.#remove(params.attemptHandle, record);
+      try { signal?.removeEventListener("abort", onAbort); }
+      finally { this.#remove(attemptHandle, record); }
     }
   }
 
@@ -551,13 +557,16 @@ export class OAuthSession {
           : `The OAuth2 token for ${scheme} expired and has no refresh token; authorize again with authorizationUrl() and exchangeCode().`,
       );
     }
+    const url = flow.refreshUrl ?? flow.tokenUrl;
+    try { qualifiedEndpoint(url); }
+    catch { throw new TokenError("Cannot refresh OAuth2 tokens: provide a valid endpoint without protected query fields."); }
     const fields: Array<[string, string]> = [
       ["grant_type", "refresh_token"],
       ["refresh_token", stored.refreshToken],
     ];
     let next: StoredToken;
     try {
-      next = await this.#tokenRequest(scheme, flow.refreshUrl ?? flow.tokenUrl, client, fields, stored.refreshToken);
+      next = await this.#tokenRequest(scheme, url, client, fields, stored.refreshToken);
     } catch (error) {
       if (error instanceof TokenError && error.rejected && this.#generation(scheme) === generation) {
         // The server no longer accepts the refresh token: forget the tokens.

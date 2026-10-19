@@ -38,6 +38,13 @@ changes.
   separate positive `maxOAuthTokenResponseBytes` owner option (native casing
   varies) for larger provider responses.
 
+- External emitters and descriptor probes use owned process groups or Job Objects
+  and request cleanup when their leader exits. The process timeout includes a
+  cleanup reserve (one quarter, at most one second). Incomplete cleanup or exhausted
+  worker capacity refuses output with TG0803. Keep emitter helpers within their
+  invocation and investigate remaining processes before retrying; these lifecycle
+  controls do not provide a sandbox or execution approval.
+
 - Ordinary buffered responses now default to 4 MiB per response across native
   runtimes. Omitted/null limits inherit that default; choose an explicit finite
   client/call limit for larger responses. Generated Rust CLIs expose
@@ -74,6 +81,11 @@ changes.
   no longer permits an implicit fallback.
 
 ### Added
+
+- Inspect supported effective configuration with `tungsten config`, including
+  typed defaults/fallback policy and winning/shadowed authored origins. Plain
+  text and JSON redact sensitive values and physical paths without compiling
+  inputs, probing tools or executing emitters.
 
 - Compose bounded local TypeScript profiles for package, version, runtime and
   dependency defaults. Retain authored provenance through the compiler driver,
@@ -286,6 +298,18 @@ values as `JsonNode`, OpenID Connect as a bearer token, no CLI or MCP).
 
 ### Changed
 
+- Locate primary and related LSP profile diagnostics in their captured local
+  files, including invalid profiles, while preserving portable compiler and
+  configuration-inspection source names.
+
+- Reuse immutable SDK structure across support checks and emission for Java,
+  Kotlin, C#, F#, Dart and Ruby. Generation stages one target's bytes at a time
+  with bounded output metadata before applying files, preserving strict
+  diagnostic withholding and custom-file ownership. Reports discard target
+  bytes after collecting their results. Application errors and cooperative
+  cancellation describe completed file writes/removals; output remains
+  nontransactional across files and directories.
+
 - Runtime performance. Successful responses are decoded once instead of
   several times: the Go runtime parses the body in one pass and unmarshals the
   original bytes into the typed result, and generated Rust SDKs call the new
@@ -360,6 +384,16 @@ values as `JsonNode`, OpenID Connect as a bearer token, no CLI or MCP).
 - Dependency audit: source-less `Cargo.lock` entries must be workspace members, and `[patch]`/`[replace]` tables in Cargo manifests are rejected.
 
 ### Fixed
+
+- Windows Git input acquisition uses an exclusively created local temporary
+  repository, avoiding Git working-directory and pack-file limits caused by
+  deeply nested project caches. Verified project pins and offline reuse retain
+  their existing locations; unsupported temporary roots fail safely.
+
+- TypeScript, Python and Rust managed OAuth helpers cap endpoint text at 32 KiB
+  and reject malformed Unicode before URL parsing. Protected or malformed refresh
+  queries refuse before authorization begins and before default refresh dispatch,
+  including a changed endpoint or the token-endpoint fallback.
 
 - Check profile-derived TypeScript prerequisites in project `doctor`, and refuse
   invalid manifests or bounded profiles before running tool version probes.

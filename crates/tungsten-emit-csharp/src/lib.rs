@@ -111,6 +111,31 @@ impl Emitter for CSharpEmitter {
         }
         diags
     }
+
+    fn uses_sdk_plan(&self) -> bool {
+        true
+    }
+
+    fn supports_prepared(&self, ir: &Ir, plan: &SdkPlan<'_>) -> Diagnostics {
+        notes(ir, plan)
+    }
+
+    fn emit_prepared(
+        &self,
+        ir: &Ir,
+        plan: &SdkPlan<'_>,
+        cfg: &TargetConfig,
+        out: &mut FileSet,
+    ) -> Diagnostics {
+        let (opts, mut diags) = Options::resolve(ir, cfg);
+        let files = generate_prepared(ir, plan, &opts);
+        for (path, text) in files {
+            if let Err(e) = out.add(path, text) {
+                diags.push(Diagnostic::error("TG0701", format!("csharp target: {e}")));
+            }
+        }
+        diags
+    }
 }
 
 /// The runtime's and the base library's type names the generated code uses
@@ -262,8 +287,12 @@ fn context<'a>(
 /// Every file of the SDK (its notes come from `supports`).
 pub fn generate(ir: &Ir, opts: &Options) -> Vec<(String, String)> {
     let (plan, _) = SdkPlan::new(ir);
-    let names = Namer::new(&plan).names(Target::CSharp, &namer_options());
-    let ctx = context(ir, &plan, &names, opts);
+    generate_prepared(ir, &plan, opts)
+}
+
+fn generate_prepared(ir: &Ir, plan: &SdkPlan<'_>, opts: &Options) -> Vec<(String, String)> {
+    let names = Namer::new(plan).names(Target::CSharp, &namer_options());
+    let ctx = context(ir, plan, &names, opts);
     let mut files: Vec<(String, String)> = vec![];
     files.push((format!("{}.csproj", opts.package_id), ctx.csproj()));
     files.push(("README.md".into(), ctx.readme()));
@@ -278,8 +307,8 @@ pub fn generate(ir: &Ir, opts: &Options) -> Vec<(String, String)> {
         files.push(("Macros.cs".into(), ctx.macros_file()));
     }
     let document = sdk::document_value(
-        &plan,
-        &document_names(&names, &plan),
+        plan,
+        &document_names(&names, plan),
         &DocumentOptions {
             version: opts.version.clone(),
         },
