@@ -183,7 +183,15 @@ pub(crate) fn map_diagnostics(
         let (path, range) = place(d, &mut lines, compiled, base, manifest_name, manifest);
         let list = out.entry(path).or_default();
         if list.len() < MAX_PER_FILE {
-            list.push(convert(d, range, &mut lines, compiled, base, manifest_name, manifest));
+            list.push(convert(
+                d,
+                range,
+                &mut lines,
+                compiled,
+                base,
+                manifest_name,
+                manifest,
+            ));
         }
     }
     for list in out.values_mut() {
@@ -204,7 +212,14 @@ fn place(
 ) -> (PathBuf, Range) {
     if let Some(span) = d.labels.iter().find_map(|l| l.span) {
         let name = lines.ws.sources.get(span.source).name.clone();
-        let path = file_path(&name, Some(span.source), compiled, base, manifest_name, manifest);
+        let path = file_path(
+            &name,
+            Some(span.source),
+            compiled,
+            base,
+            manifest_name,
+            manifest,
+        );
         return (path, lines.range(span.source, span.start, span.end));
     }
     match d.labels.first() {
@@ -231,7 +246,13 @@ fn file_path(
     // admission. Rejected captures publish the manifest collision diagnostic,
     // so existing manifest/spec fallback remains safe and unchanged.
     let source = source.or_else(|| {
-        compiled.workspace.sources.files().iter().find(|file| file.name == name).map(|file| file.id)
+        compiled
+            .workspace
+            .sources
+            .files()
+            .iter()
+            .find(|file| file.name == name)
+            .map(|file| file.id)
     });
     if let Some(path) = source.and_then(|source| compiled.profile_sources.get(&source)) {
         return profile_editor_path(path);
@@ -291,7 +312,14 @@ fn convert(
     for label in d.labels.iter().skip(1) {
         let Some(span) = label.span else { continue };
         let name = lines.ws.sources.get(span.source).name.clone();
-        let path = file_path(&name, Some(span.source), compiled, base, manifest_name, manifest);
+        let path = file_path(
+            &name,
+            Some(span.source),
+            compiled,
+            base,
+            manifest_name,
+            manifest,
+        );
         if let Some(uri) = path_to_uri(&path) {
             related.push(DiagnosticRelatedInformation {
                 location: Location::new(uri, lines.range(span.source, span.start, span.end)),

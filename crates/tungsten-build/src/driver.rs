@@ -465,7 +465,9 @@ fn compile_validated(
             .workspace
             .sources
             .add(profile.source.name(), profile.source.text());
-        compiled.profile_sources.insert(id, profile.identity.clone());
+        compiled
+            .profile_sources
+            .insert(id, profile.identity.clone());
         profile.source.attach_spans(id, &mut compiled.diagnostics);
     }
     if !collision && !opts.load.cancellation.is_cancelled() {

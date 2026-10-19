@@ -9,8 +9,14 @@ pub fn diagnostics(
     compiled: &tungsten_build::Compiled,
     manifest: &Path,
 ) -> BTreeMap<PathBuf, Vec<lsp_types::Diagnostic>> {
-    let base = manifest.parent().map(crate::uri::normalize).unwrap_or_default();
-    let name = manifest.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
+    let base = manifest
+        .parent()
+        .map(crate::uri::normalize)
+        .unwrap_or_default();
+    let name = manifest
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
     crate::analysis::map_diagnostics(compiled, &base, &name, &crate::uri::normalize(manifest))
 }
 
