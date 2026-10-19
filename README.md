@@ -92,6 +92,16 @@ materialized file is verified, and unexpected cached files or directories are
 rejected. HTTP/Git pins verify source consistency, not the publisher's identity:
 review and protect the cache and lock files together.
 
+On Windows, Git's disposable bare repository uses a fresh private child of the
+local temporary directory, so a deeply nested project cache does not become
+Git's working directory or object-store path. Pins and verified input files
+remain under the project's `.tungsten-inputs/git/` directory. `TMP`/`TEMP` must
+select a writable local disk directory with room for Git's pack and lock
+filenames; network, unusable or overly long temporary roots fail with TG0133.
+Choose a shorter local temporary path when needed. Offline pin reuse needs no
+temporary repository. Git's source repository paths and external credential
+helpers retain their own platform limits.
+
 `tungsten init` takes **one** input of any of the kinds below — OpenAPI OR Swagger OR Postman OR saved cURL OR HTTP request files OR HAR, with the endpoint-manifest and manual paths alongside them — not a bundle. Acquisition may download a document or fetch a Git commit; parsing never sends or replays the API requests described by that input, and no shell, script or capture is ever executed. Non-OpenAPI inputs are converted to a normalized OpenAPI document that `init` saves next to the manifests (`imported.openapi.json`, with an `import-report.json` where listed; the manual path writes `inferred.openapi.json` and `inference-report.json`), so the accepted input stays separate from the normalized artifact and the typed IR the compiler builds from it.
 
 | Input | You provide | Entry point and conversion | Limits and required review |

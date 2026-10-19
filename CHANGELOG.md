@@ -351,6 +351,10 @@ values as `JsonNode`, OpenID Connect as a bearer token, no CLI or MCP).
 
 ### Fixed
 
+- Windows Git input acquisition uses an exclusively created local temporary
+  repository, avoiding Git working-directory and pack-file limits caused by
+  deeply nested project caches. Verified project pins and offline reuse retain
+  their existing locations; unsupported temporary roots fail safely.
 - Check profile-derived TypeScript prerequisites in project `doctor`, and refuse
   invalid manifests or bounded profiles before running tool version probes.
 - Correct the MCP runtime and generated server prerequisite to Node.js 22.13+
