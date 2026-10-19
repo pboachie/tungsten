@@ -94,6 +94,93 @@ literal IPv4 `127/8`, and IPv6 `::1`. Subdomains, unspecified addresses and
 IPv4-mapped IPv6 addresses require the explicit override. DNS resolution does not
 grant an exception. Anonymous HTTP requests remain supported.
 
+## Managed OAuth authorization (0.2.0 development)
+
+The default authorization-code helpers now own the attempt. This is a breaking
+development API change; use matching generated/runtime source. Existing published
+runtime versions and the emitter's published dependency default stay unchanged.
+
+Configure the authorization-code client credentials, qualify provider S256 support
+and an issuer defense, and bind an authenticated browser session or owning native
+listener. Keep `ctx` alive through completion:
+
+```go
+flow := client.OAuth("oauth")
+attempt, err := flow.AuthorizationURL(ctx, tungsten.AuthorizationURLParams{
+    SessionBinding: listenerBinding,
+    S256Supported: true,
+    IssuerDefense: tungsten.IssuerResponse(providerIssuer),
+})
+if err != nil { return err }
+// Open attempt.URL; receive the complete callback URL on the owning listener.
+_, err = flow.ExchangeCode(ctx, tungsten.ExchangeCodeParams{
+    AttemptHandle: attempt.AttemptHandle,
+    CallbackURL: fullCallbackURL,
+    SessionBinding: listenerBinding,
+})
+```
+
+The runtime captures endpoint/client/redirect, scope/resource/audience and account
+selection context, generates random state and S256 PKCE, and keeps the verifier
+private. `IssuerResponse` requires the provider's exact decoded `iss` on success
+and denial, with no missing-issuer fallback. `DistinctRedirect(qualification)` is
+an explicit alternative only when the application has qualified a redirect that
+isolates this issuer. Neither helper establishes that provider or listener policy.
+The callback must match the exact captured redirect, binding and state, use strict
+UTF-8/percent encoding, and have one exclusive success/denial shape. Invalid
+unbound callbacks leave the legitimate attempt available. A valid callback claims
+its handle once; an ambiguous exchange failure requires a new attempt.
+
+Use `CancelAuthorization(handle, binding)` or cancel the begin context to abandon
+an attempt. `Logout(ctx)` advances this scheme's session generation before local
+credential removal. Independent pending logins remain separate; the last valid
+successful commit selects the scheme's credential. Generation, mutation epoch
+and refresh identity prevent stale exchanges/refreshes from overwriting a newer
+login, including a new login with the same token strings. Refresh waiters may
+cancel independently without canceling another waiter's shared owner.
+
+The default memory token store implements `FencedTokenStore`. A custom managed
+store must atomically call each supplied predicate exactly once with its actual
+current token at the final serialized mutation, then commit immediately when true
+and return true only after commit. Do not speculate, retry/retain the predicate,
+leave a gap before writing, or mutate on false/failure. Token-store and clock
+callbacks run outside the runtime's state lock; store implementations must not
+call back into client operations while holding their own mutation lock. Stores
+with only `Get/Set/Delete` are refused for managed begin/refresh. An arbitrary
+custom store cannot be repaired by a runtime-side read/check/write sequence.
+
+Limits are per client: 32 captured/claimed attempts (ten-minute monotonic lifetime),
+32 version-keyed token-read/refresh owners and 32 local credential removals. Each
+attempt captures at most 32 KiB of strict UTF-8 text, 64 scopes/extras, and accepts
+at most 16 KiB raw/decoded callback text with 64 parameters. Endpoint text is
+bounded before parsing; protected query fields are refused at begin and at actual
+refresh dispatch, including optional/fallback endpoints and changed descriptors.
+Do not mutate API/auth descriptors concurrently with operations; synchronize such
+application changes. Captured attempts also refuse later identity changes.
+
+`ClientOptions.MaxOAuthTokenResponseBytes` defaults to 64 KiB; choose a positive
+safe integer to override it. Code/refresh work has the client's monotonic `Timeout`
+deadline, including token reads and final store work; an expired/canceled response
+cannot commit or delete credentials. A store mutation that committed before
+cancellation cannot be undone by canceling its waiter. Local logout removal may
+still complete after a timeout; while it is unsettled new managed logins refuse.
+Capacity remains occupied until actual HTTP/body-close/store work returns, even
+if a custom implementation ignores cancellation. Saturation refuses new work.
+These bounds are not a total heap, goroutine, disk or external-system ceiling;
+custom stores/transports must honor their own resource and settlement contracts.
+Client-credentials, device authorization and persistent/multi-account adapters
+retain their separate contracts. Removing secret references is not physical
+zeroization; never log raw attempt fields, callbacks or tokens.
+Code/refresh failures may name the six standard OAuth token-endpoint error codes;
+unknown provider error text and descriptions are excluded from diagnostics.
+
+Applications intentionally owning the protocol use `LowLevelAuthorizationURL`
+with `LowLevelAuthorizationURLParams` and `LowLevelExchangeCode` with
+`LowLevelExchangeCodeParams`. These separately named helpers retain explicit
+state/challenge/code/verifier inputs and unconditional storage behavior. They
+provide no managed callback, lifetime, generation or conditional-store protection;
+`PKCE()` alone is a primitive, not an attempt.
+
 ## Limits
 
 The ordinary response cap was opt-in in the 0.1.3 candidate; the 4 MiB default

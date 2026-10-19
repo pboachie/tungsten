@@ -24,6 +24,12 @@ import {
 } from "./oauth-attempt.js";
 export type { AuthorizationAttempt, AuthorizationUrlParams, ExchangeCodeParams, IssuerDefense } from "./oauth-attempt.js";
 
+// Provider-supplied labels can contain secrets even when they look like codes.
+const TOKEN_ERROR_CODES = new Set([
+  "invalid_request", "invalid_client", "invalid_grant", "unauthorized_client",
+  "unsupported_grant_type", "invalid_scope",
+]);
+
 /** What the store keeps for one scheme. Secrets: never log it. */
 export interface StoredToken {
   accessToken: string;
@@ -630,7 +636,7 @@ export class OAuthSession {
     const decoded = decodeBody(outcome.body, outcome.headers, "application/json");
     if (outcome.status < 200 || outcome.status > 299) {
       const code = getPath(decoded.value, "error");
-      const named = typeof code === "string" && /^[a-z_]{1,40}$/.test(code) ? ` (${code})` : "";
+      const named = typeof code === "string" && TOKEN_ERROR_CODES.has(code) ? ` (${code})` : "";
       const error = new TokenError(
         `The OAuth2 token endpoint for ${scheme} answered HTTP ${outcome.status}${named}; check the code or refresh token, client credentials and redirect URI.`,
       );
