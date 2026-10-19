@@ -11,6 +11,13 @@ changes.
 
 ### Breaking
 
+- External emitters and descriptor probes use owned process groups or Job Objects
+  and request cleanup when their leader exits. The process timeout includes a
+  cleanup reserve (one quarter, at most one second). Incomplete cleanup or exhausted
+  worker capacity refuses output with TG0803. Keep emitter helpers within their
+  invocation and investigate remaining processes before retrying; these lifecycle
+  controls do not provide a sandbox or execution approval.
+
 - Ordinary buffered responses now default to 4 MiB per response across native
   runtimes. Omitted/null limits inherit that default; choose an explicit finite
   client/call limit for larger responses. Generated Rust CLIs expose

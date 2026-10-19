@@ -32,8 +32,8 @@ pub struct Emitted {
     pub diagnostics: Diagnostics,
 }
 
-fn failure(name: &str, command: &Command, failure: Failure) -> Diagnostic {
-    match failure {
+fn failure(name: &str, command: &Command, why: Failure) -> Diagnostic {
+    match why {
         Failure::Spawn(e) => Diagnostic::error(
             "TG0801",
             format!(
@@ -59,6 +59,18 @@ fn failure(name: &str, command: &Command, failure: Failure) -> Diagnostic {
             ),
         )
         .with_help("raise `max_output_bytes` on the target in tungsten.yml, or fix the emitter"),
+        Failure::Io(e) => Diagnostic::error("TG0803", format!("external emitter `{name}` process I/O or ownership failed: {e}"))
+            .with_help("check the emitter and ensure this process exclusively owns child reaping"),
+        Failure::Capacity => Diagnostic::error("TG0803", format!("external emitter `{name}` was not started: process worker capacity is exhausted"))
+            .with_help("wait for other external runs to finish; unresolved cleanup may require restarting the compiler after investigating its emitter processes"),
+        Failure::Cleanup { cause, signalled, reaped, unfinished } => {
+            let mut diagnostic = cause.map_or_else(
+                || Diagnostic::error("TG0803", format!("external emitter `{name}` did not complete cleanup within its process deadline")),
+                |cause| failure(name, command, *cause),
+            );
+            diagnostic.message.push_str(&format!("; cleanup incomplete (termination requested: {signalled}, leader reaped: {reaped}, unfinished workers: {unfinished}); descendant and pipe cleanup is uncertain"));
+            diagnostic.with_help("no files were accepted; inspect the emitter's remaining processes before retrying; process groups and Job Objects do not provide a sandbox")
+        }
     }
 }
 
