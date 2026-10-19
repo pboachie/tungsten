@@ -127,3 +127,63 @@ The core package is browser-safe; the separate `/node` adapter requires Node.js.
 ## License
 
 Apache-2.0. The Tungsten compiler is licensed separately under AGPL-3.0-only.
+
+## Managed browser OAuth
+
+`await flow.authorizationUrl({sessionBinding, s256Supported: true,
+issuerDefense: {kind: "issuerResponse", issuer}})` creates an independent
+S256 PKCE/state attempt and returns an `OAuthResult<AuthorizationAttempt>`.
+Keep `value.attemptHandle` in the owning browser session or native listener;
+open `value.url`, then call `await flow.exchangeCode({attemptHandle,
+callbackUrl, sessionBinding})` with the entire callback URL. Never log that URL.
+An `issuerResponse` defense requires an exact `iss` even on denial. A provider
+without that response parameter needs the explicit
+`{kind: "distinctRedirect", qualification}` strategy: the application must
+qualify a different, exactly registered callback URI for each issuer. Missing
+`iss` never activates this alternative automatically. S256 support must be
+qualified against the provider before use.
+
+Attempts expire after ten monotonic minutes. Admission is limited to 32 pending
+or exchanging attempts, 32 KiB of captured UTF-8 strings, and 64 entries each
+for scopes and extra parameters. Callback URLs and decoded fields have a
+16 KiB budget and at most 64 parameters; duplicates and malformed percent/UTF-8
+encodings fail before any token request. Managed redirect URIs must be absolute,
+without credentials, query or fragment. Protected fields in endpoint queries
+or `extra` are refused. A valid denial or claimed exchange consumes its handle;
+ambiguous failures require a new authorization attempt. Unknown handles refuse.
+
+Use `flow.cancelAuthorization(attemptHandle, sessionBinding)` to cancel and
+`await flow.logout()` to remove local tokens and invalidate pending attempts.
+A canceled exchange retains admission while its transport/store work runs.
+Custom uninterruptible work may outlive cancellation or transport timeout;
+its result cannot commit after invalidation. Garbage collection releases secret
+references; physical memory zeroization is not guaranteed.
+
+The default `MemoryTokenStore` implements atomic fencing. A custom managed store
+must implement both `setIfCurrent(scheme, token, predicate)` and
+`deleteIfCurrent(scheme, predicate)`, passing its currently stored token to the
+predicate exactly once at the final serialized write/removal. The callback
+advances a private credential-mutation epoch; speculative checks, retries and an
+await between callback and mutation violate the contract. Return true only after
+commit; on failure retain the previous token and return false or throw. A failed
+commit after callback may conservatively invalidate older refresh work. Default
+refresh compares both token identity and mutation epoch. Unsupported stores fail
+closed. These are per-client session guarantees; shared multi-account storage,
+partitioning, remote revocation and persistent transactions require a separate
+application adapter. Concurrent completed logins select the last successful
+token-store commit; an old refresh cannot replace a newer login, even when the
+provider reissues identical token strings. Ordinary external/low-level store
+writes bypass the managed epoch; use logout and a new managed session when
+replacing credentials outside these helpers. Refresh flights are keyed by epoch
+and limited to 32 owned jobs, retained until settlement.
+
+Code/refresh response bodies default to 65,536 bytes, independently of ordinary
+API call limits. `ClientOptions.maxOAuthTokenResponseBytes` accepts a positive
+safe integer for provider compatibility. The cap bounds decoded body bytes,
+not JSON decoder heap usage or a custom store's settlement time. Client-credentials
+response budgets are separate. Provider acceptance is application-specific.
+
+`lowLevelAuthorizationUrl` and `lowLevelExchangeCode` are explicit compatibility
+primitives for applications that independently implement PKCE, CSRF, callback
+and issuer validation. They provide no managed attempt guarantee and must not
+be used as a login default. `pkce()` remains a low-level primitive.

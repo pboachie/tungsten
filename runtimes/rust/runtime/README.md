@@ -42,6 +42,62 @@ literal IPv4 `127/8`, and IPv6 `::1`. Subdomains, unspecified addresses and
 IPv4-mapped IPv6 addresses require the explicit override. DNS resolution does not
 grant an exception. Anonymous HTTP requests remain supported.
 
+## Browser OAuth authorization
+
+In unreleased 0.2.0, `OAuthFlow::authorization_url` begins a managed attempt and
+returns an `AuthorizationAttempt` with a URL, opaque handle and lifetime. Call it
+inside a Tokio runtime with time enabled so the expiry task can run; the
+presence of a current runtime handle alone does not prove that capability.
+Supply a nonempty
+`AuthorizationUrlParams::session_binding` owned by your callback listener/session,
+qualify provider S256 support with `s256_supported: true`, and select an explicit
+`IssuerDefense`. `IssuerResponse` requires the provider's exact decoded `iss` in
+every callback, including denial. `DistinctRedirect` requires an application
+qualification that a separate redirect isolates the issuer; missing `iss` never
+selects this fallback. The application owns provider qualification and listener
+ownership; the runtime cannot infer them from a URL.
+
+The runtime generates independent state and S256 PKCE for every attempt and
+retains its verifier privately. `exchange_code` takes `ExchangeCodeParams` with
+the attempt handle, full callback URL and the same session binding. It validates
+the captured issuer/client/endpoints/redirect/context and claims the attempt once
+before sending. Duplicate or malformed callback fields, mismatched callbacks,
+replay and expired/canceled attempts refuse without another token exchange. A
+denial or exchange failure consumes its attempt; begin a new attempt instead of
+retrying a potentially consumed code. Never log the authorization URL, callback,
+attempt handle, session binding, tokens or verifier.
+
+Each client admits at most 32 pending/exchanging attempts. Attempts expire after
+10 monotonic minutes; captured inputs are limited to 32 KiB, 64 scopes and 64
+extra fields, while raw/decoded callbacks are limited to 16 KiB and 64 fields.
+`cancel_authorization` drops a pending verifier; cancellation/expiry retains a
+claimed work slot until that work settles. `logout` invalidates attempts before
+store work and fences late token writes and refresh results. Concurrent completed
+logins select credentials at their successful store commits. A separate mutation
+epoch prevents older refresh success or rejection from replacing/deleting a newer
+managed login, including one returning the same token strings.
+
+Managed begin and refresh require `TokenStore::supports_fencing` and both
+conditional store operations. Invoke their predicate exactly once against the
+current token at the final serialized mutation, with no speculative check, retry
+or gap before write/removal. The predicate changes a session epoch; report true
+only for a committed mutation and preserve the old token if the write fails. A
+predicate followed by a failed write may conservatively invalidate old refresh
+work. The default `MemoryTokenStore` supplies this per-client contract. Shared
+multi-account persistence needs separate partitioning and adapter qualification.
+Direct/external store writes and `low_level_authorization_url` /
+`low_level_exchange_code` bypass managed attempt/epoch protections and need
+application-owned coordination; do not mix external credential replacement with
+an active managed session. Use logout and a new session first. `pkce` remains a
+low-level utility; managed begin creates its own pair.
+
+Code/refresh token responses default to 64 KiB. A separately validated positive
+safe-integer `ClientOptions::max_oauth_token_response_bytes` overrides that cap.
+It bounds accepted response bytes, not decoder allocations, total invocation
+memory or client-credentials responses. Custom stores/transports own their
+settlement behavior; logical invalidation does not promise immediate physical
+zeroization or completion of externally owned work.
+
 ## Limits
 
 In unreleased 0.2.0, ordinary buffered responses default to **4 MiB (4,194,304 bytes) per response**.

@@ -403,6 +403,9 @@ export interface ClientOptions {
   timeoutMs?: number;
   /** Ordinary-response byte cap; default 4 MiB. Null/omitted inherits; a finite call override wins. */
   maxResponseBytes?: number | null;
+  /** OAuth code/refresh responses only: 65,536 bytes by default. A positive
+   * safe integer overrides this owner limit; ordinary call limits do not. */
+  maxOAuthTokenResponseBytes?: number;
   /** Overrides the API's per-tier retry defaults (`ApiDescriptor.retries`)
    * field by field, for every tier. */
   retries?: Partial<RetryOptions>;

@@ -81,3 +81,65 @@ availability are separate from building this source checkout.
 
 Apache-2.0; see the packaged LICENSE. The compiler is licensed separately
 under AGPL-3.0-only.
+
+## Managed browser OAuth
+
+`flow.authorization_url(session_binding=binding, s256_supported=True,
+issuer_defense=IssuerDefense("issuerResponse", issuer))` creates a managed
+S256 PKCE/state attempt. Import `IssuerDefense` from `tungsten_runtime`.
+Retain `result.value.attempt_handle` in the owning browser session/native
+listener, open `result.value.url`, then call
+`flow.exchange_code(handle, callback_url, session_binding=binding)` with the
+full callback URL. Await exchange, refresh and logout on the async client;
+begin and cancel are synchronous on both clients. Do not log callback URLs.
+
+Issuer-response validation requires an exact `iss` on both success and denial.
+`IssuerDefense("distinctRedirect", qualification)` is the explicit alternative
+only after the application qualifies a different exact registered redirect URI
+for each issuer. Missing `iss` never activates an alternative. Qualify S256
+provider support before beginning; there is no plain-PKCE fallback.
+
+The in-memory store admits 32 pending/exchanging attempts with a ten-minute
+monotonic lifetime. Captured UTF-8 inputs total at most 32 KiB, with 64 scopes
+and 64 extra parameters. Raw callbacks and decoded fields are limited to 16 KiB
+and 64 parameters. Duplicate fields, malformed encodings and protected endpoint
+query/extra fields refuse before dispatch. Managed redirects are absolute and
+have no credentials, query or fragment. Valid denial and one-shot exchange
+consume their handles; ambiguous failure requires a new attempt.
+
+`flow.cancel_authorization(handle, binding)` invalidates one attempt;
+`flow.logout()` invalidates the session before deleting local credentials.
+An exchanging attempt keeps capacity until its owned work settles, even after
+explicit cancellation. Sync transports/custom stores may be uninterruptible;
+cancellation invalidates their completion without promising immediate return.
+Secret references are removed; Python does not guarantee physical zeroization.
+
+Custom managed token stores must implement `set_if_current(scheme, token,
+predicate)` and `delete_if_current(scheme, predicate)` synchronously or
+asynchronously as appropriate. Pass the currently stored token to the predicate
+and invoke it exactly once at the final serialized write/removal. The callback
+advances the session's credential-mutation epoch; speculative checks, retries or
+an await between callback and mutation violate the contract. Return True only
+after commit; failed mutations preserve the old token and return False/raise.
+A callback followed by commit failure can conservatively invalidate older refresh
+work. Managed begin/default refresh refuse unsupported
+stores. The default memory store implements the contract across threads.
+The guarantee is per client/session; shared multi-account partitioning and
+persistent adapters need separate qualification. Concurrent completed logins
+select the last successful token-store commit; an old refresh cannot replace it,
+even if the provider reissues identical token strings. External/low-level store
+writes bypass the managed epoch; log out and begin a new managed session when
+replacing credentials outside these helpers. Refresh flights are keyed by epoch
+and limited to 32 owned jobs, retained until settlement.
+
+Code/refresh token responses default to 65,536 decoded bytes. Set the separate
+positive safe-integer `ClientOptions.max_oauth_token_response_bytes` for a
+provider requiring larger tokens. This does not bound JSON heap usage, arbitrary
+custom-store latency, or client-credentials responses. Ordinary call response
+limits are independent; provider acceptance needs application verification.
+
+Legacy applications can explicitly use `low_level_authorization_url` and
+`low_level_exchange_code` while independently owning PKCE, CSRF, callback and
+issuer validation. These compatibility primitives provide no managed-attempt
+guarantees; they must not become a default login path. `pkce()` remains a
+low-level primitive.

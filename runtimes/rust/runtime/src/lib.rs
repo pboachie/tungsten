@@ -71,6 +71,7 @@ mod integral;
 mod lease;
 mod macros;
 mod oauth;
+mod oauth_attempt;
 mod pages;
 mod prepare;
 mod preview;
@@ -93,8 +94,11 @@ pub use dispatch::{
 };
 pub use idempotency::{FileIdempotencyStore, MemoryIdempotencyStore};
 pub use oauth::{
-    AuthorizationUrlParams, ExchangeCodeParams, MemoryTokenStore, OAuthFlow, Pkce, StoredToken,
-    TokenInfo, TokenStore, generate_pkce, pkce_challenge,
+    LowLevelAuthorizationUrlParams, LowLevelExchangeCodeParams, MemoryTokenStore, OAuthFlow, Pkce,
+    StoredToken, TokenInfo, TokenStore, generate_pkce, pkce_challenge,
+};
+pub use oauth_attempt::{
+    AuthorizationAttempt, AuthorizationUrlParams, ExchangeCodeParams, IssuerDefense,
 };
 pub use pages::MAX_PAGES_REACHED;
 pub use stream::{

@@ -11,6 +11,26 @@ changes.
 
 ### Breaking
 
+- Rust browser OAuth helpers now require managed S256/state attempts with an
+  explicit qualified issuer defense and owning session/listener binding.
+  `authorization_url` returns a handle and URL inside Tokio; `exchange_code`
+  accepts that handle, the full callback URL and the same binding. Legacy
+  primitives require `low_level_authorization_url`/`low_level_exchange_code`.
+  Managed begin and refresh require atomic fenced custom stores. Code/refresh
+  responses default to 64 KiB, configurable with the separate validated
+  `max_oauth_token_response_bytes` option.
+
+- TypeScript and Python browser OAuth authorization-code helpers now create
+  managed S256 PKCE/state attempts. Supply an authenticated session/listener
+  binding and an explicit qualified issuer defense, retain the returned handle,
+  and pass the full callback URL to code exchange. TypeScript authorization URL
+  creation is asynchronous. Legacy primitives require the separately named
+  `lowLevelAuthorizationUrl`/`lowLevelExchangeCode` methods (Python snake case).
+  Managed helpers and default refresh require atomic fenced custom-token-store
+  writes and deletions. Code/refresh token bodies default to 64 KiB; use the
+  separate positive `maxOAuthTokenResponseBytes` owner option (native casing
+  varies) for larger provider responses.
+
 - External emitters and descriptor probes use owned process groups or Job Objects
   and request cleanup when their leader exits. The process timeout includes a
   cleanup reserve (one quarter, at most one second). Incomplete cleanup or exhausted
@@ -362,6 +382,12 @@ values as `JsonNode`, OpenID Connect as a bearer token, no CLI or MCP).
   repository, avoiding Git working-directory and pack-file limits caused by
   deeply nested project caches. Verified project pins and offline reuse retain
   their existing locations; unsupported temporary roots fail safely.
+
+- TypeScript, Python and Rust managed OAuth helpers cap endpoint text at 32 KiB
+  and reject malformed Unicode before URL parsing. Protected or malformed refresh
+  queries refuse before authorization begins and before default refresh dispatch,
+  including a changed endpoint or the token-endpoint fallback.
+
 - Check profile-derived TypeScript prerequisites in project `doctor`, and refuse
   invalid manifests or bounded profiles before running tool version probes.
 - Correct the MCP runtime and generated server prerequisite to Node.js 22.13+

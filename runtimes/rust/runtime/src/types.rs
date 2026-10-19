@@ -841,6 +841,8 @@ pub struct ClientOptions {
     pub timeout: Duration,
     /// Ordinary-response byte cap. Positive safe integer; None inherits the 4 MiB default.
     pub max_response_bytes: Option<u64>,
+    /// Separate code/refresh token response cap; positive safe integer, default 64 KiB.
+    pub max_oauth_token_response_bytes: u64,
     /// Overrides the API's per-tier retry defaults field by field, for every tier.
     pub retries: PartialRetryOptions,
     pub idempotency_store: Option<Arc<dyn IdempotencyStore>>,
@@ -909,6 +911,7 @@ impl Default for ClientOptions {
             token_store: None,
             timeout: Duration::from_secs(30),
             max_response_bytes: None,
+            max_oauth_token_response_bytes: crate::oauth_attempt::TOKEN_RESPONSE_BYTES,
             retries: PartialRetryOptions::default(),
             idempotency_store: None,
             middleware: Vec::new(),
