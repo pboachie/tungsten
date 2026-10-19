@@ -943,7 +943,7 @@ jobs:
                   manifest = json.load(archive.extractfile(members[0]))
               if (manifest['name'], manifest['version'], manifest['license'], manifest['engines']['node']) != (name, version, 'Apache-2.0', '>=22'):
                   raise SystemExit('npm archive identity or requirements differ from release')
-              dependency = (manifest.get('dependencies', {}) if name == names[1] else manifest.get('peerDependencies', {})).get(names[0])
+              dependency = manifest.get('peerDependencies', {}).get(names[0])
               if name != names[0] and dependency != '^' + version:
                   raise SystemExit('npm adapter runtime dependency differs from release')
           PY
