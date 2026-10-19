@@ -382,6 +382,12 @@ values as `JsonNode`, OpenID Connect as a bearer token, no CLI or MCP).
   repository, avoiding Git working-directory and pack-file limits caused by
   deeply nested project caches. Verified project pins and offline reuse retain
   their existing locations; unsupported temporary roots fail safely.
+
+- TypeScript, Python and Rust managed OAuth helpers cap endpoint text at 32 KiB
+  and reject malformed Unicode before URL parsing. Protected or malformed refresh
+  queries refuse before authorization begins and before default refresh dispatch,
+  including a changed endpoint or the token-endpoint fallback.
+
 - Check profile-derived TypeScript prerequisites in project `doctor`, and refuse
   invalid manifests or bounded profiles before running tool version probes.
 - Correct the MCP runtime and generated server prerequisite to Node.js 22.13+

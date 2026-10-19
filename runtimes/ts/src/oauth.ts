@@ -301,6 +301,7 @@ export class OAuthSession {
       const scopes = owned.scopes ?? ownedFlow.scopes;
       qualifiedEndpoint(ownedFlow.authorizationUrl);
       qualifiedEndpoint(ownedFlow.tokenUrl);
+      if (ownedFlow.refreshUrl !== null && ownedFlow.refreshUrl !== undefined) qualifiedEndpoint(ownedFlow.refreshUrl);
       qualifiedEndpoint(redirectUri, true);
       if (insecureHttp(ownedFlow.authorizationUrl, this.#deps.options.allowInsecureHttp) || insecureHttp(ownedFlow.tokenUrl, this.#deps.options.allowInsecureHttp)) return refuse();
       handle = randomAttemptSecret();
@@ -556,13 +557,16 @@ export class OAuthSession {
           : `The OAuth2 token for ${scheme} expired and has no refresh token; authorize again with authorizationUrl() and exchangeCode().`,
       );
     }
+    const url = flow.refreshUrl ?? flow.tokenUrl;
+    try { qualifiedEndpoint(url); }
+    catch { throw new TokenError("Cannot refresh OAuth2 tokens: provide a valid endpoint without protected query fields."); }
     const fields: Array<[string, string]> = [
       ["grant_type", "refresh_token"],
       ["refresh_token", stored.refreshToken],
     ];
     let next: StoredToken;
     try {
-      next = await this.#tokenRequest(scheme, flow.refreshUrl ?? flow.tokenUrl, client, fields, stored.refreshToken);
+      next = await this.#tokenRequest(scheme, url, client, fields, stored.refreshToken);
     } catch (error) {
       if (error instanceof TokenError && error.rejected && this.#generation(scheme) === generation) {
         // The server no longer accepts the refresh token: forget the tokens.

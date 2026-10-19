@@ -560,6 +560,11 @@ impl ClientCore {
             )));
         };
         let url = flow.refresh_url.as_deref().unwrap_or(&flow.token_url);
+        oauth_attempt::qualified_endpoint(url, false).map_err(|_| {
+            TokenFailure::new(
+                "Cannot refresh OAuth2 tokens: provide a valid endpoint without protected query fields.",
+            )
+        })?;
         let fields = [("grant_type", "refresh_token"), ("refresh_token", refresh)];
         match self
             .token_request(scheme, url, &client, &fields, Some(refresh))

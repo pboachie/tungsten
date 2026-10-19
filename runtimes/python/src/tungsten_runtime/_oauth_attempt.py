@@ -102,6 +102,8 @@ def callback_fields(query: str) -> dict[str, str]:
 
 
 def qualified_endpoint(url: str, *, redirect: bool = False) -> None:
+    if len(url) > MAX_BYTES or len(url.encode("utf-8", "strict")) > MAX_BYTES:
+        raise ValueError
     parts = urlsplit(url)
     if not parts.scheme or parts.username or parts.password or "#" in url:
         raise ValueError
