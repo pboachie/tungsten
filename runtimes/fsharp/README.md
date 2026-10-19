@@ -27,6 +27,16 @@ responsible for authorization and server-side idempotency.
 
 ## Limits
 
+OAuth helpers returned by generated F# clients are the C# runtime's `OAuthFlow`.
+In unreleased 0.2.0, `AuthorizationUrl` returns a managed attempt; complete it with
+its handle, full callback URL and owning session/listener binding. Explicitly
+qualify S256 support and issuer defense. Cancellation, local logout, fenced
+stores, mutation epochs and code/refresh response limits come from that core;
+see the [C# browser OAuth contract](../csharp/README.md#browser-oauth-authorization).
+The explicitly named low-level helpers are application-owned escapes. This
+delegation does not establish generated or installed F# consumer qualification;
+both runtime projects still require .NET 10 and matching package versions.
+
 Transport and safety behavior come from the C# runtime. For durable automatic
 keys, configure C#'s `FileIdempotencyStore` through the shared client options;
 see the [C# store and lease limits](../csharp/README.md#durable-automatic-keys).

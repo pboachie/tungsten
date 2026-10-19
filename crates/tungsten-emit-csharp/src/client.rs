@@ -226,7 +226,7 @@ impl Ctx<'_> {
             w.blank();
             cs::summary_line(
                 &mut w,
-                "The OAuth2 authorization-code helpers (PKCE, authorization URL, code exchange, refresh) of a scheme.",
+                "Managed OAuth2 attempts, full-callback validation, refresh and local logout for a scheme.",
             );
             w.line("public OAuthFlow OAuth(string scheme) => Core.OAuth(scheme);");
         }
