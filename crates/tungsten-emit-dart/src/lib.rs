@@ -88,13 +88,43 @@ impl Emitter for DartEmitter {
         }
         diags
     }
+
+    fn uses_sdk_plan(&self) -> bool {
+        true
+    }
+
+    fn supports_prepared(&self, _ir: &Ir, plan: &SdkPlan<'_>) -> Diagnostics {
+        let mut diags = notes(plan);
+        diags.extend(sdk::notes(plan));
+        diags
+    }
+
+    fn emit_prepared(
+        &self,
+        ir: &Ir,
+        plan: &SdkPlan<'_>,
+        cfg: &TargetConfig,
+        out: &mut FileSet,
+    ) -> Diagnostics {
+        let (opts, mut diags) = Options::resolve(ir, cfg);
+        for (path, text) in generate_prepared(ir, plan, &opts) {
+            if let Err(e) = out.add(path, text) {
+                diags.push(Diagnostic::error("TG0701", format!("dart target: {e}")));
+            }
+        }
+        diags
+    }
 }
 
 /// Every file of the package: (path relative to the target directory,
 /// contents), sorted by path.
 pub fn generate(ir: &Ir, opts: &Options) -> Vec<(String, String)> {
     let (plan, _) = SdkPlan::new(ir);
-    let g = Gen::new(&plan, opts);
+    generate_prepared(ir, &plan, opts)
+}
+
+fn generate_prepared(_ir: &Ir, plan: &SdkPlan<'_>, opts: &Options) -> Vec<(String, String)> {
+    let g = Gen::new(plan, opts);
     let mut libraries = models::libraries(&g);
     libraries.extend(sdk::libraries(&g));
     let mut files = package::files(&g, &libraries);

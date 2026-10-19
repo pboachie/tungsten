@@ -10,6 +10,10 @@ use serde::Serialize;
 use std::collections::BTreeMap;
 use tungsten_core::{Diagnostic, Diagnostics};
 
+/// Defaults shared by the declaration contract and the TypeScript emitter.
+pub const TYPESCRIPT_PACKAGE_VERSION: &str = "0.1.0";
+pub const TYPESCRIPT_RUNTIME_RANGE: &str = "^0.1.3";
+
 /// Valid user declarations; no package/version/runtime defaults are applied here.
 /// Use [`Self::parse`] to retain TG0711 diagnostics for explicit null or invalid
 /// values. A missing field is distinct from a field rejected by that parser.
@@ -22,10 +26,10 @@ pub struct TypeScriptOptions {
     #[schemars(schema_with = "version_schema")]
     pub version: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(schema_with = "nonempty_schema")]
+    #[schemars(schema_with = "runtime_path_schema")]
     pub runtime_path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(schema_with = "nonempty_schema")]
+    #[schemars(schema_with = "runtime_schema")]
     pub runtime: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "dependencies_schema")]
@@ -153,7 +157,11 @@ fn package_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
     schemars::json_schema!({
         "type": "string", "maxLength": 214,
         "pattern": r"^(@[a-z0-9~-][a-z0-9._~-]*/)?[a-z0-9~-][a-z0-9._~-]*$",
-        "not": {"pattern": r"\s"}
+        "not": {"pattern": r"\s"},
+        "x-tungsten-inspection": {
+            "default_policy":"derive from the compiled API name; unresolved without compilation",
+            "invalid_policy":"warning and emitter default", "redact":false
+        }
     })
 }
 
@@ -161,7 +169,11 @@ fn version_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
     schemars::json_schema!({
         "type":"string",
         "pattern":r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)([-+][A-Za-z0-9.+-]+)?$",
-        "not":{"pattern":r"\s"}
+        "not":{"pattern":r"\s"},
+        "default": TYPESCRIPT_PACKAGE_VERSION,
+        "x-tungsten-inspection": {
+            "default_policy":"fixed package version", "invalid_policy":"warning and emitter default", "redact":false
+        }
     })
 }
 
@@ -171,12 +183,46 @@ fn nonempty_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
     schemars::json_schema!({"type":"string", "pattern":r"[^\u0009-\u000D\u0020\u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]"})
 }
 
+fn runtime_path_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    let mut schema = nonempty_schema(generator);
+    schema.insert("default".into(), serde_json::Value::Null);
+    schema.insert(
+        "x-tungsten-inspection".into(),
+        serde_json::json!({
+            "default_policy":"absent; use runtime or its default",
+            "invalid_policy":"warning and ignore this path", "redact":true
+        }),
+    );
+    schema
+}
+
+fn runtime_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    let mut schema = nonempty_schema(generator);
+    schema.insert("default".into(), TYPESCRIPT_RUNTIME_RANGE.into());
+    schema.insert("x-tungsten-inspection".into(), serde_json::json!({
+        "default_policy":"fixed runtime range unless a valid runtime_path selects a file dependency",
+        "invalid_policy":"warning and emitter default", "redact":true,
+        "overridden_by":"runtime_path"
+    }));
+    schema
+}
+
 fn dependencies_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
     let package = package_schema(generator);
-    let nonempty = nonempty_schema(generator);
+    let mut nonempty = nonempty_schema(generator);
+    nonempty.insert("x-tungsten-inspection".into(), serde_json::json!({
+        "default_policy":"absent unless declared; profile dependency maps merge by package name",
+        "invalid_policy":"error; generation refuses invalid custom dependencies", "redact":true
+    }));
     schemars::json_schema!({
         "type":"object", "additionalProperties": nonempty,
-        "propertyNames": {"allOf":[package, {"not":{"enum":["@elysra/tungsten-runtime","zod","typescript"]}}]}
+        "propertyNames": {"allOf":[package, {"not":{"enum":["@elysra/tungsten-runtime","zod","typescript"]}}]},
+        "default": {},
+        "x-tungsten-inspection": {
+            "default_policy":"empty custom dependency map; declarations merge by package name",
+            "invalid_policy":"error; generation refuses invalid custom dependencies",
+            "redact":true, "entries":true
+        }
     })
 }
 

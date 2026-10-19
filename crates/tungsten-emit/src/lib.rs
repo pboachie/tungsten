@@ -23,8 +23,10 @@ pub mod external;
 mod fileset;
 mod imports;
 mod output;
+mod prepared;
 pub mod schema;
 pub mod sdk;
+mod staging;
 pub mod surface;
 pub mod tool_catalog;
 mod writer;
@@ -39,8 +41,10 @@ pub use imports::Imports;
 pub use output::{
     MANIFEST_FORMAT, MANIFEST_PATH, ManifestFile, OutputManifest, StaleFile, StaleReason,
     WriteOptions, WriteReport, check_stale, header, header_text, is_custom_path, stale_files,
-    write_output,
+    write_output, write_output_with_cancel,
 };
+pub use prepared::PreparedGeneration;
+pub use staging::{OutputStaging, StagedFile, StagedOutput, StagingLimits};
 pub use writer::{CommentStyle, Writer};
 
 /// Options for one target, from `tungsten.yml` `targets.<name>`.
@@ -71,4 +75,24 @@ pub trait Emitter {
     /// output directory, forward slashes). Problems become diagnostics; an
     /// emitter never panics on a valid IR.
     fn emit(&self, ir: &Ir, cfg: &TargetConfig, out: &mut FileSet) -> Diagnostics;
+    /// Whether preparation may share the language-neutral SDK plan. Native
+    /// target naming and lowering still belong to this emitter.
+    fn uses_sdk_plan(&self) -> bool {
+        false
+    }
+    /// Support checks using a previously prepared SDK plan. The default is
+    /// the legacy adapter for emitters with their own planning conventions.
+    fn supports_prepared(&self, ir: &Ir, _plan: &sdk::SdkPlan<'_>) -> Diagnostics {
+        self.supports(ir)
+    }
+    /// Emission using the same immutable plan as support checks.
+    fn emit_prepared(
+        &self,
+        ir: &Ir,
+        _plan: &sdk::SdkPlan<'_>,
+        cfg: &TargetConfig,
+        out: &mut FileSet,
+    ) -> Diagnostics {
+        self.emit(ir, cfg, out)
+    }
 }
