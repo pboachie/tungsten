@@ -120,19 +120,24 @@ extension _OAuthSession on ClientCore {
     return _oauthVersions[scheme] = _OAuthVersion();
   }
 
-  _OAuthOwner? _reserveOAuth(String scheme) {
+  _OAuthOwner? _reserveOAuth(String scheme, {int? deadline}) {
     if (_oauthOwners.length >= 32) return null;
     try {
       _oauthBytes(scheme, maxAuthorizationAttemptBytes);
     } catch (_) {
       return null;
     }
+    final started = _Transport.monotonicMs();
+    final until = deadline == null
+        ? started + _tokenTimeoutMs
+        : math.min(started + _tokenTimeoutMs, deadline);
+    if (until <= started) return null;
     final version = _oauthVersions[scheme];
     final owner = _OAuthOwner(
       scheme,
       version?.generation ?? 0,
       version?.epoch ?? 0,
-      _tokenTimeoutMs,
+      until,
     );
     _oauthOwners.add(owner);
     return owner;
@@ -489,7 +494,6 @@ extension _OAuthSession on ClientCore {
       }
     }
     final activeVersion = version;
-    if (activeVersion == null) return _oauthFail('logout');
     activeVersion.generation++;
     activeVersion.epoch++;
     activeVersion.loggedOut = true;
@@ -507,7 +511,7 @@ extension _OAuthSession on ClientCore {
       if (_tokenStore is! FencedTokenStore)
         return _oauthFail('logout', _invalidConfig);
       var calls = 0;
-      final committed = await (_tokenStore as FencedTokenStore).deleteIfCurrent(
+      final committed = await _tokenStore.deleteIfCurrent(
         scheme,
         (_) {
           if (++calls != 1 ||
@@ -564,39 +568,42 @@ extension _OAuthSession on ClientCore {
     _oauthWaiters++;
     final deadline = _Transport.monotonicMs() + _tokenTimeoutMs;
     try {
-      // A version-keyed owner includes the first custom Get and keeps admission
-      // through its final store return, even when every follower has left.
-      final known = _oauthVersions[scheme];
-      final key = (scheme, known?.generation ?? 0, known?.epoch ?? 0);
-      var flight = _oauthRefreshes[key];
-      if (flight == null) {
-        final owner = _reserveOAuth(scheme);
-        if (owner == null) return (null, _unavailable);
-        flight = _OAuthRefresh(owner, force);
-        _oauthRefreshes[key] = flight;
-        unawaited(_runOAuthRefresh(key, flight, rejected));
-      } else if (force) {
-        flight.force = true;
+      while (true) {
+        if (_Transport.monotonicMs() >= deadline) return (null, _unavailable);
+        // A version-keyed owner includes the first custom Get and keeps admission
+        // through its final store return, even when every follower has left.
+        final known = _oauthVersions[scheme];
+        final key = (scheme, known?.generation ?? 0, known?.epoch ?? 0);
+        var flight = _oauthRefreshes[key];
+        if (flight == null) {
+          final owner = _reserveOAuth(scheme, deadline: deadline);
+          if (owner == null) return (null, _unavailable);
+          flight = _OAuthRefresh(owner, force);
+          _oauthRefreshes[key] = flight;
+          unawaited(_runOAuthRefresh(key, flight, rejected));
+        } else if (force) {
+          flight.force = true;
+        }
+        final remaining = math.max(0, deadline - _Transport.monotonicMs());
+        final (stored, failure) = await flight.result.future.timeout(
+          Duration(milliseconds: remaining),
+          onTimeout: () => (null, _unavailable),
+        );
+        if (failure != null || stored == null)
+          return (null, failure ?? _unavailable);
+        if (!_ownerCurrent(flight.owner) ||
+            _Transport.monotonicMs() >= deadline) return (null, _unavailable);
+        // A force join racing a completed fresh-read decision must not accept the
+        // rejected credential without doing a fresh version-keyed refresh.
+        if (force &&
+            !flight.refreshed &&
+            (rejected == null || stored.accessToken == rejected)) {
+          if (identical(_oauthRefreshes[key], flight))
+            _oauthRefreshes.remove(key);
+          continue;
+        }
+        return (stored, null);
       }
-      final remaining = math.max(0, deadline - _Transport.monotonicMs());
-      final (stored, failure) = await flight.result.future.timeout(
-        Duration(milliseconds: remaining),
-        onTimeout: () => (null, _unavailable),
-      );
-      if (failure != null || stored == null)
-        return (null, failure ?? _unavailable);
-      if (!_ownerCurrent(flight.owner) || _Transport.monotonicMs() >= deadline)
-        return (null, _unavailable);
-      // A force join racing a completed fresh-read decision must not accept the
-      // rejected credential without doing a fresh version-keyed refresh.
-      if (force &&
-          !flight.refreshed &&
-          (rejected == null || stored.accessToken == rejected)) {
-        if (identical(_oauthRefreshes[key], flight))
-          _oauthRefreshes.remove(key);
-        return _managedStored(scheme, true, rejected: rejected);
-      }
-      return (stored, null);
     } catch (_) {
       return (null, _unavailable);
     } finally {

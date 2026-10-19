@@ -371,9 +371,10 @@ abstract final class _Transport {
               cleanupFailed = true;
             }
           }
-          if (ownedRequestDone != null) {
+          final originalDone = ownedRequestDone;
+          if (originalDone != null) {
             try {
-              final (response, succeeded) = await ownedRequestDone;
+              final (response, succeeded) = await originalDone;
               if (!succeeded || response == null) {
                 cleanupFailed = true;
               } else if (!ownedBodySettled ||

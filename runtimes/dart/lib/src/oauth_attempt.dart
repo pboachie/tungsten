@@ -278,8 +278,7 @@ final class _OAuthPending {
 }
 
 final class _OAuthOwner {
-  _OAuthOwner(this.scheme, this.generation, this.epoch, int timeout)
-      : deadline = _Transport.monotonicMs() + timeout;
+  _OAuthOwner(this.scheme, this.generation, this.epoch, this.deadline);
   final String scheme;
   final int generation;
   final int epoch;
