@@ -18,6 +18,15 @@ changes.
   clamp defaults. Exhaustive `CliEnv` and `CompileOptions` literals must include
   their new policy fields.
 
+- Java browser OAuth helpers now create managed S256/state authorization attempts.
+  Qualify issuer defense, bind the owning session/listener and pass the returned
+  handle plus full callback URL to code exchange. Kotlin delegates to the same
+  core helper. Legacy primitives use explicitly named low-level methods. Managed
+  begin and refresh require `TokenStore.Fenced`; the separate positive
+  `maxOAuthTokenResponseBytes` option bounds token bodies (64 KiB by default).
+  Attempts and refresh retain ownership until transport work settles and use
+  one monotonic operation budget.
+
 - Go browser OAuth helpers now manage bounded, one-use S256/state attempts.
   Qualify issuer defense, bind the owning session/listener, retain the attempt
   handle and pass the full callback URL to `ExchangeCode`. Managed helpers
@@ -404,6 +413,12 @@ values as `JsonNode`, OpenID Connect as a bearer token, no CLI or MCP).
 - Dependency audit: source-less `Cargo.lock` entries must be workspace members, and `[patch]`/`[replace]` tables in Cargo manifests are rejected.
 
 ### Fixed
+
+- Java generated usage now imports its resolved resource type and infers the
+  response type. Dispatch request decoding also imports resolved resource types,
+  so valid package prefixes such as `client.generated` cannot be shadowed by the
+  dispatch client's field. Java and Kotlin authorization-code examples configure
+  the managed OAuth flow explicitly.
 
 - TypeScript, Python and Rust authorization-code and refresh diagnostics include
   only recognized OAuth token error labels. Arbitrary provider error strings
