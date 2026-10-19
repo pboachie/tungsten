@@ -55,6 +55,11 @@ changes.
 
 ### Added
 
+- Inspect supported effective configuration with `tungsten config`, including
+  typed defaults/fallback policy and winning/shadowed authored origins. Plain
+  text and JSON redact sensitive values and physical paths without compiling
+  inputs, probing tools or executing emitters.
+
 - Compose bounded local TypeScript profiles for package, version, runtime and
   dependency defaults. Retain authored provenance through the compiler driver,
   strict profile diagnostics and existing manifest fallback behavior.
@@ -265,6 +270,10 @@ values as `JsonNode`, OpenID Connect as a bearer token, no CLI or MCP).
   pushed.
 
 ### Changed
+
+- Locate primary and related LSP profile diagnostics in their captured local
+  files, including invalid profiles, while preserving portable compiler and
+  configuration-inspection source names.
 
 - Reuse immutable SDK structure across support checks and emission for Java,
   Kotlin, C#, F#, Dart and Ruby. Generation stages one target's bytes at a time

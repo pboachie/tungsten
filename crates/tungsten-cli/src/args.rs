@@ -14,6 +14,7 @@ macro_rules! examples_text {
 Examples:
   tungsten init --from openapi.yaml    Write tungsten.yml and agent.yml
   tungsten check .                     Validate the project and print diagnostics
+  tungsten config .                    Explain supported effective configuration
   tungsten generate --target ts,py     Generate the TypeScript and Python SDKs
   tungsten generate --target webmcp    Generate a browser WebMCP adapter
   tungsten mock --port 4010            Serve a mock of the API from the IR
@@ -109,9 +110,10 @@ pub(crate) struct Cli {
 }
 
 impl Cli {
-    /// `check --ci` never colors its output.
+    /// CI checks and pure configuration inspection never color their output.
     pub fn forces_plain(&self) -> bool {
-        matches!(&self.command, Command::Check(args) if args.ci)
+        matches!(&self.command, Command::Config(_))
+            || matches!(&self.command, Command::Check(args) if args.ci)
     }
 
     /// The command's name in `--json` output; `None` for `lsp`, which
@@ -127,6 +129,7 @@ impl Cli {
             Command::Init(_) => CommandName::Init,
             Command::Doctor(_) => CommandName::Doctor,
             Command::Capabilities(_) => CommandName::Capabilities,
+            Command::Config(_) => CommandName::Config,
             Command::Emitters(_) => CommandName::Emitters,
             Command::Generate(_) => CommandName::Generate,
             Command::Mock(_) => CommandName::Mock,
@@ -160,6 +163,8 @@ pub(crate) enum Command {
     Doctor(DoctorArgs),
     /// Query built-in target declarations without executing tools or emitters.
     Capabilities(CapabilitiesArgs),
+    /// Explain supported effective configuration without compiling or running tools.
+    Config(ConfigArgs),
     /// List the external emitters (`tungsten-emit-<name>`) that can be
     /// run, with the protocol and version each reports.
     Emitters(EmittersArgs),
@@ -201,6 +206,16 @@ pub(crate) struct LspArgs {
 pub(crate) struct CapabilitiesArgs {
     /// Limit the catalog to one target id or CLI alias.
     pub target: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct ConfigArgs {
+    /// Local project directory or tungsten manifest.
+    #[arg(default_value = ".")]
+    pub path: PathBuf,
+    /// Fail on supported-option warnings as well as configuration errors.
+    #[arg(long)]
+    pub strict: bool,
 }
 
 #[derive(Debug, Subcommand)]

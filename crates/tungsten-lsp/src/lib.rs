@@ -40,6 +40,10 @@ mod server;
 mod symbols;
 mod uri;
 
+#[cfg(feature = "testing")]
+#[doc(hidden)]
+pub mod __testing;
+
 pub use lsp_server;
 pub use lsp_types;
 pub use server::{Options, run_stdio, serve};
