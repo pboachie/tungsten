@@ -169,9 +169,19 @@ public sealed partial class ClientCore
         { Scopes = requestedScopes, State = state, CodeChallenge = pkce.Challenge, Extra = extra });
         return new PendingAuthorization
         {
-            Scheme = scheme, Generation = generation, Client = ownedClient, Flow = captured, Binding = p.SessionBinding,
-            Redirect = redirect!, RequestedScopes = requestedScopes, Resource = p.Resource, Audience = p.Audience,
-            AccountContext = p.AccountContext, Defense = p.IssuerDefense!, State = state, Verifier = pkce.Verifier,
+            Scheme = scheme,
+            Generation = generation,
+            Client = ownedClient,
+            Flow = captured,
+            Binding = p.SessionBinding,
+            Redirect = redirect!,
+            RequestedScopes = requestedScopes,
+            Resource = p.Resource,
+            Audience = p.Audience,
+            AccountContext = p.AccountContext,
+            Defense = p.IssuerDefense!,
+            State = state,
+            Verifier = pkce.Verifier,
             Url = url,
         };
     }

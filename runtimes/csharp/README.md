@@ -130,7 +130,10 @@ credential-mutation epoch prevents old refresh success/rejection from replacing
 or deleting a newer login, including when token strings repeat. Concurrent
 completed logins select credentials at successful store commits. Refresh tasks
 retain one of 32 owned slots until settlement even if every waiter cancels;
-custom transports that ignore cancellation can delay settlement.
+custom transports that ignore cancellation can delay settlement. Code/refresh
+responses settling after the configured transport timeout are refused before
+credentials change, including credential-rejecting responses. This monotonic
+response deadline does not force synchronous custom-store work to finish.
 
 Managed begin and default refresh require `IFencedTokenStore`. Its predicates
 must run exactly once against the current token at the final serialized

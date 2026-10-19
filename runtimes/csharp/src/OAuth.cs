@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Threading;
@@ -340,6 +341,10 @@ public sealed partial class ClientCore
         {
             all.Add(("client_id", client.ClientId));
         }
+        var tokenTimeout = TokenAttemptTimeout();
+        var tokenStarted = Stopwatch.GetTimestamp();
+        TokenFailure? LateTokenResponse() => ct.IsCancellationRequested || Stopwatch.GetElapsedTime(tokenStarted) >= tokenTimeout
+            ? new("The OAuth token response was canceled or exceeded its deadline; authorize again.", false) : null;
         var outcome = await Transport.AttemptAsync(http, new AttemptRequest
         {
             Url = url,
@@ -347,13 +352,17 @@ public sealed partial class ClientCore
             Method = "POST",
             Headers = headers,
             Body = new Payload { Bytes = Util.Utf8.GetBytes(FormBody(all)) },
-            Timeout = TokenAttemptTimeout(),
+            Timeout = tokenTimeout,
         }, ct).ConfigureAwait(false);
+        // A custom handler/body may ignore cancellation and settle late. Keep owning
+        // that work, but never publish its late success or credential-rejecting error.
+        if (LateTokenResponse() is TokenFailure late) return (null, late);
         if (outcome.Kind != OutcomeKind.Response || !outcome.BodyOk)
         {
             return (null, new TokenFailure($"The OAuth2 token endpoint for {scheme} could not be reached; check network access and the token URL.", false));
         }
         var decoded = DecodedBody.Decode(outcome.Body ?? System.Array.Empty<byte>(), outcome.Headers, "application/json");
+        if (LateTokenResponse() is TokenFailure decodedLate) return (null, decodedLate);
         if (outcome.Status < 200 || outcome.Status > 299)
         {
             var named = "";
@@ -383,6 +392,7 @@ public sealed partial class ClientCore
         }
         var tokenType = StringAt("token_type");
         var scope = StringAt("scope");
+        if (LateTokenResponse() is TokenFailure parsedLate) return (null, parsedLate);
         return (new StoredToken
         {
             AccessToken = access,
