@@ -148,9 +148,6 @@ fn unsupported_import_policy(ir: &Ir, name: &str) -> bool {
         && !targets::serves_import_policy(name)
 }
 
-/// Run the emitter of target `name` over `ir` without touching the disk:
-/// the built-in one, or the external emitter its `tungsten.yml` entry
-/// declares.
 /// Prepare the compatible built-in plans needed by this target selection.
 pub(crate) fn prepare<'a>(ir: &'a Ir, names: &[String]) -> PreparedGeneration<'a> {
     let emitters: Vec<_> = names

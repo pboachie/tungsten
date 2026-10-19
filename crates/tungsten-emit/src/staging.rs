@@ -66,7 +66,10 @@ impl OutputStaging {
         for _ in 0..100 {
             let unique = NEXT.fetch_add(1, Ordering::Relaxed);
             let path = temp.join(format!("tungsten-output-{}-{unique}", std::process::id()));
+            #[cfg(unix)]
             let mut builder = std::fs::DirBuilder::new();
+            #[cfg(not(unix))]
+            let builder = std::fs::DirBuilder::new();
             #[cfg(unix)]
             {
                 use std::os::unix::fs::DirBuilderExt;
