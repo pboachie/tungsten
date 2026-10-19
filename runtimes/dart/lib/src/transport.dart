@@ -150,19 +150,47 @@ abstract final class _Transport {
     final started = monotonicMs();
     final ownedDeadline = oauthDeadline ?? started + timeoutMs;
     int left() => math.max(timeoutMs - (monotonicMs() - started), 1);
-    final client = HttpClient()
-      ..autoUncompress = false
-      ..userAgent = null
-      ..connectionTimeout = Duration(milliseconds: timeoutMs);
+    final client = oauthCancellation == null
+        ? (HttpClient()
+          ..autoUncompress = false
+          ..userAgent = null
+          ..connectionTimeout = Duration(milliseconds: timeoutMs))
+        : HttpClient();
     var handedOff = false;
     var oauthClosed = false;
+    HttpClientResponse? ownedResponse;
+    HttpClientRequest? ownedRequest;
+    Future<(HttpClientResponse?, bool)>? ownedRequestDone;
+    var ownedBodySettled = false;
+    final disposedResponses = HashSet<HttpClientResponse>.identity();
     void closeOAuth() {
       if (oauthClosed) return;
       oauthClosed = true;
       client.close(force: true);
     }
 
+    bool oauthLive() =>
+        oauthCancellation == null ||
+        (!oauthCancellation.isCanceled && monotonicMs() < ownedDeadline);
+
+    Future<(HttpClientResponse?, bool)> observeRequestDone(
+            HttpClientRequest request) =>
+        request.done.then<(HttpClientResponse?, bool)>(
+            (response) => (response, true),
+            onError: (Object _, StackTrace __) => (null, false));
+
+    Future<void> disposeResponse(HttpClientResponse response) async {
+      if (!disposedResponses.add(response)) return;
+      await _disposeOAuthResponse(response, closeOAuth);
+    }
+
     try {
+      if (oauthCancellation != null) {
+        client
+          ..autoUncompress = false
+          ..userAgent = null
+          ..connectionTimeout = Duration(milliseconds: timeoutMs);
+      }
       final Uri uri;
       try {
         uri = Uri.parse(url);
@@ -171,6 +199,7 @@ abstract final class _Transport {
       }
       final HttpClientRequest request;
       try {
+        if (!oauthLive()) return const _Outcome(_Kind.timeout);
         final opened = client.openUrl(method, uri);
         request = oauthCancellation == null
             ? await opened.timeout(Duration(milliseconds: left()))
@@ -179,11 +208,24 @@ abstract final class _Transport {
                 ownedDeadline,
                 oauthCancellation,
                 closeOAuth,
+                onLate: (lateRequest) async {
+                  ownedRequest = lateRequest;
+                  ownedRequestDone = observeRequestDone(lateRequest);
+                  try {
+                    lateRequest.abort();
+                  } finally {
+                    closeOAuth();
+                  }
+                },
               );
       } on TimeoutException {
         return const _Outcome(_Kind.timeout);
       } catch (e) {
         return _Outcome(_Kind.notSent, detail: _detail(e, false));
+      }
+      if (oauthCancellation != null) {
+        ownedRequest = request;
+        ownedRequestDone = observeRequestDone(request);
       }
       List<int>? data;
       String? multipartType;
@@ -218,6 +260,11 @@ abstract final class _Transport {
         }
         if (data != null) {
           request.contentLength = data.length;
+          // add() itself can initiate a write before close() is invoked.
+          if (!oauthLive()) {
+            request.abort();
+            return const _Outcome(_Kind.timeout);
+          }
           request.add(data);
         } else if (method == 'POST' || method == 'PUT' || method == 'PATCH') {
           request.contentLength = 0;
@@ -228,19 +275,33 @@ abstract final class _Transport {
       }
       final HttpClientResponse response;
       try {
+        if (!oauthLive()) {
+          request.abort();
+          return const _Outcome(_Kind.timeout);
+        }
         final closed = request.close();
         response = oauthCancellation == null
             ? await closed.timeout(Duration(milliseconds: left()))
-            : await _oauthPhase(closed, ownedDeadline, oauthCancellation, () {
-                request.abort();
-                closeOAuth();
-              });
+            : await _oauthPhase(
+                closed,
+                ownedDeadline,
+                oauthCancellation,
+                () {
+                  try {
+                    request.abort();
+                  } finally {
+                    closeOAuth();
+                  }
+                },
+                onLate: disposeResponse,
+              );
       } on TimeoutException {
         request.abort();
         return const _Outcome(_Kind.timeout);
       } catch (e) {
         return _Outcome(_Kind.lost, detail: _detail(e, true));
       }
+      if (oauthCancellation != null) ownedResponse = response;
       final status = response.statusCode;
       final responseHeaders = _headersOf(response.headers);
       if (stream &&
@@ -275,6 +336,7 @@ abstract final class _Transport {
               oauthCancellation,
               closeOAuth,
             );
+      if (oauthCancellation != null) ownedBodySettled = true;
       return _Outcome(
         _Kind.response,
         status: status,
@@ -287,7 +349,42 @@ abstract final class _Transport {
         if (oauthCancellation == null) {
           client.close(force: true);
         } else {
-          closeOAuth();
+          var cleanupFailed = false;
+          if (!ownedBodySettled) {
+            try {
+              ownedRequest?.abort();
+            } catch (_) {
+              cleanupFailed = true;
+            }
+          }
+          try {
+            closeOAuth();
+          } catch (_) {
+            cleanupFailed = true;
+          }
+          // Includes declared-length refusal and failures reading metadata.
+          // Every known witness is awaited even if another cleanup fails.
+          if (ownedResponse != null && !ownedBodySettled) {
+            try {
+              await disposeResponse(ownedResponse);
+            } catch (_) {
+              cleanupFailed = true;
+            }
+          }
+          if (ownedRequestDone != null) {
+            try {
+              final (response, succeeded) = await ownedRequestDone;
+              if (!succeeded || response == null) {
+                cleanupFailed = true;
+              } else if (!ownedBodySettled ||
+                  !identical(response, ownedResponse)) {
+                await disposeResponse(response);
+              }
+            } catch (_) {
+              cleanupFailed = true;
+            }
+          }
+          if (cleanupFailed) throw StateError('OAuth transport cleanup failed');
         }
       }
     }
@@ -299,8 +396,9 @@ abstract final class _Transport {
     Future<T> work,
     int deadline,
     OAuthCancellation cancellation,
-    void Function() abort,
-  ) async {
+    void Function() abort, {
+    Future<void> Function(T)? onLate,
+  }) async {
     var expired = false;
     void stop() {
       expired = true;
@@ -319,12 +417,31 @@ abstract final class _Transport {
     try {
       final result = await work;
       if (expired || cancellation.isCanceled || monotonicMs() >= deadline) {
+        timer.cancel();
+        detach();
+        if (onLate != null) await onLate(result);
         throw TimeoutException('OAuth deadline exceeded');
       }
       return result;
     } finally {
       timer.cancel();
       detach();
+    }
+  }
+
+  static Future<void> _disposeOAuthResponse(
+      HttpClientResponse response, void Function() abort) async {
+    StreamSubscription<List<int>>? subscription;
+    try {
+      subscription = response.listen((_) {}, onError: (Object _) {});
+    } finally {
+      try {
+        abort();
+      } finally {
+        // No separate grace period: original admission stays held, including
+        // when a custom subscription's cancellation future is slow to settle.
+        await subscription?.cancel();
+      }
     }
   }
 

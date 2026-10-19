@@ -128,7 +128,10 @@ read/refresh callers per client; retained scheme identities are also capped at
 32. Attempts expire after ten monotonic minutes. Captured configuration strings
 have a combined 32 KiB strict UTF-8 budget with at most 64 scopes/extras/credential
 parts; callback text and decoded fields have a 16 KiB budget and at most 64
-parameters. Inputs are checked before URL parsing or unbounded collection copies.
+parameters. Selected endpoint, scopes, extras and credential inputs are checked
+before URL parsing or copying their caller collections. Overall descriptor
+traversal and temporary allocations remain cooperative and are not a whole-heap
+or whole-descriptor bound.
 Authorization-code and refresh responses default to 64 KiB. Set
 `ClientOptions.maxOAuthTokenResponseBytes` to a positive integer up to 1 MiB for
 larger providers. This does not change the separate client-credentials response

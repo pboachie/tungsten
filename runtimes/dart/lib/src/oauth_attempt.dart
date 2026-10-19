@@ -193,6 +193,14 @@ void _oauthEndpoint(String value, {bool redirect = false}) {
   if (value.isEmpty || RegExp(r'[\x00-\x20\x7f\\]').hasMatch(value)) {
     throw const _OAuthInvalid();
   }
+  // Parse the original query before Uri can normalize malformed escapes.
+  final question = value.indexOf('?');
+  if (question >= 0) {
+    if (redirect) throw const _OAuthInvalid();
+    for (final key in _oauthFields(value.substring(question + 1)).keys) {
+      if (_oauthReserved.contains(key)) throw const _OAuthInvalid();
+    }
+  }
   final uri = Uri.parse(value);
   if (!uri.isAbsolute || uri.userInfo.isNotEmpty || value.contains('#')) {
     throw const _OAuthInvalid();
@@ -201,13 +209,6 @@ void _oauthEndpoint(String value, {bool redirect = false}) {
     if (uri.host.isEmpty) throw const _OAuthInvalid();
   } else if (!redirect) {
     throw const _OAuthInvalid();
-  }
-  if (redirect) {
-    if (value.contains('?')) throw const _OAuthInvalid();
-  } else {
-    for (final key in _oauthFields(uri.query).keys) {
-      if (_oauthReserved.contains(key)) throw const _OAuthInvalid();
-    }
   }
 }
 

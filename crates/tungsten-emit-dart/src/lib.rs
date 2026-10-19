@@ -154,6 +154,7 @@ pub(crate) struct Library {
 /// runtime and the models (and users who import both packages) never see
 /// two declarations of a name.
 const TAKEN_TYPES: &[&str] = &[
+    "AuthorizationAttempt",
     "Binary",
     "BodyDescriptor",
     "CallOptions",
@@ -171,9 +172,11 @@ const TAKEN_TYPES: &[&str] = &[
     "Err",
     "EventStream",
     "Expr",
+    "FencedTokenStore",
     "FormatException",
     "IdempotencyStore",
     "Issue",
+    "IssuerDefense",
     "Jitter",
     "Json",
     "JsonEncodable",
@@ -184,6 +187,7 @@ const TAKEN_TYPES: &[&str] = &[
     "MemoryTokenStore",
     "Middleware",
     "Models",
+    "OAuthCancellation",
     "OAuthFlow",
     "Ok",
     "OperationDescriptor",
