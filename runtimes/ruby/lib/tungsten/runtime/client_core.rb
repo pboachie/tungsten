@@ -29,6 +29,10 @@ module Tungsten
       attr_reader :descriptors, :base_url, :timeout_ms, :max_event_bytes, :max_collect_bytes, :max_collect_ms,
                   :max_reconnects, :reconnect_max_ms, :idle_timeout_ms
 
+      # Default Object inspection would include configured credentials/keys.
+      def inspect = "#<Tungsten::Runtime::ClientCore #{REDACTED}>"
+      alias_method :to_s, :inspect
+
       # @param descriptors [Descriptors] the SDK descriptor document
       # @param options [ClientOptions, Hash, nil]
       def initialize(descriptors, options = nil)
@@ -55,6 +59,7 @@ module Tungsten
         @timeout_ms = positive(o.timeout_ms) || DEFAULT_TIMEOUT_MS
         @max_event_bytes = positive(o.max_event_bytes) || DEFAULT_MAX_EVENT_BYTES
         @max_response_bytes = o.max_response_bytes.nil? ? 4 * 1024 * 1024 : o.max_response_bytes
+        @max_oauth_token_response_bytes = o.max_oauth_token_response_bytes.nil? ? 64 * 1024 : o.max_oauth_token_response_bytes
         @max_collect_bytes = positive(o.max_collect_bytes) || DEFAULT_MAX_COLLECT_BYTES
         @max_collect_ms = positive(o.max_collect_ms) || DEFAULT_MAX_COLLECT_MS
         @max_reconnects = o.max_reconnects.nil? ? DEFAULT_MAX_RECONNECTS : o.max_reconnects.to_i.clamp(0, 1000)
@@ -81,6 +86,7 @@ module Tungsten
         @used_tokens = {}
         @oauth_gates = {}
         @registry = descriptors.operations.dup
+        @oauth_sessions = OAuthSessions.new(self)
       end
 
       # The API descriptor (the document's `api`).

@@ -46,8 +46,30 @@ abstract interface class TokenStore {
   FutureOr<void> delete(String scheme);
 }
 
+/// Required by managed authorization and automatic token reads/refresh/logout.
+/// Each conditional operation must invoke [current] exactly once at its final
+/// serialized mutation, with the current token. There must be no await, retry or
+/// speculative predicate evaluation between it and that mutation. Return true
+/// only after committing; false/throw must preserve the previous token. The
+/// predicate is stateful: even a failed commit may conservatively fence older
+/// work. Persistent/shared adapters need separate account-partition validation.
+abstract interface class FencedTokenStore implements TokenStore {
+  /// Atomically conditionally replace the token.
+  FutureOr<bool> setIfCurrent(
+    String scheme,
+    StoredToken token,
+    bool Function(StoredToken? current) current,
+  );
+
+  /// Atomically conditionally remove the token.
+  FutureOr<bool> deleteIfCurrent(
+    String scheme,
+    bool Function(StoredToken? current) current,
+  );
+}
+
 /// The default [TokenStore]: in memory, for the life of the client.
-final class MemoryTokenStore implements TokenStore {
+final class MemoryTokenStore implements FencedTokenStore {
   final Map<String, StoredToken> _tokens = {};
 
   @override
@@ -61,6 +83,24 @@ final class MemoryTokenStore implements TokenStore {
   @override
   void delete(String scheme) {
     _tokens.remove(scheme);
+  }
+
+  @override
+  bool setIfCurrent(
+    String scheme,
+    StoredToken token,
+    bool Function(StoredToken?) current,
+  ) {
+    if (!current(_tokens[scheme])) return false;
+    _tokens[scheme] = token;
+    return true;
+  }
+
+  @override
+  bool deleteIfCurrent(String scheme, bool Function(StoredToken?) current) {
+    if (!current(_tokens[scheme])) return false;
+    _tokens.remove(scheme);
+    return true;
   }
 }
 

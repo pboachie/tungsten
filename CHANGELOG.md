@@ -11,6 +11,23 @@ changes.
 
 ### Breaking
 
+- Ruby browser OAuth helpers now create bounded S256/state authorization attempts.
+  Qualify issuer defense, bind the owning session/listener and pass the returned
+  handle plus full callback URL to `exchange_code`. Managed helpers require a
+  fenced token store; application-owned protocol inputs use explicitly named
+  low-level methods. Code/refresh response bodies default to 64 KiB through
+  `max_oauth_token_response_bytes`. Generated examples select the actual
+  authorization-code flow even when another authentication scheme appears first.
+
+- Dart browser OAuth helpers now create managed S256/state authorization attempts.
+  Supply the owning session/listener binding and qualified issuer defense, then
+  exchange the returned handle with the complete callback URL. Managed helpers
+  require `FencedTokenStore`; legacy primitives use explicitly named low-level
+  methods. Code/refresh bodies default to 64 KiB through
+  `maxOAuthTokenResponseBytes`. Cancellation fences token writes and retains
+  admission until transport cleanup; refresh joins preserve the caller's
+  original deadline.
+
 - Rust compiler-library embedders now pass an invocation policy and raw optional
   external limits to `external::run` and `external::describe`. Select a context
   for each invocation, using `InvocationPolicy::absent()` only for deliberate
