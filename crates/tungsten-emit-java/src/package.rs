@@ -2,6 +2,7 @@
 //! `pom.xml`, `README.md` and the custom folder of a generated SDK.
 
 use crate::Ctx;
+use crate::java::lit;
 
 /// The version of build-helper-maven-plugin a pom with `runtime_path` uses.
 const BUILD_HELPER: &str = "3.6.0";
@@ -119,13 +120,28 @@ impl Ctx<'_> {
             "var client = new {client}(ClientOptions.builder()\n"
         ));
         if let Some(scheme) = self.ir.auth.first() {
-            s.push_str(&format!(
-                "        .auth(\"{}\", AuthCredential.secret(System.getenv(\"API_TOKEN\")))\n",
-                scheme.name()
-            ));
+            if scheme.authorization_code().is_some() {
+                s.push_str(&format!(
+                    "        .auth({}, AuthCredential.parts(java.util.Map.of(\n\
+                     \x20               \"flow\", \"authorizationCode\",\n\
+                     \x20               \"client_id\", System.getenv(\"OAUTH_CLIENT_ID\"),\n\
+                     \x20               \"redirect_uri\", System.getenv(\"OAUTH_REDIRECT_URI\"))))\n",
+                    lit(scheme.name())
+                ));
+            } else {
+                s.push_str(&format!(
+                    "        .auth({}, AuthCredential.secret(System.getenv(\"API_TOKEN\")))\n",
+                    lit(scheme.name())
+                ));
+            }
         }
         s.push_str("        .build());\n");
-        if let Some(info) = self.first_call() {
+        let browser_auth = self
+            .ir
+            .auth
+            .first()
+            .is_some_and(|scheme| scheme.authorization_code().is_some());
+        if let Some(info) = self.first_call().filter(|_| !browser_auth) {
             s.push_str(&format!(
                 "Result<{}> result = client.{}.{}({}.builder().build(), CallOptions.defaults());\n",
                 info.0, info.1, info.2, info.3
@@ -135,6 +151,33 @@ impl Ctx<'_> {
             s.push_str("}\n");
         }
         s.push_str("```\n\n");
+        if browser_auth {
+            s.push_str("Set `OAUTH_CLIENT_ID` and `OAUTH_REDIRECT_URI` to your registered application's client ID and exact redirect URI before constructing the client. Public clients omit `client_secret`; confidential clients supply it through application-owned secure configuration. Complete the managed authorization below before calling authenticated operations.\n\n");
+        }
+        if let Some(scheme) = self
+            .ir
+            .auth
+            .iter()
+            .find(|s| s.authorization_code().is_some())
+        {
+            s.push_str(&format!(
+                "## Managed OAuth authorization\n\n\
+                 Configure `{}` with `AuthCredential.parts` containing `flow: \"authorizationCode\"`, `client_id` and `redirect_uri`. Qualify the provider's S256 support and issuer response before enabling them. Supply an unpredictable owning listener/session binding, the qualified issuer URL, and the full callback received by that listener.\n\n\
+                 ```java\n\
+                 var flow = client.oauth({});\n\
+                 var started = flow.authorizationUrl(OAuthFlow.AuthorizationParams.builder()\n\
+                 \x20       .sessionBinding(sessionBinding).s256Supported(true)\n\
+                 \x20       .issuerDefense(OAuthFlow.IssuerDefense.issuerResponse(issuer))\n\
+                 \x20       .build()).unwrap();\n\
+                 // Open started.url() in the browser; retain its handle with this listener.\n\
+                 var completed = flow.exchangeCode(new OAuthFlow.ExchangeParams(\n\
+                 \x20       started.attemptHandle(), callbackUrl, sessionBinding));\n\
+                 ```\n\n\
+                 Check the exchange result before authenticated calls. Accepted callbacks are consumed once; invalid, canceled, expired or logged-out attempts cannot exchange again. Use `cancelAuthorization(handle, sessionBinding)` or `logout()` for local cleanup. `TokenStore.Memory` is the per-client default; custom managed stores require the atomic `TokenStore.Fenced` contract. Shared persistent stores and real providers/listeners need separate qualification. Handles, callbacks, bindings and tokens must stay out of logs.\n\n",
+                scheme.name(),
+                lit(scheme.name())
+            ));
+        }
         s.push_str("Every call returns a `Result`: `Result.Ok` with the typed value and the response metadata, or `Result.Err` with the error envelope (`Diagnostic`: category, remediation, retryable, ...). Nothing throws for API or transport failures.\n\n");
         s.push_str("- Destructive and irreversible operations need `CallOptions.builder().confirm(...)`: a token from the operation's `preview...` method, or `Confirm.YES` for destructive ones.\n");
         s.push_str("- Mutations with a caller-owned idempotency key take `idempotencyKey(...)`; reuse it on every retry.\n");
