@@ -199,6 +199,16 @@ pub mod __testing {
         super::process::with_cleanup_paused(f)
     }
 
+    /// Delay the admitted owner before its final execution/deadline check.
+    pub fn with_launch_paused<R>(f: impl FnOnce() -> R) -> R {
+        super::process::with_launch_paused(f)
+    }
+
+    /// Finite preflight delay for verifying refusal before admission.
+    pub fn with_preflight_delay<R>(f: impl FnOnce() -> R) -> R {
+        super::process::with_preflight_delay(f)
+    }
+
     #[cfg(target_os = "linux")]
     pub fn child_reaping_status(status: &[u8]) -> std::io::Result<()> {
         super::process::child_reaping_status(status)

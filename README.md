@@ -435,8 +435,8 @@ External emission and `--describe` own a Unix process group or Windows Job Objec
 Leader exit, timeout and output overflow trigger group/job termination and leader
 reaping. `timeout_ms` includes process launch, pipe work and cleanup; one quarter,
 up to one second, is reserved for cleanup. OS calls and scheduling can exceed that
-budget. Zero or unrepresentable timeouts refuse execution. Sixteen process-wide
-worker slots allow at most four simultaneous launches. Unfinished workers retain
+budget. Zero or unrepresentable timeouts refuse execution. Each launch reserves
+four of 16 process-wide worker slots. Unfinished workers retain
 their handles and slots until they finish and a later invocation joins them;
 capacity exhaustion refuses before execution. TG0803 reports incomplete cleanup
 and accepts no files. Investigate remaining emitter processes before retrying.

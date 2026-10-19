@@ -27,6 +27,10 @@ static RETIRED_WORKERS: Mutex<Vec<Retired>> = Mutex::new(Vec::new());
 static FAIL_WORKER_START: AtomicUsize = AtomicUsize::new(0);
 #[cfg(feature = "testing")]
 static PAUSE_CLEANUP: AtomicBool = AtomicBool::new(false);
+#[cfg(feature = "testing")]
+static PAUSE_BEFORE_LAUNCH: AtomicBool = AtomicBool::new(false);
+#[cfg(feature = "testing")]
+static DELAY_PREFLIGHT: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug)]
 pub(crate) struct Finished {
@@ -345,7 +349,14 @@ struct Pipes {
     stderr: std::process::ChildStderr,
 }
 
-fn launch(command: &Command, extra: &[String], cwd: &Path) -> io::Result<OwnedChild> {
+fn launch(
+    command: &Command,
+    extra: &[String],
+    cwd: &Path,
+    execution_deadline: Instant,
+    abort: &AtomicBool,
+    timeout: Duration,
+) -> Result<OwnedChild, Failure> {
     let mut native = std::process::Command::new(&command.program);
     native
         .args(&command.args)
@@ -365,12 +376,16 @@ fn launch(command: &Command, extra: &[String], cwd: &Path) -> io::Result<OwnedCh
         wrapped.wrap(process_wrap::std::JobObject);
     }
     #[cfg(not(any(unix, windows)))]
-    return Err(io::Error::new(
+    return Err(Failure::Spawn(io::Error::new(
         io::ErrorKind::Unsupported,
         "external process ownership is unsupported on this platform",
-    ));
+    )));
+    // Command construction also consumes time; check again at the launch API.
+    if abort.load(Ordering::Acquire) || Instant::now() >= execution_deadline {
+        return Err(Failure::Timeout(timeout));
+    }
     Ok(OwnedChild {
-        child: wrapped.spawn()?,
+        child: wrapped.spawn().map_err(Failure::Spawn)?,
         armed: true,
     })
 }
@@ -399,12 +414,36 @@ fn launch_and_supervise(
         execution_deadline,
         limits,
     } = invocation;
-    let mut child = match launch(&command, &extra, &cwd) {
+    #[cfg(feature = "testing")]
+    while PAUSE_BEFORE_LAUNCH.load(Ordering::Acquire) {
+        thread::sleep(POLL);
+    }
+    // A scheduled worker is not permission to execute later. Refuse known stale
+    // work immediately before the OS spawn; an OS call already in progress is
+    // a different uncertainty and remains owned by this worker and its permit.
+    if abort.load(Ordering::Acquire) || Instant::now() >= execution_deadline {
+        state.timed_out.store(true, Ordering::Release);
+        return Lifecycle {
+            code: None,
+            failure: Some(Failure::Timeout(limits.timeout)),
+        };
+    }
+    let mut child = match launch(
+        &command,
+        &extra,
+        &cwd,
+        execution_deadline,
+        abort,
+        limits.timeout,
+    ) {
         Ok(child) => child,
-        Err(e) => {
+        Err(failure) => {
+            if matches!(&failure, Failure::Timeout(_)) {
+                state.timed_out.store(true, Ordering::Release);
+            }
             return Lifecycle {
                 code: None,
-                failure: Some(Failure::Spawn(e)),
+                failure: Some(failure),
             };
         }
     };
@@ -484,6 +523,15 @@ pub(crate) fn run(
         child_reaping_status(&status).map_err(Failure::Io)?;
     }
     reap_finished_workers();
+    #[cfg(feature = "testing")]
+    if DELAY_PREFLIGHT.load(Ordering::Acquire) {
+        thread::sleep(Duration::from_millis(40));
+    }
+    // Preflight, joining finished work or scheduling can consume the budget.
+    // Do not admit a known-expired invocation to the worker/process path.
+    if Instant::now() >= execution_deadline {
+        return Err(Failure::Timeout(limits.timeout));
+    }
     let mut permits = Permit::reserve(WORKERS_PER_RUN)?;
     let overflow = Arc::new(AtomicBool::new(false));
     let abort = Arc::new(AtomicBool::new(false));
@@ -521,6 +569,7 @@ pub(crate) fn run(
             Err(mpsc::TryRecvError::Disconnected) => break None,
             Err(mpsc::TryRecvError::Empty) if Instant::now() < deadline => thread::sleep(POLL),
             Err(mpsc::TryRecvError::Empty) => {
+                state.timed_out.store(true, Ordering::Release);
                 abort.store(true, Ordering::Release);
                 break None;
             }
@@ -661,6 +710,32 @@ pub(super) fn with_cleanup_paused<R>(f: impl FnOnce() -> R) -> R {
         }
     }
     PAUSE_CLEANUP.store(true, Ordering::Release);
+    let _reset = Reset;
+    f()
+}
+
+#[cfg(feature = "testing")]
+pub(super) fn with_launch_paused<R>(f: impl FnOnce() -> R) -> R {
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            PAUSE_BEFORE_LAUNCH.store(false, Ordering::Release);
+        }
+    }
+    PAUSE_BEFORE_LAUNCH.store(true, Ordering::Release);
+    let _reset = Reset;
+    f()
+}
+
+#[cfg(feature = "testing")]
+pub(super) fn with_preflight_delay<R>(f: impl FnOnce() -> R) -> R {
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            DELAY_PREFLIGHT.store(false, Ordering::Release);
+        }
+    }
+    DELAY_PREFLIGHT.store(true, Ordering::Release);
     let _reset = Reset;
     f()
 }
