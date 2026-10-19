@@ -9,14 +9,16 @@ changes.
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-10-17
+
 ### Added
 
 - Automate Maven Central, NuGet and RubyGems publication alongside npm, PyPI
   and crates.io after an approved release tag. Verify package identity, source
   and checksums before credentials, and compare public downloads with the tested
   archives. Add a package-only rehearsal and an embedded NuGet package icon.
-  Rust registry publication is deferred to 0.2.0: 0.1.3 keeps crates.io uploads
-  disabled while retaining Rust archive checks and documented source installation.
+  Rust publication also requires accepted first-publication ownership and both
+  trusted publishers; source preparation does not complete registry acceptance.
 
 - Enable registry packaging of the Apache-2.0 Rust runtime and CLI-kit with a
   versioned runtime dependency. Add opt-in crates.io trusted publishing to the
