@@ -80,3 +80,11 @@ MCP uses the TypeScript runtime and does not supply a file-backed OAuth token st
 ## License
 
 Apache-2.0. The Tungsten compiler is licensed separately under AGPL-3.0-only.
+
+## API credential transport
+
+The session factory delegates API calls to its configured `ClientCore`, which
+requires HTTPS for credentials and OAuth token endpoints. For intentional
+non-loopback HTTP, set `allowInsecureHttp: true` in that core's `ClientOptions`.
+Loopback remains usable without an override; this option controls outgoing API
+requests. Prefer HTTPS when migrating existing authenticated HTTP targets.

@@ -787,6 +787,16 @@ public final class ClientCore {
         return converted instanceof JsonObject ? (JsonObject) converted : null;
     }
 
+    private long responseLimit(OperationDescriptor op, CallOptions opts) {
+        Long configured = opts.maxResponseBytes() != null ? opts.maxResponseBytes() : options.maxResponseBytes;
+        long cap = configured == null ? 4 * 1024 * 1024 : configured;
+        if (cap < 1 || cap > 9_007_199_254_740_991L) {
+            throw diag(op.id(), Category.VALIDATION_FAILED).param("maxResponseBytes")
+                    .remedy("maxResponseBytes must be a positive safe integer; nothing was sent.").fail();
+        }
+        return cap;
+    }
+
     Prepared prepare(OperationDescriptor op, Object rawArgs, CallOptions opts, Purpose p, String urlOverride, MacroClaim claim) {
         if (op == null) {
             throw diag("<unknown operation>", Category.VALIDATION_FAILED).param("operation")
@@ -794,6 +804,7 @@ public final class ClientCore {
                     .remedy("The operation descriptor is invalid: the descriptor is missing. Regenerate the SDK or fix the descriptor; nothing was sent.")
                     .fail();
         }
+        responseLimit(op, opts);
         String problem = Args.descriptorProblem(op);
         if (problem != null) {
             throw diag(op.id() == null || op.id().isEmpty() ? "<unknown operation>" : op.id(), Category.VALIDATION_FAILED)
@@ -832,7 +843,8 @@ public final class ClientCore {
             confirmed(new ConfirmTarget(op.id(), op.id(), "preview(...)"), op.agent().safety(), args, opts);
         }
         String method = op.method();
-        Auth.Resolved auth = authResolver.resolve(op, method);
+        String credentialError = Auth.insecureHttp(urlOverride != null ? urlOverride : baseUrl, options.allowInsecureHttp) ? Auth.INSECURE_HTTP_AUTH : null;
+        Auth.Resolved auth = authResolver.resolve(op, method, credentialError);
         if (auth.failed != null) {
             throw diag(op.id(), Category.AUTH_FAILED).remedy(auth.failed).fail();
         }
@@ -861,6 +873,10 @@ public final class ClientCore {
         String[] urls = buildUrl(op, args, auth.plan, urlOverride);
         Serialize.Headers hs = new Serialize.Headers();
         buildHeaders(op, args, opts, auth.plan, hs);
+        if (Auth.insecureHttp(urls[0], options.allowInsecureHttp) && (!auth.plan.headers.isEmpty() || !auth.plan.cookies.isEmpty() || !auth.plan.query.isEmpty()
+                || hs.entries.stream().anyMatch(h -> h.secret() || Auth.credentialHeader(api, h.name(), false)))) {
+            throw diag(op.id(), Category.AUTH_FAILED).remedy(Auth.INSECURE_HTTP_AUTH).fail();
+        }
         Set<String> paramNames = new HashSet<>();
         for (OperationDescriptor.Param prm : op.argumentParams()) {
             paramNames.add(prm.name());
@@ -903,6 +919,12 @@ public final class ClientCore {
         }
         if (p == Purpose.SERVER_PREVIEW && op.agent().preview().mode().equals("header")) {
             hs.set(op.agent().preview().header(), op.agent().preview().value(), false);
+        }
+        if (Auth.insecureHttp(urls[0], options.allowInsecureHttp) && hs.entries.stream().anyMatch(h -> {
+            boolean preserved = key != null && h.name().equalsIgnoreCase(header) && h.value().equals(key);
+            return (h.secret() && !preserved) || Auth.credentialHeader(api, h.name(), preserved);
+        })) {
+            throw diag(op.id(), Category.AUTH_FAILED).remedy(Auth.INSECURE_HTTP_AUTH).fail();
         }
         for (Serialize.Header e : hs.entries) {
             if (Text.validHeaderName(e.name()) && Text.validHeaderValue(e.value())) {
@@ -1284,11 +1306,7 @@ public final class ClientCore {
     /** Sends with retries. With stream, a 2xx text/event-stream answer is returned unread. */
     Sent sendWith(Prepared p, CallOptions opts, boolean stream) {
         OperationDescriptor op = p.op;
-        Long cap = opts.maxResponseBytes() != null ? opts.maxResponseBytes() : options.maxResponseBytes;
-        if (cap != null && (cap < 1 || cap > 9_007_199_254_740_991L)) {
-            throw diag(op.id(), Category.VALIDATION_FAILED).param("maxResponseBytes")
-                    .remedy("maxResponseBytes must be a positive safe integer; nothing was sent.").fail();
-        }
+        long cap = responseLimit(op, opts);
         RetryPolicy policy = retryPolicy(op);
         boolean mutation = op.isMutation();
         boolean protectedCall = Classify.hasReplayProtection(op, p.hasKey);

@@ -507,7 +507,15 @@ func (c *ClientCore) prepare(ctx context.Context, op *OperationDescriptor, rawAr
 		}
 	}
 	method := op.Method
-	auth := c.resolveAuth(ctx, op, method)
+	target := c.baseURL
+	if urlOverride != "" {
+		target = urlOverride
+	}
+	credentialError := ""
+	if insecureHTTP(target, c.allowInsecureHTTP) {
+		credentialError = insecureHTTPAuth
+	}
+	auth := c.resolveAuth(ctx, op, method, credentialError)
 	if auth.failed != "" {
 		return nil, newDiag(op.ID, AuthFailed).remedy(auth.failed).err()
 	}
@@ -539,6 +547,17 @@ func (c *ClientCore) prepare(ctx context.Context, op *OperationDescriptor, rawAr
 	}
 	var headers headerBag
 	c.buildHeaders(op, args, opts, &auth.plan, &headers)
+	if insecureHTTP(fullURL, c.allowInsecureHTTP) {
+		credentials := len(auth.plan.headers)+len(auth.plan.cookies)+len(auth.plan.query) > 0
+		for _, h := range headers.entries {
+			if h.secret || c.credentialHeader(h.name, false) {
+				credentials = true
+			}
+		}
+		if credentials {
+			return nil, newDiag(op.ID, AuthFailed).remedy(insecureHTTPAuth).err()
+		}
+	}
 
 	paramNames := map[string]bool{}
 	for _, prm := range argParams(op) {
@@ -586,6 +605,14 @@ func (c *ClientCore) prepare(ctx context.Context, op *OperationDescriptor, rawAr
 	}
 	if p == purposeServerPreview && op.Agent.Preview.Mode == "header" {
 		headers.set(op.Agent.Preview.Header, op.Agent.Preview.Value, false)
+	}
+	if insecureHTTP(fullURL, c.allowInsecureHTTP) {
+		for _, h := range headers.entries {
+			preserved := hasIdem && strings.EqualFold(h.name, header) && h.value == key
+			if (h.secret && !preserved) || c.credentialHeader(h.name, preserved) {
+				return nil, newDiag(op.ID, AuthFailed).remedy(insecureHTTPAuth).err()
+			}
+		}
 	}
 	for _, e := range headers.entries {
 		if validHeaderName(e.name) && validHeaderValue(e.value) {

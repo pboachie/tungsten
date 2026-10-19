@@ -339,6 +339,14 @@ pub(crate) fn build(spec: &CliSpec, relaxed: &BTreeSet<String>) -> Tree {
         .arg(global("config", Some("PATH"), "Path of the config file"))
         .arg(
             global(
+                "max-response-bytes",
+                Some("BYTES"),
+                "Finite ordinary response byte cap (default 4 MiB)",
+            )
+            .value_parser(clap::value_parser!(u64).range(1..=9_007_199_254_740_991)),
+        )
+        .arg(
+            global(
                 "timeout",
                 Some("SECONDS"),
                 "Timeout of each request attempt",

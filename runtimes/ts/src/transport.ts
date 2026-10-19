@@ -212,8 +212,11 @@ export async function attempt(fetchImpl: typeof fetch, req: AttemptRequest): Pro
     let body: Uint8Array | null = null;
     let bodyFailure: "timeout" | "aborted" | "broken" | "oversized" | null = null;
     try {
-      if (req.maxResponseBytes === undefined || response.body === null) {
+      if (req.maxResponseBytes === undefined) {
         body = new Uint8Array(await response.arrayBuffer());
+      } else if (response.body === null) {
+        // Fetch null bodies are empty; a custom fetch must honor that contract.
+        body = new Uint8Array();
       } else {
         const reader = response.body.getReader();
         const cancel = (): void => { void reader.cancel().catch(() => undefined); };
@@ -222,7 +225,8 @@ export async function attempt(fetchImpl: typeof fetch, req: AttemptRequest): Pro
         let size = 0;
         try {
           const length = headers["content-length"];
-          if (length !== undefined && /^\d+$/.test(length) && Number(length) > req.maxResponseBytes) bodyFailure = "oversized";
+          if (req.method !== "HEAD" && ![204, 205, 304].includes(response.status)
+            && length !== undefined && /^\d+$/.test(length) && Number(length) > req.maxResponseBytes) bodyFailure = "oversized";
           while (bodyFailure === null) {
             const chunk = await reader.read();
             if (controller.signal.aborted) { bodyFailure = timedOut ? "timeout" : "aborted"; break; }

@@ -705,6 +705,7 @@ public sealed partial class ClientCore
                 .Expected("a valid operation descriptor")
                 .Remedy("The operation descriptor is invalid: the descriptor is missing. Regenerate the SDK or fix the descriptor; nothing was sent.").Fail();
         }
+        ResponseLimit(op, opts);
         if (DescriptorProblem(op) is string problem)
         {
             throw new Diag(op.Id.Length > 0 ? op.Id : "<unknown operation>", Category.ValidationFailed).Param("operation")
@@ -742,7 +743,7 @@ public sealed partial class ClientCore
             Confirmed(new ConfirmTarget(op.Id, op.Id, "preview(...)"), op.Agent.Safety, args, opts);
         }
         var method = op.Method;
-        var authResult = await ResolveAuthAsync(op, method, ct).ConfigureAwait(false);
+        var authResult = await ResolveAuthAsync(op, method, ct, InsecureHttp(urlOverride ?? baseUrl) ? InsecureHttpAuth : null).ConfigureAwait(false);
         if (authResult.Failed is not null)
         {
             throw new Diag(op.Id, Category.AuthFailed).Remedy(authResult.Failed).Fail();
@@ -778,6 +779,9 @@ public sealed partial class ClientCore
         var (fullUrl, displayUrl) = BuildUrl(op, args, authResult.Plan, urlOverride);
         var headerBag = new HeaderBag();
         BuildHeaders(op, args, opts, authResult.Plan, headerBag);
+        if (InsecureHttp(fullUrl) && (authResult.Plan.Headers.Count > 0 || authResult.Plan.Cookies.Count > 0 || authResult.Plan.Query.Count > 0
+            || headerBag.Entries.Any(h => h.Secret || CredentialHeader(h.Name))))
+            throw new Diag(op.Id, Category.AuthFailed).Remedy(InsecureHttpAuth).Fail();
 
         var paramKeys = new HashSet<string>(op.Arguments.Select(p => p.Key), StringComparer.Ordinal);
         var bodyPaths = SensitiveBodyPaths(op);
@@ -828,6 +832,12 @@ public sealed partial class ClientCore
         {
             headerBag.Set(op.Agent.Preview.Header ?? "", op.Agent.Preview.Value ?? "", false);
         }
+        if (InsecureHttp(fullUrl) && headerBag.Entries.Any(h =>
+        {
+            bool preserved = idem is not null && h.Name.Equals(header, StringComparison.OrdinalIgnoreCase) && h.Value == idem;
+            return (h.Secret && !preserved) || CredentialHeader(h.Name, preserved);
+        }))
+            throw new Diag(op.Id, Category.AuthFailed).Remedy(InsecureHttpAuth).Fail();
         foreach (var e in headerBag.Entries)
         {
             if (Serialize.ValidHeaderName(e.Name) && Serialize.ValidHeaderValue(e.Value))

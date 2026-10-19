@@ -20,7 +20,7 @@ from dataclasses import dataclass, field, replace
 from typing import Generic, Literal, Protocol, TypeVar, cast
 from urllib.parse import quote
 
-from ._auth import TokenError
+from ._auth import INSECURE_HTTP_AUTH, TokenError, insecure_http
 from ._classify import decode_body
 from ._effects import Answered, AttemptRequest, Flow, invoke, send, shared
 from ._envelope import diagnostic
@@ -441,6 +441,8 @@ class OAuthSession:
     ) -> Flow[StoredToken]:
         """One request to the token endpoint. ``previous`` is the refresh
         token a response without one keeps."""
+        if insecure_http(url, getattr(self._options, "allow_insecure_http", False)):
+            raise TokenError(INSECURE_HTTP_AUTH)
         headers = {"Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json"}
         if client.client_secret is not None:
             pair = f"{percent_encode(client.client_id)}:{percent_encode(client.client_secret)}"

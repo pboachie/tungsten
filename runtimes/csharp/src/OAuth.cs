@@ -407,6 +407,7 @@ public sealed partial class ClientCore
 
     internal async Task<(StoredToken? Token, TokenFailure? Failure)> TokenRequestAsync(string scheme, string url, CodeClient client, List<(string, string)> fields, string? previous, CancellationToken ct)
     {
+        if (InsecureHttp(url)) return (null, new TokenFailure(InsecureHttpAuth, false));
         var headers = new List<HeaderEntry>
         {
             new("Content-Type", "application/x-www-form-urlencoded", false),
@@ -477,6 +478,7 @@ public sealed partial class ClientCore
     /// <summary>Fetches (and caches) an OAuth2 client-credentials token; one request at a time per client.</summary>
     private async Task<(string? Token, string? Problem)> ClientCredentialsTokenAsync(Satisfier s, CancellationToken ct)
     {
+        if (InsecureHttp(s.TokenUrl)) return (null, InsecureHttpAuth);
         await clientCredentialsLock.WaitAsync(ct).ConfigureAwait(false);
         try
         {

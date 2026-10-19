@@ -380,6 +380,9 @@ func (c *ClientCore) tokenAttemptTimeout() time.Duration {
 }
 
 func (c *ClientCore) tokenRequest(ctx context.Context, scheme, url string, client codeClient, fields []pair, previous string) (StoredToken, *tokenFailure) {
+	if insecureHTTP(url, c.allowInsecureHTTP) {
+		return StoredToken{}, &tokenFailure{insecureHTTPAuth, false}
+	}
 	headers := []headerEntry{
 		{"Content-Type", "application/x-www-form-urlencoded", false},
 		{"Accept", "application/json", false},
@@ -474,6 +477,9 @@ type ccFlight struct {
 }
 
 func (c *ClientCore) fetchClientCredentialsToken(ctx context.Context, s *satisfier) (string, string) {
+	if insecureHTTP(s.tokenURL, c.allowInsecureHTTP) {
+		return "", insecureHTTPAuth
+	}
 	realNow := time.Now().UnixMilli()
 	form := []string{"grant_type=client_credentials"}
 	if len(s.scopes) > 0 {

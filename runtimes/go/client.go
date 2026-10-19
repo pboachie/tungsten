@@ -22,6 +22,7 @@ const Version = "0.1.3"
 // envelope. It is safe for concurrent use. API and transport failures are
 // returned as *Error values carrying the envelope.
 type ClientCore struct {
+	allowInsecureHTTP bool
 	maxResponseBytes  *int64
 	redirectsDisabled bool
 	api               *APIDescriptor
@@ -105,18 +106,18 @@ func NewClientCore(api *APIDescriptor, options ClientOptions) (*ClientCore, erro
 	} else {
 		key = append([]byte(nil), key...)
 	}
-	maximum := options.MaxResponseBytes
-	if maximum != nil {
-		copy := *maximum
-		maximum = &copy
+	maximum := int64(4 * 1024 * 1024)
+	if options.MaxResponseBytes != nil {
+		maximum = *options.MaxResponseBytes
 	}
 	c := &ClientCore{
-		maxResponseBytes:  maximum,
+		maxResponseBytes:  &maximum,
 		redirectsDisabled: api.Redirects == RedirectNone || options.Redirects == RedirectNone,
 		api:               api,
 		auth:              options.Auth,
 		headers:           options.Headers,
 		baseURL:           base,
+		allowInsecureHTTP: options.AllowInsecureHTTP,
 		timeout:           options.Timeout,
 		maxEventBytes:     options.MaxEventBytes,
 		maxCollectBytes:   options.MaxCollectBytes,

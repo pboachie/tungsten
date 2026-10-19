@@ -171,12 +171,30 @@ Pass `--version v0.1.2` to `install.sh` (or `-Version v0.1.2` to `install.ps1`) 
 
 See [`install.sh --help`](install.sh) or `Get-Help ./install.ps1 -Full`
 ([PowerShell script](install.ps1)) for environment variables and exit codes.
-Both installers check whether `gh attestation` is usable before verification.
-Without it they explain that only the checksum was verified; set
-`TUNGSTEN_REQUIRE_ATTESTATION=1` to require provenance verification. A failed
-verification always refuses installation and shows the verifier's error output.
-`TUNGSTEN_NO_ATTESTATION=1` explicitly disables the check and cannot be combined
-with required verification. Required verification also refuses custom mirrors.
+The installers in this source require build provenance by default. Install
+[GitHub CLI](https://cli.github.com/) 2.102.0 or newer through its official
+installation instructions first; older versions do not safely enforce the exact
+workflow identity. The verifier must accept the archive for `pboachie/tungsten`,
+`.github/workflows/release.yml`, issuer
+`https://token.actions.githubusercontent.com` and the requested release tag.
+Attestations are obtained from `github.com`; verification needs access to GitHub
+and its trust services. Missing/unusable verifiers, unavailable or invalid
+attestations, and identity mismatches refuse installation. The installer does
+not bootstrap a verifier or silently choose a weaker mode.
+
+To intentionally install using only `SHA256SUMS`, set
+`TUNGSTEN_NO_ATTESTATION=1`. The installer prints a checksum-only warning and
+still rejects checksum mismatches. `TUNGSTEN_REQUIRE_ATTESTATION=1` remains an
+explicit assertion of the default policy and conflicts with that opt-out;
+setting it to `0` does not disable default verification. Both settings accept
+only `0` or `1`.
+
+`TUNGSTEN_REPO`, `TUNGSTEN_RELEASE_BASE_URL` and PowerShell `-BaseUrl` change
+download locations, not trusted signer identities. Mirrors can supply the same
+official release bytes for verification. Custom builds or restricted/offline
+mirrors without verifiable official provenance need the explicit checksum-only
+choice; their origin is not authenticated by a matching checksum. Older tagged
+installers retain their released behavior.
 
 On Linux the `musl` archives (the installer default) are statically linked and
 avoid a glibc dependency. Prefer them on older distributions. The published

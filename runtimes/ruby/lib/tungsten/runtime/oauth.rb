@@ -191,6 +191,7 @@ module Tungsten
       def token_timeout_ms = [@timeout_ms, 1].max
 
       def token_request(scheme, url, client, fields, previous)
+        return [nil, TokenFailure.new(INSECURE_HTTP_AUTH, false)] if insecure_http?(url)
         headers = [["Content-Type", "application/x-www-form-urlencoded"], ["Accept", "application/json"]]
         all = fields.dup
         if client[:secret].empty?
@@ -230,6 +231,7 @@ module Tungsten
       # An OAuth2 client-credentials token, fetched once per scheme and
       # cached until 30 s before it expires (one request at a time).
       def client_credentials_token(sat)
+        return [nil, INSECURE_HTTP_AUTH] if insecure_http?(sat.token_url)
         @cc_lock.synchronize do
           real_now = (Time.now.to_f * 1000).to_i
           cached = @cc_tokens[sat.name]

@@ -11,6 +11,20 @@ changes.
 
 ### Breaking
 
+- Ordinary buffered responses now default to 4 MiB per response across native
+  runtimes. Omitted/null limits inherit that default; choose an explicit finite
+  client/call limit for larger responses. Generated Rust CLIs expose
+  `--max-response-bytes`. Invalid effective limits fail before authentication,
+  storage or preview work. Overflow remains nonretryable and a write may have
+  taken effect. OAuth and successful SSE budgets remain separate.
+
+- Authenticated requests now require HTTPS by default across native runtimes,
+  including OAuth token endpoints. Local development on `localhost`, IPv4
+  `127/8` and IPv6 `::1` remains supported. Other HTTP targets return
+  `AUTH_FAILED` before credentials are dispatched. Migrate to HTTPS, or enable
+  the client's explicit `allowInsecureHttp` option (native casing varies) for
+  intentional insecure transport. MCP and WebMCP inherit their client's policy.
+
 - Caller-supplied confirmation-token keys now require at least 32 bytes across
   all runtime families. Empty or shorter keys fail client/options construction
   with a configuration error; omitting the key still generates a random key
@@ -24,6 +38,13 @@ changes.
   preview unless a tools entry explicitly removes it (TG0616). Both warnings fail
   strict checks and generation. Move intentional policy reductions into the matching
   tools entry and regenerate affected SDKs and agent manifests together.
+
+- Installers require official release provenance by default, including for
+  mirrors. Install GitHub CLI 2.102.0 or newer before running them. Verification
+  pins the repository, release workflow, issuer and requested tag; missing or
+  rejected attestations refuse installation. `TUNGSTEN_NO_ATTESTATION=1` is the
+  explicit, diagnosed checksum-only choice; `TUNGSTEN_REQUIRE_ATTESTATION=0`
+  no longer permits an implicit fallback.
 
 ### Added
 

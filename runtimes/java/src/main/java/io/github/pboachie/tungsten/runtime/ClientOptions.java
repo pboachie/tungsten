@@ -62,12 +62,14 @@ public final class ClientOptions {
     final Duration reconnectMax;
     final Duration idleTimeout;
     final byte[] confirmationKey;
+    final boolean allowInsecureHttp;
     final SSLSocketFactory sslSocketFactory;
     final LongSupplier clock;
     final DoubleSupplier random;
     final RuntimeIdentity identity;
 
     private ClientOptions(Builder b) {
+        allowInsecureHttp = b.allowInsecureHttp;
         redirects = b.redirects;
         baseUrl = b.baseUrl;
         auth = Collections.unmodifiableMap(new LinkedHashMap<>(b.auth));
@@ -101,6 +103,7 @@ public final class ClientOptions {
     }
 
     private ClientOptions(ClientOptions o, RuntimeIdentity identity) {
+        allowInsecureHttp = o.allowInsecureHttp;
         redirects = o.redirects;
         baseUrl = o.baseUrl;
         auth = o.auth;
@@ -170,6 +173,13 @@ public final class ClientOptions {
         private Duration reconnectMax;
         private Duration idleTimeout;
         private byte[] confirmationKey;
+        private boolean allowInsecureHttp;
+
+        /** Allows credentials over non-loopback HTTP, including OAuth. Default false; localhost, 127/8 and ::1 remain usable. */
+        public Builder allowInsecureHttp(boolean value) {
+            allowInsecureHttp = value;
+            return this;
+        }
         private SSLSocketFactory sslSocketFactory;
         private LongSupplier clock;
         private DoubleSupplier random;
@@ -253,7 +263,7 @@ public final class ClientOptions {
             return this;
         }
 
-        /** Maximum ordinary response bytes; unset means unbounded. Must be a positive safe integer. */
+        /** Maximum ordinary response bytes; null/unset inherits 4 MiB. Must be a positive safe integer. */
         public Builder maxResponseBytes(long value) {
             return maxResponseBytes(Long.valueOf(value));
         }

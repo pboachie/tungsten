@@ -22,7 +22,7 @@
 //!   `--i-understand`, `--idempotency-key` and `--verify`; on paginated
 //!   operations: `--all` and, with it, `--max-pages <N>`;
 //! - global flags: `--json`, `--base-url`, `--profile`, `--config`,
-//!   `--timeout`, `--no-color`;
+//!   `--timeout`, `--max-response-bytes`, `--no-color`;
 //! - `schema <command>` (the compact JSON Schema of the arguments),
 //!   `operations` (every command with its tier), `auth status` (which
 //!   credentials are present, never their values), `macros <name>` for the

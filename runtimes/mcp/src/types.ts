@@ -176,7 +176,8 @@ export interface SearchOptions {
 export interface ServerOptions {
   manifest: McpManifest;
   /** Factory for one `ClientCore` per MCP session (confirmation tokens and
-   * shown-once state are per session). */
+   * shown-once state are per session). Outgoing credentials inherit the core's
+   * HTTPS policy; intentional non-loopback HTTP requires allowInsecureHttp there. */
   createCore: () => import("@elysra/tungsten-runtime").ClientCore;
   /** Generated macro descriptors, by name. */
   macros?: Record<string, import("@elysra/tungsten-runtime").MacroDescriptor>;

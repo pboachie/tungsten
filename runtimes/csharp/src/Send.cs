@@ -38,16 +38,22 @@ public sealed partial class ClientCore
         return sent.Response!;
     }
 
-    /// <summary>Sends with retries. With stream, a 2xx text/event-stream answer is returned unread.</summary>
-    internal async Task<Sent> SendWithAsync(Prepared p, CallOptions opts, bool stream, CancellationToken ct)
+    private long ResponseLimit(OperationDescriptor op, CallOptions opts)
     {
-        var op = p.Op;
-        long? cap = opts.MaxResponseBytes ?? maxResponseBytes;
-        if (cap is long limit && (limit < 1 || limit > 9_007_199_254_740_991L))
+        long cap = opts.MaxResponseBytes ?? maxResponseBytes ?? 4 * 1024 * 1024;
+        if (cap < 1 || cap > 9_007_199_254_740_991L)
         {
             throw new Diag(op.Id, Category.ValidationFailed).Param("maxResponseBytes")
                 .Remedy("maxResponseBytes must be a positive safe integer; nothing was sent.").Fail();
         }
+        return cap;
+    }
+
+    /// <summary>Sends with retries. With stream, a 2xx text/event-stream answer is returned unread.</summary>
+    internal async Task<Sent> SendWithAsync(Prepared p, CallOptions opts, bool stream, CancellationToken ct)
+    {
+        var op = p.Op;
+        long cap = ResponseLimit(op, opts);
         var plan = RetryOptionsFor(op);
         bool mutation = Classify.IsMutation(op);
         bool protectedCall = Classify.HasReplayProtection(op, p.HasKey);
