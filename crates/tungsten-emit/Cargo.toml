@@ -22,6 +22,7 @@ doctest = false
 testing = []
 
 [dependencies]
+process-wrap = { version = "=10.0.1", default-features = false, features = ["std", "process-group", "job-object", "creation-flags"] }
 tungsten-core.workspace = true
 tungsten-ir.workspace = true
 tungsten-tokens.workspace = true
@@ -29,6 +30,12 @@ toml = "1.1"
 serde.workspace = true
 serde_json.workspace = true
 schemars.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+nix = { version = "=0.31.3", default-features = false, features = ["signal", "process"] }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "=0.62.2", default-features = false, features = ["Win32_System_Threading"] }
 
 [lints]
 workspace = true

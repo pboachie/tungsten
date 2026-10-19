@@ -121,6 +121,26 @@
 //!
 //! ## Limits and failures
 //!
+//! Each invocation owns a Unix process group or Windows Job Object. On leader
+//! exit, timeout or output overflow it requests termination of that group/job,
+//! reaps its leader and joins completed pipe workers. The process timeout includes
+//! spawning, I/O and cleanup, reserving up to one quarter (at most one second)
+//! for cleanup. Zero or unrepresentable timeouts refuse before execution.
+//! OS calls and scheduling are not hard real-time guarantees.
+//!
+//! There are 16 process-wide worker slots, four reserved before each launch.
+//! Unfinished workers retain their handles and slots after the deadline; later
+//! invocations join them when finished. Exhaustion refuses execution (TG0803).
+//! Incomplete termination, leader reaping or pipe work also fails with TG0803;
+//! it never accepts a partial response. Embeddings must exclusively own child
+//! reaping and must not auto-reap children or change SIGCHLD during a run.
+//! Linux refuses before launch when `/proc/self/status` is unreadable or reports
+//! ignored/caught SIGCHLD. This cannot detect every signal flag or competing reaper.
+//! Unix descendants can leave their group or pass pipe handles elsewhere.
+//! A successful termination request and joined workers do not prove every
+//! descendant settled. These lifecycle controls are not a sandbox, execution
+//! approval, inherited-environment filtering or filesystem/network isolation.
+//!
 //! The run is killed after `timeout_ms` (default 60 s) or when standard
 //! output passes `max_output_bytes` (default 64 MiB), TG0803. A response may
 //! not list more than 10000 files (TG0804). The compiler checks every path and writes only inside `out`,
@@ -155,6 +175,35 @@ pub use protocol::{
     EmitterDescription, FileMode, OutputPolicy, json_schema,
 };
 pub use run::{Emitted, describe, run};
+
+/// Private qualification hooks; not part of the extension protocol.
+#[cfg(feature = "testing")]
+pub mod __testing {
+    /// Reserved slots, including unfinished workers retained after a deadline.
+    pub fn reserved_workers() -> usize {
+        super::process::reserved_workers()
+    }
+
+    /// Reserve the finite worker budget without spawning a process or thread.
+    pub fn with_capacity_reserved<R>(f: impl FnOnce() -> R) -> Result<R, String> {
+        super::process::with_capacity_reserved(f)
+    }
+
+    /// Deterministic private control; the first worker supervises/spawns.
+    pub fn with_worker_start_failure<R>(nth: usize, f: impl FnOnce() -> R) -> R {
+        super::process::with_worker_start_failure(nth, f)
+    }
+
+    /// Pause only private cleanup qualification; RAII releases even on panic.
+    pub fn with_cleanup_paused<R>(f: impl FnOnce() -> R) -> R {
+        super::process::with_cleanup_paused(f)
+    }
+
+    #[cfg(target_os = "linux")]
+    pub fn child_reaping_status(status: &[u8]) -> std::io::Result<()> {
+        super::process::child_reaping_status(status)
+    }
+}
 
 use std::path::PathBuf;
 use std::time::Duration;

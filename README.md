@@ -431,6 +431,24 @@ write an external emitter.
 
 An `external:` target in `tungsten.yml` names a command that tungsten starts as a process, unsandboxed and with your privileges. It runs on every command that produces output in memory, not only on a writing `generate`: `generate --dry-run` and `--check`, `check --ci`, `diff` and `report` run it too (plain `check` and `ir dump` do not). A CI job that runs `tungsten check --ci` on pull requests therefore executes whatever the pull request puts in `tungsten.yml`. Pass `--no-external` or set `TUNGSTEN_NO_EXTERNAL=1` to skip external targets (reported as TG0807) when the manifest is not trusted.
 
+External emission and `--describe` own a Unix process group or Windows Job Object.
+Leader exit, timeout and output overflow trigger group/job termination and leader
+reaping. `timeout_ms` includes process launch, pipe work and cleanup; one quarter,
+up to one second, is reserved for cleanup. OS calls and scheduling can exceed that
+budget. Zero or unrepresentable timeouts refuse execution. Sixteen process-wide
+worker slots allow at most four simultaneous launches. Unfinished workers retain
+their handles and slots until they finish and a later invocation joins them;
+capacity exhaustion refuses before execution. TG0803 reports incomplete cleanup
+and accepts no files. Investigate remaining emitter processes before retrying.
+Unix descendants can escape their group or pass pipes elsewhere; these lifecycle
+controls do not establish that every descendant stopped, approve an executable,
+filter inherited credentials or isolate filesystem/network access. Library
+embeddings must exclusively reap their external children and must not auto-reap
+children or change SIGCHLD during execution.
+On Linux, an unreadable `/proc/self/status` or an ignored/caught SIGCHLD disposition
+refuses external execution before launch. That check cannot detect every signal
+flag or competing reaper; the embedding ownership requirement still applies.
+
 The same opt-out disables `tungsten emitters` discovery, including `--describe`
 probes of executables on PATH. Its empty result means discovery was disabled;
 it does not establish that no emitters are installed. Without the opt-out,
