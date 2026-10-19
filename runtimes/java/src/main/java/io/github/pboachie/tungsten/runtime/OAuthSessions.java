@@ -288,7 +288,7 @@ final class OAuthSessions {
         OAuthInputs.Budget budget = new OAuthInputs.Budget();
         budget.charge(scheme);
         long tokenBytes = core.options.maxOAuthTokenResponseBytes;
-        tokenBytes -= OAuthInputs.bytes(previous.accessToken(), (int) Math.min(tokenBytes, Integer.MAX_VALUE));
+        OAuthInputs.bytes(previous.accessToken(), (int) Math.min(tokenBytes, Integer.MAX_VALUE));
         OAuthInputs.bytes(previous.refreshToken(), (int) Math.min(tokenBytes, Integer.MAX_VALUE));
         String[] reason = new String[1];
         ApiDescriptor.AuthorizationCode flow = auth.codeFlow(scheme, reason);
