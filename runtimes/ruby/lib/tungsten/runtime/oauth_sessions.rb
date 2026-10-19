@@ -334,6 +334,7 @@ module Tungsten
                                     attempt && !attempt[:invalid] && at < attempt[:expires] && current_locked?(scheme, committed))
           @sessions[scheme][:selected] = true
           remove_locked(handle) # Success publication and terminal retirement linearize together.
+          claimed = false # This owner has retired; ensure must not remove a reused handle.
         end
         Ok.new(value: @core.send(:token_info, scheme, stored), meta: ResponseMeta.local)
       rescue StandardError

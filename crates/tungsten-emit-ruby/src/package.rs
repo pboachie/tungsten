@@ -111,8 +111,8 @@ fn readme(g: &Gen<'_, '_>) -> String {
         .plan
         .ir
         .auth
-        .first()
-        .filter(|scheme| scheme.authorization_code().is_some());
+        .iter()
+        .find(|scheme| scheme.authorization_code().is_some());
     out.push_str(&format!("# {}\n\n", g.opts.gem));
     out.push_str(&format!(
         "<!-- {} -->\n\n",
@@ -165,13 +165,7 @@ fn readme(g: &Gen<'_, '_>) -> String {
     if browser_auth.is_some() {
         out.push_str("Set `OAUTH_CLIENT_ID` and `OAUTH_REDIRECT_URI` to your registered application's client ID and exact redirect URI. Public clients omit `client_secret`; confidential clients supply it through application-owned secure configuration. Complete managed authorization before authenticated calls.\n\n");
     }
-    if let Some(scheme) = g
-        .plan
-        .ir
-        .auth
-        .iter()
-        .find(|scheme| scheme.authorization_code().is_some())
-    {
+    if let Some(scheme) = browser_auth {
         out.push_str(&format!(
             "## Managed OAuth authorization\n\nConfigure `{}` with the authorization-code credential Hash (`flow: \"authorizationCode\"`, `client_id`, `redirect_uri`). Qualify the provider's S256 and issuer-response support first. Supply an unpredictable owning listener/session binding, its qualified issuer URL and the full callback received by that listener.\n\n```ruby\nflow = client.oauth({})\nstarted = flow.authorization_url(\n  session_binding: session_binding, s256_supported: true,\n  issuer_defense: Tungsten::Runtime::IssuerDefense.issuer_response(issuer)\n)\nraise \"Authorization could not begin\" unless started.ok?\nattempt = started.value\n# Open attempt.url in the browser; keep its handle with the owning listener.\ncompleted = flow.exchange_code(\n  attempt_handle: attempt.attempt_handle, callback_url: callback_url,\n  session_binding: session_binding\n)\nraise \"Authorization did not complete\" unless completed.ok?\n# Authenticated generated calls may now use the selected token.\n```\n\nAccepted callbacks are consumed once. Cancel with `cancel_authorization(attempt_handle: ..., session_binding: ...)`; `logout` fences the local session before credential cleanup. The per-client default `MemoryTokenStore` supports managed atomic writes; custom stores need the exactly-once final `set_if_current`/`delete_if_current` predicate contract. Shared stores and real providers/listeners need separate qualification. Explicit primitive escapes are `low_level_authorization_url`, `low_level_exchange_code` and `low_level_refresh`; they leave callback security and store coordination to the caller. Keep handles, URLs, bindings, callbacks and tokens out of logs.\n\n",
             scheme.name(), str_lit(scheme.name())

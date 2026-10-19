@@ -12,7 +12,8 @@ module Tungsten
       LIFETIME_MS = 600_000
       SAFE_INTEGER = 9_007_199_254_740_991
       PROTECTED = %w[state code code_verifier code_challenge code_challenge_method client_id client_secret
-                     redirect_uri grant_type response_type scope resource audience iss error error_description error_uri].freeze
+                     redirect_uri grant_type response_type response_mode request request_uri scope resource audience
+                     iss error error_description error_uri].freeze
       class Invalid < StandardError; end
 
       module_function
