@@ -75,6 +75,7 @@ pub(crate) fn compile(path: &Path) -> Compiled {
         Err(diagnostic) => Compiled {
             config: None,
             effective: None,
+            profile_sources: Default::default(),
             workspace: Workspace::default(),
             ir: None,
             diagnostics: Diagnostics(vec![diagnostic]),

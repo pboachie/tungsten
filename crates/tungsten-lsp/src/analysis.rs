@@ -170,7 +170,7 @@ impl<'w> Lines<'w> {
     }
 }
 
-fn map_diagnostics(
+pub(crate) fn map_diagnostics(
     compiled: &Compiled,
     base: &Path,
     manifest_name: &str,
@@ -180,10 +180,18 @@ fn map_diagnostics(
     let mut lines = Lines::new(ws);
     let mut out: BTreeMap<PathBuf, Vec<Diagnostic>> = BTreeMap::new();
     for d in &compiled.diagnostics.0 {
-        let (path, range) = place(d, &mut lines, base, manifest_name, manifest);
+        let (path, range) = place(d, &mut lines, compiled, base, manifest_name, manifest);
         let list = out.entry(path).or_default();
         if list.len() < MAX_PER_FILE {
-            list.push(convert(d, range, &mut lines, base));
+            list.push(convert(
+                d,
+                range,
+                &mut lines,
+                compiled,
+                base,
+                manifest_name,
+                manifest,
+            ));
         }
     }
     for list in out.values_mut() {
@@ -197,18 +205,26 @@ fn map_diagnostics(
 fn place(
     d: &Tg,
     lines: &mut Lines<'_>,
+    compiled: &Compiled,
     base: &Path,
     manifest_name: &str,
     manifest: &Path,
 ) -> (PathBuf, Range) {
     if let Some(span) = d.labels.iter().find_map(|l| l.span) {
         let name = lines.ws.sources.get(span.source).name.clone();
-        let path = file_path(&name, base, manifest_name, manifest);
+        let path = file_path(
+            &name,
+            Some(span.source),
+            compiled,
+            base,
+            manifest_name,
+            manifest,
+        );
         return (path, lines.range(span.source, span.start, span.end));
     }
     match d.labels.first() {
         Some(label) => {
-            let path = file_path(&label.file, base, manifest_name, manifest);
+            let path = file_path(&label.file, None, compiled, base, manifest_name, manifest);
             let range = lines.first_line(&label.file);
             (path, range)
         }
@@ -216,7 +232,31 @@ fn place(
     }
 }
 
-fn file_path(name: &str, base: &Path, manifest_name: &str, manifest: &Path) -> PathBuf {
+fn file_path(
+    name: &str,
+    source: Option<SourceId>,
+    compiled: &Compiled,
+    base: &Path,
+    manifest_name: &str,
+    manifest: &Path,
+) -> PathBuf {
+    // The SourceId binding is authoritative. Do not interpret an admitted
+    // profile's portable display name as a path. A span-less label can still
+    // resolve through its captured source; duplicate names were refused before
+    // admission. Rejected captures publish the manifest collision diagnostic,
+    // so existing manifest/spec fallback remains safe and unchanged.
+    let source = source.or_else(|| {
+        compiled
+            .workspace
+            .sources
+            .files()
+            .iter()
+            .find(|file| file.name == name)
+            .map(|file| file.id)
+    });
+    if let Some(path) = source.and_then(|source| compiled.profile_sources.get(&source)) {
+        return profile_editor_path(path);
+    }
     if name.is_empty() || name == manifest_name {
         manifest.to_path_buf()
     } else {
@@ -224,7 +264,41 @@ fn file_path(name: &str, base: &Path, manifest_name: &str, manifest: &Path) -> P
     }
 }
 
-fn convert(d: &Tg, range: Range, lines: &mut Lines<'_>, base: &Path) -> Diagnostic {
+fn profile_editor_path(path: &Path) -> PathBuf {
+    #[cfg(windows)]
+    {
+        use std::ffi::OsString;
+        use std::path::{Component, Prefix};
+
+        let mut components = path.components();
+        if let Some(Component::Prefix(prefix)) = components.next() {
+            let mut ordinary = match prefix.kind() {
+                Prefix::VerbatimDisk(drive) => OsString::from(format!("{}:", char::from(drive))),
+                Prefix::VerbatimUNC(server, share) => {
+                    let mut ordinary = OsString::from(r"\\");
+                    ordinary.push(server);
+                    ordinary.push(r"\");
+                    ordinary.push(share);
+                    ordinary
+                }
+                _ => return normalize(path),
+            };
+            ordinary.push(components.as_path().as_os_str());
+            return normalize(Path::new(&ordinary));
+        }
+    }
+    normalize(path)
+}
+
+fn convert(
+    d: &Tg,
+    range: Range,
+    lines: &mut Lines<'_>,
+    compiled: &Compiled,
+    base: &Path,
+    manifest_name: &str,
+    manifest: &Path,
+) -> Diagnostic {
     let mut message = d.message.clone();
     if let Some(note) = d.labels.first().and_then(|l| l.message.as_deref()) {
         message.push('\n');
@@ -238,7 +312,14 @@ fn convert(d: &Tg, range: Range, lines: &mut Lines<'_>, base: &Path) -> Diagnost
     for label in d.labels.iter().skip(1) {
         let Some(span) = label.span else { continue };
         let name = lines.ws.sources.get(span.source).name.clone();
-        let path = normalize(&base.join(&name));
+        let path = file_path(
+            &name,
+            Some(span.source),
+            compiled,
+            base,
+            manifest_name,
+            manifest,
+        );
         if let Some(uri) = path_to_uri(&path) {
             related.push(DiagnosticRelatedInformation {
                 location: Location::new(uri, lines.range(span.source, span.start, span.end)),

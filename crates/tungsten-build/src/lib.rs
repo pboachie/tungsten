@@ -20,6 +20,7 @@
 
 pub mod contracts;
 pub mod driver;
+pub mod inspection;
 pub mod suggest;
 pub mod types;
 

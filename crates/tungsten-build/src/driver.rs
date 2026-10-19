@@ -9,7 +9,7 @@ use tungsten_config::profiles::{
     self, CapturedProfile, Declaration, EffectiveConfiguration, ProfileSource, SourceKind,
 };
 use tungsten_config::{ManifestSource, ParsedManifest, TungstenConfig};
-use tungsten_core::{Diagnostic, Diagnostics, Digest};
+use tungsten_core::{Diagnostic, Diagnostics, Digest, SourceId};
 use tungsten_ir::Ir;
 use tungsten_openapi::{LoadEntry, LoadOptions, Workspace};
 
@@ -74,6 +74,11 @@ pub struct Compiled {
     /// Supported declarations and authored provenance, before emitter defaults.
     /// This in-memory result is not an authorization or replayable manifest.
     pub effective: Option<EffectiveConfiguration>,
+    /// Physical identities of admitted captured profile sources, including
+    /// invalid profiles. Invocation-local editor metadata; never serialized
+    /// into the IR, portable provenance or configuration inspection exports.
+    /// Rejected source-name collisions receive no binding.
+    pub profile_sources: BTreeMap<SourceId, PathBuf>,
     pub workspace: Workspace,
     pub ir: Option<Ir>,
     /// All diagnostics (manifest, frontend, builder), sorted.
@@ -128,15 +133,30 @@ fn compile_project_here(manifest: &Path, opts: &CompileOptions) -> Compiled {
 /// compiling or acquiring inputs, loading agent content, or running tools.
 /// Raw project target values retain their legacy emitter fallback behavior.
 pub fn load_project_config(manifest: &Path, opts: &CompileOptions) -> ParsedManifest {
+    load_project_configuration(manifest, opts).parsed
+}
+
+/// Config-only capture including the authored provenance and profile sources.
+/// Inspection consumers must redact raw source/configuration content before export.
+pub fn load_project_configuration(
+    manifest: &Path,
+    opts: &CompileOptions,
+) -> crate::inspection::ProjectConfiguration {
     let opts = opts.snapshot();
     if opts.load.cancellation.is_cancelled() {
-        return ParsedManifest {
-            config: None,
-            diagnostics: Diagnostics::new(),
-            source: tungsten_config::parse_with_source(&manifest_name(manifest), "").source,
+        return crate::inspection::ProjectConfiguration {
+            parsed: ParsedManifest {
+                config: None,
+                diagnostics: Diagnostics::new(),
+                source: tungsten_config::parse_with_source(&manifest_name(manifest), "").source,
+            },
+            effective: None,
+            profile_sources: vec![],
         };
     }
     let mut parsed = read_project_manifest(manifest, &opts);
+    let mut effective = None;
+    let mut profile_sources = vec![];
     if let Some(mut config) = parsed.config.take() {
         let base = manifest.parent().unwrap_or(Path::new(""));
         let manifest_info = Manifest {
@@ -152,12 +172,18 @@ pub fn load_project_config(manifest: &Path, opts: &CompileOptions) -> ParsedMani
             &opts,
         );
         parsed.diagnostics.extend(composition.diagnostics);
+        profile_sources = composition.sources;
         if !parsed.diagnostics.has_errors() && !opts.load.cancellation.is_cancelled() {
             parsed.config = Some(config);
+            effective = composition.effective;
         }
     }
     parsed.diagnostics.sort();
-    parsed
+    crate::inspection::ProjectConfiguration {
+        parsed,
+        effective,
+        profile_sources,
+    }
 }
 
 fn manifest_name(manifest: &Path) -> String {
@@ -320,6 +346,7 @@ fn failed(
     Compiled {
         config,
         effective: None,
+        profile_sources: BTreeMap::new(),
         workspace,
         ir: None,
         diagnostics,
@@ -438,6 +465,9 @@ fn compile_validated(
             .workspace
             .sources
             .add(profile.source.name(), profile.source.text());
+        compiled
+            .profile_sources
+            .insert(id, profile.identity.clone());
         profile.source.attach_spans(id, &mut compiled.diagnostics);
     }
     if !collision && !opts.load.cancellation.is_cancelled() {
@@ -627,6 +657,7 @@ fn compile_prepared(
         return Compiled {
             config: Some(config),
             effective: None,
+            profile_sources: BTreeMap::new(),
             workspace,
             ir: None,
             diagnostics,
@@ -699,6 +730,7 @@ fn compile_prepared(
             return Compiled {
                 config: Some(config),
                 effective: None,
+                profile_sources: BTreeMap::new(),
                 workspace,
                 ir: None,
                 diagnostics,
@@ -716,6 +748,7 @@ fn compile_prepared(
             return Compiled {
                 config: Some(config),
                 effective: None,
+                profile_sources: BTreeMap::new(),
                 workspace,
                 ir: None,
                 diagnostics,
@@ -742,6 +775,7 @@ fn compile_prepared(
     Compiled {
         config: Some(config),
         effective: None,
+        profile_sources: BTreeMap::new(),
         workspace,
         ir,
         diagnostics,
