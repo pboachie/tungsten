@@ -236,6 +236,8 @@ abstract final class _Transport {
         );
       }
       if (maxResponseBytes != null &&
+          method != 'HEAD' &&
+          !const [204, 205, 304].contains(status) &&
           response.contentLength > maxResponseBytes) {
         return _Outcome(
           _Kind.response,

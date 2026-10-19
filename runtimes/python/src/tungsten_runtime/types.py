@@ -693,8 +693,12 @@ class ClientOptions:
     #: May tighten the API default; an API configured with none cannot be relaxed.
     redirects: RedirectPolicy | None = None
 
-    #: Optional ordinary-response byte cap (positive safe integer). Unset: unbounded.
+    #: Ordinary-response byte cap (positive safe integer). None inherits the 4 MiB default.
     max_response_bytes: int | None = None
+
+    #: Explicitly allows credentials over non-loopback HTTP, including OAuth.
+    #: Default False: use HTTPS. localhost, 127/8 and ::1 work without opt-in.
+    allow_insecure_http: bool = False
 
 
 class CallOptions(TypedDict, total=False):
@@ -705,7 +709,7 @@ class CallOptions(TypedDict, total=False):
     confirm: str | Literal[True]
     allow_confirm_true: bool
     timeout_ms: int
-    max_response_bytes: int
+    max_response_bytes: int | None
     verify: bool
     headers: Mapping[str, str]
 

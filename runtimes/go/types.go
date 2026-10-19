@@ -693,7 +693,10 @@ const (
 
 // ClientOptions configures a client.
 type ClientOptions struct {
-	// Optional ordinary-response byte cap; a positive safe integer. Nil is unbounded.
+	// AllowInsecureHTTP permits credentials over non-loopback HTTP, including OAuth.
+	// Default false: use HTTPS. localhost, 127/8 and ::1 remain usable locally.
+	AllowInsecureHTTP bool
+	// Ordinary-response byte cap; a positive safe integer. Nil inherits the 4 MiB default.
 	MaxResponseBytes *int64
 	// Redirects may tighten the API policy. The zero value inherits it.
 	Redirects RedirectPolicy

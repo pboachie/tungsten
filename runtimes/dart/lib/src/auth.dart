@@ -415,8 +415,8 @@ extension _Auth on ClientCore {
   }
 
   /// The credentials of an operation.
-  Future<_AuthResult> _resolveAuth(
-      OperationDescriptor op, String method) async {
+  Future<_AuthResult> _resolveAuth(OperationDescriptor op, String method,
+      [String? credentialError]) async {
     if (op.security.isEmpty) return _AuthResult(_AuthPlan(), _Secrets());
     List<String>? best;
     var bestTouched = false;
@@ -443,6 +443,8 @@ extension _Auth on ClientCore {
         }
       }
       if (missing.isEmpty) {
+        if (sats.isNotEmpty && credentialError != null)
+          return _AuthResult.failure(credentialError);
         final out = _AuthResult(_AuthPlan(), _Secrets());
         for (final (_, sat) in sats) {
           final problem = await _apply(sat, out);

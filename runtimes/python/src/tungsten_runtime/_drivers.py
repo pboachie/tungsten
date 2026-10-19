@@ -799,17 +799,17 @@ class SyncDriver:
             return TimedOut()
         if req.stream and 200 <= response.status_code <= 299 and _is_event_stream(response):
             return Streaming(response.status_code, _headers(response), SyncStream(response))
-        maximum = (
-            req.max_response_bytes
-            if req.method != "HEAD" and response.status_code not in (204, 205, 304)
-            else None
-        )
+        maximum = req.max_response_bytes
         try:
             chunks: list[bytes] = []
             failure: Literal["timeout", "broken", "oversized"] | None = None
             try:
                 size = 0
-                if _oversized_length(response, maximum):
+                if (
+                    req.method != "HEAD"
+                    and response.status_code not in (204, 205, 304)
+                    and _oversized_length(response, maximum)
+                ):
                     failure = "oversized"
                 else:
                     for chunk in response.iter_bytes():
@@ -1024,17 +1024,17 @@ class AsyncDriver:
             return TimedOut()
         if req.stream and 200 <= response.status_code <= 299 and _is_event_stream(response):
             return Streaming(response.status_code, _headers(response), _AsyncStream(response))
-        maximum = (
-            req.max_response_bytes
-            if req.method != "HEAD" and response.status_code not in (204, 205, 304)
-            else None
-        )
+        maximum = req.max_response_bytes
         try:
             chunks: list[bytes] = []
             failure: Literal["timeout", "broken", "oversized"] | None = None
 
             async def read_body() -> Literal["oversized"] | None:
-                if _oversized_length(response, maximum):
+                if (
+                    req.method != "HEAD"
+                    and response.status_code not in (204, 205, 304)
+                    and _oversized_length(response, maximum)
+                ):
                     return "oversized"
                 size = 0
                 async for chunk in response.aiter_bytes():

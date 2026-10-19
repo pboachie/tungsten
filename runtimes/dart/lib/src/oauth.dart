@@ -309,6 +309,8 @@ extension _OAuth on ClientCore {
       ('Content-Type', 'application/x-www-form-urlencoded'),
       ('Accept', 'application/json'),
     ];
+    if (_insecureHttp(url))
+      return (null, _TokenFailure(ClientCore._insecureHttpAuth, false));
     final all = [...fields];
     if (client.secret.isEmpty) {
       all.add(('client_id', client.id));
@@ -413,6 +415,8 @@ extension _OAuth on ClientCore {
   }
 
   Future<(String?, String?)> _fetchClientCredentials(_Satisfier sat) async {
+    if (_insecureHttp(sat.tokenUrl))
+      return (null, ClientCore._insecureHttpAuth);
     final form = ['grant_type=client_credentials'];
     if (sat.scopes.isNotEmpty) {
       form.add('scope=${_Serialize.encodeFormComponent(sat.scopes.join(' '))}');

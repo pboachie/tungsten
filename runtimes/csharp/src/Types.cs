@@ -545,6 +545,8 @@ public interface IIdempotencyStore
 /// <summary>Configures a client.</summary>
 public sealed record ClientOptions
 {
+    /// <summary>Explicitly permits credentials over non-loopback HTTP, including OAuth. Default false; localhost, 127/8 and ::1 remain usable.</summary>
+    public bool AllowInsecureHttp { get; init; }
     /// <summary>Restricts redirects to same_origin_read or none; none always wins and requires the default HTTP client.</summary>
     public string? Redirects { get; init; }
 
@@ -574,7 +576,7 @@ public sealed record ClientOptions
     public IReadOnlyDictionary<string, string>? Headers { get; init; }
     /// <summary>The largest server-sent event a stream accepts, in UTF-8 bytes (default 1 MiB).</summary>
     public int? MaxEventBytes { get; init; }
-    /// <summary>Maximum ordinary response bytes; null is unbounded. Must be a positive safe integer.</summary>
+    /// <summary>Maximum ordinary response bytes; null inherits 4 MiB. Must be a positive safe integer.</summary>
     public long? MaxResponseBytes { get; init; }
     /// <summary>Bounds collecting a stream (default 4 MiB).</summary>
     public int? MaxCollectBytes { get; init; }

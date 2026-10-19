@@ -19,6 +19,7 @@ pub const RESERVED_FLAGS: &[&str] = &[
     "idempotency-key",
     "json",
     "max-pages",
+    "max-response-bytes",
     "no-color",
     "profile",
     "timeout",

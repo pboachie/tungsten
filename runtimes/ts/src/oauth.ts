@@ -10,7 +10,7 @@
  * `ClientOptions.tokenStore` (memory by default), never in the options,
  * envelopes or logs.
  */
-import { TokenError } from "./auth.js";
+import { insecureHttp, INSECURE_HTTP_AUTH, TokenError } from "./auth.js";
 import { attempt, type AttemptOutcome } from "./transport.js";
 import type { ApiDescriptor, AuthorizationCodeDescriptor, ClientOptions, Diagnostic } from "./types.js";
 import { base64url, bytesToBase64, getPath, isRecord, utf8 } from "./util.js";
@@ -362,6 +362,7 @@ export class OAuthSession {
     fields: Array<[string, string]>,
     previous: string | undefined,
   ): Promise<StoredToken> {
+    if (insecureHttp(url, this.#deps.options.allowInsecureHttp)) throw new TokenError(INSECURE_HTTP_AUTH);
     const headers: Record<string, string> = { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" };
     if (client.clientSecret !== undefined) {
       headers.Authorization = `Basic ${bytesToBase64(utf8(`${percentEncode(client.clientId)}:${percentEncode(client.clientSecret)}`))}`;

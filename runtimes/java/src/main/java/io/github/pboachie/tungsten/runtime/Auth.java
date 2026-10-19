@@ -15,6 +15,41 @@ import java.util.Map;
  * the authorization-code flow with refresh before expiry and once after a 401).
  */
 final class Auth {
+    static final String INSECURE_HTTP_AUTH = "Refusing to send credentials over non-loopback HTTP. Use HTTPS, or set ClientOptions.allowInsecureHttp(true) for intentional insecure transport. Nothing was sent.";
+
+    static boolean credentialHeader(ApiDescriptor api, String name, boolean preservedIdempotency) {
+        return (!preservedIdempotency && Text.looksSensitive(name)) || name.equalsIgnoreCase("Authorization") || name.equalsIgnoreCase("Proxy-Authorization") || name.equalsIgnoreCase("Cookie")
+                || api.auth().stream().anyMatch(s -> s.kind().equals("api_key") && "header".equals(s.in()) && s.wire().equalsIgnoreCase(name)
+                    || s.kind().equals("composite") && s.parts().stream().anyMatch(p -> p.kind().equals("header")
+                        && (p.fromConfig() == null || p.fromConfig().isEmpty()) && p.name().equalsIgnoreCase(name)));
+    }
+
+    static boolean insecureHttp(String target, boolean allow) {
+        if (allow) return false;
+        try {
+            java.net.URI url = new java.net.URI(target);
+            if (!"http".equalsIgnoreCase(url.getScheme())) return false;
+            String host = url.getHost();
+            if (host == null) return true;
+            if (host.equalsIgnoreCase("localhost") || host.equalsIgnoreCase("localhost.")) return false;
+            if (host.startsWith("[") && host.endsWith("]")) {
+                String literal = host.substring(1, host.length() - 1);
+                if (!literal.matches("[0-9a-fA-F:.]+")) return true;
+                java.net.InetAddress ip = java.net.InetAddress.getByName(literal);
+                return !(ip instanceof java.net.Inet6Address && ip.isLoopbackAddress());
+            }
+            String[] octets = host.split("\\.", -1);
+            if (octets.length != 4 || !octets[0].equals("127")) return true;
+            for (String octet : octets) {
+                if (!octet.matches("[0-9]{1,3}") || Integer.parseInt(octet) > 255) return true;
+            }
+            return false;
+        } catch (java.net.UnknownHostException error) {
+            return true;
+        } catch (java.net.URISyntaxException error) {
+            return false;
+        }
+    }
     /** Tokens expiring within this many milliseconds count as expired. */
     static final long EXPIRY_SKEW_MS = 30000;
 
@@ -346,7 +381,7 @@ final class Auth {
     }
 
     /** Resolves the credentials of an operation; a problem is the result's failed text. */
-    Resolved resolve(OperationDescriptor op, String method) {
+    Resolved resolve(OperationDescriptor op, String method, String credentialError) {
         Resolved none = new Resolved();
         if (op.security().isEmpty()) {
             return none;
@@ -385,6 +420,11 @@ final class Auth {
                 }
             }
             if (missing.isEmpty()) {
+                if (!sats.isEmpty() && credentialError != null) {
+                    Resolved failed = new Resolved();
+                    failed.failed = credentialError;
+                    return failed;
+                }
                 Resolved out = new Resolved();
                 for (Satisfier s : sats) {
                     String problem = apply(s, out);
@@ -613,6 +653,7 @@ final class Auth {
 
     /** Sends a form to a token endpoint. */
     TokenResult tokenRequest(String scheme, String url, CodeClient client, List<Serialize.Pair> fields, String previous) {
+        if (insecureHttp(url, core.options.allowInsecureHttp)) return new TokenResult(null, new Failure(INSECURE_HTTP_AUTH, false));
         List<Serialize.Header> headers = new ArrayList<>();
         headers.add(new Serialize.Header("Content-Type", "application/x-www-form-urlencoded", false));
         headers.add(new Serialize.Header("Accept", "application/json", false));
@@ -661,6 +702,7 @@ final class Auth {
 
     /** An OAuth2 client-credentials token, fetched once and cached (single flight). */
     private Token clientCredentialsToken(Satisfier s) {
+        if (insecureHttp(s.tokenUrl, core.options.allowInsecureHttp)) return Token.failed(INSECURE_HTTP_AUTH);
         synchronized (ccLock) {
             long realNow = System.currentTimeMillis();
             Cached cached = ccTokens.get(s.name);
