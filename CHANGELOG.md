@@ -108,6 +108,7 @@ changes.
   or remove the override. Keys are copied at construction so later mutation of
   a caller's buffer cannot change the client's signing key. Rotating a key
   invalidates existing previews; request a new preview before confirming.
+
 - Ordinary OpenAPI `x-agent-safety` annotations cannot lower the built-in HTTP-method
   tier without an explicit `agent.yml` tools safety override (TG0615). Spec-origin
   `x-agent-preview: none` on operations with side effects keeps a safe default
@@ -140,6 +141,7 @@ changes.
 - Declare the existing TypeScript target options and supported-value schema in
   the shared capability contract. Keep emitter defaults and TG0711 fallback
   behavior compatible while configuration and generation share validation.
+
 - Validate saved mock scenarios portably and explicitly run integration argv on
   Linux with a run-phase deadline, cancellation, owned process-group cleanup,
   final exit/call-count assertions and a value-free JSON report. The run budget
@@ -148,6 +150,7 @@ changes.
 - Load bounded, non-executable JSON scenarios with `tungsten mock --scenario`.
   Reuse existing response and fault controls, and read a value-free report of
   total calls, per-operation/status counts and unconsumed responses.
+
 - Analyze unsaved JSON/YAML specs, overlays and local references through the
   shared compiler source provider. Keep buffer spans and navigation consistent,
   and cancel obsolete editor analysis while retaining debounce and stale-result
@@ -157,19 +160,73 @@ changes.
   declarations. Share target aliases, imported-operation policy support and
   consumer prerequisites with configuration and doctor; include Kotlin, F#
   and Dart prerequisites without inferring qualification or published packages.
+
 - Add a manual Windows release-video example with exact-release provenance,
   multiple input workflows, local narration, real terminal recording, chapters,
   compact review MP4s and a reusable source and evidence package.
+
 - Add a gated JSR source-publication route for the core TypeScript runtime
   starting at 0.2.0, with artifact verification and OIDC provenance. Publication
   still requires the release checks and an explicit maintainer switch.
+
+### Changed
+
+- Locate primary and related LSP profile diagnostics in their captured local
+  files, including invalid profiles, while preserving portable compiler and
+  configuration-inspection source names.
+
+- Reuse immutable SDK structure across support checks and emission for Java,
+  Kotlin, C#, F#, Dart and Ruby. Generation stages one target's bytes at a time
+  with bounded output metadata before applying files, preserving strict
+  diagnostic withholding and custom-file ownership. Reports discard target
+  bytes after collecting their results. Application errors and cooperative
+  cancellation describe completed file writes/removals; output remains
+  nontransactional across files and directories.
+
+### Fixed
+
+- Java generated usage now imports its resolved resource type and infers the
+  response type. Dispatch request decoding also imports resolved resource types,
+  so valid package prefixes such as `client.generated` cannot be shadowed by the
+  dispatch client's field. Java and Kotlin authorization-code examples configure
+  the managed OAuth flow explicitly.
+
+- TypeScript, Python and Rust authorization-code and refresh diagnostics include
+  only recognized OAuth token error labels. Arbitrary provider error strings
+  are omitted even when they contain only lowercase letters and underscores.
+
+- Windows Git input acquisition uses an exclusively created local temporary
+  repository, avoiding Git working-directory and pack-file limits caused by
+  deeply nested project caches. Verified project pins and offline reuse retain
+  their existing locations; unsupported temporary roots fail safely.
+
+- TypeScript, Python and Rust managed OAuth helpers cap endpoint text at 32 KiB
+  and reject malformed Unicode before URL parsing. Protected or malformed refresh
+  queries refuse before authorization begins and before default refresh dispatch,
+  including a changed endpoint or the token-endpoint fallback.
+
+- Check profile-derived TypeScript prerequisites in project `doctor`, and refuse
+  invalid manifests or bounded profiles before running tool version probes.
+
+- Correct the MCP runtime and generated server prerequisite to Node.js 22.13+
+  (23.2+ on the Node.js 23 line), matching the module API used by its import
+  graph. Keep doctor prerequisites for every configured target so a linked SDK
+  cannot hide the stricter MCP floor.
+
+- `tungsten emitters --no-external` and `TUNGSTEN_NO_EXTERNAL=1` now skip
+  PATH-based descriptor probes as well as manifest commands. The inspection
+  result reports that discovery is disabled instead of claiming no emitters exist.
+
+## [0.1.3] - 2026-10-17
+
+### Added
 
 - Automate Maven Central, NuGet and RubyGems publication alongside npm, PyPI
   and crates.io after an approved release tag. Verify package identity, source
   and checksums before credentials, and compare public downloads with the tested
   archives. Add a package-only rehearsal and an embedded NuGet package icon.
-  Rust registry publication is deferred to 0.2.0: 0.1.3 keeps crates.io uploads
-  disabled while retaining Rust archive checks and documented source installation.
+  Rust publication also requires accepted first-publication ownership and both
+  trusted publishers; source preparation does not complete registry acceptance.
 
 - Enable registry packaging of the Apache-2.0 Rust runtime and CLI-kit with a
   versioned runtime dependency. Add opt-in crates.io trusted publishing to the
@@ -344,18 +401,6 @@ values as `JsonNode`, OpenID Connect as a bearer token, no CLI or MCP).
 
 ### Changed
 
-- Locate primary and related LSP profile diagnostics in their captured local
-  files, including invalid profiles, while preserving portable compiler and
-  configuration-inspection source names.
-
-- Reuse immutable SDK structure across support checks and emission for Java,
-  Kotlin, C#, F#, Dart and Ruby. Generation stages one target's bytes at a time
-  with bounded output metadata before applying files, preserving strict
-  diagnostic withholding and custom-file ownership. Reports discard target
-  bytes after collecting their results. Application errors and cooperative
-  cancellation describe completed file writes/removals; output remains
-  nontransactional across files and directories.
-
 - Runtime performance. Successful responses are decoded once instead of
   several times: the Go runtime parses the body in one pass and unmarshals the
   original bytes into the typed result, and generated Rust SDKs call the new
@@ -430,36 +475,6 @@ values as `JsonNode`, OpenID Connect as a bearer token, no CLI or MCP).
 - Dependency audit: source-less `Cargo.lock` entries must be workspace members, and `[patch]`/`[replace]` tables in Cargo manifests are rejected.
 
 ### Fixed
-
-- Java generated usage now imports its resolved resource type and infers the
-  response type. Dispatch request decoding also imports resolved resource types,
-  so valid package prefixes such as `client.generated` cannot be shadowed by the
-  dispatch client's field. Java and Kotlin authorization-code examples configure
-  the managed OAuth flow explicitly.
-
-- TypeScript, Python and Rust authorization-code and refresh diagnostics include
-  only recognized OAuth token error labels. Arbitrary provider error strings
-  are omitted even when they contain only lowercase letters and underscores.
-
-- Windows Git input acquisition uses an exclusively created local temporary
-  repository, avoiding Git working-directory and pack-file limits caused by
-  deeply nested project caches. Verified project pins and offline reuse retain
-  their existing locations; unsupported temporary roots fail safely.
-
-- TypeScript, Python and Rust managed OAuth helpers cap endpoint text at 32 KiB
-  and reject malformed Unicode before URL parsing. Protected or malformed refresh
-  queries refuse before authorization begins and before default refresh dispatch,
-  including a changed endpoint or the token-endpoint fallback.
-
-- Check profile-derived TypeScript prerequisites in project `doctor`, and refuse
-  invalid manifests or bounded profiles before running tool version probes.
-- Correct the MCP runtime and generated server prerequisite to Node.js 22.13+
-  (23.2+ on the Node.js 23 line), matching the module API used by its import
-  graph. Keep doctor prerequisites for every configured target so a linked SDK
-  cannot hide the stricter MCP floor.
-- `tungsten emitters --no-external` and `TUNGSTEN_NO_EXTERNAL=1` now skip
-  PATH-based descriptor probes as well as manifest commands. The inspection
-  result reports that discovery is disabled instead of claiming no emitters exist.
 
 - Python local setup installs the supplied runtime's declared dependencies using
   wheels and identifies the failing setup phase without changing its deadlines.
