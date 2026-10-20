@@ -66,9 +66,7 @@ def _collection_size(value: object) -> int:
     return len(canonical_json(plain).encode("utf-8"))
 
 
-def _collection_limits(max_bytes: int | None, max_ms: int | None) -> tuple[int, int] | None:
-    if max_bytes is None and max_ms is None:
-        return None
+def _collection_limits(max_bytes: int | None, max_ms: int | None) -> tuple[int, int]:
     return (4 * 1024 * 1024 if max_bytes is None else max_bytes, 60_000 if max_ms is None else max_ms)
 
 
@@ -174,17 +172,11 @@ class EventStream(Generic[T]):
         return StreamResult(True, reconnects, value=accumulator)
 
     def collect(self, *, max_bytes: int | None = None, max_ms: int | None = None) -> StreamResult[list[T]]:
-        """Collect events. With either budget set, the other defaults to 4 MiB
-        or 60 seconds. No arguments preserves unbounded collection. A budget
-        failure retains only the admitted events as ``partial``."""
+        """Collect events, always bounded: an unset budget defaults to 4 MiB
+        or 60 seconds (so ``collect()`` is bounded too). A budget failure
+        retains only the admitted events as ``partial``. Iterate or use
+        ``reduce`` to process long or large streams incrementally."""
         limits = _collection_limits(max_bytes, max_ms)
-        if limits is None:
-
-            def add(all_values: list[T], value: T, _: StreamEvent[T]) -> list[T]:
-                all_values.append(value)
-                return all_values
-
-            return self.reduce(add, [])
         maximum, milliseconds = limits
         if any(type(v) is not int or v < 1 or v > 9_007_199_254_740_991 for v in limits):
             self.close()
@@ -403,13 +395,6 @@ class AsyncEventStream(Generic[T]):
     ) -> StreamResult[list[T]]:
         """See ``EventStream.collect``."""
         limits = _collection_limits(max_bytes, max_ms)
-        if limits is None:
-
-            def add(all_values: list[T], value: T, _: StreamEvent[T]) -> list[T]:
-                all_values.append(value)
-                return all_values
-
-            return await self.reduce(add, [])
         maximum, milliseconds = limits
         if any(type(v) is not int or v < 1 or v > 9_007_199_254_740_991 for v in limits):
             await self.aclose()

@@ -88,11 +88,12 @@ grant an exception. Anonymous HTTP requests remain supported.
 
 ## Limits
 
-Stream `collect({ maxBytes, maxMs })` accepts optional byte and time budgets. Setting
-either defaults the other to 4 MiB or 60 seconds. The byte count uses UTF-8
+Stream `collect({ maxBytes, maxMs })` accepts optional byte and time budgets. An
+unset budget defaults to 4 MiB or 60 seconds. The byte count uses UTF-8
 JSON for the event values, excluding SSE framing. A limit closes the stream
 and returns a nonretryable error with only the admitted events as `partial`.
-Calling `collect()` with no arguments preserves unbounded collection.
+Calling `collect()` with no arguments uses both defaults; pass larger finite budgets, or
+iterate / `reduce` / `on` for long or large streams.
 
 In unreleased 0.2.0, ordinary buffered responses default to **4 MiB (4,194,304 bytes) per response**.
 Set `ClientOptions.maxResponseBytes` to choose a finite client cap; the call option with the same

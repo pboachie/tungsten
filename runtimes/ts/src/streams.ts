@@ -36,7 +36,7 @@ export type EventHandler<T> = (value: T, event: StreamEvent<T>) => void | Promis
  * other handler took. */
 export const ANY_EVENT = "*";
 
-/** Optional collection budgets; setting either defaults the other to 4 MiB or 60 seconds. */
+/** Optional collection budgets; an unset budget defaults to 4 MiB or 60 seconds. */
 export interface CollectOptions {
   maxBytes?: number;
   maxMs?: number;
@@ -117,11 +117,11 @@ export class EventStream<T> implements AsyncIterable<StreamItem<T>> {
     return { ok: true, value: accumulator, reconnects };
   }
 
-  /** Read the stream to its end into a list of the events' `data`. */
+  /** Read the stream to its end into a list of the events' `data`. Always
+   * bounded: with no options (or either budget unset) it defaults to 4 MiB of
+   * canonical-JSON event data and 60 seconds. Use `reduce`, `on` or iteration
+   * to process long or large streams incrementally. */
   async collect(options?: CollectOptions): Promise<StreamResult<T[]>> {
-    if (options === undefined) {
-      return this.reduce<T[]>((all, value) => { all.push(value); return all; }, []);
-    }
     const maximum = options?.maxBytes ?? 4 * 1024 * 1024;
     const milliseconds = options?.maxMs ?? 60_000;
     const values: T[] = [];
