@@ -6,6 +6,7 @@ use tungsten_emit::{CommentStyle, header};
 
 use crate::Ctx;
 use crate::kotlin::lit;
+use crate::options::KOTLINX_COROUTINES;
 
 /// The Kotlin Gradle plugin the build script applies (the compiler version
 /// the SDKs are checked with).
@@ -55,12 +56,31 @@ impl Ctx<'_> {
                 o.runtime
             ));
         }
+        if o.coroutines {
+            if o.coroutines_runtime_path.is_none() {
+                s.push_str(&format!(
+                    "    implementation(\"io.github.pboachie.tungsten:tungsten-runtime-kotlin-coroutines:{}\")\n",
+                    o.runtime
+                ));
+            } else {
+                s.push_str(&format!(
+                    "    implementation(\"org.jetbrains.kotlinx:kotlinx-coroutines-core:{KOTLINX_COROUTINES}\")\n"
+                ));
+            }
+        }
         s.push_str("}\n");
-        if o.runtime_path.is_some() || o.java_runtime_path.is_some() {
+        let local_coroutines = o.coroutines && o.coroutines_runtime_path.is_some();
+        if o.runtime_path.is_some() || o.java_runtime_path.is_some() || local_coroutines {
             // A local build compiles the runtimes' sources into the SDK, so it
             // needs no installed runtime.
             s.push_str("\nsourceSets {\n    main {\n");
             if let Some(path) = &o.runtime_path {
+                s.push_str(&format!(
+                    "        kotlin.srcDir({})\n",
+                    lit(&format!("{}/src/main/kotlin", path.trim_end_matches('/')))
+                ));
+            }
+            if let Some(path) = o.coroutines_runtime_path.as_ref().filter(|_| o.coroutines) {
                 s.push_str(&format!(
                     "        kotlin.srcDir({})\n",
                     lit(&format!("{}/src/main/kotlin", path.trim_end_matches('/')))
@@ -181,6 +201,9 @@ impl Ctx<'_> {
         s.push_str("- Destructive and irreversible operations need `CallOptions.builder().confirm(...)`: a token from the operation's `preview...` function, or `Confirm.YES` for destructive ones.\n");
         s.push_str("- Mutations with a caller-owned idempotency key take `idempotencyKey(...)`; reuse it on every retry.\n");
         s.push_str("- Paginated operations have a `...Pages` function (a `Sequence` of page results, fetched as it advances; `itemsOrThrow()` flattens it into the items), streaming ones a `...Stream` function (an `EventStream`: iterate it or call `events()`, or use `on`, `collect`, `reduce`, `first`; `cancel` and `close`, or `use { }`).\n");
+        if o.coroutines {
+            s.push_str("- Coroutines (opt-in `coroutines` option, on for this SDK): next to each blocking function there is a `suspend` variant named `<function>Suspend` that returns the same `Result`, runs on `Dispatchers.IO` and, when its coroutine is cancelled (`withTimeout`, a cancelled scope), cancels the request in flight and ends with a `CancellationException`. Pages and streams also come as cold `Flow`s, `<function>Flow` (`listPagesFlow`, `watchStreamFlow`): pull based, each collection starts afresh, an error is the last element, `maxResponseBytes` and pagination cycle detection still apply to every page, and `.buffer(n)` bounds any prefetch. `Flow<Result<Page<T>>>.itemsOrThrow()` and `Flow<Result<StreamEvent<T>>>.valuesOrThrow()` (package `io.github.pboachie.tungsten.runtime.kotlin.coroutines`) flatten them. The blocking functions are unchanged. `dispatch()`, macros and the OAuth helpers stay blocking.\n");
+        }
         s.push_str(&format!(
             "- `client.dispatch()` runs operations by id with JSON arguments; `{}.Ops` holds the operation descriptors.\n\n",
             o.package

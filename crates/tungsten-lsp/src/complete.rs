@@ -242,6 +242,8 @@ fn target_keys(target: &str) -> &'static [&'static str] {
             "runtime",
             "runtime_path",
             "java_runtime_path",
+            "coroutines",
+            "coroutines_runtime_path",
             "out",
         ],
         "ruby" => &["gem", "module", "version", "runtime", "runtime_path", "out"],

@@ -1289,7 +1289,7 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
         "An option of the `kotlin` target in tungsten.yml is not valid: `group` and `package` \
          must be dotted package names usable in Kotlin and Java (no keywords), `artifact` an \
          artifact name, `version` and `runtime` versions such as 1.2.3, `runtime_path` and \
-         `java_runtime_path` non-empty paths. The generator uses the option's default instead.",
+         `java_runtime_path` and `coroutines_runtime_path` non-empty paths, `coroutines` true or false. The generator uses the option's default instead.",
         "Fix the option under `targets.kotlin` in tungsten.yml, or remove it to keep the default.",
     ),
     e(
