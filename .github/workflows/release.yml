@@ -1142,7 +1142,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        package: [java, kotlin, csharp, ruby]
+        package: [java, kotlin, csharp, fsharp, ruby]
     permissions:
       contents: read
     steps:
@@ -1155,7 +1155,7 @@ jobs:
           distribution: temurin
           java-version: "21"
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
-        if: matrix.package == 'csharp'
+        if: matrix.package == 'csharp' || matrix.package == 'fsharp'
         with:
           dotnet-version: 10.0.401
       - uses: ruby/setup-ruby@651ff0d62c5c79bed6d53ec518387aae20e72c1a # v1.329.0
@@ -1255,6 +1255,10 @@ jobs:
         with:
           name: native-dist-csharp
           path: native-dist
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: native-dist-fsharp
+          path: native-dist-fsharp
       - name: Verify reviewed package version and checksums before credentials
         env:
           RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
@@ -1262,20 +1266,25 @@ jobs:
         run: |
           test -n "$NUGET_USER" || { echo 'Configure the reviewed NuGet account and trusted-publishing policy first.' >&2; exit 1; }
           python3 .github/scripts/native-runtime-artifacts.py --package csharp --version "${RELEASE_TAG#v}" --directory native-dist
+          python3 .github/scripts/native-runtime-artifacts.py --package fsharp --version "${RELEASE_TAG#v}" --directory native-dist-fsharp
       - uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1.2.0
         id: nuget-auth
         with:
           user: ${{ vars.NUGET_USER }}
-      - name: Publish the validated package without rebuilding
+      - name: Publish the validated packages without rebuilding
         env:
           NUGET_API_KEY: ${{ steps.nuget-auth.outputs.NUGET_API_KEY }}
-        run: dotnet nuget push native-dist/*.nupkg --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json
+        run: |
+          # The F# package depends on the exact same-version C# runtime: push that first.
+          dotnet nuget push native-dist/*.nupkg --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json
+          dotnet nuget push native-dist-fsharp/*.nupkg --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json
       - name: Verify the public package entries and repository signature
         env:
           RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
         run: |
           python3 .github/scripts/verify-published-registries.py --package csharp --version "${RELEASE_TAG#v}" --directory native-dist --save-download public-nuget
-          dotnet nuget verify --all public-nuget/*.nupkg
+          python3 .github/scripts/verify-published-registries.py --package fsharp --version "${RELEASE_TAG#v}" --directory native-dist-fsharp --save-download public-nuget-fsharp
+          dotnet nuget verify --all public-nuget/*.nupkg public-nuget-fsharp/*.nupkg
 
   rubygems-publish:
     name: RubyGems publish (trusted publishing)

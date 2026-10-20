@@ -229,6 +229,12 @@ changes.
   1.10.2, whose resolved jar the build checks against a pinned sha256).
   Generated Kotlin SDKs can then use the published artifacts instead of runtime
   source.
+- Prepare the F# runtime for NuGet as `Tungsten.Runtime.FSharp`. The release
+  packs and verifies it beside `Tungsten.Runtime` (Apache-2.0, icon, README,
+  deterministic, exact `Tungsten.Runtime [version]` dependency and an
+  `FSharp.Core` 10.1.401 floor), and publishes it behind the existing NuGet
+  gate. Generated F# SDKs will restore it as a package instead of runtime source
+  once a release publishes it; nothing is published yet.
 
 - Add explicitly pinned host policies for external emitters, with strict bounded
   capture, intersected deny/resource ceilings, pure policy digests and redacted
