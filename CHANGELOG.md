@@ -203,6 +203,18 @@ changes.
   to match, matches that time out or overflow the stack. Direct schema validation
   without an observer stays silent. Unreleased 0.2.0 only.
 
+- The Kotlin runtime layer now has a Maven Central route:
+  `io.github.pboachie.tungsten:tungsten-runtime-kotlin` is built reproducibly
+  with sources and documentation archives from `runtimes/kotlin/pom.xml`,
+  depends on the exact same-version `tungsten-runtime` and `kotlin-stdlib`, and
+  is checked, signed and verified after publication by the existing Maven
+  Central release job and `MAVEN_PUBLISH` switch, together with the opt-in
+  `io.github.pboachie.tungsten:tungsten-runtime-kotlin-coroutines` (from
+  `runtimes/kotlin/coroutines/pom.xml`, adding only `kotlinx-coroutines-core`
+  1.10.2, whose resolved jar the build checks against a pinned sha256).
+  Generated Kotlin SDKs can then use the published artifacts instead of runtime
+  source.
+
 - Add explicitly pinned host policies for external emitters, with strict bounded
   capture, intersected deny/resource ceilings, pure policy digests and redacted
   inspection. Unsupported commands reject supplied policy before effects.
