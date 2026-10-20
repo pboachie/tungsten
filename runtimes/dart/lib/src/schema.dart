@@ -19,10 +19,16 @@ final class Issue {
 /// after.
 ///
 /// Issues come structure first, then constraint violations, then unknown
-/// members. Types are strict (no coercion); string lengths count UTF-16
-/// code units. `pattern` is an ECMAScript expression run by Dart's
-/// `RegExp`, which follows ECMAScript (without the `u` flag); a pattern it
-/// cannot compile is not checked.
+/// members. Types are strict (no coercion); string lengths count Unicode
+/// code points, so an emoji is one character, not two UTF-16 code units.
+///
+/// `pattern` is an ECMAScript expression, searched anywhere in the string,
+/// run by Dart's `RegExp` with Unicode semantics (the `u` flag): `\p{...}`,
+/// `\u{...}` and astral-plane characters match as whole code points. A
+/// pattern the `u` flag rejects only for its legacy syntax (an identity
+/// escape such as `\_`) is run without the flag. A pattern neither mode can
+/// compile is never skipped silently: the value is refused with an issue that
+/// says the pattern cannot be checked.
 final class Schema {
   /// A validator of [schema] (a map of the runtime schema form) whose `ref`s
   /// resolve in [defs].
@@ -61,15 +67,38 @@ final class Schema {
 
   static final Map<String, RegExp?> _patterns = {};
 
-  /// The compiled pattern of an ECMAScript source, or null when Dart cannot
-  /// compile it.
+  /// The compiled pattern of an ECMAScript source, with Unicode semantics
+  /// when it compiles with them, else as legacy syntax; null when Dart cannot
+  /// compile it either way.
   static RegExp? pattern(String source) => _patterns.putIfAbsent(source, () {
+        try {
+          return RegExp(source, unicode: true);
+        } on FormatException {
+          // Fall through to the legacy syntax.
+        }
         try {
           return RegExp(source);
         } on FormatException {
           return null;
         }
       });
+
+  /// The length of a string in Unicode code points: a surrogate pair counts
+  /// once.
+  static int codePointCount(String text) {
+    var n = text.length;
+    for (var i = 0; i + 1 < text.length; i++) {
+      final unit = text.codeUnitAt(i);
+      if (unit >= 0xD800 && unit <= 0xDBFF) {
+        final next = text.codeUnitAt(i + 1);
+        if (next >= 0xDC00 && next <= 0xDFFF) {
+          n--;
+          i++;
+        }
+      }
+    }
+    return n;
+  }
 
   /// The issues of a value, none when it is valid.
   List<Issue> validate(Object? value) => _Run(defs).run(schema, value);
@@ -357,7 +386,7 @@ final class _Run {
 
   void _stringLimits(
       Map<String, Object?> schema, String text, List<Object> path) {
-    final n = text.length;
+    final n = Schema.codePointCount(text);
     final min = schema['min_length'];
     final max = schema['max_length'];
     if (min is num && n < min) {
@@ -369,7 +398,12 @@ final class _Run {
     final source = schema['pattern'];
     if (source is String) {
       final re = Schema.pattern(source);
-      if (re != null && !re.hasMatch(text)) {
+      if (re == null) {
+        _limit(
+          path,
+          'the pattern /$source/ cannot be checked: it is not a regular expression this runtime can compile',
+        );
+      } else if (!re.hasMatch(text)) {
         _limit(path, 'must match the pattern /$source/');
       }
     }

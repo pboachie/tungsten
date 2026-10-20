@@ -35,7 +35,7 @@ responsible for authorization and server-side idempotency.
 Select `FileIdempotencyStore` through the client's idempotency-store option to
 reuse keys after a restart and coordinate automatic key allocation across
 processes. The version-1 JSON file and `<path>.lock` owner lease interoperate
-with the TypeScript, Python, Go, Rust, Java, C# and Ruby stores.
+with the TypeScript, Python, Go, Rust, Java, C#, Ruby and Dart stores.
 
 ```ruby
 options = Tungsten::Runtime::ClientOptions.new(

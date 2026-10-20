@@ -175,6 +175,12 @@ changes.
   starting at 0.2.0, with artifact verification and OIDC provenance. Publication
   still requires the release checks and an explicit maintainer switch.
 
+- Dart `FileIdempotencyStore` keeps automatic idempotency keys across restarts
+  in the version-1 JSON file and `<path>.lock` owner lease shared with the other
+  runtimes (mode 0600, atomic rename, closed on corruption, a lease is never
+  reclaimed automatically). Stores gain `reserve(scope, logicalId, candidate)`
+  through `AtomicIdempotencyStore`; get/put-only custom stores keep working.
+
 ### Changed
 
 - Locate primary and related LSP profile diagnostics in their captured local
@@ -227,6 +233,14 @@ changes.
 - `tungsten emitters --no-external` and `TUNGSTEN_NO_EXTERNAL=1` now skip
   PATH-based descriptor probes as well as manifest commands. The inspection
   result reports that discovery is disabled instead of claiming no emitters exist.
+
+- Dart schema validation counts `min_length`/`max_length` in Unicode code points
+  (an emoji was two) and runs `pattern` with Unicode semantics (`\p{...}`,
+  `\u{...}`, whole astral characters), falling back to legacy syntax only for
+  patterns the Unicode mode rejects. A pattern that cannot be compiled is now
+  an issue ("cannot be checked") instead of passing silently, so a request
+  with such a pattern fails `VALIDATION_FAILED` and a response is reported
+  per `validateResponses`.
 
 ## [0.1.3] - 2026-10-17
 

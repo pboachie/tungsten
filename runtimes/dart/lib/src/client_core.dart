@@ -1421,14 +1421,9 @@ final class ClientCore {
             .err<Object?>();
         final (key, err) = await _keyLock.run(() async {
           try {
-            final existing = await _store.get(op.id, logical);
-            if (existing != null && existing.isNotEmpty) {
-              return (existing, null);
-            }
-            final key = _Util.uuidV4();
-            await _store.put(op.id, logical, key);
-            if (await _store.get(op.id, logical) == key) return (key, null);
-            return (null, failed('the key could not be stored'));
+            final key = await _store.reserve(op.id, logical, _Util.uuidV4());
+            if (key.isNotEmpty) return (key, null);
+            return (null, failed('it returned no key'));
           } catch (_) {
             return (null, failed('it threw an error'));
           }
