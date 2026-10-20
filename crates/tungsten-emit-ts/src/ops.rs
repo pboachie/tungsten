@@ -1178,6 +1178,7 @@ pub(crate) fn descriptors_file(
     for (info, shape) in plan.ops.iter().zip(shapes) {
         uses.integer |= shape.uses.integer;
         uses.pattern |= shape.uses.pattern;
+        uses.length |= shape.uses.length;
         uses.binary |= shape.uses.binary;
         uses.namespaces
             .extend(shape.uses.namespaces.iter().cloned());
@@ -1227,6 +1228,9 @@ pub(crate) fn descriptors_file(
     }
     if uses.pattern {
         imports.add("./internal.js", "withPattern");
+    }
+    if uses.length {
+        imports.add("./internal.js", "withLength");
     }
     if uses.binary {
         imports.add("./internal.js", "binary");

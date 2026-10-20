@@ -983,7 +983,14 @@ impl ClientCore {
         let mode = self.inner.validate_responses;
         if mode != ValidateResponses::Off
             && let Some(validator) = &spec.event
-            && let Validation::Invalid(issues) = crate::validate::judge(validator.as_ref(), &value)
+            && let (judged, notes) = crate::validate::judge_noted(validator.as_ref(), &value)
+            && {
+                self.report_unchecked(&op.id, Category::UnexpectedResponse, &notes, |path| {
+                    format!("events[{index}]{}", crate::unchecked::path_text(path))
+                });
+                true
+            }
+            && let Validation::Invalid(issues) = judged
         {
             let issue = issues.first();
             let path: Vec<String> = issue

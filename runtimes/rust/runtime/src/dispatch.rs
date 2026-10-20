@@ -194,6 +194,11 @@ pub(crate) trait BodySink: Send {
     /// JSON path: a body that does not decode, or does not pass validation,
     /// is reported from its JSON form, exactly as a dynamic call reports it.
     fn take(&mut self, bytes: &[u8], judge: bool) -> bool;
+
+    /// The patterns the validator could not check in the body just taken.
+    fn take_notes(&mut self) -> Vec<crate::unchecked::PatternNote> {
+        Vec::new()
+    }
 }
 
 /// The sink of [`crate::ClientCore::call_typed`]: the body as `T`, judged by
@@ -201,6 +206,7 @@ pub(crate) trait BodySink: Send {
 pub(crate) struct TypedSink<T> {
     validator: Option<std::sync::Arc<dyn crate::types::Validator>>,
     value: Option<T>,
+    notes: Vec<crate::unchecked::PatternNote>,
 }
 
 impl<T> TypedSink<T> {
@@ -208,6 +214,7 @@ impl<T> TypedSink<T> {
         TypedSink {
             validator,
             value: None,
+            notes: Vec::new(),
         }
     }
 
@@ -217,21 +224,28 @@ impl<T> TypedSink<T> {
 }
 
 impl<T: DeserializeOwned + Send + 'static> BodySink for TypedSink<T> {
+    fn take_notes(&mut self) -> Vec<crate::unchecked::PatternNote> {
+        std::mem::take(&mut self.notes)
+    }
+
     fn take(&mut self, bytes: &[u8], judge: bool) -> bool {
         let validator = self.validator.as_deref().filter(|_| judge);
         // A validator that panics is reported by the JSON path.
-        let decoded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let value: T = decode_bytes(bytes)?;
-            match validator {
-                None => Some(value),
-                Some(validator) => match validator.check_decoded(&value) {
-                    Some(issues) if issues.is_empty() => Some(value),
-                    _ => None,
-                },
-            }
-        }))
-        .ok()
-        .flatten();
+        let (decoded, notes) = crate::unchecked::collect(|| {
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let value: T = decode_bytes(bytes)?;
+                match validator {
+                    None => Some(value),
+                    Some(validator) => match validator.check_decoded(&value) {
+                        Some(issues) if issues.is_empty() => Some(value),
+                        _ => None,
+                    },
+                }
+            }))
+            .ok()
+            .flatten()
+        });
+        self.notes = notes;
         match decoded {
             Some(value) => {
                 self.value = Some(value);

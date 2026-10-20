@@ -705,6 +705,41 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     }
   }
 
+  /** Patterns a schema could not check accepted their values; report each,
+   * once per path and pattern in this call, without the value. */
+  #reportUnchecked(
+    op: OperationDescriptor,
+    notes: unknown,
+    category: "VALIDATION_FAILED" | "UNEXPECTED_RESPONSE",
+    where: (path: Array<string | number>) => string,
+    secrets: ReadonlySet<string>,
+  ): void {
+    if (!Array.isArray(notes)) return;
+    const seen = new Set<string>();
+    for (const note of notes) {
+      if (seen.size >= 16) break;
+      if (!isRecord(note) || !Array.isArray(note.path) || typeof note.pattern !== "string") continue;
+      const path = note.path.filter((s): s is string | number => typeof s === "string" || typeof s === "number");
+      const key = `${JSON.stringify(path)}\n${note.pattern}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const param = where(path);
+      const reason = typeof note.reason === "string" ? note.reason : "it could not be checked";
+      this.#emit(
+        scrubDiagnostic(
+          diagnostic(op.id, category, {
+            code: "PATTERN_UNCHECKED",
+            failed_parameter: param,
+            expected: `a value matching the pattern /${note.pattern}/`,
+            remediation: `The pattern /${note.pattern}/ at ${param} was not checked because ${reason}; the value was accepted without it. The server still validates it.`,
+            retryable: "never",
+          }),
+          secrets,
+        ),
+      );
+    }
+  }
+
   #middleware(): Middleware[] {
     return Array.isArray(this.options.middleware) ? this.options.middleware.filter(isRecord) : [];
   }
@@ -785,6 +820,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     const request = op.request;
     if (isSchema(request)) {
       const parsed = request.safeParse(args);
+      this.#reportUnchecked(op, parsed.notes, "VALIDATION_FAILED", (path) => argumentPath(op, path), new Set());
       if (!parsed.success) {
         const issues = isRecord(parsed.error) && Array.isArray(parsed.error.issues) ? parsed.error.issues : [];
         const pathOf = (issue: unknown): Array<string | number> =>
@@ -1746,6 +1782,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
       } catch (error) {
         parsed = { success: false, error: { issues: [{ path: [], message: `the response schema failed (${describeError(error)})` }] } };
       }
+      this.#reportUnchecked(op, parsed.notes, "UNEXPECTED_RESPONSE", (path) => `response${path.map((s) => (typeof s === "number" || /^\d+$/.test(s) ? `[${s}]` : `.${s}`)).join("")}`, prepared.secrets);
       if (!parsed.success) {
         const issues = isRecord(parsed.error) && Array.isArray(parsed.error.issues) ? parsed.error.issues : [];
         const issue = issues[0];
@@ -2092,6 +2129,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
         } catch (error) {
           parsed = { success: false, error: { issues: [{ path: [], message: `the event schema failed (${describeError(error)})` }] } };
         }
+        this.#reportUnchecked(op, parsed.notes, "UNEXPECTED_RESPONSE", (path) => `events[${index}]${path.map((s) => (typeof s === "number" || /^\d+$/.test(s) ? `[${s}]` : `.${s}`)).join("")}`, prep.secrets);
         if (!parsed.success) {
           const issues = isRecord(parsed.error) && Array.isArray(parsed.error.issues) ? parsed.error.issues : [];
           const issue = issues[0];

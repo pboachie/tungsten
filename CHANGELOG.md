@@ -20,6 +20,14 @@ changes.
   as one). Kotlin delegates to Java and changes with it. Other runtimes align in
   their own entries.
 
+- TypeScript, Python and Rust schema validation now counts string `minLength` and
+  `maxLength` in Unicode code points, as JSON Schema does. TypeScript previously
+  counted UTF-16 code units, so a string with characters outside the Basic
+  Multilingual Plane (an emoji) counted twice and could be rejected at half the
+  declared limit; regenerate TypeScript SDKs to get `withLength`. Python and Rust
+  already counted code points and keep doing so; a lone surrogate counts as one in
+  every runtime.
+
 - Ruby browser OAuth helpers now create bounded S256/state authorization attempts.
   Qualify issuer defense, bind the owning session/listener and pass the returned
   handle plus full callback URL to `exchange_code`. Managed helpers require a
@@ -166,6 +174,14 @@ changes.
   This covers patterns the engine cannot compile and, in Java, subjects too long
   to match, matches that time out or overflow the stack. Direct schema validation
   without an observer stays silent. Unreleased 0.2.0 only.
+
+- TypeScript, Python and Rust report a schema `pattern` their regex engine cannot
+  compile, or cannot match within a limit, as a non-fatal `PATTERN_UNCHECKED`
+  diagnostic (`failed_parameter`, the pattern and the reason, never the value; once
+  per call, path and pattern) through `onDiagnostic`/`on_diagnostic`. The value is
+  still accepted, as before; these runtimes skipped such patterns silently.
+  `SchemaLike.safeParse` may return `notes`, Rust gains `PatternNote` and
+  `note_unchecked_pattern`, and Python gains `schema.collect_pattern_notes`.
 
 - Add explicitly pinned host policies for external emitters, with strict bounded
   capture, intersected deny/resource ceilings, pure policy digests and redacted

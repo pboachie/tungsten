@@ -552,6 +552,10 @@ impl ClientCore {
             && is_json_body(&bytes, &headers, declared_media)
             && sink.take(&bytes, mode != ValidateResponses::Off)
         {
+            let notes = sink.take_notes();
+            self.report_unchecked(&op.id, Category::UnexpectedResponse, &notes, |path| {
+                format!("response{}", crate::unchecked::path_text(path))
+            });
             return Ok(Sent::Response(
                 Response {
                     value: None,
@@ -598,8 +602,14 @@ impl ClientCore {
             );
         } else if mode != ValidateResponses::Off
             && let (Some(validator), Some(value)) = (&op.response, decoded.value.as_ref())
-            && let crate::types::Validation::Invalid(issues) =
-                crate::validate::judge(validator.as_ref(), value)
+            && let (judged, notes) = crate::validate::judge_noted(validator.as_ref(), value)
+            && {
+                self.report_unchecked(&op.id, Category::UnexpectedResponse, &notes, |path| {
+                    format!("response{}", crate::unchecked::path_text(path))
+                });
+                true
+            }
+            && let crate::types::Validation::Invalid(issues) = judged
         {
             let issue = issues.first();
             let path: Vec<String> = issue

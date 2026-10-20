@@ -48,6 +48,14 @@ and returns a nonretryable error with only the admitted events as `partial`.
 Calling `collect()` with no arguments uses both defaults; pass larger finite budgets, or
 iterate / `reduce` / `on` for long or large streams.
 
+In unreleased 0.2.0, schema `minLength` and `maxLength` count Unicode code points, as
+JSON Schema does: an emoji outside the Basic Multilingual Plane is one character, and a
+lone surrogate counts as one. A schema `pattern` that Python's `re` cannot compile is not
+enforced: the value is accepted and the client reports a `PATTERN_UNCHECKED` diagnostic
+(`failed_parameter`, the pattern and the reason, never the value) through
+`on_diagnostic`, once per call, path and pattern. A string longer than the match limit (`MAX_PATTERN_SUBJECT`, 65,536 characters) is not matched and is reported the same way. Calling a validator directly, without
+a client, stays silent. The server still validates the pattern.
+
 In unreleased 0.2.0, ordinary buffered responses default to **4 MiB (4,194,304 bytes) per response**.
 Set `ClientOptions.max_response_bytes` to choose a finite client cap; the call option with the same
 native name overrides it. Omitted/null values inherit the default or client cap,

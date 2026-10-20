@@ -386,8 +386,16 @@ impl ClientCore {
             return None;
         }
         for (index, item) in items.iter().enumerate() {
-            let Validation::Invalid(issues) = crate::validate::judge(validator.as_ref(), item)
-            else {
+            let (judged, notes) = crate::validate::judge_noted(validator.as_ref(), item);
+            self.report_unchecked(&op.id, Category::UnexpectedResponse, &notes, |path| {
+                format!(
+                    "response{}{}[{index}]{}",
+                    if items_field.is_empty() { "" } else { "." },
+                    items_field,
+                    crate::unchecked::path_text(path)
+                )
+            });
+            let Validation::Invalid(issues) = judged else {
                 continue;
             };
             let issue = issues.first();

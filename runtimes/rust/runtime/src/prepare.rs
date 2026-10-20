@@ -265,7 +265,11 @@ impl ClientCore {
         if let Some(validator) = &op.request {
             let mut root = Value::Object(args.clone());
             integral_numbers(&mut root);
-            let Ok(outcome) = crate::validate::run(validator.as_ref(), &root) else {
+            let (outcome, notes) = crate::validate::run_noted(validator.as_ref(), &root);
+            self.report_unchecked(&op.id, Category::ValidationFailed, &notes, |path| {
+                argument_path(op, path)
+            });
+            let Ok(outcome) = outcome else {
                 return Err(fail(
                     Diag::new(op.id.clone(), Category::UnexpectedResponse)
                         .retryable(Retryable::Never)

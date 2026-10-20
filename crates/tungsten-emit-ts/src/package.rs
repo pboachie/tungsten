@@ -89,7 +89,7 @@ pub(crate) fn internal_file(header: &str) -> String {
     w.line("// Helpers shared by the generated modules; not part of the package's API.");
     w.blank();
     w.line(
-        "import { isBinaryInput, type BinaryInput, type SchemaLike } from \"@elysra/tungsten-runtime\";",
+        "import { isBinaryInput, type BinaryInput, type PatternNote, type SchemaLike } from \"@elysra/tungsten-runtime\";",
     );
     w.line("import { z } from \"zod\";");
     w.blank();
@@ -101,22 +101,61 @@ pub(crate) fn internal_file(header: &str) -> String {
     w.blank();
     w.line(WITH_PATTERN);
     w.blank();
+    w.line(WITH_LENGTH);
+    w.blank();
     w.line(BINARY);
     w.finish()
 }
 
-const TO_SCHEMA_LIKE: &str = r#"/** A Zod schema as the runtime's `SchemaLike` (issue paths as strings and numbers). */
+const TO_SCHEMA_LIKE: &str = r#"/** Set while a parse reaches a pattern this engine cannot check (`reached`),
+ * and during the second pass that finds where (`probing`). */
+const patternProbe = { reached: false, probing: false };
+const UNCHECKED_PATTERN = "tungsten:unchecked-pattern:";
+
+function collectUnchecked(issues: readonly z.core.$ZodIssue[], prefix: Array<string | number>, out: PatternNote[]): void {
+  for (const issue of issues) {
+    const path = [...prefix, ...issue.path.map((p) => (typeof p === "symbol" ? String(p) : p))];
+    if (issue.message.startsWith(UNCHECKED_PATTERN)) {
+      const [pattern, reason] = JSON.parse(issue.message.slice(UNCHECKED_PATTERN.length)) as [string, string];
+      out.push({ path, pattern, reason });
+    } else if (issue.code === "invalid_union") {
+      for (const branch of issue.errors) collectUnchecked(branch, path, out);
+    }
+  }
+}
+
+/** Where the unchecked patterns were reached: parse again with the patterns
+ * that cannot be checked failing, and read the paths off those issues. */
+function uncheckedPatterns(schema: z.ZodType, value: unknown): PatternNote[] {
+  patternProbe.probing = true;
+  try {
+    const probe = schema.safeParse(value);
+    const notes: PatternNote[] = [];
+    if (!probe.success) collectUnchecked(probe.error.issues, [], notes);
+    return notes;
+  } catch {
+    return [];
+  } finally {
+    patternProbe.probing = false;
+  }
+}
+
+/** A Zod schema as the runtime's `SchemaLike` (issue paths as strings and numbers),
+ * with the patterns it could not check as `notes`. */
 export function toSchemaLike<T>(schema: z.ZodType<T>): SchemaLike<T> {
   return {
     safeParse(value: unknown) {
+      patternProbe.reached = false;
       const result = schema.safeParse(value);
-      if (result.success) return { success: true, data: result.data };
+      const found = patternProbe.reached ? uncheckedPatterns(schema, value) : [];
+      const notes = found.length > 0 ? { notes: found } : {};
+      if (result.success) return { success: true, data: result.data, ...notes };
       const issues = result.error.issues.map((issue) => ({
         path: issue.path.map((p) => (typeof p === "symbol" ? String(p) : p)),
         message: issue.message,
         code: issue.code,
       }));
-      return { success: false, error: { issues } };
+      return { success: false, error: { issues }, ...notes };
     },
   };
 }"#;
@@ -129,16 +168,40 @@ export function integer(): z.ZodNumber {
 
 const WITH_PATTERN: &str = r#"/** Adds a JSON Schema `pattern` (ECMA-262, Unicode mode when it compiles).
  * A pattern this engine cannot compile is not enforced, so loading the SDK
- * never fails; the server still validates it. */
-export function withPattern<S extends { regex(pattern: RegExp): S }>(schema: S, source: string): S {
+ * never fails and the value is accepted; the runtime reports it as a
+ * `PATTERN_UNCHECKED` diagnostic, and the server still validates it. */
+export function withPattern<S extends { regex(pattern: RegExp): S; refine(check: (value: string) => boolean, params: { message: string }): S }>(schema: S, source: string): S {
+  let reason = "this JavaScript engine cannot compile it";
   for (const flags of ["u", ""]) {
     try {
       return schema.regex(new RegExp(source, flags));
-    } catch {
+    } catch (error) {
       // Not valid with these flags; try the next.
+      if (error instanceof Error) reason = `this JavaScript engine cannot compile it (${error.message.slice(error.message.lastIndexOf(": ") + 2)})`;
     }
   }
-  return schema;
+  return schema.refine(
+    () => {
+      patternProbe.reached = true;
+      return !patternProbe.probing;
+    },
+    { message: UNCHECKED_PATTERN + JSON.stringify([source, reason]) },
+  );
+}"#;
+
+const WITH_LENGTH: &str = r#"/** Adds `minLength`/`maxLength`, counted in Unicode code points as JSON Schema
+ * counts them (Zod's `.min`/`.max` count UTF-16 code units, so an emoji would
+ * count twice). A surrogate pair is one code point, a lone surrogate is one. */
+export function withLength<S extends { refine(check: (value: string) => boolean, params: { message: string }): S }>(schema: S, min: number | undefined, max: number | undefined): S {
+  const size = (value: string): number => {
+    let n = 0;
+    for (const _ of value) n += 1;
+    return n;
+  };
+  let out = schema;
+  if (min !== undefined) out = out.refine((value) => value.length >= 2 * min || size(value) >= min, { message: `Too small: expected string to have >=${min} characters` });
+  if (max !== undefined) out = out.refine((value) => value.length <= max || size(value) <= max, { message: `Too big: expected string to have <=${max} characters` });
+  return out;
 }"#;
 
 const BINARY: &str = r#"/** Binary data in a request: bytes, a `Blob` or `File`, or `{ data, filename?, contentType? }`. */

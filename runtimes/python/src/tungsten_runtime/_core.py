@@ -21,7 +21,7 @@ import re
 import threading
 import time
 import uuid
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, replace
 from dataclasses import field as dataclass_field
 from typing import Any, Final, Literal, cast
@@ -169,6 +169,7 @@ from ._util import (
     without_unset,
 )
 from .idempotency import MemoryIdempotencyStore
+from .schema import PatternNote, collect_pattern_notes
 from .sentinels import UNSET
 from .types import (
     ClientOptions,
@@ -317,6 +318,12 @@ class Prepared:
 
 def _fail(error: Diagnostic, partial: object = None) -> Err:
     return Err(error=error, partial=partial)
+
+
+def _run_noting(validate: Callable[[object], object], value: object, notes: list[PatternNote]) -> object:
+    """``validate(value)``, collecting the patterns it could not check."""
+    with collect_pattern_notes(notes):
+        return validate(value)
 
 
 def _hook(middleware: object, name: str) -> object:
@@ -527,6 +534,40 @@ class Engine:
     def _emit(self, d: Diagnostic) -> Flow[None]:
         yield from observe(self.options.on_diagnostic, d)
 
+    def _report_unchecked(
+        self,
+        op_id: str,
+        notes: Sequence[PatternNote],
+        where: Callable[[Sequence[str | int]], str],
+        category: Literal["VALIDATION_FAILED", "UNEXPECTED_RESPONSE"],
+        secrets: Collection[str] = (),
+    ) -> Flow[None]:
+        """A schema pattern the runtime could not check accepted its value;
+        each is reported once per call and path (never with the value) as a
+        ``PATTERN_UNCHECKED`` diagnostic."""
+        seen: set[tuple[tuple[str | int, ...], str]] = set()
+        for note in notes:
+            if len(seen) >= 16:
+                break
+            key = (note.path, note.pattern)
+            if key in seen:
+                continue
+            seen.add(key)
+            param = where(note.path)
+            d = diagnostic(
+                op_id,
+                category,
+                code="PATTERN_UNCHECKED",
+                failed_parameter=param,
+                expected=f"a value matching the pattern /{note.pattern}/",
+                remediation=(
+                    f"The pattern /{note.pattern}/ at {param} was not checked because {note.reason}; "
+                    "the value was accepted without it. The server still validates it."
+                ),
+                retryable="never",
+            )
+            yield from self._emit(scrub_diagnostic(d, list(secrets)) if secrets else d)
+
     # -------------------------------------------------------------- call
 
     def _call(
@@ -615,7 +656,7 @@ class Engine:
         )
 
     def _validate_args(
-        self, op: OperationDescriptor, args: dict[str, object], placeholders: bool
+        self, op: OperationDescriptor, args: dict[str, object], placeholders: bool, notes: list[PatternNote]
     ) -> Err | dict[str, object]:
         """Pre-flight validation of the args; the validated args on success.
         With ``placeholders``, an issue at (or below) a value that is a dry
@@ -642,7 +683,7 @@ class Engine:
             return self._validation(op, [arg], UNSET, "a request body", f"Pass the request body as {arg}.")
         validate = _hook(op.get("request"), "validate")
         if callable(validate):
-            outcome = validate(args)
+            outcome = _run_noting(validate, args, notes)
             if isinstance(outcome, Valid):
                 data: object = cast(Valid[object], outcome).data
                 return dict(data) if is_record(data) else args
@@ -893,8 +934,12 @@ class Engine:
                 "a JSON-like value without cycles",
                 "Pass arguments without circular references.",
             )
+        notes: list[PatternNote] = []
         checked = self._validate_args(
-            op, cast(dict[str, object], without_unset(raw_args)), purpose == "macro_preview"
+            op, cast(dict[str, object], without_unset(raw_args)), purpose == "macro_preview", notes
+        )
+        yield from self._report_unchecked(
+            safe_id(op), notes, lambda path: argument_path(op, list(path)), "VALIDATION_FAILED"
         )
         if isinstance(checked, Err):
             return checked
@@ -1863,12 +1908,20 @@ class Engine:
                 attempts=attempts,
             )
         elif mode != "off" and callable(validate) and not decoded.empty:
+            notes: list[PatternNote] = []
             try:
-                checked = validate(decoded.value)
+                checked = _run_noting(validate, decoded.value, notes)
             except Exception as error:
                 checked = Invalid(
                     issues=[{"path": [], "message": f"the response schema failed ({describe_error(error)})"}]
                 )
+            yield from self._report_unchecked(
+                op_id,
+                notes,
+                lambda path: "response" + "".join(f"[{s}]" if isinstance(s, int) else f".{s}" for s in path),
+                "UNEXPECTED_RESPONSE",
+                prepared.secrets,
+            )
             if isinstance(checked, Valid):
                 value = cast(Valid[object], checked).data
             else:
@@ -2085,7 +2138,9 @@ class Engine:
                             PageAnswer(
                                 Ok(
                                     value=Page(
-                                        items=self._page_items(op, items), body=result.value, next=None
+                                        items=(yield from self._page_items(op, items)),
+                                        body=result.value,
+                                        next=None,
                                     ),
                                     meta=result.meta,
                                 ),
@@ -2127,7 +2182,9 @@ class Engine:
                     seen.add(key)
             page_result = Ok(
                 value=Page(
-                    items=self._page_items(op, items), body=result.value, next=None if stop else next_value
+                    items=(yield from self._page_items(op, items)),
+                    body=result.value,
+                    next=None if stop else next_value,
                 ),
                 meta=result.meta,
             )
@@ -2154,7 +2211,7 @@ class Engine:
             if next_value is None:
                 return
 
-    def _page_items(self, op: OperationDescriptor, items: list[object]) -> list[object]:
+    def _page_items(self, op: OperationDescriptor, items: list[object]) -> Flow[list[object]]:
         """A page's items as the caller receives them (``Page.items``): each
         item the operation's ``page_item`` validator accepts is its
         ``Valid.data`` (a model instance) when ``validate_responses`` is
@@ -2165,12 +2222,19 @@ class Engine:
         if self.options.validate_responses == "off" or not callable(validate):
             return items
         out: list[object] = []
+        notes: list[PatternNote] = []
         for item in items:
             try:
-                checked = validate(item)
+                checked = _run_noting(validate, item, notes)
             except Exception:
                 checked = None
             out.append(cast(Valid[object], checked).data if isinstance(checked, Valid) else item)
+        yield from self._report_unchecked(
+            op["id"],
+            notes,
+            lambda path: "items" + "".join(f"[{s}]" if isinstance(s, int) else f".{s}" for s in path),
+            "UNEXPECTED_RESPONSE",
+        )
         return out
 
     def _stream_headers(self, call_headers: object) -> dict[str, str]:
@@ -2372,12 +2436,23 @@ class Engine:
                     ),
                 )
             if mode != "off" and callable(validate):
+                notes: list[PatternNote] = []
                 try:
-                    checked = validate(value)
+                    checked = _run_noting(validate, value, notes)
                 except Exception as error:
                     checked = Invalid(
                         issues=[{"path": [], "message": f"the event schema failed ({describe_error(error)})"}]
                     )
+                yield from self._report_unchecked(
+                    op["id"],
+                    notes,
+                    lambda path: (
+                        f"events[{index}]"
+                        + "".join(f"[{s}]" if isinstance(s, int) else f".{s}" for s in path)
+                    ),
+                    "UNEXPECTED_RESPONSE",
+                    secrets,
+                )
                 if isinstance(checked, Valid):
                     value = cast(Valid[object], checked).data
                 else:

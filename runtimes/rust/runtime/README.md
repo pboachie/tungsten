@@ -101,6 +101,14 @@ zeroization or completion of externally owned work.
 
 ## Limits
 
+In unreleased 0.2.0, schema `minLength` and `maxLength` count Unicode code points, as
+JSON Schema does: an emoji outside the Basic Multilingual Plane is one character, and a
+lone surrogate counts as one. A schema `pattern` that the `regex` crate cannot compile is not
+enforced: the value is accepted and the client reports a `PATTERN_UNCHECKED` diagnostic
+(`failed_parameter`, the pattern and the reason, never the value) through
+`ClientOptions::on_diagnostic`, once per call, path and pattern. Generated validators count `chars()` of the decoded string. Calling a validator directly, without
+a client, stays silent. The server still validates the pattern.
+
 In unreleased 0.2.0, ordinary buffered responses default to **4 MiB (4,194,304 bytes) per response**.
 Set `ClientOptions::max_response_bytes` to choose a finite client cap; the call option with the same
 native name overrides it. Omitted/null values inherit the default or client cap,
