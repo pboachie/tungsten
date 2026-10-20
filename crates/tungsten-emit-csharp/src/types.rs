@@ -3,8 +3,12 @@
 //! presence with `Patch<T>`, additional members kept), enums as readonly
 //! record structs with known values and a strict decoder, unions as
 //! abstract records with variant records (by tag, by value, else the first
-//! variant that decodes, in plan order). Every model decodes and encodes
-//! itself over the runtime's JSON tree, without reflection.
+//! variant that decodes, in plan order). An enum of mixed JSON types is a
+//! readonly record struct of known JSON values; an `allOf` that cannot be
+//! merged into one record is a record with one typed part per member, each
+//! decoded from the whole value and encoded back into one merged value.
+//! Every model decodes and encodes itself over the runtime's JSON tree,
+//! without reflection.
 
 use std::collections::BTreeSet;
 
@@ -318,10 +322,22 @@ impl Ctx<'_> {
         };
         match &t.kind {
             TypeKind::Record { .. } => true,
-            TypeKind::Enum(e) => matches!(e, EnumPlan::Strings | EnumPlan::Integers),
+            TypeKind::Enum(e) => matches!(
+                e,
+                EnumPlan::Strings | EnumPlan::Integers | EnumPlan::Mixed { .. }
+            ),
             TypeKind::Union(u) => !matches!(u, UnionPlan::Empty),
-            TypeKind::AllOf(a) => matches!(a, AllOfPlan::Merged { .. }),
+            TypeKind::AllOf(AllOfPlan::Merged { .. }) => true,
+            TypeKind::AllOf(AllOfPlan::Intersection) => self.intersection_members(id) > 0,
             TypeKind::Alias => false,
+        }
+    }
+
+    /// How many members the `allOf` named `id` has.
+    fn intersection_members(&self, id: &TypeId) -> usize {
+        match self.ir.types.get(id).map(|t| &t.shape) {
+            Some(Shape::Intersection { members }) => members.len(),
+            _ => 0,
         }
     }
 
@@ -366,7 +382,9 @@ impl Ctx<'_> {
                         active.remove(id);
                         out
                     }
-                    TypeKind::Enum(EnumPlan::Strings | EnumPlan::Integers) => Ct::of(Ck::Named {
+                    TypeKind::Enum(
+                        EnumPlan::Strings | EnumPlan::Integers | EnumPlan::Mixed { .. },
+                    ) => Ct::of(Ck::Named {
                         name: self.class_ref(id, from),
                         value: true,
                     }),
@@ -429,6 +447,10 @@ impl Ctx<'_> {
                 TypeKind::AllOf(AllOfPlan::Merged { fields, closed }) => {
                     self.merged_file(&mut w, t, &name, fields, *closed)
                 }
+                TypeKind::AllOf(AllOfPlan::Intersection) => {
+                    self.intersection_file(&mut w, t, &name)
+                }
+                TypeKind::Enum(EnumPlan::Mixed { .. }) => self.mixed_enum_file(&mut w, t, &name),
                 TypeKind::Enum(e) => self.enum_file(&mut w, t, &name, e),
                 TypeKind::Union(u) => self.union_file(&mut w, t, &name, u),
                 _ => {}
@@ -754,6 +776,243 @@ impl Ctx<'_> {
                 "public override string ToString() => Value.ToString(System.Globalization.CultureInfo.InvariantCulture);",
             );
         }
+        w.dedent();
+        w.line("}");
+    }
+
+    /// An enum of values of different JSON types (or numbers that are not
+    /// integers): a readonly record struct of the known values, each held as
+    /// its JSON text and compared as JSON.
+    fn mixed_enum_file(&self, w: &mut Writer, t: &NamedType, name: &str) {
+        let Shape::Enum { values, .. } = &t.shape else {
+            return;
+        };
+        let variant_names = self
+            .names
+            .enum_variants
+            .get(&t.id)
+            .cloned()
+            .unwrap_or_default();
+        let mut taken: Vec<String> = [
+            "Value", "Values", "FromJson", "ToJson", "ToString", "Json", "Typed", "JsonNode",
+            "Decoder", "text", name,
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let consts: Vec<(String, String)> = values
+            .iter()
+            .enumerate()
+            .map(|(i, v)| {
+                let base = variant_names
+                    .get(i)
+                    .cloned()
+                    .unwrap_or_else(|| format!("Value{i}"));
+                let text = serde_json::to_string(&v.value).unwrap_or_else(|_| "null".into());
+                (cs::unique(base, &mut taken), lit(&text))
+            })
+            .collect();
+        cs::summary(w, &doc_text(t.doc.as_ref()));
+        w.line(format!("public readonly record struct {name}"));
+        w.line("{");
+        w.indent();
+        w.line("private readonly string? text;");
+        w.blank();
+        w.line(format!("private {name}(string text)"));
+        w.line("{");
+        w.line("    this.text = text;");
+        w.line("}");
+        w.blank();
+        cs::summary_line(
+            w,
+            "The value on the wire, as a JSON value (a copy; JSON null is null).",
+        );
+        w.line("public JsonNode? Value => Typed.Parse(text ?? \"null\");");
+        w.blank();
+        for ((c, literal), v) in consts.iter().zip(values) {
+            let doc = v
+                .doc
+                .as_ref()
+                .map(|d| doc_text(Some(d)))
+                .unwrap_or_default();
+            if doc.is_empty() {
+                cs::summary_line(w, &format!("The value <c>{}</c>.", cs::xml(literal)));
+            } else {
+                cs::summary(w, &doc);
+            }
+            w.line(format!(
+                "public static readonly {name} {c} = new({literal});"
+            ));
+        }
+        w.blank();
+        cs::summary_line(w, "Every known value, in the API description's order.");
+        let list = consts
+            .iter()
+            .map(|(c, _)| c.clone())
+            .collect::<Vec<_>>()
+            .join(", ");
+        w.line(format!(
+            "public static IReadOnlyList<{name}> Values {{ get; }} = new[] {{ {list} }};"
+        ));
+        w.blank();
+        cs::summary_line(
+            w,
+            "Decodes a JSON value: one of the known values (compared as JSON), else a failure.",
+        );
+        w.line(format!(
+            "public static {name} FromJson(JsonNode? node, Decoder d)"
+        ));
+        w.line("{");
+        w.indent();
+        for (c, _) in &consts {
+            w.line(format!("if (Json.Equal(node, {c}.Value))"));
+            w.line("{");
+            w.line(format!("    return {c};"));
+            w.line("}");
+            w.blank();
+        }
+        let all = consts
+            .iter()
+            .map(|(c, _)| format!("{c}.Value"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        w.line(format!(
+            "throw d.NotOneOf(node, new JsonNode?[] {{ {all} }});"
+        ));
+        w.dedent();
+        w.line("}");
+        w.blank();
+        w.line(format!(
+            "public static {name} FromJson(JsonNode? node) => FromJson(node, Decoder.Lenient());"
+        ));
+        w.blank();
+        cs::summary_line(w, "The value as JSON.");
+        w.line("public JsonNode? ToJson() => Value;");
+        w.blank();
+        w.line("public override string ToString() => text ?? \"null\";");
+        w.dedent();
+        w.line("}");
+    }
+
+    /// An `allOf` that cannot be merged into one record: a record with one
+    /// typed part per member. Every part is decoded from the whole value
+    /// (so a member that is a union, a record with typed extra members or
+    /// any other type works), and the parts are encoded back into one value
+    /// (objects are merged member by member).
+    fn intersection_file(&self, w: &mut Writer, t: &NamedType, name: &str) {
+        let Shape::Intersection { members } = &t.shape else {
+            return;
+        };
+        let from = Some(t.namespace.as_str());
+        let mut taken: Vec<String> = cs::RECORD_MEMBERS.iter().map(|s| s.to_string()).collect();
+        taken.push(name.to_string());
+        taken.extend(
+            ["Merge", "Decoder", "JsonNode", "JsonObject"]
+                .iter()
+                .map(|s| s.to_string()),
+        );
+        let parts: Vec<(String, Ct, String)> = members
+            .iter()
+            .enumerate()
+            .map(|(i, m)| {
+                let (base, label) = match m {
+                    TypeRef::Named(id) => {
+                        let class = self.names.types.get(id).cloned().unwrap_or_default();
+                        (
+                            class.clone(),
+                            format!("the member <c>{}</c>", cs::xml(&id.0)),
+                        )
+                    }
+                    TypeRef::Inline(_) => (
+                        format!("Part{}", i + 1),
+                        format!("the member number {}", i + 1),
+                    ),
+                };
+                let base = if base.is_empty() {
+                    format!("Part{}", i + 1)
+                } else {
+                    base
+                };
+                (cs::unique(base, &mut taken), self.ct(m, from), label)
+            })
+            .collect();
+        cs::summary(w, &doc_text(t.doc.as_ref()));
+        w.line(format!("public sealed record {name}"));
+        w.line("{");
+        w.indent();
+        for (p, ct, label) in &parts {
+            cs::summary_line(w, &format!("The value as {label}."));
+            w.line(format!("public required {} {p} {{ get; init; }}", ct.ty()));
+            w.blank();
+        }
+        cs::summary_line(
+            w,
+            "Decodes a JSON value: each part decodes the whole value; strict decoding refuses members a closed part does not list.",
+        );
+        w.line(format!(
+            "public static {name} FromJson(JsonNode? node, Decoder d)"
+        ));
+        w.line("{");
+        w.indent();
+        w.line(format!("return new {name}"));
+        w.line("{");
+        w.indent();
+        for (p, ct, _) in &parts {
+            w.line(format!("{p} = {},", ct.dec_call("node", "d", 0)));
+        }
+        w.dedent();
+        w.line("};");
+        w.dedent();
+        w.line("}");
+        w.blank();
+        cs::summary_line(
+            w,
+            "Decodes a JSON value, ignoring members the parts do not list.",
+        );
+        w.line(format!(
+            "public static {name} FromJson(JsonNode? node) => FromJson(node, Decoder.Lenient());"
+        ));
+        w.blank();
+        cs::summary_line(w, "The value as JSON: the parts, merged.");
+        w.line("public JsonNode? ToJson()");
+        w.line("{");
+        w.indent();
+        w.line("JsonNode? merged = null;");
+        for (p, ct, _) in &parts {
+            w.line(format!("merged = Merge(merged, {});", ct.enc(p, 0)));
+        }
+        w.line("return merged;");
+        w.dedent();
+        w.line("}");
+        w.blank();
+        w.line("private static JsonNode? Merge(JsonNode? left, JsonNode? right)");
+        w.line("{");
+        w.indent();
+        w.line("if (left is JsonObject l && right is JsonObject r)");
+        w.line("{");
+        w.indent();
+        w.line("var merged = new JsonObject();");
+        w.line("foreach (var member in l)");
+        w.line("{");
+        w.line("    merged[member.Key] = member.Value?.DeepClone();");
+        w.line("}");
+        w.blank();
+        w.line("foreach (var member in r)");
+        w.line("{");
+        w.indent();
+        w.line("merged[member.Key] = merged.TryGetPropertyValue(member.Key, out var known)");
+        w.line("    ? Merge(known, member.Value)");
+        w.line("    : member.Value?.DeepClone();");
+        w.dedent();
+        w.line("}");
+        w.blank();
+        w.line("return merged;");
+        w.dedent();
+        w.line("}");
+        w.blank();
+        w.line("return left?.DeepClone() ?? right?.DeepClone();");
+        w.dedent();
+        w.line("}");
         w.dedent();
         w.line("}");
     }
