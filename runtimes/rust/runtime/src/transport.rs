@@ -273,16 +273,16 @@ pub async fn attempt(client: &reqwest::Client, req: &AttemptRequest<'_>) -> Atte
             },
         };
     }
-    let maximum = req
-        .max_response_bytes
-        .filter(|_| req.method != HttpMethod::Head && !matches!(status, 204 | 205 | 304));
-    let over_length = maximum.is_some_and(|limit| {
-        headers.get("content-length").is_some_and(|value| {
-            !value.is_empty()
-                && value.bytes().all(|b| b.is_ascii_digit())
-                && value.parse::<u64>().map_or(true, |length| length > limit)
-        })
-    });
+    let maximum = req.max_response_bytes;
+    let over_length = req.method != HttpMethod::Head
+        && !matches!(status, 204 | 205 | 304)
+        && maximum.is_some_and(|limit| {
+            headers.get("content-length").is_some_and(|value| {
+                !value.is_empty()
+                    && value.bytes().all(|b| b.is_ascii_digit())
+                    && value.parse::<u64>().map_or(true, |length| length > limit)
+            })
+        });
     let (body, body_failure) = if over_length {
         (None, Some(BodyFailure::Oversized))
     } else {

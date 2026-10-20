@@ -13,15 +13,15 @@
 #   TUNGSTEN_REPO                 owner/name of the repository (default: pboachie/tungsten)
 #   TUNGSTEN_RELEASE_BASE_URL     directory URL laid out like GitHub's releases/download
 #                                 (<base>/<tag>/<asset>), for mirrors and tests; needs a version
-#   TUNGSTEN_REQUIRE_ATTESTATION  1: fail unless the `gh` CLI verifies the build attestation
-#   TUNGSTEN_NO_ATTESTATION       1: do not look for an attestation at all
+#   TUNGSTEN_REQUIRE_ATTESTATION  1: explicitly require the default provenance policy
+#   TUNGSTEN_NO_ATTESTATION       1: explicitly choose checksum-only installation
 #                                 (cannot be combined with REQUIRE_ATTESTATION=1)
 #   TUNGSTEN_LIBC                 Linux archive ABI: musl (default, static) or
 #                                 gnu (dynamically linked; needs glibc 2.34+)
 #
 # The archive is checked against the release's SHA256SUMS before anything is
-# installed. When the GitHub CLI (gh) is available the archive's build
-# provenance attestation is verified too.
+# installed. Build provenance from pboachie/tungsten's release workflow is
+# required by default, including for mirrors; GitHub CLI 2.102.0+ is required.
 #
 # Exit status: 0 installed (and, with --init, set up); 1 nothing installed or
 # the install failed; 4 installed, but the --init setup was cancelled (or
@@ -134,6 +134,7 @@ main() {
       *) die "unknown option: $1" ;;
     esac
   done
+  validate_attestation_settings
   if [ "$launch_init" -eq 1 ]; then
     (test -t 0 </dev/tty) 2>/dev/null || die "--init requires a controlling terminal; install without --init then run tungsten init interactively"
   fi
@@ -156,6 +157,7 @@ main() {
   asset="$name.tar.gz"
   work=$(mktemp -d)
   trap 'rm -rf "$work"' EXIT INT TERM
+  require_attestation_verifier
 
   say "installing tungsten $version for $target"
   rc=0
@@ -208,39 +210,43 @@ main() {
   fi
 }
 
-verify_attestation() {
+validate_attestation_settings() {
+  case "${TUNGSTEN_NO_ATTESTATION:-0}" in 0 | 1) ;; *) die "TUNGSTEN_NO_ATTESTATION must be 0 or 1" ;; esac
+  case "${TUNGSTEN_REQUIRE_ATTESTATION:-0}" in 0 | 1) ;; *) die "TUNGSTEN_REQUIRE_ATTESTATION must be 0 or 1" ;; esac
   if [ "${TUNGSTEN_NO_ATTESTATION:-0}" = 1 ]; then
     [ "${TUNGSTEN_REQUIRE_ATTESTATION:-0}" != 1 ] \
       || die "TUNGSTEN_NO_ATTESTATION=1 conflicts with TUNGSTEN_REQUIRE_ATTESTATION=1"
-    say "checksum verified; attestation not checked (TUNGSTEN_NO_ATTESTATION=1)"
+  fi
+}
+
+require_attestation_verifier() {
+  [ "${TUNGSTEN_NO_ATTESTATION:-0}" != 1 ] || return 0
+  have gh || die "build provenance is required: install GitHub CLI 2.102.0 or newer from https://cli.github.com; TUNGSTEN_NO_ATTESTATION=1 explicitly chooses checksum-only installation"
+  gh --version >"$work/gh-version.log" 2>&1 \
+    || die "cannot determine GitHub CLI version; update to 2.102.0 or newer"
+  awk 'NR == 1 { split($3,v,"."); ok = ($1 == "gh" && $2 == "version" && $3 ~ /^[0-9]+\.[0-9]+\.[0-9]+$/ && (v[1] > 2 || (v[1] == 2 && v[2] >= 102))) } END { exit !ok }' "$work/gh-version.log" \
+    || die "GitHub CLI 2.102.0 or newer is required for exact workflow attestation verification"
+  if ! gh attestation verify --help >"$work/attestation-help.log" 2>&1; then
+    tail -n 8 "$work/attestation-help.log" >&2
+    die "gh attestation verify is unavailable; install GitHub CLI 2.102.0 or newer"
+  fi
+}
+
+verify_attestation() {
+  if [ "${TUNGSTEN_NO_ATTESTATION:-0}" = 1 ]; then
+    say "WARNING: checksum-only installation requested; build provenance not verified (TUNGSTEN_NO_ATTESTATION=1)"
     return 0
   fi
-  if [ -n "${TUNGSTEN_RELEASE_BASE_URL:-}" ]; then
-    [ "${TUNGSTEN_REQUIRE_ATTESTATION:-0}" != 1 ] \
-      || die "TUNGSTEN_REQUIRE_ATTESTATION=1 cannot verify a custom release location"
-    say "custom release location: skipping the build attestation check"
-    return 0
+  # Download origins do not select trusted signer identities. Mirrors and
+  # TUNGSTEN_REPO overrides must still supply an official release artifact.
+  if ! gh attestation verify "$1" --hostname github.com --repo pboachie/tungsten \
+      --signer-workflow pboachie/tungsten/.github/workflows/release.yml \
+      --cert-oidc-issuer https://token.actions.githubusercontent.com \
+      --source-ref "refs/tags/$version" >"$work/attestation-out.log" 2>"$work/attestation-error.log"; then
+    tail -n 8 "$work/attestation-error.log" >&2
+    die "the official build attestation could not be verified; nothing was installed"
   fi
-  reason='gh is not installed'
-  if have gh && gh attestation --help >"$work/attestation-help.log" 2>&1; then
-    gh --version >"$work/gh-version.log" 2>&1 \
-      || die "cannot determine GitHub CLI version; update to 2.102.0 or newer"
-    awk 'NR == 1 { split($3,v,"."); ok = ($1 == "gh" && $2 == "version" && $3 ~ /^[0-9]+\.[0-9]+\.[0-9]+$/ && (v[1] > 2 || (v[1] == 2 && v[2] >= 102))) } END { exit !ok }' "$work/gh-version.log" \
-      || die "GitHub CLI 2.102.0 or newer is required for exact workflow attestation verification"
-    if ! gh attestation verify "$1" --repo "$repo" --signer-workflow "$repo/.github/workflows/release.yml" >"$work/attestation-out.log" 2>"$work/attestation-error.log"; then
-      tail -n 8 "$work/attestation-error.log" >&2
-      die "the build attestation could not be verified; nothing was installed"
-    fi
-    say "build attestation verified"
-  else
-    if have gh; then
-      reason='gh attestation is unavailable; update GitHub CLI (2.49 or newer)'
-      tail -n 8 "$work/attestation-help.log" >&2
-    fi
-    [ "${TUNGSTEN_REQUIRE_ATTESTATION:-0}" != 1 ] \
-      || die "TUNGSTEN_REQUIRE_ATTESTATION=1 but $reason"
-    say "checksum verified; attestation not checked ($reason)"
-  fi
+  say "official build attestation verified"
 }
 
 main "$@"

@@ -49,6 +49,7 @@ public sealed partial class ClientCore
     private readonly byte[] confirmationKey;
     private readonly HttpClient http;
     private readonly bool redirectsDisabled;
+    private readonly bool allowInsecureHttp;
 
     /// <summary>Generated clients require this capability when redirects are forbidden.</summary>
     public static void RequireRedirectPolicyV1() { }
@@ -62,6 +63,7 @@ public sealed partial class ClientCore
     private readonly Func<long>? nowFn;
     private readonly Func<double>? randomFn;
     private readonly ITokenStore tokenStore;
+    private readonly long maxOAuthTokenResponseBytes;
     private readonly RuntimeIdentity identity = RuntimeIdentity.CSharp;
 
     private readonly ConcurrentDictionary<string, OperationDescriptor> registry = new(StringComparer.Ordinal);
@@ -80,6 +82,7 @@ public sealed partial class ClientCore
     public ClientCore(ApiDescriptor api, ClientOptions? options = null, IEnumerable<OperationDescriptor>? operations = null)
     {
         options ??= new ClientOptions();
+        allowInsecureHttp = options.AllowInsecureHttp;
         this.api = api ?? throw new ClientConfigException("the API descriptor is missing");
         var apiNone = RedirectsNone(api.Redirects);
         var clientNone = RedirectsNone(options.Redirects);
@@ -102,7 +105,7 @@ public sealed partial class ClientCore
         headers = options.Headers ?? new Dictionary<string, string>();
         timeout = options.Timeout is TimeSpan t && t > TimeSpan.Zero ? t : ClientOptions.DefaultTimeout;
         maxEventBytes = options.MaxEventBytes is int m && m > 0 ? m : ClientOptions.DefaultMaxEventBytes;
-        maxResponseBytes = options.MaxResponseBytes;
+        maxResponseBytes = options.MaxResponseBytes ?? 4 * 1024 * 1024;
         maxCollectBytes = options.MaxCollectBytes is int c && c > 0 ? c : ClientOptions.DefaultMaxCollectBytes;
         maxCollectTime = options.MaxCollectTime is TimeSpan ct && ct > TimeSpan.Zero ? ct : ClientOptions.DefaultMaxCollectTime;
         maxReconnects = options.MaxReconnects is int r ? Math.Min(Math.Max(r, 0), 1000) : ClientOptions.DefaultMaxReconnects;
@@ -116,11 +119,16 @@ public sealed partial class ClientCore
         middleware = options.Middleware ?? System.Array.Empty<IMiddleware>();
         validateResponses = options.ValidateResponses ?? ValidateResponses.Warn;
         onDiagnostic = options.OnDiagnostic;
-        confirmationKey = options.ConfirmationKey is { Length: > 0 } key ? key : Util.RandomBytes(32);
+        if (options.ConfirmationKey is { Length: < 32 })
+        {
+            throw new ClientConfigException("ConfirmationKey must contain at least 32 bytes; omit it to generate a random key");
+        }
+        confirmationKey = options.ConfirmationKey is { } key ? (byte[])key.Clone() : Util.RandomBytes(32);
         http = options.HttpClient ?? SharedHttp.Value;
         nowFn = options.Now;
         randomFn = options.Random;
         tokenStore = options.TokenStore ?? new MemoryTokenStore();
+        maxOAuthTokenResponseBytes = options.MaxOAuthTokenResponseBytes ?? OAuthAttemptRules.DefaultTokenResponseBytes;
         if (operations is not null)
         {
             Register(operations);

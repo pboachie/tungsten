@@ -29,6 +29,10 @@ module Tungsten
       attr_reader :descriptors, :base_url, :timeout_ms, :max_event_bytes, :max_collect_bytes, :max_collect_ms,
                   :max_reconnects, :reconnect_max_ms, :idle_timeout_ms
 
+      # Default Object inspection would include configured credentials/keys.
+      def inspect = "#<Tungsten::Runtime::ClientCore #{REDACTED}>"
+      alias_method :to_s, :inspect
+
       # @param descriptors [Descriptors] the SDK descriptor document
       # @param options [ClientOptions, Hash, nil]
       def initialize(descriptors, options = nil)
@@ -49,11 +53,13 @@ module Tungsten
         end
 
         @base_url = base
+        @allow_insecure_http = o.allow_insecure_http == true
         @auth = (o.auth || {}).to_h.transform_keys(&:to_s)
         @headers = (o.headers || {}).to_h.transform_keys(&:to_s)
         @timeout_ms = positive(o.timeout_ms) || DEFAULT_TIMEOUT_MS
         @max_event_bytes = positive(o.max_event_bytes) || DEFAULT_MAX_EVENT_BYTES
-        @max_response_bytes = o.max_response_bytes
+        @max_response_bytes = o.max_response_bytes.nil? ? 4 * 1024 * 1024 : o.max_response_bytes
+        @max_oauth_token_response_bytes = o.max_oauth_token_response_bytes.nil? ? 64 * 1024 : o.max_oauth_token_response_bytes
         @max_collect_bytes = positive(o.max_collect_bytes) || DEFAULT_MAX_COLLECT_BYTES
         @max_collect_ms = positive(o.max_collect_ms) || DEFAULT_MAX_COLLECT_MS
         @max_reconnects = o.max_reconnects.nil? ? DEFAULT_MAX_RECONNECTS : o.max_reconnects.to_i.clamp(0, 1000)
@@ -64,7 +70,12 @@ module Tungsten
         @middleware = Array(o.middleware)
         @validate_responses = %w[warn strict off].include?(o.validate_responses.to_s) ? o.validate_responses.to_s : "warn"
         @on_diagnostic = o.on_diagnostic
-        @confirmation_key = o.confirmation_key.to_s.empty? ? SecureRandom.random_bytes(32) : o.confirmation_key.to_s.b
+        key = o.confirmation_key
+        copied_key = String.new(key, encoding: Encoding::BINARY) if key.is_a?(String)
+        if !key.nil? && (copied_key.nil? || copied_key.bytesize < 32)
+          raise ConfigError, "confirmation_key must contain at least 32 bytes; omit it to generate a random key"
+        end
+        @confirmation_key = copied_key || SecureRandom.random_bytes(32)
         @now_fn = o.now
         @random_fn = o.random
         @token_store = o.token_store || MemoryTokenStore.new
@@ -75,6 +86,7 @@ module Tungsten
         @used_tokens = {}
         @oauth_gates = {}
         @registry = descriptors.operations.dup
+        @oauth_sessions = OAuthSessions.new(self)
       end
 
       # The API descriptor (the document's `api`).
@@ -401,12 +413,23 @@ module Tungsten
                .remedy("The operation descriptor is invalid: #{problem}. Regenerate the SDK or fix the descriptor; nothing was sent.").err
       end
 
+      def response_limit(op, opts)
+        cap = opts.max_response_bytes.nil? ? @max_response_bytes : opts.max_response_bytes
+        unless cap.is_a?(Integer) && cap.between?(1, 9_007_199_254_740_991)
+          return Runtime.diag(op.id, "VALIDATION_FAILED").param("maxResponseBytes")
+                        .remedy("maxResponseBytes must be a positive safe integer; nothing was sent.").err
+        end
+        cap
+      end
+
       # Validate, authenticate and render a request. `purpose` is :call,
       # :preview, :server_preview or :macro_preview.
       def prepare(op, raw_args, opts, purpose, url_override, claim)
         if (err = descriptor_err(op))
           return err
         end
+        limit = response_limit(op, opts)
+        return limit if limit.is_a?(Err)
 
         register(op)
         args = normalize_args(op, raw_args)
@@ -427,7 +450,7 @@ module Tungsten
           return err if err
         end
         method = op.http_method
-        auth = resolve_auth(op, method)
+        auth = resolve_auth(op, method, insecure_http?(url_override || @base_url) ? INSECURE_HTTP_AUTH : nil)
         return Runtime.diag(op.id, "AUTH_FAILED").remedy(auth.failed).err if auth.failed
 
         secrets = auth.secrets
@@ -442,6 +465,10 @@ module Tungsten
         full_url, display_url = urls
         headers = HeaderBag.new
         build_headers(op, args, opts, auth.plan, headers)
+        if insecure_http?(full_url) && (!auth.plan.headers.empty? || !auth.plan.cookies.empty? || !auth.plan.query.empty? ||
+            headers.entries.any? { |h| h.secret || credential_header?(h.name) })
+          return Runtime.diag(op.id, "AUTH_FAILED").remedy(INSECURE_HTTP_AUTH).err
+        end
         param_names = op.argument_params.map(&:name)
         body_paths = Helpers.sensitive_body_paths(op)
         value = UNSET
@@ -471,6 +498,12 @@ module Tungsten
         auth.plan.headers.each { |name, v, secret| headers.set(name, v, secret) }
         if purpose == :server_preview && op.agent["preview"]["mode"] == "header"
           headers.set(op.agent["preview"]["header"], op.agent["preview"]["value"], false)
+        end
+        if insecure_http?(full_url) && headers.entries.any? { |h|
+            preserved = key && h.name.casecmp?(header) && h.value == key
+            (h.secret && !preserved) || credential_header?(h.name, preserved)
+          }
+          return Runtime.diag(op.id, "AUTH_FAILED").remedy(INSECURE_HTTP_AUTH).err
         end
         headers.entries.each do |e|
           next if Serialize.valid_header_name?(e.name) && Serialize.valid_header_value?(e.value)
@@ -782,11 +815,8 @@ module Tungsten
       # returned unread as [:stream, meta, body]; otherwise Ok or Err.
       def send_with(p, opts, stream)
         op = p.op
-        cap = opts.max_response_bytes.nil? ? @max_response_bytes : opts.max_response_bytes
-        unless cap.nil? || (cap.is_a?(Integer) && cap.between?(1, 9_007_199_254_740_991))
-          return Runtime.diag(op.id, "VALIDATION_FAILED").param("maxResponseBytes")
-                        .remedy("maxResponseBytes must be a positive safe integer; nothing was sent.").err
-        end
+        cap = response_limit(op, opts)
+        return cap if cap.is_a?(Err)
         retries = retry_options(op)
         mutation = op.mutation?
         protected_ = Classify.replay_protection?(op, !p.key.nil?)

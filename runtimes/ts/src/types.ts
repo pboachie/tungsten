@@ -385,6 +385,9 @@ export interface RetryOptions {
 }
 
 export interface ClientOptions {
+  /** Allows credentials over non-loopback HTTP, including OAuth token requests.
+   * Default false: use HTTPS. localhost, 127/8 and ::1 remain usable locally. */
+  allowInsecureHttp?: boolean;
   /** May tighten the API default; cannot re-enable an API configured with none. */
   redirects?: RedirectPolicy;
   /** Defaults to the first server. */
@@ -398,8 +401,11 @@ export interface ClientOptions {
   fetch?: typeof fetch;
   /** Per-attempt timeout. Default 30000. */
   timeoutMs?: number;
-  /** Optional ordinary-response byte cap; a call may override it. Unset: unbounded. */
-  maxResponseBytes?: number;
+  /** Ordinary-response byte cap; default 4 MiB. Null/omitted inherits; a finite call override wins. */
+  maxResponseBytes?: number | null;
+  /** OAuth code/refresh responses only: 65,536 bytes by default. A positive
+   * safe integer overrides this owner limit; ordinary call limits do not. */
+  maxOAuthTokenResponseBytes?: number;
   /** Overrides the API's per-tier retry defaults (`ApiDescriptor.retries`)
    * field by field, for every tier. */
   retries?: Partial<RetryOptions>;
@@ -432,8 +438,9 @@ export interface ClientOptions {
    * with a failure whose `code` is `STREAM_IDLE`. Default: the per-attempt
    * `timeoutMs`, which ends the stream without a reconnect. */
   idleTimeoutMs?: number;
-  /** Overrides the key used to sign confirmation tokens. Default: random
-   * per client instance. */
+  /** Overrides the key used to sign confirmation tokens. Supply at least 32
+   * cryptographically random bytes; shorter keys fail construction. The key
+   * is copied. Default: random per client instance. */
   confirmationKey?: Uint8Array;
   /** Operations the core can resolve by id: verification hooks, endpoint
    * previews and macro steps. Operations passed to `call` are added too. */
@@ -461,9 +468,9 @@ export interface CallOptions {
   allowConfirmTrue?: boolean;
   signal?: AbortSignal;
   timeoutMs?: number;
-  /** Optional hard response-body byte cap. Positive safe integer; checked
+  /** Override the client response-body cap. Null/omitted inherits. Positive safe integer; checked
    * against actual bytes while reading, including non-SSE responses. */
-  maxResponseBytes?: number;
+  maxResponseBytes?: number | null;
   /** Run the operation's verification hook after success. */
   verify?: boolean;
   headers?: Record<string, string>;

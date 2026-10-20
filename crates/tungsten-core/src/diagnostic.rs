@@ -334,6 +334,14 @@ pub mod codes {
             "agent.yml option not applied by this version; ignored",
         ),
         ("TG0614", "gates entry no operation is gated by"),
+        (
+            "TG0615",
+            "spec safety is below the HTTP-method default without a tools override",
+        ),
+        (
+            "TG0616",
+            "spec removes preview from an operation with side effects without a tools override",
+        ),
         ("TG0701", "generated output could not be written"),
         ("TG0702", "target has no emitter in this version; skipped"),
         (
@@ -480,6 +488,18 @@ pub mod codes {
         (
             "TG0808",
             "external emitter does not declare imported-operation policy enforcement",
+        ),
+        (
+            "TG0809",
+            "selected host policy is invalid or does not match its digest",
+        ),
+        (
+            "TG0810",
+            "external target constraints exceed a protected ceiling or are invalid",
+        ),
+        (
+            "TG0811",
+            "external execution is denied by the selected host policy",
         ),
         ("TG0901", "generated output is stale relative to its inputs"),
         (

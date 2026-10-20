@@ -26,6 +26,19 @@ Calls return a typed result or a diagnostic envelope describing recovery;
 unknown outcomes never justify blindly repeating a mutation. The API remains
 responsible for authorization and server-side idempotency.
 
+## Credential transport
+
+Credentials require HTTPS by default, including OAuth client-credentials, code
+exchange and refresh endpoints. Non-loopback HTTP returns `AUTH_FAILED` before
+sending credentials. Migrate authenticated HTTP services to HTTPS, or explicitly
+opt in with `ClientOptions(allow_insecure_http=True)` for intentional insecure transport.
+This permits cleartext credentials; enable it only for a trusted environment.
+
+The local-development exception covers `localhost` (also with a trailing dot),
+literal IPv4 `127/8`, and IPv6 `::1`. Subdomains, unspecified addresses and
+IPv4-mapped IPv6 addresses require the explicit override. DNS resolution does not
+grant an exception. Anonymous HTTP requests remain supported.
+
 ## Limits
 
 Stream `collect(max_bytes=..., max_ms=...)` accepts optional byte and time budgets. Setting
@@ -34,14 +47,26 @@ JSON for the event values, excluding SSE framing. A limit closes the stream
 and returns a nonretryable error with only the admitted events as `partial`.
 Calling `collect()` with no arguments preserves unbounded collection.
 
-Set `ClientOptions.max_response_bytes` to opt into an ordinary-response byte cap;
-a call option with the same name overrides it. The value must be a positive
-safe integer (at most 9007199254740991); unset keeps the existing unbounded
-behavior. Content-Length is checked before reading, and actual bytes are
-counted even without that header. Overflow closes the body and returns
-`UNEXPECTED_RESPONSE` with code `RESPONSE_TOO_LARGE` and `retryable: never`.
-A mutation may have taken effect: inspect API state before retrying. The cap
-does not limit a successful SSE stream; use its event and collection limits.
+In unreleased 0.2.0, ordinary buffered responses default to **4 MiB (4,194,304 bytes) per response**.
+Set `ClientOptions.max_response_bytes` to choose a finite client cap; the call option with the same
+native name overrides it. Omitted/null values inherit the default or client cap,
+not an unlimited mode. Values must be positive safe integers (at most
+9007199254740991), validated before authentication, storage and preview effects.
+This covers ordinary success/error bodies, server previews, each page and each
+verification read. A page cap does not bound collecting many pages.
+
+Content-Length can reject an oversized representation early; actual delivered
+bytes are counted even without it. HEAD/204/205/304 metadata alone does not
+consume the budget, but any body bytes a transport delivers are still counted.
+Overflow closes the owned body and returns `UNEXPECTED_RESPONSE`, code
+`RESPONSE_TOO_LARGE`, with `retryable: never`. A mutation may have taken effect:
+inspect API state before retrying. The cap is separate from OAuth token-response
+and successful SSE event/collection budgets.
+
+The default HTTP stack supplies decoded bytes when it decompresses a response.
+The cap limits accepted body bytes; parsers, copies and HTTP decoders can allocate
+more. Custom transports must stream nonempty bodies and honor cancellation;
+their own buffering, decoding and settlement behavior need separate qualification.
 
 Default idempotency and OAuth token state are in memory. A
 `FileIdempotencyStore` is available for durable idempotency keys; it does not
@@ -56,3 +81,65 @@ availability are separate from building this source checkout.
 
 Apache-2.0; see the packaged LICENSE. The compiler is licensed separately
 under AGPL-3.0-only.
+
+## Managed browser OAuth
+
+`flow.authorization_url(session_binding=binding, s256_supported=True,
+issuer_defense=IssuerDefense("issuerResponse", issuer))` creates a managed
+S256 PKCE/state attempt. Import `IssuerDefense` from `tungsten_runtime`.
+Retain `result.value.attempt_handle` in the owning browser session/native
+listener, open `result.value.url`, then call
+`flow.exchange_code(handle, callback_url, session_binding=binding)` with the
+full callback URL. Await exchange, refresh and logout on the async client;
+begin and cancel are synchronous on both clients. Do not log callback URLs.
+
+Issuer-response validation requires an exact `iss` on both success and denial.
+`IssuerDefense("distinctRedirect", qualification)` is the explicit alternative
+only after the application qualifies a different exact registered redirect URI
+for each issuer. Missing `iss` never activates an alternative. Qualify S256
+provider support before beginning; there is no plain-PKCE fallback.
+
+The in-memory store admits 32 pending/exchanging attempts with a ten-minute
+monotonic lifetime. Captured UTF-8 inputs total at most 32 KiB, with 64 scopes
+and 64 extra parameters. Raw callbacks and decoded fields are limited to 16 KiB
+and 64 parameters. Duplicate fields, malformed encodings and protected endpoint
+query/extra fields refuse before dispatch. Managed redirects are absolute and
+have no credentials, query or fragment. Valid denial and one-shot exchange
+consume their handles; ambiguous failure requires a new attempt.
+
+`flow.cancel_authorization(handle, binding)` invalidates one attempt;
+`flow.logout()` invalidates the session before deleting local credentials.
+An exchanging attempt keeps capacity until its owned work settles, even after
+explicit cancellation. Sync transports/custom stores may be uninterruptible;
+cancellation invalidates their completion without promising immediate return.
+Secret references are removed; Python does not guarantee physical zeroization.
+
+Custom managed token stores must implement `set_if_current(scheme, token,
+predicate)` and `delete_if_current(scheme, predicate)` synchronously or
+asynchronously as appropriate. Pass the currently stored token to the predicate
+and invoke it exactly once at the final serialized write/removal. The callback
+advances the session's credential-mutation epoch; speculative checks, retries or
+an await between callback and mutation violate the contract. Return True only
+after commit; failed mutations preserve the old token and return False/raise.
+A callback followed by commit failure can conservatively invalidate older refresh
+work. Managed begin/default refresh refuse unsupported
+stores. The default memory store implements the contract across threads.
+The guarantee is per client/session; shared multi-account partitioning and
+persistent adapters need separate qualification. Concurrent completed logins
+select the last successful token-store commit; an old refresh cannot replace it,
+even if the provider reissues identical token strings. External/low-level store
+writes bypass the managed epoch; log out and begin a new managed session when
+replacing credentials outside these helpers. Refresh flights are keyed by epoch
+and limited to 32 owned jobs, retained until settlement.
+
+Code/refresh token responses default to 65,536 decoded bytes. Set the separate
+positive safe-integer `ClientOptions.max_oauth_token_response_bytes` for a
+provider requiring larger tokens. This does not bound JSON heap usage, arbitrary
+custom-store latency, or client-credentials responses. Ordinary call response
+limits are independent; provider acceptance needs application verification.
+
+Legacy applications can explicitly use `low_level_authorization_url` and
+`low_level_exchange_code` while independently owning PKCE, CSRF, callback and
+issuer validation. These compatibility primitives provide no managed-attempt
+guarantees; they must not become a default login path. `pkce()` remains a
+low-level primitive.

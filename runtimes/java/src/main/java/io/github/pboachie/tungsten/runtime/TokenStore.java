@@ -3,6 +3,7 @@ package io.github.pboachie.tungsten.runtime;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.function.Predicate;
 
 /**
  * Holds the tokens of the authorization-code schemes, by scheme name. Implement it to persist
@@ -17,6 +18,23 @@ public interface TokenStore {
 
     /** Forgets the scheme's token. */
     void delete(String scheme);
+
+    /**
+     * Managed-store capability. Invoke a predicate exactly once against the current token
+     * (possibly null), at the final serialized mutation, without speculation, retry or a gap
+     * before the write/removal. The predicate changes a managed session epoch. Return true
+     * only for committed mutation; failed writes retain the prior token. A predicate followed
+     * by a failed commit may conservatively invalidate old refresh work. Direct/low-level
+     * writes bypass managed session fences. Shared multi-account adapters need separate
+     * partitioning and qualification.
+     */
+    interface Fenced extends TokenStore {
+        /** Conditionally stores the token at the final serialized mutation. */
+        boolean setIfCurrent(String scheme, StoredToken token, Predicate<StoredToken> current);
+
+        /** Conditionally removes the token at the final serialized mutation. */
+        boolean deleteIfCurrent(String scheme, Predicate<StoredToken> current);
+    }
 
     /**
      * What a store keeps for one scheme. {@link #toString} shows no secret.
@@ -36,7 +54,7 @@ public interface TokenStore {
     }
 
     /** Keeps tokens in memory. */
-    final class Memory implements TokenStore {
+    final class Memory implements Fenced {
         private final Map<String, StoredToken> tokens = new HashMap<>();
 
         @Override
@@ -52,6 +70,20 @@ public interface TokenStore {
         @Override
         public synchronized void delete(String scheme) {
             tokens.remove(scheme);
+        }
+
+        @Override
+        public synchronized boolean setIfCurrent(String scheme, StoredToken token, Predicate<StoredToken> current) {
+            if (!current.test(tokens.get(scheme))) return false;
+            tokens.put(scheme, token);
+            return true;
+        }
+
+        @Override
+        public synchronized boolean deleteIfCurrent(String scheme, Predicate<StoredToken> current) {
+            if (!current.test(tokens.get(scheme))) return false;
+            tokens.remove(scheme);
+            return true;
         }
     }
 }

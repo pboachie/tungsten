@@ -28,7 +28,7 @@ use tungsten_tokens::{Counter, count};
 use crate::args::ReportArgs;
 use crate::commands::check;
 use crate::commands::diff::{self, DiffOptions};
-use crate::commands::generate::{Emitted, Project, emit_target};
+use crate::commands::generate::{Emitted, Project, emit_target, prepare};
 use crate::input::{self, Input};
 use crate::output::{
     Budgets, CellOrigin, CliError, CommandName, CommandResult, Coverage, CoverageStatus,
@@ -47,7 +47,7 @@ const BUCKET: usize = 100;
 const LAST_BUCKET: usize = 600;
 
 pub(crate) fn run(args: &ReportArgs, env: &CliEnv, no_external: bool) -> Report {
-    let mut compiled = input::compile(&args.input.path);
+    let mut compiled = input::compile_with_policy(&args.input.path, env.policy.clone());
     let mut report = Report::new(CommandName::Report);
     let sources = std::mem::take(&mut compiled.workspace.sources);
     let mut diagnostics = compiled.diagnostics.0.clone();
@@ -143,54 +143,52 @@ fn collect(
     };
     let agent = agent_manifest(compiled, input, project);
     data.safety = safety_rows(ir, agent.as_ref());
-    let mut runs: BTreeMap<String, Emitted> = BTreeMap::new();
-    for name in target_names(&configured) {
-        let is_configured = configured.contains(&name);
-        if !is_configured && !all_targets {
-            continue;
-        }
-        let emitted = emit_target(compiled, ir, project, &name);
-        if is_configured {
-            diagnostics.extend(emitted.diagnostics.0.iter().cloned());
-        }
-        runs.insert(name, emitted);
-    }
-    data.coverage.targets = target_names(&configured)
+    let names = target_names(&configured);
+    let selected: Vec<_> = names
         .iter()
-        .map(|name| match runs.get(name) {
-            Some(e) => coverage(ir, name, e, &configured),
-            None => not_configured_coverage(name),
-        })
+        .filter(|name| all_targets || configured.contains(name))
+        .cloned()
         .collect();
-    if let Some(files) = runs
-        .get("docs")
-        .filter(|e| !e.failed())
-        .and_then(|e| e.files.as_ref())
-    {
-        data.budgets.documents = documents(files);
-        data.budgets.tools = tool_budgets(files, data.budgets.schema_budget);
-    }
-    if let Some(files) = runs
-        .get("mcp")
-        .filter(|e| !e.failed())
-        .and_then(|e| e.files.as_ref())
-    {
-        data.budgets.mcp = mcp_budgets(files, data.budgets.schema_budget);
-    }
+    let prepared = prepare(ir, &selected);
     let opts = DiffOptions {
         patches: false,
         semver: true,
     };
-    // `runs` holds every configured target (`target_names` includes them).
-    for (name, emitted) in configured.iter().filter_map(|n| Some((n, runs.get(n)?))) {
-        data.changes.push(diff::target_diff(
-            name,
-            emitted,
-            ir,
-            project,
-            opts,
-            diagnostics,
-        ));
+    let mut changes = BTreeMap::new();
+    for name in names {
+        let is_configured = configured.contains(&name);
+        if !is_configured && !all_targets {
+            data.coverage.targets.push(not_configured_coverage(&name));
+            continue;
+        }
+        let emitted = emit_target(compiled, &prepared, project, &name, false);
+        if is_configured {
+            diagnostics.extend(emitted.diagnostics.0.iter().cloned());
+        }
+        data.coverage
+            .targets
+            .push(coverage(ir, &name, &emitted, &configured));
+        if let Some(files) = emitted.files.as_ref().filter(|_| !emitted.failed()) {
+            if name == "docs" {
+                data.budgets.documents = documents(files);
+                data.budgets.tools = tool_budgets(files, data.budgets.schema_budget);
+            } else if name == "mcp" {
+                data.budgets.mcp = mcp_budgets(files, data.budgets.schema_budget);
+            }
+        }
+        if is_configured {
+            let mut more = Vec::new();
+            let change = diff::target_diff(&name, &emitted, ir, project, opts, &mut more);
+            changes.insert(name, (change, more));
+        }
+    }
+    // Preserve authored target order and the existing diagnostic ordering
+    // without retaining emitter bytes for later comparison.
+    for name in &configured {
+        if let Some((change, more)) = changes.remove(name) {
+            data.changes.push(change);
+            diagnostics.extend(more);
+        }
     }
     data
 }

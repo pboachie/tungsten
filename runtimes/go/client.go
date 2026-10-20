@@ -22,34 +22,36 @@ const Version = "0.1.3"
 // envelope. It is safe for concurrent use. API and transport failures are
 // returned as *Error values carrying the envelope.
 type ClientCore struct {
-	maxResponseBytes  *int64
-	redirectsDisabled bool
-	api               *APIDescriptor
-	auth              AuthConfig
-	headers           map[string]string
-	baseURL           string
-	timeout           time.Duration
-	maxEventBytes     int
-	maxCollectBytes   int
-	maxCollectTime    time.Duration
-	maxReconnects     int
-	reconnectMax      time.Duration
-	idleTimeout       time.Duration
-	retries           PartialRetry
-	store             IdempotencyStore
-	middleware        []Middleware
-	validateResponses ValidateResponses
-	onDiagnostic      func(*Diagnostic)
-	confirmationKey   []byte
-	http              *http.Client
-	nowFn             func() int64
-	randomFn          func() float64
-	tokenStore        TokenStore
+	allowInsecureHTTP          bool
+	maxResponseBytes           *int64
+	maxOAuthTokenResponseBytes int64
+	redirectsDisabled          bool
+	api                        *APIDescriptor
+	auth                       AuthConfig
+	headers                    map[string]string
+	baseURL                    string
+	timeout                    time.Duration
+	maxEventBytes              int
+	maxCollectBytes            int
+	maxCollectTime             time.Duration
+	maxReconnects              int
+	reconnectMax               time.Duration
+	idleTimeout                time.Duration
+	retries                    PartialRetry
+	store                      IdempotencyStore
+	middleware                 []Middleware
+	validateResponses          ValidateResponses
+	onDiagnostic               func(*Diagnostic)
+	confirmationKey            []byte
+	http                       *http.Client
+	nowFn                      func() int64
+	randomFn                   func() float64
+	tokenStore                 TokenStore
 
 	mu         sync.Mutex
 	registry   map[string]*OperationDescriptor
 	usedTokens map[string]usedToken
-	oauthGates map[string]*gate
+	oauth      oauthState
 	// keyMu makes "find or create the key of a logical call" atomic.
 	keyMu     sync.Mutex
 	ccMu      sync.Mutex
@@ -93,25 +95,30 @@ func NewClientCore(api *APIDescriptor, options ClientOptions) (*ClientCore, erro
 		return nil, &ConfigError{Message: "the base URL is not a valid absolute http(s) URL without credentials"}
 	}
 	key := options.ConfirmationKey
-	if len(key) == 0 {
+	if key != nil && len(key) < 32 {
+		return nil, &ConfigError{Message: "ConfirmationKey must contain at least 32 bytes; omit it to generate a random key"}
+	}
+	if key == nil {
 		random, ok := randomBytes(32)
 		if !ok {
 			return nil, &ConfigError{Message: "no source of randomness for the confirmation key"}
 		}
 		key = random
+	} else {
+		key = append([]byte(nil), key...)
 	}
-	maximum := options.MaxResponseBytes
-	if maximum != nil {
-		copy := *maximum
-		maximum = &copy
+	maximum := int64(4 * 1024 * 1024)
+	if options.MaxResponseBytes != nil {
+		maximum = *options.MaxResponseBytes
 	}
 	c := &ClientCore{
-		maxResponseBytes:  maximum,
+		maxResponseBytes:  &maximum,
 		redirectsDisabled: api.Redirects == RedirectNone || options.Redirects == RedirectNone,
 		api:               api,
 		auth:              options.Auth,
 		headers:           options.Headers,
 		baseURL:           base,
+		allowInsecureHTTP: options.AllowInsecureHTTP,
 		timeout:           options.Timeout,
 		maxEventBytes:     options.MaxEventBytes,
 		maxCollectBytes:   options.MaxCollectBytes,
@@ -128,9 +135,12 @@ func NewClientCore(api *APIDescriptor, options ClientOptions) (*ClientCore, erro
 		tokenStore:        options.TokenStore,
 		registry:          map[string]*OperationDescriptor{},
 		usedTokens:        map[string]usedToken{},
-		oauthGates:        map[string]*gate{},
 		ccTokens:          map[string]cachedToken{},
 		ccFlights:         map[string]*ccFlight{},
+	}
+	c.maxOAuthTokenResponseBytes = defaultOAuthTokenResponseBytes
+	if options.MaxOAuthTokenResponseBytes != nil {
+		c.maxOAuthTokenResponseBytes = *options.MaxOAuthTokenResponseBytes
 	}
 	if c.auth == nil {
 		c.auth = AuthConfig{}

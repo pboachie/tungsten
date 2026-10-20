@@ -320,6 +320,24 @@ pub fn write_output(
     out_dir: &Path,
     opts: &WriteOptions,
 ) -> Result<WriteReport, Diagnostics> {
+    write_output_with_cancel(files, out_dir, opts, || false)
+}
+
+/// Write with cooperative cancellation between file operations. Output writes
+/// are not transactional: an I/O failure or cancellation reports completed
+/// writes/removals, and the previous manifest may require regeneration.
+pub fn write_output_with_cancel(
+    files: &FileSet,
+    out_dir: &Path,
+    opts: &WriteOptions,
+    cancelled: impl Fn() -> bool,
+) -> Result<WriteReport, Diagnostics> {
+    if cancelled() {
+        return Err(Diagnostics(vec![Diagnostic::error(
+            "TG0701",
+            "generation cancelled before writing target output",
+        )]));
+    }
     let mut errors = reserved_paths(files, out_dir);
     let previous = match read_previous(out_dir) {
         Ok(p) => p,
@@ -371,6 +389,12 @@ pub fn write_output(
 
     let mut report = WriteReport::default();
     for (rel, bytes) in files.iter() {
+        if cancelled() {
+            return Err(Diagnostics(vec![Diagnostic::error(
+                "TG0701",
+                "generation cancelled during output comparison; target output has not been applied",
+            )]));
+        }
         let path = out_dir.join(rel);
         let exists = std::fs::symlink_metadata(&path).is_ok();
         if exists && is_custom_path(rel) {
@@ -389,21 +413,48 @@ pub fn write_output(
         return Ok(report);
     }
 
-    let fail = |d: Diagnostic| {
+    let fail = |d: Diagnostic, written: usize, removed: usize| {
         let mut all = Diagnostics::new();
-        all.push(d);
+        all.push(d.with_help(format!(
+            "target output is not transactional: {written} files written and {removed} files removed before this failure; some earlier targets may also have been applied; fix the problem and run generation again"
+        )));
         all
     };
+    let mut written = 0;
+    let mut removed = 0;
+    let cancellation = |written, removed| {
+        fail(
+            Diagnostic::error(
+                "TG0701",
+                "generation cancelled while applying target output",
+            ),
+            written,
+            removed,
+        )
+    };
     for rel in &report.removed {
+        if cancelled() {
+            return Err(cancellation(written, removed));
+        }
         let path = out_dir.join(rel);
-        std::fs::remove_file(&path)
-            .map_err(|e| fail(io_error(shown(out_dir, rel), "remove", &e)))?;
+        std::fs::remove_file(&path).map_err(|e| {
+            fail(
+                io_error(shown(out_dir, rel), "remove", &e),
+                written,
+                removed,
+            )
+        })?;
+        removed += 1;
         prune_empty_dirs(out_dir, &path);
     }
     for rel in &report.written {
+        if cancelled() {
+            return Err(cancellation(written, removed));
+        }
         let bytes = files.get(rel).unwrap_or_default();
         write_file(&out_dir.join(rel), bytes)
-            .map_err(|e| fail(io_error(shown(out_dir, rel), "write", &e)))?;
+            .map_err(|e| fail(io_error(shown(out_dir, rel), "write", &e), written, removed))?;
+        written += 1;
     }
     let manifest = OutputManifest::new(files, opts.generator.as_ref()).to_bytes();
     let surface = opts.ir.as_ref().map(|ir| {
@@ -415,10 +466,13 @@ pub fn write_output(
     let bookkeeping = [(MANIFEST_PATH, Some(manifest)), (SURFACE_PATH, surface)];
     for (rel, bytes) in bookkeeping {
         let Some(bytes) = bytes else { continue };
+        if cancelled() {
+            return Err(cancellation(written, removed));
+        }
         let path = out_dir.join(rel);
         if std::fs::read(&path).ok().as_deref() != Some(bytes.as_slice()) {
             write_file(&path, &bytes)
-                .map_err(|e| fail(io_error(shown(out_dir, rel), "write", &e)))?;
+                .map_err(|e| fail(io_error(shown(out_dir, rel), "write", &e), written, removed))?;
         }
     }
     Ok(report)

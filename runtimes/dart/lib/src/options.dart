@@ -239,10 +239,12 @@ final class Middleware {
 final class ClientOptions {
   /// Client options.
   const ClientOptions({
+    this.allowInsecureHttp = false,
     this.baseUrl,
     this.redirects,
     this.auth = const {},
     this.tokenStore,
+    this.maxOAuthTokenResponseBytes,
     this.timeout,
     this.retries,
     this.idempotencyStore,
@@ -265,6 +267,10 @@ final class ClientOptions {
   /// The API's base URL; defaults to its first server.
   final String? baseUrl;
 
+  /// Explicitly permits credentials over non-loopback HTTP, including OAuth.
+  /// Default false; localhost, 127/8 and ::1 remain usable locally.
+  final bool allowInsecureHttp;
+
   /// Which redirects are followed; the API's own policy applies when null,
   /// and either one set to [RedirectPolicy.none] disables them.
   final RedirectPolicy? redirects;
@@ -274,6 +280,10 @@ final class ClientOptions {
 
   /// Where authorization-code tokens live (memory by default).
   final TokenStore? tokenStore;
+
+  /// Authorization-code/refresh response bytes (64 KiB by default). Must be a
+  /// positive integer no larger than 1 MiB; independent of ordinary responses.
+  final int? maxOAuthTokenResponseBytes;
 
   /// The per-attempt timeout (30 s).
   final Duration? timeout;
@@ -299,7 +309,7 @@ final class ClientOptions {
   /// The largest event of a stream, in UTF-8 bytes (1 MiB).
   final int? maxEventBytes;
 
-  /// Maximum buffered response bytes; null leaves the size unlimited.
+  /// Maximum ordinary response bytes; null inherits the 4 MiB default.
   /// Must be a positive safe integer. SSE uses [maxEventBytes] instead.
   final int? maxResponseBytes;
 
@@ -318,7 +328,8 @@ final class ClientOptions {
   /// The silence after which a stream is idle (none).
   final Duration? idleTimeout;
 
-  /// Signs confirmation tokens (random per client).
+  /// Signs confirmation tokens with at least 32 cryptographically random bytes,
+  /// copied at construction. Shorter keys fail construction; null generates a key.
   final List<int>? confirmationKey;
 
   /// The clock, in epoch milliseconds (tests).

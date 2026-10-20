@@ -9,6 +9,7 @@
 //! `ClientOptions::token_store` (memory by default), never in the options,
 //! envelopes or logs.
 
+use std::cell::Cell;
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -25,6 +26,10 @@ use crate::classify::decode_body;
 use crate::client::ClientCore;
 use crate::envelope::Diag;
 use crate::idempotency::lock;
+use crate::oauth_attempt::{
+    self, AuthorizationAttempt, AuthorizationUrlParams, ExchangeCodeParams, IssuerDefense,
+    PendingAuthorization,
+};
 use crate::serialize::{Payload, base64_text};
 use crate::transport::{AttemptOutcome, AttemptRequest, attempt};
 use crate::types::{
@@ -76,6 +81,31 @@ pub trait TokenStore: Send + Sync + fmt::Debug {
     fn get(&self, scheme: &str) -> Option<StoredToken>;
     fn set(&self, scheme: &str, token: StoredToken);
     fn delete(&self, scheme: &str);
+    /// Opt in only when both conditional methods invoke the predicate exactly once
+    /// against the current token at the final serialized write/removal. The predicate
+    /// changes the managed session epoch: no speculative checks, retries or gap before
+    /// mutation are permitted. Return true only for a committed mutation; a failed write
+    /// must retain the previous token. A predicate followed by a failed write may
+    /// conservatively invalidate an old refresh. Direct/low-level writes bypass the
+    /// managed session fence and need application-owned coordination.
+    fn supports_fencing(&self) -> bool {
+        false
+    }
+    fn set_if_current(
+        &self,
+        _scheme: &str,
+        _token: StoredToken,
+        _current: &dyn Fn(Option<&StoredToken>) -> bool,
+    ) -> bool {
+        false
+    }
+    fn delete_if_current(
+        &self,
+        _scheme: &str,
+        _current: &dyn Fn(Option<&StoredToken>) -> bool,
+    ) -> bool {
+        false
+    }
 }
 
 /// The default store: in memory, per client.
@@ -91,6 +121,34 @@ impl MemoryTokenStore {
 }
 
 impl TokenStore for MemoryTokenStore {
+    fn supports_fencing(&self) -> bool {
+        true
+    }
+    fn set_if_current(
+        &self,
+        scheme: &str,
+        token: StoredToken,
+        current: &dyn Fn(Option<&StoredToken>) -> bool,
+    ) -> bool {
+        let mut tokens = lock(&self.tokens);
+        if !current(tokens.get(scheme)) {
+            return false;
+        }
+        tokens.insert(scheme.to_owned(), token);
+        true
+    }
+    fn delete_if_current(
+        &self,
+        scheme: &str,
+        current: &dyn Fn(Option<&StoredToken>) -> bool,
+    ) -> bool {
+        let mut tokens = lock(&self.tokens);
+        if !current(tokens.get(scheme)) {
+            return false;
+        }
+        tokens.remove(scheme);
+        true
+    }
     fn get(&self, scheme: &str) -> Option<StoredToken> {
         lock(&self.tokens).get(scheme).cloned()
     }
@@ -153,7 +211,7 @@ pub struct TokenInfo {
 
 /// Parameters of [`OAuthFlow::authorization_url`].
 #[derive(Debug, Clone, Default)]
-pub struct AuthorizationUrlParams {
+pub struct LowLevelAuthorizationUrlParams {
     /// Defaults to the `redirect_uri` of the scheme's auth config.
     pub redirect_uri: Option<String>,
     /// Defaults to the scopes of the flow.
@@ -167,7 +225,7 @@ pub struct AuthorizationUrlParams {
 
 /// Parameters of [`OAuthFlow::exchange_code`].
 #[derive(Debug, Clone, Default)]
-pub struct ExchangeCodeParams {
+pub struct LowLevelExchangeCodeParams {
     pub code: String,
     /// Defaults to the `redirect_uri` of the scheme's auth config.
     pub redirect_uri: Option<String>,
@@ -203,7 +261,7 @@ fn build_authorization_url(
     flow: &AuthorizationCodeFlow,
     client_id: &str,
     redirect_uri: &str,
-    params: &AuthorizationUrlParams,
+    params: &LowLevelAuthorizationUrlParams,
 ) -> String {
     let scope = params.scopes.as_deref().unwrap_or(&flow.scopes).join(" ");
     let mut fields: Vec<(&str, &str)> = vec![
@@ -239,10 +297,11 @@ fn build_authorization_url(
 }
 
 /// The auth config of an authorization-code scheme.
-struct CodeClient {
-    client_id: String,
-    client_secret: Option<String>,
-    redirect_uri: Option<String>,
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) struct CodeClient {
+    pub client_id: String,
+    pub client_secret: Option<String>,
+    pub redirect_uri: Option<String>,
 }
 
 /// A token endpoint problem: the text for the envelope, and whether the
@@ -267,6 +326,7 @@ impl TokenFailure {
 #[derive(Default)]
 pub(crate) struct Gate {
     generation: AtomicU64,
+    token_epoch: AtomicU64,
     lock: tokio::sync::Mutex<()>,
 }
 
@@ -275,7 +335,16 @@ fn text(value: Option<&String>) -> Option<String> {
 }
 
 fn is_error_code(code: &str) -> bool {
-    (1..=40).contains(&code.len()) && code.bytes().all(|b| b == b'_' || b.is_ascii_lowercase())
+    // Provider-supplied labels can contain secrets even when they look like codes.
+    matches!(
+        code,
+        "invalid_request"
+            | "invalid_client"
+            | "invalid_grant"
+            | "unauthorized_client"
+            | "unsupported_grant_type"
+            | "invalid_scope"
+    )
 }
 
 impl ClientCore {
@@ -336,18 +405,50 @@ impl ClientCore {
         )
     }
 
-    fn gate(&self, scheme: &str) -> Arc<Gate> {
-        lock(&self.inner.oauth_gates)
-            .entry(scheme.to_owned())
-            .or_default()
-            .clone()
+    fn gate(
+        &self,
+        scheme: &str,
+        generation: u64,
+        token_epoch: u64,
+    ) -> Result<Arc<Gate>, TokenFailure> {
+        let mut gates = lock(&self.inner.oauth_gates);
+        gates.retain(|_, gate| Arc::strong_count(gate) > 1);
+        let key = format!("{generation}:{token_epoch}:{scheme}");
+        if let Some(gate) = gates.get(&key) {
+            return Ok(gate.clone());
+        }
+        if gates.len() >= oauth_attempt::MAX_ATTEMPTS {
+            return Err(TokenFailure::new(
+                "OAuth refresh capacity is exhausted; wait for an owned refresh to settle.",
+            ));
+        }
+        Ok(gates.entry(key).or_default().clone())
     }
 
     fn read_token(&self, scheme: &str) -> Option<StoredToken> {
-        self.inner
+        let (generation, token_epoch) = self.authorization_version(scheme);
+        if !self.authorization_epoch_current(scheme, generation, token_epoch) {
+            return None;
+        }
+        let stored = self
+            .inner
             .token_store
             .get(scheme)
-            .filter(|t| !t.access_token.is_empty())
+            .filter(|t| !t.access_token.is_empty());
+        if !self.authorization_epoch_current(scheme, generation, token_epoch) {
+            return None;
+        }
+        stored
+    }
+
+    fn authorization_version(&self, scheme: &str) -> (u64, u64) {
+        let state = lock(&self.inner.oauth_authorization);
+        (state.generation(scheme), state.token_epoch(scheme))
+    }
+
+    fn authorization_epoch_current(&self, scheme: &str, generation: u64, token_epoch: u64) -> bool {
+        let state = lock(&self.inner.oauth_authorization);
+        state.active(scheme, generation) && state.token_epoch(scheme) == token_epoch
     }
 
     /// The access token to send: the stored one, refreshed first when it
@@ -360,30 +461,57 @@ impl ClientCore {
     }
 
     async fn stored_token_inner(&self, scheme: &str, force: bool) -> Result<String, TokenFailure> {
+        let (authorization_generation, token_epoch) = self.authorization_version(scheme);
         let missing = || {
             TokenFailure::new(format!(
-                "No OAuth2 token is stored for {scheme}; send the user to authorization_url(), then call exchange_code() with the code, or put a token in ClientOptions.token_store."
+                "No OAuth2 token is stored for {scheme}; begin a managed authorization_url() attempt, then call exchange_code() with its handle, the full callback URL and the owning session binding."
             ))
         };
         let stored = self.read_token(scheme).ok_or_else(missing)?;
+        if !self.authorization_epoch_current(scheme, authorization_generation, token_epoch) {
+            return Err(TokenFailure::new("OAuth session changed; authorize again."));
+        }
         let fresh = stored
             .expires_at
             .is_none_or(|at| at > self.now().saturating_add(EXPIRY_SKEW_MS));
         if fresh && !force {
             return Ok(stored.access_token);
         }
-        let gate = self.gate(scheme);
+        let gate = self.gate(scheme, authorization_generation, token_epoch)?;
         let seen = gate.generation.load(Ordering::SeqCst);
         let _held = gate.lock.lock().await;
+        if !lock(&self.inner.oauth_authorization).active(scheme, authorization_generation) {
+            return Err(TokenFailure::new("OAuth session changed; authorize again."));
+        }
         if gate.generation.load(Ordering::SeqCst) != seen {
+            if !self.authorization_epoch_current(
+                scheme,
+                authorization_generation,
+                gate.token_epoch.load(Ordering::SeqCst),
+            ) {
+                return Err(TokenFailure::new("OAuth session changed; authorize again."));
+            }
             // Another caller refreshed while this one waited.
             return self
                 .read_token(scheme)
                 .map(|t| t.access_token)
                 .ok_or_else(missing);
         }
+        if !self.authorization_epoch_current(scheme, authorization_generation, token_epoch) {
+            return Err(TokenFailure::new("OAuth session changed; authorize again."));
+        }
         let current = self.read_token(scheme).ok_or_else(missing)?;
-        let token = self.refresh_stored(scheme, &current, force).await?;
+        let token = self
+            .refresh_stored(
+                scheme,
+                &current,
+                force,
+                authorization_generation,
+                token_epoch,
+            )
+            .await?;
+        gate.token_epoch
+            .store(token_epoch.saturating_add(1), Ordering::SeqCst);
         gate.generation.fetch_add(1, Ordering::SeqCst);
         Ok(token)
     }
@@ -409,7 +537,17 @@ impl ClientCore {
         scheme: &str,
         stored: &StoredToken,
         force: bool,
+        generation: u64,
+        token_epoch: u64,
     ) -> Result<String, TokenFailure> {
+        if !self.authorization_epoch_current(scheme, generation, token_epoch) {
+            return Err(TokenFailure::new("OAuth session changed; authorize again."));
+        }
+        if !self.inner.token_store.supports_fencing() {
+            return Err(TokenFailure::new(
+                "OAuth refresh requires an atomic fenced token store.",
+            ));
+        }
         let flow = self.code_flow(scheme).map_err(|reason| {
             TokenFailure::new(format!(
                 "Cannot refresh the OAuth2 token for {scheme}: {reason}."
@@ -431,6 +569,11 @@ impl ClientCore {
             )));
         };
         let url = flow.refresh_url.as_deref().unwrap_or(&flow.token_url);
+        oauth_attempt::qualified_endpoint(url, false).map_err(|_| {
+            TokenFailure::new(
+                "Cannot refresh OAuth2 tokens: provide a valid endpoint without protected query fields.",
+            )
+        })?;
         let fields = [("grant_type", "refresh_token"), ("refresh_token", refresh)];
         match self
             .token_request(scheme, url, &client, &fields, Some(refresh))
@@ -438,13 +581,40 @@ impl ClientCore {
         {
             Ok(renewed) => {
                 let access = renewed.access_token.clone();
-                self.inner.token_store.set(scheme, renewed);
+                if !self
+                    .inner
+                    .token_store
+                    .set_if_current(scheme, renewed, &|current| {
+                        let mut state = lock(&self.inner.oauth_authorization);
+                        state.active(scheme, generation)
+                            && state.token_epoch(scheme) == token_epoch
+                            && oauth_attempt::same_token(current, stored)
+                            && state.mutate_token(scheme).is_some()
+                    })
+                {
+                    return Err(TokenFailure::new("OAuth session changed; authorize again."));
+                }
+                if !self.authorization_epoch_current(
+                    scheme,
+                    generation,
+                    token_epoch.saturating_add(1),
+                ) {
+                    return Err(TokenFailure::new("OAuth session changed; authorize again."));
+                }
                 Ok(access)
             }
             Err(failure) => {
                 if failure.rejected {
                     // The server no longer accepts the refresh token: forget the tokens.
-                    self.inner.token_store.delete(scheme);
+                    self.inner
+                        .token_store
+                        .delete_if_current(scheme, &|current| {
+                            let mut state = lock(&self.inner.oauth_authorization);
+                            state.active(scheme, generation)
+                                && state.token_epoch(scheme) == token_epoch
+                                && oauth_attempt::same_token(current, stored)
+                                && state.mutate_token(scheme).is_some()
+                        });
                 }
                 Err(failure)
             }
@@ -461,6 +631,18 @@ impl ClientCore {
         fields: &[(&str, &str)],
         previous: Option<&str>,
     ) -> Result<StoredToken, TokenFailure> {
+        let limit = self.inner.max_oauth_token_response_bytes;
+        if limit == 0 || limit > 9_007_199_254_740_991 {
+            return Err(TokenFailure::new(
+                "max_oauth_token_response_bytes must be a positive safe integer.",
+            ));
+        }
+        if crate::auth::insecure_http(url, self.inner.allow_insecure_http) {
+            return Err(TokenFailure {
+                message: crate::auth::INSECURE_HTTP_AUTH.to_owned(),
+                rejected: false,
+            });
+        }
         let mut headers = vec![
             (
                 "Content-Type".to_owned(),
@@ -494,7 +676,7 @@ impl ClientCore {
                 timeout: self.inner.timeout.max(Duration::from_millis(1)),
                 stream: false,
                 idle: None,
-                max_response_bytes: None,
+                max_response_bytes: Some(limit),
             },
         )
         .await;
@@ -577,8 +759,8 @@ impl OAuthFlow {
         Arc::clone(&self.core.inner.token_store)
     }
 
-    /// A fresh PKCE pair; pass `challenge` to [`Self::authorization_url`] and
-    /// keep `verifier` for [`Self::exchange_code`].
+    /// A fresh PKCE pair for explicitly low-level integration. Managed
+    /// [`Self::authorization_url`] generates and retains its own pair.
     pub fn pkce(&self) -> Result<Pkce, Error> {
         generate_pkce().ok_or_else(|| {
             ClientCore::oauth_error(
@@ -592,8 +774,283 @@ impl OAuthFlow {
         format!("oauth.{}.{helper}", self.scheme)
     }
 
+    /// Begin a managed S256 attempt inside a Tokio runtime with time enabled.
+    /// The application must enable time so the owned expiry task can run;
+    /// a current runtime handle alone does not establish that capability.
+    pub fn authorization_url(
+        &self,
+        params: &AuthorizationUrlParams,
+    ) -> Result<AuthorizationAttempt, Error> {
+        let refuse = || {
+            ClientCore::oauth_error(&self.operation("authorizationUrl"), "Cannot begin authorization: qualify S256 and issuer defense, supply a session binding, valid bounded endpoints and a fenced token store inside a Tokio runtime with time enabled; protected fields are reserved.".to_owned())
+        };
+        let flow = self.core.code_flow(&self.scheme).map_err(|_| refuse())?;
+        let client = self.core.code_client(&self.scheme).map_err(|_| refuse())?;
+        let redirect = params
+            .redirect_uri
+            .as_deref()
+            .or(client.redirect_uri.as_deref())
+            .ok_or_else(refuse)?;
+        oauth_attempt::qualify(params, flow, &client, redirect, &self.scheme)
+            .map_err(|_| refuse())?;
+        let limit = self.core.inner.max_oauth_token_response_bytes;
+        if !self.core.inner.token_store.supports_fencing()
+            || limit == 0
+            || limit > 9_007_199_254_740_991
+            || [&flow.authorization_url, &flow.token_url]
+                .iter()
+                .any(|url| crate::auth::insecure_http(url, self.core.inner.allow_insecure_http))
+        {
+            return Err(refuse());
+        }
+        let runtime = tokio::runtime::Handle::try_current().map_err(|_| refuse())?;
+        let mut state = lock(&self.core.inner.oauth_authorization);
+        state.sweep();
+        if state.attempts.len() >= oauth_attempt::MAX_ATTEMPTS {
+            return Err(ClientCore::oauth_error(&self.operation("authorizationUrl"), "Authorization attempt capacity is exhausted; finish or cancel an existing attempt.".to_owned()));
+        }
+        let generation = state.generation(&self.scheme);
+        if !state.active(&self.scheme, generation) {
+            return Err(refuse());
+        }
+        let pkce = generate_pkce().ok_or_else(refuse)?;
+        let handle = URL_SAFE_NO_PAD.encode(random_bytes::<32>().ok_or_else(refuse)?);
+        let random_state = URL_SAFE_NO_PAD.encode(random_bytes::<32>().ok_or_else(refuse)?);
+        let mut extra = params.extra.clone();
+        if let Some(resource) = &params.resource {
+            extra.insert("resource".to_owned(), resource.clone());
+        }
+        if let Some(audience) = &params.audience {
+            extra.insert("audience".to_owned(), audience.clone());
+        }
+        let url = build_authorization_url(
+            flow,
+            &client.client_id,
+            redirect,
+            &LowLevelAuthorizationUrlParams {
+                scopes: params.scopes.clone(),
+                state: Some(random_state.clone()),
+                code_challenge: Some(pkce.challenge),
+                extra,
+                ..Default::default()
+            },
+        );
+        let redirect = redirect.to_owned();
+        let weak = Arc::downgrade(&self.core.inner);
+        let timer_handle = handle.clone();
+        let timer = runtime.spawn(async move {
+            tokio::time::sleep(oauth_attempt::ATTEMPT_LIFETIME).await;
+            if let Some(inner) = weak.upgrade() {
+                lock(&inner.oauth_authorization).cancel(&timer_handle);
+            }
+        });
+        state.attempts.insert(
+            handle.clone(),
+            PendingAuthorization {
+                scheme: self.scheme.clone(),
+                generation,
+                started: std::time::Instant::now(),
+                binding: params.session_binding.clone(),
+                redirect,
+                client,
+                flow: flow.clone(),
+                params: params.clone(),
+                state: random_state,
+                verifier: Some(pkce.verifier),
+                claimed: false,
+                canceled: false,
+                timer: Some(timer.abort_handle()),
+            },
+        );
+        Ok(AuthorizationAttempt {
+            attempt_handle: handle,
+            url,
+            expires_in_ms: oauth_attempt::ATTEMPT_LIFETIME.as_millis() as u64,
+        })
+    }
+
+    fn authorization_current(&self, handle: &str) -> bool {
+        let state = lock(&self.core.inner.oauth_authorization);
+        let Some(pending) = state.attempts.get(handle) else {
+            return false;
+        };
+        !pending.canceled
+            && pending.started.elapsed() < oauth_attempt::ATTEMPT_LIFETIME
+            && state.active(&self.scheme, pending.generation)
+            && self
+                .core
+                .code_flow(&self.scheme)
+                .is_ok_and(|f| *f == pending.flow)
+            && self
+                .core
+                .code_client(&self.scheme)
+                .is_ok_and(|c| c == pending.client)
+    }
+
+    /// Validate the entire callback and claim exactly one code exchange.
+    pub async fn exchange_code(&self, params: &ExchangeCodeParams) -> Result<TokenInfo, Error> {
+        let refuse = || {
+            ClientCore::oauth_error(&self.operation("exchangeCode"), "Authorization callback refused: invalid, expired, consumed or mismatched attempt. Begin a new authorization attempt if needed.".to_owned())
+        };
+        if !self.authorization_current(&params.attempt_handle) {
+            return Err(refuse());
+        }
+        let (code, verifier, client, url, redirect, generation) = {
+            let mut state = lock(&self.core.inner.oauth_authorization);
+            state.sweep();
+            let pending = state
+                .attempts
+                .get_mut(&params.attempt_handle)
+                .ok_or_else(refuse)?;
+            if pending.claimed
+                || pending.canceled
+                || pending.scheme != self.scheme
+                || pending.binding != params.session_binding
+                || params.callback_url.len() > oauth_attempt::MAX_CALLBACK_BYTES
+                || params.callback_url.contains('#')
+            {
+                return Err(refuse());
+            }
+            let (target, query) = params.callback_url.split_once('?').ok_or_else(refuse)?;
+            if target != pending.redirect {
+                return Err(refuse());
+            }
+            let fields = oauth_attempt::callback_fields(query).map_err(|_| refuse())?;
+            if fields.get("state") != Some(&pending.state) {
+                return Err(refuse());
+            }
+            if let Some(IssuerDefense::IssuerResponse { issuer }) = &pending.params.issuer_defense
+                && fields.get("iss") != Some(issuer)
+            {
+                return Err(refuse());
+            }
+            let (code, denied) = (fields.get("code"), fields.get("error"));
+            if code.is_some() == denied.is_some()
+                || code.is_some_and(|c| c.is_empty())
+                || denied.is_some_and(|e| e.is_empty())
+                || (code.is_some()
+                    && (fields.contains_key("error_description")
+                        || fields.contains_key("error_uri")))
+            {
+                return Err(refuse());
+            }
+            pending.claimed = true;
+            if denied.is_some() {
+                state.attempts.remove(&params.attempt_handle);
+                return Err(ClientCore::oauth_error(
+                    &self.operation("exchangeCode"),
+                    "Authorization was denied. Begin a new attempt to authorize again.".to_owned(),
+                ));
+            }
+            (
+                code.cloned().ok_or_else(refuse)?,
+                pending.verifier.take().ok_or_else(refuse)?,
+                pending.client.clone(),
+                pending.flow.token_url.clone(),
+                pending.redirect.clone(),
+                pending.generation,
+            )
+        };
+        let _cleanup = AuthorizationClaim {
+            flow: self,
+            handle: &params.attempt_handle,
+        };
+        if !self.authorization_current(&params.attempt_handle) {
+            return Err(refuse());
+        }
+        let fields = [
+            ("grant_type", "authorization_code"),
+            ("code", code.as_str()),
+            ("redirect_uri", redirect.as_str()),
+            ("code_verifier", verifier.as_str()),
+        ];
+        let stored = self.core.token_request(&self.scheme, &url, &client, &fields, None).await
+            .map_err(|_| ClientCore::oauth_error(&self.operation("exchangeCode"), "Authorization exchange did not complete. The code may have been consumed; begin a new authorization attempt.".to_owned()))?;
+        let result = info(&self.scheme, &stored);
+        let committed_epoch = Cell::new(None);
+        if !self
+            .core
+            .inner
+            .token_store
+            .set_if_current(&self.scheme, stored, &|_| {
+                if !self.authorization_current(&params.attempt_handle) {
+                    return false;
+                }
+                let mut state = lock(&self.core.inner.oauth_authorization);
+                let Some(pending) = state.attempts.get(&params.attempt_handle) else {
+                    return false;
+                };
+                if pending.canceled
+                    || pending.started.elapsed() >= oauth_attempt::ATTEMPT_LIFETIME
+                    || !state.active(&self.scheme, pending.generation)
+                {
+                    return false;
+                }
+                committed_epoch.set(state.mutate_token(&self.scheme));
+                committed_epoch.get().is_some()
+            })
+        {
+            return Err(refuse());
+        }
+        if !self.authorization_current(&params.attempt_handle)
+            || !committed_epoch.get().is_some_and(|epoch| {
+                self.core
+                    .authorization_epoch_current(&self.scheme, generation, epoch)
+            })
+        {
+            return Err(refuse());
+        }
+        Ok(result)
+    }
+
+    pub fn cancel_authorization(&self, handle: &str, session_binding: &str) -> Result<(), Error> {
+        let mut state = lock(&self.core.inner.oauth_authorization);
+        if !state
+            .attempts
+            .get(handle)
+            .is_some_and(|a| a.scheme == self.scheme && a.binding == session_binding)
+        {
+            return Err(ClientCore::oauth_error(
+                &self.operation("cancelAuthorization"),
+                "Authorization attempt is unavailable or belongs to a different session."
+                    .to_owned(),
+            ));
+        }
+        state.cancel(handle);
+        Ok(())
+    }
+
+    /// Local credential removal, with attempt invalidation before any store work.
+    pub fn logout(&self) {
+        {
+            let mut state = lock(&self.core.inner.oauth_authorization);
+            let generation = state.generation(&self.scheme).wrapping_add(1);
+            state.generations.insert(self.scheme.clone(), generation);
+            *state.logging_out.entry(self.scheme.clone()).or_default() += 1;
+            let handles: Vec<String> = state
+                .attempts
+                .iter()
+                .filter(|(_, a)| a.scheme == self.scheme)
+                .map(|(h, _)| h.clone())
+                .collect();
+            for handle in handles {
+                state.cancel(&handle);
+            }
+        }
+        self.core.inner.token_store.delete(&self.scheme);
+        if let Some(count) = lock(&self.core.inner.oauth_authorization)
+            .logging_out
+            .get_mut(&self.scheme)
+        {
+            *count = count.saturating_sub(1);
+        }
+    }
+
     /// The URL to send the user to.
-    pub fn authorization_url(&self, params: &AuthorizationUrlParams) -> Result<String, Error> {
+    pub fn low_level_authorization_url(
+        &self,
+        params: &LowLevelAuthorizationUrlParams,
+    ) -> Result<String, Error> {
         let operation = self.operation("authorizationUrl");
         let refuse = |reason: String| {
             ClientCore::oauth_error(
@@ -623,7 +1080,10 @@ impl OAuthFlow {
     }
 
     /// Trade the code from the redirect for tokens, stored for later calls.
-    pub async fn exchange_code(&self, params: &ExchangeCodeParams) -> Result<TokenInfo, Error> {
+    pub async fn low_level_exchange_code(
+        &self,
+        params: &LowLevelExchangeCodeParams,
+    ) -> Result<TokenInfo, Error> {
         let operation = self.operation("exchangeCode");
         let refuse = |reason: String| {
             ClientCore::oauth_error(&operation, format!("Cannot exchange the code: {reason}."))
@@ -679,6 +1139,18 @@ impl OAuthFlow {
                 format!("No token is stored for {}.", self.scheme),
             )),
         }
+    }
+}
+
+struct AuthorizationClaim<'a> {
+    flow: &'a OAuthFlow,
+    handle: &'a str,
+}
+impl Drop for AuthorizationClaim<'_> {
+    fn drop(&mut self) {
+        lock(&self.flow.core.inner.oauth_authorization)
+            .attempts
+            .remove(self.handle);
     }
 }
 

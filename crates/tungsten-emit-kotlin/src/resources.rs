@@ -571,7 +571,7 @@ impl Ctx<'_> {
             w.blank();
             kdoc_line(
                 &mut w,
-                "The authorization-code helpers of an OAuth2 scheme.",
+                "Managed S256/state attempts of an OAuth2 scheme; completion requires its handle, full callback and owning session binding.",
             );
             w.line("fun oauth(scheme: String): OAuthFlow = core.oauth(scheme)");
             if schemes.len() == 1 {

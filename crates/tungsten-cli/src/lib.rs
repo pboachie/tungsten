@@ -19,6 +19,7 @@ mod explain_table;
 mod html;
 mod input;
 pub mod output;
+mod policy;
 pub mod render;
 mod stats;
 pub mod targets;
@@ -74,6 +75,10 @@ impl std::fmt::Debug for ServeUntil {
 /// deterministic under test.
 #[derive(Debug, Clone, Default)]
 pub struct CliEnv {
+    /// Explicitly selected immutable context for this invocation. The CLI
+    /// intersects its optional selection; projects/editor overrides cannot
+    /// replace it. Recapture/revalidate selections for each new invocation.
+    pub policy: Option<Arc<tungsten_core::policy::InvocationPolicy>>,
     /// Whether stderr is an interactive terminal.
     pub is_tty: bool,
     /// Whether color is disabled (the `NO_COLOR` convention).
@@ -154,7 +159,11 @@ impl Report {
 /// The server owns the process streams, so the binary calls this before it
 /// locks them for [`run`].
 pub fn lsp(args: &[OsString]) -> Option<i32> {
-    match args::Cli::try_parse_from(args).ok()?.command {
+    let cli = args::Cli::try_parse_from(args).ok()?;
+    if cli.policy.is_some() || cli.policy_digest.is_some() {
+        return None;
+    }
+    match cli.command {
         args::Command::Lsp(lsp) => Some(commands::lsp::serve(&lsp)),
         _ => None,
     }
@@ -168,26 +177,141 @@ pub fn run(
     stderr: &mut dyn Write,
     env: &CliEnv,
 ) -> i32 {
-    let args: Vec<OsString> = args.into_iter().collect();
+    run_inner(
+        args.into_iter().collect(),
+        stdout,
+        stderr,
+        env,
+        tungsten_mock::RunCancellation::default(),
+        false,
+    )
+}
+
+/// Embed scenario execution with explicit cancellation; never changes signal masks.
+pub fn run_with_cancellation(
+    args: impl IntoIterator<Item = OsString>,
+    stdout: &mut dyn Write,
+    stderr: &mut dyn Write,
+    env: &CliEnv,
+    cancellation: tungsten_mock::RunCancellation,
+) -> i32 {
+    run_inner(
+        args.into_iter().collect(),
+        stdout,
+        stderr,
+        env,
+        cancellation,
+        false,
+    )
+}
+
+/// Process entry point. Linux scenario runs own scoped SIGINT/SIGTERM capture;
+/// library callers use `run` or `run_with_cancellation` instead.
+pub fn run_binary(
+    args: impl IntoIterator<Item = OsString>,
+    stdout: &mut dyn Write,
+    stderr: &mut dyn Write,
+    env: &CliEnv,
+) -> i32 {
+    run_inner(
+        args.into_iter().collect(),
+        stdout,
+        stderr,
+        env,
+        tungsten_mock::RunCancellation::default(),
+        true,
+    )
+}
+
+fn run_inner(
+    args: Vec<OsString>,
+    stdout: &mut dyn Write,
+    stderr: &mut dyn Write,
+    env: &CliEnv,
+    cancellation: tungsten_mock::RunCancellation,
+    _binary_signals: bool,
+) -> i32 {
     let color = env.color();
     let cli = match args::Cli::try_parse_from(&args) {
         Ok(cli) => cli,
         Err(err) => return usage_error(&err, wants_json(&args), color, stdout, stderr),
     };
-    let report = panic::catch_unwind(AssertUnwindSafe(|| commands::dispatch(&cli, env)))
-        .unwrap_or_else(|payload| {
-            let message = payload
-                .downcast_ref::<&str>()
-                .map(|s| (*s).to_string())
-                .or_else(|| payload.downcast_ref::<String>().cloned())
-                .unwrap_or_else(|| "unknown panic".to_string());
-            Report::new(cli.command_name().unwrap_or(CommandName::Check)).failed(
+    let selected_env = match policy::select(&cli, env) {
+        Ok(selected) => selected,
+        Err(report) => {
+            return if cli.json {
+                emit_json(*report, stdout)
+            } else {
+                emit_human(*report, color, stdout, stderr)
+            };
+        }
+    };
+    let env = &selected_env;
+    #[cfg(target_os = "linux")]
+    let signals = if _binary_signals
+        && matches!(
+            &cli.command,
+            args::Command::Scenario {
+                command: args::ScenarioCommand::Run(_)
+            }
+        ) {
+        match commands::scenario::signals::Signals::capture() {
+            Ok(signals) => Some(signals),
+            Err(_) => {
+                let report = Report::new(CommandName::Scenario).failed(
+                    exit::INTERNAL,
+                    CliError::new(
+                        ErrorKind::Io,
+                        "cannot establish scenario cancellation and child ownership",
+                    ).with_help("Linux scenario run requires readable /proc/self/status and default SIGCHLD disposition"),
+                );
+                return if cli.json {
+                    emit_json(report, stdout)
+                } else {
+                    emit_human(report, color, stdout, stderr)
+                };
+            }
+        }
+    } else {
+        None
+    };
+    #[cfg(target_os = "linux")]
+    let cancellation = signals.as_ref().map_or(cancellation, |s| s.cancellation());
+    let report = panic::catch_unwind(AssertUnwindSafe(|| {
+        commands::dispatch(&cli, env, &cancellation)
+    }))
+    .unwrap_or_else(|payload| {
+        if matches!(&cli.command, args::Command::Scenario { .. }) {
+            return Report::new(CommandName::Scenario).failed(
                 exit::INTERNAL,
-                CliError::new(ErrorKind::Internal, format!("internal error: {message}"))
-                    .with_help("this is a bug in tungsten; please report it with the input"),
-            )
-        });
+                CliError::new(ErrorKind::Internal, "internal scenario runner failure"),
+            );
+        }
+        let message = payload
+            .downcast_ref::<&str>()
+            .map(|s| (*s).to_string())
+            .or_else(|| payload.downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "unknown panic".to_string());
+        Report::new(cli.command_name().unwrap_or(CommandName::Check)).failed(
+            exit::INTERNAL,
+            CliError::new(ErrorKind::Internal, format!("internal error: {message}"))
+                .with_help("this is a bug in tungsten; please report it with the input"),
+        )
+    });
     let mut report = report;
+    #[cfg(target_os = "linux")]
+    if let Some(signals) = signals {
+        match signals.restore() {
+            Ok(true) => commands::scenario::reject_late_cancellation(&mut report),
+            Ok(false) => {}
+            Err(_) => {
+                report = report.failed(
+                    exit::INTERNAL,
+                    CliError::new(ErrorKind::Io, "cannot restore scenario signal mask"),
+                );
+            }
+        }
+    }
     let serving = report.serving.take();
     let code = if cli.json {
         emit_json(report, stdout)

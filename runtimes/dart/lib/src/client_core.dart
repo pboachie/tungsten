@@ -95,6 +95,7 @@ final class ClientCore {
   /// http(s) URL without credentials, or an unknown redirect policy.
   ClientCore(this.descriptors, [ClientOptions options = const ClientOptions()])
       : _api = descriptors.api,
+        _allowInsecureHttp = options.allowInsecureHttp,
         _auth = {...options.auth},
         _headers = {...options.headers},
         _retries = options.retries,
@@ -102,15 +103,14 @@ final class ClientCore {
         _middleware = [...options.middleware],
         _validateResponses = options.validateResponses,
         _onDiagnostic = options.onDiagnostic,
-        _confirmationKey =
-            options.confirmationKey == null || options.confirmationKey!.isEmpty
-                ? _Util.randomBytes(32)
-                : [...options.confirmationKey!],
+        _confirmationKey = _configuredConfirmationKey(options.confirmationKey),
         _nowFn = options.now,
         _randomFn = options.random,
         _tokenStore = options.tokenStore ?? MemoryTokenStore(),
+        _maxOAuthTokenResponseBytes = options.maxOAuthTokenResponseBytes ??
+            defaultMaxOAuthTokenResponseBytes,
         _timeoutMs = _positiveMs(options.timeout) ?? defaultTimeoutMs,
-        maxResponseBytes = options.maxResponseBytes,
+        maxResponseBytes = options.maxResponseBytes ?? 4 * 1024 * 1024,
         maxEventBytes = _positive(options.maxEventBytes) ?? 1024 * 1024,
         maxCollectBytes = _positive(options.maxCollectBytes) ?? 4 * 1024 * 1024,
         maxCollectMs = _positiveMs(options.maxCollect) ?? 60000,
@@ -143,6 +143,54 @@ final class ClientCore {
   /// build only against a runtime that honours the policy.
   static void requireRedirectPolicyV1() {}
 
+  static List<int> _configuredConfirmationKey(List<int>? key) {
+    if (key == null) return _Util.randomBytes(32);
+    if (key.length < 32 || key.any((byte) => byte < 0 || byte > 255)) {
+      throw const ClientConfigException(
+        'confirmationKey must contain at least 32 bytes; omit it to generate a random key',
+      );
+    }
+    return [...key];
+  }
+
+  /// Credential-bearing HTTP requests require an explicit opt-in off loopback.
+  static const _insecureHttpAuth =
+      'Refusing to send credentials over non-loopback HTTP. Use HTTPS, or set ClientOptions.allowInsecureHttp = true for intentional insecure transport. Nothing was sent.';
+  final bool _allowInsecureHttp;
+
+  bool _credentialHeader(String name, [bool preservedIdempotency = false]) {
+    if ((!preservedIdempotency && _Util.looksSensitive(name)) ||
+        ['authorization', 'proxy-authorization', 'cookie']
+            .contains(name.toLowerCase())) return true;
+    final schemes = _api['auth'];
+    return schemes is List &&
+        schemes.whereType<Map<String, Object?>>().any((s) =>
+            (s['kind'] == 'api_key' &&
+                s['in'] == 'header' &&
+                _str(s['wire']).toLowerCase() == name.toLowerCase()) ||
+            (s['kind'] == 'composite' &&
+                s['parts'] is List &&
+                (s['parts'] as List).whereType<Map<String, Object?>>().any(
+                    (p) =>
+                        p['kind'] == 'header' &&
+                        p['from_config'] == null &&
+                        _str(p['name']).toLowerCase() == name.toLowerCase())));
+  }
+
+  bool _insecureHttp(String target) {
+    if (_allowInsecureHttp) return false;
+    final url = Uri.tryParse(target);
+    if (url == null || url.scheme.toLowerCase() != 'http') return false;
+    final host = url.host.toLowerCase();
+    if (host == 'localhost' || host == 'localhost.') return false;
+    final ip = InternetAddress.tryParse(host);
+    return ip == null ||
+        (ip.type == InternetAddressType.IPv4
+            ? ip.rawAddress.first != 127
+            : !ip.rawAddress.take(15).every((b) => b == 0) ||
+                ip.rawAddress.last != 1);
+  }
+
   /// Same-origin redirects one read follows.
   static const int maxRedirects = 5;
 
@@ -168,7 +216,7 @@ final class ClientCore {
   /// The base URL requests go to (empty when none is configured).
   late final String baseUrl;
 
-  /// Maximum buffered response bytes, or null when unlimited.
+  /// Maximum ordinary response bytes; omitted options inherit 4 MiB.
   final int? maxResponseBytes;
 
   /// The largest event of a stream, in UTF-8 bytes.
@@ -202,6 +250,7 @@ final class ClientCore {
   final int Function()? _nowFn;
   final double Function()? _randomFn;
   final TokenStore _tokenStore;
+  final int _maxOAuthTokenResponseBytes;
   final int _timeoutMs;
   late final bool _redirectsDisabled;
   final Map<String, OperationDescriptor> _registry = {};
@@ -209,7 +258,11 @@ final class ClientCore {
   final Map<String, (String?, int)> _usedTokens = {};
   final Map<String, (String, String, int)> _ccTokens = {};
   final Map<String, Future<(String?, String?)>> _ccFlights = {};
-  final Map<String, Future<_TokenOutcome>> _refreshes = {};
+  final Map<String, _OAuthPending> _oauthAttempts = {};
+  final Map<String, _OAuthVersion> _oauthVersions = {};
+  final Set<_OAuthOwner> _oauthOwners = {};
+  final Map<(String, int, int), _OAuthRefresh> _oauthRefreshes = {};
+  int _oauthWaiters = 0;
   static final math.Random _jitter = math.Random();
 
   static int? _positive(int? value) =>
@@ -865,7 +918,8 @@ final class ClientCore {
       if (err != null) throw _Stop(err);
     }
     final method = op.method;
-    final auth = await _resolveAuth(op, method);
+    final auth = await _resolveAuth(op, method,
+        _insecureHttp(urlOverride ?? baseUrl) ? _insecureHttpAuth : null);
     if (auth.failed != null) {
       throw _Stop(
         _diag(op.id, 'AUTH_FAILED').remedy(auth.failed).err<Object?>(),
@@ -880,6 +934,15 @@ final class ClientCore {
     final (fullUrl, displayUrl) = _buildUrl(op, args, auth.plan, urlOverride);
     final headers = _HeaderBag();
     _buildHeaders(op, args, opts, auth.plan, headers);
+    if (_insecureHttp(fullUrl) &&
+        (auth.plan.headers.isNotEmpty ||
+            auth.plan.cookies.isNotEmpty ||
+            auth.plan.query.isNotEmpty ||
+            headers.entries
+                .any((h) => h.secret || _credentialHeader(h.name)))) {
+      throw _Stop(
+          _diag(op.id, 'AUTH_FAILED').remedy(_insecureHttpAuth).err<Object?>());
+    }
     final paramNames = [for (final p in op.argumentParams) p.name];
     final bodyPaths = _Helpers.sensitiveBodyPaths(op);
     Object? value = unset;
@@ -924,6 +987,17 @@ final class ClientCore {
     final preview = op._preview;
     if (purpose == _Purpose.serverPreview && preview['mode'] == 'header') {
       headers.set(_str(preview['header']), _str(preview['value']), false);
+    }
+    if (_insecureHttp(fullUrl) &&
+        headers.entries.any((h) {
+          final preserved = key != null &&
+              h.name.toLowerCase() == header.toLowerCase() &&
+              h.value == key;
+          return (h.secret && !preserved) ||
+              _credentialHeader(h.name, preserved);
+        })) {
+      throw _Stop(
+          _diag(op.id, 'AUTH_FAILED').remedy(_insecureHttpAuth).err<Object?>());
     }
     for (final e in headers.entries) {
       if (_Serialize.validHeaderName(e.name) &&

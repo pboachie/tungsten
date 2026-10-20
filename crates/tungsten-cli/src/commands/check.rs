@@ -19,7 +19,7 @@ use crate::stats::{describe, describe_refs, headline, ir_stats, plural, ref_stat
 use crate::{CliEnv, Collapse, Report, exit, input};
 
 pub(crate) fn run(args: &CheckArgs, env: &CliEnv, no_external: bool) -> Report {
-    let compiled = input::compile(&args.input.path);
+    let compiled = input::compile_with_policy(&args.input.path, env.policy.clone());
     let mut diagnostics = compiled.diagnostics.0.clone();
     // Whether the project compiles, before `--strict` turns warnings into
     // errors: the staleness comparison runs whenever the emitters can.

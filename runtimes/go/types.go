@@ -693,8 +693,14 @@ const (
 
 // ClientOptions configures a client.
 type ClientOptions struct {
-	// Optional ordinary-response byte cap; a positive safe integer. Nil is unbounded.
+	// AllowInsecureHTTP permits credentials over non-loopback HTTP, including OAuth.
+	// Default false: use HTTPS. localhost, 127/8 and ::1 remain usable locally.
+	AllowInsecureHTTP bool
+	// Ordinary-response byte cap; a positive safe integer. Nil inherits the 4 MiB default.
 	MaxResponseBytes *int64
+	// MaxOAuthTokenResponseBytes bounds each authorization-code/refresh response.
+	// Nil uses 64 KiB; require a positive safe integer. Separate from ordinary bodies.
+	MaxOAuthTokenResponseBytes *int64
 	// Redirects may tighten the API policy. The zero value inherits it.
 	Redirects RedirectPolicy
 	// BaseURL defaults to the first server.
@@ -739,7 +745,8 @@ type ClientOptions struct {
 	// error whose code is STREAM_IDLE. Zero: the per-attempt Timeout ends a
 	// silent stream, without a reconnect.
 	IdleTimeout time.Duration
-	// ConfirmationKey signs confirmation tokens; default random per client.
+	// ConfirmationKey signs confirmation tokens. Supply at least 32 cryptographically
+	// random bytes; shorter non-nil keys fail construction. Copied; nil generates a key.
 	ConfirmationKey []byte
 	// Operations the client resolves by id: verification hooks, endpoint
 	// previews and macro steps.

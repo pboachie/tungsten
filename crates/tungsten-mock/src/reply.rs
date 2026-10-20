@@ -17,6 +17,7 @@ use tungsten_ir::{ErrorModel, TypeRef};
 
 use crate::generate::Generator;
 use crate::model::Model;
+use crate::state::CallLease;
 use crate::validate::Context;
 
 /// Longest `X-Tungsten-Reason` value.
@@ -58,6 +59,15 @@ impl std::error::Error for BodyCut {}
 pub(crate) struct ReplyBody {
     data: Option<Bytes>,
     cut: Option<Pin<Box<tokio::time::Sleep>>>,
+    completion: Option<CallLease>,
+}
+
+impl ReplyBody {
+    fn complete(&mut self) {
+        if let Some(call) = self.completion.take() {
+            call.complete();
+        }
+    }
 }
 
 impl Body for ReplyBody {
@@ -69,17 +79,24 @@ impl Body for ReplyBody {
         cx: &mut TaskContext<'_>,
     ) -> Poll<Option<Result<Frame<Bytes>, BodyCut>>> {
         if let Some(data) = self.data.take() {
+            if self.cut.is_none() {
+                self.complete();
+            }
             return Poll::Ready(Some(Ok(Frame::data(data))));
         }
         match self.cut.as_mut() {
             Some(delay) => match delay.as_mut().poll(cx) {
                 Poll::Ready(()) => {
                     self.cut = None;
+                    self.complete();
                     Poll::Ready(Some(Err(BodyCut)))
                 }
                 Poll::Pending => Poll::Pending,
             },
-            None => Poll::Ready(None),
+            None => {
+                self.complete();
+                Poll::Ready(None)
+            }
         }
     }
 
@@ -151,19 +168,30 @@ impl Reply {
         self
     }
 
-    pub fn into_response(self) -> Response<ReplyBody> {
-        let body = match self.cut_after {
+    pub fn into_response(self, completion: Option<CallLease>, head: bool) -> Response<ReplyBody> {
+        let mut body = match self.cut_after {
             Some(n) => ReplyBody {
                 data: Some(Bytes::from(self.body[..n.min(self.body.len())].to_vec())),
                 cut: Some(Box::pin(tokio::time::sleep(
                     self.hold_ms.map_or(CUT_DELAY, Duration::from_millis),
                 ))),
+                completion,
             },
             None => ReplyBody {
                 data: Some(Bytes::from(self.body)),
                 cut: None,
+                completion,
             },
         };
+        // Hyper may omit polling a body that HTTP semantics forbid, or a
+        // zero-length full body. There is no remaining body work in those cases.
+        if head
+            || self.status == 204
+            || self.status == 304
+            || (body.cut.is_none() && body.data.as_ref().is_none_or(Bytes::is_empty))
+        {
+            body.complete();
+        }
         let mut response = Response::new(body);
         *response.status_mut() = hyper::StatusCode::from_u16(self.status)
             .unwrap_or(hyper::StatusCode::INTERNAL_SERVER_ERROR);

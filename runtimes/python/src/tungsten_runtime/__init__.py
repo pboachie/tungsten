@@ -21,6 +21,7 @@ from ._oauth import (
     generate_pkce,
     pkce_challenge,
 )
+from ._oauth_attempt import AuthorizationAttempt, IssuerDefense
 from ._streams import ANY_EVENT, AsyncEventStream, EventStream, StreamResult
 from .client import AsyncClientCore, ClientCore
 from .errors import TungstenError, unwrap
@@ -38,9 +39,11 @@ __all__ = [
     "AsyncEventStream",
     "AsyncOAuthFlow",
     "AsyncTokenStore",
+    "AuthorizationAttempt",
     "ClientCore",
     "EventStream",
     "FileIdempotencyStore",
+    "IssuerDefense",
     "MemoryIdempotencyStore",
     "MemoryTokenStore",
     "OAuthFlow",

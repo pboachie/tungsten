@@ -16,7 +16,7 @@ use petgraph::graphmap::DiGraphMap;
 use serde_json::Value;
 use tungsten_core::{Diagnostic, Diagnostics, Label};
 
-use crate::walk::{Kind, walk};
+use crate::walk::{Kind, walk_cancellable};
 use crate::{RefTarget, Workspace, split_pointer};
 
 #[derive(Debug, Clone, Default)]
@@ -78,11 +78,14 @@ pub(crate) fn build(
 
     let mut edges: BTreeMap<RefTarget, BTreeSet<RefTarget>> = BTreeMap::new();
     for node in &nodes {
+        if ws.is_cancelled() {
+            return RefGraph::default();
+        }
         let Some(value) = ws.get(node) else {
             continue;
         };
         let out = edges.entry(node.clone()).or_default();
-        walk(value, &node.pointer, Kind::Schema, |n| {
+        walk_cancellable(value, &node.pointer, Kind::Schema, &ws.cancellation, |n| {
             if n.pointer != node.pointer {
                 let inner = RefTarget {
                     doc: node.doc,

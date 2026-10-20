@@ -14,6 +14,7 @@ use url::Url;
 
 use crate::idempotency::{MemoryIdempotencyStore, lock};
 use crate::oauth::{Gate, MemoryTokenStore, TokenStore};
+use crate::oauth_attempt::AuthorizationState;
 use crate::types::{
     ApiDescriptor, AuthConfig, CallOptions, ClientOptions, DiagnosticSink, IdempotencyStore,
     Jitter, MacroDescriptor, Middleware, OperationDescriptor, Outcome, PartialRetryOptions,
@@ -70,6 +71,7 @@ pub(crate) struct CachedToken {
 }
 
 pub(crate) struct Inner {
+    pub allow_insecure_http: bool,
     pub redirects_disabled: bool,
     pub api: Arc<ApiDescriptor>,
     pub auth: AuthConfig,
@@ -77,6 +79,7 @@ pub(crate) struct Inner {
     pub base_url: Option<String>,
     pub timeout: Duration,
     pub max_response_bytes: Option<u64>,
+    pub max_oauth_token_response_bytes: u64,
     pub max_event_bytes: usize,
     pub max_collect_bytes: usize,
     pub max_collect_time: Duration,
@@ -105,6 +108,7 @@ pub(crate) struct Inner {
     pub token_store: Arc<dyn TokenStore>,
     /// The refresh gate of each `authorizationCode` scheme.
     pub oauth_gates: Mutex<HashMap<String, Arc<Gate>>>,
+    pub oauth_authorization: Mutex<AuthorizationState>,
 }
 
 /// The engine behind every generated client. Cheap to clone (shares one
@@ -170,8 +174,13 @@ impl ClientCore {
                 .map_err(|e| config_error(format!("the HTTP client could not be built: {e}")))?,
         };
         let confirmation_key = match options.confirmation_key.clone() {
-            Some(key) if !key.is_empty() => key,
-            _ => random_bytes::<32>()
+            Some(key) if key.len() >= 32 => key,
+            Some(_) => {
+                return Err(config_error(
+                    "confirmation_key must contain at least 32 bytes; omit it to generate a random key",
+                ));
+            }
+            None => random_bytes::<32>()
                 .ok_or_else(|| config_error("no source of randomness for the confirmation key"))?
                 .to_vec(),
         };
@@ -185,13 +194,15 @@ impl ClientCore {
             .unwrap_or_else(|| Arc::new(MemoryTokenStore::new()));
         let core = ClientCore {
             inner: Arc::new(Inner {
+                allow_insecure_http: options.allow_insecure_http,
                 redirects_disabled,
                 api: Arc::new(api),
                 auth: options.auth,
                 headers: options.headers,
                 base_url,
                 timeout: options.timeout,
-                max_response_bytes: options.max_response_bytes,
+                max_response_bytes: options.max_response_bytes.or(Some(4 * 1024 * 1024)),
+                max_oauth_token_response_bytes: options.max_oauth_token_response_bytes,
                 max_event_bytes: options.max_event_bytes.max(1),
                 max_collect_bytes: options.max_collect_bytes.max(1),
                 max_collect_time: options.max_collect_time.max(Duration::from_millis(1)),
@@ -215,6 +226,7 @@ impl ClientCore {
                 oauth_refreshes: tokio::sync::Mutex::new(HashMap::new()),
                 token_store,
                 oauth_gates: Mutex::new(HashMap::new()),
+                oauth_authorization: Mutex::new(AuthorizationState::default()),
             }),
         };
         core.register(options.operations);

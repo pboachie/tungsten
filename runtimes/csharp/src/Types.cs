@@ -545,6 +545,8 @@ public interface IIdempotencyStore
 /// <summary>Configures a client.</summary>
 public sealed record ClientOptions
 {
+    /// <summary>Explicitly permits credentials over non-loopback HTTP, including OAuth. Default false; localhost, 127/8 and ::1 remain usable.</summary>
+    public bool AllowInsecureHttp { get; init; }
     /// <summary>Restricts redirects to same_origin_read or none; none always wins and requires the default HTTP client.</summary>
     public string? Redirects { get; init; }
 
@@ -561,6 +563,8 @@ public sealed record ClientOptions
     public IReadOnlyDictionary<string, Credential>? Auth { get; init; }
     /// <summary>Holds the tokens of authorizationCode schemes. Default: in memory, per client.</summary>
     public ITokenStore? TokenStore { get; init; }
+    /// <summary>Separate code/refresh response cap; null inherits 64 KiB. Must be a positive safe integer.</summary>
+    public long? MaxOAuthTokenResponseBytes { get; init; }
     /// <summary>The per-attempt timeout (default 30 s).</summary>
     public TimeSpan? Timeout { get; init; }
     /// <summary>Overrides the API's per-tier retry defaults, for every tier.</summary>
@@ -574,7 +578,7 @@ public sealed record ClientOptions
     public IReadOnlyDictionary<string, string>? Headers { get; init; }
     /// <summary>The largest server-sent event a stream accepts, in UTF-8 bytes (default 1 MiB).</summary>
     public int? MaxEventBytes { get; init; }
-    /// <summary>Maximum ordinary response bytes; null is unbounded. Must be a positive safe integer.</summary>
+    /// <summary>Maximum ordinary response bytes; null inherits 4 MiB. Must be a positive safe integer.</summary>
     public long? MaxResponseBytes { get; init; }
     /// <summary>Bounds collecting a stream (default 4 MiB).</summary>
     public int? MaxCollectBytes { get; init; }
@@ -593,7 +597,10 @@ public sealed record ClientOptions
     /// silent stream, without a reconnect.
     /// </summary>
     public TimeSpan? IdleTimeout { get; init; }
-    /// <summary>Signs confirmation tokens; default random per client.</summary>
+    /// <summary>
+    /// Signs confirmation tokens with at least 32 cryptographically random bytes, copied
+    /// at construction. Shorter keys fail construction; null generates a per-client key.
+    /// </summary>
     public byte[]? ConfirmationKey { get; init; }
     /// <summary>
     /// Used for every request; it must not follow redirects. Default: a client without redirects,

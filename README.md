@@ -21,7 +21,7 @@ Read the documentation at [pboachie.github.io/tungsten](https://pboachie.github.
 Most SDK generators optimize for a person reading autocomplete. An agent has a finite context window, no memory between retries, and no sense of what is irreversible. tungsten changes the design goal of each stage:
 
 - **Diagnostic error envelopes.** Every failure, from argument validation to a transport error to an HTTP status, is one closed JSON shape with a category, the failing parameter, the received value, what was expected, a remediation sentence and an explicit `retryable` verdict. The same 14 members in every runtime, ready to paste into a model's context.
-- **Safety tiers.** Each operation is `read_only`, `mutating`, `destructive` or `irreversible`, defaulted from the HTTP method and refined in `agent.yml`. Tiers drive retries, MCP tool annotations and confirmation rules.
+- **Safety tiers.** Each operation is `read_only`, `mutating`, `destructive` or `irreversible`, defaulted from the HTTP method and refined in `agent.yml`. Tiers drive retries, MCP tool annotations and confirmation rules. Ordinary spec annotations cannot lower the method tier or remove preview from an operation with side effects: those decisions require an explicit per-operation `tools` entry in `agent.yml` (`safety` and `preview: none`, respectively). The compiler keeps the safe policy and reports TG0615/TG0616; `--strict` rejects these warnings. Imported operations retain their separate reviewed-policy floor.
 - **Previews and confirmation tokens.** A destructive or irreversible call must be previewed first. The preview returns the request that would be sent and its effects, plus a confirmation token that is valid only for identical arguments. The generated CLI replaces tokens with `--yes` (and `--i-understand` for irreversible operations).
 - **Idempotency and unknown outcomes.** Mutations are retried only with an idempotency key (or an identity body), always with the same key. A timeout or reset after a write is reported as `OUTCOME_UNKNOWN` with the call to verify it, not as a failure to retry blindly.
 - **Verification.** An operation can name a read to run after success and the state to expect, attached to the result as evidence.
@@ -92,6 +92,16 @@ materialized file is verified, and unexpected cached files or directories are
 rejected. HTTP/Git pins verify source consistency, not the publisher's identity:
 review and protect the cache and lock files together.
 
+On Windows, Git's disposable bare repository uses a fresh private child of the
+local temporary directory, so a deeply nested project cache does not become
+Git's working directory or object-store path. Pins and verified input files
+remain under the project's `.tungsten-inputs/git/` directory. `TMP`/`TEMP` must
+select a writable local disk directory with room for Git's pack and lock
+filenames; network, unusable or overly long temporary roots fail with TG0133.
+Choose a shorter local temporary path when needed. Offline pin reuse needs no
+temporary repository. Git's source repository paths and external credential
+helpers retain their own platform limits.
+
 `tungsten init` takes **one** input of any of the kinds below — OpenAPI OR Swagger OR Postman OR saved cURL OR HTTP request files OR HAR, with the endpoint-manifest and manual paths alongside them — not a bundle. Acquisition may download a document or fetch a Git commit; parsing never sends or replays the API requests described by that input, and no shell, script or capture is ever executed. Non-OpenAPI inputs are converted to a normalized OpenAPI document that `init` saves next to the manifests (`imported.openapi.json`, with an `import-report.json` where listed; the manual path writes `inferred.openapi.json` and `inference-report.json`), so the accepted input stays separate from the normalized artifact and the typed IR the compiler builds from it.
 
 | Input | You provide | Entry point and conversion | Limits and required review |
@@ -123,7 +133,7 @@ All conversion routes share these limits: setup inputs are bounded (8 MiB, with 
 | `fsharp` (`fs`) | F# SDK (records, discriminated unions, `Task` of `Result`) | .NET 10 | Use `runtime_path` to matching `runtimes/fsharp`; it references the .NET runtime in `runtimes/csharp` (`csharp_runtime_path`) |
 | `dart` | Dart SDK (final model classes, sealed unions, `Future` methods returning `Result`, `Stream` pages) | Dart 3.6 | Use `runtime_path` to matching `runtimes/dart` (`tungsten_runtime`, a `dart:io` package) |
 | `ruby` (`rb`) | Ruby SDK | Ruby 3.3 and Bundler | Use `runtime_path` to matching `runtimes/ruby` source |
-| `mcp` | MCP server over stdio or Streamable HTTP, discrete or progressive | Node 22 | `@elysra/tungsten-mcp`: matching npm package or built source |
+| `mcp` | MCP server over stdio or Streamable HTTP, discrete or progressive | Node 22.13+; Node 23 needs 23.2+ | `@elysra/tungsten-mcp`: matching npm package or built source |
 | `webmcp` | Browser ESM package with tool manifest and registration helper | Node 22 to build; compatible browser to run | `@elysra/tungsten-webmcp` and the generated TypeScript SDK |
 | `docs` | `llms.txt`, `llms-full.txt`, `tools.json`, README | None beyond the compiler | No runtime dependency |
 
@@ -171,12 +181,30 @@ Pass `--version v0.1.2` to `install.sh` (or `-Version v0.1.2` to `install.ps1`) 
 
 See [`install.sh --help`](install.sh) or `Get-Help ./install.ps1 -Full`
 ([PowerShell script](install.ps1)) for environment variables and exit codes.
-Both installers check whether `gh attestation` is usable before verification.
-Without it they explain that only the checksum was verified; set
-`TUNGSTEN_REQUIRE_ATTESTATION=1` to require provenance verification. A failed
-verification always refuses installation and shows the verifier's error output.
-`TUNGSTEN_NO_ATTESTATION=1` explicitly disables the check and cannot be combined
-with required verification. Required verification also refuses custom mirrors.
+The installers in this source require build provenance by default. Install
+[GitHub CLI](https://cli.github.com/) 2.102.0 or newer through its official
+installation instructions first; older versions do not safely enforce the exact
+workflow identity. The verifier must accept the archive for `pboachie/tungsten`,
+`.github/workflows/release.yml`, issuer
+`https://token.actions.githubusercontent.com` and the requested release tag.
+Attestations are obtained from `github.com`; verification needs access to GitHub
+and its trust services. Missing/unusable verifiers, unavailable or invalid
+attestations, and identity mismatches refuse installation. The installer does
+not bootstrap a verifier or silently choose a weaker mode.
+
+To intentionally install using only `SHA256SUMS`, set
+`TUNGSTEN_NO_ATTESTATION=1`. The installer prints a checksum-only warning and
+still rejects checksum mismatches. `TUNGSTEN_REQUIRE_ATTESTATION=1` remains an
+explicit assertion of the default policy and conflicts with that opt-out;
+setting it to `0` does not disable default verification. Both settings accept
+only `0` or `1`.
+
+`TUNGSTEN_REPO`, `TUNGSTEN_RELEASE_BASE_URL` and PowerShell `-BaseUrl` change
+download locations, not trusted signer identities. Mirrors can supply the same
+official release bytes for verification. Custom builds or restricted/offline
+mirrors without verifiable official provenance need the explicit checksum-only
+choice; their origin is not authenticated by a matching checksum. Older tagged
+installers retain their released behavior.
 
 On Linux the `musl` archives (the installer default) are statically linked and
 avoid a glibc dependency. Prefer them on older distributions. The published
@@ -226,6 +254,9 @@ output you use. These package versions were verified on October 15, 2026;
 Node 22+ is required for TypeScript/MCP, Python needs 3.12+, Java needs 17+,
 C# needs .NET 10, and Ruby needs 3.3+. Run Python installation commands in an
 activated virtual environment.
+
+For current source builds, MCP servers require Node 22.13+ (Node 23 requires
+23.2+); TypeScript SDKs and WebMCP build tooling retain their Node 22 prerequisite.
 
 | Output | Runtime package | Install the published runtime |
 |---|---|---|
@@ -410,6 +441,96 @@ write an external emitter.
 
 An `external:` target in `tungsten.yml` names a command that tungsten starts as a process, unsandboxed and with your privileges. It runs on every command that produces output in memory, not only on a writing `generate`: `generate --dry-run` and `--check`, `check --ci`, `diff` and `report` run it too (plain `check` and `ir dump` do not). A CI job that runs `tungsten check --ci` on pull requests therefore executes whatever the pull request puts in `tungsten.yml`. Pass `--no-external` or set `TUNGSTEN_NO_EXTERNAL=1` to skip external targets (reported as TG0807) when the manifest is not trusted.
 
+Hosts can explicitly select stricter external-emitter constraints with both
+`--policy PATH` and `--policy-digest blake3:<64 lowercase hex digits>`. First review
+a local JSON document, for example:
+
+```json
+{"tungsten_policy":1,"external":{"deny":true,"timeout_ms":10000,"max_output_bytes":1048576}}
+```
+
+Run `tungsten policy digest PATH` separately to validate and hash those exact
+bytes; it prints the core BLAKE3 digest and writes no files. Execution never
+creates or updates a pin. A relative policy path resolves against invocation cwd.
+There is no automatic discovery, environment selection, include, interpolation,
+URL fetch or replay from exported configuration. Selected symlink/reparse entries,
+nonregular files and unsupported local namespaces are refused. Capture reads one
+regular handle once, with a 64 KiB byte limit and nesting limit eight; strict JSON
+rejects duplicate/unknown members, null, trailing data and empty constraints.
+`deny` is a boolean; timeout is 1..=3,600,000 ms and output is 1..=2^40 bytes,
+subject to platform representation. Missing constraints add no restriction.
+
+| Command | Supplied execution policy |
+| --- | --- |
+| `generate` (write, check, dry-run), `check` (including CI), `report`, `diff`, `emitters` | Capture and enforce before external run/descriptor probes |
+| `config` | Capture and inspect, without acquiring API inputs or running tools |
+| `policy digest` | Reject execution-policy flags; validate/hash only its named file |
+| `doctor`, `init`/wizard, `scenario`, `lsp`, `mock`, `ir`, `overlay`, `explain`, `capabilities`, `schema`, any unlisted command | Reject supplied policy before reads or command effects |
+| `--help`, `--version` | Parser-owned; no policy read |
+
+Embedding hosts select immutable `CapturedPolicy` documents with expected digests,
+then a fresh `InvocationPolicy` for each invocation. `CliEnv.policy` intersects
+the CLI selection instead of replacing it; `CompileOptions.policy` stays outside
+editor overrides. At most 16 submitted documents and 1 MiB of captured bytes are
+accepted, counting duplicates. Denials combine by OR and ceilings by minimum;
+`false` or a weaker later document cannot undo a restriction. Config inspection
+reports opaque `policy[N]` sources, exact digests, known pointers and all contributing
+constraints, including ties, without physical paths or replayable authority.
+Absent policy retains existing behavior and is reported as `absent`; a permissive
+selection is never approval. Prepared IR does not retain a fallback context.
+Long-lived hosts must explicitly recapture/revalidate pins for new invocations.
+
+Library callers must migrate `external::run` and `external::describe` to supply
+`&InvocationPolicy` and raw `RequestedExternalLimits`; a precomputed `Limits`
+cannot substitute for context. Select `InvocationPolicy::absent()` explicitly
+only when legacy behavior is intended. Keep missing/default requested values as
+`None`, rather than converting them to explicit defaults that could exceed a
+protected ceiling. Exhaustive `CliEnv`/`CompileOptions` literals also need their
+new optional `policy` field (or `..Default::default()`).
+
+Explicit project timeout/output values above a protected ceiling fail (TG0810)
+before input acquisition or external descriptor negotiation. Missing/null project
+limits use existing defaults, then clamp to the ceiling. Descriptor probes use
+their own 5 s/1 MiB defaults, also clamped. Generation requests advertise the
+effective output cap. Denied execution is TG0811 and fails the requested operation;
+`--no-external` remains an independent unconditional TG0807 skip. Invalid captures
+or mismatched pins are TG0809. `tungsten schema execution-policy` publishes the
+strict document shape.
+
+These are per-external-operation limits, not whole-command time or heap limits.
+The exact pinned capture is authoritative for that invocation; canonical paths
+are local provenance, not replacement-safe executable identity. Restrictions do
+not verify parent symlinks/junctions, mounts or mapped-volume locality; a selected
+regular file can reside on network-backed storage, and OS file operations are not
+hard real-time bounded. They do
+not approve executables, minimize inherited environment, revoke running work,
+protect acquisition Git/providers, doctor tools, setup/package managers or
+scenario subprocesses, or isolate filesystem/network access. Policies do not
+establish a sandbox.
+
+External emission and `--describe` own a Unix process group or Windows Job Object.
+Leader exit, timeout and output overflow trigger group/job termination and leader
+reaping. `timeout_ms` includes process launch, pipe work and cleanup; one quarter,
+up to one second, is reserved for cleanup. OS calls and scheduling can exceed that
+budget. Zero or unrepresentable timeouts refuse execution. Each launch reserves
+four of 16 process-wide worker slots. Unfinished workers retain
+their handles and slots until they finish and a later invocation joins them;
+capacity exhaustion refuses before execution. TG0803 reports incomplete cleanup
+and accepts no files. Investigate remaining emitter processes before retrying.
+Unix descendants can escape their group or pass pipes elsewhere; these lifecycle
+controls do not establish that every descendant stopped, approve an executable,
+filter inherited credentials or isolate filesystem/network access. Library
+embeddings must exclusively reap their external children and must not auto-reap
+children or change SIGCHLD during execution.
+On Linux, an unreadable `/proc/self/status` or an ignored/caught SIGCHLD disposition
+refuses external execution before launch. That check cannot detect every signal
+flag or competing reaper; the embedding ownership requirement still applies.
+
+The same opt-out disables `tungsten emitters` discovery, including `--describe`
+probes of executables on PATH. Its empty result means discovery was disabled;
+it does not establish that no emitters are installed. Without the opt-out,
+discovery executes those programs and requires the same trust as generation.
+
 ## Browser WebMCP
 
 Add a browser target alongside your TypeScript SDK:
@@ -480,17 +601,277 @@ tungsten [--json] <command>
 | `ir dump` | Write the IR as JSON (`--out`, `--compact`) |
 | `explain` | Explain a diagnostic code (`TG0201`), an operation or a type |
 | `schema` | Print a JSON Schema: `tungsten`, `agent`, `ir`, `cli-output`, `external-emitter`, `sdk-descriptors`, `tool-catalog` |
-| `mock` | Serve a mock of the API from the IR (`--port`, `--seed`, `--gate`) |
+| `mock` | Serve a mock of the API from the IR (`--port`, `--seed`, `--gate`, `--scenario`) |
+| `scenario validate` / `scenario run` | Validate a saved scenario, or run explicit integration argv with exit and call-count assertions (Linux run) |
 | `report` | Coverage, safety matrix, token budgets and diagnostics, as text, JSON or one static HTML file (`--html`); only configured targets run, `--all-targets` runs every known emitter |
 | `diff` | Show regeneration changes; `--semver` classifies the API surface, `--migration` adds upgrade actions and runtime requirement review |
 | `lsp` | Serve diagnostics, completion, hover, go-to-definition and symbols for `tungsten.yml`, `agent.yml` and overlays to an editor over stdio (`--config`) |
 | `doctor` | Report external tools; pass a project path and `--strict` to fail when its required tools are missing or too old |
+| `capabilities` | Query built-in target declarations without running tools or emitters; optionally select a target id or alias, such as `capabilities py --json` |
 
 With `--json`, stdout carries exactly one JSON document described by `tungsten schema cli-output` (`lsp` speaks the language server protocol on stdio instead). Color is used only on a terminal and never when `NO_COLOR` is set.
 
+Generation prepares compatible Java, Kotlin, C#, F#, Dart and Ruby SDK structure
+once per command, preserving each target's naming. Writing runs stage one
+target's generated bytes at a time in an owned system temporary directory and
+verify them before applying that target. `--strict` finishes every emitter's
+diagnostic preflight before any destination writes. Temporary staging also
+applies to `--dry-run`; destination files remain unchanged. Staging metadata is
+limited to 262,144 files and 64 MiB of accounted path/digest/index metadata across
+the selected targets; exceeding a limit fails with TG0701. This bounds retained
+output metadata, not total compiler memory or temporary disk use. `--check`,
+`check --ci`, `diff` and `report` process each target's output in memory.
+
+Custom files remain user-owned and obsolete generated files are removed using
+the previous output manifest. Output writes are not a transaction across files
+or target directories. Cancellation or an I/O failure during application can
+leave earlier files written or removed; the failing file may also be partly
+changed. TG0701 reports completed write/removal counts.
+Correct the failure and run generation again. Cooperative cancellation checks
+run between file operations; a single emitter pass or file operation may finish
+first. Cleanup of owned temporary files is attempted when the command unwinds;
+forced process termination or a cleanup error can leave a temporary directory.
+
+### Saved mock scenarios
+
+`tungsten mock . --scenario retry.json --port 0` validates a saved scenario
+against the project's callable operations, then starts a fresh loopback server
+with its responses queued. The listening URL is printed in the normal report
+(`result.base_url` with `--json`). Each process owns its port and mock state.
+Files never run commands or expand environment variables. You can launch your
+integration separately and point it at that URL, or use the explicit runner
+below to manage its lifetime and assert the final result.
+
+For an operation named `openapi.listPets`, this version 1 JSON file expects a
+rate limit followed by one successful retry (replace the operation with one in
+your project):
+
+```json
+{
+  "version": 1,
+  "programs": [
+    {"operation": "openapi.listPets", "status": 429, "headers": {"Retry-After": "0"}},
+    {"operation": "openapi.listPets", "status": 200, "body": []}
+  ],
+  "expect": {
+    "total_calls": 2,
+    "calls": [
+      {"operation": "openapi.listPets", "status": 429, "count": 1},
+      {"operation": "openapi.listPets", "status": 200, "count": 1}
+    ]
+  }
+}
+```
+
+After the integration has finished and no calls are in flight, fetch
+`GET /__tungsten/scenario`. HTTP 200 means the report was read: **assert its
+`passed` field**, which is true only when the total and every listed count match
+and all queued responses were consumed. `calls` in the report follows the
+file's assertion order; omitting an assertion's `status` counts every call of
+that operation. Status `0` counts dropped connections. Counts remain accurate
+even when `--max-recorded-calls` evicts request payloads. Reports contain counts
+only, without operation names, credentials or bodies. A snapshot can change
+when another request arrives; it does not stop the server or prove provider
+effects. In particular, a recorded write is not proof of an applied write.
+
+Programs use the existing `/__tungsten/program` controls: `status` (200–599),
+optional JSON `body`, string-valued `headers`, `times`, error `code`, and
+`cut_after` bytes; or `inject` with optional `times`. For malformed JSON, use a
+string body and an `application/json` header. For stream interruption, use
+`inject: "drop-mid-stream"` or a stream string body with `cut_after`. For a lost
+write response, use `inject: "drop-after-write"`; the mock's existing validation
+and idempotency behavior still applies. `inject: "reset"` is unsupported in a
+program because it acts before routing. Unknown fields and unsupported controls
+are rejected before the port is bound.
+
+Version 1 limits each file to 1 MiB, 256 programs, 256 call assertions, 10,000
+programmed calls and at most 10,000 expected total calls. Timeout/stall injection
+holds cannot exceed 30 seconds. These are input limits, not an overall run
+deadline. Keep scenarios synthetic: bodies and headers are served as written,
+and the separate `/__tungsten/calls` endpoint still exposes recorded data.
+Stop the server with Ctrl-C or close its stdin when done. Existing
+`POST /__tungsten/reset` clears responses, recordings and scenario assertions;
+restart with the same file to rerun it. Without a loaded scenario the assertion
+endpoint returns 404. These manual-server controls remain available for local
+exploration; the runner keeps its loaded responses and assertions immutable.
+
+Validate without binding a server or launching a process on any platform:
+
+```sh
+tungsten scenario validate . --scenario retry.json
+```
+
+On Linux (including WSL), run your integration explicitly:
+
+```sh
+tungsten --json scenario run . --scenario retry.json --timeout-ms 30000 --expect-exit 0 -- python3 integration.py
+```
+
+The integration reads its URL from `TUNGSTEN_MOCK_BASE_URL`. Arguments after
+`--` are passed directly to the named executable. There is no implicit shell;
+commands cannot be supplied by the saved file. An interpreter such as `python3`
+runs only when explicitly named by the caller. Other platforms reject `run`
+before input acquisition, port binding or process creation; `validate` remains
+portable.
+
+The run-phase deadline starts after compilation and scenario validation. It
+covers server startup, process execution, cleanup and final assertions; a small
+part of that budget is reserved for cleanup. It does not bound input acquisition
+or compilation. The runner owns a fresh loopback port and process group, stops
+its server before reading final counts, and fails on cancellation, timeout,
+cleanup failure, unfinished admitted requests, unexpected exit or unmet counts.
+Request completion tracks server-side handler and response-body generation,
+independently of when a call was counted; it does not prove transport delivery.
+The binary handles SIGINT/SIGTERM for this run; library callers supply explicit
+cancellation instead of installing signal handlers. The Linux binary refuses an
+unreadable or malformed `/proc/self/status` and observable ignored/caught SIGCHLD
+dispositions before acquiring inputs or creating a server or child. Embeddings
+must exclusively reap their runner children, avoid auto-reap dispositions and
+keep SIGCHLD disposition stable; the binary preflight does not establish these
+conditions for a concurrent embedding or inspect every `SA_NOCLDWAIT` setting.
+Process groups cover ordinary
+descendants, not processes that deliberately leave the group. Signal delivery
+and leader reaping do not prove that every descendant has settled, and this is
+not a sandbox.
+
+Runner connections are capped at 32 before request bodies are read, bodies at
+1 MiB, and admitted API calls at 10,000 (`--max-calls` can lower that limit).
+Excess admission or attempts to mutate control state fail the run. Recorded-call
+payloads are not retained; the bounded 64-entry idempotency cache can retain
+request fingerprints (including body bytes) and responses. Child stdin, stdout
+and stderr are disconnected. The machine report includes stable status and
+counts without child output, argv, PID, port or timing. `result.run.passed` requires the expected exit code (default
+0), matching counts and consumed responses. The command exits 0 only on success;
+run assertion/cancellation failures exit 1. Count assertions still do not prove
+provider effects, including applied writes or exactly-once behavior.
+
+`capabilities` returns contract version 1: target ids/aliases, source implementation,
+runtime family, imported-operation policy support and local consumer prerequisites.
+The same declarations drive target aliases and `doctor --strict`, including Kotlin's
+Java/Gradle tools, F#'s .NET SDK and Dart's `>=3.6 <4.0` SDK. Python's default
+minimum is 3.12; `doctor` resolves the declared `python_version` option for 3.10
+or 3.11 projects. Prerequisites describe local builds, not compiler execution or
+browser runtime support. Qualification, platform qualification and artifact
+availability are explicitly `unknown`: these source records do not prove a
+tested combination or published package. External emitters are not inspected by
+this command. Fields may be added within version 1; consumers should reject
+unknown major contract versions before interpreting them.
+
+The TypeScript declaration also includes `options_schema`, a JSON Schema for
+supported raw `package`, `version`, `runtime`, `runtime_path` and `dependencies`
+values. The `ts` alias returns the same declaration. Other targets report null
+until their option schemas are declared. This does not change generation policy:
+invalid TypeScript scalars still produce TG0711 warnings and use defaults;
+invalid custom dependencies produce errors. Unknown keys remain ignored, and
+defaults that depend on the compiled API remain in the emitter. This is an
+option declaration; existing project target validation remains compatible.
+
+### Local TypeScript profiles
+
+Select ordered local defaults in `tungsten.yml`:
+
+```yaml
+profiles:
+  - path: profiles/sdk.yml
+    root: profiles
+```
+
+Both selection paths are relative to the project manifest; `root` is an explicit
+existing include directory. A profile outside the project may be deliberately
+selected with relative `../` paths. Absolute, drive-relative and rooted Windows
+paths are refused. Profile v1 is a YAML or JSON mapping:
+
+```yaml
+tungsten_profile: 1
+includes: [base.yml]
+targets:
+  typescript:
+    package: '@example/sdk'
+    version: '1.0.0'
+    runtime: '^0.1.3'
+    dependencies:
+      yaml: '^2'
+```
+
+Includes resolve relative to their declaring profile and remain inside the
+selected root after symlink resolution. Traverse selections/includes left to
+right, depth first, applying parents before their child and each canonical file
+once at its first encounter. Every reused graph path still checks confinement
+and depth. Limits per compilation are 1 MiB per file, 16 MiB of unique captured
+bytes, 64 identities/selections, 256 include edges and depth eight (roots at zero).
+Profile reads use the shared source provider, including unsaved local files in
+existing directories, and capture each identity once for that compilation.
+
+Scalars override individually; dependency maps merge by package name. Explicit
+project fields take precedence. Missing fields and empty dependency maps add
+nothing; profile nulls and unknown fields are errors, with no deletion syntax.
+The `ts` alias is accepted inside profiles, but declaring both aliases is an
+error. Profiles cannot set project identity, inputs, agent/tools, executables,
+output directories or `runtime_path`. Existing project invalid/null target
+values keep their TG0711 warning/fallback or dependency-error behavior.
+
+Project `doctor` checks the same composed target configuration, including a
+TypeScript target introduced only by a profile. It validates the manifest and
+bounded profiles before probing tool versions; it does not compile or acquire
+API inputs, load agent content, or execute emitters.
+
+The compiler driver returns typed declarations and winning/shadowed authored
+origins in memory; emitter defaults still depend on the compiled API. Profile
+source/digest names are portable (`profile[0]/base.yml`), while physical identity
+stays in provenance for confinement. A name collision with another compilation
+input is an error. This result is not a replayable approval document. Dedicated
+profile navigation and setup presets remain follow-up work. Hosts can select the
+external-emitter restrictions described above; executable approval remains separate.
+
+Inspect the supported effective configuration without compiling API inputs:
+
+```sh
+tungsten config .
+tungsten config path/to/tungsten.yml --json
+tungsten config . --strict --json
+```
+
+The command validates the manifest and bounded local profiles through the same
+config-only loader as project doctor. It shows the winning and shadowed authored
+origins for each supported TypeScript option and custom dependency, its default
+and invalid-value policy, and `runtime_path` precedence over `runtime`. Package
+names derived from the compiled API remain unresolved. Static package/runtime
+defaults come from the shared option declaration. Targets without a typed option
+declaration are explicitly `unsupported_options`; external targets are
+`external_unverified`, with opaque ordinals in manifest order.
+
+Runtime specifiers, local runtime paths and dependency specifiers are always
+redacted by the option schema. Unknown settings, transport/auth content, physical
+paths, source excerpts and invalid authored values are omitted. Sources use
+`project` and `profile[n]` capture ordinals with profile content digests, so even
+profile filenames are not exported. These digests identify captured bytes, not
+publisher trust. Plain text and JSON carry the same explanation, without prompts,
+color, login, tool probes, input acquisition or emitter execution. Global input
+acquisition flags do not cause acquisition during inspection.
+
+Exit 0 means the inspected configuration has no errors; exit 1 means manifest,
+profile or supported-option errors, or warnings with `--strict`. Unsupported
+target markers are informational. Invalid scalar project options retain their
+warning/default policy; invalid custom dependencies fail. This inspection is
+neither a replayable manifest nor evidence that generation or a consumer works.
+
 ### Editor support
 
-`tungsten lsp` is a language server for `tungsten.yml`, `agent.yml` and the overlay files a project lists. It checks the project with the same compiler as `tungsten check` and shows the same `TG` diagnostics on the YAML lines they belong to, including unsaved changes to the two manifests (specs and overlays are re-read when saved). It completes keys, enumerated values and the operation ids, gates and clusters of the compiled project; shows field documentation, operation signatures and diagnostic explanations on hover; jumps from an operation id to its place in the OpenAPI document; and outlines the manifests. The workspace is the directory of `tungsten.yml` (found from the editor's workspace folder, or given with `--config <path>`); one project is served per process.
+Diagnostics for selected local profiles point to the captured physical file,
+including invalid or unsaved included profiles outside the manifest directory.
+Compiler source names and exported configuration provenance remain portable.
+Dedicated profile completion and navigation remain follow-up work.
+
+`tungsten lsp` is a language server for `tungsten.yml`, `agent.yml` and the overlay files a project lists. It checks the project with the same compiler as `tungsten check` and shows the same `TG` diagnostics on their source lines. Unsaved JSON/YAML manifests, specs, overlays and local references participate in the same source snapshot, including new files in an existing input directory. Closing a buffer restores its disk contents; file watchers pick up saved changes and deletions. File-size limits and local-reference confinement still apply. The selected project's `.tungsten-inputs` acquisition cache is reserved for verified disk content: buffers cannot replace or extend a pinned Git tree, while explicitly selected local overlays outside the cache remain editable. It completes keys, enumerated values and the operation ids, gates and clusters of the compiled project; shows field documentation, operation signatures and diagnostic explanations on hover; jumps from an operation id to its place in the OpenAPI document; and outlines the manifests. The workspace is the directory of `tungsten.yml` (found from the editor's workspace folder, or given with `--config <path>`); one project is served per process.
+
+Edits retain the existing debounce and one active analysis worker. A newer edit
+cancels obsolete work cooperatively between compiler phases and during reference,
+operation and component traversals; obsolete results do not replace diagnostics
+or the last accepted navigation index. Diagnostics for open files carry their
+document version, and older change notifications are ignored. An in-progress read,
+parse or indivisible compiler pass finishes before the next cancellation check;
+this is not a hard execution deadline. No persistent analysis cache is introduced.
+
 
 Visual Studio Code needs a generic language client extension, for example [Generic LSP Client](https://marketplace.visualstudio.com/items?itemName=llllvvuu.llllvvuu-glspc). In `settings.json`:
 

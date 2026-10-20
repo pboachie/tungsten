@@ -13,6 +13,8 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const output = resolve(process.argv[2] ?? mkdtempSync(join(tmpdir(), "tungsten-runtime-dist-")));
 const packages = ["ts", "mcp", "webmcp"];
 const names = ["@elysra/tungsten-runtime", "@elysra/tungsten-mcp", "@elysra/tungsten-webmcp"];
+// The MCP adapter's floor follows its node:module import graph.
+const nodeFloors = [">=22", "^22.13.0 || >=23.2.0", ">=22"];
 const workspaceVersion = readFileSync(join(root, "Cargo.toml"), "utf8").match(/^version = "([^"]+)"/m)?.[1];
 assert(workspaceVersion, "workspace version is required");
 mkdirSync(output, { recursive: true });
@@ -49,7 +51,7 @@ try {
     assert.equal(manifest.name, names[i]);
     assert.equal(manifest.version, workspaceVersion, `${manifest.name}: workspace version mismatch`);
     assert.equal(manifest.license, "Apache-2.0");
-    assert.equal(manifest.engines?.node, ">=22", `${manifest.name}: Node.js support floor`);
+    assert.equal(manifest.engines?.node, nodeFloors[i], `${manifest.name}: Node.js support floor`);
     assert.equal(manifest.homepage, "https://github.com/pboachie/tungsten");
     assert.equal(manifest.bugs?.url, "https://github.com/pboachie/tungsten/issues");
     assert.equal(manifest.author, "Prince Boachie");

@@ -14,6 +14,7 @@ macro_rules! examples_text {
 Examples:
   tungsten init --from openapi.yaml    Write tungsten.yml and agent.yml
   tungsten check .                     Validate the project and print diagnostics
+  tungsten config .                    Explain supported effective configuration
   tungsten generate --target ts,py     Generate the TypeScript and Python SDKs
   tungsten generate --target webmcp    Generate a browser WebMCP adapter
   tungsten mock --port 4010            Serve a mock of the API from the IR
@@ -68,6 +69,18 @@ const LONG_HELP: &str = concat!(examples_text!(), exit_codes_text!());
     color = ColorChoice::Never
 )]
 pub(crate) struct Cli {
+    /// Select one reviewed local strict JSON external-emitter policy (requires
+    /// --policy-digest). Supported: generate (all modes), check (including CI),
+    /// report, diff, emitters and pure config inspection. policy digest and all
+    /// other commands reject supplied policy before reads or effects. No approval,
+    /// environment isolation, acquisition protection or sandbox is conferred.
+    /// Parent links/mounts and volume/network locality are not verified.
+    #[arg(long, global = true, requires = "policy_digest", value_name = "PATH")]
+    pub policy: Option<PathBuf>,
+    /// Exact blake3: plus 64 lowercase hex digits of the reviewed policy bytes.
+    /// Obtain it separately with `tungsten policy digest PATH`.
+    #[arg(long, global = true, requires = "policy", value_name = "DIGEST")]
+    pub policy_digest: Option<String>,
     /// Reuse verified HTTP/Git input pins and cached files without network access.
     #[arg(long, global = true, conflicts_with = "refresh_inputs")]
     pub offline: bool,
@@ -95,7 +108,8 @@ pub(crate) struct Cli {
     /// --ci`, `diff` and `report`, with your privileges and with whatever
     /// the manifest says; pass it (or set TUNGSTEN_NO_EXTERNAL=1) when the
     /// manifest is not trusted, for example on a pull request in CI. Such
-    /// targets are reported as skipped (TG0807).
+    /// targets are reported as skipped (TG0807). Also disables `emitters`
+    /// discovery, including descriptor probes of programs on PATH.
     #[arg(
         long,
         global = true,
@@ -108,9 +122,10 @@ pub(crate) struct Cli {
 }
 
 impl Cli {
-    /// `check --ci` never colors its output.
+    /// CI checks and pure configuration inspection never color their output.
     pub fn forces_plain(&self) -> bool {
-        matches!(&self.command, Command::Check(args) if args.ci)
+        matches!(&self.command, Command::Config(_))
+            || matches!(&self.command, Command::Check(args) if args.ci)
     }
 
     /// The command's name in `--json` output; `None` for `lsp`, which
@@ -125,9 +140,13 @@ impl Cli {
             Command::Schema(_) => CommandName::Schema,
             Command::Init(_) => CommandName::Init,
             Command::Doctor(_) => CommandName::Doctor,
+            Command::Capabilities(_) => CommandName::Capabilities,
+            Command::Config(_) => CommandName::Config,
+            Command::Policy { .. } => CommandName::PolicyDigest,
             Command::Emitters(_) => CommandName::Emitters,
             Command::Generate(_) => CommandName::Generate,
             Command::Mock(_) => CommandName::Mock,
+            Command::Scenario { .. } => CommandName::Scenario,
             Command::Report(_) => CommandName::Report,
             Command::Diff(_) => CommandName::Diff,
             Command::Overlay {
@@ -155,6 +174,15 @@ pub(crate) enum Command {
     Init(Box<InitArgs>),
     /// Report installed tools and optionally check project prerequisites.
     Doctor(DoctorArgs),
+    /// Query built-in target declarations without executing tools or emitters.
+    Capabilities(CapabilitiesArgs),
+    /// Explain supported effective configuration without compiling or running tools.
+    Config(ConfigArgs),
+    /// Explicit host policy utilities; never approves or runs executables.
+    Policy {
+        #[command(subcommand)]
+        command: PolicyCommand,
+    },
     /// List the external emitters (`tungsten-emit-<name>`) that can be
     /// run, with the protocol and version each reports.
     Emitters(EmittersArgs),
@@ -162,6 +190,11 @@ pub(crate) enum Command {
     Generate(GenerateArgs),
     /// Serve a mock of the API from the compiled IR.
     Mock(MockArgs),
+    /// Validate a saved mock scenario or run an explicitly selected integration.
+    Scenario {
+        #[command(subcommand)]
+        command: ScenarioCommand,
+    },
     /// Coverage, safety matrix, token budgets, diagnostics and changes
     /// since the last generation, as text, one static HTML file or JSON.
     Report(ReportArgs),
@@ -187,11 +220,39 @@ pub(crate) struct LspArgs {
     pub config: Option<PathBuf>,
 }
 
+#[derive(Debug, Args)]
+pub(crate) struct CapabilitiesArgs {
+    /// Limit the catalog to one target id or CLI alias.
+    pub target: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct ConfigArgs {
+    /// Local project directory or tungsten manifest.
+    #[arg(default_value = ".")]
+    pub path: PathBuf,
+    /// Fail on supported-option warnings as well as configuration errors.
+    #[arg(long)]
+    pub strict: bool,
+}
+
 #[derive(Debug, Subcommand)]
 pub(crate) enum OverlayCommand {
     /// Suggest an Overlay 1.0 document whose actions fix diagnostics
     /// (a missing or repeated operationId) without changing the IR.
     Suggest(SuggestArgs),
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum PolicyCommand {
+    /// Purely validate/hash a bounded local strict JSON policy for review.
+    /// Rejects execution-policy flags; never writes files or grants authority.
+    Digest(PolicyDigestArgs),
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct PolicyDigestArgs {
+    pub path: PathBuf,
 }
 
 #[derive(Debug, Subcommand)]
@@ -308,6 +369,9 @@ pub(crate) struct DiffArgs {
 pub(crate) struct MockArgs {
     #[command(flatten)]
     pub input: InputArgs,
+    /// Load a versioned JSON scenario before serving; no commands are executed.
+    #[arg(long, value_name = "FILE")]
+    pub scenario: Option<PathBuf>,
     /// Port on 127.0.0.1 to listen on; 0 picks a free port.
     #[arg(long, default_value_t = 0)]
     pub port: u16,
@@ -329,6 +393,40 @@ pub(crate) struct MockArgs {
     /// nothing.
     #[arg(long, value_name = "N", default_value_t = tungsten_mock::DEFAULT_MAX_IDEMPOTENT_RESPONSES)]
     pub max_idempotent_responses: usize,
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum ScenarioCommand {
+    /// Validate a saved JSON scenario without binding or executing commands.
+    Validate(ScenarioValidateArgs),
+    /// Load isolated mock state, execute explicit argv, and assert counts/exit.
+    Run(ScenarioRunArgs),
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct ScenarioValidateArgs {
+    #[command(flatten)]
+    pub input: InputArgs,
+    #[arg(long, value_name = "FILE")]
+    pub scenario: PathBuf,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct ScenarioRunArgs {
+    #[command(flatten)]
+    pub input: InputArgs,
+    #[arg(long, value_name = "FILE")]
+    pub scenario: PathBuf,
+    /// Run-phase budget including cleanup; compilation/validation precede it.
+    #[arg(long, default_value_t = 30_000, value_parser = clap::value_parser!(u64).range(20..=600_000))]
+    pub timeout_ms: u64,
+    #[arg(long, default_value_t = 0)]
+    pub expect_exit: u8,
+    #[arg(long, default_value_t = 10_000, value_parser = clap::value_parser!(u64).range(1..=10_000))]
+    pub max_calls: u64,
+    /// Executable and arguments after --. No shell interpolation is performed.
+    #[arg(last = true, required = true, num_args = 1.., value_name = "COMMAND")]
+    pub command: Vec<std::ffi::OsString>,
 }
 
 #[derive(Debug, Args)]
@@ -401,10 +499,14 @@ pub enum SchemaName {
     CliOutput,
     /// The documents of the external emitter protocol.
     ExternalEmitter,
+    /// Strict host-selected external execution constraints, never approval.
+    ExecutionPolicy,
     /// The SDK descriptor document (tungsten_emit::sdk::descriptors).
     SdkDescriptors,
     /// Transport-neutral tools and scoped groups.
     ToolCatalog,
+    /// Built-in target capability declarations, independent of qualification.
+    Capabilities,
 }
 
 #[derive(Debug, Clone, Args)]

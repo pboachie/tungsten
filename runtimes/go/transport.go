@@ -388,14 +388,11 @@ func attempt(ctx context.Context, client *http.Client, req attemptRequest) attem
 		return attemptOutcome{kind: outcomeStreaming, status: status, headers: headers,
 			stream: &eventBody{response: resp, cancel: cancel, idle: streamIdle(req)}}
 	}
-	if req.method == "HEAD" || status == 204 || status == 205 || status == 304 {
-		req.maxResponseBytes = nil
-	}
 	oversized := false
 	var reader io.Reader = resp.Body
 	if maximum := req.maxResponseBytes; maximum != nil {
 		length := headers["content-length"]
-		if length != "" && strings.IndexFunc(length, func(r rune) bool { return r < '0' || r > '9' }) == -1 {
+		if req.method != "HEAD" && status != 204 && status != 205 && status != 304 && length != "" && strings.IndexFunc(length, func(r rune) bool { return r < '0' || r > '9' }) == -1 {
 			value, err := strconv.ParseUint(length, 10, 64)
 			oversized = err != nil || value > uint64(*maximum)
 		}

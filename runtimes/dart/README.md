@@ -25,7 +25,139 @@ Calls return a typed result or a diagnostic envelope describing recovery;
 unknown outcomes never justify blindly repeating a mutation. The API remains
 responsible for authorization and server-side idempotency.
 
+## Credential transport
+
+Credentials require HTTPS by default, including OAuth client-credentials, code
+exchange and refresh endpoints. Non-loopback HTTP returns `AUTH_FAILED` before
+sending credentials. Migrate authenticated HTTP services to HTTPS, or explicitly
+opt in with `ClientOptions(allowInsecureHttp: true)` for intentional insecure transport.
+This permits cleartext credentials; enable it only for a trusted environment.
+
+The local-development exception covers `localhost` (also with a trailing dot),
+literal IPv4 `127/8`, and IPv6 `::1`. Subdomains, unspecified addresses and
+IPv4-mapped IPv6 addresses require the explicit override. DNS resolution does not
+grant an exception. Anonymous HTTP requests remain supported.
+
+## Managed OAuth authorization
+
+In unreleased 0.2.0, `OAuthFlow.authorizationUrl` returns a managed
+`Result<AuthorizationAttempt>` synchronously. Configure the scheme with
+`Credential.authorizationCode(clientId: ..., redirectUri: ...)`, qualify the
+provider's S256 support and pin an issuer defense. Public clients omit
+`clientSecret`; confidential clients obtain it from application-owned secure
+configuration. The caller owns the browser or native listener and supplies its
+unpredictable session binding and the complete callback received by that owner.
+
+```dart
+final flow = core.oauth('user');
+try {
+  final begun = flow.authorizationUrl(
+    sessionBinding: sessionBinding,
+    issuerDefense: IssuerDefense.issuerResponse(issuer),
+    s256Supported: true,
+  );
+  if (begun is Err<AuthorizationAttempt>) {
+    throw StateError(begun.error.remediation);
+  }
+  final attempt = (begun as Ok<AuthorizationAttempt>).value;
+  // Open attempt.url in that browser and await its full callbackUrl.
+  final completed = await flow.exchangeCode(
+    attemptHandle: attempt.attemptHandle,
+    callbackUrl: callbackUrl,
+    sessionBinding: sessionBinding,
+  );
+  if (completed is Err<TokenInfo>) {
+    throw StateError(completed.error.remediation);
+  }
+  // The token is stored; authenticated calls can now use it.
+} finally {
+  flow.cancelAllAuthorization();
+}
+```
+
+The default owns random state and an S256 verifier for each opaque attempt.
+Issuer-response defense requires the exact decoded `iss` on every callback;
+missing `iss` never selects another defense. Alternatively, explicitly qualify
+`IssuerDefense.distinctRedirect(...)` for a provider-specific redirect. Duplicate,
+malformed, mismatched, expired, canceled and replayed callbacks refuse before a
+token request. Invalid unrelated callbacks leave the legitimate attempt usable.
+A claimed callback is consumed even if its token request has an ambiguous result;
+never blindly repeat a code exchange. Endpoint query/extra parameters cannot
+override protected authorization fields.
+
+`cancelAuthorization(handle, binding)` cancels one attempt. The synchronous
+`cancelAllAuthorization()` invalidates this scheme's pending attempts and running
+read/refresh/exchange work, disposes its attempt timers, preserves any stored
+credential, and permits a new managed attempt. Dart timers can keep an isolate
+alive: call this real cleanup helper in the owning application's `finally` block.
+Cancellation signals (`OAuthCancellation`) and expiry invalidate results while
+claimed network/store work retains admission until actual settlement. An
+arbitrary custom store/future that never settles can hold its bounded slot; this
+is not a hard wall-clock guarantee or physical secret zeroization.
+
+`await flow.logout()` fences local work before attempting token removal. Even if
+cleanup fails or capacity is exhausted, older work stays fenced and managed
+reads remain logged out until a successful newer login. Logout does not revoke
+provider tokens. Separate logout generations and credential mutation epochs
+prevent an older refresh from overwriting/removing a newer managed login even
+when the provider reissues identical token strings.
+
+Custom managed stores must implement `FencedTokenStore`: evaluate the supplied
+stateful predicate exactly once at the final serialized mutation, with no await,
+retry or speculative check before committing. False/throw must preserve the
+prior token. A failed commit can conservatively advance the epoch. The manager
+holds no internal lock while invoking stores or bounded configuration callbacks;
+final predicates revalidate mutable configuration synchronously before checking
+their internal generation, epoch and deadline. Custom collection getters and
+store implementations must cooperate with that synchronous atomic boundary.
+Direct external or low-level writes bypass managed epochs; shared account
+partitioning and persistent adapters need separate qualification.
+
+Migration: old primitive calls are now explicitly named
+`lowLevelAuthorizationUrl` and `lowLevelExchangeCode`. Those helpers leave PKCE,
+state, full callback validation and issuer defense to the caller and must not be
+used as the generated login default. They do not establish managed store fencing.
+Never log handles, authorization/callback URLs, codes, bindings, verifiers or
+tokens. Diagnostic error labels use a finite OAuth allowlist; provider descriptions
+and arbitrary error strings are not copied into failures.
+
 ## Limits
+
+Managed OAuth admits at most 32 attempts, 32 token-work owners and 32 waiting
+read/refresh callers per client; retained scheme identities are also capped at
+32. Attempts expire after ten monotonic minutes. Captured configuration strings
+have a combined 32 KiB strict UTF-8 budget with at most 64 scopes/extras/credential
+parts; callback text and decoded fields have a 16 KiB budget and at most 64
+parameters. Selected endpoint, scopes, extras and credential inputs are checked
+before URL parsing or copying their caller collections. Overall descriptor
+traversal and temporary allocations remain cooperative and are not a whole-heap
+or whole-descriptor bound.
+Authorization-code and refresh responses default to 64 KiB. Set
+`ClientOptions.maxOAuthTokenResponseBytes` to a positive integer up to 1 MiB for
+larger providers. This does not change the separate client-credentials response
+budget. Custom stored token strings are independently bounded by that response
+cap; limits bound accepted data rather than total parser/HTTP/runtime heap usage.
+
+In unreleased 0.2.0, ordinary buffered responses default to **4 MiB (4,194,304 bytes) per response**.
+Set `ClientOptions.maxResponseBytes` to choose a finite client cap; the call option with the same
+native name overrides it. Omitted/null values inherit the default or client cap,
+not an unlimited mode. Values must be positive safe integers (at most
+9007199254740991), validated before authentication, storage and preview effects.
+This covers ordinary success/error bodies, server previews, each page and each
+verification read. A page cap does not bound collecting many pages.
+
+Content-Length can reject an oversized representation early; actual delivered
+bytes are counted even without it. HEAD/204/205/304 metadata alone does not
+consume the budget, but any body bytes a transport delivers are still counted.
+Overflow closes the owned body and returns `UNEXPECTED_RESPONSE`, code
+`RESPONSE_TOO_LARGE`, with `retryable: never`. A mutation may have taken effect:
+inspect API state before retrying. The cap is separate from OAuth token-response
+and successful SSE event/collection budgets.
+
+The default transport does not decompress encoded bodies; use identity encoding. Encoded delivery does not establish a decoded-content limit.
+The cap limits accepted body bytes; parsers, copies and HTTP decoders can allocate
+more. Custom transports must stream nonempty bodies and honor cancellation;
+their own buffering, decoding and settlement behavior need separate qualification.
 
 The `dart:io` transport is not a browser transport. Applications own
 persistent storage and must supply appropriate token and idempotency store

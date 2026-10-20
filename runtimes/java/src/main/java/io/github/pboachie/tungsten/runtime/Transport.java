@@ -21,10 +21,12 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import javax.net.ssl.SSLException;
 import javax.net.ssl.SSLHandshakeException;
 import javax.net.ssl.SSLParameters;
@@ -180,6 +182,13 @@ final class Transport {
         /** Releases the connection; a blocked read ends as lost. */
         void close() {
             closed = true;
+            closeSocket();
+            queue.clear();
+            queue.offer(new IOException("closed"));
+        }
+
+        /** Also closes an attached raw/TLS socket when connect throws before returning it. */
+        void closeSocket() {
             Socket s = socket;
             if (s != null) {
                 try {
@@ -188,8 +197,6 @@ final class Transport {
                     // closing is best effort
                 }
             }
-            queue.clear();
-            queue.offer(new IOException("closed"));
         }
     }
 
@@ -559,6 +566,44 @@ final class Transport {
 
     /** Sends once. It never throws: every outcome is an {@link Outcome}. */
     static Outcome attempt(SSLSocketFactory tls, Request req) {
+        return attempt(tls, req, null);
+    }
+
+    /** OAuth owns admission until the physical socket worker has closed and settled. */
+    static Outcome oauthAttempt(SSLSocketFactory tls, Request req) {
+        Settlement settlement = new Settlement();
+        try {
+            return attempt(tls, req, settlement);
+        } finally {
+            if (!settlement.started) settlement.complete();
+            settlement.await();
+        }
+    }
+
+    private static final class Settlement {
+        private final CountDownLatch done = new CountDownLatch(1);
+        private final AtomicBoolean completed = new AtomicBoolean();
+        private boolean started;
+
+        void complete() {
+            if (completed.compareAndSet(false, true)) done.countDown();
+        }
+
+        void await() {
+            boolean interrupted = false;
+            while (true) {
+                try {
+                    done.await();
+                    break;
+                } catch (InterruptedException ignored) {
+                    interrupted = true;
+                }
+            }
+            if (interrupted) Thread.currentThread().interrupt();
+        }
+    }
+
+    private static Outcome attempt(SSLSocketFactory tls, Request req, Settlement settlement) {
         Target t = target(req.url());
         if (t == null) {
             return Outcome.of(Kind.NOT_SENT, "INVALID_REQUEST");
@@ -597,17 +642,31 @@ final class Transport {
                     body.push(e);
                 }
             } finally {
-                if (socket != null) {
-                    try {
-                        socket.close();
-                    } catch (IOException ignored) {
-                        // closing is best effort
+                try {
+                    if (settlement != null) body.closeSocket();
+                    else if (socket != null) {
+                        try {
+                            socket.close();
+                        } catch (IOException ignored) {
+                            // closing is best effort
+                        }
                     }
+                } finally {
+                    if (settlement != null) settlement.complete();
                 }
             }
         }, "tungsten-http");
         worker.setDaemon(true);
-        worker.start();
+        if (settlement == null) worker.start();
+        else {
+            settlement.started = true;
+            try {
+                worker.start();
+            } catch (RuntimeException | Error failure) {
+                settlement.complete();
+                throw failure;
+            }
+        }
         Head response;
         try {
             response = head.get(Math.max(1, req.timeout().toMillis()), TimeUnit.MILLISECONDS);

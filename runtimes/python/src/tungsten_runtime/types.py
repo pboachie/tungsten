@@ -658,6 +658,8 @@ class ClientOptions:
     validate_responses: Literal["off", "warn", "strict"] = "warn"
     on_diagnostic: Callable[[Diagnostic], None] | None = None
     headers: Mapping[str, str] = field(default_factory=dict[str, str])
+    #: At least 32 cryptographically random bytes, copied at construction.
+    #: Shorter keys raise ValueError. None generates a random per-client key.
     confirmation_key: bytes | None = None
     operations: Sequence[OperationDescriptor] = ()
     macros: Sequence[MacroDescriptor] = ()
@@ -691,8 +693,15 @@ class ClientOptions:
     #: May tighten the API default; an API configured with none cannot be relaxed.
     redirects: RedirectPolicy | None = None
 
-    #: Optional ordinary-response byte cap (positive safe integer). Unset: unbounded.
+    #: Ordinary-response byte cap (positive safe integer). None inherits the 4 MiB default.
     max_response_bytes: int | None = None
+
+    #: Separate code/refresh token response cap; positive safe integer, default 64 KiB.
+    max_oauth_token_response_bytes: int = 65_536
+
+    #: Explicitly allows credentials over non-loopback HTTP, including OAuth.
+    #: Default False: use HTTPS. localhost, 127/8 and ::1 work without opt-in.
+    allow_insecure_http: bool = False
 
 
 class CallOptions(TypedDict, total=False):
@@ -703,7 +712,7 @@ class CallOptions(TypedDict, total=False):
     confirm: str | Literal[True]
     allow_confirm_true: bool
     timeout_ms: int
-    max_response_bytes: int
+    max_response_bytes: int | None
     verify: bool
     headers: Mapping[str, str]
 

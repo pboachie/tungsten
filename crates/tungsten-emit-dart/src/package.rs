@@ -8,7 +8,7 @@ use std::collections::BTreeSet;
 use tungsten_emit::sdk::MemberKind;
 use tungsten_ir::Safety;
 
-use crate::dart::{directive, one_line};
+use crate::dart::{directive, one_line, str_lit};
 use crate::options::RUNTIME_PACKAGE;
 use crate::{Gen, Library};
 
@@ -190,6 +190,12 @@ fn readme(g: &Gen<'_, '_>) -> String {
     let t = title(g);
     let p = &g.opts.package;
     let client = &g.names.client_class;
+    let code_scheme = g
+        .plan
+        .ir
+        .auth
+        .iter()
+        .find(|scheme| scheme.authorization_code().is_some());
     out.push_str(&format!("# {p}\n\n"));
     out.push_str(&format!(
         "<!-- {} -->\n\n",
@@ -215,19 +221,30 @@ fn readme(g: &Gen<'_, '_>) -> String {
         out.push_str("\n\n");
     }
     out.push_str("## Usage\n\n```dart\n");
+    if code_scheme.is_some() {
+        out.push_str("import 'dart:io';\n");
+    }
     out.push_str(&format!("import 'package:{p}/{p}.dart';\n"));
     out.push_str(&format!(
         "import 'package:{RUNTIME_PACKAGE}/{RUNTIME_PACKAGE}.dart';\n\n"
     ));
     out.push_str("Future<void> main() async {\n");
-    out.push_str(&format!(
-        "  final client = {client}(ClientOptions(baseUrl: 'https://api.example.com'));\n"
-    ));
+    if let Some(scheme) = code_scheme {
+        out.push_str(&format!(
+            "  final client = {client}(ClientOptions(\n    baseUrl: 'https://api.example.com',\n    auth: {{{}: Credential.authorizationCode(\n      clientId: Platform.environment['OAUTH_CLIENT_ID'] ?? '',\n      redirectUri: Platform.environment['OAUTH_REDIRECT_URI'] ?? '',\n    )}},\n  ));\n  // Complete managed authorization below before authenticated calls.\n",
+            str_lit(scheme.name())
+        ));
+    } else {
+        out.push_str(&format!(
+            "  final client = {client}(ClientOptions(baseUrl: 'https://api.example.com'));\n"
+        ));
+    }
     if let Some((o, op)) = g.plan.operations.iter().enumerate().find(|(_, o)| {
         o.arguments
             .iter()
             .all(|a| !matches!(a.presence, tungsten_ir::Presence::Required))
-    }) && let Some(member) = member(g, op.resource, MemberKind::Operation(o))
+    }) && code_scheme.is_none()
+        && let Some(member) = member(g, op.resource, MemberKind::Operation(o))
     {
         let chain = resource_chain(g, op.resource).join(".");
         let chain = if chain.is_empty() {
@@ -241,6 +258,12 @@ fn readme(g: &Gen<'_, '_>) -> String {
         out.push_str("  switch (result) {\n    case Ok(:final value):\n      print(value);\n    case Err(:final error):\n      print(error.remediation);\n  }\n");
     }
     out.push_str("}\n```\n\n");
+    if let Some(scheme) = code_scheme {
+        out.push_str(&format!(
+            "## Managed OAuth authorization\n\nSet `OAUTH_CLIENT_ID` and `OAUTH_REDIRECT_URI` to the registered client and exact redirect before constructing the client. Public clients omit `clientSecret`; confidential clients supply it from application-owned secure configuration. Qualify S256 support and issuer-response behavior before enabling the provider. The application supplies `sessionBinding` from its owning listener/browser session, the exact qualified `issuer`, and the full `callbackUrl` delivered to that same owner.\n\n```dart\nfinal flow = client.oauth({});\ntry {{\n  final begun = flow.authorizationUrl(\n    sessionBinding: sessionBinding,\n    issuerDefense: IssuerDefense.issuerResponse(issuer),\n    s256Supported: true,\n  );\n  if (begun is Err<AuthorizationAttempt>) {{\n    throw StateError(begun.error.remediation);\n  }}\n  final attempt = (begun as Ok<AuthorizationAttempt>).value;\n  // Open attempt.url in the owning browser and await its full callbackUrl.\n  final completed = await flow.exchangeCode(\n    attemptHandle: attempt.attemptHandle,\n    callbackUrl: callbackUrl,\n    sessionBinding: sessionBinding,\n  );\n  if (completed is Err<TokenInfo>) {{\n    throw StateError(completed.error.remediation);\n  }}\n  // Authenticated generated methods may now be called.\n}} finally {{\n  flow.cancelAllAuthorization();\n}}\n```\n\n`cancelAllAuthorization()` synchronously invalidates pending attempts and running token work and disposes attempt timers. Owned network/store work retains admission until settlement; an already stored credential is preserved and a new attempt may begin. Call `await flow.logout()` separately to invalidate and remove local credentials; neither operation remotely revokes tokens. Custom managed stores require `FencedTokenStore` final atomic predicates. Keep handles, authorization/callback URLs, session bindings, codes and tokens out of logs. Shared persistent adapters and actual provider/listener behavior need separate qualification. The deliberately unbound `lowLevelAuthorizationUrl` and `lowLevelExchangeCode` are compatibility primitives, never the managed default.\n\n",
+            str_lit(scheme.name())
+        ));
+    }
     out.push_str(
         "Every method returns a `Future<Result<T>>`: `Ok` (`value`, `raw`, `meta`, `verification`) or `Err` (`error`: the diagnostic envelope with `category`, `remediation`, `retryable`, `nextAction`, ...). API and transport failures never throw.\n\n",
     );

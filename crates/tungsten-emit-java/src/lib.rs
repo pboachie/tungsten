@@ -106,6 +106,32 @@ impl Emitter for JavaEmitter {
         }
         diags
     }
+
+    fn uses_sdk_plan(&self) -> bool {
+        true
+    }
+
+    fn supports_prepared(&self, ir: &Ir, plan: &SdkPlan<'_>) -> Diagnostics {
+        notes(ir, plan)
+    }
+
+    fn emit_prepared(
+        &self,
+        ir: &Ir,
+        plan: &SdkPlan<'_>,
+        cfg: &TargetConfig,
+        out: &mut FileSet,
+    ) -> Diagnostics {
+        let (opts, mut diags) = Options::resolve(ir, cfg);
+        let (files, more) = generate_prepared(ir, plan, &opts);
+        diags.extend(more);
+        for (path, text) in files {
+            if let Err(e) = out.add(path, text) {
+                diags.push(Diagnostic::error("TG0701", format!("java target: {e}")));
+            }
+        }
+        diags
+    }
 }
 
 /// The names of the runtime's public types, java.util's types generated code
@@ -310,8 +336,16 @@ fn context<'a>(
 /// Every file of the SDK, and the generator's diagnostics.
 pub fn generate(ir: &Ir, opts: &Options) -> (Vec<(String, String)>, Diagnostics) {
     let (plan, _) = SdkPlan::new(ir);
-    let names = Namer::new(&plan).names(Target::Java, &namer_options());
-    let ctx = context(ir, &plan, &names, opts);
+    generate_prepared(ir, &plan, opts)
+}
+
+fn generate_prepared(
+    ir: &Ir,
+    plan: &SdkPlan<'_>,
+    opts: &Options,
+) -> (Vec<(String, String)>, Diagnostics) {
+    let names = Namer::new(plan).names(Target::Java, &namer_options());
+    let ctx = context(ir, plan, &names, opts);
     let mut files: Vec<(String, String)> = vec![];
     files.push(("pom.xml".into(), ctx.pom()));
     files.push(("README.md".into(), ctx.readme()));
@@ -320,8 +354,8 @@ pub fn generate(ir: &Ir, opts: &Options) -> (Vec<(String, String)>, Diagnostics)
     files.extend(ctx.resources(&infos));
     files.extend(ctx.root(&infos));
     let document = sdk::document_value(
-        &plan,
-        &document_names(&names, &plan),
+        plan,
+        &document_names(&names, plan),
         &DocumentOptions {
             version: opts.version.clone(),
         },

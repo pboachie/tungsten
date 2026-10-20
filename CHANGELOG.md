@@ -9,6 +9,214 @@ changes.
 
 ## [Unreleased]
 
+### Breaking
+
+- Ruby browser OAuth helpers now create bounded S256/state authorization attempts.
+  Qualify issuer defense, bind the owning session/listener and pass the returned
+  handle plus full callback URL to `exchange_code`. Managed helpers require a
+  fenced token store; application-owned protocol inputs use explicitly named
+  low-level methods. Code/refresh response bodies default to 64 KiB through
+  `max_oauth_token_response_bytes`. Generated examples select the actual
+  authorization-code flow even when another authentication scheme appears first.
+
+- Dart browser OAuth helpers now create managed S256/state authorization attempts.
+  Supply the owning session/listener binding and qualified issuer defense, then
+  exchange the returned handle with the complete callback URL. Managed helpers
+  require `FencedTokenStore`; legacy primitives use explicitly named low-level
+  methods. Code/refresh bodies default to 64 KiB through
+  `maxOAuthTokenResponseBytes`. Cancellation fences token writes and retains
+  admission until transport cleanup; refresh joins preserve the caller's
+  original deadline.
+
+- Rust compiler-library embedders now pass an invocation policy and raw optional
+  external limits to `external::run` and `external::describe`. Select a context
+  for each invocation, using `InvocationPolicy::absent()` only for deliberate
+  legacy behavior. Preserve missing limits as `None` so protected ceilings can
+  clamp defaults. Exhaustive `CliEnv` and `CompileOptions` literals must include
+  their new policy fields.
+
+- Java browser OAuth helpers now create managed S256/state authorization attempts.
+  Qualify issuer defense, bind the owning session/listener and pass the returned
+  handle plus full callback URL to code exchange. Kotlin delegates to the same
+  core helper. Legacy primitives use explicitly named low-level methods. Managed
+  begin and refresh require `TokenStore.Fenced`; the separate positive
+  `maxOAuthTokenResponseBytes` option bounds token bodies (64 KiB by default).
+  Attempts and refresh retain ownership until transport work settles and use
+  one monotonic operation budget.
+
+- Go browser OAuth helpers now manage bounded, one-use S256/state attempts.
+  Qualify issuer defense, bind the owning session/listener, retain the attempt
+  handle and pass the full callback URL to `ExchangeCode`. Managed helpers
+  require a `FencedTokenStore`; application-owned protocol inputs move to
+  `LowLevelAuthorizationURL` and `LowLevelExchangeCode`. Code/refresh responses
+  default to 64 KiB through `MaxOAuthTokenResponseBytes`. Token jobs retain their
+  monotonic deadline and physical ownership through cleanup, and diagnostics
+  expose only recognized token-endpoint error labels.
+
+- C# browser OAuth helpers now create managed S256/state authorization attempts.
+  Qualify issuer defense and bind the owning session/listener, retain the returned
+  handle, and pass the full callback URL to `ExchangeCodeAsync`. F# clients use
+  the same core helper. Legacy primitives require explicitly named low-level
+  methods/types. Managed begin and refresh require `IFencedTokenStore`; separate
+  `MaxOAuthTokenResponseBytes` controls code/refresh bodies (64 KiB by default).
+
+- Rust browser OAuth helpers now require managed S256/state attempts with an
+  explicit qualified issuer defense and owning session/listener binding.
+  `authorization_url` returns a handle and URL inside Tokio; `exchange_code`
+  accepts that handle, the full callback URL and the same binding. Legacy
+  primitives require `low_level_authorization_url`/`low_level_exchange_code`.
+  Managed begin and refresh require atomic fenced custom stores. Code/refresh
+  responses default to 64 KiB, configurable with the separate validated
+  `max_oauth_token_response_bytes` option.
+
+- TypeScript and Python browser OAuth authorization-code helpers now create
+  managed S256 PKCE/state attempts. Supply an authenticated session/listener
+  binding and an explicit qualified issuer defense, retain the returned handle,
+  and pass the full callback URL to code exchange. TypeScript authorization URL
+  creation is asynchronous. Legacy primitives require the separately named
+  `lowLevelAuthorizationUrl`/`lowLevelExchangeCode` methods (Python snake case).
+  Managed helpers and default refresh require atomic fenced custom-token-store
+  writes and deletions. Code/refresh token bodies default to 64 KiB; use the
+  separate positive `maxOAuthTokenResponseBytes` owner option (native casing
+  varies) for larger provider responses.
+
+- External emitters and descriptor probes use owned process groups or Job Objects
+  and request cleanup when their leader exits. The process timeout includes a
+  cleanup reserve (one quarter, at most one second). Incomplete cleanup or exhausted
+  worker capacity refuses output with TG0803. Keep emitter helpers within their
+  invocation and investigate remaining processes before retrying; these lifecycle
+  controls do not provide a sandbox or execution approval.
+
+- Ordinary buffered responses now default to 4 MiB per response across native
+  runtimes. Omitted/null limits inherit that default; choose an explicit finite
+  client/call limit for larger responses. Generated Rust CLIs expose
+  `--max-response-bytes`. Invalid effective limits fail before authentication,
+  storage or preview work. Overflow remains nonretryable and a write may have
+  taken effect. OAuth and successful SSE budgets remain separate.
+
+- Authenticated requests now require HTTPS by default across native runtimes,
+  including OAuth token endpoints. Local development on `localhost`, IPv4
+  `127/8` and IPv6 `::1` remains supported. Other HTTP targets return
+  `AUTH_FAILED` before credentials are dispatched. Migrate to HTTPS, or enable
+  the client's explicit `allowInsecureHttp` option (native casing varies) for
+  intentional insecure transport. MCP and WebMCP inherit their client's policy.
+
+- Caller-supplied confirmation-token keys now require at least 32 bytes across
+  all runtime families. Empty or shorter keys fail client/options construction
+  with a configuration error; omitting the key still generates a random key
+  per client. Replace short keys with at least 32 cryptographically random bytes,
+  or remove the override. Keys are copied at construction so later mutation of
+  a caller's buffer cannot change the client's signing key. Rotating a key
+  invalidates existing previews; request a new preview before confirming.
+
+- Ordinary OpenAPI `x-agent-safety` annotations cannot lower the built-in HTTP-method
+  tier without an explicit `agent.yml` tools safety override (TG0615). Spec-origin
+  `x-agent-preview: none` on operations with side effects keeps a safe default
+  preview unless a tools entry explicitly removes it (TG0616). Both warnings fail
+  strict checks and generation. Move intentional policy reductions into the matching
+  tools entry and regenerate affected SDKs and agent manifests together.
+
+- Installers require official release provenance by default, including for
+  mirrors. Install GitHub CLI 2.102.0 or newer before running them. Verification
+  pins the repository, release workflow, issuer and requested tag; missing or
+  rejected attestations refuse installation. `TUNGSTEN_NO_ATTESTATION=1` is the
+  explicit, diagnosed checksum-only choice; `TUNGSTEN_REQUIRE_ATTESTATION=0`
+  no longer permits an implicit fallback.
+
+### Added
+
+- Add explicitly pinned host policies for external emitters, with strict bounded
+  capture, intersected deny/resource ceilings, pure policy digests and redacted
+  inspection. Unsupported commands reject supplied policy before effects.
+
+- Inspect supported effective configuration with `tungsten config`, including
+  typed defaults/fallback policy and winning/shadowed authored origins. Plain
+  text and JSON redact sensitive values and physical paths without compiling
+  inputs, probing tools or executing emitters.
+
+- Compose bounded local TypeScript profiles for package, version, runtime and
+  dependency defaults. Retain authored provenance through the compiler driver,
+  strict profile diagnostics and existing manifest fallback behavior.
+
+- Declare the existing TypeScript target options and supported-value schema in
+  the shared capability contract. Keep emitter defaults and TG0711 fallback
+  behavior compatible while configuration and generation share validation.
+
+- Validate saved mock scenarios portably and explicitly run integration argv on
+  Linux with a run-phase deadline, cancellation, owned process-group cleanup,
+  final exit/call-count assertions and a value-free JSON report. The run budget
+  begins after compilation and validation; call counts do not prove effects.
+
+- Load bounded, non-executable JSON scenarios with `tungsten mock --scenario`.
+  Reuse existing response and fault controls, and read a value-free report of
+  total calls, per-operation/status counts and unconsumed responses.
+
+- Analyze unsaved JSON/YAML specs, overlays and local references through the
+  shared compiler source provider. Keep buffer spans and navigation consistent,
+  and cancel obsolete editor analysis while retaining debounce and stale-result
+  protection.
+
+- Add an offline `capabilities` query and JSON Schema for built-in target
+  declarations. Share target aliases, imported-operation policy support and
+  consumer prerequisites with configuration and doctor; include Kotlin, F#
+  and Dart prerequisites without inferring qualification or published packages.
+
+- Add a manual Windows release-video example with exact-release provenance,
+  multiple input workflows, local narration, real terminal recording, chapters,
+  compact review MP4s and a reusable source and evidence package.
+
+- Add a gated JSR source-publication route for the core TypeScript runtime
+  starting at 0.2.0, with artifact verification and OIDC provenance. Publication
+  still requires the release checks and an explicit maintainer switch.
+
+### Changed
+
+- Locate primary and related LSP profile diagnostics in their captured local
+  files, including invalid profiles, while preserving portable compiler and
+  configuration-inspection source names.
+
+- Reuse immutable SDK structure across support checks and emission for Java,
+  Kotlin, C#, F#, Dart and Ruby. Generation stages one target's bytes at a time
+  with bounded output metadata before applying files, preserving strict
+  diagnostic withholding and custom-file ownership. Reports discard target
+  bytes after collecting their results. Application errors and cooperative
+  cancellation describe completed file writes/removals; output remains
+  nontransactional across files and directories.
+
+### Fixed
+
+- Java generated usage now imports its resolved resource type and infers the
+  response type. Dispatch request decoding also imports resolved resource types,
+  so valid package prefixes such as `client.generated` cannot be shadowed by the
+  dispatch client's field. Java and Kotlin authorization-code examples configure
+  the managed OAuth flow explicitly.
+
+- TypeScript, Python and Rust authorization-code and refresh diagnostics include
+  only recognized OAuth token error labels. Arbitrary provider error strings
+  are omitted even when they contain only lowercase letters and underscores.
+
+- Windows Git input acquisition uses an exclusively created local temporary
+  repository, avoiding Git working-directory and pack-file limits caused by
+  deeply nested project caches. Verified project pins and offline reuse retain
+  their existing locations; unsupported temporary roots fail safely.
+
+- TypeScript, Python and Rust managed OAuth helpers cap endpoint text at 32 KiB
+  and reject malformed Unicode before URL parsing. Protected or malformed refresh
+  queries refuse before authorization begins and before default refresh dispatch,
+  including a changed endpoint or the token-endpoint fallback.
+
+- Check profile-derived TypeScript prerequisites in project `doctor`, and refuse
+  invalid manifests or bounded profiles before running tool version probes.
+
+- Correct the MCP runtime and generated server prerequisite to Node.js 22.13+
+  (23.2+ on the Node.js 23 line), matching the module API used by its import
+  graph. Keep doctor prerequisites for every configured target so a linked SDK
+  cannot hide the stricter MCP floor.
+
+- `tungsten emitters --no-external` and `TUNGSTEN_NO_EXTERNAL=1` now skip
+  PATH-based descriptor probes as well as manifest commands. The inspection
+  result reports that discovery is disabled instead of claiming no emitters exist.
+
 ## [0.1.3] - 2026-10-17
 
 ### Added

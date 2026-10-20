@@ -20,6 +20,7 @@
 
 pub mod contracts;
 pub mod driver;
+pub mod inspection;
 pub mod suggest;
 pub mod types;
 
@@ -94,6 +95,9 @@ pub fn build_with_manifest(input: &BuildInput<'_>, manifest: &str) -> BuildOutpu
     let cfg = input.config;
     let mut cx = Ctx::new(ws, cfg, manifest);
     for ns in &input.namespaces {
+        if ws.is_cancelled() {
+            break;
+        }
         cx.tb
             .add_components(&cfg.inputs[ns.config_index].namespace, ns.doc);
     }
@@ -102,6 +106,9 @@ pub fn build_with_manifest(input: &BuildInput<'_>, manifest: &str) -> BuildOutpu
     let mut namespaces = vec![];
     let mut known_ids: BTreeSet<String> = BTreeSet::new();
     for (ns_index, ns) in input.namespaces.iter().enumerate() {
+        if ws.is_cancelled() {
+            break;
+        }
         let name = cfg.inputs[ns.config_index].namespace.as_str();
         let mut ops = operations::build_namespace(&mut cx, &auth, ns_index, ns);
         pagination::apply(&mut cx, &mut ops.callable, &mut ops.planned);

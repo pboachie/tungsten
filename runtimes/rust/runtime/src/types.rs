@@ -824,6 +824,9 @@ pub type DiagnosticSink = Arc<dyn Fn(&Diagnostic) + Send + Sync>;
 
 #[derive(Clone)]
 pub struct ClientOptions {
+    /// Explicitly permits credentials over non-loopback HTTP, including OAuth.
+    /// Default false; localhost, 127/8 and ::1 remain usable locally.
+    pub allow_insecure_http: bool,
     /// May tighten the API default; None policy always wins.
     pub redirects: Option<RedirectPolicy>,
     /// Defaults to the first server.
@@ -836,8 +839,10 @@ pub struct ClientOptions {
     pub token_store: Option<Arc<dyn TokenStore>>,
     /// Per-attempt timeout. Default 30 s.
     pub timeout: Duration,
-    /// Optional ordinary-response byte cap. Positive safe integer; unset is unbounded.
+    /// Ordinary-response byte cap. Positive safe integer; None inherits the 4 MiB default.
     pub max_response_bytes: Option<u64>,
+    /// Separate code/refresh token response cap; positive safe integer, default 64 KiB.
+    pub max_oauth_token_response_bytes: u64,
     /// Overrides the API's per-tier retry defaults field by field, for every tier.
     pub retries: PartialRetryOptions,
     pub idempotency_store: Option<Arc<dyn IdempotencyStore>>,
@@ -876,8 +881,9 @@ pub struct ClientOptions {
     /// whose `code` is `STREAM_IDLE`. `None`: the per-attempt `timeout`,
     /// which ends the stream without a reconnect.
     pub idle_timeout: Option<Duration>,
-    /// Overrides the key used to sign confirmation tokens. Default: random
-    /// per client instance.
+    /// Overrides the key used to sign confirmation tokens. Supply at least 32
+    /// cryptographically random bytes; shorter keys fail construction.
+    /// Default: random per client instance.
     pub confirmation_key: Option<Vec<u8>>,
     /// Operations the core can resolve by id: verification hooks, endpoint
     /// previews and macro steps.
@@ -898,12 +904,14 @@ pub struct ClientOptions {
 impl Default for ClientOptions {
     fn default() -> Self {
         ClientOptions {
+            allow_insecure_http: false,
             redirects: None,
             base_url: None,
             auth: AuthConfig::new(),
             token_store: None,
             timeout: Duration::from_secs(30),
             max_response_bytes: None,
+            max_oauth_token_response_bytes: crate::oauth_attempt::TOKEN_RESPONSE_BYTES,
             retries: PartialRetryOptions::default(),
             idempotency_store: None,
             middleware: Vec::new(),

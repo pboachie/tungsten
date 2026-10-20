@@ -12,7 +12,7 @@
  * Every public method resolves; none throws. Failures are diagnostic
  * envelopes (`{ok: false, error}`).
  */
-import { type AuthPlan, isSafeMethod, resolveAuth, TokenError, type TokenSource } from "./auth.js";
+import { type AuthPlan, credentialHeader, insecureHttp, INSECURE_HTTP_AUTH, isSafeMethod, resolveAuth, TokenError, type TokenSource } from "./auth.js";
 import {
   type CallContext,
   changeOf,
@@ -489,10 +489,20 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     let store: IdempotencyStore | undefined;
     let key: Uint8Array | undefined;
     try {
+      const configured = this.options.confirmationKey;
+      if (configured !== undefined) {
+        if (!(configured instanceof Uint8Array)) {
+          throw new TypeError();
+        }
+        key = new Uint8Array(configured);
+        if (key.byteLength < 32) throw new TypeError();
+      }
+    } catch {
+      throw new TypeError("confirmationKey must be a Uint8Array containing at least 32 bytes; omit it to generate a random key");
+    }
+    try {
       const candidate = this.options.idempotencyStore;
       if (isRecord(candidate) && typeof candidate.get === "function" && typeof candidate.put === "function") store = candidate;
-      const configured = this.options.confirmationKey;
-      if (configured instanceof Uint8Array && configured.byteLength > 0) key = configured;
       if (Array.isArray(this.options.operations)) this.register(...this.options.operations);
     } catch {
       // Unreadable options: keep the defaults; calls report the problem.
@@ -666,8 +676,8 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     };
   }
 
-  #responseLimit(opts: CallOptions): number | undefined {
-    return opts.maxResponseBytes === undefined ? this.options.maxResponseBytes : opts.maxResponseBytes;
+  #responseLimit(opts: CallOptions): number {
+    return opts.maxResponseBytes ?? this.options.maxResponseBytes ?? 4 * 1024 * 1024;
   }
 
   #timeout(opts: CallOptions): number {
@@ -964,7 +974,9 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     const method = op.method;
     const beforeAuth = this.#beforeDispatch(op, opts);
     if (beforeAuth) return beforeAuth;
-    const auth = await resolveAuth(this.api, op, isRecord(this.options.auth) ? this.options.auth : {}, method, this.#tokenSource);
+    const authTarget = urlOverride ?? (typeof this.options.baseUrl === "string" ? this.options.baseUrl : this.api.servers?.find(s => typeof s === "string"));
+    const auth = await resolveAuth(this.api, op, isRecord(this.options.auth) ? this.options.auth : {}, method, this.#tokenSource,
+      insecureHttp(authTarget, this.options.allowInsecureHttp) ? INSECURE_HTTP_AUTH : null);
     if (!auth.ok) return fail(diagnostic(op.id, "AUTH_FAILED", { remediation: auth.remediation }));
     const secrets = new Set(auth.secrets.filter((s) => s !== ""));
     for (const p of op.params) {
@@ -982,6 +994,11 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
 
     const headers = new HeaderBag();
     this.#buildHeaders(op, args, opts, auth.plan, headers, params);
+    if (insecureHttp(url.value.url, this.options.allowInsecureHttp)
+      && (auth.plan.headers.length > 0 || auth.plan.cookies.length > 0 || auth.plan.query.length > 0
+        || [...headers.entries()].some(h => h.secret || credentialHeader(this.api, h.name)))) {
+      return fail(diagnostic(op.id, "AUTH_FAILED", { remediation: INSECURE_HTTP_AUTH }));
+    }
     const earlyHeaderFailure = this.#checkHeaders(op, headers, auth.plan);
     if (earlyHeaderFailure) return earlyHeaderFailure;
 
@@ -1316,6 +1333,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
   };
 
   async #fetchToken(name: string, tokenUrl: string, scopes: unknown, config: Record<string, string>): Promise<string> {
+    if (insecureHttp(tokenUrl, this.options.allowInsecureHttp)) throw new TokenError(INSECURE_HTTP_AUTH);
     const form = new URLSearchParams({ grant_type: "client_credentials" });
     if (Array.isArray(scopes) && scopes.length > 0) form.set("scope", scopes.filter((s) => typeof s === "string").join(" "));
     const basic = btoa(`${encodeURIComponent(config.clientId ?? "")}:${encodeURIComponent(config.clientSecret ?? "")}`);
@@ -1366,6 +1384,11 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
         body: prepared.observedBody,
       };
       const headers = await this.#beforeRequest(ctx, prepared);
+      if (insecureHttp(prepared.url, this.options.allowInsecureHttp)
+        && Object.entries(headers).some(([name, value]) => credentialHeader(this.api, name,
+          prepared.key !== null && name.toLowerCase() === prepared.keyHeader.toLowerCase() && value === prepared.key))) {
+        return previousMutationFailure ?? fail(diagnostic(op.id, "AUTH_FAILED", { remediation: INSECURE_HTTP_AUTH }));
+      }
       const interrupted = this.#beforeDispatch(op, opts);
       if (interrupted) return previousMutationFailure ?? interrupted;
       // Redirects are never followed by fetch: it would forward custom

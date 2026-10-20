@@ -102,6 +102,17 @@ To validate a manifest you do not trust, pass `--no-external` or set
 `TUNGSTEN_NO_EXTERNAL=1`: external targets are then skipped with a TG0807
 notice and no command is started.
 
+External emission and descriptor probes use owned Unix process groups or Windows
+Job Objects for lifecycle cleanup. They request group/job termination on leader
+exit, timeout or overflow and bound pipe/reaping work under one process deadline.
+Incomplete cleanup is an error, with no generated files accepted. Unfinished
+workers retain finite process-wide capacity, so new execution can be refused.
+Unix group escape and transferred pipe handles remain possible; termination and
+leader reaping do not establish that every descendant settled. These controls
+provide no executable approval, credential filtering or filesystem/network
+isolation. Embeddings must exclusively own child reaping and preserve SIGCHLD
+behavior during execution.
+
 ## Scope
 
 In scope: the compiler (`crates/`), the runtime libraries (`runtimes/`), and

@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tungsten-release-video-example"
+version = "0.0.0"
+description = "Manual Windows terminal recording and local narration example"
+requires-python = "==3.12.*"
+license = "AGPL-3.0-only"
+dependencies = [
+  "numpy==2.2.2",
+  "scipy==1.15.1",
+  "Pillow==11.1.0",
+  "pywinpty==2.0.15; sys_platform == 'win32'",
+  "pyte==0.8.2",
+  "imageio-ffmpeg==0.6.0",
+  "kokoro-onnx==0.6.1",
+  "soundfile==0.13.1",
+  "onnxruntime==1.31.0",
+]
+
+[tool.setuptools]
+py-modules = []

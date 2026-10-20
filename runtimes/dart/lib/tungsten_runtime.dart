@@ -42,6 +42,8 @@ part 'src/idempotency.dart';
 part 'src/json.dart';
 part 'src/macros.dart';
 part 'src/oauth.dart';
+part 'src/oauth_attempt.dart';
+part 'src/oauth_session.dart';
 part 'src/options.dart';
 part 'src/pages.dart';
 part 'src/schema.dart';

@@ -20,9 +20,14 @@
 //! [`parse_yaml`] and [`deserialize_manifest`] report `TG0601` and
 //! `TG0602` the same way for any manifest type.
 
+pub mod capabilities;
+pub mod execution_policy;
+pub mod inspection;
 pub mod pointer;
+pub mod profiles;
 mod source;
 mod strict;
+pub mod target_options;
 mod validate;
 mod yaml;
 
@@ -75,6 +80,10 @@ pub struct TungstenConfig {
     /// targets, for example in CI over a manifest you do not trust.
     #[serde(default)]
     pub targets: IndexMap<String, serde_json::Value>,
+    /// Ordered local defaults with explicitly selected include roots.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[schemars(length(max = 64))]
+    pub profiles: Vec<profiles::ProfileSelection>,
     #[serde(default)]
     pub output: Option<serde_json::Value>,
     /// Path of the agent manifest, relative to this file. When absent,
@@ -405,6 +414,7 @@ impl TungstenConfig {
             pagination: IndexMap::new(),
             types: TypesConfig::default(),
             targets: IndexMap::new(),
+            profiles: vec![],
             output: None,
             agent: None,
         }

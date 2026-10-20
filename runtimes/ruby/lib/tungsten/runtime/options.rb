@@ -44,6 +44,8 @@ module Tungsten
     #   `redirect_uri`);
     # - `token_store`: where authorization-code tokens live (memory by default);
     # - `timeout_ms`: the per-attempt timeout (30 s);
+    # - `max_oauth_token_response_bytes`: a positive safe integer cap for each
+    #   code/refresh response (64 KiB by default); separate from ordinary bodies;
     # - `retries`: RetryOptions over the API's per-tier defaults;
     # - `idempotency_store`: anything with `get(scope, id)` and `put(scope, id,
     #   key)` (memory by default);
@@ -55,19 +57,26 @@ module Tungsten
     # - `max_event_bytes` (1 MiB), `max_collect_bytes` (4 MiB), `max_collect_ms`
     #   (60 s), `max_reconnects` (3), `reconnect_max_ms` (30 s),
     #   `idle_timeout_ms` (none): event streams;
-    # - `confirmation_key`: signs confirmation tokens (random per client);
+    # - `allow_insecure_http` (false): explicitly permit credentials over
+    #   non-loopback HTTP, including OAuth token requests; prefer HTTPS;
+    # - `confirmation_key`: at least 32 cryptographically random bytes, copied;
+    #   shorter keys fail construction (nil generates a random per-client key);
     # - `now` (epoch milliseconds) and `random` (in [0, 1)): callables for tests.
     ClientOptions = Data.define(
       :redirects, :base_url, :auth, :token_store, :timeout_ms, :retries, :idempotency_store, :middleware,
-      :validate_responses, :on_diagnostic, :headers, :max_event_bytes, :max_response_bytes, :max_collect_bytes, :max_collect_ms,
-      :max_reconnects, :reconnect_max_ms, :idle_timeout_ms, :confirmation_key, :now, :random
+      :validate_responses, :on_diagnostic, :headers, :max_event_bytes, :max_response_bytes, :max_oauth_token_response_bytes, :max_collect_bytes, :max_collect_ms,
+      :max_reconnects, :reconnect_max_ms, :idle_timeout_ms, :confirmation_key, :now, :random, :allow_insecure_http
     ) do
       def initialize(redirects: nil, base_url: nil, auth: {}, token_store: nil, timeout_ms: nil, retries: nil, idempotency_store: nil,
                      middleware: [], validate_responses: "warn", on_diagnostic: nil, headers: {}, max_event_bytes: nil, max_response_bytes: nil,
+                     max_oauth_token_response_bytes: nil,
                      max_collect_bytes: nil, max_collect_ms: nil, max_reconnects: nil, reconnect_max_ms: nil,
-                     idle_timeout_ms: nil, confirmation_key: nil, now: nil, random: nil)
+                     idle_timeout_ms: nil, confirmation_key: nil, now: nil, random: nil, allow_insecure_http: false)
         super
       end
+
+      def inspect = "#<Tungsten::Runtime::ClientOptions #{REDACTED}>"
+      alias_method :to_s, :inspect
 
       # Options from nil, a Hash or ClientOptions, with keywords over them.
       def self.from(options = nil, **keywords)

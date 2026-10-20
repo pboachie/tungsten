@@ -6,19 +6,18 @@ use std::path::Path;
 use std::time::Duration;
 
 use serde_json::Value;
+use tungsten_core::policy::{ExternalOperation, InvocationPolicy, RequestedExternalLimits};
 use tungsten_core::{Diagnostic, Diagnostics};
 use tungsten_ir::Ir;
 
 use super::process::{self, Failure, Finished};
 use super::protocol::{EmitDiagnostic, EmitRequest, EmitResponse, EmitterDescription};
-use super::{Command, DESCRIBE_TIMEOUT, Limits, MAX_FILES, PROTOCOL, base64};
+use super::{Command, Limits, MAX_FILES, PROTOCOL, base64};
 use crate::fileset::valid_path;
 use crate::{FileSet, FileSetError};
 
 /// Most path problems reported for one response.
 const MAX_PATH_PROBLEMS: usize = 10;
-/// Cap on the output of `--describe`.
-const DESCRIBE_MAX_BYTES: usize = 1024 * 1024;
 
 /// What an external emitter produced.
 #[derive(Debug, Default)]
@@ -32,8 +31,8 @@ pub struct Emitted {
     pub diagnostics: Diagnostics,
 }
 
-fn failure(name: &str, command: &Command, failure: Failure) -> Diagnostic {
-    match failure {
+fn failure(name: &str, command: &Command, why: Failure) -> Diagnostic {
+    match why {
         Failure::Spawn(e) => Diagnostic::error(
             "TG0801",
             format!(
@@ -59,6 +58,18 @@ fn failure(name: &str, command: &Command, failure: Failure) -> Diagnostic {
             ),
         )
         .with_help("raise `max_output_bytes` on the target in tungsten.yml, or fix the emitter"),
+        Failure::Io(e) => Diagnostic::error("TG0803", format!("external emitter `{name}` process I/O or ownership failed: {e}"))
+            .with_help("check the emitter and ensure this process exclusively owns child reaping"),
+        Failure::Capacity => Diagnostic::error("TG0803", format!("external emitter `{name}` was not started: process worker capacity is exhausted"))
+            .with_help("wait for other external runs to finish; unresolved cleanup may require restarting the compiler after investigating its emitter processes"),
+        Failure::Cleanup { cause, signalled, reaped, unfinished } => {
+            let mut diagnostic = cause.map_or_else(
+                || Diagnostic::error("TG0803", format!("external emitter `{name}` did not complete cleanup within its process deadline")),
+                |cause| failure(name, command, *cause),
+            );
+            diagnostic.message.push_str(&format!("; cleanup incomplete (termination requested: {signalled}, leader reaped: {reaped}, unfinished workers: {unfinished}); descendant and pipe cleanup is uncertain"));
+            diagnostic.with_help("no files were accepted; inspect the emitter's remaining processes before retrying; process groups and Job Objects do not provide a sandbox")
+        }
     }
 }
 
@@ -129,15 +140,29 @@ fn parse<T: serde::de::DeserializeOwned>(
 /// Run `command` for target `name` over `ir` with the target's `options`,
 /// in directory `cwd`. Never panics; every problem is a diagnostic and a
 /// failed run returns no files.
+/// The caller must select `policy` for this invocation, even when explicitly
+/// absent. Raw missing limits retain defaults and clamp; precomputed limits
+/// cannot replace the shared protected constraint gate.
 pub fn run(
     name: &str,
     command: &Command,
     options: Value,
     ir: &Ir,
     cwd: &Path,
-    limits: Limits,
+    policy: &InvocationPolicy,
+    requested: RequestedExternalLimits,
 ) -> Emitted {
     let mut out = Emitted::default();
+    let limits = match policy.resolve(requested, ExternalOperation::Run) {
+        Ok(limits) => Limits {
+            timeout: limits.timeout,
+            max_output_bytes: limits.max_output_bytes,
+        },
+        Err(diagnostic) => {
+            out.diagnostics.push(diagnostic);
+            return out;
+        }
+    };
     let request = EmitRequest::new(name, options, ir, limits.max_output_bytes);
     let input = match serde_json::to_vec(&request) {
         Ok(bytes) => bytes,
@@ -307,14 +332,19 @@ fn invalid_file(name: &str, path: &str, why: &str) -> Diagnostic {
 
 /// Ask `command` to describe itself (`--describe`). The error is the
 /// diagnostic that explains why it could not (TG0801 to TG0804).
+/// Requires the same invocation context and authored optional target limits as
+/// emission. Descriptor defaults remain independent and are clamped separately.
 pub fn describe(
     name: &str,
     command: &Command,
     cwd: &Path,
+    policy: &InvocationPolicy,
+    requested: RequestedExternalLimits,
 ) -> Result<EmitterDescription, Diagnostic> {
+    let effective = policy.resolve(requested, ExternalOperation::Describe)?;
     let limits = Limits {
-        timeout: DESCRIBE_TIMEOUT,
-        max_output_bytes: DESCRIBE_MAX_BYTES,
+        timeout: effective.timeout,
+        max_output_bytes: effective.max_output_bytes,
     };
     let done = process::run(command, &["--describe"], cwd, vec![], limits)
         .map_err(|f| failure(name, command, f))?;

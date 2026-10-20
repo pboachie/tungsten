@@ -107,6 +107,12 @@ fn readme(g: &Gen<'_, '_>) -> String {
     let m = g.module();
     let client = &g.names.client_class;
     let lib = g.lib();
+    let browser_auth = g
+        .plan
+        .ir
+        .auth
+        .iter()
+        .find(|scheme| scheme.authorization_code().is_some());
     out.push_str(&format!("# {}\n\n", g.opts.gem));
     out.push_str(&format!(
         "<!-- {} -->\n\n",
@@ -130,23 +136,41 @@ fn readme(g: &Gen<'_, '_>) -> String {
     }
     out.push_str("## Usage\n\n```ruby\n");
     out.push_str(&format!("require \"{lib}\"\n\n"));
-    out.push_str(&format!(
-        "client = {m}::{client}.new(base_url: \"https://api.example.com\", auth: {{ ... }})\n"
-    ));
+    if let Some(scheme) = browser_auth {
+        out.push_str(&format!(
+            "client = {m}::{client}.new(\n  base_url: \"https://api.example.com\",\n  auth: {{ {} => {{ flow: \"authorizationCode\",\n    client_id: ENV.fetch(\"OAUTH_CLIENT_ID\"),\n    redirect_uri: ENV.fetch(\"OAUTH_REDIRECT_URI\") }} }}\n)\n",
+            str_lit(scheme.name())
+        ));
+    } else {
+        out.push_str(&format!(
+            "client = {m}::{client}.new(base_url: \"https://api.example.com\", auth: {{ ... }})\n"
+        ));
+    }
     if let Some(first) = g.plan.operations.iter().enumerate().find(|(_, o)| {
-        o.arguments
-            .iter()
-            .all(|a| !matches!(a.presence, tungsten_ir::Presence::Required))
+        browser_auth.is_none()
+            && o.arguments
+                .iter()
+                .all(|a| !matches!(a.presence, tungsten_ir::Presence::Required))
     }) {
         let (o, op) = first;
         let chain = g.resource_chain(op.resource).join(".");
         if let Some(member) = g.member(op.resource, MemberKind::Operation(o)) {
             out.push_str(&format!("result = client.{chain}.{member}\n"));
+            out.push_str(
+                "if result.ok?\n  puts result.value\nelse\n  warn result.error.remediation\nend\n",
+            );
         }
     }
-    out.push_str(
-        "if result.ok?\n  puts result.value\nelse\n  warn result.error.remediation\nend\n```\n\n",
-    );
+    out.push_str("```\n\n");
+    if browser_auth.is_some() {
+        out.push_str("Set `OAUTH_CLIENT_ID` and `OAUTH_REDIRECT_URI` to your registered application's client ID and exact redirect URI. Public clients omit `client_secret`; confidential clients supply it through application-owned secure configuration. Complete managed authorization before authenticated calls.\n\n");
+    }
+    if let Some(scheme) = browser_auth {
+        out.push_str(&format!(
+            "## Managed OAuth authorization\n\nConfigure `{}` with the authorization-code credential Hash (`flow: \"authorizationCode\"`, `client_id`, `redirect_uri`). Qualify the provider's S256 and issuer-response support first. Supply an unpredictable owning listener/session binding, its qualified issuer URL and the full callback received by that listener.\n\n```ruby\nflow = client.oauth({})\nstarted = flow.authorization_url(\n  session_binding: session_binding, s256_supported: true,\n  issuer_defense: Tungsten::Runtime::IssuerDefense.issuer_response(issuer)\n)\nraise \"Authorization could not begin\" unless started.ok?\nattempt = started.value\n# Open attempt.url in the browser; keep its handle with the owning listener.\ncompleted = flow.exchange_code(\n  attempt_handle: attempt.attempt_handle, callback_url: callback_url,\n  session_binding: session_binding\n)\nraise \"Authorization did not complete\" unless completed.ok?\n# Authenticated generated calls may now use the selected token.\n```\n\nAccepted callbacks are consumed once. Cancel with `cancel_authorization(attempt_handle: ..., session_binding: ...)`; `logout` fences the local session before credential cleanup. The per-client default `MemoryTokenStore` supports managed atomic writes; custom stores need the exactly-once final `set_if_current`/`delete_if_current` predicate contract. Shared stores and real providers/listeners need separate qualification. Explicit primitive escapes are `low_level_authorization_url`, `low_level_exchange_code` and `low_level_refresh`; they leave callback security and store coordination to the caller. Keep handles, URLs, bindings, callbacks and tokens out of logs.\n\n",
+            scheme.name(), str_lit(scheme.name())
+        ));
+    }
     out.push_str(
         "Every method returns `Tungsten::Runtime::Ok` (`value`, `raw`, `meta`, `verification`) or `Tungsten::Runtime::Err` (`error`: the diagnostic envelope with `category`, `remediation`, `retryable`, `next_action`, ...; `partial`: what a failed call already produced). API and transport failures never raise.\n\n",
     );
@@ -157,7 +181,7 @@ fn readme(g: &Gen<'_, '_>) -> String {
     out.push_str("- `idempotency_key`: the key of an operation that takes one (generate it once per intent and reuse it on every retry);\n");
     out.push_str("- `confirm`: `true` for a destructive operation, or the `confirmation_token` of the operation's `preview_<method>` (the only way for an irreversible one);\n");
     out.push_str("- `timeout_ms`, `verify`, `headers`.\n\n");
-    out.push_str("Client options (keywords of `new`): `base_url`, `auth` (credentials by scheme name), `timeout_ms`, `retries`, `idempotency_store`, `middleware`, `validate_responses` (`\"warn\"`, `\"strict\"`, `\"off\"`), `on_diagnostic`, `headers`, `max_event_bytes`, `max_reconnects`, `reconnect_max_ms`, `idle_timeout_ms`, `token_store`.\n\n");
+    out.push_str("Client options (keywords of `new`): `base_url`, `auth` (credentials by scheme name), `timeout_ms`, `retries`, `idempotency_store`, `middleware`, `validate_responses` (`\"warn\"`, `\"strict\"`, `\"off\"`), `on_diagnostic`, `headers`, `max_event_bytes`, `max_reconnects`, `reconnect_max_ms`, `idle_timeout_ms`, `token_store`, `max_oauth_token_response_bytes` (positive safe integer, 64 KiB by default for each code/refresh response).\n\n");
     let mut destructive: Vec<String> = vec![];
     for (o, op) in g.plan.operations.iter().enumerate() {
         if matches!(op.safety, Safety::Destructive | Safety::Irreversible)

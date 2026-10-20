@@ -81,19 +81,131 @@ Calls return a typed result or a diagnostic envelope describing recovery;
 unknown outcomes never justify blindly repeating a mutation. The API remains
 responsible for authorization and server-side idempotency.
 
+## Credential transport
+
+Credentials require HTTPS by default, including OAuth client-credentials, code
+exchange and refresh endpoints. Non-loopback HTTP returns `AUTH_FAILED` before
+sending credentials. Migrate authenticated HTTP services to HTTPS, or explicitly
+opt in with `ClientOptions{AllowInsecureHTTP: true}` for intentional insecure transport.
+This permits cleartext credentials; enable it only for a trusted environment.
+
+The local-development exception covers `localhost` (also with a trailing dot),
+literal IPv4 `127/8`, and IPv6 `::1`. Subdomains, unspecified addresses and
+IPv4-mapped IPv6 addresses require the explicit override. DNS resolution does not
+grant an exception. Anonymous HTTP requests remain supported.
+
+## Managed OAuth authorization (0.2.0 development)
+
+The default authorization-code helpers now own the attempt. This is a breaking
+development API change; use matching generated/runtime source. Existing published
+runtime versions and the emitter's published dependency default stay unchanged.
+
+Configure the authorization-code client credentials, qualify provider S256 support
+and an issuer defense, and bind an authenticated browser session or owning native
+listener. Keep `ctx` alive through completion:
+
+```go
+flow := client.OAuth("oauth")
+attempt, err := flow.AuthorizationURL(ctx, tungsten.AuthorizationURLParams{
+    SessionBinding: listenerBinding,
+    S256Supported: true,
+    IssuerDefense: tungsten.IssuerResponse(providerIssuer),
+})
+if err != nil { return err }
+// Open attempt.URL; receive the complete callback URL on the owning listener.
+_, err = flow.ExchangeCode(ctx, tungsten.ExchangeCodeParams{
+    AttemptHandle: attempt.AttemptHandle,
+    CallbackURL: fullCallbackURL,
+    SessionBinding: listenerBinding,
+})
+```
+
+The runtime captures endpoint/client/redirect, scope/resource/audience and account
+selection context, generates random state and S256 PKCE, and keeps the verifier
+private. `IssuerResponse` requires the provider's exact decoded `iss` on success
+and denial, with no missing-issuer fallback. `DistinctRedirect(qualification)` is
+an explicit alternative only when the application has qualified a redirect that
+isolates this issuer. Neither helper establishes that provider or listener policy.
+The callback must match the exact captured redirect, binding and state, use strict
+UTF-8/percent encoding, and have one exclusive success/denial shape. Invalid
+unbound callbacks leave the legitimate attempt available. A valid callback claims
+its handle once; an ambiguous exchange failure requires a new attempt.
+
+Use `CancelAuthorization(handle, binding)` or cancel the begin context to abandon
+an attempt. `Logout(ctx)` advances this scheme's session generation before local
+credential removal. Independent pending logins remain separate; the last valid
+successful commit selects the scheme's credential. Generation, mutation epoch
+and refresh identity prevent stale exchanges/refreshes from overwriting a newer
+login, including a new login with the same token strings. Refresh waiters may
+cancel independently without canceling another waiter's shared owner.
+
+The default memory token store implements `FencedTokenStore`. A custom managed
+store must atomically call each supplied predicate exactly once with its actual
+current token at the final serialized mutation, then commit immediately when true
+and return true only after commit. Do not speculate, retry/retain the predicate,
+leave a gap before writing, or mutate on false/failure. Token-store and clock
+callbacks run outside the runtime's state lock; store implementations must not
+call back into client operations while holding their own mutation lock. Stores
+with only `Get/Set/Delete` are refused for managed begin/refresh. An arbitrary
+custom store cannot be repaired by a runtime-side read/check/write sequence.
+
+Limits are per client: 32 captured/claimed attempts (ten-minute monotonic lifetime),
+32 version-keyed token-read/refresh owners and 32 local credential removals. Each
+attempt captures at most 32 KiB of strict UTF-8 text, 64 scopes/extras, and accepts
+at most 16 KiB raw/decoded callback text with 64 parameters. Endpoint text is
+bounded before parsing; protected query fields are refused at begin and at actual
+refresh dispatch, including optional/fallback endpoints and changed descriptors.
+Do not mutate API/auth descriptors concurrently with operations; synchronize such
+application changes. Captured attempts also refuse later identity changes.
+
+`ClientOptions.MaxOAuthTokenResponseBytes` defaults to 64 KiB; choose a positive
+safe integer to override it. Code/refresh work has the client's monotonic `Timeout`
+deadline, including token reads and final store work; an expired/canceled response
+cannot commit or delete credentials. A store mutation that committed before
+cancellation cannot be undone by canceling its waiter. Local logout removal may
+still complete after a timeout; while it is unsettled new managed logins refuse.
+Capacity remains occupied until actual HTTP/body-close/store work returns, even
+if a custom implementation ignores cancellation. Saturation refuses new work.
+These bounds are not a total heap, goroutine, disk or external-system ceiling;
+custom stores/transports must honor their own resource and settlement contracts.
+Client-credentials, device authorization and persistent/multi-account adapters
+retain their separate contracts. Removing secret references is not physical
+zeroization; never log raw attempt fields, callbacks or tokens.
+Code/refresh failures may name the six standard OAuth token-endpoint error codes;
+unknown provider error text and descriptions are excluded from diagnostics.
+
+Applications intentionally owning the protocol use `LowLevelAuthorizationURL`
+with `LowLevelAuthorizationURLParams` and `LowLevelExchangeCode` with
+`LowLevelExchangeCodeParams`. These separately named helpers retain explicit
+state/challenge/code/verifier inputs and unconditional storage behavior. They
+provide no managed callback, lifetime, generation or conditional-store protection;
+`PKCE()` alone is a primitive, not an attempt.
+
 ## Limits
 
-This section describes the matching **0.1.3 candidate** source; the ordinary
-response-byte cap was added after the released `v0.1.2` runtime.
+The ordinary response cap was opt-in in the 0.1.3 candidate; the 4 MiB default
+described here is the 0.2.0 development behavior.
 
-Set `ClientOptions.MaxResponseBytes` (an optional `*int64`) to opt into an ordinary-response byte cap;
-a call option with the same name overrides it. The value must be a positive
-safe integer (at most 9007199254740991); unset keeps the existing unbounded
-behavior. Content-Length is checked before reading, and actual bytes are
-counted even without that header. Overflow closes the body and returns
-`UNEXPECTED_RESPONSE` with code `RESPONSE_TOO_LARGE` and `retryable: never`.
-A mutation may have taken effect: inspect API state before retrying. The cap
-does not limit a successful SSE stream; use its event and collection limits.
+In unreleased 0.2.0, ordinary buffered responses default to **4 MiB (4,194,304 bytes) per response**.
+Set `ClientOptions.MaxResponseBytes` to choose a finite client cap; the call option with the same
+native name overrides it. Omitted/null values inherit the default or client cap,
+not an unlimited mode. Values must be positive safe integers (at most
+9007199254740991), validated before authentication, storage and preview effects.
+This covers ordinary success/error bodies, server previews, each page and each
+verification read. A page cap does not bound collecting many pages.
+
+Content-Length can reject an oversized representation early; actual delivered
+bytes are counted even without it. HEAD/204/205/304 metadata alone does not
+consume the budget, but any body bytes a transport delivers are still counted.
+Overflow closes the owned body and returns `UNEXPECTED_RESPONSE`, code
+`RESPONSE_TOO_LARGE`, with `retryable: never`. A mutation may have taken effect:
+inspect API state before retrying. The cap is separate from OAuth token-response
+and successful SSE event/collection budgets.
+
+The default transport does not decompress encoded bodies; use identity encoding. Encoded delivery does not establish a decoded-content limit.
+The cap limits accepted body bytes; parsers, copies and HTTP decoders can allocate
+more. Custom transports must stream nonempty bodies and honor cancellation;
+their own buffering, decoding and settlement behavior need separate qualification.
 
 Calls are synchronous and cancellation uses `context.Context`.
 Memory stores are process-local; use the file idempotency store or an
