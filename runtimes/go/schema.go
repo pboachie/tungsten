@@ -246,7 +246,7 @@ func (s *Schema) compiled() (*regexp.Regexp, string) {
 	// A pattern RE2 cannot compile (lookaround, backreferences) is not
 	// checked, as in the Rust runtime; the caller reports it.
 	c := compiledPattern{}
-	re, err := regexp.Compile(s.Pattern)
+	re, err := regexp.Compile(codePointEscapes(s.Pattern))
 	if err != nil {
 		c.reason = "it is not a regular expression this runtime can compile (Go RE2: " + err.Error() + ")"
 	} else {
@@ -254,6 +254,37 @@ func (s *Schema) compiled() (*regexp.Regexp, string) {
 	}
 	patterns.Store(s.Pattern, c)
 	return c.re, c.reason
+}
+
+// codePointEscapes rewrites the ECMAScript u-flag escape \u{XXXX} (one to six
+// hex digits, at most 10FFFF) to RE2's \x{XXXX}, in and out of classes. An
+// escaped backslash and any other escape are copied unchanged; a malformed or
+// out-of-range \u{...} is left alone, so it fails to compile and is reported
+// as unchecked.
+func codePointEscapes(pattern string) string {
+	if !strings.Contains(pattern, `\u{`) {
+		return pattern
+	}
+	var out strings.Builder
+	for i := 0; i < len(pattern); i++ {
+		if pattern[i] != '\\' || i+1 >= len(pattern) {
+			out.WriteByte(pattern[i])
+			continue
+		}
+		if pattern[i+1] == 'u' && i+2 < len(pattern) && pattern[i+2] == '{' {
+			if end := strings.IndexByte(pattern[i+3:], '}'); end >= 1 && end <= 6 {
+				digits := pattern[i+3 : i+3+end]
+				if n, err := strconv.ParseUint(digits, 16, 32); err == nil && n <= 0x10FFFF {
+					out.WriteString(`\x{` + digits + `}`)
+					i += 3 + end
+					continue
+				}
+			}
+		}
+		out.WriteString(pattern[i : i+2])
+		i++
+	}
+	return out.String()
 }
 
 func boundText(f float64) string {

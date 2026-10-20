@@ -710,10 +710,31 @@ def _note(path: Path, source: str, reason: str) -> bool:
     return True
 
 
+_BRACED_ESCAPE = re.compile(r"\\(?:(\\)|u\{([0-9A-Fa-f]{1,6})\}|.)", re.DOTALL)
+
+
+def _code_point_escapes(source: str) -> str:
+    """Rewrite the ECMAScript ``u``-flag escape ``\\u{XXXX}`` (one to six hex
+    digits, at most 10FFFF) to the ``\\UXXXXXXXX`` that ``re`` understands, in
+    and out of classes. Any other escape, an escaped backslash included, is
+    kept; a malformed or out-of-range ``\\u{...}`` is left alone, so it fails to
+    compile and is reported as unchecked."""
+    if "\\u{" not in source:
+        return source
+
+    def rewrite(match: re.Match[str]) -> str:
+        digits = match.group(2)
+        if digits is None or int(digits, 16) > 0x10FFFF:
+            return match.group(0)
+        return f"\\U{int(digits, 16):08x}"
+
+    return _BRACED_ESCAPE.sub(rewrite, source)
+
+
 def _compile_pattern(source: str) -> tuple[re.Pattern[str] | None, str]:
     """The compiled pattern, or why Python's ``re`` cannot compile it."""
     try:
-        return re.compile(source), ""
+        return re.compile(_code_point_escapes(source)), ""
     except re.error as error:
         return None, f"Python's re cannot compile it ({error.msg})"
     except (OverflowError, RecursionError):
