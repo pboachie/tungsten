@@ -1222,6 +1222,7 @@ dependencies = [
  "tungsten-mock",
  "tungsten-openapi",
  "tungsten-tokens",
+ "ureq",
  "url",
 ]
 

@@ -57,6 +57,11 @@ pub mod exit {
     /// over existing files, or `generate` into a directory tungsten did not
     /// write, without `--force`); it never prompts.
     pub const REFUSED: i32 = 4;
+    /// `update check` found a newer release with this platform's archive.
+    pub const UPDATE_AVAILABLE: i32 = 5;
+    /// `update check` could not confirm a usable release: offline, opted out,
+    /// network or metadata failure, or the platform archive is missing.
+    pub const UPDATE_UNCONFIRMED: i32 = 6;
 }
 
 /// How long `tungsten mock` serves after printing its address: until this

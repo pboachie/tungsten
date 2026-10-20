@@ -247,6 +247,27 @@ tungsten doctor                            # reports optional tools (node, pytho
 
 Node, Python and the formatters are optional: a missing tool only disables the target or `--format` option that needs it.
 
+### Check for a newer release
+
+`tungsten update check` asks GitHub once (5 second limit, 1 MiB response cap) for the public
+release metadata of this repository and compares the latest stable release with the version
+you run. It sends no project data, installs nothing and does not change project pins or
+generated clients. Add `--include-prerelease` to consider prereleases and `--json` for the
+machine-readable result. A newer release is recommended only when it lists the archive for
+your platform and `SHA256SUMS`. Upgrade guidance depends on how the CLI was installed: a
+pinned installer command for the release installer, `cargo install` for cargo, and
+package-manager guidance for npm. When the installation route cannot be determined,
+the command says so and prints no replacement command.
+
+| Exit code | Meaning |
+| --- | --- |
+| 0 | Up to date, or this build is newer than the newest release considered |
+| 5 | A newer release with your platform's archive is available |
+| 6 | Could not confirm: offline, opted out, timeout, network or rate-limit failure, invalid or oversized metadata, no matching release, or a newer release without your platform's archive |
+
+`--offline` (also a global flag), `--no-update-check` and `TUNGSTEN_NO_UPDATE_CHECK=1`
+make no request and exit 6 with a reason in the `--json` result.
+
 ### Runtime packages
 
 For a published compiler release and generated client, choose the runtime for the
