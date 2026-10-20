@@ -172,6 +172,28 @@ Overflow closes the owned body and returns `UNEXPECTED_RESPONSE`, code
 inspect API state before retrying. The cap is separate from OAuth token-response
 and successful SSE event/collection budgets.
 
+### Schema patterns
+
+A schema `pattern` is an ECMAScript (ECMA-262) expression, searched rather than anchored, as in the
+TypeScript runtime. .NET regular expressions differ, so the runtime rewrites the pattern before compiling it
+(`RegexOptions.ECMAScript` is not used: it rejects `\p{...}` and lookbehind, and still lets `$` match before
+a trailing newline). `\d`, `\w` and `\b` are ASCII, `\s` is the ECMAScript whitespace set, `$` matches only
+at the very end, `.` excludes `\n`, `\r`, `\u2028` and `\u2029`, and `\u{...}`, `\p{...}` (general
+categories, `ASCII`, `Any`), lookbehind and named groups work.
+
+A pattern the runtime cannot check accepts the value, as the other runtimes do, but is no longer silent:
+`ClientOptions.OnDiagnostic` receives a diagnostic with code `PATTERN_UNCHECKED` (one per pattern and path and
+call), whose `failed_parameter` is the path (`args...` for a request, `response...`, `events[n]...` or a page
+item) and whose remediation names the pattern and the reason. The server still validates the value. The
+cases are: the pattern is not valid ECMAScript or .NET refuses it; it uses a construct without a faithful
+.NET equivalent (Unicode properties other than general categories, `ASCII` and `Any`, or a code point above
+U+FFFF inside a character class); or matching took longer than one second. `Schema.Validate` and
+`Schema.Accepts` called directly have no observer and stay silent.
+
+Remaining differences: .NET matches UTF-16 code units, so a character class does not match an astral code
+point (for example `[\p{L}]` and `[^a]` on a surrogate pair), though `.` and negated escapes outside a class
+do; and numbered back-references in a pattern that also has named groups follow .NET group numbering.
+
 The default transport does not decompress encoded bodies; use identity encoding. Encoded delivery does not establish a decoded-content limit.
 The cap limits accepted body bytes; parsers, copies and HTTP decoders can allocate
 more. Custom transports must stream nonempty bodies and honor cancellation;

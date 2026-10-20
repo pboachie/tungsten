@@ -13,6 +13,9 @@ namespace Tungsten.Runtime;
 /// <summary>One validation problem: the path of the offending value (member names and array indexes) and a message.</summary>
 public sealed record Issue(IReadOnlyList<object> Path, string Message);
 
+/// <summary>A schema <c>pattern</c> that was not checked at <paramref name="Path"/>, and why; the value was accepted.</summary>
+internal sealed record PatternNote(IReadOnlyList<object> Path, string Pattern, string Reason);
+
 /// <summary>
 /// One schema of the runtime schema form (the descriptor document's <c>request</c>, <c>response</c>,
 /// <c>page_item</c> and stream <c>event</c> schemas, and its <c>defs</c>): the validator of arguments,
@@ -51,10 +54,14 @@ public sealed class Schema
     internal IReadOnlyDictionary<string, Schema>? Defs { get; set; }
 
     /// <summary>The issues of a value: structure first, then constraint violations, then unknown members.</summary>
-    public IReadOnlyList<Issue> Validate(JsonNode? value)
+    public IReadOnlyList<Issue> Validate(JsonNode? value) => Validate(value, null);
+
+    /// <summary>As <see cref="Validate(JsonNode?)"/>; the patterns that could not be checked are added to <paramref name="notes"/>.</summary>
+    internal IReadOnlyList<Issue> Validate(JsonNode? value, List<PatternNote>? notes)
     {
         var v = new Validation();
         v.Check(this, value, new List<object>(), 0);
+        notes?.AddRange(v.Notes);
         return v.Structure.Concat(v.Constraints).Concat(v.Unknown).ToList();
     }
 
@@ -169,9 +176,12 @@ public sealed class Schema
         return sources.ToDictionary(kv => kv.Key, kv => new Regex("^(?:" + kv.Value + ")$", RegexOptions.CultureInvariant));
     });
 
-    private static readonly ConcurrentDictionary<string, Regex?> Patterns = new(StringComparer.Ordinal);
+    /// <summary>A compiled schema pattern, or the reason it cannot be checked.</summary>
+    private sealed record PatternEntry(Regex? Regex, string? Unchecked);
 
-    private Regex? Compiled()
+    private static readonly ConcurrentDictionary<string, PatternEntry> Patterns = new(StringComparer.Ordinal);
+
+    private PatternEntry? Compiled()
     {
         if (string.IsNullOrEmpty(Pattern))
         {
@@ -179,14 +189,19 @@ public sealed class Schema
         }
         return Patterns.GetOrAdd(Pattern, p =>
         {
-            // A pattern .NET cannot compile is not checked, as in the other runtimes.
+            // The pattern is ECMAScript; it is rewritten into the .NET dialect with the same meaning.
+            // One that has no faithful rewrite, or that .NET still refuses, is not checked and is reported.
+            if (!EcmaPattern.TryTranslate(p, out var translated, out var reason))
+            {
+                return new PatternEntry(null, "it uses " + reason + ", which the .NET runtime cannot match like ECMAScript");
+            }
             try
             {
-                return new Regex(p, RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+                return new PatternEntry(new Regex(translated, RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)), null);
             }
-            catch (ArgumentException)
+            catch (ArgumentException e)
             {
-                return null;
+                return new PatternEntry(null, "it does not compile in .NET (" + e.Message + ")");
             }
         });
     }
@@ -216,6 +231,7 @@ public sealed class Schema
         public readonly List<Issue> Structure = new();
         public readonly List<Issue> Constraints = new();
         public readonly List<Issue> Unknown = new();
+        public readonly List<PatternNote> Notes = new();
 
         private static List<object> With(List<object> path, object seg)
         {
@@ -427,8 +443,8 @@ public sealed class Schema
             {
                 Limit(path, $"must have at most {max} characters");
             }
-            var re = s.Compiled();
-            if (re is not null)
+            var entry = s.Compiled();
+            if (entry?.Regex is { } re)
             {
                 bool matched;
                 try
@@ -437,12 +453,18 @@ public sealed class Schema
                 }
                 catch (RegexMatchTimeoutException)
                 {
+                    // Fail open, but never silently: the caller reports the pattern as unchecked.
+                    Notes.Add(new PatternNote(path, s.Pattern ?? "", "matching took longer than " + re.MatchTimeout.TotalSeconds.ToString(CultureInfo.InvariantCulture) + " s"));
                     matched = true;
                 }
                 if (!matched)
                 {
                     Limit(path, "must match the pattern /" + s.Pattern + "/");
                 }
+            }
+            else if (entry?.Unchecked is { } why)
+            {
+                Notes.Add(new PatternNote(path, s.Pattern ?? "", why));
             }
             if (s.Format is not null && FormatPatterns.Value.TryGetValue(s.Format, out var format) && !format.IsMatch(text))
             {

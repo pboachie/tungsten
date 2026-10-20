@@ -217,7 +217,8 @@ public sealed partial class ClientCore
         }
         for (int index = 0; index < items.Count; index++)
         {
-            var issues = Judge(schema, items[index]);
+            var itemRoot = "response" + (itemsField.Length > 0 ? "." + itemsField : "") + "[" + index.ToString(CultureInfo.InvariantCulture) + "]";
+            var issues = Judge(op.Id, itemRoot, schema, items[index]);
             if (issues.Count == 0)
             {
                 continue;

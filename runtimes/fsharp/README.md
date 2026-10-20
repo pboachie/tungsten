@@ -43,6 +43,24 @@ see the [C# store and lease limits](../csharp/README.md#durable-automatic-keys).
 Applications own the storage location and lifecycle. Package versions must
 match the generated consumer's dependencies.
 
+Schema `pattern` values are ECMAScript expressions; the C# runtime rewrites them for .NET and reports a pattern
+it cannot check as a `PATTERN_UNCHECKED` diagnostic through `ClientOptions.OnDiagnostic`; see
+[Schema patterns](../csharp/README.md#schema-patterns) for the remaining differences.
+
+Scope of the F# target in 0.2.0 (decided, not planned work):
+
+- **Task API only.** Calls return `Task<Result<_, Diagnostic>>` and pages and streams are
+  `IAsyncEnumerable`. There is no `Async<_>` surface; from `async { }` use `Async.AwaitTask`.
+- **net10.0 only.** `Tungsten.Runtime`, `Tungsten.Runtime.FSharp` and generated F# projects target net10.0;
+  lowering the target (net8.0/net9.0) is out of scope and unqualified.
+- **No Fantomas formatting.** Generated sources are deterministic but not Fantomas-formatted, and no check
+  runs them through it. Run Fantomas in your own project if you want that style.
+- **No Fable or JavaScript target.** The runtime builds on `HttpClient`, `System.Text.Json` and the .NET
+  runtime's file stores; compiling with Fable is untested and unsupported.
+- Inherited from the generator and the C# runtime: success bodies that differ by status and unmergeable
+  `allOf` intersections are `JsonNode`, OpenID Connect is sent as a bearer token without discovery, and
+  the F# target emits no CLI or MCP server (other targets emit those from the same description).
+
 No runtime ships a file-backed OAuth token store. Provide an application-owned
 token-store implementation when tokens must survive process restarts; protect
 stored credentials and avoid logging them. Registry publication and package
