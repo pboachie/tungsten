@@ -12,14 +12,20 @@ module Tungsten
     # before any network call, success bodies, page items and events after.
     #
     # Issues come structure first, then constraint violations, then unknown
-    # members. Types are strict (no coercion); string lengths count UTF-16
-    # code units. `pattern` is an ECMAScript expression run on Onigmo, Ruby's
+    # members. Types are strict (no coercion); string lengths count Unicode
+    # code points (a surrogate pair is one, a lone surrogate is one).
+    # `pattern` is an ECMAScript expression run on Onigmo, Ruby's
     # engine: `^` and `$` outside a character class are anchored to the
     # whole string (`\A`, `\z`) as in ECMAScript without the `m` flag; other
     # differences (Unicode property and case-folding details, `\d`, `\w` and
     # `\s` being ASCII-only in Ruby) are Onigmo's, and a pattern Onigmo
-    # cannot compile is not checked.
+    # cannot compile is not checked: the value is accepted and the pattern is
+    # reported (see `validate`).
     class Schema
+      # A pattern that could not be checked: the value was accepted without
+      # it. It never holds the value.
+      PatternNote = Data.define(:path, :pattern, :reason)
+
       DATE = "(?:(?:[0-9][0-9][2468][048]|[0-9][0-9][13579][26]|[0-9][0-9]0[48]|[02468][048]00" \
              "|[13579][26]00)-02-29|[0-9]{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12][0-9]|3[01])" \
              "|(?:0[469]|11)-(?:0[1-9]|[12][0-9]|30)|(?:02)-(?:0[1-9]|1[0-9]|2[0-8])))"
@@ -41,15 +47,22 @@ module Tungsten
 
       class << self
         # The compiled pattern of an ECMAScript source, or nil when Onigmo
-        # cannot compile it.
+        # cannot compile it (see `pattern_error`).
         def pattern(source)
-          @patterns_lock.synchronize do
-            return @patterns[source] if @patterns.key?(source)
+          compile(source)[0]
+        end
 
-            @patterns[source] = begin
-              Regexp.new(translate(source))
-            rescue RegexpError, ArgumentError
-              nil
+        # Why Onigmo cannot compile the source, or nil when it can.
+        def pattern_error(source)
+          compile(source)[1]
+        end
+
+        def compile(source)
+          @patterns_lock.synchronize do
+            @patterns[source] ||= begin
+              [Regexp.new(translate(source)), nil]
+            rescue RegexpError, ArgumentError => e
+              [nil, "it is not a regular expression this runtime can compile (Onigmo: #{e.message.sub(/: \/.*\z/m, '')})"]
             end
           end
         end
@@ -91,18 +104,21 @@ module Tungsten
         @defs = defs || {}
       end
 
-      # The issues of a value, none when it is valid.
-      def validate(value)
-        run(@schema, value)
+      # The issues of a value, none when it is valid. `notes`, when given (an
+      # Array), receives a PatternNote for each pattern that could not be
+      # checked (once per path and pattern); the value was accepted without
+      # it. Without `notes` the call is silent.
+      def validate(value, notes = nil)
+        run(@schema, value, notes)
       end
 
       # Whether the value is valid.
       def accepts?(value) = validate(value).empty?
 
-      def run(schema, value)
+      def run(schema, value, notes = nil)
         # Descriptors share validators across clients. Keep each validation's
         # issue lists on its own worker, including recursive union probes.
-        self.class.new(schema, @defs).send(:run_validation, schema, value)
+        self.class.new(schema, @defs).send(:run_validation, schema, value, notes)
       end
 
       # Whether `schema` admits `value`, in a fresh run (union variants).
@@ -112,7 +128,9 @@ module Tungsten
 
       private
 
-      def run_validation(schema, value)
+      def run_validation(schema, value, notes)
+        @notes = notes
+        @noted = {}
         @structure = []
         @constraints = []
         @unknown = []
@@ -282,12 +300,24 @@ module Tungsten
         value.is_a?(Float) && value == value.truncate && value.abs < Json::MAX_SAFE ? value.to_i.to_s : Json.number_text(value)
       end
 
+      def unchecked(path, source, reason)
+        return unless @notes
+        return if @noted.key?([path, source])
+
+        @noted[[path, source]] = true
+        @notes << PatternNote.new(path: path, pattern: source, reason: reason)
+      end
+
       def string_limits(schema, text, path)
-        n = Json.utf16_length(text)
+        n = Json.code_point_length(text)
         limit(path, "must have at least #{schema['min_length']} characters") if schema["min_length"] && n < schema["min_length"]
         limit(path, "must have at most #{schema['max_length']} characters") if schema["max_length"] && n > schema["max_length"]
-        if (source = schema["pattern"]) && (re = Schema.pattern(source)) && !re.match?(text)
-          limit(path, "must match the pattern /#{source}/")
+        if (source = schema["pattern"])
+          if (re = Schema.pattern(source))
+            limit(path, "must match the pattern /#{source}/") unless re.match?(text)
+          else
+            unchecked(path, source, Schema.pattern_error(source))
+          end
         end
         format = FORMATS[schema["format"]]
         limit(path, "must be a valid #{schema['format']}") if format && !format.match?(text)

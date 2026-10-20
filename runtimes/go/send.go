@@ -346,7 +346,7 @@ func (c *ClientCore) classifyResponse(cctx *callContext, p *prepared, outcome at
 		problem = newDiag(op.ID, UnexpectedResponse).status(status).requestID(requestID).param("response").
 			expected(expected).remedy(remediation).attempts(attempts).build()
 	} else if mode != ValidateOff && op.Response != nil && decoded.has {
-		if issues := judge(op.Response, decoded.value); len(issues) > 0 {
+		if issues := c.judge(op.ID, "response", op.Response, decoded.value, nil); len(issues) > 0 {
 			issue := issues[0]
 			path := segmentStrings(issue.Path)
 			pathText := formatIssuePath(issue.Path)

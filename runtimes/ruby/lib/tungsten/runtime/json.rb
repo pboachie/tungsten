@@ -303,6 +303,16 @@ module Tungsten
       end
 
       # The length of a text in UTF-16 code units, the unit JavaScript counts.
+      # The Unicode code points of a text: a surrogate pair is one, a lone
+      # surrogate (three bytes in a broken string) is one, and every other
+      # invalid byte is one.
+      def code_point_length(text)
+        return text.length if text.encoding == Encoding::UTF_8 && text.valid_encoding?
+
+        bytes = text.b.gsub(/\xED[\xA0-\xBF][\x80-\xBF]/n, "\xEF\xBF\xBD".b)
+        bytes.force_encoding(Encoding::UTF_8).scrub("\uFFFD").length
+      end
+
       def utf16_length(text)
         text.each_char.sum { |c| c.ord >= 0x10000 ? 2 : 1 }
       end
