@@ -258,25 +258,43 @@ func (s *Schema) compiled() (*regexp.Regexp, string) {
 
 // codePointEscapes rewrites the ECMAScript u-flag escape \u{XXXX} (one to six
 // hex digits, at most 10FFFF) to RE2's \x{XXXX}, in and out of classes. An
-// escaped backslash and any other escape are copied unchanged; a malformed or
-// out-of-range \u{...} is left alone, so it fails to compile and is reported
-// as unchecked.
+// escaped backslash, native \Q...\E quoted text and any other escape are copied
+// unchanged; a malformed or out-of-range \u{...} is left alone, so it fails to
+// compile and is reported as unchecked. Each candidate needs at most seven
+// bytes of lookahead (six digits and the closing brace).
 func codePointEscapes(pattern string) string {
 	if !strings.Contains(pattern, `\u{`) {
 		return pattern
 	}
 	var out strings.Builder
+	quoted := false
 	for i := 0; i < len(pattern); i++ {
+		if quoted {
+			out.WriteByte(pattern[i])
+			if pattern[i] == '\\' && i+1 < len(pattern) && pattern[i+1] == 'E' {
+				out.WriteByte('E')
+				i++
+				quoted = false
+			}
+			continue
+		}
 		if pattern[i] != '\\' || i+1 >= len(pattern) {
 			out.WriteByte(pattern[i])
 			continue
 		}
-		if pattern[i+1] == 'u' && i+2 < len(pattern) && pattern[i+2] == '{' {
-			if end := strings.IndexByte(pattern[i+3:], '}'); end >= 1 && end <= 6 {
-				digits := pattern[i+3 : i+3+end]
+		if pattern[i+1] == 'Q' {
+			quoted = true
+		} else if pattern[i+1] == 'u' && i+2 < len(pattern) && pattern[i+2] == '{' {
+			start := i + 3
+			end := start
+			for end < len(pattern) && end-start <= 6 && pattern[end] != '}' {
+				end++
+			}
+			if end-start >= 1 && end-start <= 6 && end < len(pattern) && pattern[end] == '}' {
+				digits := pattern[start:end]
 				if n, err := strconv.ParseUint(digits, 16, 32); err == nil && n <= 0x10FFFF {
 					out.WriteString(`\x{` + digits + `}`)
-					i += 3 + end
+					i = end
 					continue
 				}
 			}
