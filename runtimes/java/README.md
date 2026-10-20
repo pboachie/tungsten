@@ -89,6 +89,14 @@ The cap limits accepted body bytes; parsers, copies and HTTP decoders can alloca
 more. Custom transports must stream nonempty bodies and honor cancellation;
 their own buffering, decoding and settlement behavior need separate qualification.
 
+Schema `min_length`/`max_length` count Unicode code points (a surrogate pair is one, a lone
+surrogate is one), as JSON Schema does. A schema `pattern` is a `java.util.regex` expression. One
+Java cannot compile is accepted and reported through `onDiagnostic` as `PATTERN_UNCHECKED` (path,
+pattern and reason, never the value; once per path and pattern per call). So is a value longer than
+65,536 characters, a match that runs over one second, and a match that overflows the stack
+(`java.util.regex` recurses per repetition of some groups); each of those values is accepted
+unchecked. `Schema` validation called directly stays silent. Kotlin delegates to this runtime.
+
 The Java API is synchronous. There is no async API, proxy configuration or
 pluggable HTTP transport. Preview and
 confirmation state are scoped to the client that created them.

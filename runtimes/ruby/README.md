@@ -195,6 +195,13 @@ The cap limits accepted body bytes; parsers, copies and HTTP decoders can alloca
 more. Custom transports must stream nonempty bodies and honor cancellation;
 their own buffering, decoding and settlement behavior need separate qualification.
 
+Schema `min_length`/`max_length` count Unicode code points (a surrogate pair is one, a lone
+surrogate is one), as JSON Schema does. A schema `pattern` is an ECMAScript expression run on
+Onigmo. One Onigmo cannot compile is accepted and reported through `on_diagnostic` as
+`PATTERN_UNCHECKED` (path, pattern and reason, never the value; once per path and pattern per
+call). Ruby matching has no time or length limit. Calling `Schema#validate` directly is silent unless
+you pass a notes array.
+
 The runtime is synchronous and opens a new HTTP connection for each
 attempt; it does not pool persistent connections.
 

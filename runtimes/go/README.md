@@ -205,6 +205,12 @@ The cap limits accepted body bytes; parsers, copies and HTTP decoders can alloca
 more. Custom transports must stream nonempty bodies and honor cancellation;
 their own buffering, decoding and settlement behavior need separate qualification.
 
+Schema `min_length`/`max_length` count Unicode code points (an invalid UTF-8 byte counts as one),
+as JSON Schema does. A schema `pattern` is a Go RE2 expression: one RE2 cannot compile (lookaround,
+backreferences) accepts the value and is reported through `OnDiagnostic` as `PATTERN_UNCHECKED`
+(path, pattern and reason, never the value; once per path and pattern per call). RE2 matching has no
+backtracking, so no match is skipped for length or time. Calling `Schema.Validate` directly is silent.
+
 Calls are synchronous and cancellation uses `context.Context`.
 Memory stores are process-local; use the file idempotency store or an
 application-owned store when key reuse must survive restarts.
