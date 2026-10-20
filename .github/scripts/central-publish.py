@@ -56,9 +56,9 @@ def gpg(home, args, data=None):
     return result.stdout
 
 
-def sign_bundle(directory, version, output):
+def sign_bundle(directory, version, output, package="java"):
     # Validate untrusted downloaded artifacts before reading secrets.
-    inventory = native.verify(directory, "java", version)
+    inventory = native.verify(directory, package, version)
     if output.exists() or output.is_symlink():
         raise ValueError("Central output must not already exist")
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -87,8 +87,12 @@ def sign_bundle(directory, version, output):
                     "imported signing key differs from the reviewed fingerprint"
                 )
             entries = {}
-            prefix = f"io/github/pboachie/tungsten/tungsten-runtime/{version}/"
+            artifacts = native.maven_artifacts(package)
             for name in sorted(inventory["files"]):
+                artifact = next(
+                    a for a in artifacts if name.startswith(f"{a}-{version}")
+                )
+                prefix = f"io/github/pboachie/tungsten/{artifact}/{version}/"
                 path = directory / name
                 signature = Path(scratch) / (name + ".asc")
                 gpg(
@@ -128,7 +132,7 @@ def sign_bundle(directory, version, output):
                         .encode()
                     )
             # Recheck frozen inputs after signing; no Maven lifecycle runs here.
-            native.verify(directory, "java", version)
+            native.verify(directory, package, version)
             with zipfile.ZipFile(
                 output, "x", compression=zipfile.ZIP_DEFLATED
             ) as archive:
@@ -173,7 +177,7 @@ def request(path, token, body=b"", content_type="application/json"):
         ) from None
 
 
-def publish(bundle, version, receipt, timeout=1200):
+def publish(bundle, version, receipt, timeout=1200, package="java"):
     if receipt.exists() or receipt.is_symlink():
         raise ValueError(
             "deployment receipt already exists; inspect it before retrying"
@@ -197,7 +201,7 @@ def publish(bundle, version, receipt, timeout=1200):
     )
     # Never retry this write automatically: an uncertain response may have published.
     result = request(
-        f"/upload?publishingType=AUTOMATIC&name=tungsten-runtime-{version}",
+        f"/upload?publishingType=AUTOMATIC&name={native.PACKAGES[package]}-{version}",
         token,
         body,
         "multipart/form-data; boundary=" + boundary,
@@ -237,10 +241,12 @@ def publish(bundle, version, receipt, timeout=1200):
                 "Central rejected the deployment; inspect its validation details in the Portal"
             )
         if state == "PUBLISHED":
-            expected = (
-                f"pkg:maven/io.github.pboachie.tungsten/tungsten-runtime@{version}"
+            expected = sorted(
+                f"pkg:maven/io.github.pboachie.tungsten/{artifact}@{version}"
+                for artifact in native.maven_artifacts(package)
             )
-            if status.get("purls") != [expected]:
+            purls = status.get("purls")
+            if not isinstance(purls, list) or sorted(purls) != expected:
                 raise ValueError("Central published an unexpected component inventory")
             return
         time.sleep(20)
@@ -253,6 +259,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--directory", type=Path, required=True)
     parser.add_argument("--version", required=True)
+    parser.add_argument(
+        "--package",
+        choices=("java", "kotlin"),
+        default="java",
+        help="Maven component set to sign and publish (one Central deployment each)",
+    )
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--receipt", type=Path, default=Path("central-deployment.json"))
     parser.add_argument(
@@ -262,9 +274,14 @@ def main():
     )
     args = parser.parse_args()
     try:
-        sign_bundle(args.directory.absolute(), args.version, args.output.absolute())
+        sign_bundle(
+            args.directory.absolute(),
+            args.version,
+            args.output.absolute(),
+            args.package,
+        )
         if args.publish:
-            publish(args.output, args.version, args.receipt)
+            publish(args.output, args.version, args.receipt, package=args.package)
     except (
         OSError,
         ValueError,

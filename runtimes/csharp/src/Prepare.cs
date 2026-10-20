@@ -505,7 +505,9 @@ public sealed partial class ClientCore
             IReadOnlyList<Issue> issues;
             try
             {
-                issues = request.Validate(args);
+                var notes = new List<PatternNote>();
+                issues = request.Validate(args, notes);
+                ReportUncheckedPatterns(op.Id, "args", notes, Category.ValidationFailed);
             }
             catch (Exception e) when (e is not Failure)
             {

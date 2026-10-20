@@ -18,7 +18,8 @@
 #   attestation per archive.
 # Registry publishing stays off unless its reviewed repository switch is enabled:
 # NPM_PUBLISH, PYPI_PUBLISH, CRATES_PUBLISH, MAVEN_PUBLISH, NUGET_PUBLISH or
-# RUBYGEMS_PUBLISH. JSR_PUBLISH adds the JSR core runtime route from 0.2.0.
+# RUBYGEMS_PUBLISH. JSR_PUBLISH adds the JSR core runtime route from 0.2.0 and
+# PUB_PUBLISH adds the pub.dev Dart runtime route from 0.2.0.
 # Account/publisher/signing setup is separate. The runbook is
 # runbooks/release.md in tungsten-ops.
 #
@@ -85,6 +86,7 @@ jobs:
       tag: ${{ steps.plan.outputs.tag }}
       version: ${{ steps.plan.outputs.version }}
       jsr_eligible: ${{ steps.jsr-policy.outputs.eligible }}
+      pub_eligible: ${{ steps.pub-policy.outputs.eligible }}
     steps:
       - name: Reject published bootstrap outside bootstrap-only mode
         env:
@@ -116,6 +118,9 @@ jobs:
       - name: Select JSR releases starting at 0.2.0
         id: jsr-policy
         run: python3 .github/scripts/jsr-runtime.py eligible >> "$GITHUB_OUTPUT"
+      - name: Select pub.dev releases starting at 0.2.0
+        id: pub-policy
+        run: python3 .github/scripts/pub-runtime.py eligible >> "$GITHUB_OUTPUT"
       - name: Decide dry run or release
         id: plan
         env:
@@ -172,12 +177,13 @@ jobs:
           NUGET_PUBLISH: ${{ vars.NUGET_PUBLISH }}
           RUBYGEMS_PUBLISH: ${{ vars.RUBYGEMS_PUBLISH }}
           JSR_PUBLISH: ${{ vars.JSR_PUBLISH }}
+          PUB_PUBLISH: ${{ vars.PUB_PUBLISH }}
         run: |
           python3 - <<'PY'
           import os
           switches = ['NPM_PUBLISH', 'PYPI_PUBLISH', 'CRATES_PUBLISH', 'MAVEN_PUBLISH', 'NUGET_PUBLISH', 'RUBYGEMS_PUBLISH']
           if tuple(map(int, os.environ['RELEASE_VERSION'].split('-', 1)[0].split('.'))) >= (0, 2, 0):
-              switches.append('JSR_PUBLISH')
+              switches.extend(['JSR_PUBLISH', 'PUB_PUBLISH'])
           missing = [name for name in switches if os.environ.get(name) != 'true']
           if missing:
               raise SystemExit('Finish registry setup before approving a release tag: ' + ', '.join(missing))
@@ -1136,7 +1142,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        package: [java, csharp, ruby]
+        package: [java, kotlin, csharp, ruby]
     permissions:
       contents: read
     steps:
@@ -1144,7 +1150,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
-        if: matrix.package == 'java'
+        if: matrix.package == 'java' || matrix.package == 'kotlin'
         with:
           distribution: temurin
           java-version: "21"
@@ -1188,10 +1194,17 @@ jobs:
         with:
           name: native-dist-java
           path: native-dist
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: native-dist-kotlin
+          path: native-dist-kotlin
       - name: Verify reviewed package version and checksums before credentials
         env:
           RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
-        run: python3 .github/scripts/native-runtime-artifacts.py --package java --version "${RELEASE_TAG#v}" --directory native-dist
+        run: |
+          set -eu
+          python3 .github/scripts/native-runtime-artifacts.py --package java --version "${RELEASE_TAG#v}" --directory native-dist
+          python3 .github/scripts/native-runtime-artifacts.py --package kotlin --version "${RELEASE_TAG#v}" --directory native-dist-kotlin
       - name: Sign and publish the frozen archives through Central
         env:
           RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
@@ -1201,18 +1214,25 @@ jobs:
           MAVEN_GPG_PASSPHRASE: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
           MAVEN_GPG_FINGERPRINT: ${{ vars.MAVEN_GPG_FINGERPRINT }}
         run: |
+          set -eu
           python3 .github/scripts/central-publish.py --directory native-dist --version "${RELEASE_TAG#v}" --output central-bundle.zip --receipt central-deployment.json --publish
+          python3 .github/scripts/central-publish.py --package kotlin --directory native-dist-kotlin --version "${RELEASE_TAG#v}" --output central-bundle-kotlin.zip --receipt central-deployment-kotlin.json --publish
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: central-deployment
-          path: central-deployment.json
+          path: |
+            central-deployment.json
+            central-deployment-kotlin.json
           if-no-files-found: ignore
           retention-days: 30
       - name: Verify the public Maven component matches the tested archives
         env:
           RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
-        run: python3 .github/scripts/verify-published-registries.py --package java --version "${RELEASE_TAG#v}" --directory native-dist
+        run: |
+          set -eu
+          python3 .github/scripts/verify-published-registries.py --package java --version "${RELEASE_TAG#v}" --directory native-dist
+          python3 .github/scripts/verify-published-registries.py --package kotlin --version "${RELEASE_TAG#v}" --directory native-dist-kotlin
 
   nuget-publish:
     name: NuGet publish (trusted publishing)
@@ -1292,3 +1312,89 @@ jobs:
         env:
           RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
         run: python3 .github/scripts/verify-published-registries.py --package ruby --version "${RELEASE_TAG#v}" --directory native-dist
+
+  # pub.dev starts at 0.2.0, after the existing routes. Its first version of a
+  # package must be published by a maintainer (automated publishing only covers
+  # existing packages), so the publish job refuses a package that is not on the
+  # registry yet. The staged package lives outside the git work tree: pub would
+  # otherwise apply the repository's ignore rules to target/ and see no files.
+  pub-dry-run:
+    name: pub.dev runtime archive and dry run
+    needs: prepare
+    if: needs.prepare.outputs.pub_eligible == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
+        with:
+          sdk: 3.13.5
+      - name: Freeze source files, metadata and checksums from this exact checkout
+        env:
+          PUBLIC_SHA: ${{ github.sha }}
+        run: python3 .github/scripts/pub-runtime.py stage --directory "$RUNNER_TEMP/pub-dist" --source-sha "$PUBLIC_SHA"
+      - name: Validate the package and archive contents without uploading, failing on any warning
+        run: |
+          cp -R "$RUNNER_TEMP/pub-dist/package" "$RUNNER_TEMP/pub-check"
+          cd "$RUNNER_TEMP/pub-check"
+          dart pub publish --dry-run
+      - name: Ensure validation did not change the frozen artifact
+        env:
+          PUBLIC_SHA: ${{ github.sha }}
+        run: python3 .github/scripts/pub-runtime.py verify --directory "$RUNNER_TEMP/pub-dist" --source-sha "$PUBLIC_SHA"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pub-runtime-dist
+          path: ${{ runner.temp }}/pub-dist/
+          if-no-files-found: error
+          retention-days: 14
+
+  pub-publish:
+    name: pub.dev runtime publish (OIDC)
+    needs: [prepare, pub-dry-run, github-release, woodpecker-release]
+    if: needs.prepare.outputs.release == 'true' && needs.prepare.outputs.pub_eligible == 'true' && vars.PUB_PUBLISH == 'true' && vars.WOODPECKER_RELEASE == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: pub
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      # setup-dart exchanges the job's GitHub OIDC identity for the pub.dev
+      # publishing credential; the tag must match the package's configured
+      # pattern. No stored token or fallback.
+      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
+        with:
+          sdk: 3.13.5
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: pub-runtime-dist
+          path: ${{ runner.temp }}/pub-dist
+      - name: Verify the frozen version, source identity and registry state before publishing
+        env:
+          PUBLIC_SHA: ${{ github.sha }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+        run: python3 .github/scripts/pub-runtime.py preflight --directory "$RUNNER_TEMP/pub-dist" --source-sha "$PUBLIC_SHA" --version "${RELEASE_TAG#v}"
+      - name: Publish the checked package with GitHub OIDC
+        run: |
+          cp -R "$RUNNER_TEMP/pub-dist/package" "$RUNNER_TEMP/pub-publish"
+          cd "$RUNNER_TEMP/pub-publish"
+          dart pub publish --force
+      - name: Verify the public registry archive against the checked artifact
+        env:
+          PUBLIC_SHA: ${{ github.sha }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+        run: python3 .github/scripts/pub-runtime.py registry --directory "$RUNNER_TEMP/pub-dist" --source-sha "$PUBLIC_SHA" --version "${RELEASE_TAG#v}"

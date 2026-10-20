@@ -724,7 +724,7 @@ public sealed partial class ClientCore
         }
         if (validateResponses != ValidateResponses.Off && spec.Event is { } schema)
         {
-            var issues = Judge(schema, value);
+            var issues = Judge(op.Id, $"events[{index}]", schema, value);
             if (issues.Count > 0)
             {
                 var issue = issues[0];

@@ -39,7 +39,7 @@ Tree rules:
   - the SDK runtimes of LANGUAGE_ROOTS: Java (runtimes/java/: .java,
     pom.xml), C# (runtimes/csharp/: .cs, .csproj, Directory.Build.props),
     F# (runtimes/fsharp/: .fs, .fsi, .fsproj), Kotlin (runtimes/kotlin/:
-    .kt, .kts), Swift (runtimes/swift/: .swift, Package.swift,
+    .kt, .kts, pom.xml), Swift (runtimes/swift/: .swift, Package.swift,
     Package.resolved), PHP (runtimes/php/: .php,
     composer.json, phpstan.neon), Ruby (runtimes/ruby/: .rb, .gemspec,
     Gemfile) and Dart (runtimes/dart/: .dart, pubspec.yaml,
@@ -119,7 +119,7 @@ DOC_NAME = re.compile(
 # documentation, and a documentation directory is refused even around these.
 ALLOWED_DOCS = re.compile(
     r"^(?:README\.md|LICENSE|CONTRIBUTING\.md|SECURITY\.md|CODE_OF_CONDUCT\.md|CHANGELOG\.md"
-    r"|runtimes/LICENSE|runtimes/[^/]+/LICENSE|runtimes/rust/(?:runtime|cli-kit)/LICENSE"
+    r"|runtimes/LICENSE|runtimes/[^/]+/LICENSE|runtimes/kotlin/coroutines/LICENSE|runtimes/kotlin/coroutines/README\.md|runtimes/rust/(?:runtime|cli-kit)/LICENSE"
     r"|runtimes/(?:ts|mcp|webmcp|python|rust|go|java|csharp|ruby|kotlin|fsharp|dart)/README\.md"
     r"|runtimes/rust/(?:runtime|cli-kit)/README\.md"
     r"|\.github/[^/]+\.md"
@@ -145,7 +145,7 @@ LANGUAGE_ROOTS = (
     ("runtimes/java/", "Java", {".java"}, {"pom.xml"}, set()),
     ("runtimes/csharp/", "C#", {".cs"}, {"Directory.Build.props"}, {".csproj"}),
     ("runtimes/fsharp/", "F#", {".fs", ".fsi"}, set(), {".fsproj"}),
-    ("runtimes/kotlin/", "Kotlin", {".kt", ".kts"}, set(), set()),
+    ("runtimes/kotlin/", "Kotlin", {".kt", ".kts"}, {"pom.xml"}, set()),
     ("runtimes/swift/", "Swift", {".swift"}, {"Package.swift", "Package.resolved"}, set()),
     ("runtimes/php/", "PHP", {".php"}, {"composer.json", "phpstan.neon"}, set()),
     ("runtimes/ruby/", "Ruby", {".rb"}, {"Gemfile"}, {".gemspec"}),
@@ -212,10 +212,14 @@ def language_of(path: str) -> tuple[str, str] | None:
     """(root, language) of an SDK runtime source or manifest, by its name."""
     name = PurePosixPath(path).name
     suffix = PurePosixPath(name).suffix.lower()
-    for root, language, sources, names, manifest_suffixes in LANGUAGE_ROOTS:
-        if suffix in sources or name in names or suffix in manifest_suffixes:
-            return root, language
-    return None
+    owners = [
+        (root, language)
+        for root, language, sources, names, manifest_suffixes in LANGUAGE_ROOTS
+        if suffix in sources or name in names or suffix in manifest_suffixes
+    ]
+    # A manifest name shared by two runtimes (pom.xml: Java and Kotlin) belongs
+    # to the runtime whose directory holds it.
+    return next((o for o in owners if path.startswith(o[0])), owners[0] if owners else None)
 
 
 def language_violations(path: str) -> list[str]:

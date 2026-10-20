@@ -11,6 +11,12 @@ changes.
 
 ### Breaking
 
+- C# and F# schema `min_length` and `max_length` now count Unicode code points (a
+  surrogate pair is one character, a lone surrogate is one) instead of UTF-16 code
+  units, as JSON Schema defines. Strings with characters above U+FFFF are no
+  longer over-counted; a value that fit only because of the old count can now be
+  rejected.
+
 
 - Java and Ruby string `min_length`/`max_length` now count Unicode code points,
   as JSON Schema does, instead of UTF-16 code units: an emoji is one character
@@ -146,7 +152,37 @@ changes.
   `maxBytes`/`maxMs` (`max_bytes`/`max_ms` in Python), or consume long or large
   streams incrementally with iteration, `reduce` or `on`.
 
+- The Dart, C# and F# SDKs give three shapes real types that were the JSON value
+  (`Object?` in Dart, `JsonNode` in C# and F#) until now. An `allOf` that cannot
+  be merged into one record (a member is a union, an array or a record with typed
+  extra members, or two members declare one property with different types) is a
+  class/record with one typed part per member: each part decodes the whole value
+  and `toJson`/`ToJson` merges the parts. An enum of booleans or fractional
+  numbers (in C# and F# also of integers beyond 64 bits) is an enhanced enum
+  (Dart), a readonly record struct (C#) or a union with `Unknown of JsonNode` (F#)
+  of its JSON values, compared as JSON. An operation whose success bodies differ by
+  exact status returns a union of its answers (Dart `<Resource><Operation>Response`
+  with one `...Status<code>` subclass per status, C# a nested `<Operation>Response`
+  record, F# `<Class><Member>Response`) holding the typed body of the response's
+  HTTP status (none for an empty one) and its `status`. Code that read these values
+  as `Object?`/`JsonNode` should use the typed parts or answers; the wire form and
+  the runtime's validation are unchanged. A success status the operation does not
+  declare fails as an unexpected response. Limits that remain: an `allOf` without
+  members (TG1021, TG1071, TG1081) and, in Dart only, an enum with an integer
+  beyond 64 bits (TG1071; a Dart `int` is 64 bits) keep the JSON value, and so do
+  success bodies that differ but are not one JSON body per exact status (a range or
+  `default` status, a text or binary body among them). TG1024, TG1074 and TG1084
+  are no longer reported.
+
 ### Added
+
+- Add a pub.dev release route for the Dart runtime (`tungsten_runtime`) from
+  0.2.0: a frozen, checksummed archive with a zero-warning `dart pub publish
+  --dry-run` on every release run, then a gated OIDC publish (`PUB_PUBLISH`,
+  environment `pub`) whose public archive is compared with the frozen one.
+  Generated Dart SDKs can depend on the published package instead of
+  runtime source. The runtime's `crypto` dependency is now the range `^3.0.7`
+  (pub.dev warns on exact pins) and the package declares pub.dev topics.
 
 - Add opt-in coroutine support to the Kotlin target (`coroutines: true` in
   `targets.kotlin`). Each resource gains a `<op>Suspend` function next to the
@@ -182,6 +218,17 @@ changes.
   still accepted, as before; these runtimes skipped such patterns silently.
   `SchemaLike.safeParse` may return `notes`, Rust gains `PatternNote` and
   `note_unchecked_pattern`, and Python gains `schema.collect_pattern_notes`.
+- The Kotlin runtime layer now has a Maven Central route:
+  `io.github.pboachie.tungsten:tungsten-runtime-kotlin` is built reproducibly
+  with sources and documentation archives from `runtimes/kotlin/pom.xml`,
+  depends on the exact same-version `tungsten-runtime` and `kotlin-stdlib`, and
+  is checked, signed and verified after publication by the existing Maven
+  Central release job and `MAVEN_PUBLISH` switch, together with the opt-in
+  `io.github.pboachie.tungsten:tungsten-runtime-kotlin-coroutines` (from
+  `runtimes/kotlin/coroutines/pom.xml`, adding only `kotlinx-coroutines-core`
+  1.10.2, whose resolved jar the build checks against a pinned sha256).
+  Generated Kotlin SDKs can then use the published artifacts instead of runtime
+  source.
 
 - Add explicitly pinned host policies for external emitters, with strict bounded
   capture, intersected deny/resource ceilings, pure policy digests and redacted
@@ -254,6 +301,20 @@ changes.
   installation docs now describe registry installation alongside the source routes. User docs now describe 0.1.3 as the latest
   release and list the verified 0.1.3 registry packages.
 
+- C# and F# schema `pattern` values are now matched as the ECMAScript expressions
+  the contract defines: `\d`, `\w`, `\s`, `\b`, `$` (no match before a trailing
+  newline), `.`, `\u{...}`, `\p{...}` general categories, lookbehind and named groups
+  behave as in TypeScript. A pattern that cannot be checked (invalid, a construct
+  .NET cannot match faithfully, a value with characters above U+FFFF for a pattern
+  that depends on code points, or matching that exceeds its time budget) still
+  accepts the value but now reports a `PATTERN_UNCHECKED` diagnostic through
+  `ClientOptions.OnDiagnostic` instead of passing silently. The C# and F# READMEs
+  list the remaining differences.
+- Correct the 0.1.3 "Known gaps of the F# target" note: the C# runtime's durable
+  `FileIdempotencyStore` exists, so "in-memory idempotency store" no longer
+  applies, and the ".NET regex dialect" limit is resolved above. The F# README now
+  records that the `async` surface, targets below net10.0, Fantomas formatting and
+  Fable/JavaScript remain out of scope for 0.2.0.
 - Java generated usage now imports its resolved resource type and infers the
   response type. Dispatch request decoding also imports resolved resource types,
   so valid package prefixes such as `client.generated` cannot be shadowed by the
