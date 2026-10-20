@@ -123,6 +123,12 @@ changes.
   explicit, diagnosed checksum-only choice; `TUNGSTEN_REQUIRE_ATTESTATION=0`
   no longer permits an implicit fallback.
 
+- TypeScript and Python stream `collect()` with no arguments is now bounded like the
+  other runtimes: 4 MiB of canonical-JSON event data and 60 seconds, the defaults
+  already applied when either budget was set. Pass explicit larger finite
+  `maxBytes`/`maxMs` (`max_bytes`/`max_ms` in Python), or consume long or large
+  streams incrementally with iteration, `reduce` or `on`.
+
 ### Added
 
 - Add explicitly pinned host policies for external emitters, with strict bounded
