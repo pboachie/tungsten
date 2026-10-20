@@ -8,6 +8,9 @@ use tungsten_ir::Ir;
 
 use crate::output::{DiagnosticCounts, ExplainResult};
 
+/// `tungsten update check` seams: injected fetcher, no network.
+pub use crate::commands::update::testing as update;
+
 /// Exercise bounded staging preflight with a private harness budget, without
 /// introducing process-global test overrides or user-facing configuration.
 pub fn generate_with_staging_limits(

@@ -45,6 +45,9 @@ Exit codes:
      mock server cannot start)
   4  the command refused to act without confirmation (init over existing
      files, generate into a directory tungsten did not write: pass --force)
+  5  `update check` found a newer release
+  6  `update check` could not confirm a usable release (offline, opted
+     out, network or metadata failure, or the platform archive is missing)
 
 Output:
   Without --json, results go to stdout and diagnostics to stderr. With
@@ -152,6 +155,7 @@ impl Cli {
             Command::Overlay {
                 command: OverlayCommand::Suggest(_),
             } => CommandName::OverlaySuggest,
+            Command::Update { .. } => CommandName::UpdateCheck,
             Command::Lsp(_) => return None,
         })
     }
@@ -205,6 +209,11 @@ pub(crate) enum Command {
     Overlay {
         #[command(subcommand)]
         command: OverlayCommand,
+    },
+    /// Check for a newer release; never installs anything.
+    Update {
+        #[command(subcommand)]
+        command: crate::commands::update::UpdateCommand,
     },
     /// Serve a Language Server Protocol server on stdin and stdout for
     /// tungsten.yml, agent.yml and overlays: diagnostics, completion, hover,

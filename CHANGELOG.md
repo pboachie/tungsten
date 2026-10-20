@@ -176,6 +176,19 @@ changes.
 
 ### Added
 
+- Add `tungsten update check`, an explicit, bounded release lookup. It makes one
+  request (5 second limit, 1 MiB cap) for public pboachie/tungsten release
+  metadata, compares the latest stable release with the running version
+  (`--include-prerelease` also considers prereleases), confirms the release lists
+  this platform's archive and `SHA256SUMS`, and prints upgrade guidance for the
+  detected installation route (installer, cargo or npm; an unknown route gets
+  guidance, not a command). Exit codes: 0 up to date, 5 newer release available,
+  6 could not confirm (offline, opted out, network or metadata failure, or a
+  partially published release). `--offline`, `--no-update-check` and
+  `TUNGSTEN_NO_UPDATE_CHECK=1` make no request. It never installs, changes
+  project pins or generated clients, or sends project data. `--json` output adds
+  the `update check` command to the CLI output schema.
+
 - Add a pub.dev release route for the Dart runtime (`tungsten_runtime`) from
   0.2.0: a frozen, checksummed archive with a zero-warning `dart pub publish
   --dry-run` on every release run, then a gated OIDC publish (`PUB_PUBLISH`,

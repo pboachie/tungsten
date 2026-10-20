@@ -31,7 +31,8 @@ pub struct CliOutput {
     pub ok: bool,
     /// The process exit code: 0 ok, 1 input errors, stale output or item
     /// not found, 2 usage, 3 I/O or internal failure, 4 refused without
-    /// confirmation.
+    /// confirmation, 5 `update check` found a newer release, 6 `update check`
+    /// could not confirm a usable release.
     pub exit_code: i32,
     /// Diagnostics about the input, in deterministic order.
     pub diagnostics: Vec<JsonDiagnostic>,
@@ -102,6 +103,8 @@ pub enum CommandName {
     Diff,
     #[serde(rename = "overlay suggest")]
     OverlaySuggest,
+    #[serde(rename = "update check")]
+    UpdateCheck,
 }
 
 /// A diagnostic flattened to its first label.
@@ -200,6 +203,7 @@ pub enum CommandResult {
     Report(Box<ReportResult>),
     Diff(DiffResult),
     OverlaySuggest(OverlaySuggestResult),
+    UpdateCheck(crate::commands::update::UpdateCheckResult),
     Help(HelpResult),
 }
 
@@ -1029,6 +1033,7 @@ const RESULT_DEFS: &[(CommandName, &str)] = &[
     (CommandName::Report, "ReportResult"),
     (CommandName::Diff, "DiffResult"),
     (CommandName::OverlaySuggest, "OverlaySuggestResult"),
+    (CommandName::UpdateCheck, "UpdateCheckResult"),
 ];
 
 /// The JSON Schema (draft 2020-12) of [`CliOutput`]. Beyond the generated
