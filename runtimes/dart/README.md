@@ -211,18 +211,22 @@ of event JSON and runs at most `maxCollect` (60 s); a dropped stream reconnects
 - `tungsten_runtime` is not published on pub.dev. Use the path dependency in
   Install from source.
 
-### Schema features without a Dart type
+### Schema features and fallback types
 
-The compiler warns (TG1071) and the SDK types these as `Object?`; the runtime
-still validates the value against the schema:
+Since 0.2.0 an `allOf` that cannot be merged into one record is a final class
+with one typed part per member, an enum of booleans or fractional numbers is an
+enhanced enum of its JSON values, and an operation whose success bodies differ
+by exact status returns a sealed class of its answers (read `status` to tell
+them apart).
 
-- an `allOf` that cannot be merged into one record (a member is not a record,
-  has typed extra members, or two members share a wire name);
-- an enum that is not of strings or of integers.
+Still the JSON value (`Object?`), which the runtime validates against the schema:
 
-An operation whose success body differs by status is also `Object?` (TG1074,
-informational): read `meta.status` of the result to tell the bodies apart. A
-discriminated union with a variant that has no tag value tries its variants in
+- an `allOf` without members and an enum with an integer beyond 64 bits (TG1071,
+  a warning);
+- a success whose bodies differ and are not one JSON body (or none) per exact
+  status: a range or `default` status, or a text or binary body among them.
+
+A discriminated union with a variant that has no tag value tries its variants in
 order (TG1075). OpenID Connect is sent as a bearer token without discovery
 (TG1073). A macro outside the canonical form is left out (TG1072). The Dart
 target emits no CLI or MCP server; the `mcp` target is separate.

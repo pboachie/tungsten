@@ -237,20 +237,25 @@ reconnects `MaxReconnects` times (3).
 - `Tungsten.Runtime` 0.1.3 is published on NuGet. The unreleased 0.2.0 behavior
   described here is available from source until a matching package is published.
 
-### Schema features without a C# type
+### Schema features and fallback types
 
-The compiler warns (TG1021) and the SDK types these as the runtime's `JsonNode`;
-the runtime still validates the value against the schema:
+Since 0.2.0 an `allOf` that cannot be merged into one record is a sealed record
+with one typed property per member, an enum of mixed JSON types (booleans,
+fractional numbers, integers beyond 64 bits) is a readonly record struct of its
+known JSON values, and an operation whose success bodies differ by exact status
+returns a nested abstract record of its answers (read `Status` to tell them
+apart).
 
-- an `allOf` that cannot be merged into one record;
-- an enum that mixes JSON types.
+Still the runtime's `JsonNode`, which the runtime validates against the schema:
 
-An operation whose success body differs by status is also `JsonNode` (TG1024,
-informational). A discriminated union with a variant that has no tag value
-tries its variants in order (TG1025). OpenID Connect is sent as a bearer token;
-discovery is not supported (TG1023). A macro outside the canonical form is left
-out (TG1022). The C# target emits no CLI or MCP server; the `mcp` target is
-separate.
+- an `allOf` without members (TG1021, a warning);
+- a success whose bodies differ and are not one JSON body (or none) per exact
+  status: a range or `default` status, or a text or binary body among them.
+
+A discriminated union with a variant that has no tag value tries its variants in
+order (TG1025). OpenID Connect is sent as a bearer token; discovery is not
+supported (TG1023). A macro outside the canonical form is left out (TG1022). The
+C# target emits no CLI or MCP server; the `mcp` target is separate.
 
 No runtime ships a file-backed OAuth token store. Provide an application-owned
 token-store implementation when tokens must survive process restarts; protect
