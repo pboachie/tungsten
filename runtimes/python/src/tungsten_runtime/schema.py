@@ -26,12 +26,14 @@ from __future__ import annotations
 
 import base64
 import binascii
+import contextlib
+import contextvars
 import dataclasses
 import math
 import re
 import sys
 import warnings
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Generator, Mapping, Sequence
 from types import NoneType, UnionType
 from typing import (
     Annotated,
@@ -673,16 +675,56 @@ _FORMATS: dict[str, re.Pattern[str]] = {
 MAX_PATTERN_SUBJECT = 64 * 1024
 
 
-def _compile_pattern(source: str) -> re.Pattern[str] | None:
+@dataclasses.dataclass(frozen=True, slots=True)
+class PatternNote:
+    """A schema ``pattern`` that was not checked, so its value was accepted:
+    where (``path``), which pattern, and why. Never carries the value."""
+
+    path: tuple[str | int, ...]
+    pattern: str
+    reason: str
+
+
+_NOTES: contextvars.ContextVar[list[PatternNote] | None] = contextvars.ContextVar(
+    "tungsten_pattern_notes", default=None
+)
+
+
+@contextlib.contextmanager
+def collect_pattern_notes(sink: list[PatternNote]) -> Generator[None]:
+    """While active, validation appends a ``PatternNote`` to ``sink`` for each
+    pattern it could not check (the runtime reports them as ``PATTERN_UNCHECKED``
+    diagnostics). Without it a direct ``validate`` call stays silent."""
+    token = _NOTES.set(sink)
     try:
-        return re.compile(source)
-    except (re.error, OverflowError, RecursionError):
-        return None
+        yield
+    finally:
+        _NOTES.reset(token)
+
+
+def _note(path: Path, source: str, reason: str) -> bool:
+    sink = _NOTES.get()
+    if sink is None:
+        return False
+    sink.append(PatternNote(tuple(path), source, reason))
+    return True
+
+
+def _compile_pattern(source: str) -> tuple[re.Pattern[str] | None, str]:
+    """The compiled pattern, or why Python's ``re`` cannot compile it."""
+    try:
+        return re.compile(source), ""
+    except re.error as error:
+        return None, f"Python's re cannot compile it ({error.msg})"
+    except (OverflowError, RecursionError):
+        return None, "Python's re cannot compile it (too large or too deeply nested)"
 
 
 def _limit_issue(limits: Limits, value: object) -> tuple[str, str] | None:
     """The first bound ``value`` breaks: (message, code)."""
     if isinstance(value, str | list):
+        # A string counts code points (JSON Schema): Python's ``str`` indexes
+        # them, a lone surrogate included.
         size = len(cast("str | list[object]", value))
         noun = "characters" if isinstance(value, str) else "items"
         kind = "string" if isinstance(value, str) else "list"
@@ -728,7 +770,7 @@ class _CheckedNode(_Node):
         self.inner = inner
         self.exact = [m for m in meta if isinstance(m, _Exact)]
         self.limits = [m for m in meta if isinstance(m, Limits)]
-        self.patterns = [(m.source, _compile_pattern(m.source)) for m in meta if isinstance(m, _Pattern)]
+        self.patterns = [(m.source, *_compile_pattern(m.source)) for m in meta if isinstance(m, _Pattern)]
         self.formats = [m for m in meta if isinstance(m, _Format)]
         self.one_of = [m for m in meta if isinstance(m, _OneOf)]
 
@@ -743,20 +785,33 @@ class _CheckedNode(_Node):
             return _BAD
         # Bounds apply to the value read (an integral float is an integer).
         subject = result
+        if isinstance(subject, str):
+            # Reported even when a length bound fails first: the pattern is
+            # not checked either way.
+            for source, compiled, why in self.patterns:
+                if compiled is None:
+                    _note(path, source, why)
         for limits in self.limits:
             problem = _limit_issue(limits, subject)
             if problem is not None:
                 return _fail(issues, path, *problem)
         if isinstance(subject, str):
-            for source, compiled in self.patterns:
-                if compiled is not None and len(subject) > MAX_PATTERN_SUBJECT:
-                    warnings.warn(
-                        f"String longer than {MAX_PATTERN_SUBJECT} characters: pattern /{source[:80]}/ not checked",
-                        RuntimeWarning,
-                        stacklevel=2,
-                    )
+            for source, compiled, _why in self.patterns:
+                if compiled is None:
                     continue
-                if compiled is not None and compiled.search(subject) is None:
+                if len(subject) > MAX_PATTERN_SUBJECT:
+                    if not _note(
+                        path,
+                        source,
+                        f"the string is longer than {MAX_PATTERN_SUBJECT} characters (the match limit)",
+                    ):
+                        warnings.warn(
+                            f"String longer than {MAX_PATTERN_SUBJECT} characters: pattern /{source[:80]}/ not checked",
+                            RuntimeWarning,
+                            stacklevel=2,
+                        )
+                    continue
+                if compiled.search(subject) is None:
                     return _fail(
                         issues, path, f"String should match pattern /{source}/", "string_pattern_mismatch"
                     )

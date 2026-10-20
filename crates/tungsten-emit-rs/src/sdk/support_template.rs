@@ -403,6 +403,16 @@ const IPV6: &str = concat!(
     "|H:(?:(?::H){1,6})|:(?:(?::H){1,7}|:))"
 );
 
+/// Why the regex engine rejected a pattern: its message without the pattern.
+pub fn regex_reason(error: &regex::Error) -> String {
+    let text = error.to_string();
+    text.lines()
+        .rev()
+        .find_map(|line| line.trim().strip_prefix("error: "))
+        .unwrap_or("it is not supported")
+        .to_owned()
+}
+
 fn compile(source: &str) -> Option<Regex> {
     Regex::new(&format!("^(?:{source})$")).ok()
 }
@@ -518,9 +528,19 @@ impl Checker {
         }
     }
 
-    pub fn pattern(&mut self, value: &str, re: &LazyLock<Option<Regex>>, source: &str) {
-        if re.as_ref().is_some_and(|r| !r.is_match(value)) {
-            self.issue(format!("must match the pattern /{source}/"));
+    /// A pattern the regex engine cannot compile accepts the value and is
+    /// noted, so the runtime reports it as a `PATTERN_UNCHECKED` diagnostic.
+    pub fn pattern(&mut self, value: &str, re: &LazyLock<Result<Regex, String>>, source: &str) {
+        match &**re {
+            Ok(r) if !r.is_match(value) => {
+                self.issue(format!("must match the pattern /{source}/"));
+            }
+            Ok(_) => {}
+            Err(reason) => tungsten_runtime::note_unchecked_pattern(
+                &self.path,
+                source,
+                &format!("the Rust regex engine cannot compile it ({reason})"),
+            ),
         }
     }
 

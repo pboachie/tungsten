@@ -532,7 +532,9 @@ pub(crate) fn ts_primitive(p: &Primitive) -> &'static str {
 
 /// The Zod schema of a primitive with its constraints. String formats use
 /// Zod's checks only where they accept every valid wire value; patterns go
-/// through `withPattern`, which skips a pattern the engine cannot compile.
+/// through `withPattern`, which skips a pattern the engine cannot compile
+/// (and reports it); lengths go through `withLength`, which counts code points
+/// (JSON Schema), not UTF-16 units like Zod's `.min`/`.max`.
 pub(crate) fn zod_primitive(p: &Primitive, c: &Constraints) -> String {
     let mut out = match p {
         Primitive::String { format } => match format {
@@ -551,11 +553,13 @@ pub(crate) fn zod_primitive(p: &Primitive, c: &Constraints) -> String {
         Primitive::Bytes => return "binary()".to_string(),
     };
     if matches!(p, Primitive::String { .. }) {
-        if let Some(n) = c.min_length {
-            out.push_str(&format!(".min({n})"));
-        }
-        if let Some(n) = c.max_length {
-            out.push_str(&format!(".max({n})"));
+        if c.min_length.is_some() || c.max_length.is_some() {
+            let bound = |n: Option<u64>| n.map_or("undefined".to_string(), |n| n.to_string());
+            out = format!(
+                "withLength({out}, {}, {})",
+                bound(c.min_length),
+                bound(c.max_length)
+            );
         }
         if let Some(pattern) = &c.pattern {
             out = format!("withPattern({out}, {})", string_lit(pattern));
@@ -715,6 +719,9 @@ pub(crate) fn models_file(plan: &Plan<'_>, ns: &str, header: &str) -> String {
     if uses.pattern {
         imports.add("../internal.js", "withPattern");
     }
+    if uses.length {
+        imports.add("../internal.js", "withLength");
+    }
     if uses.binary {
         imports.add("../internal.js", "binary");
         imports.add_type("../internal.js", "BinaryInput");
@@ -777,6 +784,8 @@ pub(crate) struct Uses {
     pub integer: bool,
     /// The `withPattern()` helper.
     pub pattern: bool,
+    /// The `withLength()` helper.
+    pub length: bool,
     /// The `binary()` helper and the `BinaryInput` type.
     pub binary: bool,
     /// Model namespaces referenced (other than the module's own).
@@ -808,6 +817,8 @@ impl Uses {
                 self.integer |= matches!(primitive, Primitive::Int64 | Primitive::Integer);
                 self.pattern |=
                     matches!(primitive, Primitive::String { .. }) && constraints.pattern.is_some();
+                self.length |= matches!(primitive, Primitive::String { .. })
+                    && (constraints.min_length.is_some() || constraints.max_length.is_some());
                 self.binary |= matches!(primitive, Primitive::Bytes);
             }
             Shape::Array { items, .. } => self.add_ref(plan, home, items),

@@ -80,6 +80,7 @@ mod serialize;
 mod sse;
 mod stream;
 mod transport;
+mod unchecked;
 mod util;
 mod validate;
 mod value;
@@ -107,6 +108,7 @@ pub use stream::{
     TypedEvents,
 };
 pub use types::*;
+pub use unchecked::{PatternNote, note_unchecked_pattern};
 pub use value::{BINARY_KEY, Binary, Patch};
 
 /// Version of this runtime, sent as `X-Tungsten-Runtime: tungsten-rs/<version>`.
@@ -132,5 +134,6 @@ pub mod internals {
     };
     pub use crate::sse::{DEFAULT_MAX_EVENT_BYTES, SseEvent, SseParser, Utf8Decoder};
     pub use crate::transport::{next_link, parse_http_date, parse_retry_after};
+    pub use crate::unchecked::collect as collect_pattern_notes;
     pub use crate::util::{canonical_json, envelope_value, js_number, json_text, sha256_hex};
 }

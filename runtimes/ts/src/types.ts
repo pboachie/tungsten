@@ -229,8 +229,18 @@ export interface AgentMeta {
  * depend on a Zod version. */
 export interface SchemaLike<T = unknown> {
   safeParse(value: unknown):
-    | { success: true; data: T }
-    | { success: false; error: { issues: Array<{ path: Array<string | number>; message: string; code?: string }> } };
+    | { success: true; data: T; notes?: PatternNote[] }
+    | { success: false; error: { issues: Array<{ path: Array<string | number>; message: string; code?: string }> }; notes?: PatternNote[] };
+}
+
+/** A schema `pattern` the validator could not check, so it accepted the value:
+ * where, which pattern and why (never the value). A schema returns these in
+ * `notes`; the client reports each once per call and path as a
+ * `PATTERN_UNCHECKED` diagnostic through `onDiagnostic`. */
+export interface PatternNote {
+  path: Array<string | number>;
+  pattern: string;
+  reason: string;
 }
 
 export interface OperationDescriptor {

@@ -1426,9 +1426,12 @@ pub(crate) fn write_patterns(w: &mut Writer, patterns: &[String]) {
         w.dedent();
         w.line("}");
         w.blank();
+        w.line(format!("static RE_{n}: LazyLock<Result<Regex, String>> ="));
+        w.indent();
         w.line(format!(
-            "static RE_{n}: LazyLock<Option<Regex>> = LazyLock::new(|| Regex::new(re_{n}()).ok());"
+            "LazyLock::new(|| Regex::new(re_{n}()).map_err(|e| crate::support::regex_reason(&e)));"
         ));
+        w.dedent();
     }
 }
 
