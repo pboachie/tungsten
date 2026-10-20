@@ -165,8 +165,7 @@ final class _Run {
     return [..._structure, ..._constraints, ..._unknown];
   }
 
-  bool _admits(
-      Object? schema, Object? value, List<Object> path, int depth) {
+  bool _admits(Object? schema, Object? value, List<Object> path, int depth) {
     final notes = <UncheckedPattern>[];
     final probe = _Run(defs, onUnchecked == null ? null : notes.add);
     probe._check(_asSchema(schema), value, path, depth);
