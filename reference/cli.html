@@ -183,33 +183,43 @@
 <h2 id="tungsten"><a class="header" href="#tungsten"><code>tungsten</code></a></h2>
 <pre><code class="language-text">Agent-native SDK generator and MCP/WebMCP compiler
 
-Usage: tungsten [OPTIONS] &lt;COMMAND&gt;
+Usage: tungsten.exe [OPTIONS] &lt;COMMAND&gt;
 
 Commands:
-  check     Validate the manifest and specs and report diagnostics
-  ir        Intermediate representation commands
-  explain   Explain a diagnostic code, an operation or a type
-  schema    Print a JSON Schema published by tungsten
-  init      Write tungsten.yml and agent.yml for a new project
-  doctor    Report installed tools and optionally check project prerequisites
-  emitters  List the external emitters (`tungsten-emit-&lt;name&gt;`) that can be run, with the protocol and version each reports
-  generate  Generate every configured target (SDKs, docs) from the project
-  mock      Serve a mock of the API from the compiled IR
-  report    Coverage, safety matrix, token budgets, diagnostics and changes since the last generation, as text, one static HTML file or JSON
-  diff      Show what regeneration would add, change or remove in each target, and with --semver how the API surface changed
-  overlay   OpenAPI Overlay authoring helpers
-  lsp       Serve a Language Server Protocol server on stdin and stdout for tungsten.yml, agent.yml and overlays: diagnostics, completion, hover, go-to-definition and symbols. `--json` has no effect
-  help      Print this message or the help of the given subcommand(s)
+  check         Validate the manifest and specs and report diagnostics
+  ir            Intermediate representation commands
+  explain       Explain a diagnostic code, an operation or a type
+  schema        Print a JSON Schema published by tungsten
+  init          Write tungsten.yml and agent.yml for a new project
+  doctor        Report installed tools and optionally check project prerequisites
+  capabilities  Query built-in target declarations without executing tools or emitters
+  config        Explain supported effective configuration without compiling or running tools
+  policy        Explicit host policy utilities; never approves or runs executables
+  emitters      List the external emitters (`tungsten-emit-&lt;name&gt;`) that can be run, with the protocol and version each reports
+  generate      Generate every configured target (SDKs, docs) from the project
+  mock          Serve a mock of the API from the compiled IR
+  scenario      Validate a saved mock scenario or run an explicitly selected integration
+  report        Coverage, safety matrix, token budgets, diagnostics and changes since the last generation, as text, one static HTML file or JSON
+  diff          Show what regeneration would add, change or remove in each target, and with --semver how the API surface changed
+  overlay       OpenAPI Overlay authoring helpers
+  lsp           Serve a Language Server Protocol server on stdin and stdout for tungsten.yml, agent.yml and overlays: diagnostics, completion, hover, go-to-definition and symbols. `--json` has no effect
+  help          Print this message or the help of the given subcommand(s)
 
 Options:
+      --policy &lt;PATH&gt;
+          Select one reviewed local strict JSON external-emitter policy (requires --policy-digest). Supported: generate (all modes), check (including CI), report, diff, emitters and pure config inspection. policy digest and all other commands reject supplied policy before reads or effects. No approval, environment isolation, acquisition protection or sandbox is conferred. Parent links/mounts and volume/network locality are not verified
+
+      --policy-digest &lt;DIGEST&gt;
+          Exact blake3: plus 64 lowercase hex digits of the reviewed policy bytes. Obtain it separately with `tungsten policy digest PATH`
+
       --offline
           Reuse verified HTTP/Git input pins and cached files without network access
 
       --refresh-inputs
           Refresh an HTTP content pin or resolve a Git ref again after review. Converted imports require init into a fresh project to change sources
 
-      --input-header &lt;NAME: VALUE&gt;
-          Header for HTTP document downloads only (repeatable; not Git authentication). Environment values are newline-separated. Prefer the environment for secrets
+      --input-header &lt;[ORIGIN] NAME: VALUE&gt;
+          Header for a URL typed on the command line; for manifest URLs use [https://api.example.com] Name: value to restrict it to that origin. Not Git authentication. Environment values are newline-separated. Prefer the environment for secrets
           
           [env: TUNGSTEN_INPUT_HEADERS]
 
@@ -217,7 +227,7 @@ Options:
           Print exactly one JSON document on stdout
 
       --no-external
-          Never start the commands of `external` targets. Without it, an `external` target's command runs on `generate` (any mode), `check --ci`, `diff` and `report`, with your privileges and with whatever the manifest says; pass it (or set TUNGSTEN_NO_EXTERNAL=1) when the manifest is not trusted, for example on a pull request in CI. Such targets are reported as skipped (TG0807)
+          Never start the commands of `external` targets. Without it, an `external` target's command runs on `generate` (any mode), `check --ci`, `diff` and `report`, with your privileges and with whatever the manifest says; pass it (or set TUNGSTEN_NO_EXTERNAL=1) when the manifest is not trusted, for example on a pull request in CI. Such targets are reported as skipped (TG0807). Also disables `emitters` discovery, including descriptor probes of programs on PATH
           
           [env: TUNGSTEN_NO_EXTERNAL=]
 
@@ -230,6 +240,7 @@ Options:
 Examples:
   tungsten init --from openapi.yaml    Write tungsten.yml and agent.yml
   tungsten check .                     Validate the project and print diagnostics
+  tungsten config .                    Explain supported effective configuration
   tungsten generate --target ts,py     Generate the TypeScript and Python SDKs
   tungsten generate --target webmcp    Generate a browser WebMCP adapter
   tungsten mock --port 4010            Serve a mock of the API from the IR
@@ -263,81 +274,130 @@ Output:
 <h3 id="tungsten-check"><a class="header" href="#tungsten-check"><code>tungsten check</code></a></h3>
 <pre><code class="language-text">Validate the manifest and specs and report diagnostics
 
-Usage: tungsten check [OPTIONS] [PATH]
+Usage: tungsten.exe check [OPTIONS] [PATH]
 
 Arguments:
   [PATH]  A directory with a tungsten.yml, a tungsten*.yml manifest, or a single OpenAPI document (local path, HTTP(S) URL or git+ URL) [default: .]
 
 Options:
-      --ci                          CI mode: never prompt, never color, and fail (TG0901) when the generated output of a target differs from what `generate` would write. This runs every configured target's emitter in memory, including the commands of `external` targets (see --no-external)
-      --offline                     Reuse verified HTTP/Git input pins and cached files without network access
-      --refresh-inputs              Refresh an HTTP content pin or resolve a Git ref again after review. Converted imports require init into a fresh project to change sources
-      --strict                      Treat warnings as errors
-      --audit-contracts             Audit the success response contracts after compiling (opt-in): a JSON response without a schema (TG0930), a schema that constrains nothing (TG0305) and a free-form object response (TG0931) become warnings naming the operation, status and media type. Nothing is rejected and the default exit behavior is unchanged; combine with --strict to fail when the audit finds weak contracts. Typed maps, no-content responses and non-JSON media types are not findings; a schema (or media-type entry) with a nonempty string review note in `x-tungsten-reviewed-contract`, usually through an overlay, counts as reviewed. TG0932 reports an incomplete audit when budgets are hit
-      --input-header &lt;NAME: VALUE&gt;  Header for HTTP document downloads only (repeatable; not Git authentication). Environment values are newline-separated. Prefer the environment for secrets [env: TUNGSTEN_INPUT_HEADERS]
-      --json                        Print exactly one JSON document on stdout
-      --require-contracts           Run the response-contract audit and treat its findings as errors. Other warnings keep their usual severity (unlike --strict)
-      --all-warnings                Print every warning and info diagnostic in full. By default a code that repeats is shown a few times, then summarized with a count; `--json` always lists every diagnostic
-      --no-external                 Never start the commands of `external` targets. Without it, an `external` target's command runs on `generate` (any mode), `check --ci`, `diff` and `report`, with your privileges and with whatever the manifest says; pass it (or set TUNGSTEN_NO_EXTERNAL=1) when the manifest is not trusted, for example on a pull request in CI. Such targets are reported as skipped (TG0807) [env: TUNGSTEN_NO_EXTERNAL=]
-  -h, --help                        Print help
+      --ci
+          CI mode: never prompt, never color, and fail (TG0901) when the generated output of a target differs from what `generate` would write. This runs every configured target's emitter in memory, including the commands of `external` targets (see --no-external)
+      --policy &lt;PATH&gt;
+          Select one reviewed local strict JSON external-emitter policy (requires --policy-digest). Supported: generate (all modes), check (including CI), report, diff, emitters and pure config inspection. policy digest and all other commands reject supplied policy before reads or effects. No approval, environment isolation, acquisition protection or sandbox is conferred. Parent links/mounts and volume/network locality are not verified
+      --policy-digest &lt;DIGEST&gt;
+          Exact blake3: plus 64 lowercase hex digits of the reviewed policy bytes. Obtain it separately with `tungsten policy digest PATH`
+      --strict
+          Treat warnings as errors
+      --audit-contracts
+          Audit the success response contracts after compiling (opt-in): a JSON response without a schema (TG0930), a schema that constrains nothing (TG0305) and a free-form object response (TG0931) become warnings naming the operation, status and media type. Nothing is rejected and the default exit behavior is unchanged; combine with --strict to fail when the audit finds weak contracts. Typed maps, no-content responses and non-JSON media types are not findings; a schema (or media-type entry) with a nonempty string review note in `x-tungsten-reviewed-contract`, usually through an overlay, counts as reviewed. TG0932 reports an incomplete audit when budgets are hit
+      --offline
+          Reuse verified HTTP/Git input pins and cached files without network access
+      --refresh-inputs
+          Refresh an HTTP content pin or resolve a Git ref again after review. Converted imports require init into a fresh project to change sources
+      --require-contracts
+          Run the response-contract audit and treat its findings as errors. Other warnings keep their usual severity (unlike --strict)
+      --all-warnings
+          Print every warning and info diagnostic in full. By default a code that repeats is shown a few times, then summarized with a count; `--json` always lists every diagnostic
+      --input-header &lt;[ORIGIN] NAME: VALUE&gt;
+          Header for a URL typed on the command line; for manifest URLs use [https://api.example.com] Name: value to restrict it to that origin. Not Git authentication. Environment values are newline-separated. Prefer the environment for secrets [env: TUNGSTEN_INPUT_HEADERS]
+      --json
+          Print exactly one JSON document on stdout
+      --no-external
+          Never start the commands of `external` targets. Without it, an `external` target's command runs on `generate` (any mode), `check --ci`, `diff` and `report`, with your privileges and with whatever the manifest says; pass it (or set TUNGSTEN_NO_EXTERNAL=1) when the manifest is not trusted, for example on a pull request in CI. Such targets are reported as skipped (TG0807). Also disables `emitters` discovery, including descriptor probes of programs on PATH [env: TUNGSTEN_NO_EXTERNAL=]
+  -h, --help
+          Print help
 </code></pre>
 <h3 id="tungsten-ir"><a class="header" href="#tungsten-ir"><code>tungsten ir</code></a></h3>
 <pre><code class="language-text">Intermediate representation commands
 
-Usage: tungsten ir [OPTIONS] &lt;COMMAND&gt;
+Usage: tungsten.exe ir [OPTIONS] &lt;COMMAND&gt;
 
 Commands:
   dump  Write the IR as JSON
   help  Print this message or the help of the given subcommand(s)
 
 Options:
-      --offline                     Reuse verified HTTP/Git input pins and cached files without network access
-      --refresh-inputs              Refresh an HTTP content pin or resolve a Git ref again after review. Converted imports require init into a fresh project to change sources
-      --input-header &lt;NAME: VALUE&gt;  Header for HTTP document downloads only (repeatable; not Git authentication). Environment values are newline-separated. Prefer the environment for secrets [env: TUNGSTEN_INPUT_HEADERS]
-      --json                        Print exactly one JSON document on stdout
-      --no-external                 Never start the commands of `external` targets. Without it, an `external` target's command runs on `generate` (any mode), `check --ci`, `diff` and `report`, with your privileges and with whatever the manifest says; pass it (or set TUNGSTEN_NO_EXTERNAL=1) when the manifest is not trusted, for example on a pull request in CI. Such targets are reported as skipped (TG0807) [env: TUNGSTEN_NO_EXTERNAL=]
-  -h, --help                        Print help
+      --policy &lt;PATH&gt;
+          Select one reviewed local strict JSON external-emitter policy (requires --policy-digest). Supported: generate (all modes), check (including CI), report, diff, emitters and pure config inspection. policy digest and all other commands reject supplied policy before reads or effects. No approval, environment isolation, acquisition protection or sandbox is conferred. Parent links/mounts and volume/network locality are not verified
+      --policy-digest &lt;DIGEST&gt;
+          Exact blake3: plus 64 lowercase hex digits of the reviewed policy bytes. Obtain it separately with `tungsten policy digest PATH`
+      --offline
+          Reuse verified HTTP/Git input pins and cached files without network access
+      --refresh-inputs
+          Refresh an HTTP content pin or resolve a Git ref again after review. Converted imports require init into a fresh project to change sources
+      --input-header &lt;[ORIGIN] NAME: VALUE&gt;
+          Header for a URL typed on the command line; for manifest URLs use [https://api.example.com] Name: value to restrict it to that origin. Not Git authentication. Environment values are newline-separated. Prefer the environment for secrets [env: TUNGSTEN_INPUT_HEADERS]
+      --json
+          Print exactly one JSON document on stdout
+      --no-external
+          Never start the commands of `external` targets. Without it, an `external` target's command runs on `generate` (any mode), `check --ci`, `diff` and `report`, with your privileges and with whatever the manifest says; pass it (or set TUNGSTEN_NO_EXTERNAL=1) when the manifest is not trusted, for example on a pull request in CI. Such targets are reported as skipped (TG0807). Also disables `emitters` discovery, including descriptor probes of programs on PATH [env: TUNGSTEN_NO_EXTERNAL=]
+  -h, --help
+          Print help
 </code></pre>
 <h4 id="tungsten-ir-dump"><a class="header" href="#tungsten-ir-dump"><code>tungsten ir dump</code></a></h4>
 <pre><code class="language-text">Write the IR as JSON
 
-Usage: tungsten ir dump [OPTIONS] [PATH]
+Usage: tungsten.exe ir dump [OPTIONS] [PATH]
 
 Arguments:
   [PATH]  A directory with a tungsten.yml, a tungsten*.yml manifest, or a single OpenAPI document (local path, HTTP(S) URL or git+ URL) [default: .]
 
 Options:
-      --offline                     Reuse verified HTTP/Git input pins and cached files without network access
-      --out &lt;FILE&gt;                  Write the IR to this file instead of stdout
-      --compact                     One line instead of indented JSON
-      --refresh-inputs              Refresh an HTTP content pin or resolve a Git ref again after review. Converted imports require init into a fresh project to change sources
-      --input-header &lt;NAME: VALUE&gt;  Header for HTTP document downloads only (repeatable; not Git authentication). Environment values are newline-separated. Prefer the environment for secrets [env: TUNGSTEN_INPUT_HEADERS]
-      --pretty                      Indented JSON (the default)
-      --json                        Print exactly one JSON document on stdout
-      --no-external                 Never start the commands of `external` targets. Without it, an `external` target's command runs on `generate` (any mode), `check --ci`, `diff` and `report`, with your privileges and with whatever the manifest says; pass it (or set TUNGSTEN_NO_EXTERNAL=1) when the manifest is not trusted, for example on a pull request in CI. Such targets are reported as skipped (TG0807) [env: TUNGSTEN_NO_EXTERNAL=]
-  -h, --help                        Print help
+      --out &lt;FILE&gt;
+          Write the IR to this file instead of stdout
+      --policy &lt;PATH&gt;
+          Select one reviewed local strict JSON external-emitter policy (requires --policy-digest). Supported: generate (all modes), check (including CI), report, diff, emitters and pure config inspection. policy digest and all other commands reject supplied policy before reads or effects. No approval, environment isolation, acquisition protection or sandbox is conferred. Parent links/mounts and volume/network locality are not verified
+      --compact
+          One line instead of indented JSON
+      --policy-digest &lt;DIGEST&gt;
+          Exact blake3: plus 64 lowercase hex digits of the reviewed policy bytes. Obtain it separately with `tungsten policy digest PATH`
+      --offline
+          Reuse verified HTTP/Git input pins and cached files without network access
+      --pretty
+          Indented JSON (the default)
+      --refresh-inputs
+          Refresh an HTTP content pin or resolve a Git ref again after review. Converted imports require init into a fresh project to change sources
+      --input-header &lt;[ORIGIN] NAME: VALUE&gt;
+          Header for a URL typed on the command line; for manifest URLs use [https://api.example.com] Name: value to restrict it to that origin. Not Git authentication. Environment values are newline-separated. Prefer the environment for secrets [env: TUNGSTEN_INPUT_HEADERS]
+      --json
+          Print exactly one JSON document on stdout
+      --no-external
+          Never start the commands of `external` targets. Without it, an `external` target's command runs on `generate` (any mode), `check --ci`, `diff` and `report`, with your privileges and with whatever the manifest says; pass it (or set TUNGSTEN_NO_EXTERNAL=1) when the manifest is not trusted, for example on a pull request in CI. Such targets are reported as skipped (TG0807). Also disables `emitters` discovery, including descriptor probes of programs on PATH [env: TUNGSTEN_NO_EXTERNAL=]
+  -h, --help
+          Print help
 </code></pre>
 <h3 id="tungsten-explain"><a class="header" href="#tungsten-explain"><code>tungsten explain</code></a></h3>
 <pre><code class="language-text">Explain a diagnostic code, an operation or a type
 
-Usage: tungsten explain [OPTIONS] &lt;TARGET&gt;
+Usage: tungsten.exe explain [OPTIONS] &lt;TARGET&gt;
 
 Arguments:
   &lt;TARGET&gt;  A diagnostic code (TG0201), an operation id (public.listPets) or a type id (public.Pet). A bare operationId or type name is accepted when it is unambiguous
 
 Options:
-      --offline                     Reuse verified HTTP/Git input pins and cached files without network access
-      --project &lt;PATH&gt;              Project used to resolve operation and type ids [default: .]
-      --refresh-inputs              Refresh an HTTP content pin or resolve a Git ref again after review. Converted imports require init into a fresh project to change sources
-      --input-header &lt;NAME: VALUE&gt;  Header for HTTP document downloads only (repeatable; not Git authentication). Environment values are newline-separated. Prefer the environment for secrets [env: TUNGSTEN_INPUT_HEADERS]
-      --json                        Print exactly one JSON document on stdout
-      --no-external                 Never start the commands of `external` targets. Without it, an `external` target's command runs on `generate` (any mode), `check --ci`, `diff` and `report`, with your privileges and with whatever the manifest says; pass it (or set TUNGSTEN_NO_EXTERNAL=1) when the manifest is not trusted, for example on a pull request in CI. Such targets are reported as skipped (TG0807) [env: TUNGSTEN_NO_EXTERNAL=]
-  -h, --help                        Print help
+      --policy &lt;PATH&gt;
+          Select one reviewed local strict JSON external-emitter policy (requires --policy-digest). Supported: generate (all modes), check (including CI), report, diff, emitters and pure config inspection. policy digest and all other commands reject supplied policy before reads or effects. No approval, environment isolation, acquisition protection or sandbox is conferred. Parent links/mounts and volume/network locality are not verified
+      --project &lt;PATH&gt;
+          Project used to resolve operation and type ids [default: .]
+      --policy-digest &lt;DIGEST&gt;
+          Exact blake3: plus 64 lowercase hex digits of the reviewed policy bytes. Obtain it separately with `tungsten policy digest PATH`
+      --offline
+          Reuse verified HTTP/Git input pins and cached files without network access
+      --refresh-inputs
+          Refresh an HTTP content pin or resolve a Git ref again after review. Converted imports require init into a fresh project to change sources
+      --input-header &lt;[ORIGIN] NAME: VALUE&gt;
+          Header for a URL typed on the command line; for manifest URLs use [https://api.example.com] Name: value to restrict it to that origin. Not Git authentication. Environment values are newline-separated. Prefer the environment for secrets [env: TUNGSTEN_INPUT_HEADERS]
+      --json
+          Print exactly one JSON document on stdout
+      --no-external
+          Never start the commands of `external` targets. Without it, an `external` target's command runs on `generate` (any mode), `check --ci`, `diff` and `report`, with your privileges and with whatever the manifest says; pass it (or set TUNGSTEN_NO_EXTERNAL=1) when the manifest is not trusted, for example on a pull request in CI. Such targets are reported as skipped (TG0807). Also disables `emitters` discovery, including descriptor probes of programs on PATH [env: TUNGSTEN_NO_EXTERNAL=]
+  -h, --help
+          Print help
 </code></pre>
 <h3 id="tungsten-schema"><a class="header" href="#tungsten-schema"><code>tungsten schema</code></a></h3>
 <pre><code class="language-text">Print a JSON Schema published by tungsten
 
-Usage: tungsten schema [OPTIONS] &lt;NAME&gt;
+Usage: tungsten.exe schema [OPTIONS] &lt;NAME&gt;
 
 Arguments:
   &lt;NAME&gt;
@@ -349,18 +409,26 @@ Arguments:
           - ir:               The intermediate representation written by `ir dump`
           - cli-output:       The `--json` output of this CLI
           - external-emitter: The documents of the external emitter protocol
+          - execution-policy: Strict host-selected external execution constraints, never approval
           - sdk-descriptors:  The SDK descriptor document (tungsten_emit::sdk::descriptors)
           - tool-catalog:     Transport-neutral tools and scoped groups
+          - capabilities:     Built-in target capability declarations, independent of qualification
 
 Options:
+      --policy &lt;PATH&gt;
+          Select one reviewed local strict JSON external-emitter policy (requires --policy-digest). Supported: generate (all modes), check (including CI), report, diff, emitters and pure config inspection. policy digest and all other commands reject supplied policy before reads or effects. No approval, environment isolation, acquisition protection or sandbox is conferred. Parent links/mounts and volume/network locality are not verified
+
+      --policy-digest &lt;DIGEST&gt;
+          Exact blake3: plus 64 lowercase hex digits of the reviewed policy bytes. Obtain it separately with `tungsten policy digest PATH`
+
       --offline
           Reuse verified HTTP/Git input pins and cached files without network access
 
       --refresh-inputs
           Refresh an HTTP content pin or resolve a Git ref again after review. Converted imports require init into a fresh project to change sources
 
-      --input-header &lt;NAME: VALUE&gt;
-          Header for HTTP document downloads only (repeatable; not Git authentication). Environment values are newline-separated. Prefer the environment for secrets
+      --input-header &lt;[ORIGIN] NAME: VALUE&gt;
+          Header for a URL typed on the command line; for manifest URLs use [https://api.example.com] Name: value to restrict it to that origin. Not Git authentication. Environment values are newline-separated. Prefer the environment for secrets
           
           [env: TUNGSTEN_INPUT_HEADERS]
 
@@ -368,7 +436,7 @@ Options:
           Print exactly one JSON document on stdout
 
       --no-external
-          Never start the commands of `external` targets. Without it, an `external` target's command runs on `generate` (any mode), `check --ci`, `diff` and `report`, with your privileges and with whatever the manifest says; pass it (or set TUNGSTEN_NO_EXTERNAL=1) when the manifest is not trusted, for example on a pull request in CI. Such targets are reported as skipped (TG0807)
+          Never start the commands of `external` targets. Without it, an `external` target's command runs on `generate` (any mode), `check --ci`, `diff` and `report`, with your privileges and with whatever the manifest says; pass it (or set TUNGSTEN_NO_EXTERNAL=1) when the manifest is not trusted, for example on a pull request in CI. Such targets are reported as skipped (TG0807). Also disables `emitters` discovery, including descriptor probes of programs on PATH
           
           [env: TUNGSTEN_NO_EXTERNAL=]
 
@@ -378,31 +446,35 @@ Options:
 <h3 id="tungsten-init"><a class="header" href="#tungsten-init"><code>tungsten init</code></a></h3>
 <pre><code class="language-text">Write tungsten.yml and agent.yml for a new project
 
-Usage: tungsten init [OPTIONS]
+Usage: tungsten.exe init [OPTIONS]
 
 Options:
-      --offline
-          Reuse verified HTTP/Git input pins and cached files without network access
+      --policy &lt;PATH&gt;
+          Select one reviewed local strict JSON external-emitter policy (requires --policy-digest). Supported: generate (all modes), check (including CI), report, diff, emitters and pure config inspection. policy digest and all other commands reject supplied policy before reads or effects. No approval, environment isolation, acquisition protection or sandbox is conferred. Parent links/mounts and volume/network locality are not verified
       --server-url &lt;SERVER_URL&gt;
           Advanced: default server URL for later live use; no credentials/query/fragment
       --cli-profile &lt;CLI_PROFILE&gt;
           Advanced: generated Rust CLI environment profile NAME=URL; repeatable. Writes tungsten-profiles.toml with no credentials
-      --refresh-inputs
-          Refresh an HTTP content pin or resolve a Git ref again after review. Converted imports require init into a fresh project to change sources
-      --input-header &lt;NAME: VALUE&gt;
-          Header for HTTP document downloads only (repeatable; not Git authentication). Environment values are newline-separated. Prefer the environment for secrets [env: TUNGSTEN_INPUT_HEADERS]
+      --policy-digest &lt;DIGEST&gt;
+          Exact blake3: plus 64 lowercase hex digits of the reviewed policy bytes. Obtain it separately with `tungsten policy digest PATH`
+      --offline
+          Reuse verified HTTP/Git input pins and cached files without network access
       --strict
           Advanced: promote generation warnings to errors and withhold all outputs
       --hide-operation &lt;HIDE_OPERATION&gt;
           Hide an exact namespace.operationId from agent surfaces; repeatable
-      --json
-          Print exactly one JSON document on stdout
-      --no-external
-          Never start the commands of `external` targets. Without it, an `external` target's command runs on `generate` (any mode), `check --ci`, `diff` and `report`, with your privileges and with whatever the manifest says; pass it (or set TUNGSTEN_NO_EXTERNAL=1) when the manifest is not trusted, for example on a pull request in CI. Such targets are reported as skipped (TG0807) [env: TUNGSTEN_NO_EXTERNAL=]
+      --refresh-inputs
+          Refresh an HTTP content pin or resolve a Git ref again after review. Converted imports require init into a fresh project to change sources
+      --input-header &lt;[ORIGIN] NAME: VALUE&gt;
+          Header for a URL typed on the command line; for manifest URLs use [https://api.example.com] Name: value to restrict it to that origin. Not Git authentication. Environment values are newline-separated. Prefer the environment for secrets [env: TUNGSTEN_INPUT_HEADERS]
       --require-confirmation &lt;REQUIRE_CONFIRMATION&gt;
           Require argument-bound confirmation on an exact operation; repeatable. Never counts as imported-operation review or grants live authority
+      --json
+          Print exactly one JSON document on stdout
       --python-runtime &lt;PYTHON_RUNTIME&gt;
           Advanced: local Python runtime checkout (used only with explicit setup consent)
+      --no-external
+          Never start the commands of `external` targets. Without it, an `external` target's command runs on `generate` (any mode), `check --ci`, `diff` and `report`, with your privileges and with whatever the manifest says; pass it (or set TUNGSTEN_NO_EXTERNAL=1) when the manifest is not trusted, for example on a pull request in CI. Such targets are reported as skipped (TG0807). Also disables `emitters` discovery, including descriptor probes of programs on PATH [env: TUNGSTEN_NO_EXTERNAL=]
       --rust-runtime &lt;RUST_RUNTIME&gt;
           Advanced: local Rust runtime crate
       --cli-kit-runtime &lt;CLI_KIT_RUNTIME&gt;
@@ -465,165 +537,476 @@ Options:
 <h3 id="tungsten-doctor"><a class="header" href="#tungsten-doctor"><code>tungsten doctor</code></a></h3>
 <pre><code class="language-text">Report installed tools and optionally check project prerequisites
 
-Usage: tungsten doctor [OPTIONS] [PATH]
+Usage: tungsten.exe doctor [OPTIONS] [PATH]
 
 Arguments:
   [PATH]  Project directory or tungsten manifest to inspect without network access
 
 Options:
-      --offline                     Reuse verified HTTP/Git input pins and cached files without network access
-      --strict                      Fail when the project's required tools are missing or unsupported. Uses the current directory when PATH is omitted
-      --refresh-inputs              Refresh an HTTP content pin or resolve a Git ref again after review. Converted imports require init into a fresh project to change sources
-      --input-header &lt;NAME: VALUE&gt;  Header for HTTP document downloads only (repeatable; not Git authentication). Environment values are newline-separated. Prefer the environment for secrets [env: TUNGSTEN_INPUT_HEADERS]
-      --json                        Print exactly one JSON document on stdout
-      --no-external                 Never start the commands of `external` targets. Without it, an `external` target's command runs on `generate` (any mode), `check --ci`, `diff` and `report`, with your privileges and with whatever the manifest says; pass it (or set TUNGSTEN_NO_EXTERNAL=1) when the manifest is not trusted, for example on a pull request in CI. Such targets are reported as skipped (TG0807) [env: TUNGSTEN_NO_EXTERNAL=]
-  -h, --help                        Print help
+      --policy &lt;PATH&gt;
+          Select one reviewed local strict JSON external-emitter policy (requires --policy-digest). Supported: generate (all modes), check (including CI), report, diff, emitters and pure config inspection. policy digest and all other commands reject supplied policy before reads or effects. No approval, environment isolation, acquisition protection or sandbox is conferred. Parent links/mounts and volume/network locality are not verified
+      --strict
+          Fail when the project's required tools are missing or unsupported. Uses the current directory when PATH is omitted
+      --policy-digest &lt;DIGEST&gt;
+          Exact blake3: plus 64 lowercase hex digits of the reviewed policy bytes. Obtain it separately with `tungsten policy digest PATH`
+      --offline
+          Reuse verified HTTP/Git input pins and cached files without network access
+      --refresh-inputs
+          Refresh an HTTP content pin or resolve a Git ref again after review. Converted imports require init into a fresh project to change sources
+      --input-header &lt;[ORIGIN] NAME: VALUE&gt;
+          Header for a URL typed on the command line; for manifest URLs use [https://api.example.com] Name: value to restrict it to that origin. Not Git authentication. Environment values are newline-separated. Prefer the environment for secrets [env: TUNGSTEN_INPUT_HEADERS]
+      --json
+          Print exactly one JSON document on stdout
+      --no-external
+          Never start the commands of `external` targets. Without it, an `external` target's command runs on `generate` (any mode), `check --ci`, `diff` and `report`, with your privileges and with whatever the manifest says; pass it (or set TUNGSTEN_NO_EXTERNAL=1) when the manifest is not trusted, for example on a pull request in CI. Such targets are reported as skipped (TG0807). Also disables `emitters` discovery, including descriptor probes of programs on PATH [env: TUNGSTEN_NO_EXTERNAL=]
+  -h, --help
+          Print help
+</code></pre>
+<h3 id="tungsten-capabilities"><a class="header" href="#tungsten-capabilities"><code>tungsten capabilities</code></a></h3>
+<pre><code class="language-text">Query built-in target declarations without executing tools or emitters
+
+Usage: tungsten.exe capabilities [OPTIONS] [TARGET]
+
+Arguments:
+  [TARGET]  Limit the catalog to one target id or CLI alias
+
+Options:
+      --policy &lt;PATH&gt;
+          Select one reviewed local strict JSON external-emitter policy (requires --policy-digest). Supported: generate (all modes), check (including CI), report, diff, emitters and pure config inspection. policy digest and all other commands reject supplied policy before reads or effects. No approval, environment isolation, acquisition protection or sandbox is conferred. Parent links/mounts and volume/network locality are not verified
+      --policy-digest &lt;DIGEST&gt;
+          Exact blake3: plus 64 lowercase hex digits of the reviewed policy bytes. Obtain it separately with `tungsten policy digest PATH`
+      --offline
+          Reuse verified HTTP/Git input pins and cached files without network access
+      --refresh-inputs
+          Refresh an HTTP content pin or resolve a Git ref again after review. Converted imports require init into a fresh project to change sources
+      --input-header &lt;[ORIGIN] NAME: VALUE&gt;
+          Header for a URL typed on the command line; for manifest URLs use [https://api.example.com] Name: value to restrict it to that origin. Not Git authentication. Environment values are newline-separated. Prefer the environment for secrets [env: TUNGSTEN_INPUT_HEADERS]
+      --json
+          Print exactly one JSON document on stdout
+      --no-external
+          Never start the commands of `external` targets. Without it, an `external` target's command runs on `generate` (any mode), `check --ci`, `diff` and `report`, with your privileges and with whatever the manifest says; pass it (or set TUNGSTEN_NO_EXTERNAL=1) when the manifest is not trusted, for example on a pull request in CI. Such targets are reported as skipped (TG0807). Also disables `emitters` discovery, including descriptor probes of programs on PATH [env: TUNGSTEN_NO_EXTERNAL=]
+  -h, --help
+          Print help
+</code></pre>
+<h3 id="tungsten-config"><a class="header" href="#tungsten-config"><code>tungsten config</code></a></h3>
+<pre><code class="language-text">Explain supported effective configuration without compiling or running tools
+
+Usage: tungsten.exe config [OPTIONS] [PATH]
+
+Arguments:
+  [PATH]  Local project directory or tungsten manifest [default: .]
+
+Options:
+      --policy &lt;PATH&gt;
+          Select one reviewed local strict JSON external-emitter policy (requires --policy-digest). Supported: generate (all modes), check (including CI), report, diff, emitters and pure config inspection. policy digest and all other commands reject supplied policy before reads or effects. No approval, environment isolation, acquisition protection or sandbox is conferred. Parent links/mounts and volume/network locality are not verified
+      --strict
+          Fail on supported-option warnings as well as configuration errors
+      --policy-digest &lt;DIGEST&gt;
+          Exact blake3: plus 64 lowercase hex digits of the reviewed policy bytes. Obtain it separately with `tungsten policy digest PATH`
+      --offline
+          Reuse verified HTTP/Git input pins and cached files without network access
+      --refresh-inputs
+          Refresh an HTTP content pin or resolve a Git ref again after review. Converted imports require init into a fresh project to change sources
+      --input-header &lt;[ORIGIN] NAME: VALUE&gt;
+          Header for a URL typed on the command line; for manifest URLs use [https://api.example.com] Name: value to restrict it to that origin. Not Git authentication. Environment values are newline-separated. Prefer the environment for secrets [env: TUNGSTEN_INPUT_HEADERS]
+      --json
+          Print exactly one JSON document on stdout
+      --no-external
+          Never start the commands of `external` targets. Without it, an `external` target's command runs on `generate` (any mode), `check --ci`, `diff` and `report`, with your privileges and with whatever the manifest says; pass it (or set TUNGSTEN_NO_EXTERNAL=1) when the manifest is not trusted, for example on a pull request in CI. Such targets are reported as skipped (TG0807). Also disables `emitters` discovery, including descriptor probes of programs on PATH [env: TUNGSTEN_NO_EXTERNAL=]
+  -h, --help
+          Print help
+</code></pre>
+<h3 id="tungsten-policy"><a class="header" href="#tungsten-policy"><code>tungsten policy</code></a></h3>
+<pre><code class="language-text">Explicit host policy utilities; never approves or runs executables
+
+Usage: tungsten.exe policy [OPTIONS] &lt;COMMAND&gt;
+
+Commands:
+  digest  Purely validate/hash a bounded local strict JSON policy for review. Rejects execution-policy flags; never writes files or grants authority
+  help    Print this message or the help of the given subcommand(s)
+
+Options:
+      --policy &lt;PATH&gt;
+          Select one reviewed local strict JSON external-emitter policy (requires --policy-digest). Supported: generate (all modes), check (including CI), report, diff, emitters and pure config inspection. policy digest and all other commands reject supplied policy before reads or effects. No approval, environment isolation, acquisition protection or sandbox is conferred. Parent links/mounts and volume/network locality are not verified
+      --policy-digest &lt;DIGEST&gt;
+          Exact blake3: plus 64 lowercase hex digits of the reviewed policy bytes. Obtain it separately with `tungsten policy digest PATH`
+      --offline
+          Reuse verified HTTP/Git input pins and cached files without network access
+      --refresh-inputs
+          Refresh an HTTP content pin or resolve a Git ref again after review. Converted imports require init into a fresh project to change sources
+      --input-header &lt;[ORIGIN] NAME: VALUE&gt;
+          Header for a URL typed on the command line; for manifest URLs use [https://api.example.com] Name: value to restrict it to that origin. Not Git authentication. Environment values are newline-separated. Prefer the environment for secrets [env: TUNGSTEN_INPUT_HEADERS]
+      --json
+          Print exactly one JSON document on stdout
+      --no-external
+          Never start the commands of `external` targets. Without it, an `external` target's command runs on `generate` (any mode), `check --ci`, `diff` and `report`, with your privileges and with whatever the manifest says; pass it (or set TUNGSTEN_NO_EXTERNAL=1) when the manifest is not trusted, for example on a pull request in CI. Such targets are reported as skipped (TG0807). Also disables `emitters` discovery, including descriptor probes of programs on PATH [env: TUNGSTEN_NO_EXTERNAL=]
+  -h, --help
+          Print help
+</code></pre>
+<h4 id="tungsten-policy-digest"><a class="header" href="#tungsten-policy-digest"><code>tungsten policy digest</code></a></h4>
+<pre><code class="language-text">Purely validate/hash a bounded local strict JSON policy for review. Rejects execution-policy flags; never writes files or grants authority
+
+Usage: tungsten.exe policy digest [OPTIONS] &lt;PATH&gt;
+
+Arguments:
+  &lt;PATH&gt;  
+
+Options:
+      --policy &lt;PATH&gt;
+          Select one reviewed local strict JSON external-emitter policy (requires --policy-digest). Supported: generate (all modes), check (including CI), report, diff, emitters and pure config inspection. policy digest and all other commands reject supplied policy before reads or effects. No approval, environment isolation, acquisition protection or sandbox is conferred. Parent links/mounts and volume/network locality are not verified
+      --policy-digest &lt;DIGEST&gt;
+          Exact blake3: plus 64 lowercase hex digits of the reviewed policy bytes. Obtain it separately with `tungsten policy digest PATH`
+      --offline
+          Reuse verified HTTP/Git input pins and cached files without network access
+      --refresh-inputs
+          Refresh an HTTP content pin or resolve a Git ref again after review. Converted imports require init into a fresh project to change sources
+      --input-header &lt;[ORIGIN] NAME: VALUE&gt;
+          Header for a URL typed on the command line; for manifest URLs use [https://api.example.com] Name: value to restrict it to that origin. Not Git authentication. Environment values are newline-separated. Prefer the environment for secrets [env: TUNGSTEN_INPUT_HEADERS]
+      --json
+          Print exactly one JSON document on stdout
+      --no-external
+          Never start the commands of `external` targets. Without it, an `external` target's command runs on `generate` (any mode), `check --ci`, `diff` and `report`, with your privileges and with whatever the manifest says; pass it (or set TUNGSTEN_NO_EXTERNAL=1) when the manifest is not trusted, for example on a pull request in CI. Such targets are reported as skipped (TG0807). Also disables `emitters` discovery, including descriptor probes of programs on PATH [env: TUNGSTEN_NO_EXTERNAL=]
+  -h, --help
+          Print help
 </code></pre>
 <h3 id="tungsten-emitters"><a class="header" href="#tungsten-emitters"><code>tungsten emitters</code></a></h3>
 <pre><code class="language-text">List the external emitters (`tungsten-emit-&lt;name&gt;`) that can be run, with the protocol and version each reports
 
-Usage: tungsten emitters [OPTIONS] [PATH]
+Usage: tungsten.exe emitters [OPTIONS] [PATH]
 
 Arguments:
   [PATH]  A project (as for `check`) whose `external` targets are listed too
 
 Options:
-      --offline                     Reuse verified HTTP/Git input pins and cached files without network access
-      --refresh-inputs              Refresh an HTTP content pin or resolve a Git ref again after review. Converted imports require init into a fresh project to change sources
-      --input-header &lt;NAME: VALUE&gt;  Header for HTTP document downloads only (repeatable; not Git authentication). Environment values are newline-separated. Prefer the environment for secrets [env: TUNGSTEN_INPUT_HEADERS]
-      --json                        Print exactly one JSON document on stdout
-      --no-external                 Never start the commands of `external` targets. Without it, an `external` target's command runs on `generate` (any mode), `check --ci`, `diff` and `report`, with your privileges and with whatever the manifest says; pass it (or set TUNGSTEN_NO_EXTERNAL=1) when the manifest is not trusted, for example on a pull request in CI. Such targets are reported as skipped (TG0807) [env: TUNGSTEN_NO_EXTERNAL=]
-  -h, --help                        Print help
+      --policy &lt;PATH&gt;
+          Select one reviewed local strict JSON external-emitter policy (requires --policy-digest). Supported: generate (all modes), check (including CI), report, diff, emitters and pure config inspection. policy digest and all other commands reject supplied policy before reads or effects. No approval, environment isolation, acquisition protection or sandbox is conferred. Parent links/mounts and volume/network locality are not verified
+      --policy-digest &lt;DIGEST&gt;
+          Exact blake3: plus 64 lowercase hex digits of the reviewed policy bytes. Obtain it separately with `tungsten policy digest PATH`
+      --offline
+          Reuse verified HTTP/Git input pins and cached files without network access
+      --refresh-inputs
+          Refresh an HTTP content pin or resolve a Git ref again after review. Converted imports require init into a fresh project to change sources
+      --input-header &lt;[ORIGIN] NAME: VALUE&gt;
+          Header for a URL typed on the command line; for manifest URLs use [https://api.example.com] Name: value to restrict it to that origin. Not Git authentication. Environment values are newline-separated. Prefer the environment for secrets [env: TUNGSTEN_INPUT_HEADERS]
+      --json
+          Print exactly one JSON document on stdout
+      --no-external
+          Never start the commands of `external` targets. Without it, an `external` target's command runs on `generate` (any mode), `check --ci`, `diff` and `report`, with your privileges and with whatever the manifest says; pass it (or set TUNGSTEN_NO_EXTERNAL=1) when the manifest is not trusted, for example on a pull request in CI. Such targets are reported as skipped (TG0807). Also disables `emitters` discovery, including descriptor probes of programs on PATH [env: TUNGSTEN_NO_EXTERNAL=]
+  -h, --help
+          Print help
 </code></pre>
 <h3 id="tungsten-generate"><a class="header" href="#tungsten-generate"><code>tungsten generate</code></a></h3>
 <pre><code class="language-text">Generate every configured target (SDKs, docs) from the project
 
-Usage: tungsten generate [OPTIONS] [PATH]
+Usage: tungsten.exe generate [OPTIONS] [PATH]
 
 Arguments:
   [PATH]  A directory with a tungsten.yml, a tungsten*.yml manifest, or a single OpenAPI document (local path, HTTP(S) URL or git+ URL) [default: .]
 
 Options:
-      --offline                     Reuse verified HTTP/Git input pins and cached files without network access
-      --target &lt;TARGETS&gt;            Only these targets, comma-separated (`typescript,docs`; `ts`, `py`, `rs` and `rb` are accepted). Default: every target in tungsten.yml
-      --dry-run                     Report what would be written or removed without touching the disk
-      --refresh-inputs              Refresh an HTTP content pin or resolve a Git ref again after review. Converted imports require init into a fresh project to change sources
-      --check                       Compare the output directories with what would be generated; write nothing and exit 1 when they differ
-      --input-header &lt;NAME: VALUE&gt;  Header for HTTP document downloads only (repeatable; not Git authentication). Environment values are newline-separated. Prefer the environment for secrets [env: TUNGSTEN_INPUT_HEADERS]
-      --force                       Write into a non-empty output directory that tungsten did not generate (one without .tungsten/manifest.json)
-      --json                        Print exactly one JSON document on stdout
-      --no-external                 Never start the commands of `external` targets. Without it, an `external` target's command runs on `generate` (any mode), `check --ci`, `diff` and `report`, with your privileges and with whatever the manifest says; pass it (or set TUNGSTEN_NO_EXTERNAL=1) when the manifest is not trusted, for example on a pull request in CI. Such targets are reported as skipped (TG0807) [env: TUNGSTEN_NO_EXTERNAL=]
-      --strict                      Treat warnings (the compiler's and the emitters') as errors: nothing is written when there are any, in any target
-  -h, --help                        Print help
+      --policy &lt;PATH&gt;
+          Select one reviewed local strict JSON external-emitter policy (requires --policy-digest). Supported: generate (all modes), check (including CI), report, diff, emitters and pure config inspection. policy digest and all other commands reject supplied policy before reads or effects. No approval, environment isolation, acquisition protection or sandbox is conferred. Parent links/mounts and volume/network locality are not verified
+      --target &lt;TARGETS&gt;
+          Only these targets, comma-separated (`typescript,docs`; `ts`, `py`, `rs` and `rb` are accepted). Default: every target in tungsten.yml
+      --dry-run
+          Report what would be written or removed without touching the disk
+      --policy-digest &lt;DIGEST&gt;
+          Exact blake3: plus 64 lowercase hex digits of the reviewed policy bytes. Obtain it separately with `tungsten policy digest PATH`
+      --check
+          Compare the output directories with what would be generated; write nothing and exit 1 when they differ
+      --offline
+          Reuse verified HTTP/Git input pins and cached files without network access
+      --force
+          Write into a non-empty output directory that tungsten did not generate (one without .tungsten/manifest.json)
+      --refresh-inputs
+          Refresh an HTTP content pin or resolve a Git ref again after review. Converted imports require init into a fresh project to change sources
+      --input-header &lt;[ORIGIN] NAME: VALUE&gt;
+          Header for a URL typed on the command line; for manifest URLs use [https://api.example.com] Name: value to restrict it to that origin. Not Git authentication. Environment values are newline-separated. Prefer the environment for secrets [env: TUNGSTEN_INPUT_HEADERS]
+      --strict
+          Treat warnings (the compiler's and the emitters') as errors: nothing is written when there are any, in any target
+      --json
+          Print exactly one JSON document on stdout
+      --no-external
+          Never start the commands of `external` targets. Without it, an `external` target's command runs on `generate` (any mode), `check --ci`, `diff` and `report`, with your privileges and with whatever the manifest says; pass it (or set TUNGSTEN_NO_EXTERNAL=1) when the manifest is not trusted, for example on a pull request in CI. Such targets are reported as skipped (TG0807). Also disables `emitters` discovery, including descriptor probes of programs on PATH [env: TUNGSTEN_NO_EXTERNAL=]
+  -h, --help
+          Print help
 </code></pre>
 <h3 id="tungsten-mock"><a class="header" href="#tungsten-mock"><code>tungsten mock</code></a></h3>
 <pre><code class="language-text">Serve a mock of the API from the compiled IR
 
-Usage: tungsten mock [OPTIONS] [PATH]
+Usage: tungsten.exe mock [OPTIONS] [PATH]
 
 Arguments:
   [PATH]  A directory with a tungsten.yml, a tungsten*.yml manifest, or a single OpenAPI document (local path, HTTP(S) URL or git+ URL) [default: .]
 
 Options:
-      --offline                       Reuse verified HTTP/Git input pins and cached files without network access
-      --port &lt;PORT&gt;                   Port on 127.0.0.1 to listen on; 0 picks a free port [default: 0]
-      --refresh-inputs                Refresh an HTTP content pin or resolve a Git ref again after review. Converted imports require init into a fresh project to change sources
-      --seed &lt;SEED&gt;                   Seed for generated response values; the same seed gives the same responses [default: 0]
-      --gate &lt;ENV&gt;                    Treat this runtime gate (its environment variable, e.g. SEALED_WEBHOOK_DELIVERY_ENABLED) as on; repeat for several. Gates not listed keep their default
-      --input-header &lt;NAME: VALUE&gt;    Header for HTTP document downloads only (repeatable; not Git authentication). Environment values are newline-separated. Prefer the environment for secrets [env: TUNGSTEN_INPUT_HEADERS]
-      --json                          Print exactly one JSON document on stdout
-      --max-recorded-calls &lt;N&gt;        Recorded calls kept for `/__tungsten/calls`; past it the oldest is dropped. 0 records nothing [default: 10000]
-      --max-idempotent-responses &lt;N&gt;  Stored idempotent responses kept for replays; past it the oldest is dropped and a later request with its key is served as new. 0 stores nothing [default: 10000]
-      --no-external                   Never start the commands of `external` targets. Without it, an `external` target's command runs on `generate` (any mode), `check --ci`, `diff` and `report`, with your privileges and with whatever the manifest says; pass it (or set TUNGSTEN_NO_EXTERNAL=1) when the manifest is not trusted, for example on a pull request in CI. Such targets are reported as skipped (TG0807) [env: TUNGSTEN_NO_EXTERNAL=]
-  -h, --help                          Print help
+      --policy &lt;PATH&gt;
+          Select one reviewed local strict JSON external-emitter policy (requires --policy-digest). Supported: generate (all modes), check (including CI), report, diff, emitters and pure config inspection. policy digest and all other commands reject supplied policy before reads or effects. No approval, environment isolation, acquisition protection or sandbox is conferred. Parent links/mounts and volume/network locality are not verified
+      --scenario &lt;FILE&gt;
+          Load a versioned JSON scenario before serving; no commands are executed
+      --policy-digest &lt;DIGEST&gt;
+          Exact blake3: plus 64 lowercase hex digits of the reviewed policy bytes. Obtain it separately with `tungsten policy digest PATH`
+      --port &lt;PORT&gt;
+          Port on 127.0.0.1 to listen on; 0 picks a free port [default: 0]
+      --offline
+          Reuse verified HTTP/Git input pins and cached files without network access
+      --seed &lt;SEED&gt;
+          Seed for generated response values; the same seed gives the same responses [default: 0]
+      --gate &lt;ENV&gt;
+          Treat this runtime gate (its environment variable, e.g. SEALED_WEBHOOK_DELIVERY_ENABLED) as on; repeat for several. Gates not listed keep their default
+      --refresh-inputs
+          Refresh an HTTP content pin or resolve a Git ref again after review. Converted imports require init into a fresh project to change sources
+      --input-header &lt;[ORIGIN] NAME: VALUE&gt;
+          Header for a URL typed on the command line; for manifest URLs use [https://api.example.com] Name: value to restrict it to that origin. Not Git authentication. Environment values are newline-separated. Prefer the environment for secrets [env: TUNGSTEN_INPUT_HEADERS]
+      --max-recorded-calls &lt;N&gt;
+          Recorded calls kept for `/__tungsten/calls`; past it the oldest is dropped. 0 records nothing [default: 10000]
+      --json
+          Print exactly one JSON document on stdout
+      --max-idempotent-responses &lt;N&gt;
+          Stored idempotent responses kept for replays; past it the oldest is dropped and a later request with its key is served as new. 0 stores nothing [default: 10000]
+      --no-external
+          Never start the commands of `external` targets. Without it, an `external` target's command runs on `generate` (any mode), `check --ci`, `diff` and `report`, with your privileges and with whatever the manifest says; pass it (or set TUNGSTEN_NO_EXTERNAL=1) when the manifest is not trusted, for example on a pull request in CI. Such targets are reported as skipped (TG0807). Also disables `emitters` discovery, including descriptor probes of programs on PATH [env: TUNGSTEN_NO_EXTERNAL=]
+  -h, --help
+          Print help
+</code></pre>
+<h3 id="tungsten-scenario"><a class="header" href="#tungsten-scenario"><code>tungsten scenario</code></a></h3>
+<pre><code class="language-text">Validate a saved mock scenario or run an explicitly selected integration
+
+Usage: tungsten.exe scenario [OPTIONS] &lt;COMMAND&gt;
+
+Commands:
+  validate  Validate a saved JSON scenario without binding or executing commands
+  run       Load isolated mock state, execute explicit argv, and assert counts/exit
+  help      Print this message or the help of the given subcommand(s)
+
+Options:
+      --policy &lt;PATH&gt;
+          Select one reviewed local strict JSON external-emitter policy (requires --policy-digest). Supported: generate (all modes), check (including CI), report, diff, emitters and pure config inspection. policy digest and all other commands reject supplied policy before reads or effects. No approval, environment isolation, acquisition protection or sandbox is conferred. Parent links/mounts and volume/network locality are not verified
+      --policy-digest &lt;DIGEST&gt;
+          Exact blake3: plus 64 lowercase hex digits of the reviewed policy bytes. Obtain it separately with `tungsten policy digest PATH`
+      --offline
+          Reuse verified HTTP/Git input pins and cached files without network access
+      --refresh-inputs
+          Refresh an HTTP content pin or resolve a Git ref again after review. Converted imports require init into a fresh project to change sources
+      --input-header &lt;[ORIGIN] NAME: VALUE&gt;
+          Header for a URL typed on the command line; for manifest URLs use [https://api.example.com] Name: value to restrict it to that origin. Not Git authentication. Environment values are newline-separated. Prefer the environment for secrets [env: TUNGSTEN_INPUT_HEADERS]
+      --json
+          Print exactly one JSON document on stdout
+      --no-external
+          Never start the commands of `external` targets. Without it, an `external` target's command runs on `generate` (any mode), `check --ci`, `diff` and `report`, with your privileges and with whatever the manifest says; pass it (or set TUNGSTEN_NO_EXTERNAL=1) when the manifest is not trusted, for example on a pull request in CI. Such targets are reported as skipped (TG0807). Also disables `emitters` discovery, including descriptor probes of programs on PATH [env: TUNGSTEN_NO_EXTERNAL=]
+  -h, --help
+          Print help
+</code></pre>
+<h4 id="tungsten-scenario-validate"><a class="header" href="#tungsten-scenario-validate"><code>tungsten scenario validate</code></a></h4>
+<pre><code class="language-text">Validate a saved JSON scenario without binding or executing commands
+
+Usage: tungsten.exe scenario validate [OPTIONS] --scenario &lt;FILE&gt; [PATH]
+
+Arguments:
+  [PATH]  A directory with a tungsten.yml, a tungsten*.yml manifest, or a single OpenAPI document (local path, HTTP(S) URL or git+ URL) [default: .]
+
+Options:
+      --policy &lt;PATH&gt;
+          Select one reviewed local strict JSON external-emitter policy (requires --policy-digest). Supported: generate (all modes), check (including CI), report, diff, emitters and pure config inspection. policy digest and all other commands reject supplied policy before reads or effects. No approval, environment isolation, acquisition protection or sandbox is conferred. Parent links/mounts and volume/network locality are not verified
+      --scenario &lt;FILE&gt;
+          
+      --policy-digest &lt;DIGEST&gt;
+          Exact blake3: plus 64 lowercase hex digits of the reviewed policy bytes. Obtain it separately with `tungsten policy digest PATH`
+      --offline
+          Reuse verified HTTP/Git input pins and cached files without network access
+      --refresh-inputs
+          Refresh an HTTP content pin or resolve a Git ref again after review. Converted imports require init into a fresh project to change sources
+      --input-header &lt;[ORIGIN] NAME: VALUE&gt;
+          Header for a URL typed on the command line; for manifest URLs use [https://api.example.com] Name: value to restrict it to that origin. Not Git authentication. Environment values are newline-separated. Prefer the environment for secrets [env: TUNGSTEN_INPUT_HEADERS]
+      --json
+          Print exactly one JSON document on stdout
+      --no-external
+          Never start the commands of `external` targets. Without it, an `external` target's command runs on `generate` (any mode), `check --ci`, `diff` and `report`, with your privileges and with whatever the manifest says; pass it (or set TUNGSTEN_NO_EXTERNAL=1) when the manifest is not trusted, for example on a pull request in CI. Such targets are reported as skipped (TG0807). Also disables `emitters` discovery, including descriptor probes of programs on PATH [env: TUNGSTEN_NO_EXTERNAL=]
+  -h, --help
+          Print help
+</code></pre>
+<h4 id="tungsten-scenario-run"><a class="header" href="#tungsten-scenario-run"><code>tungsten scenario run</code></a></h4>
+<pre><code class="language-text">Load isolated mock state, execute explicit argv, and assert counts/exit
+
+Usage: tungsten.exe scenario run [OPTIONS] --scenario &lt;FILE&gt; [PATH] -- &lt;COMMAND&gt;...
+
+Arguments:
+  [PATH]        A directory with a tungsten.yml, a tungsten*.yml manifest, or a single OpenAPI document (local path, HTTP(S) URL or git+ URL) [default: .]
+  &lt;COMMAND&gt;...  Executable and arguments after --. No shell interpolation is performed
+
+Options:
+      --policy &lt;PATH&gt;
+          Select one reviewed local strict JSON external-emitter policy (requires --policy-digest). Supported: generate (all modes), check (including CI), report, diff, emitters and pure config inspection. policy digest and all other commands reject supplied policy before reads or effects. No approval, environment isolation, acquisition protection or sandbox is conferred. Parent links/mounts and volume/network locality are not verified
+      --scenario &lt;FILE&gt;
+          
+      --policy-digest &lt;DIGEST&gt;
+          Exact blake3: plus 64 lowercase hex digits of the reviewed policy bytes. Obtain it separately with `tungsten policy digest PATH`
+      --timeout-ms &lt;TIMEOUT_MS&gt;
+          Run-phase budget including cleanup; compilation/validation precede it [default: 30000]
+      --expect-exit &lt;EXPECT_EXIT&gt;
+          [default: 0]
+      --offline
+          Reuse verified HTTP/Git input pins and cached files without network access
+      --max-calls &lt;MAX_CALLS&gt;
+          [default: 10000]
+      --refresh-inputs
+          Refresh an HTTP content pin or resolve a Git ref again after review. Converted imports require init into a fresh project to change sources
+      --input-header &lt;[ORIGIN] NAME: VALUE&gt;
+          Header for a URL typed on the command line; for manifest URLs use [https://api.example.com] Name: value to restrict it to that origin. Not Git authentication. Environment values are newline-separated. Prefer the environment for secrets [env: TUNGSTEN_INPUT_HEADERS]
+      --json
+          Print exactly one JSON document on stdout
+      --no-external
+          Never start the commands of `external` targets. Without it, an `external` target's command runs on `generate` (any mode), `check --ci`, `diff` and `report`, with your privileges and with whatever the manifest says; pass it (or set TUNGSTEN_NO_EXTERNAL=1) when the manifest is not trusted, for example on a pull request in CI. Such targets are reported as skipped (TG0807). Also disables `emitters` discovery, including descriptor probes of programs on PATH [env: TUNGSTEN_NO_EXTERNAL=]
+  -h, --help
+          Print help
 </code></pre>
 <h3 id="tungsten-report"><a class="header" href="#tungsten-report"><code>tungsten report</code></a></h3>
 <pre><code class="language-text">Coverage, safety matrix, token budgets, diagnostics and changes since the last generation, as text, one static HTML file or JSON
 
-Usage: tungsten report [OPTIONS] [PATH]
+Usage: tungsten.exe report [OPTIONS] [PATH]
 
 Arguments:
   [PATH]  A directory with a tungsten.yml, a tungsten*.yml manifest, or a single OpenAPI document (local path, HTTP(S) URL or git+ URL) [default: .]
 
 Options:
-      --html &lt;FILE&gt;                 Write the report as one static HTML file (no external assets, no scripts)
-      --offline                     Reuse verified HTTP/Git input pins and cached files without network access
-      --all-targets                 Also run the emitter of every target this version knows, not only the configured ones, to fill the coverage table and the token budgets of targets that are not enabled yet. Slow on a large API. Without it those targets are listed as `not_configured`. Configured `external` targets run either way (see --no-external)
-      --refresh-inputs              Refresh an HTTP content pin or resolve a Git ref again after review. Converted imports require init into a fresh project to change sources
-      --input-header &lt;NAME: VALUE&gt;  Header for HTTP document downloads only (repeatable; not Git authentication). Environment values are newline-separated. Prefer the environment for secrets [env: TUNGSTEN_INPUT_HEADERS]
-      --json                        Print exactly one JSON document on stdout
-      --no-external                 Never start the commands of `external` targets. Without it, an `external` target's command runs on `generate` (any mode), `check --ci`, `diff` and `report`, with your privileges and with whatever the manifest says; pass it (or set TUNGSTEN_NO_EXTERNAL=1) when the manifest is not trusted, for example on a pull request in CI. Such targets are reported as skipped (TG0807) [env: TUNGSTEN_NO_EXTERNAL=]
-  -h, --help                        Print help
+      --html &lt;FILE&gt;
+          Write the report as one static HTML file (no external assets, no scripts)
+      --policy &lt;PATH&gt;
+          Select one reviewed local strict JSON external-emitter policy (requires --policy-digest). Supported: generate (all modes), check (including CI), report, diff, emitters and pure config inspection. policy digest and all other commands reject supplied policy before reads or effects. No approval, environment isolation, acquisition protection or sandbox is conferred. Parent links/mounts and volume/network locality are not verified
+      --all-targets
+          Also run the emitter of every target this version knows, not only the configured ones, to fill the coverage table and the token budgets of targets that are not enabled yet. Slow on a large API. Without it those targets are listed as `not_configured`. Configured `external` targets run either way (see --no-external)
+      --policy-digest &lt;DIGEST&gt;
+          Exact blake3: plus 64 lowercase hex digits of the reviewed policy bytes. Obtain it separately with `tungsten policy digest PATH`
+      --offline
+          Reuse verified HTTP/Git input pins and cached files without network access
+      --refresh-inputs
+          Refresh an HTTP content pin or resolve a Git ref again after review. Converted imports require init into a fresh project to change sources
+      --input-header &lt;[ORIGIN] NAME: VALUE&gt;
+          Header for a URL typed on the command line; for manifest URLs use [https://api.example.com] Name: value to restrict it to that origin. Not Git authentication. Environment values are newline-separated. Prefer the environment for secrets [env: TUNGSTEN_INPUT_HEADERS]
+      --json
+          Print exactly one JSON document on stdout
+      --no-external
+          Never start the commands of `external` targets. Without it, an `external` target's command runs on `generate` (any mode), `check --ci`, `diff` and `report`, with your privileges and with whatever the manifest says; pass it (or set TUNGSTEN_NO_EXTERNAL=1) when the manifest is not trusted, for example on a pull request in CI. Such targets are reported as skipped (TG0807). Also disables `emitters` discovery, including descriptor probes of programs on PATH [env: TUNGSTEN_NO_EXTERNAL=]
+  -h, --help
+          Print help
 </code></pre>
 <h3 id="tungsten-diff"><a class="header" href="#tungsten-diff"><code>tungsten diff</code></a></h3>
 <pre><code class="language-text">Show what regeneration would add, change or remove in each target, and with --semver how the API surface changed
 
-Usage: tungsten diff [OPTIONS] [PATH]
+Usage: tungsten.exe diff [OPTIONS] [PATH]
 
 Arguments:
   [PATH]  A directory with a tungsten.yml, a tungsten*.yml manifest, or a single OpenAPI document (local path, HTTP(S) URL or git+ URL) [default: .]
 
 Options:
-      --offline                     Reuse verified HTTP/Git input pins and cached files without network access
-      --target &lt;TARGETS&gt;            Only these targets, comma-separated. Default: every target in tungsten.yml
-      --refresh-inputs              Refresh an HTTP content pin or resolve a Git ref again after review. Converted imports require init into a fresh project to change sources
-      --semver                      Classify the API surface change since the last generation (from .tungsten/surface.json) as major, minor, patch or none
-      --input-header &lt;NAME: VALUE&gt;  Header for HTTP document downloads only (repeatable; not Git authentication). Environment values are newline-separated. Prefer the environment for secrets [env: TUNGSTEN_INPUT_HEADERS]
-      --migration                   Include actionable migration guidance (implies --semver)
-      --json                        Print exactly one JSON document on stdout
-      --no-external                 Never start the commands of `external` targets. Without it, an `external` target's command runs on `generate` (any mode), `check --ci`, `diff` and `report`, with your privileges and with whatever the manifest says; pass it (or set TUNGSTEN_NO_EXTERNAL=1) when the manifest is not trusted, for example on a pull request in CI. Such targets are reported as skipped (TG0807) [env: TUNGSTEN_NO_EXTERNAL=]
-  -h, --help                        Print help
+      --policy &lt;PATH&gt;
+          Select one reviewed local strict JSON external-emitter policy (requires --policy-digest). Supported: generate (all modes), check (including CI), report, diff, emitters and pure config inspection. policy digest and all other commands reject supplied policy before reads or effects. No approval, environment isolation, acquisition protection or sandbox is conferred. Parent links/mounts and volume/network locality are not verified
+      --target &lt;TARGETS&gt;
+          Only these targets, comma-separated. Default: every target in tungsten.yml
+      --policy-digest &lt;DIGEST&gt;
+          Exact blake3: plus 64 lowercase hex digits of the reviewed policy bytes. Obtain it separately with `tungsten policy digest PATH`
+      --semver
+          Classify the API surface change since the last generation (from .tungsten/surface.json) as major, minor, patch or none
+      --migration
+          Include actionable migration guidance (implies --semver)
+      --offline
+          Reuse verified HTTP/Git input pins and cached files without network access
+      --refresh-inputs
+          Refresh an HTTP content pin or resolve a Git ref again after review. Converted imports require init into a fresh project to change sources
+      --input-header &lt;[ORIGIN] NAME: VALUE&gt;
+          Header for a URL typed on the command line; for manifest URLs use [https://api.example.com] Name: value to restrict it to that origin. Not Git authentication. Environment values are newline-separated. Prefer the environment for secrets [env: TUNGSTEN_INPUT_HEADERS]
+      --json
+          Print exactly one JSON document on stdout
+      --no-external
+          Never start the commands of `external` targets. Without it, an `external` target's command runs on `generate` (any mode), `check --ci`, `diff` and `report`, with your privileges and with whatever the manifest says; pass it (or set TUNGSTEN_NO_EXTERNAL=1) when the manifest is not trusted, for example on a pull request in CI. Such targets are reported as skipped (TG0807). Also disables `emitters` discovery, including descriptor probes of programs on PATH [env: TUNGSTEN_NO_EXTERNAL=]
+  -h, --help
+          Print help
 </code></pre>
 <h3 id="tungsten-overlay"><a class="header" href="#tungsten-overlay"><code>tungsten overlay</code></a></h3>
 <pre><code class="language-text">OpenAPI Overlay authoring helpers
 
-Usage: tungsten overlay [OPTIONS] &lt;COMMAND&gt;
+Usage: tungsten.exe overlay [OPTIONS] &lt;COMMAND&gt;
 
 Commands:
   suggest  Suggest an Overlay 1.0 document whose actions fix diagnostics (a missing or repeated operationId) without changing the IR
   help     Print this message or the help of the given subcommand(s)
 
 Options:
-      --offline                     Reuse verified HTTP/Git input pins and cached files without network access
-      --refresh-inputs              Refresh an HTTP content pin or resolve a Git ref again after review. Converted imports require init into a fresh project to change sources
-      --input-header &lt;NAME: VALUE&gt;  Header for HTTP document downloads only (repeatable; not Git authentication). Environment values are newline-separated. Prefer the environment for secrets [env: TUNGSTEN_INPUT_HEADERS]
-      --json                        Print exactly one JSON document on stdout
-      --no-external                 Never start the commands of `external` targets. Without it, an `external` target's command runs on `generate` (any mode), `check --ci`, `diff` and `report`, with your privileges and with whatever the manifest says; pass it (or set TUNGSTEN_NO_EXTERNAL=1) when the manifest is not trusted, for example on a pull request in CI. Such targets are reported as skipped (TG0807) [env: TUNGSTEN_NO_EXTERNAL=]
-  -h, --help                        Print help
+      --policy &lt;PATH&gt;
+          Select one reviewed local strict JSON external-emitter policy (requires --policy-digest). Supported: generate (all modes), check (including CI), report, diff, emitters and pure config inspection. policy digest and all other commands reject supplied policy before reads or effects. No approval, environment isolation, acquisition protection or sandbox is conferred. Parent links/mounts and volume/network locality are not verified
+      --policy-digest &lt;DIGEST&gt;
+          Exact blake3: plus 64 lowercase hex digits of the reviewed policy bytes. Obtain it separately with `tungsten policy digest PATH`
+      --offline
+          Reuse verified HTTP/Git input pins and cached files without network access
+      --refresh-inputs
+          Refresh an HTTP content pin or resolve a Git ref again after review. Converted imports require init into a fresh project to change sources
+      --input-header &lt;[ORIGIN] NAME: VALUE&gt;
+          Header for a URL typed on the command line; for manifest URLs use [https://api.example.com] Name: value to restrict it to that origin. Not Git authentication. Environment values are newline-separated. Prefer the environment for secrets [env: TUNGSTEN_INPUT_HEADERS]
+      --json
+          Print exactly one JSON document on stdout
+      --no-external
+          Never start the commands of `external` targets. Without it, an `external` target's command runs on `generate` (any mode), `check --ci`, `diff` and `report`, with your privileges and with whatever the manifest says; pass it (or set TUNGSTEN_NO_EXTERNAL=1) when the manifest is not trusted, for example on a pull request in CI. Such targets are reported as skipped (TG0807). Also disables `emitters` discovery, including descriptor probes of programs on PATH [env: TUNGSTEN_NO_EXTERNAL=]
+  -h, --help
+          Print help
 </code></pre>
 <h4 id="tungsten-overlay-suggest"><a class="header" href="#tungsten-overlay-suggest"><code>tungsten overlay suggest</code></a></h4>
 <pre><code class="language-text">Suggest an Overlay 1.0 document whose actions fix diagnostics (a missing or repeated operationId) without changing the IR
 
-Usage: tungsten overlay suggest [OPTIONS] [PATH]
+Usage: tungsten.exe overlay suggest [OPTIONS] [PATH]
 
 Arguments:
   [PATH]  A directory with a tungsten.yml, a tungsten*.yml manifest, or a single OpenAPI document (local path, HTTP(S) URL or git+ URL) [default: .]
 
 Options:
-      --offline                     Reuse verified HTTP/Git input pins and cached files without network access
-      --write &lt;FILE&gt;                Write the overlay to this file instead of stdout
-      --force                       Overwrite the --write file if it exists
-      --refresh-inputs              Refresh an HTTP content pin or resolve a Git ref again after review. Converted imports require init into a fresh project to change sources
-      --input-header &lt;NAME: VALUE&gt;  Header for HTTP document downloads only (repeatable; not Git authentication). Environment values are newline-separated. Prefer the environment for secrets [env: TUNGSTEN_INPUT_HEADERS]
-      --only &lt;CODES&gt;                Only suggest fixes for these diagnostic codes, comma-separated
-      --json                        Print exactly one JSON document on stdout
-      --namespace &lt;NAME&gt;            The input (namespace) to suggest for. Needed when more than one input has suggestions: an overlay's targets only fit its own spec
-      --no-external                 Never start the commands of `external` targets. Without it, an `external` target's command runs on `generate` (any mode), `check --ci`, `diff` and `report`, with your privileges and with whatever the manifest says; pass it (or set TUNGSTEN_NO_EXTERNAL=1) when the manifest is not trusted, for example on a pull request in CI. Such targets are reported as skipped (TG0807) [env: TUNGSTEN_NO_EXTERNAL=]
-  -h, --help                        Print help
+      --policy &lt;PATH&gt;
+          Select one reviewed local strict JSON external-emitter policy (requires --policy-digest). Supported: generate (all modes), check (including CI), report, diff, emitters and pure config inspection. policy digest and all other commands reject supplied policy before reads or effects. No approval, environment isolation, acquisition protection or sandbox is conferred. Parent links/mounts and volume/network locality are not verified
+      --write &lt;FILE&gt;
+          Write the overlay to this file instead of stdout
+      --force
+          Overwrite the --write file if it exists
+      --policy-digest &lt;DIGEST&gt;
+          Exact blake3: plus 64 lowercase hex digits of the reviewed policy bytes. Obtain it separately with `tungsten policy digest PATH`
+      --offline
+          Reuse verified HTTP/Git input pins and cached files without network access
+      --only &lt;CODES&gt;
+          Only suggest fixes for these diagnostic codes, comma-separated
+      --namespace &lt;NAME&gt;
+          The input (namespace) to suggest for. Needed when more than one input has suggestions: an overlay's targets only fit its own spec
+      --refresh-inputs
+          Refresh an HTTP content pin or resolve a Git ref again after review. Converted imports require init into a fresh project to change sources
+      --input-header &lt;[ORIGIN] NAME: VALUE&gt;
+          Header for a URL typed on the command line; for manifest URLs use [https://api.example.com] Name: value to restrict it to that origin. Not Git authentication. Environment values are newline-separated. Prefer the environment for secrets [env: TUNGSTEN_INPUT_HEADERS]
+      --json
+          Print exactly one JSON document on stdout
+      --no-external
+          Never start the commands of `external` targets. Without it, an `external` target's command runs on `generate` (any mode), `check --ci`, `diff` and `report`, with your privileges and with whatever the manifest says; pass it (or set TUNGSTEN_NO_EXTERNAL=1) when the manifest is not trusted, for example on a pull request in CI. Such targets are reported as skipped (TG0807). Also disables `emitters` discovery, including descriptor probes of programs on PATH [env: TUNGSTEN_NO_EXTERNAL=]
+  -h, --help
+          Print help
 </code></pre>
 <h3 id="tungsten-lsp"><a class="header" href="#tungsten-lsp"><code>tungsten lsp</code></a></h3>
 <pre><code class="language-text">Serve a Language Server Protocol server on stdin and stdout for tungsten.yml, agent.yml and overlays: diagnostics, completion, hover, go-to-definition and symbols. `--json` has no effect
 
-Usage: tungsten lsp [OPTIONS]
+Usage: tungsten.exe lsp [OPTIONS]
 
 Options:
-      --config &lt;PATH&gt;               The manifest to serve: a tungsten.yml, or a directory holding one. Default: the tungsten.yml of the editor's workspace folder
-      --offline                     Reuse verified HTTP/Git input pins and cached files without network access
-      --refresh-inputs              Refresh an HTTP content pin or resolve a Git ref again after review. Converted imports require init into a fresh project to change sources
-      --input-header &lt;NAME: VALUE&gt;  Header for HTTP document downloads only (repeatable; not Git authentication). Environment values are newline-separated. Prefer the environment for secrets [env: TUNGSTEN_INPUT_HEADERS]
-      --json                        Print exactly one JSON document on stdout
-      --no-external                 Never start the commands of `external` targets. Without it, an `external` target's command runs on `generate` (any mode), `check --ci`, `diff` and `report`, with your privileges and with whatever the manifest says; pass it (or set TUNGSTEN_NO_EXTERNAL=1) when the manifest is not trusted, for example on a pull request in CI. Such targets are reported as skipped (TG0807) [env: TUNGSTEN_NO_EXTERNAL=]
-  -h, --help                        Print help
+      --config &lt;PATH&gt;
+          The manifest to serve: a tungsten.yml, or a directory holding one. Default: the tungsten.yml of the editor's workspace folder
+      --policy &lt;PATH&gt;
+          Select one reviewed local strict JSON external-emitter policy (requires --policy-digest). Supported: generate (all modes), check (including CI), report, diff, emitters and pure config inspection. policy digest and all other commands reject supplied policy before reads or effects. No approval, environment isolation, acquisition protection or sandbox is conferred. Parent links/mounts and volume/network locality are not verified
+      --policy-digest &lt;DIGEST&gt;
+          Exact blake3: plus 64 lowercase hex digits of the reviewed policy bytes. Obtain it separately with `tungsten policy digest PATH`
+      --offline
+          Reuse verified HTTP/Git input pins and cached files without network access
+      --refresh-inputs
+          Refresh an HTTP content pin or resolve a Git ref again after review. Converted imports require init into a fresh project to change sources
+      --input-header &lt;[ORIGIN] NAME: VALUE&gt;
+          Header for a URL typed on the command line; for manifest URLs use [https://api.example.com] Name: value to restrict it to that origin. Not Git authentication. Environment values are newline-separated. Prefer the environment for secrets [env: TUNGSTEN_INPUT_HEADERS]
+      --json
+          Print exactly one JSON document on stdout
+      --no-external
+          Never start the commands of `external` targets. Without it, an `external` target's command runs on `generate` (any mode), `check --ci`, `diff` and `report`, with your privileges and with whatever the manifest says; pass it (or set TUNGSTEN_NO_EXTERNAL=1) when the manifest is not trusted, for example on a pull request in CI. Such targets are reported as skipped (TG0807). Also disables `emitters` discovery, including descriptor probes of programs on PATH [env: TUNGSTEN_NO_EXTERNAL=]
+  -h, --help
+          Print help
 </code></pre>
 
                     </main>

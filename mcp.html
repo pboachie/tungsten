@@ -200,7 +200,7 @@ tool order, each vector L2-normalized, so cosine is a dot product) and
 and <code>docs</code>, the tool name and content hash of each document). Providers:
 <code>command</code> (a command line run from the directory of <code>tungsten.yml</code>: one JSON
 request on standard input, <code>{"embeddings": [[...], ...]}</code> on standard
-output) and <code>http</code> (the common <code>/embeddings</code> shape: <code>POST</code> of <code>{model, input, dimensions?, encoding_format}</code>, answer <code>{data: [{index, embedding}]}</code>, <code>Authorization: Bearer</code> from the environment variable named
+output) and <code>http</code> (the common <code>/embeddings</code> shape: <code>POST</code> of <code>{model,  input, dimensions?, encoding_format}</code>, answer <code>{data: [{index,  embedding}]}</code>, <code>Authorization: Bearer</code> from the environment variable named
 by <code>api_key_env</code>; the key is never written anywhere). The compiler links no
 TLS stack, so its <code>http</code> provider is plain <code>http://</code> only (a local gateway,
 or a <code>command</code> that runs <code>curl</code>); the server's own query embedder has no such
@@ -230,7 +230,7 @@ the discrete listing ~29M tokens). The rule, in <code>tungsten-emit-mcp</code>
 from the response body is replaced by <code>{}</code> (any value, so the real
 <code>structuredContent</code> still validates), then the unreachable <code>$defs</code> are
 dropped; hoisted <code>shared_*</code> scalars never count as a hop. When the result is
-still over <code>OUTPUT_BUDGET_FACTOR</code> (4) times <code>defaults.disclosure. schema_budget_tokens</code>, every reference is <code>{}</code> (0 hops). A tool still over that
+still over <code>OUTPUT_BUDGET_FACTOR</code> (4) times <code>defaults.disclosure.  schema_budget_tokens</code>, every reference is <code>{}</code> (0 hops). A tool still over that
 budget is TG0727. TG0721 keeps counting description plus input only
 (<code>schemaTokens</code> is that figure in the manifest). The runtime needs no change:
 <code>advertisedOutputSchema</code> passes <code>$defs</code> and the body through.</p>
@@ -261,9 +261,9 @@ secret now; it will not be shown again."</li>
 the compiler) and a small server package on top of the
 generated TypeScript SDK; all behaviour lives in <code>@elysra/tungsten-mcp</code>.</p>
 <ul>
-<li><code>src/server.ts</code> reads the manifest with <code>loadManifest(new URL("../manifest.json", import.meta.url))</code>, builds one <code>ClientCore</code> per
+<li><code>src/server.ts</code> reads the manifest with <code>loadManifest(new  URL("../manifest.json", import.meta.url))</code>, builds one <code>ClientCore</code> per
 MCP session from the environment (one variable per credential, the base
-URL, <code>&lt;API&gt;_MCP_MODE</code>) and starts with <code>serve(server, parseServeArgs(argv))</code>: stdio by default, Streamable HTTP with <code>--http &lt;port&gt; [--host &lt;host&gt;]</code> (the URL is written to stderr; SIGINT and
+URL, <code>&lt;API&gt;_MCP_MODE</code>) and starts with <code>serve(server,  parseServeArgs(argv))</code>: stdio by default, Streamable HTTP with <code>--http  &lt;port&gt; [--host &lt;host&gt;]</code> (the URL is written to stderr; SIGINT and
 SIGTERM close every session). The command line selects the transport
 only; credentials never come from arguments.</li>
 <li><code>invoke</code> and <code>preview</code> take <code>{name, arguments}</code> (discrete <code>preview</code>
@@ -273,15 +273,15 @@ argument has that name) are taken out before the SDK call.</li>
 <li>The manifest carries <code>instructionsByMode</code> (additive): the runtime sends
 the instructions of the mode in effect, so a server whose mode is
 overridden does not describe the other mode's tools.</li>
-<li>Descriptions name the fields a tool returns once (<code>returns signing_secret_b64url once</code>), so a client that has no output schema
+<li>Descriptions name the fields a tool returns once (<code>returns  signing_secret_b64url once</code>), so a client that has no output schema
 (a discrete macro, a search result) knows which value to store.</li>
-<li>Macro previews: the text rendering lists every step (<code>N. &lt;kind&gt; &lt;operation&gt; (&lt;tier&gt;, result as &lt;as&gt;): &lt;method&gt; &lt;url&gt; with body ...</code>,
+<li>Macro previews: the text rendering lists every step (<code>N. &lt;kind&gt;  &lt;operation&gt; (&lt;tier&gt;, result as &lt;as&gt;): &lt;method&gt; &lt;url&gt; with body ...</code>,
 then its effects) with the <code>&lt;from step NAME: path&gt;</code> placeholders;
 <code>structuredContent</code> is the <code>PreviewResult</code> with its <code>steps</code>.</li>
 <li>Envelopes stay the runtime's; when their <code>remediation</code> or
 <code>next_action</code> names SDK operations, the text adds how this server calls
-them (<code>Here public.listWebhookEndpoints is called as invoke({"name": "public_webhooks_list", ...})</code>).</li>
-<li>Token budgets count what the runtime serves: <code>tungsten_emit_mcp:: tools_list</code> renders <code>tools/list</code> of either mode exactly as <code>@elysra/tungsten-mcp</code>
+them (<code>Here public.listWebhookEndpoints is called as  invoke({"name": "public_webhooks_list", ...})</code>).</li>
+<li>Token budgets count what the runtime serves: <code>tungsten_emit_mcp::  tools_list</code> renders <code>tools/list</code> of either mode exactly as <code>@elysra/tungsten-mcp</code>
 does (the advertised output schemas with the envelope branch, the
 redaction markers and the verification result; the <code>preview</code> meta tool;
 the cluster enum), and <code>listing_tokens</code> adds that mode's instructions.
@@ -320,6 +320,7 @@ was cancelled or rolled back.</p>
 <h3 id="openapi-mcp"><a class="header" href="#openapi-mcp">openapi-mcp</a></h3>
 <p>MCP server for the openapi API, generated by tungsten. It serves 3 tools (3 operations, 0 macros) over stdio through <code>@elysra/tungsten-mcp</code>, calling the API with the generated SDK <code>openapi-sdk</code>.</p>
 <h4 id="run"><a class="header" href="#run">Run</a></h4>
+<p>Requires Node.js 22.13 or newer; Node.js 23 requires 23.2 or newer.</p>
 <pre><code class="language-sh">npm install
 npm run build
 node dist/server.js    # or `openapi-mcp` once installed

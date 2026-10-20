@@ -190,11 +190,12 @@
 </code></pre>
 <h3 id="usage"><a class="header" href="#usage">Usage</a></h3>
 <pre><code class="language-java">import com.example.openapi.OpenapiClient;
+import com.example.openapi.resources.PetsResource;
 import io.github.pboachie.tungsten.runtime.*;
 
 var client = new OpenapiClient(ClientOptions.builder()
         .build());
-Result&lt;List&lt;Pet&gt;&gt; result = client.pets().list(PetsResource.ListRequest.builder().build(), CallOptions.defaults());
+var result = client.pets().list(PetsResource.ListRequest.builder().build(), CallOptions.defaults());
 if (result instanceof Result.Err&lt;?&gt; err) {
     System.err.println(err.error().toJson()); // the error envelope
 }

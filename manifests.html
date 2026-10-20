@@ -611,7 +611,7 @@ the MCP server or the docs.</p>
 </tbody></table>
 </div>
 <p>Exactly one of <code>reject_host_suffixes</code> and <code>max_ahead_minutes</code> per rule
-(TG0602 otherwise). Compiled form: <code>OperationAgentMeta.server_rules: Vec&lt;ServerRule&gt;</code> (<code>field</code>, <code>check</code> tagged <code>host_suffixes { suffixes }</code> or
+(TG0602 otherwise). Compiled form: <code>OperationAgentMeta.server_rules:  Vec&lt;ServerRule&gt;</code> (<code>field</code>, <code>check</code> tagged <code>host_suffixes { suffixes }</code> or
 <code>max_ahead_minutes { minutes }</code>, <code>status</code>, <code>code?</code>, <code>message?</code>), written only
 when non-empty. The mock checks them after the description's own checks
 (authentication, parameters, body schema) and before idempotent replay, so a
@@ -648,7 +648,7 @@ one its tools entry or <code>x-agent-cluster</code> names, else the first declar
 cluster whose list (operation references, macro names, <code>&lt;ns&gt;.*</code> and
 <code>&lt;ns&gt;.&lt;resource path&gt;.*</code> globs) covers it.</li>
 <li>Macros are checked against the compiled API and normalized to the
-canonical form on <code>tungsten_ir::Macro</code> (steps <code>{kind, operation, args, as, until, interval_ms, budget_ms, max_pages}</code>, <code>input: {extends, add}</code>); a macro carries <code>cluster</code>, <code>sensitive_response_fields</code> and
+canonical form on <code>tungsten_ir::Macro</code> (steps <code>{kind, operation, args,  as, until, interval_ms, budget_ms, max_pages}</code>, <code>input: {extends,  add}</code>); a macro carries <code>cluster</code>, <code>sensitive_response_fields</code> and
 <code>shown_once</code>. Its safety is the strictest step's (a poll counts as
 <code>read_only</code>); a weaker declared tier is raised (TG0609).</li>
 <li>Macro confirmation is macro-level. A macro whose tier is <code>destructive</code>
@@ -658,7 +658,7 @@ the macro's own preview, bound to the macro name and its exact input
 (after defaults). That confirmation authorizes every step; steps never
 ask for tokens of their own, since their arguments can depend on
 earlier results. The macro preview validates and renders the first step
-and lists every step's effects (arguments only known later read <code>&lt;from an earlier step&gt;</code>), without sending anything.</li>
+and lists every step's effects (arguments only known later read <code>&lt;from  an earlier step&gt;</code>), without sending anything.</li>
 <li>At run time an added input field's JSON Schema <code>default</code> is applied
 when the input omits it, and a <code>poll</code> step whose budget runs out binds
 its <code>as</code> name to <code>null</code> (so <code>{expr: "$status == null"}</code> reports the

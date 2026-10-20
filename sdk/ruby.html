@@ -203,7 +203,7 @@ end
 <li><code>confirm</code>: <code>true</code> for a destructive operation, or the <code>confirmation_token</code> of the operation's <code>preview_&lt;method&gt;</code> (the only way for an irreversible one);</li>
 <li><code>timeout_ms</code>, <code>verify</code>, <code>headers</code>.</li>
 </ul>
-<p>Client options (keywords of <code>new</code>): <code>base_url</code>, <code>auth</code> (credentials by scheme name), <code>timeout_ms</code>, <code>retries</code>, <code>idempotency_store</code>, <code>middleware</code>, <code>validate_responses</code> (<code>"warn"</code>, <code>"strict"</code>, <code>"off"</code>), <code>on_diagnostic</code>, <code>headers</code>, <code>max_event_bytes</code>, <code>max_reconnects</code>, <code>reconnect_max_ms</code>, <code>idle_timeout_ms</code>, <code>token_store</code>.</p>
+<p>Client options (keywords of <code>new</code>): <code>base_url</code>, <code>auth</code> (credentials by scheme name), <code>timeout_ms</code>, <code>retries</code>, <code>idempotency_store</code>, <code>middleware</code>, <code>validate_responses</code> (<code>"warn"</code>, <code>"strict"</code>, <code>"off"</code>), <code>on_diagnostic</code>, <code>headers</code>, <code>max_event_bytes</code>, <code>max_reconnects</code>, <code>reconnect_max_ms</code>, <code>idle_timeout_ms</code>, <code>token_store</code>, <code>max_oauth_token_response_bytes</code> (positive safe integer, 64 KiB by default for each code/refresh response).</p>
 <h3 id="operations"><a class="header" href="#operations">Operations</a></h3>
 <div class="table-wrapper"><table><thead><tr><th>Method</th><th>Operation</th><th>Safety</th></tr></thead><tbody>
 <tr><td><code>client.pets.list</code></td><td><code>openapi.listPets</code></td><td><code>read_only</code></td></tr>

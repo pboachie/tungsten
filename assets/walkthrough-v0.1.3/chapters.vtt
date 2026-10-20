@@ -1,0 +1,37 @@
+WEBVTT
+
+1
+00:00:00.000 --> 00:00:12.286
+Contents
+
+2
+00:00:12.286 --> 00:00:47.719
+Published v0.1.3 and what is new
+
+3
+00:00:47.719 --> 00:01:25.720
+Generate three SDKs and compile Kotlin
+
+4
+00:01:25.720 --> 00:02:00.846
+Build F# with matching .NET source runtimes
+
+5
+00:02:00.846 --> 00:02:37.847
+Analyze, compile and run the Dart client locally
+
+6
+00:02:37.847 --> 00:03:14.888
+Pinned HTTP input, refresh and offline reuse
+
+7
+00:03:14.888 --> 00:03:54.331
+Native Git acquisition and offline commit pins
+
+8
+00:03:54.331 --> 00:04:39.332
+Bounded Rust/Axum library import
+
+9
+00:04:39.332 --> 00:05:18.350
+Policy limits and reproducible review artifacts

@@ -1,0 +1,67 @@
+1
+00:00:00,300 --> 00:00:10,230
+Tungsten version 0.1.3 is published. This walkthrough shows real commands, local fixtures, and the limits behind the new features.
+
+2
+00:00:12,736 --> 00:00:30,376
+This is the published release archive, checked against its checksum and the exact source tag. The new SDK targets are Kotlin, Dart and F#. Together with the existing targets, native OpenAPI now supports ten SDK languages, including external emitter Go.
+
+3
+00:00:30,726 --> 00:00:47,018
+The demonstrations use one declared, read-only pets contract and matching source runtimes. Generated files, compiler builds and actual calls are different checks. Nothing here uses production credentials or sends a write request to a real service.
+
+4
+00:00:48,169 --> 00:01:05,816
+One native OpenAPI contract generates all three new SDKs. The output directories and compiler manifests are real. Kotlin is a thin language layer over the Java runtime. Its transport is blocking, and the generated package targets Java seventeen.
+
+5
+00:01:06,166 --> 00:01:24,149
+Here the Java runtime compiles with release seventeen, then the matching Kotlin runtime and generated client compile with the pinned Kotlin compiler. The jar contains the actual client and model classes. This is a build check, not a claim that every runtime feature was exercised.
+
+6
+00:01:26,170 --> 00:01:41,439
+F# uses the shared C# core through a language-native API. This generated project targets .NET 10. The build uses the matching tagged runtime projects, and keeps its artifacts outside the source checkout.
+
+7
+00:01:41,789 --> 00:02:00,145
+The command serializes compilation to avoid a shared-output file lock observed during preparation on this Windows host. The SDK build succeeds without changing generated code. This segment does not execute an API call or test persistence, authentication or retry behavior.
+
+8
+00:02:01,296 --> 00:02:18,074
+Dart has a native dart I O transport, not a browser transport. First analyze the generated package, then compile a small consumer into an executable. Dependency downloads happened during preparation; these warmed build steps are not benchmarks.
+
+9
+00:02:18,424 --> 00:02:35,309
+The executable now calls the generated pets method against an explicitly local fixture. It receives a typed Pet and uses strict response validation. The response is fixture data from a real loopback request, not a claimed result from a production API.
+
+10
+00:02:38,297 --> 00:02:55,811
+The compiler can now acquire an entry document from HTTP or HTTPS. This local server exposes the same read-only contract. Initialization retains a content pin and verified cache. Refresh inputs is an explicit online review step.
+
+11
+00:02:56,161 --> 00:03:14,187
+Now stop the source server and run generation with offline and check. The command succeeds using the retained pin and cached document. Keep both the source lock and its cache. A pin makes the input reproducible; it does not prove the remote API is unchanged or safe.
+
+12
+00:03:15,338 --> 00:03:33,573
+Git acquisition is now native to the compiler. This deterministic example uses a local Git fixture, a selected tag and one document path. Tungsten records the resolved commit and content hashes. The release also accepts the documented Git plus HTTPS form.
+
+13
+00:03:33,923 --> 00:03:53,629
+The earlier deep Windows project path failed, so this run uses a shorter temporary project directory. Temporarily make the source repository unavailable, then generate offline from its verified cache. The successful check demonstrates reuse without fetching or executing repository application code.
+
+14
+00:03:54,781 --> 00:04:12,327
+Rust and Axum support is a bounded library API, not an init from Rust command. The caller supplies source text, a router name and an explicit mount prefix. This real harness links tungsten contract from the exact release tag; it never runs the supplied application.
+
+15
+00:04:12,677 --> 00:04:33,548
+The literal typed route becomes candidate OpenAPI. The dynamic route stays unresolved in coverage. A separately saved origin override is preserved through inference. Runtime complete remains false: parsing selected declarations cannot establish runtime routing, authentication, macro expansion or application-wide coverage.
+
+16
+00:04:39,782 --> 00:04:58,021
+The new languages do not make every imported format eligible for every target. This saved curl to Kotlin attempt is an intentional refusal check. Version 0.1.3 rejects the unsupported target early with diagnostic TG0705.
+
+17
+00:04:58,371 --> 00:05:17,513
+Finish by checking regeneration. The review package retains real command exits, source pins, fixture inputs, dependency locks, captions and exact chapter times. This video establishes the checks shown, not registry availability or universal target parity. Human review comes before any publication.

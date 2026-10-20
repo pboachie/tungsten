@@ -237,7 +237,7 @@ JSON path (<code>body.recipient_e164</code>).</p>
                                      └──── retry policy ◀────────┘
 </code></pre>
 <p>Middleware hooks: <code>onRequest</code>, <code>onResponse</code>, <code>onDiagnostic</code>, <code>onRetry</code>. The
-OpenTelemetry adapter is a middleware. Default headers: <code>User-Agent: &lt;api&gt;-sdk/&lt;ver&gt; tungsten/&lt;ver&gt; (&lt;target&gt;)</code>, <code>X-Tungsten-Operation</code>.</p>
+OpenTelemetry adapter is a middleware. Default headers: <code>User-Agent:  &lt;api&gt;-sdk/&lt;ver&gt; tungsten/&lt;ver&gt; (&lt;target&gt;)</code>, <code>X-Tungsten-Operation</code>.</p>
 <h2 id="retry-policy"><a class="header" href="#retry-policy">Retry policy</a></h2>
 <ul>
 <li>Read-only: up to <code>max</code> attempts on <code>RATE_LIMITED</code>, <code>UPSTREAM_UNAVAILABLE</code>,
@@ -264,7 +264,7 @@ Regenerate clients and upgrade their runtimes together.</li>
 client timeout after the request was written, connection reset without a
 response, or a status listed in <code>errors.ambiguous_statuses</code>. The envelope
 carries <code>next_action</code> from the verification hook when one exists
-(<code>"Call public.getAlphaMessageStatus with message_id if you have it, or list recent messages filtered by client_message_id"</code>), and <code>retryable: same_key_only</code>. SDK docs state that a new key for the same intent is the
+(<code>"Call public.getAlphaMessageStatus with message_id if you have it, or  list recent messages filtered by client_message_id"</code>), and <code>retryable:  same_key_only</code>. SDK docs state that a new key for the same intent is the
 one way to duplicate a side effect.</p>
 <h2 id="idempotency-store"><a class="header" href="#idempotency-store">Idempotency store</a></h2>
 <p>Interface in each runtime: <code>get(scope, logical_id) → key?</code>,

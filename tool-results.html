@@ -231,7 +231,7 @@ adapter's <code>maxResultBytes</code> (or the declared binary policy's <code>max
 <p>Small, reviewed binary outputs can be converted to JSON base64:</p>
 <pre><code class="language-ts">binaryResults: { mode: "base64", maxBytes: 64 * 1024 }
 </code></pre>
-<p>The result value is <code>{ kind: "binary", encoding: "base64", mediaType, byteLength, data }</code>, retaining the outer SDK envelope. Base64 expansion must fit the JSON
+<p>The result value is <code>{ kind: "binary", encoding: "base64", mediaType, byteLength,  data }</code>, retaining the outer SDK envelope. Base64 expansion must fit the JSON
 result budget. The HTTP reader checks both declared Content-Length and actual
 received bytes, cancels on overflow, and never retries an oversized response.</p>
 <p>Applications can instead render an expiring download handle:</p>
@@ -245,7 +245,7 @@ received bytes, cancels on overflow, and never retries an oversized response.</p
 }
 </code></pre>
 <p>The adapter accepts HTTPS URLs without embedded credentials and future integer
-expiry timestamps. The JSON value is <code>{ kind: "download", mediaType, byteLength, url, expiresAt }</code>. The application must enforce expiry, access control and its
+expiry timestamps. The JSON value is <code>{ kind: "download", mediaType, byteLength,  url, expiresAt }</code>. The application must enforce expiry, access control and its
 content policy; a timestamp alone does not expire a URL. The renderer receives
 an AbortSignal and should cancel its own work. No browser Blob URLs are generated,
 and secret-bearing outputs never reach the renderer. Invalid handles and binary
