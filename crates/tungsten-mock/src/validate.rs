@@ -132,12 +132,12 @@ impl<'a> Validator<'a> {
                     known = true;
                     result.declarations += 1;
                     result.required |= self.required(field);
-                    result.valid &= self.field_value(field, value, &mut String::new(), 1).is_ok();
+                    result.valid &= self
+                        .field_value(field, value, &mut String::new(), 1)
+                        .is_ok();
                 }
             }
-            if !known
-                && let Additional::Typed { values } = additional
-            {
+            if !known && let Additional::Typed { values } = additional {
                 result.valid &= self.ty(values, value, &mut String::new(), 2, false).is_ok();
             }
         }

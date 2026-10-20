@@ -160,9 +160,9 @@ impl<'a> Generator<'a> {
             Shape::Intersection { members } => {
                 let mut merged = Map::new();
                 let mut first = None;
-                let records = members.iter().all(|member| {
-                    matches!(self.model.shape(member), Some(Shape::Record { .. }))
-                });
+                let records = members
+                    .iter()
+                    .all(|member| matches!(self.model.shape(member), Some(Shape::Record { .. })));
                 let mut alternatives: BTreeMap<String, Vec<Value>> = BTreeMap::new();
                 for member in members {
                     match self.ty(member, scope, path, name, depth + 1, None) {
@@ -246,7 +246,8 @@ impl<'a> Generator<'a> {
                 .flatten()
                 .chain(std::iter::once(&null))
             {
-                let Some(property) = validator.intersection_property(members, key, candidate) else {
+                let Some(property) = validator.intersection_property(members, key, candidate)
+                else {
                     return original;
                 };
                 if property.valid {
