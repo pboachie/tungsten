@@ -258,7 +258,12 @@ pub(crate) fn run(args: &DoctorArgs, env: &CliEnv) -> Report {
             );
         }
     }
-    report.result = Some(CommandResult::Doctor(DoctorResult { tools }));
+    let openapi_inputs = tungsten_config::capabilities::OPENAPI_INPUTS.to_vec();
+    report.human.push_str(&openapi_summary(&openapi_inputs));
+    report.result = Some(CommandResult::Doctor(DoctorResult {
+        tools,
+        openapi_inputs,
+    }));
     if args.strict && !failures.is_empty() {
         report.exit = exit::FAILED;
         report.error = Some(
@@ -270,6 +275,22 @@ pub(crate) fn run(args: &DoctorArgs, env: &CliEnv) -> Report {
         );
     }
     report
+}
+
+/// One line per OpenAPI line; `tungsten capabilities` lists every diagnosed construct.
+fn openapi_summary(inputs: &[tungsten_config::capabilities::OpenApiVersionCapability]) -> String {
+    let mut out = String::from("OpenAPI input (see `tungsten capabilities`):\n");
+    for input in inputs {
+        let _ = match input.unsupported_features.len() {
+            0 => writeln!(out, "  {}.x supported", input.line),
+            n => writeln!(
+                out,
+                "  {}.x {:?}: constructs equivalent to 3.1 are read; {n} 3.2-only constructs get diagnostics TG0140-TG0156",
+                input.line, input.support
+            ),
+        };
+    }
+    out
 }
 
 /// Intersect already option-resolved bounds, independent of target order.

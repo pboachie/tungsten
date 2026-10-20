@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! OpenAPI 3.0/3.1 frontend.
+//! OpenAPI 3.0/3.1 frontend, with a diagnosed subset of 3.2.
 //!
 //! Loads documents (JSON or YAML) with a JSON-Pointer → byte-span index,
 //! applies overlays, normalizes 3.0 constructs to 3.1 form, resolves
@@ -26,6 +26,7 @@ mod refs;
 mod source;
 mod spans;
 pub mod swagger;
+mod v32;
 mod version;
 mod walk;
 mod yaml;
@@ -49,6 +50,9 @@ pub enum SpecVersion {
     /// 3.0.x; the document has been normalized to 3.1 form.
     V30(String),
     V31(String),
+    /// 3.2.x. Constructs equivalent to 3.1 take the 3.1 path unchanged; each
+    /// construct 3.2 added is diagnosed (`TG0140`-`TG0156`), never ignored.
+    V32(String),
     /// A file loaded only because another document referenced it.
     Fragment,
 }

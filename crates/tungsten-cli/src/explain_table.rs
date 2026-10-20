@@ -196,8 +196,8 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
     e(
         "TG0103",
         "The document's `openapi` field is missing or names a version tungsten does not \
-         compile. tungsten reads OpenAPI 3.0.x and 3.1.x; Swagger 2.0 documents declare \
-         `swagger: \"2.0\"` instead.",
+         compile. tungsten reads OpenAPI 3.0.x and 3.1.x and a documented subset of 3.2.x; \
+         Swagger 2.0 documents declare `swagger: \"2.0\"` instead.",
         "Set `openapi` to the version the document follows, or convert a Swagger 2.0 document \
          to OpenAPI 3 (for example with swagger2openapi) before compiling.",
     ),
@@ -286,6 +286,91 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
         "TG0134",
         "Discovery found zero or multiple supported documents under the selected repository subpath. Tungsten lists candidates and does not choose one implicitly.",
         "Append #path to select exactly one OpenAPI, Swagger, Postman, HAR, saved request or JSON Schema endpoint manifest document.",
+    ),
+    e(
+        "TG0140",
+        "An OpenAPI 3.2 document declares `$self`, a self-assigned URI that changes the base URI used to resolve relative references. tungsten resolves references against the file location only, so honouring the document as written is not possible.",
+        "Remove `$self`, or keep relative references that resolve the same against the file location.",
+    ),
+    e(
+        "TG0141",
+        "A Path Item uses the OpenAPI 3.2 `query` operation (the HTTP QUERY method). tungsten does not compile the QUERY method and would leave the operation out of the client.",
+        "Describe the call with a supported method such as `post`, or remove the operation.",
+    ),
+    e(
+        "TG0142",
+        "A Path Item lists OpenAPI 3.2 `additionalOperations`, operations under methods outside the fixed set. tungsten would leave them out of the client.",
+        "Describe the calls with the standard methods, or remove them.",
+    ),
+    e(
+        "TG0143",
+        "A parameter uses `in: querystring`, the OpenAPI 3.2 location that treats the whole query string as one value described by `content`. tungsten models the query as named parameters.",
+        "Describe the query as separate `in: query` parameters.",
+    ),
+    e(
+        "TG0144",
+        "A parameter uses `style: cookie`, the OpenAPI 3.2 style that follows Cookie header syntax without percent-encoding. Serializing it as form style would change the bytes sent.",
+        "Use `style: form` for the cookie parameter, or remove the style.",
+    ),
+    e(
+        "TG0145",
+        "A Media Type Object uses OpenAPI 3.2 `itemSchema`, which types each item of a sequential media type such as JSON Lines or Server-Sent Events. tungsten would type the payload without its items.",
+        "Describe the whole payload with `schema`, or remove the media type.",
+    ),
+    e(
+        "TG0146",
+        "A Media Type Object uses OpenAPI 3.2 `prefixEncoding` or `itemEncoding`, which encode multipart parts by position. tungsten encodes parts by name only.",
+        "Name the parts and describe them with `encoding`.",
+    ),
+    e(
+        "TG0147",
+        "An Encoding Object uses OpenAPI 3.2 `encoding`, `prefixEncoding` or `itemEncoding` to encode a nested multipart or form value. tungsten does not model nested encodings.",
+        "Describe the part as one value with a `contentType`.",
+    ),
+    e(
+        "TG0148",
+        "The document defines `components.mediaTypes` or gives a media type object by `$ref`, both OpenAPI 3.2 features. tungsten reads media types only where they are written.",
+        "Inline the media type object under each `content` map.",
+    ),
+    e(
+        "TG0149",
+        "A discriminator uses OpenAPI 3.2 `defaultMapping`, the schema chosen when the discriminating value matches no mapping. A client without it would reject payloads the API accepts.",
+        "Remove `defaultMapping`, or model the fallback as an explicit union member.",
+    ),
+    e(
+        "TG0150",
+        "A security scheme declares `flows.deviceAuthorization`, the OpenAPI 3.2 device flow. tungsten does not implement the device flow.",
+        "Declare a supported flow, or obtain the token outside the client.",
+    ),
+    e(
+        "TG0151",
+        "A security requirement names a scheme by URI reference rather than by a component name. tungsten resolves security requirements against `components.securitySchemes` only.",
+        "Declare the scheme under `components.securitySchemes` and name it there.",
+    ),
+    e(
+        "TG0152",
+        "An OAuth 2.0 security scheme declares the OpenAPI 3.2 `oauth2MetadataUrl`. tungsten does not fetch server metadata; the declared flows are used as written.",
+        "Nothing to fix; remove the field to silence the warning.",
+    ),
+    e(
+        "TG0153",
+        "A tag uses the OpenAPI 3.2 `parent` or `kind` field. tungsten groups operations by tag name and ignores the hierarchy.",
+        "Nothing to fix; remove the field to silence the warning.",
+    ),
+    e(
+        "TG0154",
+        "An Example Object uses OpenAPI 3.2 `dataValue` or `serializedValue`. tungsten reads `value` and `externalValue` only.",
+        "Add `value` when the example should be used, or remove the field.",
+    ),
+    e(
+        "TG0155",
+        "An XML Object uses the OpenAPI 3.2 `nodeType`. tungsten does not use XML Object details.",
+        "Nothing to fix; remove the field to silence the warning.",
+    ),
+    e(
+        "TG0156",
+        "A document uses an OpenAPI 3.2 descriptive field without effect on a client: tag `summary`, response `summary`, server `name` or security scheme `deprecated`.",
+        "Nothing to fix; remove the field to silence the warning.",
     ),
     e(
         "TG0201",
