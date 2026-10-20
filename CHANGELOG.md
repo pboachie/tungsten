@@ -211,6 +211,14 @@ changes.
   to match, matches that time out or overflow the stack. Direct schema validation
   without an observer stays silent. Unreleased 0.2.0 only.
 
+- Go, Java and Python now check a schema `pattern` that uses the ECMAScript
+  `u`-flag escape `\u{XXXX}` (one to six hex digits, at most `10FFFF`) instead
+  of accepting it unchecked: it is translated to RE2 and Java's `\x{XXXX}` and to
+  Python's `\UXXXXXXXX`, in and out of character classes. A malformed or
+  out-of-range `\u{...}` is still accepted and reported as `PATTERN_UNCHECKED`.
+  Python's `re` still has no `\p{...}` property classes, so those patterns stay
+  unchecked and reported. Unreleased 0.2.0 only.
+
 - TypeScript, Python and Rust report a schema `pattern` their regex engine cannot
   compile, or cannot match within a limit, as a non-fatal `PATTERN_UNCHECKED`
   diagnostic (`failed_parameter`, the pattern and the reason, never the value; once

@@ -300,6 +300,65 @@ public final class Schema {
         }
     }
 
+    /**
+     * Rewrites the ECMAScript u-flag escape {@code \\u{XXXX}} (one to six hex digits, at most 10FFFF) to
+     * java.util.regex's {@code \\x{XXXX}}, in and out of classes. An escaped backslash, native
+     * {@code \\Q...\\E} quoted text and any other escape are copied unchanged; a malformed or out-of-range
+     * {@code \\u{...}} is left alone, so it fails to compile and is reported as unchecked. Each candidate needs
+     * at most seven characters of lookahead (six digits and the closing brace).
+     */
+    static String codePointEscapes(String source) {
+        if (!source.contains("\\u{")) {
+            return source;
+        }
+        StringBuilder out = new StringBuilder(source.length());
+        boolean quoted = false;
+        for (int i = 0; i < source.length(); i++) {
+            char c = source.charAt(i);
+            if (quoted) {
+                out.append(c);
+                if (c == '\\' && i + 1 < source.length() && source.charAt(i + 1) == 'E') {
+                    out.append('E');
+                    i++;
+                    quoted = false;
+                }
+                continue;
+            }
+            if (c != '\\' || i + 1 >= source.length()) {
+                out.append(c);
+                continue;
+            }
+            if (source.charAt(i + 1) == 'Q') {
+                quoted = true;
+            } else if (source.charAt(i + 1) == 'u' && i + 2 < source.length() && source.charAt(i + 2) == '{') {
+                int start = i + 3;
+                int close = start;
+                while (close < source.length() && close - start <= 6 && source.charAt(close) != '}') {
+                    close++;
+                }
+                int digits = close - start;
+                if (digits >= 1 && digits <= 6 && close < source.length() && source.charAt(close) == '}'
+                        && isHex(source, start, close) && Integer.parseInt(source.substring(start, close), 16) <= 0x10FFFF) {
+                    out.append("\\x{").append(source, start, close).append('}');
+                    i = close;
+                    continue;
+                }
+            }
+            out.append(c).append(source.charAt(i + 1));
+            i++;
+        }
+        return out.toString();
+    }
+
+    private static boolean isHex(String s, int from, int to) {
+        for (int i = from; i < to; i++) {
+            if (Character.digit(s.charAt(i), 16) < 0 || s.charAt(i) > 'f') {
+                return false;
+            }
+        }
+        return true;
+    }
+
     private Pattern compiled() {
         if (pattern == null || BAD_PATTERNS.containsKey(pattern)) {
             return null;
@@ -309,7 +368,7 @@ public final class Schema {
             return p;
         }
         try {
-            p = Pattern.compile(pattern);
+            p = Pattern.compile(codePointEscapes(pattern));
         } catch (PatternSyntaxException e) {
             BAD_PATTERNS.put(pattern, "it is not a regular expression this runtime can compile (java.util.regex: "
                     + e.getDescription() + ")");
