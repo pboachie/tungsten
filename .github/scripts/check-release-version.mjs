@@ -42,6 +42,9 @@ expect("C# manifest", capture("runtimes/csharp/Tungsten.Runtime.csproj", /<Versi
 expect("F# manifest", capture("runtimes/fsharp/Tungsten.Runtime.FSharp.fsproj", /<Version>([^<]+)<\/Version>/));
 expect("Kotlin manifest", capture("runtimes/kotlin/build.gradle.kts", /^version\s*=\s*"([^"]+)"/m));
 expect("Kotlin Java runtime dependency", capture("runtimes/kotlin/build.gradle.kts", /api\("io\.github\.pboachie\.tungsten:tungsten-runtime:([^"]+)"\)/));
+expect("Kotlin coroutines manifest", capture("runtimes/kotlin/coroutines/build.gradle.kts", /^version\s*=\s*"([^"]+)"/m));
+expect("Kotlin coroutines Java runtime dependency", capture("runtimes/kotlin/coroutines/build.gradle.kts", /api\("io\.github\.pboachie\.tungsten:tungsten-runtime:([^"]+)"\)/));
+expect("Kotlin coroutines Kotlin layer dependency", capture("runtimes/kotlin/coroutines/build.gradle.kts", /api\("io\.github\.pboachie\.tungsten:tungsten-runtime-kotlin:([^"]+)"\)/));
 expect("Dart manifest", capture("runtimes/dart/pubspec.yaml", /^version:\s*(\S+)/m));
 expect("Go emitter default", capture("emitters/go/main.go", /const defaultRuntimeVersion\s*=\s*"v([^"]+)"/));
 

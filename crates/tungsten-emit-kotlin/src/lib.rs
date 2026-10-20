@@ -21,7 +21,10 @@
 //! - `<package>/resources/...`: one class per resource with a request data
 //!   class and a blocking typed function per operation, `preview<Op>`,
 //!   `<op>Pages` (a `Sequence` of page results), `<op>Stream`; one class per
-//!   namespace in multi-namespace APIs;
+//!   namespace in multi-namespace APIs; with the opt-in `coroutines` option
+//!   also `<op>Suspend` (a cancellable `suspend` function) and the cold
+//!   `Flow`s `<op>PagesFlow` / `<op>StreamFlow`, over the separate
+//!   `tungsten-runtime-kotlin-coroutines` artifact;
 //! - `src/main/resources/<package path>/tungsten-descriptors.json`;
 //! - `<package>/custom/`, created once.
 //!
@@ -72,6 +75,8 @@ pub mod __testing {
             runtime: options::DEFAULT_RUNTIME.into(),
             runtime_path: None,
             java_runtime_path: None,
+            coroutines: false,
+            coroutines_runtime_path: None,
         };
         let (plan, _) = SdkPlan::new(ir);
         let names = Namer::new(&plan).names(Target::Kotlin, &namer_options());

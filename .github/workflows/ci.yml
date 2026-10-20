@@ -216,7 +216,9 @@ jobs:
         run: python3 .github/scripts/check-archive-notices.py runtimes/java/target/tungsten-runtime-*.jar runtimes/java --prefix META-INF/
 
   # The Kotlin layer (runtimes/kotlin) compiled against the Java runtime's
-  # classes with kotlinc -Werror; its tests, and the build of the SDKs the
+  # classes with kotlinc -Werror, and the opt-in coroutines layer
+  # (runtimes/kotlin/coroutines) against a pinned, checksum-verified
+  # kotlinx-coroutines-core jar; their tests, and the build of the SDKs the
   # Kotlin emitter generates, run in tungsten-ops.
   kotlin:
     name: kotlin runtime build
@@ -227,6 +229,8 @@ jobs:
     env:
       KOTLIN_VERSION: "2.4.21"
       KOTLIN_SHA256: 7cc140e76daf416a0424a5557f99afd7ca89ebd463ea1101261e3e01c33e75cd
+      KOTLINX_COROUTINES_VERSION: "1.10.2"
+      KOTLINX_COROUTINES_SHA256: 5ca175b38df331fd64155b35cd8cae1251fa9ee369709b36d42e0a288ccce3fd
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -250,6 +254,15 @@ jobs:
         run: |
           find runtimes/kotlin/src/main/kotlin -name '*.kt' | sort > "$RUNNER_TEMP/kotlin.txt"
           kotlinc -Werror -jvm-target 17 -Xexplicit-api=strict -cp "$RUNNER_TEMP/java" -d "$RUNNER_TEMP/kotlin-classes" "@$RUNNER_TEMP/kotlin.txt"
+      - name: Fetch kotlinx-coroutines-core (sha256 checked)
+        run: |
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/kotlinx-coroutines.jar" \
+            "https://repo1.maven.org/maven2/org/jetbrains/kotlinx/kotlinx-coroutines-core-jvm/$KOTLINX_COROUTINES_VERSION/kotlinx-coroutines-core-jvm-$KOTLINX_COROUTINES_VERSION.jar"
+          echo "$KOTLINX_COROUTINES_SHA256  $RUNNER_TEMP/kotlinx-coroutines.jar" | sha256sum -c -
+      - name: kotlinc -Werror -jvm-target 17 (runtimes/kotlin/coroutines)
+        run: |
+          find runtimes/kotlin/coroutines/src/main/kotlin -name '*.kt' | sort > "$RUNNER_TEMP/coroutines.txt"
+          kotlinc -Werror -jvm-target 17 -Xexplicit-api=strict -cp "$RUNNER_TEMP/java:$RUNNER_TEMP/kotlin-classes:$RUNNER_TEMP/kotlinx-coroutines.jar" -d "$RUNNER_TEMP/coroutines-classes" "@$RUNNER_TEMP/coroutines.txt"
 
   # The .NET runtime (runtimes/csharp, net10.0, no dependencies); its tests,
   # and the build of the SDKs the C# emitter generates, run in tungsten-ops.
