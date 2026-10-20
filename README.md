@@ -608,6 +608,7 @@ tungsten [--json] <command>
 | `lsp` | Serve diagnostics, completion, hover, go-to-definition and symbols for `tungsten.yml`, `agent.yml` and overlays to an editor over stdio (`--config`) |
 | `doctor` | Report external tools; pass a project path and `--strict` to fail when its required tools are missing or too old |
 | `capabilities` | Query built-in target declarations without running tools or emitters; optionally select a target id or alias, such as `capabilities py --json` |
+| `support-bundle --preview` | Show exactly what a diagnostic support bundle would contain, as metadata only: versions, capability and configuration provenance, diagnostic codes and tool prerequisites; works for a broken project and starts no program, probes no tool version, reads no API document and writes nothing; `--exclude <id>` removes an entry. Writing the bundle is not available yet |
 
 With `--json`, stdout carries exactly one JSON document described by `tungsten schema cli-output` (`lsp` speaks the language server protocol on stdio instead). Color is used only on a terminal and never when `NO_COLOR` is set.
 
