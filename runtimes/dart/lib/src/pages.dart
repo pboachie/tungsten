@@ -262,11 +262,18 @@ extension _Pages on ClientCore {
     if (schema == null || _validateResponses == ValidateResponses.off) {
       return null;
     }
+    final seen = <String>{};
     for (var index = 0; index < items.length; index++) {
-      final issues = ClientCore._judge(schema, items[index]);
+      final field = itemsField.isEmpty ? '' : '.$itemsField';
+      final issues = _judge(
+        op.id,
+        'response$field[$index]',
+        schema,
+        items[index],
+        seen,
+      );
       if (issues.isEmpty) continue;
       final issue = issues.first;
-      final field = itemsField.isEmpty ? '' : '.$itemsField';
       final path = 'response$field[$index]${Schema.issuePath(issue.path)}';
       final d = _diag(op.id, 'UNEXPECTED_RESPONSE')
           .status(meta.status)

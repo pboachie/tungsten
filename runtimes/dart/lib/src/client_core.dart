@@ -637,8 +637,9 @@ final class ClientCore {
     final request = op.request;
     if (request != null) {
       final List<Issue> issues;
+      final notes = <UncheckedPattern>[];
       try {
-        issues = request.validate(args);
+        issues = request.validate(args, onUnchecked: notes.add);
       } catch (_) {
         throw _Stop(
           _diag(op.id, 'UNEXPECTED_RESPONSE')
@@ -650,6 +651,7 @@ final class ClientCore {
               .err<Object?>(),
         );
       }
+      _reportUnchecked(op.id, 'args', notes, 'VALIDATION_FAILED');
       if (issues.isEmpty) return;
       Issue? issue;
       if (placeholders) {
@@ -1421,14 +1423,9 @@ final class ClientCore {
             .err<Object?>();
         final (key, err) = await _keyLock.run(() async {
           try {
-            final existing = await _store.get(op.id, logical);
-            if (existing != null && existing.isNotEmpty) {
-              return (existing, null);
-            }
-            final key = _Util.uuidV4();
-            await _store.put(op.id, logical, key);
-            if (await _store.get(op.id, logical) == key) return (key, null);
-            return (null, failed('the key could not be stored'));
+            final key = await _store.reserve(op.id, logical, _Util.uuidV4());
+            if (key.isNotEmpty) return (key, null);
+            return (null, failed('it returned no key'));
           } catch (_) {
             return (null, failed('it threw an error'));
           }
@@ -1828,7 +1825,12 @@ final class ClientCore {
     } else if (mode != ValidateResponses.off &&
         response != null &&
         decoded.present) {
-      final issues = _judge(response, decoded.value);
+      final issues = _judge(
+        op.id,
+        'response',
+        response,
+        decoded.value,
+      );
       if (issues.isNotEmpty) {
         final issue = issues.first;
         final pathText = Schema.issuePath(issue.path);
@@ -1885,14 +1887,57 @@ final class ClientCore {
   }
 
   /// A validator that only judges (responses, page items, events): a
-  /// failure of the validator itself is an issue at the root.
-  static List<Issue> _judge(Schema validator, Object? value) {
+  /// failure of the validator itself is an issue at the root. Patterns it
+  /// could not check are reported under [root] (once per path and pattern in
+  /// [seen]).
+  List<Issue> _judge(
+    String operation,
+    String root,
+    Schema validator,
+    Object? value, [
+    Set<String>? seen,
+  ]) {
+    final notes = <UncheckedPattern>[];
     try {
-      return validator.validate(value);
+      final issues = validator.validate(value, onUnchecked: notes.add);
+      _reportUnchecked(operation, root, notes, 'UNEXPECTED_RESPONSE', seen);
+      return issues;
     } catch (_) {
       return const [
         Issue([], 'the response schema failed (the validator threw an error)'),
       ];
+    }
+  }
+
+  /// A schema pattern the runtime cannot compile accepts the value but is
+  /// reported through `onDiagnostic` as `PATTERN_UNCHECKED`, once per path and
+  /// pattern (at most 16 a call). The value is never included.
+  void _reportUnchecked(
+    String operation,
+    String root,
+    List<UncheckedPattern> notes,
+    String category, [
+    Set<String>? seen,
+  ]) {
+    final done = seen ?? <String>{};
+    var sent = 0;
+    for (final note in notes) {
+      if (sent >= 16) break;
+      final param = '$root${Schema.issuePath(note.path)}';
+      if (!done.add('$param\n${note.pattern}')) continue;
+      sent++;
+      _emit(
+        _diag(operation, category)
+            .code('PATTERN_UNCHECKED')
+            .retrying('never')
+            .param(param)
+            .expected('a value matching the pattern /${note.pattern}/')
+            .remedy(
+              'The pattern /${note.pattern}/ at $param was not checked because ${note.reason}; '
+              'the value was accepted without it. The server still validates it.',
+            )
+            .build(),
+      );
     }
   }
 

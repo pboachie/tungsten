@@ -25,6 +25,40 @@ Calls return a typed result or a diagnostic envelope describing recovery;
 unknown outcomes never justify blindly repeating a mutation. The API remains
 responsible for authorization and server-side idempotency.
 
+## Durable automatic keys
+
+Select `FileIdempotencyStore` through `ClientOptions.idempotencyStore` to reuse
+keys after a restart and coordinate automatic key allocation across processes.
+The version-1 JSON file and `<path>.lock` owner lease interoperate with the
+TypeScript, Python, Go, Rust, Java, C#, Ruby and Dart stores.
+
+```dart
+final client = ClientOptions(
+  idempotencyStore: FileIdempotencyStore('./state/idempotency.json'),
+);
+```
+
+Automatic allocation calls `reserve(scope, logicalId, candidate)` to return an
+existing non-empty key or persist one candidate while holding the shared lease.
+`reserve` is available on every `IdempotencyStore`: a custom store that only
+implements `get` and `put` keeps working and is serialized per store instance,
+but a backend shared across processes must implement `AtomicIdempotencyStore`
+with its own atomic reservation. Direct `put` calls do not take the
+cross-process lease and must not race with another writer.
+
+The file store writes a private temporary file in the same directory and renames
+it over the store. Files and leases are mode 0600 on POSIX systems (set with
+`chmod`; a file that stays readable by others is refused); protect the
+containing directory with appropriate ACLs on Windows. A corrupt or unreadable
+file fails closed with a `FileSystemException`, and the call is not sent rather
+than issue a second key for the same intent. Lease acquisition waits up to two
+seconds. A lease is never reclaimed automatically, even if its recorded process
+appears dead: remove an abandoned `<path>.lock` only after confirming its owner
+has stopped. A writer checks its token immediately before the rename and removes
+only its own lease. Use a filesystem with exclusive creation and atomic rename;
+this is not a distributed transaction service. Losing the file can cause a new
+key for a previous intent.
+
 ## Credential transport
 
 Credentials require HTTPS by default, including OAuth client-credentials, code
@@ -160,13 +194,34 @@ more. Custom transports must stream nonempty bodies and honor cancellation;
 their own buffering, decoding and settlement behavior need separate qualification.
 
 The `dart:io` transport is not a browser transport. Applications own
-persistent storage and must supply appropriate token and idempotency store
-implementations when process-local state is insufficient.
+persistent storage and must supply appropriate token stores; the default
+idempotency store is process-local, and `FileIdempotencyStore` (see Durable
+automatic keys) is the durable one.
 
-No runtime ships a file-backed OAuth token store. Provide an application-owned
-token-store implementation when tokens must survive process restarts; protect
-stored credentials and avoid logging them. Registry publication and package
-availability are separate from building this source checkout.
+### Schema strings
+
+`min_length` and `max_length` count Unicode code points, so an emoji is one
+character; code-point counting is the contract in every runtime. A lone surrogate
+counts as one.
+
+`pattern` is an ECMAScript expression, searched anywhere in the string. It runs
+with Unicode semantics (`RegExp(unicode: true)`, the `u` flag): `\p{...}`,
+`\u{...}` and astral-plane characters match as whole code points, and `.` matches
+one code point. A pattern the Unicode mode rejects only for legacy syntax, such as
+an identity escape (`\_`), is run without it. Differences remain: Dart's engine
+follows ECMAScript but is not V8 (supported property names, case folding and
+syntax corner cases can differ), and a pattern that behaves differently with and
+without the `u` flag is judged with the flag, which can differ from a runtime
+that compiles it without.
+
+A pattern neither mode can compile accepts the value, as in the other runtimes,
+but is no longer silent: `ClientOptions.onDiagnostic` receives a diagnostic with
+code `PATTERN_UNCHECKED` (category `VALIDATION_FAILED` for a request,
+`UNEXPECTED_RESPONSE` otherwise), once per path and pattern, whose
+`failed_parameter` is the path (`args...`, `response...`, `events[n]...` or a page
+item) and whose remediation names the pattern and the reason, never the value.
+The server still validates the value. `Schema.validate` called directly stays
+silent unless it is given an `onUnchecked` observer.
 
 ## License
 
