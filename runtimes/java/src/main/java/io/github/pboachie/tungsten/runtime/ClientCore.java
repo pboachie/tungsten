@@ -420,7 +420,9 @@ public final class ClientCore {
         if (op.request() != null) {
             List<Schema.Issue> issues;
             try {
-                issues = op.request().validate(args);
+                List<Schema.PatternNote> notes = new ArrayList<>();
+                issues = op.request().validate(args, notes);
+                reportUnchecked(op.id(), Category.VALIDATION_FAILED, notes, p -> Args.argumentPath(op, p), null);
             } catch (RuntimeException e) {
                 throw diag(op.id(), Category.UNEXPECTED_RESPONSE).retry(Retryable.NEVER)
                         .remedy("The SDK failed while building or sending the request (the request validator panicked). This is a bug in the generated SDK or the runtime; report it. Nothing was sent.")
@@ -1541,7 +1543,7 @@ public final class ClientCore {
             problem = diag(op.id(), Category.UNEXPECTED_RESPONSE).status(status).requestId(requestId).param("response")
                     .expected(expected).remedy(remediation).attempts(attempts).build();
         } else if (validateResponses != ClientOptions.ValidateResponses.OFF && op.response() != null && decoded.has) {
-            List<Schema.Issue> issues = judge(op.response(), decoded.value);
+            List<Schema.Issue> issues = judge(op.id(), "response", op.response(), decoded.value, null);
             if (!issues.isEmpty()) {
                 Schema.Issue issue = issues.get(0);
                 List<String> path = Schema.segments(issue.path());
@@ -1580,12 +1582,43 @@ public final class ClientCore {
         return new Sent(new Result.Ok<>(decoded.value, decoded.has, decoded.value, meta, null), null, null);
     }
 
-    /** Runs a validator that only judges: a failure is an issue at the root. */
-    static List<Schema.Issue> judge(Schema s, Object value) {
+    /**
+     * Runs a validator that only judges: a failure is an issue at the root. The patterns it could
+     * not check are reported once through the observer under {@code root} (for example
+     * "response"); {@code seen}, when not null, deduplicates across several calls.
+     */
+    List<Schema.Issue> judge(String operation, String root, Schema s, Object value, Set<String> seen) {
+        List<Schema.PatternNote> notes = new ArrayList<>();
+        List<Schema.Issue> issues;
         try {
-            return s.validate(value);
+            issues = s.validate(value, notes);
         } catch (RuntimeException e) {
             return List.of(new Schema.Issue(List.of(), "the response schema failed (the validator threw)"));
+        }
+        reportUnchecked(operation, Category.UNEXPECTED_RESPONSE, notes, p -> root + Schema.formatPath(p), seen);
+        return issues;
+    }
+
+    /**
+     * Emits PATTERN_UNCHECKED for each schema pattern the runtime could not check: the value was
+     * accepted without it. Names the path, the pattern and the reason, never the value.
+     */
+    void reportUnchecked(String operation, Category category, List<Schema.PatternNote> notes,
+            java.util.function.Function<List<Object>, String> show, Set<String> seen) {
+        if (notes.isEmpty() || onDiagnostic == null) {
+            return;
+        }
+        Set<String> done = seen == null ? new HashSet<>() : seen;
+        for (Schema.PatternNote n : notes) {
+            String param = show.apply(n.path());
+            if (done.size() >= 16 || !done.add(param + "\n" + n.pattern())) {
+                continue;
+            }
+            emit(diag(operation, category).code("PATTERN_UNCHECKED").retry(Retryable.NEVER).param(param)
+                    .expected("a value matching the pattern /" + n.pattern() + "/")
+                    .remedy("The pattern /" + n.pattern() + "/ at " + param + " was not checked because " + n.reason()
+                            + "; the value was accepted without it. The server still validates it.")
+                    .build());
         }
     }
 

@@ -17,6 +17,15 @@ changes.
   longer over-counted; a value that fit only because of the old count can now be
   rejected.
 
+
+- Java and Ruby string `min_length`/`max_length` now count Unicode code points,
+  as JSON Schema does, instead of UTF-16 code units: an emoji is one character
+  (a surrogate pair is one, a lone surrogate is one). Strings with characters
+  above U+FFFF that were rejected for length are now accepted, and the reverse
+  never happens. Go already counted code points (an invalid UTF-8 byte counts
+  as one). Kotlin delegates to Java and changes with it. Other runtimes align in
+  their own entries.
+
 - Ruby browser OAuth helpers now create bounded S256/state authorization attempts.
   Qualify issuer defense, bind the owning session/listener and pass the returned
   handle plus full callback URL to `exchange_code`. Managed helpers require a
@@ -136,6 +145,16 @@ changes.
   streams incrementally with iteration, `reduce` or `on`.
 
 ### Added
+
+
+- Go, Java and Ruby (and Kotlin, which delegates to Java) report a schema
+  `pattern` they cannot check. The value is still accepted, as before, but the
+  client now emits a non-fatal `PATTERN_UNCHECKED` diagnostic through
+  `OnDiagnostic` (Go) or `onDiagnostic`/`on_diagnostic` naming the path, the
+  pattern and the reason, never the value, once per path and pattern per call.
+  This covers patterns the engine cannot compile and, in Java, subjects too long
+  to match, matches that time out or overflow the stack. Direct schema validation
+  without an observer stays silent. Unreleased 0.2.0 only.
 
 - Add explicitly pinned host policies for external emitters, with strict bounded
   capture, intersected deny/resource ceilings, pure policy digests and redacted

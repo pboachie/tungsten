@@ -167,8 +167,10 @@ module Tungsten
       def check_items(op, items_field, items, response)
         return nil if op.page_item.nil? || @validate_responses == "off"
 
+        seen = {}
         items.each_with_index do |item, index|
-          issues = judge(op.page_item, item)
+          root = "response#{items_field.empty? ? '' : ".#{items_field}"}[#{index}]"
+          issues = judge(op.page_item, item, op.id, root, seen)
           next if issues.empty?
 
           issue = issues.first

@@ -470,7 +470,7 @@ module Tungsten
                                      .remedy("Event #{index} of the stream (event \"#{ev.event}\") does not carry JSON in its data.#{after_effect} Events before it were delivered."))
         end
         if @validate_responses != "off" && op.stream["event"]
-          issues = judge(op.stream["event"], value)
+          issues = judge(op.stream["event"], value, op.id, "events[#{index}]")
           unless issues.empty?
             issue = issues.first
             path_text = Runtime.issue_path(issue.path)

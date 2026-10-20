@@ -83,10 +83,31 @@ type SchemaField struct {
 
 // Validate implements Validator.
 func (s *Schema) Validate(value any) []Issue {
+	issues, _ := s.validateNotes(value)
+	return issues
+}
+
+// patternNote is one schema pattern that could not be checked: the value was
+// accepted without it. It never holds the value.
+type patternNote struct {
+	Path    []PathSegment
+	Pattern string
+	Reason  string
+}
+
+// noteValidator is a Validator that also reports the patterns it could not
+// check, so the client can surface them through OnDiagnostic.
+type noteValidator interface {
+	validateNotes(value any) ([]Issue, []patternNote)
+}
+
+// validateNotes is Validate plus the unchecked patterns, one per path and
+// pattern.
+func (s *Schema) validateNotes(value any) ([]Issue, []patternNote) {
 	v := validation{}
 	v.check(s, value)
 	out := append(v.structure, v.constraints...)
-	return append(out, v.unknown...)
+	return append(out, v.unknown...), v.notes
 }
 
 // seg is one segment of the path being checked: a member name or, with
@@ -105,6 +126,24 @@ type validation struct {
 	// path is the path of the value being checked, pushed and popped as
 	// the walk descends.
 	path []seg
+	// notes are the patterns that could not be checked, deduplicated by
+	// path and pattern.
+	notes    []patternNote
+	noteSeen map[string]bool
+}
+
+// unchecked records a pattern that was accepted without being checked.
+func (v *validation) unchecked(pattern, reason string) {
+	path := v.at()
+	key := formatIssuePath(path) + "\n" + pattern
+	if v.noteSeen[key] {
+		return
+	}
+	if v.noteSeen == nil {
+		v.noteSeen = map[string]bool{}
+	}
+	v.noteSeen[key] = true
+	v.notes = append(v.notes, patternNote{Path: path, Pattern: pattern, Reason: reason})
 }
 
 // at is the current path as the segments of an issue.
@@ -184,25 +223,37 @@ func formatPatterns() map[string]*regexp.Regexp {
 	return formats
 }
 
+// compiledPattern is a cached pattern: the expression, or why it cannot be
+// checked.
+type compiledPattern struct {
+	re     *regexp.Regexp
+	reason string
+}
+
 // patterns caches compiled patterns by source.
 var patterns sync.Map
 
-func (s *Schema) compiled() *regexp.Regexp {
+// compiled returns the pattern's expression, or the reason it cannot be
+// checked; both are empty without a pattern.
+func (s *Schema) compiled() (*regexp.Regexp, string) {
 	if s.Pattern == "" {
-		return nil
+		return nil, ""
 	}
 	if cached, ok := patterns.Load(s.Pattern); ok {
-		re, _ := cached.(*regexp.Regexp)
-		return re
+		c, _ := cached.(compiledPattern)
+		return c.re, c.reason
 	}
 	// A pattern RE2 cannot compile (lookaround, backreferences) is not
-	// checked, as in the Rust runtime.
+	// checked, as in the Rust runtime; the caller reports it.
+	c := compiledPattern{}
 	re, err := regexp.Compile(s.Pattern)
 	if err != nil {
-		re = nil
+		c.reason = "it is not a regular expression this runtime can compile (Go RE2: " + err.Error() + ")"
+	} else {
+		c.re = re
 	}
-	patterns.Store(s.Pattern, re)
-	return re
+	patterns.Store(s.Pattern, c)
+	return c.re, c.reason
 }
 
 func boundText(f float64) string {
@@ -355,8 +406,12 @@ func (v *validation) stringLimits(s *Schema, text string) {
 			v.limit(fmt.Sprintf("must have at most %d characters", *s.MaxLength))
 		}
 	}
-	if re := s.compiled(); re != nil && !re.MatchString(text) {
-		v.limit("must match the pattern /" + s.Pattern + "/")
+	if re, reason := s.compiled(); re != nil {
+		if !re.MatchString(text) {
+			v.limit("must match the pattern /" + s.Pattern + "/")
+		}
+	} else if reason != "" {
+		v.unchecked(s.Pattern, reason)
 	}
 	if s.Format != "" {
 		if re, ok := formatPatterns()[s.Format]; ok && !re.MatchString(text) {
