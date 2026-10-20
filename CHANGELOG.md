@@ -176,6 +176,12 @@ changes.
 
 ### Added
 
+- A copyable GitHub Actions workflow in `examples/github-actions/` installs a pinned,
+  checksum- and provenance-verified release through `install.sh`, runs `tungsten check`
+  and fails on stale generated output with `tungsten generate --check`. It uses
+  `contents: read` permissions, SHA-pinned actions, no secrets and
+  `TUNGSTEN_NO_EXTERNAL=1`, so a pull request cannot start `external` emitter commands.
+
 - Add a pub.dev release route for the Dart runtime (`tungsten_runtime`) from
   0.2.0: a frozen, checksummed archive with a zero-warning `dart pub publish
   --dry-run` on every release run, then a gated OIDC publish (`PUB_PUBLISH`,
