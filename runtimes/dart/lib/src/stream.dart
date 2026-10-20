@@ -748,7 +748,7 @@ extension _Streams on ClientCore {
     }
     final schema = op.stream!.event;
     if (_validateResponses != ValidateResponses.off) {
-      final issues = ClientCore._judge(schema, value);
+      final issues = _judge(op.id, 'events[$index]', schema, value);
       if (issues.isNotEmpty) {
         final issue = issues.first;
         final pathText = Schema.issuePath(issue.path);

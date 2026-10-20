@@ -237,10 +237,9 @@ changes.
 - Dart schema validation counts `min_length`/`max_length` in Unicode code points
   (an emoji was two) and runs `pattern` with Unicode semantics (`\p{...}`,
   `\u{...}`, whole astral characters), falling back to legacy syntax only for
-  patterns the Unicode mode rejects. A pattern that cannot be compiled is now
-  an issue ("cannot be checked") instead of passing silently, so a request
-  with such a pattern fails `VALIDATION_FAILED` and a response is reported
-  per `validateResponses`.
+  patterns the Unicode mode rejects. A pattern that cannot be compiled still
+  accepts the value but now reports a `PATTERN_UNCHECKED` diagnostic through
+  `ClientOptions.onDiagnostic` instead of passing silently.
 
 ## [0.1.3] - 2026-10-17
 

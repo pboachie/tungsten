@@ -14,6 +14,22 @@ final class Issue {
   final String message;
 }
 
+/// A `pattern` the runtime could not check, so the value was accepted
+/// without it (see [Schema.validate]).
+final class UncheckedPattern {
+  /// A pattern that was not checked.
+  const UncheckedPattern(this.path, this.pattern, this.reason);
+
+  /// Member names (strings) and array indexes (ints) from the root.
+  final List<Object> path;
+
+  /// The pattern source.
+  final String pattern;
+
+  /// Why it was not checked, in words.
+  final String reason;
+}
+
 /// The validator of the runtime schema form of the SDK descriptor document:
 /// arguments before any network call, success bodies, page items and events
 /// after.
@@ -27,8 +43,9 @@ final class Issue {
 /// `\u{...}` and astral-plane characters match as whole code points. A
 /// pattern the `u` flag rejects only for its legacy syntax (an identity
 /// escape such as `\_`) is run without the flag. A pattern neither mode can
-/// compile is never skipped silently: the value is refused with an issue that
-/// says the pattern cannot be checked.
+/// compile accepts the value, as in the other runtimes, but never silently:
+/// the caller of [validate] is told through its `onUnchecked` observer, and
+/// the client reports a `PATTERN_UNCHECKED` diagnostic.
 final class Schema {
   /// A validator of [schema] (a map of the runtime schema form) whose `ref`s
   /// resolve in [defs].
@@ -101,7 +118,15 @@ final class Schema {
   }
 
   /// The issues of a value, none when it is valid.
-  List<Issue> validate(Object? value) => _Run(defs).run(schema, value);
+  ///
+  /// A `pattern` that cannot be compiled adds no issue. When [onUnchecked] is
+  /// given it receives each such pattern with its path (the value is never
+  /// passed); without it the pattern is skipped silently.
+  List<Issue> validate(
+    Object? value, {
+    void Function(UncheckedPattern note)? onUnchecked,
+  }) =>
+      _Run(defs, onUnchecked).run(schema, value);
 
   /// Whether the value is valid.
   bool accepts(Object? value) => validate(value).isEmpty;
@@ -126,9 +151,10 @@ final class Schema {
 }
 
 final class _Run {
-  _Run(this.defs);
+  _Run(this.defs, [this.onUnchecked]);
 
   final Map<String, Object?> defs;
+  final void Function(UncheckedPattern note)? onUnchecked;
   final List<Issue> _structure = [];
   final List<Issue> _constraints = [];
   final List<Issue> _unknown = [];
@@ -399,9 +425,12 @@ final class _Run {
     if (source is String) {
       final re = Schema.pattern(source);
       if (re == null) {
-        _limit(
-          path,
-          'the pattern /$source/ cannot be checked: it is not a regular expression this runtime can compile',
+        onUnchecked?.call(
+          UncheckedPattern(
+            path,
+            source,
+            'Dart\'s RegExp cannot compile it',
+          ),
         );
       } else if (!re.hasMatch(text)) {
         _limit(path, 'must match the pattern /$source/');

@@ -201,10 +201,8 @@ automatic keys) is the durable one.
 ### Schema strings
 
 `min_length` and `max_length` count Unicode code points, so an emoji is one
-character. This follows JSON Schema and the Go and Python runtimes; the
-TypeScript, Rust, Java, C# and Ruby runtimes count UTF-16 code units, so a string
-with astral-plane characters (emoji, some CJK) near a limit can pass in one
-runtime and fail in another. A lone surrogate counts as one.
+character; code-point counting is the contract in every runtime. A lone surrogate
+counts as one.
 
 `pattern` is an ECMAScript expression, searched anywhere in the string. It runs
 with Unicode semantics (`RegExp(unicode: true)`, the `u` flag): `\p{...}`,
@@ -216,17 +214,14 @@ syntax corner cases can differ), and a pattern that behaves differently with and
 without the `u` flag is judged with the flag, which can differ from a runtime
 that compiles it without.
 
-A pattern neither mode can compile is not skipped. The value is refused with the
-issue "the pattern /.../ cannot be checked: it is not a regular expression this
-runtime can compile": a request fails `VALIDATION_FAILED` before it is sent, and
-a response, page item or event is reported according to `validateResponses`
-(a warning by default). Fix or simplify the pattern in the API description. The
-other runtimes still skip such patterns silently.
-
-No runtime ships a file-backed OAuth token store. Provide an application-owned
-token-store implementation when tokens must survive process restarts; protect
-stored credentials and avoid logging them. Registry publication and package
-availability are separate from building this source checkout.
+A pattern neither mode can compile accepts the value, as in the other runtimes,
+but is no longer silent: `ClientOptions.onDiagnostic` receives a diagnostic with
+code `PATTERN_UNCHECKED` (category `VALIDATION_FAILED` for a request,
+`UNEXPECTED_RESPONSE` otherwise), once per path and pattern, whose
+`failed_parameter` is the path (`args...`, `response...`, `events[n]...` or a page
+item) and whose remediation names the pattern and the reason, never the value.
+The server still validates the value. `Schema.validate` called directly stays
+silent unless it is given an `onUnchecked` observer.
 
 ## License
 
