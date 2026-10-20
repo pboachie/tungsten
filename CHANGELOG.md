@@ -302,6 +302,10 @@ changes.
 
 ### Fixed
 
+- Dart schema validation now reports unchecked patterns from the first accepting
+  untagged-union variant, preserving nested property and array paths. Rejected
+  variants do not emit speculative warnings.
+
 - Python runtime: offset and page-number pagination no longer fail with
   `UNEXPECTED_RESPONSE` on Python 3.10 and 3.11, where `int.is_integer` does not exist.
 
