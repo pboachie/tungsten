@@ -29,8 +29,9 @@ import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
 
-PACKAGES = ("npm", "python", "rust", "java", "csharp", "fsharp", "ruby")
+PACKAGES = ("npm", "python", "rust", "java", "kotlin", "csharp", "fsharp", "ruby")
 NUGET = {"csharp": "Tungsten.Runtime", "fsharp": "Tungsten.Runtime.FSharp"}
+KOTLIN_ARTIFACTS = ("tungsten-runtime-kotlin", "tungsten-runtime-kotlin-coroutines")
 LIMIT = 128 * 1024 * 1024
 HOSTS = {
     "registry.npmjs.org",
@@ -268,6 +269,11 @@ def local_archives(package, version, directory):
                 f"tungsten-runtime-{version}{suffix}"
                 for suffix in (".jar", "-sources.jar", "-javadoc.jar", ".pom")
             },
+            "kotlin": {
+                f"{artifact}-{version}{suffix}"
+                for artifact in KOTLIN_ARTIFACTS
+                for suffix in (".jar", "-sources.jar", "-javadoc.jar", ".pom")
+            },
             "csharp": {f"Tungsten.Runtime.{version}.nupkg"},
             "fsharp": {f"Tungsten.Runtime.FSharp.{version}.nupkg"},
             "ruby": {f"tungsten-runtime-{version}.gem"},
@@ -275,6 +281,7 @@ def local_archives(package, version, directory):
         patterns = {
             "rust": ("*.crate",),
             "java": ("*.jar", "*.pom"),
+            "kotlin": ("*.jar", "*.pom"),
             "csharp": ("*.nupkg",),
             "fsharp": ("*.nupkg",),
             "ruby": ("*.gem",),
@@ -335,6 +342,17 @@ def local_archives(package, version, directory):
         )
         if metadata.findtext("groupId") != "io.github.pboachie.tungsten":
             raise ValueError("unexpected Maven group")
+    elif package == "kotlin":
+        for artifact in KOTLIN_ARTIFACTS:
+            metadata = xml_fields(files[f"{artifact}-{version}.pom"])
+            identity(
+                metadata.findtext("artifactId"),
+                metadata.findtext("version"),
+                artifact,
+                version,
+            )
+            if metadata.findtext("groupId") != "io.github.pboachie.tungsten":
+                raise ValueError("unexpected Maven group")
     elif package in NUGET:
         nuget_metadata(
             zip_entries(next(iter(files.values())))[NUGET[package] + ".nuspec"],
@@ -451,6 +469,11 @@ def verify_files(package, version, files, fetch, save_download=None):
     elif package == "java":
         base = f"https://repo.maven.apache.org/maven2/io/github/pboachie/tungsten/tungsten-runtime/{version}/"
         for name, data in files.items():
+            results.append(exact_file(name, data, base + name, fetch))
+    elif package == "kotlin":
+        for name, data in files.items():
+            artifact = next(a for a in KOTLIN_ARTIFACTS if name.startswith(f"{a}-{version}"))
+            base = f"https://repo.maven.apache.org/maven2/io/github/pboachie/tungsten/{artifact}/{version}/"
             results.append(exact_file(name, data, base + name, fetch))
     elif package == "ruby":
         normalized = ruby_version(version)

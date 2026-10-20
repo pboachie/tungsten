@@ -359,6 +359,7 @@
     "equivalent",
     "errno",
     "find-msvc-tools",
+    "foldhash",
     "form_urlencoded",
     "futures-channel",
     "futures-core",

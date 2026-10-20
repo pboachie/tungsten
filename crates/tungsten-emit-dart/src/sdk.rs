@@ -30,11 +30,16 @@
 //! and contract parity match the TypeScript SDK; the Dart parameter names
 //! come from the [`tungsten_emit::sdk::Namer`].
 //!
+//! An operation whose success bodies differ by exact status returns a
+//! sealed class of its answers (`<Resource><Operation>Response`, one final
+//! subclass `...Status<code>` per status holding the typed body, or none),
+//! chosen by the HTTP status of the response.
+//!
 //! Notes ([`notes`]): TG1072 (a macro outside the canonical form is left
 //! out), TG1073 (OpenID Connect is sent as a bearer token), TG1074
-//! (different success bodies by status: the typed result is `Object?`) and
-//! TG1075 (a discriminated union with a variant without a tag value: its
-//! variants are tried in order).
+//! (reserved: success bodies that differ by status used to be `Object?`)
+//! and TG1075 (a discriminated union with a variant without a tag value:
+//! its variants are tried in order).
 
 mod client;
 mod descriptors;
@@ -42,13 +47,14 @@ mod dispatch;
 mod macros;
 mod resources;
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use tungsten_core::{Diagnostic, Diagnostics};
 use tungsten_emit::sdk::{
-    ArgSource, ClientPlan, InputSource, MemberKind, SdkPlan, SuccessPlan, TypeKind, UnionPlan,
+    ArgSource, ClientPlan, InputSource, MemberKind, SdkPlan, StatusBody, SuccessPlan, TypeKind,
+    UnionPlan,
 };
-use tungsten_ir::{AuthScheme, BodyEncoding, Presence, Shape};
+use tungsten_ir::{AuthScheme, BodyEncoding, Presence, Shape, StatusMatch};
 
 use crate::dart::{Code, Expr, contains_word, directive, one_line, str_lit};
 use crate::models::Dt;
@@ -69,8 +75,10 @@ const RUNTIME_NAMES: &[&str] = &[
     "DispatchEntry",
     "Dispatcher",
     "EventStream",
+    "JsonEncodable",
     "Models",
     "OAuthFlow",
+    "Ok",
     "Page",
     "Patch",
     "PreviewResult",
@@ -115,17 +123,6 @@ pub(crate) fn notes(plan: &SdkPlan<'_>) -> Diagnostics {
                 "TG1073",
                 format!(
                     "auth scheme `{name}` (OpenID Connect) is sent as a bearer token by the Dart SDK; discovery is not supported"
-                ),
-            ));
-        }
-    }
-    for op in &plan.operations {
-        if let SuccessPlan::ByStatus(_) = op.success {
-            diags.push(Diagnostic::info(
-                "TG1074",
-                format!(
-                    "operation `{}` answers different bodies by status: its Dart typed result is the JSON value (`Object?`)",
-                    op.op.id.0
                 ),
             ));
         }
@@ -404,6 +401,17 @@ pub(crate) fn arg_in(g: &Gen<'_, '_>, a: &Arg) -> Expr {
 /// Method parameters `{ ..., CallOptions options = const CallOptions(), }`
 /// after `head` (`Future<Result<T>> name`), always split one per line.
 pub(crate) fn method_head(w: &mut Code, g: &Gen<'_, '_>, head: &str, args: &[Arg]) {
+    method_head_as(w, g, head, args, "");
+}
+
+/// [`method_head`] with `modifier` (`async `) before the body.
+pub(crate) fn method_head_as(
+    w: &mut Code,
+    g: &Gen<'_, '_>,
+    head: &str,
+    args: &[Arg],
+    modifier: &str,
+) {
     w.line(format!("{head}({{"));
     w.indent();
     for a in args {
@@ -427,7 +435,7 @@ pub(crate) fn method_head(w: &mut Code, g: &Gen<'_, '_>, head: &str, args: &[Arg
     }
     w.line("CallOptions options = const CallOptions(),");
     w.dedent();
-    w.line("}) {");
+    w.line(format!("}}) {modifier}{{"));
 }
 
 /// The documentation of the parameters of a method.
@@ -508,6 +516,50 @@ pub(crate) fn result_type(g: &Gen<'_, '_>, dt: Option<&Dt>, optional: bool) -> S
             }
         }
     }
+}
+
+/// The answer class of every operation whose success bodies differ by
+/// status, by operation index: `<Resource><Operation>Response`, unique
+/// among the package's class and type names.
+pub(crate) fn answer_classes(g: &Gen<'_, '_>) -> BTreeMap<usize, String> {
+    let mut taken: BTreeSet<String> = g.names.resources.iter().map(|r| r.class.clone()).collect();
+    taken.extend(g.names.namespace_classes.iter().cloned());
+    taken.insert(g.names.client_class.clone());
+    taken.insert(macros_class(g));
+    taken.extend(g.names.types.values().cloned());
+    taken.extend(crate::TAKEN_TYPES.iter().map(|s| s.to_string()));
+    let mut out = BTreeMap::new();
+    for (o, op) in g.plan.operations.iter().enumerate() {
+        if !matches!(op.success, SuccessPlan::ByStatus(_)) {
+            continue;
+        }
+        let member = member_name(g, op.resource, MemberKind::Operation(o))
+            .unwrap_or_else(|| format!("op{o}"));
+        let base = format!(
+            "{}{}Response",
+            g.names.resources[op.resource].class,
+            upper_first(&member)
+        );
+        let name = unique(base, &taken);
+        taken.insert(name.clone());
+        out.insert(o, name);
+    }
+    out
+}
+
+/// The success answers of operation `o`: per exact status, the Dart
+/// representation of its body (`None`: no body).
+pub(crate) fn answer_cases(g: &Gen<'_, '_>, o: usize) -> Vec<(u16, Option<Dt>)> {
+    let SuccessPlan::ByStatus(list) = &g.plan.operations[o].success else {
+        return vec![];
+    };
+    list.iter()
+        .filter_map(|(status, body)| match (status, body) {
+            (StatusMatch::Exact(code), StatusBody::Empty) => Some((*code, None)),
+            (StatusMatch::Exact(code), StatusBody::Json(ty)) => Some((*code, Some(g.dt(ty)))),
+            _ => None,
+        })
+        .collect()
 }
 
 /// A private top-level decoder function `name` of a result value.

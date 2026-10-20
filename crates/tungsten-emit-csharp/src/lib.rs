@@ -14,18 +14,23 @@
 //!   through the typed methods), `Macros.cs`, `Ops.cs`;
 //! - `Models/...`: sealed records (four-state presence with `Patch<T>`,
 //!   additional members kept), enums as readonly record structs with known
-//!   values and a strict decoder, unions as abstract records with variant
-//!   records (by tag, else the first variant that decodes, in plan order);
-//!   every model decodes and encodes itself over the runtime's JSON tree
-//!   (no reflection, trimming- and AOT-safe);
+//!   values and a strict decoder (an enum of mixed JSON types holds its
+//!   values as JSON), unions as abstract records with variant records (by
+//!   tag, else the first variant that decodes, in plan order), an `allOf`
+//!   that cannot be merged into one record as a record of one typed part
+//!   per member; every model decodes and encodes itself over the runtime's
+//!   JSON tree (no reflection, trimming- and AOT-safe);
 //! - `Resources/...`: one class per resource with a request record and the
-//!   async methods of each operation; one class per namespace in
-//!   multi-namespace APIs;
+//!   async methods of each operation (an operation whose success bodies
+//!   differ by exact status also has a nested abstract record of its
+//!   answers, `<Operation>Response`, chosen by the HTTP status of the
+//!   response); one class per namespace in multi-namespace APIs;
 //! - `custom/`, created once.
 //!
 //! Arguments objects use the TypeScript arguments layout, so
 //! `failed_parameter` and contract parity match the TypeScript SDK.
-//! Diagnostics: TG1020 to TG1025 (planning/05 "C# SDK").
+//! Diagnostics: TG1020 to TG1025 (planning/05 "C# SDK"); TG1021 is an
+//! `allOf` without members, TG1024 is no longer reported.
 
 mod client;
 mod cs;
@@ -37,8 +42,7 @@ use std::collections::BTreeMap;
 
 use tungsten_core::{Diagnostic, Diagnostics};
 use tungsten_emit::sdk::{
-    self, DocumentOptions, NameMap, Namer, NamerOptions, Scope, SdkPlan, SuccessPlan, TypeKind,
-    UnionPlan,
+    self, DocumentOptions, NameMap, Namer, NamerOptions, Scope, SdkPlan, TypeKind, UnionPlan,
 };
 use tungsten_emit::{CommentStyle, Emitter, FileSet, TargetConfig, Writer, header};
 use tungsten_ir::naming::Target;
@@ -402,17 +406,6 @@ fn notes(ir: &Ir, plan: &SdkPlan<'_>) -> Diagnostics {
             ));
         }
     }
-    for op in &plan.operations {
-        if let SuccessPlan::ByStatus(_) = op.success {
-            diags.push(Diagnostic::info(
-                "TG1024",
-                format!(
-                    "operation `{}` answers different bodies by status: its typed result is the runtime's JsonNode",
-                    op.op.id.0
-                ),
-            ));
-        }
-    }
     for t in plan.types.values() {
         match &t.kind {
             TypeKind::Union(UnionPlan::Untagged { .. }) => {
@@ -428,20 +421,20 @@ fn notes(ir: &Ir, plan: &SdkPlan<'_>) -> Diagnostics {
                     ));
                 }
             }
-            TypeKind::AllOf(sdk::AllOfPlan::Intersection) => diags.push(Diagnostic::warning(
-                "TG1021",
-                format!(
-                    "type `{}` (an allOf that cannot be merged) has no C# type: the runtime's JsonNode is used",
-                    t.id.0
-                ),
-            )),
-            TypeKind::Enum(sdk::EnumPlan::Mixed { .. }) => diags.push(Diagnostic::warning(
-                "TG1021",
-                format!(
-                    "enum `{}` mixes JSON types and has no C# type: the runtime's JsonNode is used",
-                    t.id.0
-                ),
-            )),
+            TypeKind::AllOf(sdk::AllOfPlan::Intersection)
+                if matches!(
+                    ir.types.get(&t.id).map(|n| &n.shape),
+                    Some(tungsten_ir::Shape::Intersection { members }) if members.is_empty()
+                ) =>
+            {
+                diags.push(Diagnostic::warning(
+                    "TG1021",
+                    format!(
+                        "type `{}` (an allOf without members) has no C# type: the runtime's JsonNode is used",
+                        t.id.0
+                    ),
+                ))
+            }
             _ => {}
         }
     }

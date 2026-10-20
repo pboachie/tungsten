@@ -6,8 +6,7 @@
 //! Types ([`Ft`]): `string`, `bool`, `int`, `int64`, `float`, `byte[]`
 //! (base64 in JSON), the runtime's `Binary` (a body or multipart file), the
 //! .NET runtime's `JsonNode` for anything without an F# type (TG1081: an
-//! `allOf` that cannot be merged, an enum that mixes JSON types, inline
-//! records and unions, `any`), generated models, `'T list` for arrays and
+//! `allOf` without members; inline records and unions; `any`), generated models, `'T list` for arrays and
 //! `Map<string, 'T>` for maps. JSON null inside a type is `'T option`
 //! (`JsonNode` holds null itself). A record field's type follows its
 //! presence ([`field_ty`]): `'T` when required, `'T option` when optional
@@ -180,17 +179,25 @@ impl Ctx<'_> {
             .unwrap_or_else(|| "Shared".into())
     }
 
-    /// Whether a named type has a model (a record, a merged `allOf`, a
-    /// string or integer enum, or a union with variants).
+    /// Whether a named type has a model (a record, an `allOf` (merged into
+    /// one record, or a record of one part per member), an enum, or a union
+    /// with variants).
     pub fn has_model(&self, id: &TypeId) -> bool {
         let Some(t) = self.plan.types.get(id) else {
             return false;
         };
         match &t.kind {
             TypeKind::Record { .. } => true,
-            TypeKind::Enum(e) => matches!(e, EnumPlan::Strings | EnumPlan::Integers),
+            TypeKind::Enum(e) => matches!(
+                e,
+                EnumPlan::Strings | EnumPlan::Integers | EnumPlan::Mixed { .. }
+            ),
             TypeKind::Union(u) => !matches!(u, UnionPlan::Empty),
-            TypeKind::AllOf(a) => matches!(a, AllOfPlan::Merged { .. }),
+            TypeKind::AllOf(AllOfPlan::Merged { .. }) => true,
+            TypeKind::AllOf(AllOfPlan::Intersection) => matches!(
+                self.ir.types.get(id).map(|t| &t.shape),
+                Some(Shape::Intersection { members }) if !members.is_empty()
+            ),
             TypeKind::Alias => false,
         }
     }
