@@ -131,6 +131,14 @@ changes.
 
 ### Added
 
+- Add a pub.dev release route for the Dart runtime (`tungsten_runtime`) from
+  0.2.0: a frozen, checksummed archive with a zero-warning `dart pub publish
+  --dry-run` on every release run, then a gated OIDC publish (`PUB_PUBLISH`,
+  environment `pub`) whose public archive is compared with the frozen one.
+  Generated Dart SDKs can depend on the published package instead of
+  runtime source. The runtime's `crypto` dependency is now the range `^3.0.7`
+  (pub.dev warns on exact pins) and the package declares pub.dev topics.
+
 - Add explicitly pinned host policies for external emitters, with strict bounded
   capture, intersected deny/resource ceilings, pure policy digests and redacted
   inspection. Unsupported commands reject supplied policy before effects.
