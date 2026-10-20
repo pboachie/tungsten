@@ -853,6 +853,61 @@ internal static class EcmaPattern
             return chosen.Length == 0 ? "(?!)" : "[" + Body(chosen) + "]";
         }
 
+        /// <summary>An astral code point written at <paramref name="at"/> (a raw pair, a \u{...} or a \uD83D\uDE00 escape), or -1.</summary>
+        private int PeekAstral(int at, out int length)
+        {
+            length = 0;
+            if (at >= s.Length)
+            {
+                return -1;
+            }
+            if (char.IsHighSurrogate(s[at]) && at + 1 < s.Length && char.IsLowSurrogate(s[at + 1]))
+            {
+                length = 2;
+                return char.ConvertToUtf32(s[at], s[at + 1]);
+            }
+            if (s[at] != '\\' || at + 2 >= s.Length || s[at + 1] != 'u')
+            {
+                return -1;
+            }
+            if (s[at + 2] == '{')
+            {
+                int end = s.IndexOf('}', at);
+                if (end > at + 3 && int.TryParse(s.AsSpan(at + 3, end - at - 3), NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture, out int cp)
+                    && cp > 0xFFFF && cp <= 0x10FFFF)
+                {
+                    length = end + 1 - at;
+                    return cp;
+                }
+                return -1;
+            }
+            if (HexAt(at + 2, 4, out int hi) && hi >= 0xD800 && hi <= 0xDBFF && at + 7 < s.Length && s[at + 6] == '\\' && s[at + 7] == 'u'
+                && HexAt(at + 8, 4, out int lo) && lo >= 0xDC00 && lo <= 0xDFFF)
+            {
+                length = 12;
+                return char.ConvertToUtf32((char)hi, (char)lo);
+            }
+            return -1;
+        }
+
+        /// <summary>The surrogate-pair alternatives that match the code points <paramref name="lo"/> to <paramref name="hi"/>.</summary>
+        private static string AstralRange(int lo, int hi)
+        {
+            string a = char.ConvertFromUtf32(lo), b = char.ConvertFromUtf32(hi);
+            int hl = a[0], ll = a[1], hh = b[0], lh = b[1];
+            if (hl == hh)
+            {
+                return U(hl) + "[" + U(ll) + "-" + U(lh) + "]";
+            }
+            var parts = new List<string> { U(hl) + "[" + U(ll) + "-\\uDFFF]" };
+            if (hl + 1 <= hh - 1)
+            {
+                parts.Add("[" + U(hl + 1) + "-" + U(hh - 1) + "][\\uDC00-\\uDFFF]");
+            }
+            parts.Add(U(hh) + "[\\uDC00-" + U(lh) + "]");
+            return string.Join("|", parts);
+        }
+
         private void Class()
         {
             bool negate = i < s.Length && s[i] == '^';
@@ -874,6 +929,7 @@ internal static class EcmaPattern
                 return;
             }
             var b = new StringBuilder();
+            var astral = new List<string>();
             bool lastWasSet = false;
             int prev = -1;
             bool range = false;
@@ -897,6 +953,37 @@ internal static class EcmaPattern
                 if (i >= s.Length)
                 {
                     throw new InvalidPatternException("an unterminated character class");
+                }
+                if (unicode)
+                {
+                    int cp = PeekAstral(i, out int len);
+                    if (cp > 0)
+                    {
+                        if (negate || range)
+                        {
+                            throw new UnsupportedException("a code point above U+FFFF inside a negated character class or a range from a BMP character");
+                        }
+                        i += len;
+                        int top = cp;
+                        if (i < s.Length && s[i] == '-' && i + 1 < s.Length && s[i + 1] != ']')
+                        {
+                            int end = PeekAstral(i + 1, out int len2);
+                            if (end < 0)
+                            {
+                                throw new UnsupportedException("a range from a code point above U+FFFF to a BMP character");
+                            }
+                            if (end < cp)
+                            {
+                                throw new InvalidPatternException("a class range out of order");
+                            }
+                            top = end;
+                            i += 1 + len2;
+                        }
+                        astral.Add(AstralRange(cp, top));
+                        lastWasSet = false;
+                        prev = -1;
+                        continue;
+                    }
                 }
                 char c = s[i++];
                 if (c == ']')
@@ -939,10 +1026,6 @@ internal static class EcmaPattern
                 }
                 if (c != '\\')
                 {
-                    if (unicode && char.IsHighSurrogate(c) && i < s.Length && char.IsLowSurrogate(s[i]))
-                    {
-                        throw new UnsupportedException("a code point above U+FFFF inside a character class");
-                    }
                     b.Append(c);
                     Unit(c);
                     continue;
@@ -988,6 +1071,15 @@ internal static class EcmaPattern
             if (negate)
             {
                 o.Append(Negated(b.ToString()));
+            }
+            else if (astral.Count > 0)
+            {
+                o.Append("(?:");
+                if (b.Length > 0)
+                {
+                    o.Append('[').Append(b).Append("]|");
+                }
+                o.Append(string.Join("|", astral)).Append(')');
             }
             else
             {

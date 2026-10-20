@@ -195,7 +195,7 @@ server still validates the value. The cases are:
 
 - the pattern is not valid ECMAScript, or .NET refuses the rewrite;
 - it uses a construct without a faithful .NET equivalent: Unicode properties other than general
-  categories, `ASCII` and `Any`; a code point above U+FFFF inside a character class; a capture group
+  categories, `ASCII` and `Any`; a code point above U+FFFF in a negated character class or at the end of a range that starts below it; a capture group
   inside a lookbehind; a back-reference to a group inside a repeated group or a negative lookahead; a
   quantified lookahead or the legacy octal and `\c` escapes of patterns without the `u` flag;
 - the value contains characters above U+FFFF and the pattern can tell a surrogate pair from two code units
