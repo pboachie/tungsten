@@ -24,9 +24,42 @@ Calls return a typed result or a diagnostic envelope describing recovery;
 unknown outcomes never justify blindly repeating a mutation. The API remains
 responsible for authorization and server-side idempotency.
 
+## Coroutines (opt-in)
+
+The default surface is blocking and has no dependency beyond the Java runtime
+and kotlin-stdlib. Coroutine support is a separate artifact,
+`io.github.pboachie.tungsten:tungsten-runtime-kotlin-coroutines`
+(`runtimes/kotlin/coroutines`, the only one that depends on
+`kotlinx-coroutines-core`, pinned to 1.10.2). Generated SDKs use it when the
+Kotlin target sets `coroutines: true`; build it from source like this layer:
+
+```sh
+gradle -p runtimes/kotlin/coroutines publishToMavenLocal --no-daemon
+```
+
+- `suspending { call }` runs one blocking runtime call as a cancellable suspend
+  call on `Dispatchers.IO` (or the dispatcher you pass) and returns its
+  `Result`. Cancelling the coroutine interrupts the call; the Java runtime
+  answers by closing the connection of the in-flight request, and the call ends
+  with a `CancellationException`. A mutation cancelled after it was sent has an
+  unknown outcome: reuse its idempotency key.
+- `pagesFlow { pages }` and `eventsFlow { stream }` are cold `Flow`s of the
+  runtime's page and event results; the lambda runs once per collection. They
+  are pull based with no buffer of their own: the next page or event is read
+  only when the collector takes the previous one, so `maxResponseBytes` and
+  cycle detection apply per page unchanged, an error is the last element and
+  `.buffer(n)` bounds any prefetch. The stream is cancelled and closed when the
+  flow ends or is cancelled. `itemsOrThrow()` and `valuesOrThrow()` flatten them.
+
+Not covered: calls made through `dispatch()`, macros, previews and the OAuth
+helpers remain blocking; there is no deadline shared by a whole pagination
+(each request keeps its own timeout); the Java runtime still uses one
+platform thread per in-flight request.
+
 ## Limits
 
-This is a thin Kotlin layer over the Java runtime. Calls are synchronous;
+This is a thin Kotlin layer over the Java runtime. Calls are synchronous (the
+coroutines artifact above wraps them);
 Java's lack of async calls, proxy configuration and pluggable transport also
 applies. For durable automatic keys, configure Java's `FileIdempotencyStore`
 through the shared client options; see the

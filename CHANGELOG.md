@@ -148,6 +148,23 @@ changes.
   runtime source. The runtime's `crypto` dependency is now the range `^3.0.7`
   (pub.dev warns on exact pins) and the package declares pub.dev topics.
 
+- Add opt-in coroutine support to the Kotlin target (`coroutines: true` in
+  `targets.kotlin`). Each resource gains a `<op>Suspend` function next to the
+  blocking one (same `Result`, run on `Dispatchers.IO`; cancelling the coroutine
+  interrupts the call, which closes the request in flight and ends with a
+  `CancellationException`) and cold `Flow`s, `<op>PagesFlow` and
+  `<op>StreamFlow`, next to `Pages` and `Stream`. The flows are pull based with
+  no buffer of their own (`.buffer(n)` bounds any prefetch); `maxResponseBytes`
+  and pagination cycle detection still apply to every page and an error is the
+  last element. The blocking API is unchanged and remains the default, and the
+  new `tungsten-runtime-kotlin-coroutines` artifact (`runtimes/kotlin/coroutines`,
+  `coroutines_runtime_path` for a source build) is the only one that depends on
+  `kotlinx-coroutines-core` 1.10.2. Limits: `dispatch()`, macros, previews and
+  the OAuth helpers stay blocking, the calls run on `Dispatchers.IO` (one
+  platform thread per request in flight), no deadline spans a whole pagination,
+  and a mutation cancelled after it was sent has an unknown outcome; reuse its
+  idempotency key to repeat it.
+
 
 - Go, Java and Ruby (and Kotlin, which delegates to Java) report a schema
   `pattern` they cannot check. The value is still accepted, as before, but the
@@ -202,6 +219,12 @@ changes.
   starting at 0.2.0, with artifact verification and OIDC provenance. Publication
   still requires the release checks and an explicit maintainer switch.
 
+- Dart `FileIdempotencyStore` keeps automatic idempotency keys across restarts
+  in the version-1 JSON file and `<path>.lock` owner lease shared with the other
+  runtimes (mode 0600, atomic rename, closed on corruption, a lease is never
+  reclaimed automatically). Stores gain `reserve(scope, logicalId, candidate)`
+  through `AtomicIdempotencyStore`; get/put-only custom stores keep working.
+
 ### Changed
 
 - Locate primary and related LSP profile diagnostics in their captured local
@@ -254,6 +277,13 @@ changes.
 - `tungsten emitters --no-external` and `TUNGSTEN_NO_EXTERNAL=1` now skip
   PATH-based descriptor probes as well as manifest commands. The inspection
   result reports that discovery is disabled instead of claiming no emitters exist.
+
+- Dart schema validation counts `min_length`/`max_length` in Unicode code points
+  (an emoji was two) and runs `pattern` with Unicode semantics (`\p{...}`,
+  `\u{...}`, whole astral characters), falling back to legacy syntax only for
+  patterns the Unicode mode rejects. A pattern that cannot be compiled still
+  accepts the value but now reports a `PATTERN_UNCHECKED` diagnostic through
+  `ClientOptions.onDiagnostic` instead of passing silently.
 
 ## [0.1.3] - 2026-10-17
 
