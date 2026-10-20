@@ -279,8 +279,13 @@ func (c *ClientCore) checkItems(op *OperationDescriptor, itemsField string, item
 	if op.PageItem == nil || mode == ValidateOff {
 		return nil
 	}
+	seen := map[string]bool{}
 	for index, item := range items {
-		issues := judge(op.PageItem, item)
+		root := "response"
+		if itemsField != "" {
+			root += "." + itemsField
+		}
+		issues := c.judge(op.ID, root+fmt.Sprintf("[%d]", index), op.PageItem, item, seen)
 		if len(issues) == 0 {
 			continue
 		}

@@ -490,7 +490,7 @@ public final class EventStream<T> implements Iterator<Result<StreamEvent<T>>>, I
                             + afterEffect + " Events before it were delivered."));
         }
         if (core.validateResponses != ClientOptions.ValidateResponses.OFF && spec.event() != null) {
-            List<Schema.Issue> issues = ClientCore.judge(spec.event(), value);
+            List<Schema.Issue> issues = core.judge(op.id(), "events[" + index + "]", spec.event(), value, null);
             if (!issues.isEmpty()) {
                 Schema.Issue issue = issues.get(0);
                 List<String> path = Schema.segments(issue.path());

@@ -273,7 +273,10 @@ module Tungsten
         if op.request
           issues =
             begin
-              op.request.validate(args)
+              notes = []
+              op.request.validate(args, notes).tap do
+                report_unchecked(op.id, "VALIDATION_FAILED", notes) { |path| Helpers.argument_path(op, path) }
+              end
             rescue StandardError
               return Runtime.diag(op.id, "UNEXPECTED_RESPONSE").retrying("never")
                             .remedy("The SDK failed while building or sending the request (the request validator failed). This is a bug in the generated SDK or the runtime; report it. Nothing was sent.").err
@@ -970,7 +973,7 @@ module Tungsten
           problem = Runtime.diag(op.id, "UNEXPECTED_RESPONSE").status(status).request_id(rid).param("response")
                            .expected(expected).remedy(remediation).attempts(attempts).build
         elsif mode != "off" && op.response && decoded.present?
-          issues = judge(op.response, decoded.value)
+          issues = judge(op.response, decoded.value, op.id, "response")
           unless issues.empty?
             issue = issues.first
             path_text = Runtime.issue_path(issue.path)
@@ -1001,10 +1004,37 @@ module Tungsten
 
       # A validator that only judges (responses, page items, events): a
       # failure is an issue at the root.
-      def judge(validator, value)
-        validator.validate(value)
+      #
+      # The patterns the validator could not check are reported once through
+      # the observer (`PATTERN_UNCHECKED`), under `root` (for example
+      # "response"); `seen` deduplicates across several calls.
+      def judge(validator, value, operation, root, seen = nil)
+        notes = []
+        issues = validator.validate(value, notes)
+        report_unchecked(operation, "UNEXPECTED_RESPONSE", notes, seen) { |path| "#{root}#{Runtime.issue_path(path)}" }
+        issues
       rescue StandardError
         [Issue.new(path: [], message: "the response schema failed (the validator raised an error)")]
+      end
+
+      # Emits PATTERN_UNCHECKED for each schema pattern the runtime could not
+      # check: the value was accepted without it. The diagnostic names the
+      # path, the pattern and the reason, never the value.
+      def report_unchecked(operation, category, notes, seen = nil)
+        return if notes.empty? || @on_diagnostic.nil?
+
+        seen ||= {}
+        notes.each do |n|
+          param = yield(n.path)
+          key = [param, n.pattern]
+          next if seen.key?(key) || seen.length >= 16
+
+          seen[key] = true
+          emit(Runtime.diag(operation, category).code("PATTERN_UNCHECKED").retrying("never").param(param)
+                      .expected("a value matching the pattern /#{n.pattern}/")
+                      .remedy("The pattern /#{n.pattern}/ at #{param} was not checked because #{n.reason}; the value was accepted without it. The server still validates it.")
+                      .build)
+        end
       end
 
       # How to find out whether a mutation without replay protection took
