@@ -16,13 +16,19 @@ concurrency:
 
 jobs:
   npm:
-    name: public npm package build
+    name: public npm package build (Node ${{ matrix.node-version }})
     # Standard public runners only; do not run if copied to a private repo.
     if: github.repository == 'pboachie/tungsten' && github.event.repository.private == false
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
       contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        # The lowest Node that satisfies every published engines range
+        # (the MCP runtime needs 22.13.0), then the current LTS.
+        node-version: ["22.13.0", "24.22.0"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -36,10 +42,12 @@ jobs:
         run: test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: "24"
+          node-version: ${{ matrix.node-version }}
           package-manager-cache: false
       - name: Build, pack and validate installed public runtimes
         run: |
+          node --version
+          npm --version
           node .github/scripts/check-runtime-artifacts.mjs "$RUNNER_TEMP/npm-dist"
           cd "$RUNNER_TEMP/npm-dist"
           sha256sum --check SHA256SUMS
@@ -47,12 +55,18 @@ jobs:
       # cross-workflow artifact consumption or private-source checkout.
 
   python:
-    name: public Python package build
+    name: public Python package build (Python ${{ matrix.python-version }})
     if: github.repository == 'pboachie/tungsten' && github.event.repository.private == false
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        # requires-python floor and the newest CPython qualified; each minor
+        # resolves to its latest available patch.
+        python-version: ["3.10", "3.14"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -64,13 +78,30 @@ jobs:
         run: test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
       - name: Build and check the public sdist and wheel
         working-directory: runtimes/python
         run: |
           python -m pip install --disable-pip-version-check build==1.6.1 twine==7.0.0
           python -m build --outdir "$RUNNER_TEMP/python-dist"
           python -m twine check "$RUNNER_TEMP/python-dist/"*
+      - name: Install each archive into a clean environment and import it
+        run: |
+          for archive in "$RUNNER_TEMP"/python-dist/*.whl "$RUNNER_TEMP"/python-dist/*.tar.gz; do
+            venv="$RUNNER_TEMP/consumer-$(basename "$archive")"
+            python -m venv "$venv"
+            "$venv/bin/python" -m pip install --disable-pip-version-check "$archive"
+            "$venv/bin/python" -m pip freeze
+            # Outside the checkout and isolated: the import must resolve to the installed package.
+            (cd "$RUNNER_TEMP" && "$venv/bin/python" -I -c '
+          import sys
+          import tungsten_runtime
+          from tungsten_runtime import AsyncClientCore, ClientCore
+          assert "site-packages" in tungsten_runtime.__file__, tungsten_runtime.__file__
+          print(sys.version)
+          print(tungsten_runtime.__file__)
+          ')
+          done
 
   ruby:
     name: public Ruby package notices
