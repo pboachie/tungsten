@@ -1248,11 +1248,16 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
     ),
     e(
         "TG1021",
-        "The C# SDK has no native type for this schema (an allOf whose members cannot be merged \
-         into one record, or an enum whose values mix JSON types), so the typed value is the \
-         runtime's `JsonNode?`. The runtime still validates it against the schema.",
-        "Merge the allOf members into one object, or give the enum values a single type, if a \
-         typed C# model is wanted.",
+        "The C# SDK has no native type for this schema: an `allOf` without members has nothing \
+         to type, so its typed value is the runtime's `JsonNode?`, which the runtime still \
+         validates against the schema. Two shapes that used to fall back to `JsonNode?` are \
+         typed since 0.2.0: an `allOf` whose members cannot be merged into one record (a member \
+         is not a record, has typed extra members, or two members share a wire name) is a \
+         sealed record with one typed property per member (each decodes the whole value, and \
+         `ToJson()` merges the properties' JSON), and an enum of mixed JSON types (booleans, \
+         fractional numbers, integers beyond 64 bits) is a readonly record struct of its known \
+         JSON values (`Value` is the wire value, compared as JSON).",
+        "Give the `allOf` at least one member, or use the `JsonNode?` value.",
     ),
     e(
         "TG1022",
@@ -1271,11 +1276,12 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
     ),
     e(
         "TG1024",
-        "The operation answers different JSON bodies depending on the exact status, so the typed \
-         method's result is the runtime's `JsonNode?`; the result's `Meta.Status` tells them \
-         apart.",
-        "Read `Meta.Status` of the result and decode the body with the matching model's \
-         `FromJson`.",
+        "Reserved; not reported since 0.2.0. An operation that answers different JSON bodies \
+         depending on the exact status returns a nested abstract record of its answers \
+         (`<Operation>Response`, one `Status<code>` record per status holding the typed body, \
+         or none for an empty one). `Status` is the HTTP status of the response; a success with \
+         a status the operation does not declare fails as an unexpected response.",
+        "Match on the answer's `Status<code>` records (or read `Status`).",
     ),
     e(
         "TG1025",
@@ -1385,13 +1391,18 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
     ),
     e(
         "TG1071",
-        "A schema has no Dart type: an `allOf` that cannot be merged into one record (a member \
-         is not a record, has typed extra members, or two members share a wire name) or an \
-         enum that is not an enum of strings or of integers (mixed JSON types, numbers or \
-         booleans). The Dart SDK types it as its JSON value (`Object?`), which the runtime \
-         still validates against the schema.",
-        "Restructure the schema (records with distinct properties, an enum of strings or \
-         integers), or accept the JSON value.",
+        "A schema has no Dart type: an `allOf` without members has nothing to type, and an \
+         enum with an integer beyond 64 bits has no Dart constant (a Dart `int` is 64 bits, and \
+         a `double` would send another number). The Dart SDK types it as its JSON value \
+         (`Object?`), which the runtime still validates against the schema. Two shapes that \
+         used to fall back to `Object?` are typed since 0.2.0: an `allOf` whose members cannot \
+         be merged into one record (a member is not a record, has typed extra members, or two \
+         members share a wire name) is a final class with one typed part per member (each \
+         decodes the whole value, and `toJson()` merges the parts' JSON), and an enum of mixed \
+         JSON types (booleans, fractional numbers) is an enhanced enum whose `wire` is the JSON \
+         value, compared as JSON.",
+        "Give the `allOf` at least one member, keep the integers of the enum within 64 bits, or \
+         accept the JSON value.",
     ),
     e(
         "TG1072",
@@ -1408,10 +1419,12 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
     ),
     e(
         "TG1074",
-        "An operation answers different JSON bodies depending on the status. The Dart SDK's \
-         typed result for it is the JSON value (`Object?`); the runtime validates it against \
-         the body of the status that arrived.",
-        "Nothing to fix; read `meta.status` of the result to tell the bodies apart.",
+        "Reserved; not reported since 0.2.0. An operation that answers different JSON bodies \
+         depending on the exact status returns a sealed class of its answers \
+         (`<Resource><Operation>Response`, one `...Status<code>` subclass per status; `value` \
+         is the typed body, absent for an empty one, and `status` the HTTP status). A success \
+         with a status the operation does not declare fails as an unexpected response.",
+        "Switch over the answer's subclasses (or read `status`).",
     ),
     e(
         "TG1075",
@@ -1430,11 +1443,16 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
     ),
     e(
         "TG1081",
-        "The F# SDK has no native type for this schema (an allOf whose members cannot be merged \
-         into one record, or an enum whose values mix JSON types), so the typed value is the \
-         .NET runtime's `JsonNode`. The runtime still validates it against the schema.",
-        "Merge the allOf members into one object, or give the enum values a single type, if a \
-         typed F# model is wanted.",
+        "The F# SDK has no native type for this schema: an `allOf` without members has nothing \
+         to type, so its typed value is the .NET runtime's `JsonNode`, which the runtime still \
+         validates against the schema. Two shapes that used to fall back to `JsonNode` are \
+         typed since 0.2.0: an `allOf` whose members cannot be merged into one record (a member \
+         is not a record, has typed extra members, or two members share a wire name) is a \
+         record with one typed field per member (each decodes the whole value, and `ToJson()` \
+         merges the fields' JSON), and an enum of mixed JSON types (booleans, fractional \
+         numbers, integers beyond 64 bits) is a union of its known JSON values plus `Unknown \
+         of JsonNode` (`Value` is the wire value, compared as JSON).",
+        "Give the `allOf` at least one member, or use the `JsonNode` value.",
     ),
     e(
         "TG1082",
@@ -1453,11 +1471,12 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
     ),
     e(
         "TG1084",
-        "The operation answers different JSON bodies depending on the exact status, so the typed \
-         method's result is the runtime's `JsonNode`; the result's `Meta.Status` tells them \
-         apart.",
-        "Read `Meta.Status` of the result and decode the body with the matching model's \
-         `fromJson`.",
+        "Reserved; not reported since 0.2.0. An operation that answers different JSON bodies \
+         depending on the exact status returns a union of its answers \
+         (`<Class><Member>Response`, one `Status<code>` case per status holding the typed body, \
+         none for an empty one). `Status` is the HTTP status of the response; a success with a \
+         status the operation does not declare fails as an unexpected response.",
+        "Match on the answer's `Status<code>` cases (or read `Status`).",
     ),
     e(
         "TG1085",

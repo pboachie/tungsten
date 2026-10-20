@@ -5,9 +5,11 @@
 //! multi-namespace APIs, and `Ops` (the descriptor document and one field
 //! per operation and macro).
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use tungsten_emit::Writer;
-use tungsten_emit::sdk::{ArgSource, MemberKind, OpPlan, SuccessPlan};
-use tungsten_ir::{BodyEncoding, Presence, TypeRef};
+use tungsten_emit::sdk::{ArgSource, MemberKind, OpPlan, StatusBody, SuccessPlan};
+use tungsten_ir::{BodyEncoding, Presence, StatusMatch, TypeRef};
 
 use crate::Ctx;
 use crate::cs::{self, lit};
@@ -20,6 +22,15 @@ pub struct ArgField {
     pub ct: Ct,
     pub presence: Presence,
     pub doc: String,
+}
+
+/// The answers of an operation whose success bodies differ by status: a
+/// nested abstract record with one case per status.
+pub struct ByStatus {
+    /// The record's name (nested in the resource class).
+    pub name: String,
+    /// Per success status, the type of its body (none: no body).
+    pub cases: Vec<(u16, Option<Ct>)>,
 }
 
 /// What the methods of one operation are made of.
@@ -39,6 +50,8 @@ pub struct OpInfo {
     pub result: Ct,
     /// No success body at all (`Result<NoContent>`).
     pub no_content: bool,
+    /// The success bodies differ by status: the typed answers.
+    pub by_status: Option<ByStatus>,
     pub item: Ct,
     pub event: Ct,
     pub fields: Vec<ArgField>,
@@ -89,6 +102,9 @@ impl Ctx<'_> {
     /// The methods of every operation, in plan order.
     pub fn op_infos(&self) -> Vec<OpInfo> {
         let mut infos = vec![];
+        // The names taken inside each resource class: its members, the
+        // request records, the answer records so far.
+        let mut taken: BTreeMap<usize, BTreeSet<String>> = BTreeMap::new();
         for (i, p) in self.plan.operations.iter().enumerate() {
             let res = &self.names.resources[p.resource];
             let member_of = |kind: MemberKind| {
@@ -122,7 +138,43 @@ impl Ctx<'_> {
             let optional_request = fields
                 .iter()
                 .all(|f| matches!(f.presence, Presence::Optional | Presence::OptionalNullable));
-            let (result, no_content) = self.success_ct(p);
+            let (mut result, no_content) = self.success_ct(p);
+            let by_status = match &p.success {
+                SuccessPlan::ByStatus(list) => {
+                    let used = taken.entry(p.resource).or_insert_with(|| {
+                        let mut set: BTreeSet<String> = BTreeSet::new();
+                        set.insert(res.class.clone());
+                        for m in &res.members {
+                            set.insert(m.name.clone());
+                            set.insert(format!("{}Request", m.name));
+                        }
+                        set
+                    });
+                    let mut name = format!("{member}Response");
+                    let mut n = 2;
+                    while used.contains(&name) {
+                        name = format!("{member}Response{n}");
+                        n += 1;
+                    }
+                    used.insert(name.clone());
+                    let cases = list
+                        .iter()
+                        .filter_map(|(status, body)| match (status, body) {
+                            (StatusMatch::Exact(code), StatusBody::Empty) => Some((*code, None)),
+                            (StatusMatch::Exact(code), StatusBody::Json(ty)) => {
+                                Some((*code, Some(self.ct(ty, None))))
+                            }
+                            _ => None,
+                        })
+                        .collect();
+                    result = Ct::of(Ck::Named {
+                        name: name.clone(),
+                        value: false,
+                    });
+                    Some(ByStatus { name, cases })
+                }
+                _ => None,
+            };
             let item = p
                 .page
                 .as_ref()
@@ -147,6 +199,7 @@ impl Ctx<'_> {
                 optional_request,
                 result,
                 no_content,
+                by_status,
                 item,
                 event,
                 fields,
@@ -168,6 +221,102 @@ impl Ctx<'_> {
         } else {
             (ct, false)
         }
+    }
+
+    /// The answers of an operation whose success bodies differ by status:
+    /// an abstract record with one case per status (`Status<code>`), and
+    /// `FromJson(status, body, decoder)` choosing the case by the HTTP
+    /// status of the response.
+    fn answers_record(w: &mut Writer, operation: &str, answers: &ByStatus) {
+        let name = &answers.name;
+        let codes: Vec<String> = answers.cases.iter().map(|(c, _)| c.to_string()).collect();
+        cs::summary_line(
+            w,
+            &format!(
+                "The success answers of {operation}: one case per status ({}).",
+                codes.join(", ")
+            ),
+        );
+        w.line(format!("public abstract record {name}"));
+        w.line("{");
+        w.indent();
+        w.line(format!("private protected {name}()"));
+        w.line("{");
+        w.line("}");
+        w.blank();
+        cs::summary_line(w, "The HTTP status of the answer.");
+        w.line("public abstract int Status { get; }");
+        w.blank();
+        cs::summary_line(w, "The body as JSON (null when the answer has none).");
+        w.line("public abstract JsonNode? ToJson();");
+        w.blank();
+        for (code, ct) in &answers.cases {
+            match ct {
+                Some(ct) => {
+                    cs::summary_line(w, &format!("The answer with status {code}."));
+                    w.line(format!(
+                        "public sealed record Status{code}({} Value) : {name}",
+                        ct.ty()
+                    ));
+                    w.line("{");
+                    w.indent();
+                    w.line(format!("public override int Status => {code};"));
+                    w.blank();
+                    w.line(format!(
+                        "public override JsonNode? ToJson() => {};",
+                        ct.enc("Value", 0)
+                    ));
+                    w.dedent();
+                    w.line("}");
+                }
+                None => {
+                    cs::summary_line(
+                        w,
+                        &format!("The answer with status {code}, without a body."),
+                    );
+                    w.line(format!("public sealed record Status{code} : {name}"));
+                    w.line("{");
+                    w.indent();
+                    w.line(format!("public override int Status => {code};"));
+                    w.blank();
+                    w.line("public override JsonNode? ToJson() => null;");
+                    w.dedent();
+                    w.line("}");
+                }
+            }
+            w.blank();
+        }
+        cs::summary_line(
+            w,
+            "Decodes the body of the response with this HTTP status into its case.",
+        );
+        w.line(format!(
+            "public static {name} FromJson(int status, JsonNode? node, Decoder d)"
+        ));
+        w.line("{");
+        w.indent();
+        w.line("return status switch");
+        w.line("{");
+        w.indent();
+        for (code, ct) in &answers.cases {
+            match ct {
+                Some(ct) => w.line(format!(
+                    "{code} => new Status{code}({}),",
+                    ct.dec_call("node", "d", 0)
+                )),
+                None => w.line(format!("{code} => new Status{code}(),")),
+            };
+        }
+        w.line(format!(
+            "_ => throw new DecodeException(System.Array.Empty<object>(), $\"the status {{status}} is none of {}\"),",
+            codes.join(", ")
+        ));
+        w.dedent();
+        w.line("};");
+        w.dedent();
+        w.line("}");
+        w.dedent();
+        w.line("}");
     }
 
     /// A record of arguments: properties, a strict-capable `FromJson` and
@@ -341,8 +490,29 @@ impl Ctx<'_> {
             summary.clone()
         };
         let field = format!("Ops.{}", info.field);
+        if let Some(answers) = &info.by_status {
+            Self::answers_record(w, &op.id.0, answers);
+            w.blank();
+        }
         cs::summary_line(w, &doc);
-        if info.no_content {
+        if let Some(answers) = &info.by_status {
+            w.line(format!(
+                "public async Task<Result<{0}>> {1}Async({request_param}, {tail})",
+                answers.name, info.member
+            ));
+            w.line("{");
+            w.indent();
+            w.line(format!(
+                "var result = await core.CallAsync({field}, {args}, options, cancellationToken).ConfigureAwait(false);"
+            ));
+            w.line("var status = result is Result<JsonNode?>.Ok ok ? ok.Meta.Status : 0;");
+            w.line(format!(
+                "return Typed.Decode({field}.Id, result, (node, d) => {}.FromJson(status, node, d));",
+                answers.name
+            ));
+            w.dedent();
+            w.line("}");
+        } else if info.no_content {
             w.line(format!(
                 "public Task<Result<NoContent>> {}Async({request_param}, {tail}) =>",
                 info.member

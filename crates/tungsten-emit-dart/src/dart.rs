@@ -65,6 +65,25 @@ pub fn json_lit(v: &Value) -> String {
     }
 }
 
+/// A constant Dart expression for a JSON value (an enum constant's
+/// argument): arrays and objects are collection literals.
+pub fn const_lit(v: &Value) -> String {
+    match v {
+        Value::Array(items) => {
+            let items: Vec<String> = items.iter().map(const_lit).collect();
+            format!("[{}]", items.join(", "))
+        }
+        Value::Object(members) => {
+            let members: Vec<String> = members
+                .iter()
+                .map(|(k, v)| format!("{}: {}", str_lit(k), const_lit(v)))
+                .collect();
+            format!("{{{}}}", members.join(", "))
+        }
+        other => json_lit(other),
+    }
+}
+
 /// Text collapsed to one line.
 pub fn one_line(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")

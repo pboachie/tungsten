@@ -144,6 +144,28 @@ changes.
   `maxBytes`/`maxMs` (`max_bytes`/`max_ms` in Python), or consume long or large
   streams incrementally with iteration, `reduce` or `on`.
 
+- The Dart, C# and F# SDKs give three shapes real types that were the JSON value
+  (`Object?` in Dart, `JsonNode` in C# and F#) until now. An `allOf` that cannot
+  be merged into one record (a member is a union, an array or a record with typed
+  extra members, or two members declare one property with different types) is a
+  class/record with one typed part per member: each part decodes the whole value
+  and `toJson`/`ToJson` merges the parts. An enum of booleans or fractional
+  numbers (in C# and F# also of integers beyond 64 bits) is an enhanced enum
+  (Dart), a readonly record struct (C#) or a union with `Unknown of JsonNode` (F#)
+  of its JSON values, compared as JSON. An operation whose success bodies differ by
+  exact status returns a union of its answers (Dart `<Resource><Operation>Response`
+  with one `...Status<code>` subclass per status, C# a nested `<Operation>Response`
+  record, F# `<Class><Member>Response`) holding the typed body of the response's
+  HTTP status (none for an empty one) and its `status`. Code that read these values
+  as `Object?`/`JsonNode` should use the typed parts or answers; the wire form and
+  the runtime's validation are unchanged. A success status the operation does not
+  declare fails as an unexpected response. Limits that remain: an `allOf` without
+  members (TG1021, TG1071, TG1081) and, in Dart only, an enum with an integer
+  beyond 64 bits (TG1071; a Dart `int` is 64 bits) keep the JSON value, and so do
+  success bodies that differ but are not one JSON body per exact status (a range or
+  `default` status, a text or binary body among them). TG1024, TG1074 and TG1084
+  are no longer reported.
+
 ### Added
 
 - Add opt-in coroutine support to the Kotlin target (`coroutines: true` in
