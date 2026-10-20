@@ -86,6 +86,15 @@ maintainer will add it.
 - Follow the existing style; `cargo fmt` and clippy must be clean.
 - Intermediate representation changes must be additive.
 - Update `CHANGELOG.md` under `Unreleased` for user-visible changes.
+- When a change adds, removes or alters a known limit or gap of a target (a
+  schema feature that falls back to a JSON value, a transport, OAuth,
+  idempotency or stream limit, a platform floor or registry availability),
+  update that target's runtime README `Limits` section in the same pull request
+  and keep it consistent with the `CHANGELOG.md` text. Check that every
+  "Known gaps" statement in the changelog for the Dart, Kotlin, C# and F#
+  targets appears in `runtimes/<target>/README.md`, that the root README
+  Targets table still links to the section, and that the README claims only
+  registry packages that are published.
 - From 0.1.3 onward, compiler and runtime package versions follow the release
   tag in lockstep. One release preparation change updates their manifests,
   lockfiles and runtime identity headers together; ordinary feature changes

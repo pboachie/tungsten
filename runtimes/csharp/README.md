@@ -222,6 +222,36 @@ their own buffering, decoding and settlement behavior need separate qualificatio
 Applications configure and own the
 HTTP client and persistent credential storage.
 
+Streams: a server-sent event larger than `ClientOptions.MaxEventBytes` (1 MiB)
+fails the stream. `EventStream.CollectAsync` keeps at most `MaxCollectBytes` (4 MiB)
+of event JSON and runs at most `MaxCollectTime` (60 s); a dropped stream
+reconnects `MaxReconnects` times (3).
+
+### Platform and availability
+
+- Targets net10.0 only (`Tungsten.Runtime.csproj`). Requests use HTTP/1.1.
+- `ClientOptions.HttpClient` replaces the default client, which must not follow
+  redirects; proxy and handler configuration belong to that client.
+- The default idempotency store is process-local (`MemoryIdempotencyStore`);
+  `FileIdempotencyStore` (see Durable automatic keys) is the durable one.
+- `Tungsten.Runtime` 0.1.3 is published on NuGet. The unreleased 0.2.0 behavior
+  described here is available from source until a matching package is published.
+
+### Schema features without a C# type
+
+The compiler warns (TG1021) and the SDK types these as the runtime's `JsonNode`;
+the runtime still validates the value against the schema:
+
+- an `allOf` that cannot be merged into one record;
+- an enum that mixes JSON types.
+
+An operation whose success body differs by status is also `JsonNode` (TG1024,
+informational). A discriminated union with a variant that has no tag value
+tries its variants in order (TG1025). OpenID Connect is sent as a bearer token;
+discovery is not supported (TG1023). A macro outside the canonical form is left
+out (TG1022). The C# target emits no CLI or MCP server; the `mcp` target is
+separate.
+
 No runtime ships a file-backed OAuth token store. Provide an application-owned
 token-store implementation when tokens must survive process restarts; protect
 stored credentials and avoid logging them. Registry publication and package

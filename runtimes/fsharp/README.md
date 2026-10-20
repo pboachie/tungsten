@@ -61,10 +61,22 @@ Scope of the F# target in 0.2.0 (decided, not planned work):
   `allOf` intersections are `JsonNode`, OpenID Connect is sent as a bearer token without discovery, and
   the F# target emits no CLI or MCP server (other targets emit those from the same description).
 
+Schema features without an F# type are the runtime's `JsonNode` (TG1081, a
+warning): an `allOf` that cannot be merged into one record and an enum that
+mixes JSON types. By-status success bodies are `JsonNode` too (TG1084). A
+discriminated union with a variant that has no tag value tries its variants in
+order (TG1085), and a macro outside the canonical form is left out (TG1082).
+Stream and `collect` limits, the 1 MiB event cap, the 4 MiB / 60 s collect
+budget and HTTP/1.1 requests are the C# runtime's; see its
+[Limits](../csharp/README.md#limits).
+
 No runtime ships a file-backed OAuth token store. Provide an application-owned
 token-store implementation when tokens must survive process restarts; protect
-stored credentials and avoid logging them. Registry publication and package
-availability are separate from building this source checkout.
+stored credentials and avoid logging them.
+
+Availability: `Tungsten.Runtime.FSharp` is not published on NuGet. Build it from
+source as in Install from source. It depends on `Tungsten.Runtime`, which is on
+NuGet at 0.1.3, but the 0.2.0 behavior described here needs the matching source.
 
 ## License
 
