@@ -57,14 +57,30 @@ Scope of the F# target in 0.2.0 (decided, not planned work):
   runs them through it. Run Fantomas in your own project if you want that style.
 - **No Fable or JavaScript target.** The runtime builds on `HttpClient`, `System.Text.Json` and the .NET
   runtime's file stores; compiling with Fable is untested and unsupported.
-- Inherited from the generator and the C# runtime: success bodies that differ by status and unmergeable
-  `allOf` intersections are `JsonNode`, OpenID Connect is sent as a bearer token without discovery, and
-  the F# target emits no CLI or MCP server (other targets emit those from the same description).
+- Inherited from the generator and the C# runtime: OpenID Connect is sent as a bearer token without
+  discovery, and the F# target emits no CLI or MCP server (other targets emit those from the same
+  description). The `JsonNode` fallbacks that remain are listed below.
+
+Since 0.2.0 an `allOf` that cannot be merged into one record is a record with
+one typed field per member, an enum of mixed JSON types is a union of its known
+JSON values plus `Unknown of JsonNode`, and an operation whose success bodies
+differ by exact status returns a union of its answers (read `Status`). Still
+`JsonNode`: an `allOf` without members (TG1081, a warning) and a success whose
+bodies differ and are not one JSON body (or none) per exact status, such as a
+range or `default` status or a text or binary body among them. A discriminated
+union with a variant that has no tag value tries its variants in order (TG1085),
+and a macro outside the canonical form is left out (TG1082).
+Stream and `collect` limits, the 1 MiB event cap, the 4 MiB / 60 s collect
+budget and HTTP/1.1 requests are the C# runtime's; see its
+[Limits](../csharp/README.md#limits).
 
 No runtime ships a file-backed OAuth token store. Provide an application-owned
 token-store implementation when tokens must survive process restarts; protect
-stored credentials and avoid logging them. Registry publication and package
-availability are separate from building this source checkout.
+stored credentials and avoid logging them.
+
+Availability: `Tungsten.Runtime.FSharp` is not published on NuGet. Build it from
+source as in Install from source. It depends on `Tungsten.Runtime`, which is on
+NuGet at 0.1.3, but the 0.2.0 behavior described here needs the matching source.
 
 ## License
 

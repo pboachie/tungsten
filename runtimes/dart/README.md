@@ -193,10 +193,43 @@ The cap limits accepted body bytes; parsers, copies and HTTP decoders can alloca
 more. Custom transports must stream nonempty bodies and honor cancellation;
 their own buffering, decoding and settlement behavior need separate qualification.
 
-The `dart:io` transport is not a browser transport. Applications own
-persistent storage and must supply appropriate token stores; the default
-idempotency store is process-local, and `FileIdempotencyStore` (see Durable
-automatic keys) is the durable one.
+Streams: a server-sent event larger than `ClientOptions.maxEventBytes` (1 MiB)
+fails the stream. `EventStream.collect` keeps at most `maxCollectBytes` (4 MiB)
+of event JSON and runs at most `maxCollect` (60 s); a dropped stream reconnects
+`maxReconnects` times (3; 0 turns it off).
+
+### Platform and availability
+
+- Requires Dart 3.6 or newer, below 4 (`pubspec.yaml`); the package declares
+  Linux, macOS and Windows. The transport is `dart:io`, so browsers and Dart
+  for the web are not supported.
+- `ClientOptions` has no HTTP client or proxy setting. Applications own
+  persistent storage and must supply appropriate token stores; no runtime ships
+  a file-backed OAuth token store.
+- The default idempotency store is process-local (`MemoryIdempotencyStore`);
+  `FileIdempotencyStore` (see Durable automatic keys) is the durable one.
+- `tungsten_runtime` is not published on pub.dev. Use the path dependency in
+  Install from source.
+
+### Schema features and fallback types
+
+Since 0.2.0 an `allOf` that cannot be merged into one record is a final class
+with one typed part per member, an enum of booleans or fractional numbers is an
+enhanced enum of its JSON values, and an operation whose success bodies differ
+by exact status returns a sealed class of its answers (read `status` to tell
+them apart).
+
+Still the JSON value (`Object?`), which the runtime validates against the schema:
+
+- an `allOf` without members and an enum with an integer beyond 64 bits (TG1071,
+  a warning);
+- a success whose bodies differ and are not one JSON body (or none) per exact
+  status: a range or `default` status, or a text or binary body among them.
+
+A discriminated union with a variant that has no tag value tries its variants in
+order (TG1075). OpenID Connect is sent as a bearer token without discovery
+(TG1073). A macro outside the canonical form is left out (TG1072). The Dart
+target emits no CLI or MCP server; the `mcp` target is separate.
 
 ### Schema strings
 

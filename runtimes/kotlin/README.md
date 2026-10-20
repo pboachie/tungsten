@@ -61,14 +61,40 @@ platform thread per in-flight request.
 This is a thin Kotlin layer over the Java runtime. Calls are synchronous (the
 coroutines artifact above wraps them);
 Java's lack of async calls, proxy configuration and pluggable transport also
-applies. For durable automatic keys, configure Java's `FileIdempotencyStore`
-through the shared client options; see the
-[Java store and lease limits](../java/README.md#durable-automatic-keys).
+applies. Transport, retries, validation and diagnostics are the Java runtime's.
+
+- **Response size.** Ordinary buffered responses default to 4 MiB per response.
+  Set the Java `ClientOptions.Builder.maxResponseBytes` (or the call option of
+  the same name) to change it; overflow returns `UNEXPECTED_RESPONSE`, code
+  `RESPONSE_TOO_LARGE`. See the
+  [Java limits](../java/README.md#limits) for the exact rules.
+- **Strings.** `min_length` and `max_length` count Unicode code points, and a
+  `pattern` is a `java.util.regex` expression; a pattern Java cannot check is
+  accepted and reported as `PATTERN_UNCHECKED`. Both come from the Java runtime.
+- **Platform.** JVM only, Java 17 bytecode; there is no Kotlin/Native
+  or Kotlin/JS target. The build pins the Kotlin compiler in
+  `build.gradle.kts`.
+- **Idempotency.** For durable automatic keys, configure Java's
+  `FileIdempotencyStore` through the shared client options; see the
+  [Java store and lease limits](../java/README.md#durable-automatic-keys).
+- **Schema features without a Kotlin type.** The compiler warns (TG1031) and the
+  SDK types an `allOf` that cannot be merged, or an enum that mixes JSON types,
+  as the runtime's JSON value. A by-status success body is also the JSON value
+  (TG1034, informational). OpenID Connect is sent as a bearer token without
+  discovery (TG1033). A macro outside the canonical form is left out (TG1032),
+  and a discriminated union with a variant that has no tag value tries its
+  variants in order (TG1035).
+- **No CLI or MCP.** The Kotlin target emits neither; the `mcp` target is
+  separate.
 
 No runtime ships a file-backed OAuth token store. Provide an application-owned
 token-store implementation when tokens must survive process restarts; protect
-stored credentials and avoid logging them. Registry publication and package
-availability are separate from building this source checkout.
+stored credentials and avoid logging them.
+
+Availability: neither `tungsten-runtime-kotlin` nor
+`tungsten-runtime-kotlin-coroutines` is published to a registry. Build them from
+source as described above; only the Java runtime they depend on is on Maven
+Central.
 
 ## Managed browser OAuth
 
