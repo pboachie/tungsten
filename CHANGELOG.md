@@ -176,6 +176,17 @@ changes.
 
 ### Added
 
+- `tungsten support-bundle --preview` prints the exact, metadata-only contents
+  of a diagnostic support bundle, as text or `--json`. Entries (tool and schema
+  versions, the capability catalog, effective-configuration provenance,
+  configuration diagnostic codes, declared tool prerequisites and a fixed
+  reproduction recipe) are assembled from existing config-only sources: no
+  IR build is needed, so a broken project still previews, and no program is
+  started, no tool version is probed, nothing is fetched and no file is written.
+  Option values, digests, project names, environment values, URLs, paths and
+  diagnostic text are never included, and the output is size-bounded.
+  `--exclude <id>` removes an entry. Writing the archive is not available yet.
+
 - Add a pub.dev release route for the Dart runtime (`tungsten_runtime`) from
   0.2.0: a frozen, checksummed archive with a zero-warning `dart pub publish
   --dry-run` on every release run, then a gated OIDC publish (`PUB_PUBLISH`,

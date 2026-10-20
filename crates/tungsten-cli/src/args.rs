@@ -152,6 +152,7 @@ impl Cli {
             Command::Overlay {
                 command: OverlayCommand::Suggest(_),
             } => CommandName::OverlaySuggest,
+            Command::SupportBundle(_) => CommandName::SupportBundle,
             Command::Lsp(_) => return None,
         })
     }
@@ -206,10 +207,25 @@ pub(crate) enum Command {
         #[command(subcommand)]
         command: OverlayCommand,
     },
+    /// Preview the exact, metadata-only contents of a diagnostic support bundle.
+    SupportBundle(SupportBundleArgs),
     /// Serve a Language Server Protocol server on stdin and stdout for
     /// tungsten.yml, agent.yml and overlays: diagnostics, completion, hover,
     /// go-to-definition and symbols. `--json` has no effect.
     Lsp(LspArgs),
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct SupportBundleArgs {
+    /// Local project directory or tungsten manifest.
+    #[arg(default_value = ".")]
+    pub path: PathBuf,
+    /// Print what a bundle would contain; writes, uploads and runs nothing.
+    #[arg(long)]
+    pub preview: bool,
+    /// Remove an entry by id from the bundle; repeatable.
+    #[arg(long, value_name = "ID")]
+    pub exclude: Vec<String>,
 }
 
 #[derive(Debug, Args)]

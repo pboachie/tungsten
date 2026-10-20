@@ -102,6 +102,8 @@ pub enum CommandName {
     Diff,
     #[serde(rename = "overlay suggest")]
     OverlaySuggest,
+    #[serde(rename = "support-bundle")]
+    SupportBundle,
 }
 
 /// A diagnostic flattened to its first label.
@@ -200,6 +202,7 @@ pub enum CommandResult {
     Report(Box<ReportResult>),
     Diff(DiffResult),
     OverlaySuggest(OverlaySuggestResult),
+    SupportBundle(Box<crate::commands::support_bundle::SupportBundlePreview>),
     Help(HelpResult),
 }
 
@@ -1029,6 +1032,7 @@ const RESULT_DEFS: &[(CommandName, &str)] = &[
     (CommandName::Report, "ReportResult"),
     (CommandName::Diff, "DiffResult"),
     (CommandName::OverlaySuggest, "OverlaySuggestResult"),
+    (CommandName::SupportBundle, "SupportBundlePreview"),
 ];
 
 /// The JSON Schema (draft 2020-12) of [`CliOutput`]. Beyond the generated
