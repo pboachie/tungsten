@@ -370,6 +370,10 @@ def sent_arguments(op: OperationDescriptor, args: Mapping[str, object]) -> str:
 
 
 def int_like(value: float) -> int | float:
+    # ``int.is_integer`` exists only from Python 3.12; an int (bool included)
+    # is already integral, so it never reaches the float path.
+    if isinstance(value, int):
+        return int(value)
     return int(value) if math.isfinite(value) and value.is_integer() else value
 
 
