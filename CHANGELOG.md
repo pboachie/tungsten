@@ -9,6 +9,11 @@ changes.
 
 ## [Unreleased]
 
+### Security
+
+- Update locked `rustls-webpki` and `webpki-roots` dependencies to reject distrusted
+  emSign certificate paths (RUSTSEC-2026-0382 and RUSTSEC-2026-0381).
+
 ### Breaking
 
 - C# and F# schema `min_length` and `max_length` now count Unicode code points (a
