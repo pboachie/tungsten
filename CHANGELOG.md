@@ -296,6 +296,9 @@ changes.
 
 ### Fixed
 
+- Python runtime: offset and page-number pagination no longer fail with
+  `UNEXPECTED_RESPONSE` on Python 3.10 and 3.11, where `int.is_integer` does not exist.
+
 - Document that `tungsten-runtime` and `tungsten-cli-kit` are published on
   crates.io starting with 0.1.3 (0.1.2 was published earlier), and that the Rust
   installation docs now describe registry installation alongside the source routes. User docs now describe 0.1.3 as the latest
