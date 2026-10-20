@@ -553,7 +553,7 @@ pub mod codes {
         ),
         (
             "TG1021",
-            "schema has no C# type in the csharp target; the runtime's JsonNode is used",
+            "allOf without members has no C# type in the csharp target; the runtime's JsonNode is used",
         ),
         (
             "TG1022",
@@ -565,7 +565,7 @@ pub mod codes {
         ),
         (
             "TG1024",
-            "different success bodies by status: the csharp typed result is the JsonNode",
+            "reserved: different success bodies by status are a record of answers in the csharp target",
         ),
         (
             "TG1025",
@@ -619,7 +619,7 @@ pub mod codes {
         ("TG1070", "invalid dart target option; the default is used"),
         (
             "TG1071",
-            "schema has no Dart type in the dart target; the JSON value (Object?) is used",
+            "schema has no Dart type in the dart target (allOf without members, enum beyond 64 bits); the JSON value (Object?) is used",
         ),
         (
             "TG1072",
@@ -631,7 +631,7 @@ pub mod codes {
         ),
         (
             "TG1074",
-            "different success bodies by status: the dart typed result is the JSON value (Object?)",
+            "reserved: different success bodies by status are a sealed class of answers in the dart target",
         ),
         (
             "TG1075",
@@ -643,7 +643,7 @@ pub mod codes {
         ),
         (
             "TG1081",
-            "schema has no F# type in the fsharp target; the runtime's JsonNode is used",
+            "allOf without members has no F# type in the fsharp target; the runtime's JsonNode is used",
         ),
         (
             "TG1082",
@@ -655,7 +655,7 @@ pub mod codes {
         ),
         (
             "TG1084",
-            "different success bodies by status: the fsharp typed result is the JsonNode",
+            "reserved: different success bodies by status are a union of answers in the fsharp target",
         ),
         (
             "TG1085",
