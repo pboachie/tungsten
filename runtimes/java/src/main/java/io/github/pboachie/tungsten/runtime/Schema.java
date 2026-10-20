@@ -198,7 +198,18 @@ public final class Schema {
 
     /** Checks a value: the issues, none when it is valid. */
     public List<Issue> validate(Object value) {
-        Validation v = new Validation();
+        return validate(value, null);
+    }
+
+    /**
+     * A schema pattern that could not be checked: the value was accepted without it. It never holds
+     * the value.
+     */
+    record PatternNote(List<Object> path, String pattern, String reason) {}
+
+    /** Checks a value, adding to {@code notes} (when not null) each pattern it could not check, once per path and pattern. */
+    List<Issue> validate(Object value, List<PatternNote> notes) {
+        Validation v = new Validation(notes);
         v.check(this, value, List.of(), 0);
         List<Issue> out = new ArrayList<>(v.structure);
         out.addAll(v.constraints);
@@ -233,14 +244,16 @@ public final class Schema {
         return Pattern.compile("^(?:" + source + ")$");
     }
 
-    /** Compiled patterns by source; a pattern Java cannot compile is not checked. */
+    /** Compiled patterns by source; a pattern Java cannot compile is not checked (and reported). */
     private static final Map<String, Pattern> PATTERNS = new ConcurrentHashMap<>();
-    private static final Set<String> BAD_PATTERNS = ConcurrentHashMap.newKeySet();
+    private static final Map<String, String> BAD_PATTERNS = new ConcurrentHashMap<>();
 
     /** Longest string (in characters) a spec pattern is matched against; longer is not checked. */
     static final int MAX_PATTERN_SUBJECT = 64 * 1024;
     /** Longest a single pattern match may run, in nanoseconds; a timeout means not checked. */
     static final long PATTERN_TIMEOUT_NANOS = 1_000_000_000L;
+    /** Marks a pattern that was checked and did not match (compared by identity). */
+    private static final String NO_MATCH = new String("no match");
 
     /** Thrown by {@link DeadlineSequence} once its deadline has passed. */
     private static final class PatternTimeout extends RuntimeException {
@@ -288,7 +301,7 @@ public final class Schema {
     }
 
     private Pattern compiled() {
-        if (pattern == null || BAD_PATTERNS.contains(pattern)) {
+        if (pattern == null || BAD_PATTERNS.containsKey(pattern)) {
             return null;
         }
         Pattern p = PATTERNS.get(pattern);
@@ -298,7 +311,8 @@ public final class Schema {
         try {
             p = Pattern.compile(pattern);
         } catch (PatternSyntaxException e) {
-            BAD_PATTERNS.add(pattern);
+            BAD_PATTERNS.put(pattern, "it is not a regular expression this runtime can compile (java.util.regex: "
+                    + e.getDescription() + ")");
             return null;
         }
         PATTERNS.put(pattern, p);
@@ -346,6 +360,18 @@ public final class Schema {
         final List<Issue> structure = new ArrayList<>();
         final List<Issue> constraints = new ArrayList<>();
         final List<Issue> unknown = new ArrayList<>();
+        private final List<PatternNote> notes;
+        private final Set<String> noted = new HashSet<>();
+
+        Validation(List<PatternNote> notes) {
+            this.notes = notes;
+        }
+
+        void unchecked(List<Object> path, String pattern, String reason) {
+            if (notes != null && noted.add(formatPath(path) + "\n" + pattern)) {
+                notes.add(new PatternNote(path, pattern, reason));
+            }
+        }
 
         void bad(List<Object> path, String message) {
             structure.add(new Issue(path, message));
@@ -506,16 +532,26 @@ public final class Schema {
         }
 
         void stringLimits(Schema s, String text, List<Object> path) {
-            long n = text.length();
+            // JSON Schema counts code points: a surrogate pair is one, a lone surrogate is one.
+            long n = text.codePointCount(0, text.length());
             if (s.minLength != null && n < s.minLength) {
                 limit(path, "must have at least " + s.minLength + " characters");
             }
             if (s.maxLength != null && n > s.maxLength) {
                 limit(path, "must have at most " + s.maxLength + " characters");
             }
-            Pattern re = s.compiled();
-            if (re != null && !patternFound(re, text)) {
-                limit(path, "must match the pattern /" + s.pattern + "/");
+            if (s.pattern != null) {
+                Pattern re = s.compiled();
+                if (re == null) {
+                    unchecked(path, s.pattern, BAD_PATTERNS.get(s.pattern));
+                } else {
+                    String outcome = patternOutcome(re, text);
+                    if (outcome == NO_MATCH) {
+                        limit(path, "must match the pattern /" + s.pattern + "/");
+                    } else if (outcome != null) {
+                        unchecked(path, s.pattern, outcome);
+                    }
+                }
             }
             Pattern f = s.format == null ? null : FORMATS.get(s.format);
             if (f != null && !f.matcher(text).matches()) {
@@ -523,17 +559,19 @@ public final class Schema {
             }
         }
 
-        /** True when the pattern matches or cannot be checked (too long, out of time, or too deep to match). */
-        private boolean patternFound(Pattern re, String text) {
+        /** Null when the pattern matches, {@link #NO_MATCH} when it does not, else why it could not be checked. */
+        private String patternOutcome(Pattern re, String text) {
             if (text.length() > MAX_PATTERN_SUBJECT) {
-                return true;
+                return "the value is longer than " + MAX_PATTERN_SUBJECT + " characters, the most a pattern is matched against";
             }
             try {
-                return re.matcher(new DeadlineSequence(text, System.nanoTime() + PATTERN_TIMEOUT_NANOS)).find();
-            } catch (PatternTimeout | StackOverflowError e) {
+                return re.matcher(new DeadlineSequence(text, System.nanoTime() + PATTERN_TIMEOUT_NANOS)).find() ? null : NO_MATCH;
+            } catch (PatternTimeout e) {
+                return "matching took longer than " + PATTERN_TIMEOUT_NANOS / 1_000_000_000L + " s";
+            } catch (StackOverflowError e) {
                 // java.util.regex recurses per repetition of some groups, so a long subject can
                 // overflow the stack; that is as unbounded as a timeout and reads as not checked.
-                return true;
+                return "matching the value overflowed the stack of java.util.regex";
             }
         }
 

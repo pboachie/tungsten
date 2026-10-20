@@ -3,9 +3,11 @@ package io.github.pboachie.tungsten.runtime;
 
 import java.net.URI;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.NoSuchElementException;
+import java.util.Set;
 
 /**
  * The pages of a paginated operation, fetched one by one as the iteration advances. Each element
@@ -250,8 +252,10 @@ public final class Pages implements Iterable<Result<Page<Object>>>, Iterator<Res
         if (op.pageItem() == null || c.validateResponses == ClientOptions.ValidateResponses.OFF) {
             return null;
         }
+        Set<String> seen = new HashSet<>();
         for (int index = 0; index < items.size(); index++) {
-            List<Schema.Issue> issues = ClientCore.judge(op.pageItem(), items.get(index));
+            List<Schema.Issue> issues = c.judge(op.id(), "response" + (itemsField.isEmpty() ? "" : "." + itemsField) + "[" + index + "]",
+                    op.pageItem(), items.get(index), seen);
             if (issues.isEmpty()) {
                 continue;
             }

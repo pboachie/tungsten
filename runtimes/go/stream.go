@@ -588,7 +588,7 @@ func (c *ClientCore) accept(op *OperationDescriptor, spec *StreamDescriptor, o *
 			remedy(fmt.Sprintf("Event %d of the stream (event \"%s\") does not carry JSON in its data.%s Events before it were delivered.", index, ev.event, afterEffect)))
 	}
 	if mode := c.validateResponses; mode != ValidateOff && spec.Event != nil {
-		if issues := judge(spec.Event, value); len(issues) > 0 {
+		if issues := c.judge(op.ID, fmt.Sprintf("events[%d]", index), spec.Event, value, nil); len(issues) > 0 {
 			issue := issues[0]
 			path := segmentStrings(issue.Path)
 			pathText := formatIssuePath(issue.Path)
