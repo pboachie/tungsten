@@ -98,21 +98,28 @@ pub(crate) fn scan_document(root: &Value) -> Vec<Finding> {
         ));
     }
     server_findings("/servers", doc.get("servers"), &mut out);
-    requirements(doc.get("security"), "/security", Some(&schemes), &mut out);
+    requirements(doc.get("security"), "/security", &schemes, &mut out);
     walk(root, "", Kind::Document, |node| {
-        node_findings(node, Some(&schemes), &mut out);
+        node_findings(node, &schemes, &mut out);
         true
     });
     out
 }
 
 /// Findings of the subtree of a fragment at `pointer`, read as `kind`.
-/// Document-level members and security names need the entry document and
-/// are not checked here.
-pub(crate) fn scan_subtree(value: &Value, pointer: &str, kind: Kind) -> Vec<Finding> {
+/// Security names use the input entry's component names, as in the builder;
+/// a fragment's own members cannot introduce a different namespace. Whole
+/// document-only members are checked separately by `scan_document`.
+pub(crate) fn scan_subtree(
+    value: &Value,
+    pointer: &str,
+    kind: Kind,
+    entry: &Value,
+) -> Vec<Finding> {
     let mut out = vec![];
+    let schemes = entry.as_object().map(scheme_names).unwrap_or_default();
     walk(value, pointer, kind, |node| {
-        node_findings(node, None, &mut out);
+        node_findings(node, &schemes, &mut out);
         true
     });
     out
@@ -176,10 +183,10 @@ fn server_findings(pointer: &str, servers: Option<&Value>, out: &mut Vec<Finding
 fn requirements(
     value: Option<&Value>,
     pointer: &str,
-    schemes: Option<&BTreeSet<String>>,
+    schemes: &BTreeSet<String>,
     out: &mut Vec<Finding>,
 ) {
-    let (Some(Value::Array(list)), Some(schemes)) = (value, schemes) else {
+    let Some(Value::Array(list)) = value else {
         return;
     };
     for (i, requirement) in list.iter().enumerate() {
@@ -204,7 +211,7 @@ fn requirements(
     }
 }
 
-fn node_findings(node: &Node<'_>, schemes: Option<&BTreeSet<String>>, out: &mut Vec<Finding>) {
+fn node_findings(node: &Node<'_>, schemes: &BTreeSet<String>, out: &mut Vec<Finding>) {
     let map = node.value;
     let at = |key: &str| join_pointer(&node.pointer, key);
     match node.kind {
