@@ -176,6 +176,24 @@ changes.
 
 ### Added
 
+- OpenAPI 3.2.x documents are read: a document that uses only constructs OpenAPI
+  3.1 has takes the 3.1 path and compiles to the same IR as its 3.1 twin. Each
+  construct only 3.2 has is diagnosed at its member instead of being ignored, one
+  code per feature. These are errors, because a client built without them would
+  differ from the API: `$self` (TG0140), the `query` method (TG0141),
+  `additionalOperations` (TG0142), `in: querystring` (TG0143), `style: cookie`
+  (TG0144), `itemSchema` (TG0145), `prefixEncoding` and `itemEncoding` (TG0146),
+  nested encodings (TG0147), `components.mediaTypes` and media types given by
+  `$ref` (TG0148), discriminator `defaultMapping` (TG0149), the OAuth 2.0 device
+  authorization flow (TG0150) and security requirements that name a scheme by URI
+  (TG0151). These are warnings, because they add metadata with no effect on a
+  client: `oauth2MetadataUrl` (TG0152), tag `parent` and `kind` (TG0153), example
+  `dataValue` and `serializedValue` (TG0154), XML `nodeType` (TG0155), and tag
+  `summary`, response `summary`, server `name` and security scheme `deprecated`
+  (TG0156). `tungsten capabilities` and `tungsten doctor` list the supported
+  OpenAPI versions and these constructs (additive `openapi_inputs` field). 3.0 and
+  3.1 input and output are unchanged; `tungsten explain` describes each new code.
+
 - Add a pub.dev release route for the Dart runtime (`tungsten_runtime`) from
   0.2.0: a frozen, checksummed archive with a zero-warning `dart pub publish
   --dry-run` on every release run, then a gated OIDC publish (`PUB_PUBLISH`,

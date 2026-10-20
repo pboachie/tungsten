@@ -53,17 +53,19 @@ pub(crate) fn detect(
             ));
             None
         }
-        Some(Value::String(v)) => match parse_version(v) {
-            Some(version) => Some(version),
-            None => {
-                errors.push(at(
+        Some(Value::String(v)) => {
+            match parse_version(v) {
+                Some(version) => Some(version),
+                None => {
+                    errors.push(at(
                     Diagnostic::error("TG0103", format!("unsupported OpenAPI version {v}"))
-                        .with_help("supported versions are 3.0.x and 3.1.x"),
+                        .with_help("supported versions are 3.0.x, 3.1.x and a documented subset of 3.2.x"),
                     "/openapi",
                 ));
-                None
+                    None
+                }
             }
-        },
+        }
         Some(other) => {
             errors.push(at(
                 Diagnostic::error(
@@ -111,7 +113,7 @@ pub(crate) fn detect(
             Diagnostic::error("TG0104", "missing required field `paths` (OpenAPI 3.0)"),
             "",
         )),
-        Some(SpecVersion::V31(_))
+        Some(SpecVersion::V31(_) | SpecVersion::V32(_))
             if !["paths", "webhooks", "components"]
                 .iter()
                 .any(|k| doc.contains_key(*k)) =>
@@ -119,7 +121,7 @@ pub(crate) fn detect(
             errors.push(at(
                 Diagnostic::error(
                     "TG0104",
-                    "an OpenAPI 3.1 document needs at least one of `paths`, `webhooks` or `components`",
+                    "an OpenAPI 3.1 or 3.2 document needs at least one of `paths`, `webhooks` or `components`",
                 ),
                 "",
             ));
@@ -140,7 +142,7 @@ pub(crate) fn detect(
     }
 }
 
-/// `3.0`, `3.0.N` or `3.0.N-suffix` (and the same for 3.1).
+/// `3.0`, `3.0.N` or `3.0.N-suffix` (and the same for 3.1 and 3.2).
 fn parse_version(v: &str) -> Option<SpecVersion> {
     let core = v.split_once('-').map_or(v, |(c, _)| c);
     let mut parts = core.split('.');
@@ -154,6 +156,7 @@ fn parse_version(v: &str) -> Option<SpecVersion> {
     match minor {
         "0" => Some(SpecVersion::V30(v.to_string())),
         "1" => Some(SpecVersion::V31(v.to_string())),
+        "2" => Some(SpecVersion::V32(v.to_string())),
         _ => None,
     }
 }

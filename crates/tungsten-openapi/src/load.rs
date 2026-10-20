@@ -12,10 +12,11 @@ use crate::overlay::{self, Overlay};
 use crate::parse::{self, Parsed};
 use crate::refs::{Reference, lexical_normalize, parse_reference};
 use crate::source::too_big;
+use crate::spans::SpanIndex;
 use crate::walk::{Kind, walk_cancellable};
 use crate::{
     DocId, Document, LoadEntry, LoadOptions, RefTarget, SpecVersion, Workspace, graph, normalize,
-    version,
+    v32, version,
 };
 
 /// Load entry documents and everything they reference.
@@ -96,6 +97,9 @@ struct Loader<'o> {
     schema_targets: BTreeSet<RefTarget>,
     /// Referenced files that could not be read or parsed.
     failed_files: BTreeSet<PathBuf>,
+    /// Fragments reached from a 3.2 document, read as 3.2.
+    fragments_v32: HashSet<DocId>,
+    reported_v32: v32::Reported,
 }
 
 impl<'o> Loader<'o> {
@@ -112,6 +116,8 @@ impl<'o> Loader<'o> {
             fragment_roots: vec![],
             schema_targets: BTreeSet::new(),
             failed_files: BTreeSet::new(),
+            fragments_v32: HashSet::new(),
+            reported_v32: v32::Reported::default(),
         }
     }
 
@@ -272,12 +278,49 @@ impl<'o> Loader<'o> {
         if v30 {
             normalize::normalize(&mut root, &mut spans, &mut moves, "", Kind::Document);
         }
+        self.diagnose_v32(&version, &root, name, &spans);
         let mut doc = Document::new(source, name.to_string(), version, root, digest);
         doc.spans = spans;
         doc.moves = moves;
         let id = self.push(doc, path, v30);
         self.ws.entries.push(id);
         Some(id)
+    }
+
+    /// Report the constructs a 3.2 document uses that 3.1 does not have.
+    fn diagnose_v32(&mut self, version: &SpecVersion, root: &Value, name: &str, spans: &SpanIndex) {
+        if matches!(version, SpecVersion::V32(_)) {
+            for finding in v32::scan_document(root) {
+                self.ws
+                    .diagnostics
+                    .push(finding.into_diagnostic(name, spans));
+            }
+        }
+    }
+
+    /// A fragment reached from a 3.2 document is read as 3.2: the subtree
+    /// the reference selects is checked like the document itself.
+    fn diagnose_fragment_v32(&mut self, from: DocId, target: &RefTarget, kind: Kind) {
+        let reaching_v32 = match self.ws.documents[from].version {
+            SpecVersion::V32(_) => true,
+            SpecVersion::Fragment => self.fragments_v32.contains(&from),
+            _ => false,
+        };
+        let fragment = matches!(self.ws.documents[target.doc].version, SpecVersion::Fragment);
+        if !reaching_v32 || !fragment {
+            return;
+        }
+        self.fragments_v32.insert(target.doc);
+        let document = &self.ws.documents[target.doc];
+        let Some(value) = document.get(&target.pointer) else {
+            return;
+        };
+        for finding in v32::scan_subtree(value, &target.pointer, kind) {
+            if self.reported_v32.first(target.doc, &finding) {
+                let diagnostic = finding.into_diagnostic(&document.name, &document.spans);
+                self.ws.diagnostics.push(diagnostic);
+            }
+        }
     }
 
     fn push(&mut self, mut doc: Document, path: Option<PathBuf>, v30: bool) -> DocId {
@@ -422,6 +465,9 @@ impl<'o> Loader<'o> {
                         target
                     }
                 };
+                if let Some(target) = &target {
+                    self.diagnose_fragment_v32(doc, target, site.kind);
+                }
                 if let Some(target) = target {
                     // A fragment is read in the dialect of whoever reaches
                     // it; an entry document keeps its own.
@@ -618,6 +664,7 @@ impl<'o> Loader<'o> {
         if v30 {
             normalize::normalize(&mut root, &mut spans, &mut moves, "", Kind::Document);
         }
+        self.diagnose_v32(&version, &root, &name, &spans);
         let mut doc = Document::new(source, name, version, root, digest);
         doc.spans = spans;
         doc.moves = moves;

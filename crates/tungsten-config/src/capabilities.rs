@@ -214,6 +214,7 @@ pub fn target(name: &str) -> Option<&'static TargetCapability> {
 pub struct CapabilityCatalog {
     pub capability_version: u32,
     pub targets: Vec<TargetCapability>,
+    pub openapi_inputs: Vec<OpenApiVersionCapability>,
     pub execution_policy: ExecutionPolicyCapability,
 }
 
@@ -256,3 +257,158 @@ pub fn json_schema() -> serde_json::Value {
         .into_root_schema_for::<CapabilityCatalog>()
         .to_value()
 }
+
+/// How far the native frontend supports one OpenAPI version line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum OpenApiSupport {
+    /// The whole line is read.
+    Supported,
+    /// Constructs equivalent to 3.1 are read; each listed construct is
+    /// diagnosed instead of being ignored.
+    Subset,
+}
+
+/// What the frontend does with a construct it does not compile.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum InputFeaturePolicy {
+    /// An error diagnostic; no artifact is produced from the document.
+    Rejected,
+    /// A warning diagnostic; the construct has no effect on the output.
+    Ignored,
+}
+
+/// One construct of a version line that is diagnosed, never silently dropped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct UnsupportedInputFeature {
+    pub id: &'static str,
+    /// The document member that introduces the construct.
+    pub member: &'static str,
+    /// Stable diagnostic code reported at that member.
+    pub diagnostic: &'static str,
+    pub policy: InputFeaturePolicy,
+}
+
+const fn feature(
+    id: &'static str,
+    member: &'static str,
+    diagnostic: &'static str,
+    policy: InputFeaturePolicy,
+) -> UnsupportedInputFeature {
+    UnsupportedInputFeature {
+        id,
+        member,
+        diagnostic,
+        policy,
+    }
+}
+
+/// Source declaration for one `openapi` version line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct OpenApiVersionCapability {
+    /// Major.minor line; every patch version of it is accepted.
+    pub line: &'static str,
+    pub support: OpenApiSupport,
+    pub unsupported_features: &'static [UnsupportedInputFeature],
+}
+
+use InputFeaturePolicy::{Ignored, Rejected};
+
+/// OpenAPI 3.2 constructs without a 3.1 equivalent. A 3.2 document using none
+/// of them is read exactly as its 3.1 twin.
+pub const OPENAPI_32_FEATURES: &[UnsupportedInputFeature] = &[
+    feature("document_self", "$self", "TG0140", Rejected),
+    feature("query_method", "query", "TG0141", Rejected),
+    feature(
+        "additional_operations",
+        "additionalOperations",
+        "TG0142",
+        Rejected,
+    ),
+    feature(
+        "querystring_parameter",
+        "in: querystring",
+        "TG0143",
+        Rejected,
+    ),
+    feature("cookie_style", "style: cookie", "TG0144", Rejected),
+    feature("item_schema", "itemSchema", "TG0145", Rejected),
+    feature(
+        "positional_multipart_encoding",
+        "prefixEncoding, itemEncoding",
+        "TG0146",
+        Rejected,
+    ),
+    feature(
+        "nested_encoding",
+        "encoding, prefixEncoding, itemEncoding (Encoding Object)",
+        "TG0147",
+        Rejected,
+    ),
+    feature(
+        "reusable_media_types",
+        "components.mediaTypes, $ref media type",
+        "TG0148",
+        Rejected,
+    ),
+    feature(
+        "discriminator_default_mapping",
+        "discriminator.defaultMapping",
+        "TG0149",
+        Rejected,
+    ),
+    feature(
+        "oauth2_device_authorization",
+        "flows.deviceAuthorization",
+        "TG0150",
+        Rejected,
+    ),
+    feature(
+        "security_scheme_by_uri",
+        "security requirement naming a URI",
+        "TG0151",
+        Rejected,
+    ),
+    feature(
+        "oauth2_metadata_url",
+        "oauth2MetadataUrl",
+        "TG0152",
+        Ignored,
+    ),
+    feature("tag_hierarchy", "tag parent, kind", "TG0153", Ignored),
+    feature(
+        "example_data_value",
+        "dataValue, serializedValue",
+        "TG0154",
+        Ignored,
+    ),
+    feature("xml_node_type", "xml.nodeType", "TG0155", Ignored),
+    feature(
+        "descriptive_fields",
+        "tag summary, response summary, server name, security scheme deprecated",
+        "TG0156",
+        Ignored,
+    ),
+];
+
+/// OpenAPI input versions the native frontend reads.
+pub const OPENAPI_INPUTS: &[OpenApiVersionCapability] = &[
+    OpenApiVersionCapability {
+        line: "3.0",
+        support: OpenApiSupport::Supported,
+        unsupported_features: &[],
+    },
+    OpenApiVersionCapability {
+        line: "3.1",
+        support: OpenApiSupport::Supported,
+        unsupported_features: &[],
+    },
+    OpenApiVersionCapability {
+        line: "3.2",
+        support: OpenApiSupport::Subset,
+        unsupported_features: OPENAPI_32_FEATURES,
+    },
+];

@@ -190,7 +190,7 @@ fn openapi_versions(compiled: &Compiled) -> Vec<Option<String>> {
     ws.entry_docs
         .iter()
         .map(|doc| match &ws.documents.get((*doc)?)?.version {
-            SpecVersion::V30(v) | SpecVersion::V31(v) => Some(v.clone()),
+            SpecVersion::V30(v) | SpecVersion::V31(v) | SpecVersion::V32(v) => Some(v.clone()),
             SpecVersion::Fragment => None,
         })
         .collect()

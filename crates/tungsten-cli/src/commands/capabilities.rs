@@ -22,6 +22,7 @@ pub(crate) fn run(args: &CapabilitiesArgs) -> Report {
     let result = CapabilityCatalog {
         capability_version: capabilities::VERSION,
         targets,
+        openapi_inputs: capabilities::OPENAPI_INPUTS.to_vec(),
         execution_policy: capabilities::execution_policy(),
     };
     report.human = format!(
@@ -43,7 +44,35 @@ pub(crate) fn run(args: &CapabilitiesArgs) -> Report {
             );
         }
     }
+    report
+        .human
+        .push_str(&openapi_human(&result.openapi_inputs));
     report.human.push_str("Source declarations only; platform qualification and artifact availability are unknown. Use doctor for local prerequisites.\n");
     report.result = Some(CommandResult::Capabilities(result));
     report
+}
+
+/// The supported OpenAPI lines, shared with `doctor`.
+pub(crate) fn openapi_human(inputs: &[capabilities::OpenApiVersionCapability]) -> String {
+    let mut out = String::from("OpenAPI input versions\n");
+    for input in inputs {
+        let _ = writeln!(out, "  {:<12} {:?}", input.line, input.support);
+        if !input.unsupported_features.is_empty() {
+            let _ = writeln!(
+                out,
+                "    {} constructs diagnosed, not compiled (error unless marked ignored):",
+                input.unsupported_features.len()
+            );
+        }
+        for feature in input.unsupported_features {
+            let _ = writeln!(
+                out,
+                "    {} {:<9} {}",
+                feature.diagnostic,
+                format!("{:?}", feature.policy).to_lowercase(),
+                feature.member
+            );
+        }
+    }
+    out
 }

@@ -532,6 +532,9 @@ pub enum InitAction {
 #[schemars(deny_unknown_fields)]
 pub struct DoctorResult {
     pub tools: Vec<ToolReport>,
+    /// OpenAPI input versions the frontend reads, with the 3.2 constructs it
+    /// diagnoses.
+    pub openapi_inputs: Vec<tungsten_config::capabilities::OpenApiVersionCapability>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
