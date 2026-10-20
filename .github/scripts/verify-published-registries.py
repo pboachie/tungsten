@@ -30,7 +30,7 @@ import zipfile
 from pathlib import Path
 
 PACKAGES = ("npm", "python", "rust", "java", "kotlin", "csharp", "ruby")
-KOTLIN_ARTIFACTS = ("tungsten-runtime-kotlin",)  # append further Kotlin modules
+KOTLIN_ARTIFACTS = ("tungsten-runtime-kotlin", "tungsten-runtime-kotlin-coroutines")
 LIMIT = 128 * 1024 * 1024
 HOSTS = {
     "registry.npmjs.org",

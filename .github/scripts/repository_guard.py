@@ -119,7 +119,7 @@ DOC_NAME = re.compile(
 # documentation, and a documentation directory is refused even around these.
 ALLOWED_DOCS = re.compile(
     r"^(?:README\.md|LICENSE|CONTRIBUTING\.md|SECURITY\.md|CODE_OF_CONDUCT\.md|CHANGELOG\.md"
-    r"|runtimes/LICENSE|runtimes/[^/]+/LICENSE|runtimes/rust/(?:runtime|cli-kit)/LICENSE"
+    r"|runtimes/LICENSE|runtimes/[^/]+/LICENSE|runtimes/kotlin/coroutines/LICENSE|runtimes/kotlin/coroutines/README\.md|runtimes/rust/(?:runtime|cli-kit)/LICENSE"
     r"|runtimes/(?:ts|mcp|webmcp|python|rust|go|java|csharp|ruby|kotlin|fsharp|dart)/README\.md"
     r"|runtimes/rust/(?:runtime|cli-kit)/README\.md"
     r"|\.github/[^/]+\.md"

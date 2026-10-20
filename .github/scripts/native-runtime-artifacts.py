@@ -34,7 +34,7 @@ STDLIB = ("org.jetbrains.kotlin", "kotlin-stdlib")
 # with Maven in this order and installed into one throwaway local repository,
 # so a later module resolves the same-version earlier ones (and the Java
 # runtime) without Central. A dependency version "@" is the release version.
-# Append further modules (for example the coroutines adapter) here.
+# Append further modules here.
 KOTLIN_MODULES = [
     {
         "artifact": "tungsten-runtime-kotlin",
@@ -45,7 +45,29 @@ KOTLIN_MODULES = [
             STDLIB: "2.4.21",
         },
     },
+    {
+        "artifact": "tungsten-runtime-kotlin-coroutines",
+        "directory": "runtimes/kotlin/coroutines",
+        "classes": "io/github/pboachie/tungsten/runtime/kotlin/coroutines/",
+        "dependencies": {
+            (GROUP, "tungsten-runtime-kotlin"): "@",
+            (GROUP, "tungsten-runtime"): "@",
+            STDLIB: "2.4.21",
+            ("org.jetbrains.kotlinx", "kotlinx-coroutines-core"): "1.10.2",
+        },
+    },
 ]
+# The Maven build resolves kotlinx-coroutines-core from Central into the
+# throwaway repository; the JVM jar it compiled against must be the one CI and
+# the private toolchain pin (KOTLINX_COROUTINES_SHA256 in ci.yml and
+# scripts/toolchains.sh).
+KOTLINX_COROUTINES_JAR = (
+    "org/jetbrains/kotlinx/kotlinx-coroutines-core-jvm/1.10.2/"
+    "kotlinx-coroutines-core-jvm-1.10.2.jar"
+)
+KOTLINX_COROUTINES_SHA256 = (
+    "5ca175b38df331fd64155b35cd8cae1251fa9ee369709b36d42e0a288ccce3fd"
+)
 SEMVER = r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?"
 LIMIT = 128 * 1024 * 1024
 
@@ -349,7 +371,10 @@ def check_kotlin_module(directory, version, module):
             raise ValueError("Kotlin archive has unexpected or non-Java-17 classes")
     if f"META-INF/{artifact}.kotlin_module" not in binary:
         raise ValueError("Kotlin archive has no module descriptor")
-    manifest = binary.get("META-INF/MANIFEST.MF", b"").decode("utf-8", "replace")
+    # Manifest lines wrap at 72 bytes with a leading-space continuation.
+    manifest = re.sub(
+        r"\r?\n ", "", binary.get("META-INF/MANIFEST.MF", b"").decode("utf-8", "replace")
+    )
     automatic = "io.github.pboachie.tungsten.runtime." + artifact.removeprefix(
         "tungsten-runtime-"
     ).replace("-", ".")
@@ -641,6 +666,18 @@ def build(directory, package, version):
             for module in KOTLIN_MODULES:
                 folder = ROOT / module["directory"]
                 run(maven, folder)
+                if ("org.jetbrains.kotlinx", "kotlinx-coroutines-core") in module[
+                    "dependencies"
+                ]:
+                    resolved = Path(repository) / KOTLINX_COROUTINES_JAR
+                    if (
+                        not resolved.is_file()
+                        or hashlib.sha256(resolved.read_bytes()).hexdigest()
+                        != KOTLINX_COROUTINES_SHA256
+                    ):
+                        raise ValueError(
+                            "resolved kotlinx-coroutines-core differs from the pinned checksum"
+                        )
                 for suffix in (".jar", "-sources.jar", "-javadoc.jar"):
                     shutil.copy2(
                         folder / "target" / f"{module['artifact']}-{version}{suffix}",
