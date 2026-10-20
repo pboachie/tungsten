@@ -209,6 +209,11 @@ server still validates the value. The cases are:
 difference in checked patterns is the Unicode version behind `\p{...}`: .NET's tables can differ from the
 JavaScript engine's for recently assigned characters.
 
+### String lengths
+
+`min_length` and `max_length` count Unicode code points, as JSON Schema defines: a surrogate pair is one
+character and a lone surrogate is one. Earlier versions counted UTF-16 code units.
+
 The default transport does not decompress encoded bodies; use identity encoding. Encoded delivery does not establish a decoded-content limit.
 The cap limits accepted body bytes; parsers, copies and HTTP decoders can allocate
 more. Custom transports must stream nonempty bodies and honor cancellation;

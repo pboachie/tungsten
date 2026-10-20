@@ -11,6 +11,12 @@ changes.
 
 ### Breaking
 
+- C# and F# schema `min_length` and `max_length` now count Unicode code points (a
+  surrogate pair is one character, a lone surrogate is one) instead of UTF-16 code
+  units, as JSON Schema defines. Strings with characters above U+FFFF are no
+  longer over-counted; a value that fit only because of the old count can now be
+  rejected.
+
 - Ruby browser OAuth helpers now create bounded S256/state authorization attempts.
   Qualify issuer defense, bind the owning session/listener and pass the returned
   handle plus full callback URL to `exchange_code`. Managed helpers require a

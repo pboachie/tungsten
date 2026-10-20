@@ -206,6 +206,21 @@ public sealed class Schema
         });
     }
 
+    /// <summary>The length of a string in Unicode code points: a surrogate pair counts as one, a lone surrogate as one.</summary>
+    internal static long CodePoints(string text)
+    {
+        long n = text.Length;
+        for (int k = 0; k + 1 < text.Length; k++)
+        {
+            if (char.IsHighSurrogate(text[k]) && char.IsLowSurrogate(text[k + 1]))
+            {
+                n--;
+                k++;
+            }
+        }
+        return n;
+    }
+
     private static string BoundText(double f)
     {
         if (f == Math.Truncate(f) && Math.Abs(f) < Json.MaxSafe)
@@ -438,7 +453,7 @@ public sealed class Schema
 
         private void StringLimits(Schema s, string text, List<object> path)
         {
-            long n = text.Length;
+            long n = CodePoints(text);
             if (s.MinLength is long min && n < min)
             {
                 Limit(path, $"must have at least {min} characters");
