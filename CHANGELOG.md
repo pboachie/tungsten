@@ -191,6 +191,11 @@ changes.
 
 ### Fixed
 
+- Document that `tungsten-runtime` and `tungsten-cli-kit` are published on
+  crates.io starting with 0.1.3 (0.1.2 was published earlier), and that the Rust
+  installation docs now describe registry installation alongside the source routes. User docs now describe 0.1.3 as the latest
+  release and list the verified 0.1.3 registry packages.
+
 - Java generated usage now imports its resolved resource type and infers the
   response type. Dispatch request decoding also imports resolved resource types,
   so valid package prefixes such as `client.generated` cannot be shadowed by the
@@ -237,7 +242,7 @@ changes.
 - Enable registry packaging of the Apache-2.0 Rust runtime and CLI-kit with a
   versioned runtime dependency. Add opt-in crates.io trusted publishing to the
   existing release workflow; account ownership, first publication and publisher
-  configuration remain maintainer release steps.
+  configuration were maintainer release steps, since completed at 0.1.3.
 
 - Generated Go SDKs require the published `v0.1.3` runtime module through its
   `runtimes/go/v0.1.3` nested-module tag, replacing the interim pseudo-version.
