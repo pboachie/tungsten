@@ -276,7 +276,9 @@ runtime imports do not generate a client or call an API.
 
 The 0.1.3 compiler is an unreleased source candidate. Use matching runtime source
 as in the quickstart below; published 0.1.2 packages do not satisfy dependencies
-on 0.1.3 runtime capabilities. Rust registry installation is currently unavailable.
+on 0.1.3 runtime capabilities. The Rust runtime and CLI kit are published on crates.io
+(`tungsten-runtime` and `tungsten-cli-kit` 0.1.3); see the
+[Rust installation](runtimes/rust/README.md).
 Go supports matching stable source; its qualified `v0.1.3` module is an optional
 candidate dependency, not a compiler release. See the [Rust source installation](runtimes/rust/README.md) and
 [Go installation options](runtimes/go/README.md). Runtime libraries do not install
@@ -308,10 +310,10 @@ The released compiler's native runtime defaults predate the newly published
 0.1.2 packages, so keep the Java, C# and Ruby overrides explicit. Registry
 consumers use those packages without a runtime source checkout.
 
-The [stable Rust source recipe](runtimes/rust/README.md#released-012-sdk-and-cli)
-uses the unchanged `v0.1.2` checkout for both Rust crates while registry
-installation remains unavailable. This source route does not require a 0.1.3
-upgrade. The candidate compiler and its new features continue to require
+The [stable Rust source recipe](runtimes/rust/README.md#stable-012-sdk-and-cli-from-source)
+uses the unchanged `v0.1.2` checkout for both Rust crates. This source route
+remains valid and does not require a 0.1.3 upgrade; the 0.1.3 crates are also
+available from crates.io. The candidate compiler and its new features continue to require
 matching candidate runtime source; Python 3.10/3.11 output belongs to that
 candidate route. Generated SDK compatibility still needs qualification against
 your own API and deployment.

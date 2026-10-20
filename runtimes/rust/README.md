@@ -2,11 +2,21 @@
 
 ## Registry status
 
-The 0.1.3 compiler is an unreleased source candidate. Registry installation of
-`tungsten-runtime` and `tungsten-cli-kit` is currently unavailable. Use matching
-runtime source for both stable 0.1.2 and the 0.1.3 source candidate.
+`tungsten-runtime` and `tungsten-cli-kit` are published on crates.io at 0.1.2
+and 0.1.3. Install the version that matches your compiler and generated SDK:
 
-## Released 0.1.2 SDK and CLI
+```sh
+cargo add tungsten-runtime@0.1.3
+cargo add tungsten-cli-kit@0.1.3   # only for a generated CLI
+```
+
+Generated Rust SDK and CLI crates can depend on the registry crates by setting
+`runtime: "0.1.3"` (and `kit: "0.1.3"` for a CLI) without `runtime_path` or
+`kit_path`. Source checkouts remain supported, and the source routes below still
+apply when you need unreleased candidate source or the unchanged `v0.1.2`
+checkout.
+
+## Stable 0.1.2 SDK and CLI from source
 
 The published `tungsten 0.1.2` compiler works with the unchanged `v0.1.2`
 source checkout. That tag's Rust crates retain their original **0.1.0** source
@@ -43,15 +53,15 @@ cargo run --manifest-path generated/rust/Cargo.toml -p acme-cli -- --help
 
 This builds the generated SDK and CLI with Rust 1.88 or newer, using the two
 matching source crates. Relative `runtime_path` and `kit_path` values resolve
-from the generated SDK and CLI crate directories respectively. Keep these
-source dependencies while registry installation is unavailable; packaging a
-generated crate for registry distribution still needs published runtime crates.
+from the generated SDK and CLI crate directories respectively. Packaging a
+generated crate for registry distribution needs registry runtime dependencies
+instead of these source paths.
 No 0.1.3 upgrade is needed for this stable source installation.
 
 ## Install from source
 
 Requires Rust 1.88 or newer. Use the same source revision as your compiler and
-generated SDK: `v0.1.2` for stable 0.1.2, or the matching 0.1.3 candidate checkout.
+generated SDK: `v0.1.2` for stable 0.1.2, or the matching 0.1.3 checkout.
 Configure a local dependency in the consuming Cargo project (adjust the path):
 
 ```toml
@@ -96,8 +106,8 @@ coordination across hosts.
 
 No runtime ships a file-backed OAuth token store. Provide an application-owned
 token-store implementation when tokens must survive process restarts; protect
-stored credentials and avoid logging them. Registry publication and package
-availability are separate from building this source checkout.
+stored credentials and avoid logging them. Registry packages and this source checkout are separate install routes; build
+results for one do not establish the other.
 
 ## License
 
