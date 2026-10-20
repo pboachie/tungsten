@@ -13,7 +13,7 @@ cargo add tungsten-cli-kit@0.1.3   # only for a generated CLI
 Generated Rust SDK and CLI crates can depend on the registry crates by setting
 `runtime: "0.1.3"` (and `kit: "0.1.3"` for a CLI) without `runtime_path` or
 `kit_path`. Source checkouts remain supported, and the source routes below still
-apply when you need unreleased candidate source or the unchanged `v0.1.2`
+apply when you need unreleased source or the unchanged `v0.1.2`
 checkout.
 
 ## Stable 0.1.2 SDK and CLI from source
@@ -61,7 +61,7 @@ No 0.1.3 upgrade is needed for this stable source installation.
 ## Install from source
 
 Requires Rust 1.88 or newer. Use the same source revision as your compiler and
-generated SDK: `v0.1.2` for stable 0.1.2, or the matching 0.1.3 checkout.
+generated SDK: `v0.1.2` for 0.1.2, or `v0.1.3` for 0.1.3.
 Configure a local dependency in the consuming Cargo project (adjust the path):
 
 ```toml
@@ -87,8 +87,8 @@ responsible for authorization and server-side idempotency.
 
 ## Limits
 
-This section describes the matching **0.1.3 candidate** source. Its ordinary
-response-byte cap is an addition after the released `v0.1.2` runtime.
+This section describes the 0.1.3 runtime. Its ordinary
+response-byte cap is an addition after the `v0.1.2` runtime.
 
 Set `ClientOptions::max_response_bytes` to opt into an ordinary-response byte cap;
 a call option with the same name overrides it. The value must be a positive

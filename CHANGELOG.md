@@ -193,7 +193,8 @@ changes.
 
 - Document that `tungsten-runtime` and `tungsten-cli-kit` are published on
   crates.io starting with 0.1.3 (0.1.2 was published earlier), and that the Rust
-  installation docs now describe registry installation alongside the source routes.
+  installation docs now describe registry installation alongside the source routes. User docs now describe 0.1.3 as the latest
+  release and list the verified 0.1.3 registry packages.
 
 - Java generated usage now imports its resolved resource type and infers the
   response type. Dispatch request decoding also imports resolved resource types,
