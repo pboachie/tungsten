@@ -11,6 +11,12 @@ changes.
 
 ### Breaking
 
+- C# and F# schema `min_length` and `max_length` now count Unicode code points (a
+  surrogate pair is one character, a lone surrogate is one) instead of UTF-16 code
+  units, as JSON Schema defines. Strings with characters above U+FFFF are no
+  longer over-counted; a value that fit only because of the old count can now be
+  rejected.
+
 
 - Java and Ruby string `min_length`/`max_length` now count Unicode code points,
   as JSON Schema does, instead of UTF-16 code units: an emoji is one character
@@ -238,6 +244,20 @@ changes.
   installation docs now describe registry installation alongside the source routes. User docs now describe 0.1.3 as the latest
   release and list the verified 0.1.3 registry packages.
 
+- C# and F# schema `pattern` values are now matched as the ECMAScript expressions
+  the contract defines: `\d`, `\w`, `\s`, `\b`, `$` (no match before a trailing
+  newline), `.`, `\u{...}`, `\p{...}` general categories, lookbehind and named groups
+  behave as in TypeScript. A pattern that cannot be checked (invalid, a construct
+  .NET cannot match faithfully, a value with characters above U+FFFF for a pattern
+  that depends on code points, or matching that exceeds its time budget) still
+  accepts the value but now reports a `PATTERN_UNCHECKED` diagnostic through
+  `ClientOptions.OnDiagnostic` instead of passing silently. The C# and F# READMEs
+  list the remaining differences.
+- Correct the 0.1.3 "Known gaps of the F# target" note: the C# runtime's durable
+  `FileIdempotencyStore` exists, so "in-memory idempotency store" no longer
+  applies, and the ".NET regex dialect" limit is resolved above. The F# README now
+  records that the `async` surface, targets below net10.0, Fantomas formatting and
+  Fable/JavaScript remain out of scope for 0.2.0.
 - Java generated usage now imports its resolved resource type and infers the
   response type. Dispatch request decoding also imports resolved resource types,
   so valid package prefixes such as `client.generated` cannot be shadowed by the

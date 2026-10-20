@@ -316,7 +316,7 @@ public sealed partial class ClientCore
         }
         else if (mode != ValidateResponses.Off && op.Response is { } schema && decoded.Has)
         {
-            var issues = Judge(schema, decoded.Value);
+            var issues = Judge(op.Id, "response", schema, decoded.Value);
             if (issues.Count > 0)
             {
                 var issue = issues[0];
@@ -363,15 +363,43 @@ public sealed partial class ClientCore
     }
 
     /// <summary>A validator that only judges (responses, page items, events): a failure inside it is an issue at the root.</summary>
-    internal static IReadOnlyList<Issue> Judge(Schema schema, JsonNode? value)
+    internal IReadOnlyList<Issue> Judge(string operation, string root, Schema schema, JsonNode? value, Category category = Category.UnexpectedResponse)
     {
         try
         {
-            return schema.Validate(value);
+            var notes = new List<PatternNote>();
+            var issues = schema.Validate(value, notes);
+            ReportUncheckedPatterns(operation, root, notes, category);
+            return issues;
         }
         catch (Exception e) when (e is not Failure)
         {
             return new[] { new Issue(System.Array.Empty<object>(), "the response schema failed (the validator panicked)") };
+        }
+    }
+
+    /// <summary>
+    /// A schema pattern the runtime cannot check (it has no .NET equivalent, or matching timed out) accepts the
+    /// value, as the other runtimes do, but is reported once per call through <c>OnDiagnostic</c>.
+    /// </summary>
+    internal void ReportUncheckedPatterns(string operation, string root, IReadOnlyList<PatternNote> notes, Category category)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var note in notes)
+        {
+            if (seen.Count >= 16)
+            {
+                break;
+            }
+            var param = root + Schema.FormatPath(note.Path);
+            if (!seen.Add(param + "\n" + note.Pattern))
+            {
+                continue;
+            }
+            Emit(new Diag(operation, category).Code("PATTERN_UNCHECKED").Retry(Retryable.Never).Param(param)
+                .Expected("a value matching the pattern /" + note.Pattern + "/")
+                .Remedy($"The pattern /{note.Pattern}/ at {param} was not checked because {note.Reason}; the value was accepted without it. The server still validates it.")
+                .Build());
         }
     }
 
