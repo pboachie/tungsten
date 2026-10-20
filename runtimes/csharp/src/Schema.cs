@@ -177,7 +177,7 @@ public sealed class Schema
     });
 
     /// <summary>A compiled schema pattern, or the reason it cannot be checked.</summary>
-    private sealed record PatternEntry(Regex? Regex, string? Unchecked);
+    private sealed record PatternEntry(Regex? Regex, string? Unchecked, bool Astral = false);
 
     private static readonly ConcurrentDictionary<string, PatternEntry> Patterns = new(StringComparer.Ordinal);
 
@@ -191,13 +191,13 @@ public sealed class Schema
         {
             // The pattern is ECMAScript; it is rewritten into the .NET dialect with the same meaning.
             // One that has no faithful rewrite, or that .NET still refuses, is not checked and is reported.
-            if (!EcmaPattern.TryTranslate(p, out var translated, out var reason))
+            if (!EcmaPattern.TryTranslate(p, out var translated, out var reason, out var astral))
             {
                 return new PatternEntry(null, "it uses " + reason + ", which the .NET runtime cannot match like ECMAScript");
             }
             try
             {
-                return new PatternEntry(new Regex(translated, RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)), null);
+                return new PatternEntry(new Regex(translated, RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)), null, astral);
             }
             catch (ArgumentException e)
             {
@@ -232,6 +232,10 @@ public sealed class Schema
         public readonly List<Issue> Constraints = new();
         public readonly List<Issue> Unknown = new();
         public readonly List<PatternNote> Notes = new();
+        // All pattern matching of one validation shares this budget, so many pathological values cost
+        // a bounded time; each single match is also bounded by the pattern's own timeout.
+        private static readonly TimeSpan MatchBudget = TimeSpan.FromSeconds(2);
+        private readonly System.Diagnostics.Stopwatch matchTime = new();
 
         private static List<object> With(List<object> path, object seg)
         {
@@ -446,16 +450,32 @@ public sealed class Schema
             var entry = s.Compiled();
             if (entry?.Regex is { } re)
             {
-                bool matched;
-                try
+                bool matched = true;
+                if (entry.Astral && text.Any(char.IsSurrogate))
                 {
-                    matched = re.IsMatch(text);
+                    Notes.Add(new PatternNote(path, s.Pattern ?? "", "the value has characters above U+FFFF, which this pattern cannot match like ECMAScript in .NET"));
                 }
-                catch (RegexMatchTimeoutException)
+                else if (matchTime.Elapsed >= MatchBudget)
                 {
-                    // Fail open, but never silently: the caller reports the pattern as unchecked.
-                    Notes.Add(new PatternNote(path, s.Pattern ?? "", "matching took longer than " + re.MatchTimeout.TotalSeconds.ToString(CultureInfo.InvariantCulture) + " s"));
-                    matched = true;
+                    Notes.Add(new PatternNote(path, s.Pattern ?? "", "pattern matching in this validation already used its " + MatchBudget.TotalSeconds.ToString(CultureInfo.InvariantCulture) + " s budget"));
+                }
+                else
+                {
+                    matchTime.Start();
+                    try
+                    {
+                        matched = re.IsMatch(text);
+                    }
+                    catch (RegexMatchTimeoutException)
+                    {
+                        // Fail open, but never silently: the caller reports the pattern as unchecked.
+                        Notes.Add(new PatternNote(path, s.Pattern ?? "", "matching took longer than " + re.MatchTimeout.TotalSeconds.ToString(CultureInfo.InvariantCulture) + " s"));
+                        matched = true;
+                    }
+                    finally
+                    {
+                        matchTime.Stop();
+                    }
                 }
                 if (!matched)
                 {

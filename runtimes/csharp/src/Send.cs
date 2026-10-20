@@ -387,6 +387,10 @@ public sealed partial class ClientCore
         var seen = new HashSet<string>(StringComparer.Ordinal);
         foreach (var note in notes)
         {
+            if (seen.Count >= 16)
+            {
+                break;
+            }
             var param = root + Schema.FormatPath(note.Path);
             if (!seen.Add(param + "\n" + note.Pattern))
             {

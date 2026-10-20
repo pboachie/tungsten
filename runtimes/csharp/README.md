@@ -181,18 +181,33 @@ a trailing newline). `\d`, `\w` and `\b` are ASCII, `\s` is the ECMAScript white
 at the very end, `.` excludes `\n`, `\r`, `\u2028` and `\u2029`, and `\u{...}`, `\p{...}` (general
 categories, `ASCII`, `Any`), lookbehind and named groups work.
 
-A pattern the runtime cannot check accepts the value, as the other runtimes do, but is no longer silent:
-`ClientOptions.OnDiagnostic` receives a diagnostic with code `PATTERN_UNCHECKED` (one per pattern and path and
-call), whose `failed_parameter` is the path (`args...` for a request, `response...`, `events[n]...` or a page
-item) and whose remediation names the pattern and the reason. The server still validates the value. The
-cases are: the pattern is not valid ECMAScript or .NET refuses it; it uses a construct without a faithful
-.NET equivalent (Unicode properties other than general categories, `ASCII` and `Any`, or a code point above
-U+FFFF inside a character class); or matching took longer than one second. `Schema.Validate` and
-`Schema.Accepts` called directly have no observer and stay silent.
+A pattern is either checked with ECMAScript meaning or not checked at all; it is never approximated. Like the
+TypeScript runtime, a pattern is read in Unicode mode and only when ECMAScript itself rejects it there, as a
+pattern without the `u` flag. Every capture group is numbered in ECMAScript order, so back-references and
+`\k<name>` point at the right group even when named and unnamed groups are mixed, and a reference to a group
+that has not captured matches the empty string, as in ECMAScript.
 
-Remaining differences: .NET matches UTF-16 code units, so a character class does not match an astral code
-point (for example `[\p{L}]` and `[^a]` on a surrogate pair), though `.` and negated escapes outside a class
-do; and numbered back-references in a pattern that also has named groups follow .NET group numbering.
+A pattern the runtime cannot check accepts the value, as the other runtimes do, but is not silent:
+`ClientOptions.OnDiagnostic` receives a diagnostic with code `PATTERN_UNCHECKED` (one per pattern and path
+and call, at most 16 per call), whose `failed_parameter` is the path (`args...` for a request,
+`response...`, `events[n]...` or a page item) and whose remediation names the pattern and the reason. The
+server still validates the value. The cases are:
+
+- the pattern is not valid ECMAScript, or .NET refuses the rewrite;
+- it uses a construct without a faithful .NET equivalent: Unicode properties other than general
+  categories, `ASCII` and `Any`; a code point above U+FFFF inside a character class; a capture group
+  inside a lookbehind; a back-reference to a group inside a repeated group or a negative lookahead; a
+  quantified lookahead or the legacy octal and `\c` escapes of patterns without the `u` flag;
+- the value contains characters above U+FFFF and the pattern can tell a surrogate pair from two code units
+  (`\p{...}`, a class with a complemented escape such as `[\W\d]` or a range across the surrogates, or a
+  lone surrogate escape), because .NET matches UTF-16 code units; `.`, negated classes and astral literals
+  are matched as whole code points;
+- matching one value took longer than one second, or the matching of one validation (one request, response,
+  page item or event) has used its two-second budget, so a run of pathological values costs bounded time.
+
+`Schema.Validate` and `Schema.Accepts` called directly have no observer and stay silent. The one remaining
+difference in checked patterns is the Unicode version behind `\p{...}`: .NET's tables can differ from the
+JavaScript engine's for recently assigned characters.
 
 The default transport does not decompress encoded bodies; use identity encoding. Encoded delivery does not establish a decoded-content limit.
 The cap limits accepted body bytes; parsers, copies and HTTP decoders can allocate

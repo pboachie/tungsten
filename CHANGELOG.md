@@ -200,8 +200,9 @@ changes.
   the contract defines: `\d`, `\w`, `\s`, `\b`, `$` (no match before a trailing
   newline), `.`, `\u{...}`, `\p{...}` general categories, lookbehind and named groups
   behave as in TypeScript. A pattern that cannot be checked (invalid, a construct
-  .NET cannot match faithfully, or a match that exceeds one second) still accepts
-  the value but now reports a `PATTERN_UNCHECKED` diagnostic through
+  .NET cannot match faithfully, a value with characters above U+FFFF for a pattern
+  that depends on code points, or matching that exceeds its time budget) still
+  accepts the value but now reports a `PATTERN_UNCHECKED` diagnostic through
   `ClientOptions.OnDiagnostic` instead of passing silently. The C# and F# READMEs
   list the remaining differences.
 - Correct the 0.1.3 "Known gaps of the F# target" note: the C# runtime's durable
