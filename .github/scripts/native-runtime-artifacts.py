@@ -15,6 +15,7 @@ import stat
 import struct
 import subprocess
 import tarfile
+import tempfile
 import tomllib
 import xml.etree.ElementTree as ET
 import zipfile
@@ -25,9 +26,37 @@ PACKAGES = {
     "java": "tungsten-runtime",
     "csharp": "Tungsten.Runtime",
     "ruby": "tungsten-runtime",
+    "kotlin": "tungsten-runtime-kotlin",
 }
+GROUP = "io.github.pboachie.tungsten"
+STDLIB = ("org.jetbrains.kotlin", "kotlin-stdlib")
+# The Kotlin layer ships as an ordered list of Maven modules: each is built
+# with Maven in this order and installed into one throwaway local repository,
+# so a later module resolves the same-version earlier ones (and the Java
+# runtime) without Central. A dependency version "@" is the release version.
+# Append further modules (for example the coroutines adapter) here.
+KOTLIN_MODULES = [
+    {
+        "artifact": "tungsten-runtime-kotlin",
+        "directory": "runtimes/kotlin",
+        "classes": "io/github/pboachie/tungsten/runtime/kotlin/",
+        "dependencies": {
+            (GROUP, "tungsten-runtime"): "@",
+            STDLIB: "2.4.21",
+        },
+    },
+]
 SEMVER = r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?"
 LIMIT = 128 * 1024 * 1024
+
+
+def maven_artifacts(package):
+    """Maven artifactIds of a Central-published package, in build order."""
+    if package == "java":
+        return [PACKAGES["java"]]
+    if package == "kotlin":
+        return [module["artifact"] for module in KOTLIN_MODULES]
+    raise ValueError("not a Maven Central package: " + package)
 
 
 def release_version(version):
@@ -120,7 +149,24 @@ def tar_files(data, mode):
     return result
 
 
+def kotlin_source_files(module):
+    source = ROOT / module["directory"]
+    paths = sorted(source.glob("src/main/kotlin/**/*.kt")) + [
+        source / "pom.xml",
+        source / "README.md",
+        source / "LICENSE",
+        source / "javadoc/index.html",
+    ]
+    return paths
+
+
 def source_files(package):
+    if package == "kotlin":
+        return {
+            path.relative_to(ROOT).as_posix(): regular(path)
+            for module in KOTLIN_MODULES
+            for path in kotlin_source_files(module)
+        }
     source = ROOT / "runtimes" / package
     pattern, manifest = {
         "java": ("src/main/java/**/*.java", "pom.xml"),
@@ -160,11 +206,11 @@ def text(root, path):
     return element.text if element is not None else None
 
 
-def check_pom(data, version):
+def check_pom(data, version, artifact=PACKAGES["java"]):
     pom = xml(data)
     expected = {
-        "groupId": "io.github.pboachie.tungsten",
-        "artifactId": PACKAGES["java"],
+        "groupId": GROUP,
+        "artifactId": artifact,
         "version": version,
         "packaging": "jar",
         "licenses/license/name": "Apache-2.0",
@@ -241,6 +287,97 @@ def check_java(directory, version):
         name.endswith("ClientCore.html") for name in docs
     ):
         raise ValueError("Java documentation archive is incomplete")
+
+
+def pom_dependencies(pom):
+    result = {}
+    namespace = pom.tag.split("}")[0] + "}" if "}" in pom.tag else ""
+    for dep in pom.findall(f"{namespace}dependencies/{namespace}dependency"):
+        key = tuple(
+            (dep.findtext(f"{namespace}{field}") or "")
+            for field in ("groupId", "artifactId")
+        )
+        if key in result or dep.findtext(f"{namespace}scope") not in (None, "compile"):
+            raise ValueError("duplicate or non-compile Maven dependency")
+        result[key] = dep.findtext(f"{namespace}version")
+    return result
+
+
+def check_kotlin_module(directory, version, module):
+    artifact, source = module["artifact"], ROOT / module["directory"]
+    basename = f"{artifact}-{version}"
+    pom = regular(directory / (basename + ".pom"))
+    check_pom(pom, version, artifact)
+    if pom != regular(source / "pom.xml"):
+        raise ValueError("published Maven POM differs from source")
+    expected_dependencies = {
+        key: version if value == "@" else value
+        for key, value in module["dependencies"].items()
+    }
+    if pom_dependencies(xml(pom)) != expected_dependencies:
+        raise ValueError("Kotlin Maven dependencies differ from the reviewed set")
+    kotlin_sources = {
+        p.relative_to(source / "src/main/kotlin").as_posix(): regular(p)
+        for p in sorted((source / "src/main/kotlin").rglob("*.kt"))
+    }
+    if not kotlin_sources:
+        raise ValueError("Kotlin module has no sources")
+    if any(
+        b"import kotlinx.coroutines" in content for content in kotlin_sources.values()
+    ) and ("org.jetbrains.kotlinx", "kotlinx-coroutines-core") not in expected_dependencies:
+        raise ValueError("Kotlin sources use coroutines without a declared dependency")
+    binary = zip_files(directory / (basename + ".jar"))
+    sources = zip_files(directory / (basename + "-sources.jar"))
+    docs = zip_files(directory / (basename + "-javadoc.jar"))
+    for files in (binary, sources):
+        for name in ("LICENSE", "README.md"):
+            if files.get("META-INF/" + name) != regular(source / name):
+                raise ValueError("Kotlin archive notices differ from source")
+    if {n: v for n, v in sources.items() if n.endswith(".kt")} != kotlin_sources:
+        raise ValueError("Kotlin source archive differs from source")
+    classes = {name for name in binary if name.endswith(".class")}
+    if not classes:
+        raise ValueError("Kotlin archive has no classes")
+    for name in classes:
+        content = binary[name]
+        if (
+            not name.startswith(module["classes"])
+            or not content.startswith(b"\xca\xfe\xba\xbe")
+            or len(content) < 8
+            or struct.unpack(">H", content[6:8])[0] != 61
+        ):
+            raise ValueError("Kotlin archive has unexpected or non-Java-17 classes")
+    if f"META-INF/{artifact}.kotlin_module" not in binary:
+        raise ValueError("Kotlin archive has no module descriptor")
+    manifest = binary.get("META-INF/MANIFEST.MF", b"").decode("utf-8", "replace")
+    automatic = "io.github.pboachie.tungsten.runtime." + artifact.removeprefix(
+        "tungsten-runtime-"
+    ).replace("-", ".")
+    if not re.search(
+        r"(?m)^Automatic-Module-Name: " + re.escape(automatic) + r"\r?$", manifest
+    ):
+        raise ValueError("Kotlin archive has an incorrect automatic module name")
+    embedded = f"META-INF/maven/{GROUP}/{artifact}/"
+    if binary.get(embedded + "pom.xml") != pom:
+        raise ValueError("Kotlin archive embeds an unexpected POM")
+    properties = binary.get(embedded + "pom.properties", b"").decode("utf-8")
+    for field, value in (
+        ("groupId", GROUP),
+        ("artifactId", artifact),
+        ("version", version),
+    ):
+        if not re.search(r"(?m)^" + field + "=" + re.escape(value) + r"$", properties):
+            raise ValueError("Kotlin archive properties have incorrect identity")
+    if (
+        set(docs) - {"META-INF/MANIFEST.MF"} != {"index.html"}
+        or docs["index.html"] != regular(source / "javadoc/index.html")
+    ):
+        raise ValueError("Kotlin documentation archive is incomplete")
+
+
+def check_kotlin(directory, version):
+    for module in KOTLIN_MODULES:
+        check_kotlin_module(directory, version, module)
 
 
 def check_csharp(directory, version, commit):
@@ -360,7 +497,14 @@ def source_version(package, version):
     if workspace != version:
         raise ValueError("release version differs from the source workspace")
     source = ROOT / "runtimes" / package
-    if package == "java":
+    if package == "kotlin":
+        for module in KOTLIN_MODULES:
+            check_pom(
+                regular(ROOT / module["directory"] / "pom.xml"),
+                version,
+                module["artifact"],
+            )
+    elif package == "java":
         check_pom(regular(source / "pom.xml"), version)
     elif package == "csharp":
         if (
@@ -416,6 +560,11 @@ def verify(directory, package, version):
             f"tungsten-runtime-{version}{s}"
             for s in (".jar", "-sources.jar", "-javadoc.jar", ".pom")
         },
+        "kotlin": {
+            f"{m['artifact']}-{version}{s}"
+            for m in KOTLIN_MODULES
+            for s in (".jar", "-sources.jar", "-javadoc.jar", ".pom")
+        },
         "csharp": {f"Tungsten.Runtime.{version}.nupkg"},
         "ruby": {f"tungsten-runtime-{version}.gem"},
     }[package]
@@ -434,6 +583,8 @@ def verify(directory, package, version):
             raise ValueError("native runtime checksum mismatch: " + name)
     if package == "java":
         check_java(directory, version)
+    elif package == "kotlin":
+        check_kotlin(directory, version)
     elif package == "csharp":
         check_csharp(directory, version, commit)
     else:
@@ -468,6 +619,36 @@ def build(directory, package, version):
                 source / "target" / f"tungsten-runtime-{version}{suffix}", directory
             )
         shutil.copy2(source / "pom.xml", directory / f"tungsten-runtime-{version}.pom")
+    elif package == "kotlin":
+        # Maven resolves the same-version Java runtime and earlier Kotlin
+        # modules from a throwaway local repository populated by this build,
+        # because none of them is on Central before this release publishes.
+        timestamp = "-Dproject.build.outputTimestamp=" + os.environ.get(
+            "SOURCE_DATE_EPOCH", "315532802"
+        )
+        with tempfile.TemporaryDirectory(prefix="tungsten-m2-") as repository:
+            maven = [
+                "mvn",
+                "-B",
+                "-Dmaven.repo.local=" + repository,
+                "-Prelease-artifacts",
+                "-DskipTests",
+                timestamp,
+                "clean",
+                "install",
+            ]
+            run(maven, ROOT / "runtimes" / "java")
+            for module in KOTLIN_MODULES:
+                folder = ROOT / module["directory"]
+                run(maven, folder)
+                for suffix in (".jar", "-sources.jar", "-javadoc.jar"):
+                    shutil.copy2(
+                        folder / "target" / f"{module['artifact']}-{version}{suffix}",
+                        directory,
+                    )
+                shutil.copy2(
+                    folder / "pom.xml", directory / f"{module['artifact']}-{version}.pom"
+                )
     elif package == "csharp":
         run(
             [
