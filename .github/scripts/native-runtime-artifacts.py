@@ -15,6 +15,7 @@ import stat
 import struct
 import subprocess
 import tarfile
+import tempfile
 import tomllib
 import xml.etree.ElementTree as ET
 import zipfile
@@ -24,9 +25,13 @@ ROOT = Path(__file__).resolve().parents[2]
 PACKAGES = {
     "java": "tungsten-runtime",
     "csharp": "Tungsten.Runtime",
+    "fsharp": "Tungsten.Runtime.FSharp",
     "ruby": "tungsten-runtime",
 }
 SEMVER = r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?"
+# Declared dependency floor of the F# package: the FSharp.Core the .NET SDK
+# 10.0.401 bundles and the layer is built and tested with.
+FSHARP_CORE = "10.1.401"
 LIMIT = 128 * 1024 * 1024
 
 
@@ -125,6 +130,7 @@ def source_files(package):
     pattern, manifest = {
         "java": ("src/main/java/**/*.java", "pom.xml"),
         "csharp": ("src/**/*.cs", "Tungsten.Runtime.csproj"),
+        "fsharp": ("src/**/*.fs", "Tungsten.Runtime.FSharp.fsproj"),
         "ruby": ("lib/**/*.rb", "tungsten-runtime.gemspec"),
     }[package]
     paths = sorted(source.glob(pattern)) + [
@@ -132,8 +138,14 @@ def source_files(package):
         source / "README.md",
         source / "LICENSE",
     ]
-    if package == "csharp":
+    if package in ("csharp", "fsharp"):
         paths.append(ROOT / "assets/tungsten-icon.png")
+    if package == "fsharp":
+        # The F# assembly is compiled against exactly this C# runtime source.
+        csharp = ROOT / "runtimes/csharp"
+        paths += sorted(csharp.glob("src/**/*.cs")) + [
+            csharp / "Tungsten.Runtime.csproj"
+        ]
     return {path.relative_to(ROOT).as_posix(): regular(path) for path in paths}
 
 
@@ -243,8 +255,22 @@ def check_java(directory, version):
         raise ValueError("Java documentation archive is incomplete")
 
 
-def check_csharp(directory, version, commit):
-    files = zip_files(directory / f"Tungsten.Runtime.{version}.nupkg")
+def nuget_dependencies(metadata):
+    groups = child(metadata, "metadata/dependencies")
+    if groups is None:
+        return None
+    result = {}
+    for group in list(groups):
+        target = group.get("targetFramework")
+        result[target] = sorted(
+            (item.get("id"), item.get("version")) for item in list(group)
+        )
+    return result
+
+
+def check_nuget(directory, version, commit, package):
+    name = PACKAGES[package]
+    files = zip_files(directory / f"{name}.{version}.nupkg")
     core_properties = {
         name
         for name in files
@@ -255,17 +281,17 @@ def check_csharp(directory, version, commit):
     expected_files = {
         "_rels/.rels",
         "[Content_Types].xml",
-        "Tungsten.Runtime.nuspec",
+        f"{name}.nuspec",
         "LICENSE",
         "README.md",
-        "lib/net10.0/Tungsten.Runtime.dll",
+        f"lib/net10.0/{name}.dll",
         "tungsten-icon.png",
     }
     if len(core_properties) != 1 or set(files) != expected_files | core_properties:
         raise ValueError("NuGet package contains unexpected files")
-    metadata = xml(files["Tungsten.Runtime.nuspec"])
+    metadata = xml(files[f"{name}.nuspec"])
     expected = {
-        "id": PACKAGES["csharp"],
+        "id": name,
         "version": version,
         "license": "Apache-2.0",
         "readme": "README.md",
@@ -287,8 +313,22 @@ def check_csharp(directory, version, commit):
         or repository.get("commit") != commit
     ):
         raise ValueError("NuGet license or immutable repository metadata is incorrect")
-    for name in ("README.md", "LICENSE"):
-        if files.get(name) != regular(ROOT / "runtimes/csharp" / name):
+    dependencies = nuget_dependencies(metadata)
+    if package == "csharp":
+        wanted = {"net10.0": []}
+    else:
+        # The F# layer needs exactly the same-version C# runtime ("[x]" is an
+        # exact NuGet range; a bare "x" would also accept newer versions) and
+        # FSharp.Core at or above the floor it is built with.
+        wanted = {
+            "net10.0": sorted(
+                [("FSharp.Core", FSHARP_CORE), (PACKAGES["csharp"], f"[{version}]")]
+            )
+        }
+    if dependencies != wanted:
+        raise ValueError("NuGet dependencies differ from the reviewed contract")
+    for notice in ("README.md", "LICENSE"):
+        if files.get(notice) != regular(ROOT / "runtimes" / package / notice):
             raise ValueError("NuGet notices differ from source")
     icon = regular(ROOT / "assets/tungsten-icon.png")
     if (
@@ -299,9 +339,11 @@ def check_csharp(directory, version, commit):
     ):
         raise ValueError("NuGet icon must embed the checked 128px PNG")
     assemblies = {
-        name for name in files if name.startswith("lib/") and name.endswith(".dll")
+        member
+        for member in files
+        if member.startswith("lib/") and member.endswith(".dll")
     }
-    if assemblies != {"lib/net10.0/Tungsten.Runtime.dll"} or not files[
+    if assemblies != {f"lib/net10.0/{name}.dll"} or not files[
         next(iter(assemblies))
     ].startswith(b"MZ"):
         raise ValueError("NuGet package has an unexpected assembly target")
@@ -362,15 +404,23 @@ def source_version(package, version):
     source = ROOT / "runtimes" / package
     if package == "java":
         check_pom(regular(source / "pom.xml"), version)
-    elif package == "csharp":
-        if (
-            text(
-                xml(regular(source / "Tungsten.Runtime.csproj")),
-                "PropertyGroup/Version",
-            )
-            != version
-        ):
-            raise ValueError("C# source version differs from release")
+    elif package in ("csharp", "fsharp"):
+        manifest = {
+            "csharp": "Tungsten.Runtime.csproj",
+            "fsharp": "Tungsten.Runtime.FSharp.fsproj",
+        }[package]
+        if text(xml(regular(source / manifest)), "PropertyGroup/Version") != version:
+            raise ValueError(f"{package} source version differs from release")
+        if package == "fsharp":
+            core = [
+                r.get("Version")
+                for r in xml(regular(source / manifest)).iter("PackageReference")
+                if r.get("Include") == "FSharp.Core"
+            ]
+            if core != [FSHARP_CORE]:
+                raise ValueError(
+                    "F# source FSharp.Core differs from the declared floor"
+                )
     elif not re.search(
         r'VERSION\s*=\s*"' + re.escape(version) + '"',
         regular(source / "lib/tungsten/runtime/version.rb").decode(),
@@ -417,6 +467,7 @@ def verify(directory, package, version):
             for s in (".jar", "-sources.jar", "-javadoc.jar", ".pom")
         },
         "csharp": {f"Tungsten.Runtime.{version}.nupkg"},
+        "fsharp": {f"Tungsten.Runtime.FSharp.{version}.nupkg"},
         "ruby": {f"tungsten-runtime-{version}.gem"},
     }[package]
     if (
@@ -434,8 +485,8 @@ def verify(directory, package, version):
             raise ValueError("native runtime checksum mismatch: " + name)
     if package == "java":
         check_java(directory, version)
-    elif package == "csharp":
-        check_csharp(directory, version, commit)
+    elif package in ("csharp", "fsharp"):
+        check_nuget(directory, version, commit, package)
     else:
         check_ruby(directory, version)
     return manifest
@@ -483,6 +534,40 @@ def build(directory, package, version):
             ],
             ROOT,
         )
+    elif package == "fsharp":
+        # Pack the same-version C# runtime into a throwaway feed first; the F#
+        # project then restores only from that feed, so its nuspec carries an
+        # exact "[version]" dependency instead of a minimum.
+        with tempfile.TemporaryDirectory() as feed:
+            run(
+                [
+                    "dotnet",
+                    "pack",
+                    ROOT / "runtimes/csharp/Tungsten.Runtime.csproj",
+                    "-c",
+                    "Release",
+                    "-p:RepositoryCommit=" + commit,
+                    "-p:ContinuousIntegrationBuild=true",
+                    "-o",
+                    feed,
+                ],
+                ROOT,
+            )
+            run(
+                [
+                    "dotnet",
+                    "pack",
+                    source / "Tungsten.Runtime.FSharp.fsproj",
+                    "-c",
+                    "Release",
+                    "-p:RepositoryCommit=" + commit,
+                    "-p:ContinuousIntegrationBuild=true",
+                    "-p:TungstenRuntimeFeed=" + feed,
+                    "-o",
+                    directory,
+                ],
+                ROOT,
+            )
     else:
         run(
             [
