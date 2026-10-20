@@ -365,7 +365,7 @@ fn parse_releases(body: &[u8]) -> Result<Vec<Release>, SourceError> {
             assets: raw
                 .assets
                 .into_iter()
-                .filter(|a| a.state.as_deref().is_none_or(|s| s == "uploaded"))
+                .filter(|a| a.state.as_deref() == Some("uploaded"))
                 .map(|a| a.name)
                 .collect(),
         });
@@ -785,7 +785,7 @@ pub fn check(source: &dyn UpdateSource, ctx: &Context) -> UpdateCheckResult {
     result.status = match latest.version.cmp(&current) {
         Ordering::Equal => UpdateStatus::UpToDate,
         Ordering::Less => UpdateStatus::Ahead,
-        Ordering::Greater if result.artifacts_available == Some(false) => {
+        Ordering::Greater if result.artifacts_available != Some(true) => {
             result.reason = Some(UnavailableReason::ArtifactsMissing);
             UpdateStatus::ArtifactsUnavailable
         }
@@ -797,6 +797,9 @@ pub fn check(source: &dyn UpdateSource, ctx: &Context) -> UpdateCheckResult {
             &latest.tag,
             ctx.install.windows,
         ),
+        UpdateStatus::ArtifactsUnavailable if result.expected_archive.is_none() => vec![
+            "Release archives are not declared for this platform; no replacement is recommended.".into(),
+        ],
         UpdateStatus::ArtifactsUnavailable => vec![
             "The release is published without this platform's archive; wait for the release to complete rather than building a guess.".into(),
         ],
@@ -829,6 +832,10 @@ pub fn render(result: &UpdateCheckResult) -> String {
             "This build is newer than the newest release considered.".to_string()
         }
         (UpdateStatus::UpdateAvailable, _) => "A newer release is available.".to_string(),
+        (UpdateStatus::ArtifactsUnavailable, _) if result.expected_archive.is_none() => {
+            "A newer release exists, but no release archive is declared for this platform; not recommended."
+                .to_string()
+        }
         (UpdateStatus::ArtifactsUnavailable, _) => {
             "A newer release exists, but it does not list this platform's archive and SHA256SUMS yet; not recommended."
                 .to_string()
