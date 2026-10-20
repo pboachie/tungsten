@@ -302,6 +302,11 @@ changes.
 
 ### Fixed
 
+- Mock generation now repairs conflicting optional fields in `allOf` records by
+  reusing a compatible generated value or omitting an optional field. Required
+  fields remain intact, and the full intersection must validate before a repair
+  is accepted.
+
 - Python runtime: offset and page-number pagination no longer fail with
   `UNEXPECTED_RESPONSE` on Python 3.10 and 3.11, where `int.is_integer` does not exist.
 
