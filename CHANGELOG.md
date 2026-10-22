@@ -9,6 +9,10 @@ changes.
 
 ## [Unreleased]
 
+### Security
+
+- Refresh the locked TLS verification, CA bundles and MCP address parser, and use patched Node.js releases for package validation.
+
 ### Documentation
 
 - Clarify the OAuth URL-as-data boundary and safe browser integration across
