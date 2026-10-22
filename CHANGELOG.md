@@ -9,6 +9,10 @@ changes.
 
 ## [Unreleased]
 
+### Security
+
+- Refresh the locked TLS verification, CA bundles and MCP address parser, and use patched Node.js releases for package validation.
+
 ### Breaking
 
 - C# and F# schema `min_length` and `max_length` now count Unicode code points (a
