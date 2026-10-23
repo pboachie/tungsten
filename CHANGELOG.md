@@ -9,6 +9,13 @@ changes.
 
 ## [Unreleased]
 
+### Documentation
+
+- Clarify the OAuth URL-as-data boundary and safe browser integration across
+  SDKs and MCP hosts. HTTP(S) validation is not shell escaping; compatibility
+  helpers retain application-owned custom-scheme policy. No browser launcher or
+  URL-policy behavior is added or changed.
+
 ### Breaking
 
 - C# and F# schema `min_length` and `max_length` now count Unicode code points (a
