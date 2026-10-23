@@ -50,9 +50,16 @@ pub(crate) struct Validator<'a> {
     model: &'a Model,
     ctx: Context,
     steps: Cell<usize>,
+    work: Option<&'a Cell<usize>>,
 }
 
 type Checked = Result<(), Invalid>;
+
+pub(crate) struct IntersectionProperty {
+    pub declarations: usize,
+    pub required: bool,
+    pub valid: bool,
+}
 
 impl<'a> Validator<'a> {
     pub fn new(model: &'a Model, ctx: Context) -> Validator<'a> {
@@ -60,13 +67,81 @@ impl<'a> Validator<'a> {
             model,
             ctx,
             steps: Cell::new(0),
+            work: None,
         }
+    }
+
+    /// Generation shares one repair budget across all candidate checks.
+    /// Ordinary validation retains its existing per-check limits.
+    pub fn with_work(model: &'a Model, ctx: Context, work: &'a Cell<usize>) -> Self {
+        Self {
+            work: Some(work),
+            ..Self::new(model, ctx)
+        }
+    }
+
+    fn spend(&self, pointer: &str) -> Checked {
+        self.spend_many(pointer, 1)
+    }
+
+    fn spend_many(&self, pointer: &str, amount: usize) -> Checked {
+        if let Some(work) = self.work {
+            let Some(left) = work.get().checked_sub(amount) else {
+                work.set(0);
+                return Self::fail(pointer, "value is too complex to validate");
+            };
+            work.set(left);
+        }
+        Ok(())
     }
 
     pub fn check(&self, ty: &TypeRef, value: &Value) -> Checked {
         self.steps.set(0);
         let mut pointer = String::new();
         self.ty(ty, value, &mut pointer, 0, false)
+    }
+
+    pub fn check_shape(&self, shape: &Shape, value: &Value) -> Checked {
+        self.steps.set(0);
+        self.spend("")?;
+        self.shape(shape, value, &mut String::new(), 0, false)
+    }
+
+    /// Check one present property with the same field/null/additional rules
+    /// as relaxed record validation. Non-record members are not repairable.
+    pub fn intersection_property(
+        &self,
+        members: &[TypeRef],
+        key: &str,
+        value: &Value,
+    ) -> Option<IntersectionProperty> {
+        let mut result = IntersectionProperty {
+            declarations: 0,
+            required: false,
+            valid: true,
+        };
+        for member in members {
+            self.spend("").ok()?;
+            let Shape::Record { fields, additional } = self.model.shape(member)? else {
+                return None;
+            };
+            let mut known = false;
+            for field in fields {
+                self.spend("").ok()?;
+                if field.wire_name == key {
+                    known = true;
+                    result.declarations += 1;
+                    result.required |= self.required(field);
+                    result.valid &= self
+                        .field_value(field, value, &mut String::new(), 1)
+                        .is_ok();
+                }
+            }
+            if !known && let Additional::Typed { values } = additional {
+                result.valid &= self.ty(values, value, &mut String::new(), 2, false).is_ok();
+            }
+        }
+        Some(result)
     }
 
     fn fail(pointer: &str, message: impl Into<String>) -> Checked {
@@ -85,6 +160,7 @@ impl<'a> Validator<'a> {
         depth: usize,
         relaxed: bool,
     ) -> Checked {
+        self.spend(ptr)?;
         let steps = self.steps.get() + 1;
         self.steps.set(steps);
         if depth > MAX_DEPTH || steps > MAX_STEPS {
@@ -206,6 +282,22 @@ impl<'a> Validator<'a> {
             && !(self.ctx == Context::Response && field.write_only)
     }
 
+    fn field_value(&self, field: &Field, value: &Value, ptr: &mut String, depth: usize) -> Checked {
+        if value.is_null() {
+            let nullable = matches!(
+                field.presence,
+                Presence::RequiredNullable | Presence::OptionalNullable
+            );
+            if !nullable && self.ty(&field.ty, value, ptr, depth + 1, false).is_err() {
+                return Self::fail(ptr, "must not be null");
+            }
+            Ok(())
+        } else {
+            self.ty(&field.ty, value, ptr, depth + 1, false)?;
+            self.constraints(&field.constraints, value, ptr)
+        }
+    }
+
     fn record(
         &self,
         fields: &[Field],
@@ -219,6 +311,7 @@ impl<'a> Validator<'a> {
             return Self::fail(ptr, "expected an object");
         };
         for field in fields {
+            self.spend(ptr)?;
             let mark = push_key(ptr, &field.wire_name);
             match object.get(&field.wire_name) {
                 None => {
@@ -226,22 +319,8 @@ impl<'a> Validator<'a> {
                         return Self::fail(ptr, "missing required field");
                     }
                 }
-                Some(Value::Null) => {
-                    let nullable = matches!(
-                        field.presence,
-                        Presence::RequiredNullable | Presence::OptionalNullable
-                    );
-                    if !nullable
-                        && self
-                            .ty(&field.ty, &Value::Null, ptr, depth + 1, false)
-                            .is_err()
-                    {
-                        return Self::fail(ptr, "must not be null");
-                    }
-                }
                 Some(value) => {
-                    self.ty(&field.ty, value, ptr, depth + 1, false)?;
-                    self.constraints(&field.constraints, value, ptr)?;
+                    self.field_value(field, value, ptr, depth)?;
                 }
             }
             ptr.truncate(mark);
@@ -249,6 +328,7 @@ impl<'a> Validator<'a> {
         let known = |key: &str| fields.iter().any(|f| f.wire_name == key);
         match additional {
             Additional::Closed if !relaxed => {
+                self.spend_many(ptr, fields.len().saturating_mul(object.len()))?;
                 if let Some(extra) = object.keys().find(|k| !known(k)) {
                     let mark = push_key(ptr, extra);
                     let result = Self::fail(ptr, "unknown field");
@@ -257,6 +337,7 @@ impl<'a> Validator<'a> {
                 }
             }
             Additional::Typed { values } => {
+                self.spend_many(ptr, fields.len().saturating_mul(object.len()))?;
                 for (key, item) in object.iter().filter(|(k, _)| !known(k)) {
                     let mark = push_key(ptr, key);
                     self.ty(values, item, ptr, depth + 1, false)?;
@@ -347,10 +428,14 @@ impl<'a> Validator<'a> {
                 Some(Shape::Record {
                     fields,
                     additional: Additional::Closed,
-                }) => allowed.extend(fields.iter().map(|f| f.wire_name.as_str())),
+                }) => {
+                    self.spend_many(ptr, fields.len())?;
+                    allowed.extend(fields.iter().map(|f| f.wire_name.as_str()));
+                }
                 _ => return Ok(()),
             }
         }
+        self.spend_many(ptr, object.len())?;
         if let Some(extra) = object.keys().find(|k| !allowed.contains(k.as_str())) {
             let mark = push_key(ptr, extra);
             let result = Self::fail(ptr, "unknown field");

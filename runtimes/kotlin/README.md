@@ -56,6 +56,15 @@ helpers remain blocking; there is no deadline shared by a whole pagination
 (each request keeps its own timeout); the Java runtime still uses one
 platform thread per in-flight request.
 
+## Opening authorization URLs safely
+
+OAuth helpers return URL data and never launch a browser. Follow the
+[java runtime's safe URL integration guidance](../java/README.md#opening-authorization-urls-safely):
+validate for the application, use a literal-data browser API, and never interpolate
+URLs into shell source or use an unsafe opener or shell fallback. HTTP(S) scheme
+validation alone does not prevent command injection, including on Windows/WSL.
+Compatibility helpers retain application-owned custom-scheme policy.
+
 ## Limits
 
 This is a thin Kotlin layer over the Java runtime. Calls are synchronous (the

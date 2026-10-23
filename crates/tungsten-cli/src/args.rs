@@ -45,6 +45,9 @@ Exit codes:
      mock server cannot start)
   4  the command refused to act without confirmation (init over existing
      files, generate into a directory tungsten did not write: pass --force)
+  5  `update check` found a newer release
+  6  `update check` could not confirm a usable release (offline, opted
+     out, network or metadata failure, or the platform archive is missing)
 
 Output:
   Without --json, results go to stdout and diagnostics to stderr. With
@@ -152,6 +155,8 @@ impl Cli {
             Command::Overlay {
                 command: OverlayCommand::Suggest(_),
             } => CommandName::OverlaySuggest,
+            Command::SupportBundle(_) => CommandName::SupportBundle,
+            Command::Update { .. } => CommandName::UpdateCheck,
             Command::Lsp(_) => return None,
         })
     }
@@ -206,10 +211,30 @@ pub(crate) enum Command {
         #[command(subcommand)]
         command: OverlayCommand,
     },
+    /// Preview the exact, metadata-only contents of a diagnostic support bundle.
+    SupportBundle(SupportBundleArgs),
+    /// Check for a newer release; never installs anything.
+    Update {
+        #[command(subcommand)]
+        command: crate::commands::update::UpdateCommand,
+    },
     /// Serve a Language Server Protocol server on stdin and stdout for
     /// tungsten.yml, agent.yml and overlays: diagnostics, completion, hover,
     /// go-to-definition and symbols. `--json` has no effect.
     Lsp(LspArgs),
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct SupportBundleArgs {
+    /// Local project directory or tungsten manifest.
+    #[arg(default_value = ".")]
+    pub path: PathBuf,
+    /// Print what a bundle would contain; writes, uploads and runs nothing.
+    #[arg(long)]
+    pub preview: bool,
+    /// Remove an entry by id from the bundle; repeatable.
+    #[arg(long, value_name = "ID")]
+    pub exclude: Vec<String>,
 }
 
 #[derive(Debug, Args)]

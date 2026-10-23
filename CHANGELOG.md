@@ -9,6 +9,23 @@ changes.
 
 ## [Unreleased]
 
+### Security
+
+- Refresh the locked TLS verification, CA bundles and MCP address parser, and use patched Node.js releases for package validation.
+  The `rustls-webpki` and `webpki-roots` updates reject distrusted emSign
+  certificate paths (RUSTSEC-2026-0382 and RUSTSEC-2026-0381).
+
+### Documentation
+
+- Document generated Rust CLI workflows for command discovery, deployment
+  profiles, structured input, previews and confirmation, and script recovery
+  from errors or partial pagination.
+
+- Clarify the OAuth URL-as-data boundary and safe browser integration across
+  SDKs and MCP hosts. HTTP(S) validation is not shell escaping; compatibility
+  helpers retain application-owned custom-scheme policy. No browser launcher or
+  URL-policy behavior is added or changed.
+
 ### Breaking
 
 - C# and F# schema `min_length` and `max_length` now count Unicode code points (a
@@ -176,6 +193,54 @@ changes.
 
 ### Added
 
+- A copyable GitHub Actions workflow in `examples/github-actions/` installs a pinned,
+  checksum- and provenance-verified release through `install.sh`, runs `tungsten check`
+  and fails on stale generated output with `tungsten generate --check`. It uses
+  `contents: read` permissions, SHA-pinned actions, no secrets and
+  `TUNGSTEN_NO_EXTERNAL=1`, so a pull request cannot start `external` emitter commands.
+
+- `tungsten support-bundle --preview` prints the exact, metadata-only contents
+  of a diagnostic support bundle, as text or `--json`. Entries (tool and schema
+  versions, the capability catalog, effective-configuration provenance,
+  configuration diagnostic codes, declared tool prerequisites and a fixed
+  reproduction recipe) are assembled from existing config-only sources: no
+  IR build is needed, so a broken project still previews, and no program is
+  started, no tool version is probed, nothing is fetched and no file is written.
+  Option values, digests, project names, environment values, URLs, paths and
+  diagnostic text are never included, and the output is size-bounded.
+  `--exclude <id>` removes an entry. Writing the archive is not available yet.
+
+- Add `tungsten update check`, an explicit, bounded release lookup. It makes one
+  request (5 second limit, 1 MiB cap) for public pboachie/tungsten release
+  metadata, compares the latest stable release with the running version
+  (`--include-prerelease` also considers prereleases), confirms the release lists
+  this platform's archive and `SHA256SUMS`, and prints upgrade guidance for the
+  detected installation route (installer, cargo or npm; an unknown route gets
+  guidance, not a command). Exit codes: 0 up to date, 5 newer release available,
+  6 could not confirm (offline, opted out, network or metadata failure, or a
+  partially published release). `--offline`, `--no-update-check` and
+  `TUNGSTEN_NO_UPDATE_CHECK=1` make no request. It never installs, changes
+  project pins or generated clients, or sends project data. `--json` output adds
+  the `update check` command to the CLI output schema.
+
+- OpenAPI 3.2.x documents are read: a document that uses only constructs OpenAPI
+  3.1 has takes the 3.1 path and compiles to the same IR as its 3.1 twin. Each
+  construct only 3.2 has is diagnosed at its member instead of being ignored, one
+  code per feature. These are errors, because a client built without them would
+  differ from the API: `$self` (TG0140), the `query` method (TG0141),
+  `additionalOperations` (TG0142), `in: querystring` (TG0143), `style: cookie`
+  (TG0144), `itemSchema` (TG0145), `prefixEncoding` and `itemEncoding` (TG0146),
+  nested encodings (TG0147), `components.mediaTypes` and media types given by
+  `$ref` (TG0148), discriminator `defaultMapping` (TG0149), the OAuth 2.0 device
+  authorization flow (TG0150) and security requirements that name a scheme by URI
+  (TG0151). These are warnings, because they add metadata with no effect on a
+  client: `oauth2MetadataUrl` (TG0152), tag `parent` and `kind` (TG0153), example
+  `dataValue` and `serializedValue` (TG0154), XML `nodeType` (TG0155), and tag
+  `summary`, response `summary`, server `name` and security scheme `deprecated`
+  (TG0156). `tungsten capabilities` and `tungsten doctor` list the supported
+  OpenAPI versions and these constructs (additive `openapi_inputs` field). 3.0 and
+  3.1 input and output are unchanged; `tungsten explain` describes each new code.
+
 - Add a pub.dev release route for the Dart runtime (`tungsten_runtime`) from
   0.2.0: a frozen, checksummed archive with a zero-warning `dart pub publish
   --dry-run` on every release run, then a gated OIDC publish (`PUB_PUBLISH`,
@@ -210,6 +275,14 @@ changes.
   This covers patterns the engine cannot compile and, in Java, subjects too long
   to match, matches that time out or overflow the stack. Direct schema validation
   without an observer stays silent. Unreleased 0.2.0 only.
+
+- Go, Java and Python now check a schema `pattern` that uses the ECMAScript
+  `u`-flag escape `\u{XXXX}` (one to six hex digits, at most `10FFFF`) instead
+  of accepting it unchecked: it is translated to RE2 and Java's `\x{XXXX}` and to
+  Python's `\UXXXXXXXX`, in and out of character classes. A malformed or
+  out-of-range `\u{...}` is still accepted and reported as `PATTERN_UNCHECKED`.
+  Python's `re` still has no `\p{...}` property classes, so those patterns stay
+  unchecked and reported. Unreleased 0.2.0 only.
 
 - TypeScript, Python and Rust report a schema `pattern` their regex engine cannot
   compile, or cannot match within a limit, as a non-fatal `PATTERN_UNCHECKED`
@@ -301,6 +374,15 @@ changes.
   nontransactional across files and directories.
 
 ### Fixed
+
+- Mock generation now repairs conflicting optional fields in `allOf` records by
+  reusing a compatible generated value or omitting an optional field. Required
+  fields remain intact, and the full intersection must validate before a repair
+  is accepted.
+
+- Dart schema validation now reports unchecked patterns from the first accepting
+  untagged-union variant, preserving nested property and array paths. Rejected
+  variants do not emit speculative warnings.
 
 - Python runtime: offset and page-number pagination no longer fail with
   `UNEXPECTED_RESPONSE` on Python 3.10 and 3.11, where `int.is_integer` does not exist.

@@ -155,6 +155,25 @@ Never log handles, authorization/callback URLs, codes, bindings, verifiers or
 tokens. Diagnostic error labels use a finite OAuth allowlist; provider descriptions
 and arbitrary error strings are not copied into failures.
 
+## Opening authorization URLs safely
+
+OAuth authorization helpers return URL data; they do not open a browser. Treat
+provider endpoints and returned URLs as untrusted input. Apply your application's
+URL policy and use a browser or native URL API that treats the complete target as
+literal data. Never interpolate the URL into PowerShell, CMD, POSIX shell or other
+command source, and do not pass it to an opener that does so internally.
+
+Scheme validation alone does not prevent command injection: an ordinary HTTPS
+URL can contain shell expansion characters. Managed OAuth endpoint checks are
+protocol validation, not shell escaping. Explicit low-level compatibility helpers
+retain application-owned URL policy, including custom schemes; their results
+need the same safe integration boundary. Do not silently route a rejected URL or
+failed browser launch through a shell fallback.
+
+These boundaries do not qualify third-party openers, custom integrations or real
+provider/listener behavior. Qualify the application's complete launch path on
+each supported platform, including Windows and WSL.
+
 ## Limits
 
 Managed OAuth admits at most 32 attempts, 32 token-work owners and 32 waiting
@@ -253,6 +272,9 @@ code `PATTERN_UNCHECKED` (category `VALIDATION_FAILED` for a request,
 `UNEXPECTED_RESPONSE` otherwise), once per path and pattern, whose
 `failed_parameter` is the path (`args...`, `response...`, `events[n]...` or a page
 item) and whose remediation names the pattern and the reason, never the value.
+For an untagged union, diagnostics come from the first variant that accepts the
+value, including patterns nested in that variant; rejected variants do not
+produce warnings. Paths retain the enclosing object members and array indexes.
 The server still validates the value. `Schema.validate` called directly stays
 silent unless it is given an `onUnchecked` observer.
 

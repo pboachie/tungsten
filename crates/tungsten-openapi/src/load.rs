@@ -12,10 +12,11 @@ use crate::overlay::{self, Overlay};
 use crate::parse::{self, Parsed};
 use crate::refs::{Reference, lexical_normalize, parse_reference};
 use crate::source::too_big;
+use crate::spans::SpanIndex;
 use crate::walk::{Kind, walk_cancellable};
 use crate::{
     DocId, Document, LoadEntry, LoadOptions, RefTarget, SpecVersion, Workspace, graph, normalize,
-    version,
+    v32, version,
 };
 
 /// Load entry documents and everything they reference.
@@ -69,6 +70,17 @@ struct RefSite {
     reference: Value,
 }
 
+/// A fragment inherits its dialect along the reference path. Security
+/// requirement names retain the input namespace's entry-document scope,
+/// matching the builder even when a complete referenced document changes
+/// the dialect used for its own fragments.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct WalkContext {
+    v30: bool,
+    v32: bool,
+    entry: DocId,
+}
+
 /// An input root: the directory of an entry document. File references
 /// must stay inside one of them.
 #[derive(Debug)]
@@ -96,6 +108,7 @@ struct Loader<'o> {
     schema_targets: BTreeSet<RefTarget>,
     /// Referenced files that could not be read or parsed.
     failed_files: BTreeSet<PathBuf>,
+    reported_v32: v32::Reported,
 }
 
 impl<'o> Loader<'o> {
@@ -112,6 +125,7 @@ impl<'o> Loader<'o> {
             fragment_roots: vec![],
             schema_targets: BTreeSet::new(),
             failed_files: BTreeSet::new(),
+            reported_v32: v32::Reported::default(),
         }
     }
 
@@ -272,12 +286,41 @@ impl<'o> Loader<'o> {
         if v30 {
             normalize::normalize(&mut root, &mut spans, &mut moves, "", Kind::Document);
         }
+        self.diagnose_v32(&version, &root, name, &spans);
         let mut doc = Document::new(source, name.to_string(), version, root, digest);
         doc.spans = spans;
         doc.moves = moves;
         let id = self.push(doc, path, v30);
         self.ws.entries.push(id);
         Some(id)
+    }
+
+    /// Report the constructs a 3.2 document uses that 3.1 does not have.
+    fn diagnose_v32(&mut self, version: &SpecVersion, root: &Value, name: &str, spans: &SpanIndex) {
+        if matches!(version, SpecVersion::V32(_)) {
+            for finding in v32::scan_document(root) {
+                self.ws
+                    .diagnostics
+                    .push(finding.into_diagnostic(name, spans));
+            }
+        }
+    }
+
+    /// A fragment reached from a 3.2 document is read as 3.2: the subtree
+    /// the reference selects is checked like the document itself.
+    fn diagnose_fragment_v32(&mut self, entry: DocId, target: &RefTarget, kind: Kind) {
+        let document = &self.ws.documents[target.doc];
+        let Some(value) = document.get(&target.pointer) else {
+            return;
+        };
+        for finding in
+            v32::scan_subtree(value, &target.pointer, kind, &self.ws.documents[entry].root)
+        {
+            if self.reported_v32.first(target.doc, &finding) {
+                let diagnostic = finding.into_diagnostic(&document.name, &document.spans);
+                self.ws.diagnostics.push(diagnostic);
+            }
+        }
     }
 
     fn push(&mut self, mut doc: Document, path: Option<PathBuf>, v30: bool) -> DocId {
@@ -368,26 +411,38 @@ impl<'o> Loader<'o> {
     /// Walk every entry document, follow every `$ref`, load referenced
     /// files, and report the references that cannot be followed. Each walk
     /// carries the dialect of the entry it started from, so a fragment
-    /// subtree reached from a 3.0 document is normalized even when a 3.1
-    /// document reached it first.
+    /// subtree reached from a 3.0 document is normalized, and one reached
+    /// from a 3.2 document is diagnosed, even when a 3.1 document reached
+    /// either first. The security-name scope also travels with each walk.
     fn resolve_all(&mut self) {
-        let mut queue: VecDeque<(DocId, String, Kind, bool)> = self
+        let mut queue: VecDeque<(DocId, String, Kind, WalkContext)> = self
             .ws
             .entries
             .iter()
-            .map(|&d| (d, String::new(), Kind::Document, self.dialect30[d]))
+            .map(|&d| {
+                (
+                    d,
+                    String::new(),
+                    Kind::Document,
+                    WalkContext {
+                        v30: self.dialect30[d],
+                        v32: matches!(self.ws.documents[d].version, SpecVersion::V32(_)),
+                        entry: d,
+                    },
+                )
+            })
             .collect();
         let mut seen_roots = HashSet::new();
         // Each `$ref` is followed (and reported) once, whatever walks reach it.
         let mut followed: HashMap<(DocId, String), Option<RefTarget>> = HashMap::new();
-        while let Some((doc, pointer, kind, v30)) = queue.pop_front() {
+        while let Some((doc, pointer, kind, context)) = queue.pop_front() {
             if self.ws.is_cancelled() {
                 return;
             }
-            if !seen_roots.insert((doc, pointer.clone(), kind, v30)) {
+            if !seen_roots.insert((doc, pointer.clone(), kind, context)) {
                 continue;
             }
-            if v30 && matches!(self.ws.documents[doc].version, SpecVersion::Fragment) {
+            if context.v30 && matches!(self.ws.documents[doc].version, SpecVersion::Fragment) {
                 self.fragment_roots.push((doc, pointer.clone(), kind));
             }
             let Some(start) = self.ws.documents[doc].get(&pointer) else {
@@ -425,11 +480,24 @@ impl<'o> Loader<'o> {
                 if let Some(target) = target {
                     // A fragment is read in the dialect of whoever reaches
                     // it; an entry document keeps its own.
-                    let target_v30 = match self.ws.documents[target.doc].version {
-                        SpecVersion::Fragment => v30,
-                        _ => self.dialect30[target.doc],
+                    let fragment =
+                        matches!(self.ws.documents[target.doc].version, SpecVersion::Fragment);
+                    let target_context = if fragment {
+                        context
+                    } else {
+                        WalkContext {
+                            v30: self.dialect30[target.doc],
+                            v32: matches!(
+                                self.ws.documents[target.doc].version,
+                                SpecVersion::V32(_)
+                            ),
+                            ..context
+                        }
                     };
-                    queue.push_back((target.doc, target.pointer, site.kind, target_v30));
+                    if fragment && target_context.v32 {
+                        self.diagnose_fragment_v32(context.entry, &target, site.kind);
+                    }
+                    queue.push_back((target.doc, target.pointer, site.kind, target_context));
                 }
             }
         }
@@ -618,6 +686,7 @@ impl<'o> Loader<'o> {
         if v30 {
             normalize::normalize(&mut root, &mut spans, &mut moves, "", Kind::Document);
         }
+        self.diagnose_v32(&version, &root, &name, &spans);
         let mut doc = Document::new(source, name, version, root, digest);
         doc.spans = spans;
         doc.moves = moves;

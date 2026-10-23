@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! Diagnostics with stable codes.
 //!
-//! Code ranges: `TG01xx` parsing, `TG02xx` refs and cycles, `TG03xx` type
+//! Code ranges: `TG01xx` parsing (`TG0140`-`TG0159`: constructs only OpenAPI 3.2
+//! has, one code per feature), `TG02xx` refs and cycles, `TG03xx` type
 //! normalization, `TG04xx` naming, `TG05xx` pagination/auth inference,
 //! `TG06xx` manifests, `TG07xx` emitter limits, `TG08xx` external emitters,
 //! `TG09xx` staleness/CI, overlay suggestions and the response-contract
@@ -215,6 +216,59 @@ pub mod codes {
         (
             "TG0134",
             "Git discovery requires exactly one input document",
+        ),
+        (
+            "TG0140",
+            "OpenAPI 3.2 `$self` document identity is not supported",
+        ),
+        ("TG0141", "OpenAPI 3.2 `query` HTTP method is not supported"),
+        (
+            "TG0142",
+            "OpenAPI 3.2 `additionalOperations` custom HTTP methods are not supported",
+        ),
+        (
+            "TG0143",
+            "OpenAPI 3.2 `querystring` parameter is not supported",
+        ),
+        (
+            "TG0144",
+            "OpenAPI 3.2 `cookie` parameter style is not supported",
+        ),
+        (
+            "TG0145",
+            "OpenAPI 3.2 `itemSchema` for sequential and streaming media types is not supported",
+        ),
+        (
+            "TG0146",
+            "OpenAPI 3.2 positional multipart encoding is not supported",
+        ),
+        ("TG0147", "OpenAPI 3.2 nested encoding is not supported"),
+        (
+            "TG0148",
+            "OpenAPI 3.2 reusable media types are not supported",
+        ),
+        (
+            "TG0149",
+            "OpenAPI 3.2 discriminator `defaultMapping` is not supported",
+        ),
+        (
+            "TG0150",
+            "OpenAPI 3.2 OAuth 2.0 device authorization flow is not supported",
+        ),
+        (
+            "TG0151",
+            "OpenAPI 3.2 security scheme named by URI is not supported",
+        ),
+        ("TG0152", "OpenAPI 3.2 `oauth2MetadataUrl` is ignored"),
+        ("TG0153", "OpenAPI 3.2 tag `parent` and `kind` are ignored"),
+        (
+            "TG0154",
+            "OpenAPI 3.2 example `dataValue` and `serializedValue` are ignored",
+        ),
+        ("TG0155", "OpenAPI 3.2 XML `nodeType` is ignored"),
+        (
+            "TG0156",
+            "OpenAPI 3.2 descriptive fields (tag and response `summary`, server `name`, scheme `deprecated`) are ignored",
         ),
         ("TG0201", "unresolvable $ref"),
         (

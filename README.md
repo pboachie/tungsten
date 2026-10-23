@@ -106,7 +106,7 @@ helpers retain their own platform limits.
 
 | Input | You provide | Entry point and conversion | Limits and required review |
 |---|---|---|---|
-| OpenAPI 3.0 / 3.1 | JSON or YAML document | `tungsten init --from openapi.json` (default when unset: `openapi.json`, `openapi.yaml` or `openapi.yml` in the target directory). The document is kept in place, so relative references retain meaning, and goes through the native frontend: `$ref` resolution, overlays | The full frontend surface; overlays remain optional |
+| OpenAPI 3.0 / 3.1 | JSON or YAML document | `tungsten init --from openapi.json` (default when unset: `openapi.json`, `openapi.yaml` or `openapi.yml` in the target directory). The document is kept in place, so relative references retain meaning, and goes through the native frontend: `$ref` resolution, overlays | The full frontend surface; overlays remain optional. OpenAPI 3.2 documents are read when they use only constructs 3.1 has; each 3.2-only construct gets its own diagnostic (TG0140 to TG0156), an error unless it only adds metadata, and `tungsten capabilities` lists them |
 | Swagger 2.0 | JSON or YAML document | `tungsten init --from swagger.json` (also a default name) or any path. Bounded offline conversion to OpenAPI, saved as `imported.openapi.json` | Unsupported semantics fail explicitly instead of being guessed; conversion never resolves external references |
 | Postman Collection v2.1 | JSON collection | `tungsten init --from collection.json`. Structural import; omissions are listed in `import-report.json` | Scripts and requests are never executed: script-dependent behavior, non-JSON bodies and saved responses and unsupported auth helpers are omitted per item, not interpreted — this is not a Postman runtime |
 | Saved cURL command | A saved command as text | `tungsten init --from command.curl --route '/pets/{id}'` (auto-detected by a leading `curl`, a `.curl` extension, or `--input-format curl`). Parsed as data against POSIX, cmd or PowerShell quoting (`--shell-dialect`) | Exactly one explicit `--route` path template is required; the command is parsed, never executed |
@@ -246,6 +246,27 @@ tungsten doctor                            # reports optional tools (node, pytho
 ```
 
 Node, Python and the formatters are optional: a missing tool only disables the target or `--format` option that needs it.
+
+### Check for a newer release
+
+`tungsten update check` asks GitHub once (5 second limit, 1 MiB response cap) for the public
+release metadata of this repository and compares the latest stable release with the version
+you run. It sends no project data, installs nothing and does not change project pins or
+generated clients. Add `--include-prerelease` to consider prereleases and `--json` for the
+machine-readable result. A newer release is recommended only when it lists the archive for
+your platform and `SHA256SUMS`. Upgrade guidance depends on how the CLI was installed: a
+pinned installer command for the release installer, `cargo install` for cargo, and
+package-manager guidance for npm. When the installation route cannot be determined,
+the command says so and prints no replacement command.
+
+| Exit code | Meaning |
+| --- | --- |
+| 0 | Up to date, or this build is newer than the newest release considered |
+| 5 | A newer release with your platform's archive is available |
+| 6 | Could not confirm: offline, opted out, timeout, network or rate-limit failure, invalid or oversized metadata, no matching release, or a newer release without your platform's archive |
+
+`--offline` (also a global flag), `--no-update-check` and `TUNGSTEN_NO_UPDATE_CHECK=1`
+make no request and exit 6 with a reason in the `--json` result.
 
 ### Runtime packages
 
@@ -608,6 +629,7 @@ tungsten [--json] <command>
 | `lsp` | Serve diagnostics, completion, hover, go-to-definition and symbols for `tungsten.yml`, `agent.yml` and overlays to an editor over stdio (`--config`) |
 | `doctor` | Report external tools; pass a project path and `--strict` to fail when its required tools are missing or too old |
 | `capabilities` | Query built-in target declarations without running tools or emitters; optionally select a target id or alias, such as `capabilities py --json` |
+| `support-bundle --preview` | Show exactly what a diagnostic support bundle would contain, as metadata only: versions, capability and configuration provenance, diagnostic codes and tool prerequisites; works for a broken project and starts no program, probes no tool version, reads no API document and writes nothing; `--exclude <id>` removes an entry. Writing the bundle is not available yet |
 
 With `--json`, stdout carries exactly one JSON document described by `tungsten schema cli-output` (`lsp` speaks the language server protocol on stdio instead). Color is used only on a terminal and never when `NO_COLOR` is set.
 

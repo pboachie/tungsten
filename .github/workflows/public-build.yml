@@ -26,9 +26,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # The lowest Node that satisfies every published engines range
-        # (the MCP runtime needs 22.13.0), then the current LTS.
-        node-version: ["22.13.0", "24.22.0"]
+        # Security-patched maintenance and current LTS releases.
+        node-version: ["22.23.4", "24.22.1"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
