@@ -7,6 +7,10 @@
  * validation, authentication, transport and safety checks. Applications
  * usually configure {@link ClientOptions}, pass {@link CallOptions} per
  * invocation, and inspect {@link Result} rather than parse exception text.
+ *
+ * These types are shared by the runtime and TypeScript emitter. Keep changes
+ * additive (new optional fields or union members), and update both sides
+ * together.
  */
 import type { TokenStore } from "./oauth.js";
 import type { EventStream } from "./streams.js";
@@ -265,9 +269,11 @@ export type PaginationDescriptor =
   | { style: "link_header"; itemsField: string };
 
 /**
- * Policy for obtaining replay protection. `auto` reserves a stored key;
- * `caller_owned` uses a supplied key; `content_hash` derives one from the
- * body. `content_identity` relies on the request identity without a key header.
+ * Replay-protection policy. `auto` uses a supplied key first; otherwise,
+ * only an actual call reserves a stored key. `caller_owned` uses a supplied
+ * key. `content_hash` hashes available body material and yields no key when
+ * that material is absent. `content_identity` relies on request identity
+ * without a key header.
  */
 export type IdempotencyKind = "none" | "auto" | "caller_owned" | "content_hash" | "content_identity";
 
