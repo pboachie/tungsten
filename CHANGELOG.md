@@ -17,6 +17,10 @@ changes.
 
 ### Documentation
 
+- Document generated Rust CLI workflows for command discovery, deployment
+  profiles, structured input, previews and confirmation, and script recovery
+  from errors or partial pagination.
+
 - Clarify the OAuth URL-as-data boundary and safe browser integration across
   SDKs and MCP hosts. HTTP(S) validation is not shell escaping; compatibility
   helpers retain application-owned custom-scheme policy. No browser launcher or
