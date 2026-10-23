@@ -17,6 +17,10 @@ changes.
 
 ### Documentation
 
+- Expand the Postman import and generation-freshness guides with contract
+  review, source-checkout prerequisites and links to the existing example
+  workflows.
+
 - Document generated Rust CLI workflows for command discovery, deployment
   profiles, structured input, previews and confirmation, and script recovery
   from errors or partial pagination.

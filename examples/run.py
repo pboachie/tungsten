@@ -21,6 +21,225 @@ REPO = HERE.parent
 CATALOG = json.loads((HERE / "gallery.json").read_text())
 
 
+TUTORIALS = {
+    "input-postman": """
+## Problem: a collection is not yet a client contract
+
+You have saved requests, but want a typed client without replaying those requests
+or running collection scripts. Start with the small committed `collection.json`:
+it records one `GET /pets` and a saved JSON response. Its `example.invalid` URL is
+a placeholder, not a service to call. The sample response is evidence of one
+shape, not a promise that every response has that shape.
+
+### 1. Import offline and inspect the result
+
+Use the canonical command above from the repository root. The recipe initializes
+the **docs target**, checks the project, generates twice, compares the generated
+documentation and checks freshness. It does not build or invoke a Python SDK.
+Expected results here describe those source-defined checks, not a captured run.
+
+Open `examples/input-postman/.work/project/` and review:
+
+| File | What to check |
+|---|---|
+| `imported.openapi.json` | Accepted operations, parameter and response shapes, and imported-operation annotations. |
+| `import-report.json` | Omitted items, skipped test scripts and unknown contract facts. An omitted request is not a supported endpoint. |
+| `tungsten.yml` | Input reference, selected targets and generated output paths. |
+| `agent.yml` | Authentication-related policy, safety and allowed origins before any live use. Importing cannot approve its own safety or origins. |
+
+The importer is structural: it never executes requests, pre-request scripts,
+tests or dynamic variables. Unsupported items such as script-dependent requests,
+non-JSON bodies/responses and unsupported authentication helpers can be omitted;
+structural or limit errors can refuse the import. Read the report even when
+initialization succeeds. See [supported inputs](../../README.md#supported-inputs)
+for the conversion limits and supported targets.
+
+### 2. Review the contract before choosing a client
+
+Compare the normalized contract with the API owner's documentation. Supply the
+missing success and error responses, required and optional fields, nullability,
+pagination, authentication and authorization requirements. Confirm the origin
+and operation safety policy explicitly. A saved `200` example cannot establish
+these facts, and generation cannot supply server-side authorization.
+
+Keep reviewed work outside the recipe's disposable `.work/` directory. For a
+separate Python project, this is the source-supported initialization route from
+the repository root; choose a fresh destination:
+
+```sh
+tungsten init --from examples/input-postman/collection.json --dir postman-python --targets python --python-runtime runtimes/python --no-interactive
+```
+
+Review the new project's normalized input, report and manifests as above. Then:
+
+```sh
+tungsten check postman-python
+tungsten generate postman-python
+```
+
+The generated package is under `postman-python/generated/python`. Follow its
+installation guidance and the [Python runtime source guide](../../runtimes/python/README.md)
+with the matching checkout. Inspect the generated names and methods; the
+`PetstoreClient` used by another gallery fixture is not a promised name for an
+arbitrary imported collection. These commands do not demonstrate a successful
+Postman-derived client call.
+
+### 3. Learn the call boundary with the existing local mock
+
+For a separate, declared OpenAPI fixture and a strict typed loopback call, use:
+
+```sh
+python3 examples/run.py --only local-mock
+```
+
+That [recipe](../local-mock/README.md) installs its generated Python client and
+matching runtime, starts a loopback mock, and checks for a nonempty typed Pet
+list. Its expected client message is `mock returned typed pets`; this is the
+message in the recipe source, not a transcript supplied here. It uses its own
+contract, not the Postman conversion above. The [first Python package](../first-python/README.md)
+recipe isolates installation/import; [preview and confirmation](../preview-confirmation/README.md)
+adds a separate destructive-call example. A mock call does not validate a real
+API, its credentials or production readiness.
+
+### Prerequisites, recovery and limits
+
+Use a compiler and runtime source from the same checkout, not an unrelated
+binary found on PATH. The runner accepts an absolute compiler path through
+`TUNGSTEN`; building that compiler uses the repository's `rust-toolchain.toml`.
+Python 3.12+ is needed for this runner; the local-call step also needs venv/pip
+and may download dependencies. See the [target matrix](../../README.md#targets)
+for client-specific requirements and acceptance limits.
+
+- **Missing compiler:** select the matching compiler through `TUNGSTEN`, or build
+  it as described in the [gallery prerequisites](../README.md). Installing the
+  Python runtime alone does not install the compiler.
+- **Omitted or refused input:** inspect the diagnostic and import report; replace
+  script-dependent behavior with an explicitly reviewed contract. Do not treat
+  fewer imported operations as a complete conversion.
+- **Existing destination or interrupted setup:** inspect partial files and keep
+  reviewed changes; use a fresh directory rather than forcing an overwrite.
+- **Unexpected client failure:** inspect the returned error and contract first.
+  Do not retry a mutation merely because its outcome is unknown.
+
+All commands are terminal/text-first and require no screenshot or recording.
+`--no-interactive` avoids setup prompts in the separate-project command. Before
+rerunning a recipe, save anything needed from `.work/`: the runner replaces it.
+If interrupted, inspect the command's processes and partial artifacts before
+starting another run; this guide does not promise cross-platform cancellation
+or recovery qualification. No real API, proxy/CA setup or credential flow is
+exercised by the offline import.
+""",
+    "ci-drift": """
+## Problem: the contract changed but generated output did not
+
+You want a review or CI gate to catch a forgotten regeneration, rather than
+discovering stale methods in a consumer. This recipe uses a committed OpenAPI
+contract and generated **docs output** to make that failure and repair small.
+Expected results below describe the recipe's checks, not a recorded CI run.
+
+### 1. Follow the stale-output cycle
+
+Run the canonical command above from the repository root. In
+`examples/ci-drift/.work/`, the runner:
+
+1. Copies `openapi.json`, writes a docs-target manifest and validates it.
+2. Generates twice, compares file hashes and checks that output is fresh.
+3. Adds `GET /status` with operation ID `getStatus` and a `204` response to the
+   **copied** contract. The committed input remains unchanged.
+4. Requires `generate --check` to exit `1` with diagnostic `TG0901`.
+5. Regenerates and requires the same freshness check to succeed.
+
+The runner handles the deliberately failing middle command. A nonzero exit of
+the whole recipe is a failure to investigate, not the expected stale stage.
+Generated `sdk/llms.txt` and `sdk/tools.json` are part of this docs example;
+the directory name `sdk` does not make this an SDK build or an API call.
+
+After the recipe completes, inspect the final copied contract and output. For
+your own initialized project, the corresponding repair commands are:
+
+```sh
+tungsten check path/to/project
+tungsten generate --check path/to/project
+```
+
+If the second command reports `TG0901`, review the contract change, then run:
+
+```sh
+tungsten generate path/to/project
+tungsten generate --check path/to/project
+```
+
+Replace `path/to/project` with the directory containing your `tungsten.yml`.
+Review and commit the intended generated diff with the contract change. Do not
+remove generated files from the freshness check just to make it pass. See
+[surface diff](../surface-diff/README.md) for the existing semver/migration
+review recipe; a fresh tree alone does not establish backward compatibility.
+
+### 2. Compare SDK, CLI and MCP generation honestly
+
+The committed contracts in `first-python`, `first-rust`, `first-mcp` and this
+directory have identical bytes. You can use the existing recipes to inspect
+how those target configurations differ:
+
+```sh
+python3 examples/run.py --only first-python,first-rust,first-mcp
+```
+
+| Recipe | What its source checks |
+|---|---|
+| [Python SDK](../first-python/README.md) | Installs the generated package with matching Python runtime source and imports `PetstoreClient`. |
+| [Rust SDK and CLI](../first-rust/README.md) | Builds the generated workspace and runs the generated CLI's `--help`. |
+| [MCP server](../first-mcp/README.md) | Builds the matching TypeScript runtime, adapter, generated SDK and server package. |
+
+These are separate projects and `.work/` directories, not one shared manifest
+or one run of the changed contract through every consumer. CLI help is not an
+API operation, and an MCP package build is not a tool invocation. The docs-only
+staleness cycle above does not prove SDK/CLI/MCP behavioral parity. For an
+actual loopback client step defined in source, use the separate
+[local-mock recipe](../local-mock/README.md); it does not call a real API.
+
+Use Python 3.12+ with venv/pip, the repository's pinned Rust toolchain with
+Cargo, and Node with npm. For MCP, Node 22 requires **22.13 or newer**, and
+Node 23 requires **23.2 or newer**; consult the
+[MCP runtime guide](../../runtimes/mcp/README.md) and
+[target matrix](../../README.md#targets) for the precise version ranges.
+The runner uses matching runtime source and can download package dependencies.
+`--generate-only` omits these package builds; it is not equivalent validation.
+
+### 3. Put the same freshness rule in your repository
+
+The [copyable GitHub Actions workflow](../github-actions/README.md) validates
+`TUNGSTEN_PROJECT` and runs `tungsten generate --check` without regenerating
+files in CI. Follow that guide's copy commands and upgrade instructions. It
+pins the compiler release, installer and checkout action; upgrade them together
+deliberately. Its current platform is Ubuntu 24.04 x86_64, not a promise for all
+hosts. It disables external emitter commands for pull-request safety, so read
+its trust and skipped-target limitations before adopting it. No hosted run or
+successful installation is demonstrated by this page.
+
+### Troubleshooting and safe reruns
+
+- **`TG0901` in your project:** inspect missing, changed or extra generated files,
+  regenerate with the matching compiler, review the diff and rerun the check.
+- **Different results across machines:** compare compiler/runtime source and
+  toolchain versions before accepting a new output baseline. See the
+  [gallery prerequisites](../README.md) for compiler selection through `TUNGSTEN`.
+- **Missing package toolchain:** install the prerequisites for the selected
+  recipe. Choosing `--generate-only` changes the evidence; it does not turn a
+  missing build or invocation into a pass.
+- **Interrupted run or local edits:** preserve useful artifacts before rerunning.
+  Each recipe replaces its own `.work/`; do not keep hand-maintained code there.
+  Inspect any remaining child processes before another run. No universal
+  cancellation or platform-recovery result is claimed here.
+
+The steps are text-first and use normal terminal commands. Generation freshness,
+package builds, installed-consumer behavior, live API acceptance and production
+readiness are separate checks; keep the [target limits](../../README.md#targets)
+visible when sharing a result.
+""",
+}
+
+
 def command(argv: list[str], cwd: Path, expected: int = 0) -> subprocess.CompletedProcess[str]:
     result = subprocess.run(argv, cwd=cwd, text=True, capture_output=True, timeout=900)
     if result.returncode != expected:
@@ -295,7 +514,7 @@ Target availability, minimum toolchains and acceptance limits belong to the
 [canonical target matrix](../../README.md#targets), maintained through
 [#61](https://github.com/pboachie/tungsten/issues/61). A small example does not
 establish full target parity, registry availability or live API readiness.
-'''
+''' + TUTORIALS.get(entry["name"], "")
 
 
 def index_readme() -> str:
