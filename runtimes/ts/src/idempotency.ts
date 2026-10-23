@@ -1,19 +1,24 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Idempotency (planning/04 "Idempotency policies", planning/06
- * "Idempotency store"): the default in-memory store, key formats and the
- * header an operation's key travels in.
+ * Replay-key storage and policy helpers. The default
+ * {@link MemoryIdempotencyStore} stores keys in one instance; use a persistent
+ * adapter when an automatically reserved key must survive its lifetime.
  */
 import type { IdempotencyStore, OperationDescriptor } from "./types.js";
 
 /**
- * The default {@link IdempotencyStore}: keys live as long as the process.
- * Use a persistent store (`FileIdempotencyStore` from
- * `@elysra/tungsten-runtime/node`, or your own) when a key must survive a crash.
+ * The default {@link IdempotencyStore}: keys belong to this store instance
+ * and are not persisted. Share an instance to share its reservations. Use
+ * FileIdempotencyStore from `@elysra/tungsten-runtime/node`, or another
+ * persistent adapter, when a key must survive a restart.
  */
 export class MemoryIdempotencyStore implements IdempotencyStore {
   readonly #keys = new Map<string, string>();
 
+  /**
+   * Return the existing nonempty key, otherwise store and return candidate
+   * without an intervening await. This is atomic within this store instance.
+   */
   async reserve(scope: string, logicalId: string, candidate: string): Promise<string> {
     const slot = `${scope}\u0000${logicalId}`;
     const existing = this.#keys.get(slot);
@@ -22,10 +27,16 @@ export class MemoryIdempotencyStore implements IdempotencyStore {
     return candidate;
   }
 
+  /**
+   * Read this instance's slot; undefined means it has not been stored.
+   */
   async get(scope: string, logicalId: string): Promise<string | undefined> {
     return this.#keys.get(`${scope}\u0000${logicalId}`);
   }
 
+  /**
+   * Replace this instance's slot. No key is persisted outside memory.
+   */
   async put(scope: string, logicalId: string, key: string): Promise<void> {
     this.#keys.set(`${scope}\u0000${logicalId}`, key);
   }
