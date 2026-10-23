@@ -67,6 +67,23 @@ Adjust paths to your generated outputs. `createCore` creates a separate client f
 - `run_script` is disabled by default. Enabling it requires an explicit sandbox configuration; Deno execution also requires a Deno executable. The WASM engine runs in a worker thread of the server process with configured bounds. `sandbox.maxConcurrent` (`perSession`, default 4; `global`, default 16) caps scripts running at once.
 - Deno limits wall time and V8 heap on all platforms; its additional process data limit is enforced on Linux. On Windows and macOS, `memoryMb` does not bound memory outside the V8 heap, including `ArrayBuffer` backing stores.
 
+## OAuth URL integration boundaries
+
+Generated MCP servers take API access tokens from their environment; the built-in
+server does not provide an interactive OAuth browser launcher. If a custom host
+integration uses an SDK authorization URL, treat that URL as untrusted data and
+follow the [SDK runtime's safe launch guidance](../ts/README.md#opening-authorization-urls-safely).
+Use an application-approved URL policy and a browser API that preserves literal
+data. An HTTPS scheme check alone does not prevent shell injection. Never
+interpolate the URL into shell source, use an opener that does so internally, or
+fall back to a shell after rejection or launch failure. Local embedding commands
+and external emitters are executable configuration that the operator must trust;
+remote query/endpoint text must not select their executable or arguments.
+
+This describes the built-in boundary, not a security certification of custom
+integrations or third-party MCP hosts. Qualify their complete Windows/WSL and
+other platform launch paths separately.
+
 ## Limits
 
 MCP uses the TypeScript runtime and does not supply a file-backed OAuth token store. Deno `memoryMb` adds a process data bound only on Linux; other platforms bound V8 heap but not all process memory.

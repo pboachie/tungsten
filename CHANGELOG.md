@@ -11,8 +11,16 @@ changes.
 
 ### Security
 
-- Update locked `rustls-webpki` and `webpki-roots` dependencies to reject distrusted
-  emSign certificate paths (RUSTSEC-2026-0382 and RUSTSEC-2026-0381).
+- Refresh the locked TLS verification, CA bundles and MCP address parser, and use patched Node.js releases for package validation.
+  The `rustls-webpki` and `webpki-roots` updates reject distrusted emSign
+  certificate paths (RUSTSEC-2026-0382 and RUSTSEC-2026-0381).
+
+### Documentation
+
+- Clarify the OAuth URL-as-data boundary and safe browser integration across
+  SDKs and MCP hosts. HTTP(S) validation is not shell escaping; compatibility
+  helpers retain application-owned custom-scheme policy. No browser launcher or
+  URL-policy behavior is added or changed.
 
 ### Breaking
 

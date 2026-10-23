@@ -25,6 +25,15 @@ Calls return a typed result or a diagnostic envelope describing recovery;
 unknown outcomes never justify blindly repeating a mutation. The API remains
 responsible for authorization and server-side idempotency.
 
+## Opening authorization URLs safely
+
+OAuth helpers return URL data and never launch a browser. Follow the
+[csharp runtime's safe URL integration guidance](../csharp/README.md#opening-authorization-urls-safely):
+validate for the application, use a literal-data browser API, and never interpolate
+URLs into shell source or use an unsafe opener or shell fallback. HTTP(S) scheme
+validation alone does not prevent command injection, including on Windows/WSL.
+Compatibility helpers retain application-owned custom-scheme policy.
+
 ## Limits
 
 OAuth helpers returned by generated F# clients are the C# runtime's `OAuthFlow`.

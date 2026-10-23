@@ -39,6 +39,25 @@ literal IPv4 `127/8`, and IPv6 `::1`. Subdomains, unspecified addresses and
 IPv4-mapped IPv6 addresses require the explicit override. DNS resolution does not
 grant an exception. Anonymous HTTP requests remain supported.
 
+## Opening authorization URLs safely
+
+OAuth authorization helpers return URL data; they do not open a browser. Treat
+provider endpoints and returned URLs as untrusted input. Apply your application's
+URL policy and use a browser or native URL API that treats the complete target as
+literal data. Never interpolate the URL into PowerShell, CMD, POSIX shell or other
+command source, and do not pass it to an opener that does so internally.
+
+Scheme validation alone does not prevent command injection: an ordinary HTTPS
+URL can contain shell expansion characters. Managed OAuth endpoint checks are
+protocol validation, not shell escaping. Explicit low-level compatibility helpers
+retain application-owned URL policy, including custom schemes; their results
+need the same safe integration boundary. Do not silently route a rejected URL or
+failed browser launch through a shell fallback.
+
+These boundaries do not qualify third-party openers, custom integrations or real
+provider/listener behavior. Qualify the application's complete launch path on
+each supported platform, including Windows and WSL.
+
 ## Limits
 
 Stream `collect(max_bytes=..., max_ms=...)` accepts optional byte and time budgets. An
