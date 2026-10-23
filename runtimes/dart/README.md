@@ -272,6 +272,9 @@ code `PATTERN_UNCHECKED` (category `VALIDATION_FAILED` for a request,
 `UNEXPECTED_RESPONSE` otherwise), once per path and pattern, whose
 `failed_parameter` is the path (`args...`, `response...`, `events[n]...` or a page
 item) and whose remediation names the pattern and the reason, never the value.
+For an untagged union, diagnostics come from the first variant that accepts the
+value, including patterns nested in that variant; rejected variants do not
+produce warnings. Paths retain the enclosing object members and array indexes.
 The server still validates the value. `Schema.validate` called directly stays
 silent unless it is given an `onUnchecked` observer.
 

@@ -121,7 +121,8 @@ final class Schema {
   ///
   /// A `pattern` that cannot be compiled adds no issue. When [onUnchecked] is
   /// given it receives each such pattern with its path (the value is never
-  /// passed); without it the pattern is skipped silently.
+  /// passed), including patterns in a union's first accepting variant;
+  /// without it the pattern is skipped silently.
   List<Issue> validate(
     Object? value, {
     void Function(UncheckedPattern note)? onUnchecked,
@@ -164,8 +165,22 @@ final class _Run {
     return [..._structure, ..._constraints, ..._unknown];
   }
 
-  bool _admits(Object? schema, Object? value) =>
-      _Run(defs).run(_asSchema(schema), value).isEmpty;
+  bool _admits(Object? schema, Object? value, List<Object> path, int depth) {
+    final notes = <UncheckedPattern>[];
+    final probe = _Run(defs, onUnchecked == null ? null : notes.add);
+    probe._check(_asSchema(schema), value, path, depth);
+    if (probe._structure.isNotEmpty ||
+        probe._constraints.isNotEmpty ||
+        probe._unknown.isNotEmpty) {
+      return false;
+    }
+    // Only the selected variant's unchecked patterns affect this validation.
+    // Keep their original paths rather than restarting at the union's root.
+    for (final note in notes) {
+      onUnchecked?.call(note);
+    }
+    return true;
+  }
 
   static Map<String, Object?>? _asSchema(Object? s) =>
       s is Map<String, Object?> ? s : null;
@@ -397,7 +412,7 @@ final class _Run {
       }
       return _bad(_at(path, tag), 'must be one of ${Json.text(tags)}');
     }
-    if (variants.any((v) => _admits(v, value))) return;
+    if (variants.any((v) => _admits(v, value, path, depth + 1))) return;
     _bad(path, 'does not match any variant');
   }
 
