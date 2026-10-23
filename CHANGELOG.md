@@ -375,6 +375,12 @@ changes.
 
 ### Fixed
 
+- MCP preserves special JSON member names in request identities and generated
+  examples, so distinct requests do not accidentally share repeated-result
+  redaction.
+- `update check` now reports a timeout when release metadata stalls during the
+  response body, instead of incorrectly reporting a network failure.
+
 - Mock generation now repairs conflicting optional fields in `allOf` records by
   reusing a compatible generated value or omitting an optional field. Required
   fields remain intact, and the full intersection must validate before a repair
