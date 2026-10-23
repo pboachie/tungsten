@@ -230,6 +230,16 @@ impl Fetcher for HttpFetcher {
             .max_response_header_size(16 * 1024)
             .build()
             .new_agent();
+        Self::fetch_with_agent(&agent, url, max_bytes)
+    }
+}
+
+impl HttpFetcher {
+    fn fetch_with_agent(
+        agent: &ureq::Agent,
+        url: &str,
+        max_bytes: usize,
+    ) -> Result<Vec<u8>, FetchError> {
         let mut response = agent
             .get(url)
             .header("Accept", "application/vnd.github+json")
@@ -238,10 +248,7 @@ impl Fetcher for HttpFetcher {
                 format!("tungsten/{}", tungsten_build::TUNGSTEN_VERSION),
             )
             .call()
-            .map_err(|error| match error {
-                ureq::Error::Timeout(_) => FetchError::Timeout,
-                _ => FetchError::Network,
-            })?;
+            .map_err(fetch_error)?;
         let status = response.status().as_u16();
         if status == 429
             || (status == 403
@@ -261,17 +268,23 @@ impl Fetcher for HttpFetcher {
             .as_reader()
             .take(max_bytes as u64 + 1)
             .read_to_end(&mut bytes)
-            .map_err(|error| {
-                if error.kind() == std::io::ErrorKind::TimedOut {
-                    FetchError::Timeout
-                } else {
-                    FetchError::Network
-                }
-            })?;
+            // ureq wraps body timeouts in an I/O error of kind Other. Restore
+            // the original error before applying the same request policy.
+            .map_err(|error| fetch_error(error.into()))?;
         if bytes.len() > max_bytes {
             return Err(FetchError::TooLarge);
         }
         Ok(bytes)
+    }
+}
+
+fn fetch_error(error: ureq::Error) -> FetchError {
+    match error {
+        ureq::Error::Timeout(_) => FetchError::Timeout,
+        ureq::Error::Io(error) if error.kind() == std::io::ErrorKind::TimedOut => {
+            FetchError::Timeout
+        }
+        _ => FetchError::Network,
     }
 }
 
@@ -939,6 +952,20 @@ pub mod testing {
 
     pub fn sanitize_text(text: &str, max: usize) -> String {
         sanitize(text, max)
+    }
+
+    /// Exercise the production HTTP reader against a private local fixture.
+    pub fn fetch_once(url: &str, max: usize, timeout: Duration) -> Result<Vec<u8>, FetchError> {
+        let agent = ureq::Agent::config_builder()
+            .proxy(None)
+            .timeout_global(Some(timeout))
+            .timeout_connect(Some(CONNECT_TIMEOUT.min(timeout)))
+            .max_redirects(0)
+            .http_status_as_error(false)
+            .max_response_header_size(16 * 1024)
+            .build()
+            .new_agent();
+        HttpFetcher::fetch_with_agent(&agent, url, max)
     }
 
     pub use super::{
