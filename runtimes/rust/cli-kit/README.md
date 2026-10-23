@@ -31,6 +31,141 @@ Calls return a typed result or a diagnostic envelope describing recovery;
 unknown outcomes never justify blindly repeating a mutation. The API remains
 responsible for authorization and server-side idempotency.
 
+## Discover a generated CLI
+
+These recipes describe the current source for unreleased 0.2.0. Start with the
+[First Rust SDK example](../../../examples/first-rust/README.md), which generates
+and builds the SDK and CLI together against matching runtime source. From that
+example's generated workspace, inspect the available commands without calling
+the API:
+
+```sh
+cd examples/first-rust/.work/sdk
+cargo run --quiet -p petstore-cli -- --help
+cargo run --quiet -p petstore-cli -- --json operations
+cargo run --quiet -p petstore-cli -- schema pets delete --pretty
+cargo run --quiet -p petstore-cli -- pets delete --help
+```
+
+`operations` lists command paths, operation IDs, safety tiers and pagination
+availability. `schema` prints the arguments' JSON Schema and accepts either a
+command path or its operation ID. Operation-specific help lists the actual flags;
+names come from the API contract and can differ between generated CLIs.
+
+The remaining examples use `example-cli` for your generated executable and
+illustrative operation/flag names. Substitute names from its help and schema.
+
+## Select a deployment and inspect credentials
+
+Keep deployment settings in a TOML profile, for example `client.toml`:
+
+```toml
+[profile.local]
+base_url = "http://127.0.0.1:4010"
+timeout = 10
+```
+
+```sh
+example-cli --config client.toml --profile local auth status
+example-cli --config client.toml --profile local --json auth status
+```
+
+`auth status` reports the selected profile, effective base URL, credential
+environment-variable names and profile keys, and whether each credential is
+present. It does not print credential values or contact the API to verify them.
+The local address above requires a separately running mock when making a call.
+
+Base URL and timeout precedence is command flag, environment variable, selected
+profile, then the SDK default. The generated API prefix supplies variables such
+as `PETSTORE_BASE_URL`, `PETSTORE_TIMEOUT`, `PETSTORE_PROFILE` and `PETSTORE_CONFIG`.
+An explicitly selected profile must exist. `--timeout` is a positive number of
+seconds per request attempt, not an overall retry or pagination deadline.
+
+Use the credential names reported by `auth status`; an API can override their
+default environment names. Credentials come from the environment or profile,
+with environment values taking precedence. Protect any file containing secrets.
+Sensitive operation flags accept `env:NAME` or `-` to read one line from standard
+input, rather than a literal secret on the command line.
+
+## Pass structured arguments without shell escaping
+
+For a JSON-valued flag, use a file or dotted members instead of embedding a large
+JSON string in the shell:
+
+```sh
+example-cli things list --filter @filter.json
+example-cli things list --filter.status open
+```
+
+These forms require a JSON-valued `--filter` in that operation's help. Dotted
+members are validated against the argument schema. Arrays use a repeated flag;
+for example, a declared array flag accepts `--tag first --tag second`.
+
+If help lists `--body`, supply the request body with `--body @request.json` or
+`--body -` for standard input. JSON bodies must contain valid JSON; text bodies
+must be UTF-8; binary bodies take a file or standard input. A file-valued operation
+flag uses `@path` or `@-`. Choose the form declared by the operation, and avoid
+making both a secret and a whole body consume the same standard-input stream.
+
+## Preview a mutation before confirming it
+
+Non-read-only commands expose `--dry-run`. For the gallery CLI, this prints the
+request and effects without sending the deletion:
+
+```sh
+cargo run --quiet -p petstore-cli -- --json pets delete --pet-id pet-1 --dry-run
+```
+
+Run that command from `examples/first-rust/.work/sdk`. A successful explicit
+preview exits 0. A destructive command run without `--yes` prints its preview and
+exits 6; an irreversible command requires both `--yes` and `--i-understand`.
+The CLI never prompts, so a script must handle exit 6 explicitly.
+
+After reviewing the target, arguments and effects, rerun the same command with
+the required confirmation flags. The CLI obtains a fresh preview and uses its
+confirmation token within that process; do not copy a token from an earlier CLI
+process. If the operation requires a caller-owned idempotency key, supply
+`--idempotency-key KEY`, retain that key with the intended call and reuse it for
+retries of that same call. A new key does not resolve an uncertain outcome.
+
+## Consume output and failures in scripts
+
+For ordinary calls, `--json` writes the success body (`null` for no body) or the
+diagnostic envelope to standard output. Notes, warnings and verification results
+go to standard error. Capture both streams and the exit code before interpreting
+the response. `--no-color` disables terminal color for text output.
+
+| Exit | Meaning and next step |
+|---|---|
+| 0 | Success, help, version or successful explicit preview. |
+| 1 | Internal command/SDK mismatch or output failure. |
+| 2 | Usage or preflight validation failure; fix the named input before retrying. |
+| 3 | API failure that is not retryable unchanged. |
+| 4 | API failure with a retry condition; inspect the diagnostic before retrying. |
+| 5 | `OUTCOME_UNKNOWN`; check server state before deciding whether to retry. |
+| 6 | Confirmation required; review the printed preview. |
+| 7 | Credentials missing or malformed before the request; inspect `auth status`. |
+
+Explain a category or a captured diagnostic envelope with the same generated CLI:
+
+```sh
+example-cli explain-error OUTCOME_UNKNOWN
+example-cli explain-error @error.json
+```
+
+`explain-error -` reads an envelope from standard input. The explanation includes
+retry guidance and any remediation declared by the API. In particular, exit 4
+does not mean retry immediately: a diagnostic can require a delay, the same
+idempotency key or remediation first. These are generated-client exit codes;
+the Tungsten compiler has its own command contract.
+
+On a paginated operation, `--json` with `--all --max-pages 5` streams one JSON array while
+holding one page at a time. Reaching that explicit page limit exits 0 and writes
+a note to standard error when more pages remain; it is not a complete-export
+signal. A failure after output starts leaves an incomplete array and writes the
+diagnostic to standard error with a nonzero exit. Only consume the captured array
+after checking both successful exit and the intended page-limit policy.
+
 ## Limits
 
 In unreleased 0.2.0, ordinary API responses inherit the Rust runtime's 4 MiB default. Set the global
