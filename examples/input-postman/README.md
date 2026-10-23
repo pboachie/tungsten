@@ -37,6 +37,22 @@ it records one `GET /pets` and a saved JSON response. Its `example.invalid` URL 
 a placeholder, not a service to call. The sample response is evidence of one
 shape, not a promise that every response has that shape.
 
+### Select the matching compiler in this shell
+
+The snippets below use POSIX `sh` syntax. Replace the placeholder with the
+absolute path to the compiler built for this matching checkout, then export it:
+
+```sh
+export TUNGSTEN="/absolute/path/to/matching/tungsten"
+```
+
+Use that same shell for the following commands, including the canonical runner
+command above. `TUNGSTEN` selects the runner's compiler; it does not change shell
+`PATH`. The standalone commands below invoke `"$TUNGSTEN"` explicitly. For a
+Windows compiler used from a POSIX shell, select its absolute executable path
+including `.exe`. These snippets are not PowerShell syntax or a claim of native
+platform qualification.
+
 ### 1. Import offline and inspect the result
 
 Use the canonical command above from the repository root. The recipe initializes
@@ -73,14 +89,14 @@ separate Python project, this is the source-supported initialization route from
 the repository root; choose a fresh destination:
 
 ```sh
-tungsten init --from examples/input-postman/collection.json --dir postman-python --targets python --python-runtime runtimes/python --no-interactive
+"$TUNGSTEN" init --from examples/input-postman/collection.json --dir postman-python --targets python --python-runtime runtimes/python --no-interactive
 ```
 
 Review the new project's normalized input, report and manifests as above. Then:
 
 ```sh
-tungsten check postman-python
-tungsten generate postman-python
+"$TUNGSTEN" check postman-python
+"$TUNGSTEN" generate postman-python
 ```
 
 The generated package is under `postman-python/generated/python`. Follow its

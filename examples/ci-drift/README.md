@@ -36,6 +36,22 @@ discovering stale methods in a consumer. This recipe uses a committed OpenAPI
 contract and generated **docs output** to make that failure and repair small.
 Expected results below describe the recipe's checks, not a recorded CI run.
 
+### Select the matching compiler in this shell
+
+The snippets below use POSIX `sh` syntax. Replace the placeholder with the
+absolute path to the compiler built for this matching checkout, then export it:
+
+```sh
+export TUNGSTEN="/absolute/path/to/matching/tungsten"
+```
+
+Use that same shell for the following commands, including the canonical runner
+command above. `TUNGSTEN` selects the runner's compiler; it does not change shell
+`PATH`. The standalone commands below invoke `"$TUNGSTEN"` explicitly. For a
+Windows compiler used from a POSIX shell, select its absolute executable path
+including `.exe`. These snippets are not PowerShell syntax or a claim of native
+platform qualification.
+
 ### 1. Follow the stale-output cycle
 
 Run the canonical command above from the repository root. In
@@ -57,15 +73,15 @@ After the recipe completes, inspect the final copied contract and output. For
 your own initialized project, the corresponding repair commands are:
 
 ```sh
-tungsten check path/to/project
-tungsten generate --check path/to/project
+"$TUNGSTEN" check path/to/project
+"$TUNGSTEN" generate --check path/to/project
 ```
 
 If the second command reports `TG0901`, review the contract change, then run:
 
 ```sh
-tungsten generate path/to/project
-tungsten generate --check path/to/project
+"$TUNGSTEN" generate path/to/project
+"$TUNGSTEN" generate --check path/to/project
 ```
 
 Replace `path/to/project` with the directory containing your `tungsten.yml`.
