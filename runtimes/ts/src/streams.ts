@@ -38,10 +38,23 @@ export const ANY_EVENT = "*";
 
 /** Optional collection budgets; an unset budget defaults to 4 MiB or 60 seconds. */
 export interface CollectOptions {
+  /**
+   * Maximum cumulative UTF-8 canonical-JSON bytes of admitted event values;
+   * excludes SSE framing. Positive safe integer; default 4 MiB.
+   */
   maxBytes?: number;
+  /**
+   * Collection deadline in milliseconds. Positive safe integer; default
+   * 60,000. Expiry returns a nonretryable failure with admitted values as partial.
+   */
   maxMs?: number;
 }
 
+/**
+ * A single-consumer stream returned by ClientCore.stream. Iterate items
+ * to inspect per-event diagnostics, or use one consumption helper. Breaking
+ * iteration closes the owned source; callback exceptions propagate.
+ */
 export class EventStream<T> implements AsyncIterable<StreamItem<T>> {
   readonly #source: AsyncGenerator<StreamItem<T>>;
   readonly #abort: () => void;
@@ -72,6 +85,10 @@ export class EventStream<T> implements AsyncIterable<StreamItem<T>> {
     this.#source.return(undefined).catch(() => undefined);
   }
 
+  /**
+   * Iterate decoded events and terminal diagnostic items. Leaving the
+   * iterator aborts the source and requests its return.
+   */
   async *[Symbol.asyncIterator](): AsyncGenerator<StreamItem<T>> {
     try {
       for (;;) {
