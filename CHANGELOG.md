@@ -21,6 +21,9 @@ changes.
   review, source-checkout prerequisites and links to the existing example
   workflows.
 
+- Clarify TypeScript runtime API contracts, streaming budgets, OAuth attempts
+  and replay-key storage, with separate core and Node adapter overviews.
+
 - Document generated Rust CLI workflows for command discovery, deployment
   profiles, structured input, previews and confirmation, and script recovery
   from errors or partial pagination.
