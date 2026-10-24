@@ -11,6 +11,10 @@ changes.
 
 ### Security
 
+- Refresh the locked MCP HTTP-body and URI parsers and schema validator to
+  address request-body denial of service, URI normalization confusion and
+  oversized-collection validation advisories.
+
 - Refresh the locked TLS verification, CA bundles and MCP address parser, and use patched Node.js releases for package validation.
   The `rustls-webpki` and `webpki-roots` updates reject distrusted emSign
   certificate paths (RUSTSEC-2026-0382 and RUSTSEC-2026-0381).
