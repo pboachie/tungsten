@@ -46,7 +46,7 @@ jobs:
       - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
         with:
           distribution: temurin
-          java-version: "21.0.13+9"
+          java-version: "21.0.13+9.0.LTS"
           check-latest: true
       - name: Prepare job-local Java TLS trust
         run: python3 .github/scripts/prepare_java_ci_trust.py --major 21
@@ -55,7 +55,7 @@ jobs:
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: 10.0.402
-      - uses: ruby/setup-ruby@651ff0d62c5c79bed6d53ec518387aae20e72c1a # v1.329.0
+      - uses: ruby/setup-ruby@7f797815d8adceb1c412e7abefdd1ab4abc47a5f # v1.335.0
         with:
           ruby-version: "3.3.13"
           bundler-cache: false
