@@ -39,6 +39,10 @@ changes.
 
 ### Documentation
 
+- Expand the Postman import and generation-freshness guides with contract
+  review, source-checkout prerequisites and links to the existing example
+  workflows.
+
 - Clarify TypeScript runtime API contracts, streaming budgets, OAuth attempts
   and replay-key storage, with separate core and Node adapter overviews.
 
