@@ -1,14 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * OAuth2 authorization-code helpers (planning/06 "Auth profiles"): PKCE
- * (RFC 7636, S256), the authorization URL, the code exchange, refresh with
- * a single flight per scheme, and the token store behind an
- * `authorizationCode` scheme.
+ * Authorization-code and token-storage helpers.
  *
- * Credentials: `ClientOptions.auth[scheme] = { flow: "authorizationCode",
- * clientId, clientSecret?, redirectUri? }`. Tokens live in
- * `ClientOptions.tokenStore` (memory by default), never in the options,
- * envelopes or logs.
+ * Use {@link OAuthFlow.authorizationUrl} and {@link OAuthFlow.exchangeCode}
+ * for managed attempts. Low-level helpers leave PKCE, callback/session and
+ * issuer validation to the application. Returned authorization URLs are
+ * data: these helpers do not launch a browser or shell.
  */
 import { insecureHttp, INSECURE_HTTP_AUTH, TokenError } from "./auth.js";
 import { attempt, type AttemptOutcome } from "./transport.js";
@@ -99,8 +96,16 @@ export interface TokenInfo {
   refreshable: boolean;
 }
 
+/**
+ * OAuth helper outcome. Failures carry a diagnostic rather than provider
+ * response secrets; successful token exchanges return metadata only.
+ */
 export type OAuthResult<T> = { ok: true; value: T } | { ok: false; error: Diagnostic };
 
+/**
+ * Inputs for the explicit low-level URL builder. The application owns
+ * state, PKCE, callback and issuer validation; prefer managed attempts.
+ */
 export interface LowLevelAuthorizationUrlParams {
   /** Defaults to the `redirectUri` of the scheme's auth config. */
   redirectUri?: string;
@@ -113,6 +118,10 @@ export interface LowLevelAuthorizationUrlParams {
   extra?: Record<string, string>;
 }
 
+/**
+ * Code exchange inputs for the explicit compatibility path, outside the
+ * managed attempt lifecycle. Never pass a managed attempt through this path.
+ */
 export interface LowLevelExchangeCodeParams {
   code: string;
   /** Defaults to the `redirectUri` of the scheme's auth config. */
@@ -703,10 +712,18 @@ export class OAuthFlow {
     return this.#session.lowLevelExchangeCode(this.scheme, params);
   }
 
+  /**
+   * Cancel an owned managed attempt using the same session binding.
+   * In-flight work may settle later but cannot commit that canceled attempt.
+   */
   cancelAuthorization(attemptHandle: string, sessionBinding: string): OAuthResult<void> {
     return this.#session.cancelAuthorization(this.scheme, attemptHandle, sessionBinding);
   }
 
+  /**
+   * Invalidate pending attempts and remove this scheme's local tokens.
+   * This does not revoke credentials at the provider. Store failures are diagnostics.
+   */
   logout(): Promise<OAuthResult<void>> { return this.#session.logout(this.scheme); }
 
   /** Refresh the stored token now. Calls refresh on their own when it expires. */

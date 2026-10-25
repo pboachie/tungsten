@@ -15,12 +15,30 @@ export type IssuerDefense =
   | { kind: "issuerResponse"; issuer: string }
   | { kind: "distinctRedirect"; qualification: string };
 
+/**
+ * A managed S256/state authorization attempt. Retain its opaque handle
+ * with the owning session; use the URL only through an application-approved
+ * URL-opening API, never by interpolating it into shell commands.
+ */
 export interface AuthorizationAttempt {
+  /**
+   * Opaque one-shot handle; keep it with the session that created it.
+   */
   attemptHandle: string;
+  /**
+   * Authorization URL data. These helpers do not open a browser or shell.
+   */
   url: string;
+  /**
+   * Remaining attempt lifetime in milliseconds.
+   */
   expiresInMs: number;
 }
 
+/**
+ * Inputs for a managed authorization attempt. Provider S256 support and
+ * an explicit issuer defense are required; no downgrade is inferred.
+ */
 export interface AuthorizationUrlParams {
   /** Authenticated browser session or owning native listener/invocation identity. */
   sessionBinding: string;
@@ -36,9 +54,19 @@ export interface AuthorizationUrlParams {
   signal?: AbortSignal;
 }
 
+/**
+ * The full callback and original ownership information used to claim
+ * a managed attempt. The callback may contain secrets and must not be logged.
+ */
 export interface ExchangeCodeParams {
   attemptHandle: string;
+  /**
+   * Entire returned callback URL, including its query for strict validation.
+   */
   callbackUrl: string;
+  /**
+   * The same owning browser session or native invocation binding used at creation.
+   */
   sessionBinding: string;
   signal?: AbortSignal;
 }

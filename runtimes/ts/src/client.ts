@@ -1,16 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * `ClientCore`: the behaviour behind every generated SDK method
- * (planning/06 "Transport pipeline"):
+ * The transport and safety pipeline used by generated SDK methods.
  *
- * ```
- * call → preflight → auth → idempotency → send → classify → verify? → result
- *                                           ▲              │
- *                                           └── retries ◀──┘
- * ```
- *
- * Every public method resolves; none throws. Failures are diagnostic
- * envelopes (`{ok: false, error}`).
+ * {@link ClientCore} validates arguments, resolves credentials and replay
+ * protection, sends requests and returns diagnostic results. Construction
+ * can throw for an invalid confirmation key; call failures are represented
+ * by {@link Result}. See the public options for response, retry and stream
+ * budgets rather than treating an HTTP success as verification of an effect.
  */
 import { type AuthPlan, credentialHeader, insecureHttp, INSECURE_HTTP_AUTH, isSafeMethod, resolveAuth, TokenError, type TokenSource } from "./auth.js";
 import {
@@ -457,7 +453,13 @@ function addAll<T>(set: Set<T>, values: Iterable<T>): Set<T> {
  * token cache and the registry of operations resolvable by id.
  */
 export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
+  /**
+   * The API descriptor supplied to this core.
+   */
   readonly api: ApiDescriptor;
+  /**
+   * Client-wide configuration used by this core.
+   */
   readonly options: ClientOptions;
   readonly #registry = new Map<string, OperationDescriptor>();
   readonly #store: IdempotencyStore;
@@ -472,6 +474,13 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
   readonly #redirectsDisabled: boolean;
   readonly #redirectPolicyInvalid: boolean;
 
+  /**
+   * Create a core with per-instance confirmation and OAuth state.
+   *
+   * @param api Generated API descriptor.
+   * @param options Transport and policy overrides; no request is sent here.
+   * @throws {TypeError} If confirmationKey is not a Uint8Array of at least 32 bytes.
+   */
   constructor(api: ApiDescriptor, options: ClientOptions = {}) {
     this.api = isRecord(api) ? api : ({} as ApiDescriptor);
     this.options = isRecord(options) ? options : {};
@@ -888,7 +897,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     return this.#confirmed(op.id, op.id, op.agent.safety, args, opts.confirm, "preview(...)", opts.allowConfirmTrue !== false);
   }
 
-  /** The confirmation rule of planning/04 for one tier: `destructive`
+  /** The confirmation rule for one tier: `destructive`
    * accepts `true` (unless `allowTrue` is false) or a token, `irreversible`
    * only a token issued for `subject` (an operation id, or `macro:<name>`)
    * and these exact args. */
