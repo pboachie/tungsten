@@ -543,8 +543,13 @@ class _UnionNode(_Node):
         first: list[Issue] | None = None
         for member in self.members:
             found: list[Issue] = []
-            result = member.check(value, path, mode, found)
+            notes = _NOTES.get()
+            speculative: list[PatternNote] = []
+            with collect_pattern_notes(speculative) if notes is not None else contextlib.nullcontext():
+                result = member.check(value, path, mode, found)
             if result is not _BAD:
+                if notes is not None:
+                    notes.extend(speculative)
                 return result
             first = first if first is not None else found
             if isinstance(member, _NoneNode) or (
