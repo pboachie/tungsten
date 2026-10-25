@@ -447,6 +447,10 @@ uninterruptible callbacks retain capacity until completion and late results are
 rejected, without a hard settlement deadline. OS resolver cancellation depends on
 the platform.
 
+For a saved collection, start with [Postman import and contract review](examples/input-postman/README.md).
+For an API change, use the [stale-output and regeneration walkthrough](examples/ci-drift/README.md).
+Both build on the existing gallery recipes.
+
 More examples: the [runnable example gallery](examples/README.md) covers first
 SDKs, supported input routes, local mocks, destructive confirmation and CI/surface
 review workflows. [Typed Python SSE](examples/typed-sse/README.md) shows how to
