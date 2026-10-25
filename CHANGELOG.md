@@ -11,6 +11,28 @@ changes.
 
 ### Security
 
+- Bootstrap Python package installation with the hash-verified pip 26.2.2 wheel,
+  including fresh environments, and reject uv versions older than 0.13.4.
+  Require certifi 2026.10.19 or newer in the Python runtime, without changing
+  its Python compatibility floor. These packaging mitigations do not claim
+  the still-unreleased CPython intermediate-certificate denylist fix.
+
+- Refresh the locked MCP HTTP-body and URI parsers and schema validator to
+  address request-body denial of service, URI normalization confusion and
+  oversized-collection validation advisories.
+- Pin the remaining example, Windows acceptance and release Node.js jobs to
+  the October security releases (22.23.4 and 24.22.1), avoiding stale cached
+  major-version selections without changing runtime compatibility floors.
+- Validate native runtimes with patched Go 1.26.10, Temurin 21.0.13,
+  .NET SDK 10.0.402, Ruby 3.3.13, Dart 3.13.7 and Deno 2.9.8 toolchains.
+  Source-language and target framework declarations remain unchanged; EOL Go
+  toolchains are not security-qualified runtimes.
+- Qualify Java CI HTTPS trust with per-job copies excluding the four affected
+  CA roots. Preserve installed stores and all other trust entries; certificate
+  chains relying on those roots intentionally fail.
+- Update the pinned PyPI publishing action to 1.14.3 for its bundled
+  certificate-trust security fix; publication gates and permissions are unchanged.
+
 - Refresh the locked TLS verification, CA bundles and MCP address parser, and use patched Node.js releases for package validation.
   The `rustls-webpki` and `webpki-roots` updates reject distrusted emSign
   certificate paths (RUSTSEC-2026-0382 and RUSTSEC-2026-0381).

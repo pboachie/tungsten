@@ -20,8 +20,8 @@ use tungsten_ir::naming::{self, Role, Target};
 /// The version of the runtime packages generated SDKs depend on.
 pub const DEFAULT_RUNTIME: &str = "0.1.3";
 
-/// The FSharp.Core version the SDK pins: the one the .NET SDK 10.0.401
-/// bundles in its library pack, so a restore needs no package source.
+/// The published FSharp.Core compatibility floor, independent of patch toolchain upgrades.
+/// Restore downloads this package when the SDK library pack contains a newer version.
 pub const FSHARP_CORE: &str = "10.1.401";
 
 /// Resolved target options.

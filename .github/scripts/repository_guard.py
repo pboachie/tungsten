@@ -55,6 +55,10 @@ Tree rules:
     files (*Test.java, *Tests.java, *Test.kt, *Tests.cs, *Tests.fs,
     *Tests.swift, *Test.php, *_test.rb, *_spec.rb, *_test.dart) and test directories (any
     case, `Tests/` included, and spec/ under runtimes/ruby/) are refused.
+  - one CI-only exception, .github/scripts/JavaTrustProbe.java, may inspect
+    and qualify job-local JSSE trust. It must be an ordinary UTF-8 text file
+    with the AGPL-3.0-only header; it is not a shipped runtime source. All
+    other Java sources outside runtimes/java/ remain forbidden;
   - CHANGELOG.md (the source of the GitHub Release notes) keeps, inside one
     release section (`## [X.Y.Z]` or `## [Unreleased]`), one heading of each
     kind and one bullet per change (no repeated bullet text), and every
@@ -151,6 +155,8 @@ LANGUAGE_ROOTS = (
     ("runtimes/ruby/", "Ruby", {".rb"}, {"Gemfile"}, {".gemspec"}),
     ("runtimes/dart/", "Dart", {".dart"}, {"pubspec.yaml", "analysis_options.yaml"}, set()),
 )
+# Exact CI-tooling exception only; never broaden this to a directory or suffix.
+CI_JAVA_PROBE = ".github/scripts/JavaTrustProbe.java"
 SLASH_HEADER_SOURCES = {".java", ".cs", ".fs", ".fsi", ".kt", ".kts", ".swift", ".dart"}
 HASH_HEADER_FILES = {"Gemfile", "pubspec.yaml", "analysis_options.yaml", "phpstan.neon"}
 HASH_HEADER_SOURCES = {".rb", ".gemspec"}
@@ -225,7 +231,7 @@ def language_of(path: str) -> tuple[str, str] | None:
 def language_violations(path: str) -> list[str]:
     found = []
     owner = language_of(path)
-    if owner and not path.startswith(owner[0]):
+    if owner and not path.startswith(owner[0]) and path != CI_JAVA_PROBE:
         found.append(f"{owner[1]} source or manifest outside {owner[0]}")
     parts = PurePosixPath(path).parts
     if path.startswith("runtimes/ruby/") and any(p.lower() == "spec" for p in parts[:-1]):
@@ -331,6 +337,8 @@ def manifest_violations(path: str, text: str, paths: set[str]) -> list[str]:
 
 def content_violations(path: str, text: str, paths: set[str]) -> list[str]:
     found = []
+    if path == CI_JAVA_PROBE and not has_header(text, AGPL_HEADER):
+        found.append(f"CI Java probe without the licence header '{AGPL_HEADER}'")
     if path == CHANGELOG_PATH:
         found += changelog_violations(text)
         if PRIVATE_REFERENCE.search(text):
@@ -452,10 +460,19 @@ def check_tree(repo: Path, ref: str) -> list[str]:
     findings = []
     for mode, oid, path in files:
         issues = path_violations(path)
+        if path == CI_JAVA_PROBE and mode != "100644":
+            issues.append("CI Java probe must be an ordinary non-executable file")
         if mode == "160000":
             issues.append("submodule (the public repository vendors nothing)")
         elif mode != "120000":
             data = blobs[oid]
+            if path == CI_JAVA_PROBE:
+                try:
+                    data.decode("utf-8", "strict")
+                    if b"\0" in data:
+                        raise ValueError("binary probe")
+                except (UnicodeDecodeError, ValueError):
+                    issues.append("CI Java probe must be UTF-8 text")
             if b"\0" not in data:
                 issues += content_violations(path, data.decode("utf-8", "replace"), paths)
         findings += [f"{path}: {issue}" for issue in issues]

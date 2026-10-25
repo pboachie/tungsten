@@ -16,9 +16,9 @@
     <PackageProjectUrl>https://github.com/pboachie/tungsten</PackageProjectUrl>
     <RepositoryUrl>https://github.com/pboachie/tungsten</RepositoryUrl>
     <PackageTags>tungsten;sdk;runtime;agents;fsharp</PackageTags>
-    <!-- FSharp.Core 10.1.401 is the version the .NET SDK 10.0.401 bundles (its library pack) and the
-         one this layer is compiled and tested against. It is also the published dependency floor:
-         the nuspec asks for FSharp.Core 10.1.401 or higher, resolved from nuget.org by consumers. -->
+    <!-- FSharp.Core 10.1.401 is the published dependency floor, independent of SDK patch upgrades.
+         Restore obtains this exact package when the SDK library pack contains a newer version.
+         The nuspec asks for FSharp.Core 10.1.401 or higher, resolved from nuget.org by consumers. -->
     <DisableImplicitFSharpCoreReference>true</DisableImplicitFSharpCoreReference>
     <RestoreSources Condition="'$(TungstenRuntimeFeed)' != ''">$(TungstenRuntimeFeed)</RestoreSources>
     <TungstenRuntime Condition="'$(TungstenRuntime)' == ''">../csharp/Tungsten.Runtime.csproj</TungstenRuntime>

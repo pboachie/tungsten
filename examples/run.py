@@ -353,11 +353,14 @@ def python_environment(work: Path) -> Path:
     venv = work / "venv"
     python = venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
     uv = shutil.which("uv")
+    bootstrap = REPO / "crates/tungsten-cli/src/commands/bootstrap_python.py"
     if uv:
+        command([sys.executable, "-I", str(bootstrap), "--check-uv", uv], work)
         command([uv, "venv", "--python", sys.executable, str(venv)], work)
         install = [uv, "pip", "install", "--python", str(python)]
     else:
         command([sys.executable, "-m", "venv", str(venv)], work)
+        command([str(python), "-I", str(bootstrap)], work)
         install = [str(python), "-m", "pip", "install", "--disable-pip-version-check"]
     command([*install, "-e", str(REPO / "runtimes/python"), "-e", str(work / "sdk")], work)
     return python
