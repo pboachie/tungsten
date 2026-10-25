@@ -633,9 +633,48 @@ tungsten [--json] <command>
 | `lsp` | Serve diagnostics, completion, hover, go-to-definition and symbols for `tungsten.yml`, `agent.yml` and overlays to an editor over stdio (`--config`) |
 | `doctor` | Report external tools; pass a project path and `--strict` to fail when its required tools are missing or too old |
 | `capabilities` | Query built-in target declarations without running tools or emitters; optionally select a target id or alias, such as `capabilities py --json` |
-| `support-bundle --preview` | Show exactly what a diagnostic support bundle would contain, as metadata only: versions, capability and configuration provenance, diagnostic codes and tool prerequisites; works for a broken project and starts no program, probes no tool version, reads no API document and writes nothing; `--exclude <id>` removes an entry. Writing the bundle is not available yet |
+| `support-bundle --preview` | Inspect the exact metadata-only support manifest without writing files; `--exclude <id>` removes an entry. On Linux, `--output <PATH>` instead publishes it to a new file in an existing, trusted directory |
 
 With `--json`, stdout carries exactly one JSON document described by `tungsten schema cli-output` (`lsp` speaks the language server protocol on stdio instead). Color is used only on a terminal and never when `NO_COLOR` is set.
+
+### Inspect and export support metadata
+
+`tungsten support-bundle --preview --json` shows a versioned manifest containing
+allowlisted tool, capability and configuration provenance, diagnostic codes and
+declared prerequisites. Collection works with a broken project and does not
+compile it, read API documents, probe tool versions, run extensions or contact a
+network. It excludes configuration values, private paths, URLs, credentials,
+source text, logs, hashes and project identifiers. Use `--exclude <id>` to omit
+an entry; collection of additional sensitive content is not supported.
+
+On Linux, `tungsten support-bundle --output <PATH>` creates a new local file.
+Its bytes are exactly the same manifest serialized as compact JSON with one
+trailing newline, capped at 128 KiB including metadata; entry payloads retain
+their 16 KiB individual and 64 KiB combined limits. The JSON command result is
+a separate receipt containing the manifest, complete artifact size, publication
+state and temporary-file cleanup state. The manifest's `mode: "preview"` and
+`wrote_files: false` describe inspection; the receipt records publication.
+
+The destination directory must already exist, belong to the effective user
+and have no group or other write permission. Traversed directories must be
+owned by that user or root and protected from other-user replacement;
+root-owned sticky ancestors such as `/tmp` are allowed. Symlink directories,
+`..` traversal and existing destination entries are refused. Publication uses
+an exclusive file with mode 0600 and never replaces an existing entry. These
+checks do not protect against root, another process with the same user ID,
+permission changes by those actors or a filesystem that violates local file
+operation semantics. Other platforms refuse export before collecting data;
+preview remains available.
+
+Library callers can cooperatively cancel an export before publication with
+`run_with_cancellation`. Successful publication is the commit point: a later
+cancellation does not remove the file. A cleanup failure after publication
+returns a nonzero status while retaining `published: true` in the receipt.
+Abrupt process termination and binary signal cleanup are not qualified by this
+command. Abrupt termination or unconfirmed cleanup can leave one owned
+`.tungsten-support-*.pending` entry per invocation; later commands do not sweep
+existing temporary entries. File syncing before publication does not establish
+a power-loss durability guarantee. There is no automatic upload or issue creation.
 
 Generation prepares compatible Java, Kotlin, C#, F#, Dart and Ruby SDK structure
 once per command, preserving each target's naming. Writing runs stage one

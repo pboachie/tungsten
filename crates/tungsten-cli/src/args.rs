@@ -211,7 +211,7 @@ pub(crate) enum Command {
         #[command(subcommand)]
         command: OverlayCommand,
     },
-    /// Preview the exact, metadata-only contents of a diagnostic support bundle.
+    /// Preview metadata-only diagnostics, or export them to a new file on Linux.
     SupportBundle(SupportBundleArgs),
     /// Check for a newer release; never installs anything.
     Update {
@@ -232,6 +232,10 @@ pub(crate) struct SupportBundleArgs {
     /// Print what a bundle would contain; writes, uploads and runs nothing.
     #[arg(long)]
     pub preview: bool,
+    /// Export metadata to a new file on Linux; never overwrite an existing entry.
+    /// Its existing directory must be owned by you and not writable by others.
+    #[arg(long, value_name = "PATH", conflicts_with = "preview")]
+    pub output: Option<PathBuf>,
     /// Remove an entry by id from the bundle; repeatable.
     #[arg(long, value_name = "ID")]
     pub exclude: Vec<String>,

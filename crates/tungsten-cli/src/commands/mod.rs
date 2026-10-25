@@ -28,6 +28,7 @@ pub(crate) mod report;
 pub(crate) mod scenario;
 mod schema;
 pub(crate) mod support_bundle;
+mod support_bundle_file;
 pub(crate) mod update;
 mod wizard;
 
@@ -97,7 +98,7 @@ fn dispatch_with_inputs(
         Command::Overlay {
             command: OverlayCommand::Suggest(args),
         } => overlay::suggest(args),
-        Command::SupportBundle(args) => support_bundle::run(args, env, cli),
+        Command::SupportBundle(args) => support_bundle::run(args, env, cli, cancellation),
         Command::Update { command } => update::run(command, cli.offline),
         Command::Lsp(_) => lsp::refuse(),
     }

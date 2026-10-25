@@ -206,6 +206,7 @@ pub enum CommandResult {
     Diff(DiffResult),
     OverlaySuggest(OverlaySuggestResult),
     SupportBundle(Box<crate::commands::support_bundle::SupportBundlePreview>),
+    SupportBundleExport(Box<crate::commands::support_bundle::SupportBundleExportReceipt>),
     UpdateCheck(crate::commands::update::UpdateCheckResult),
     Help(HelpResult),
 }
@@ -1066,10 +1067,14 @@ pub fn cli_output_schema() -> Value {
     let rules: Vec<Value> = RESULT_DEFS
         .iter()
         .map(|(command, def)| {
+            let mut results = vec![json!({ "$ref": format!("#/$defs/{def}") }), json!({ "type": "null" })];
+            if *command == CommandName::SupportBundle {
+                results.push(json!({ "$ref": "#/$defs/SupportBundleExportReceipt" }));
+            }
             json!({
                 "if": { "properties": { "command": { "const": command } }, "required": ["command"] },
                 "then": { "properties": { "result": {
-                    "anyOf": [{ "$ref": format!("#/$defs/{def}") }, { "type": "null" }]
+                    "anyOf": results
                 } } }
             })
         })
