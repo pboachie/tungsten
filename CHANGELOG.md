@@ -11,6 +11,12 @@ changes.
 
 ### Security
 
+- Bootstrap Python package installation with the hash-verified pip 26.2.2 wheel,
+  including fresh environments, and reject uv versions older than 0.13.4.
+  Require certifi 2026.10.19 or newer in the Python runtime, without changing
+  its Python compatibility floor. These packaging mitigations do not claim
+  the still-unreleased CPython intermediate-certificate denylist fix.
+
 - Refresh the locked MCP HTTP-body and URI parsers and schema validator to
   address request-body denial of service, URI normalization confusion and
   oversized-collection validation advisories.

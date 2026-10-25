@@ -43,6 +43,15 @@ pub(super) fn build(directory: &Path, runtime: Option<&Path>) -> Result<(), Stri
     let python = python
         .to_str()
         .ok_or("Python environment path is not UTF-8")?;
+    // Bootstrap this fresh environment before its first network pip operation.
+    // Embed the packaged source so installed CLIs do not need a repository checkout.
+    execute(
+        python,
+        &["-I", "-c", include_str!("bootstrap_python.py")],
+        directory,
+        Duration::from_secs(180),
+    )
+    .map_err(|error| format!("Python verified pip bootstrap: {error}"))?;
     // Wheel-only downloads avoid arbitrary dependency build hooks. The generated
     // package and explicitly supplied runtime use the known installed backend.
     // Resolve the local runtime's declared dependencies too: the bootstrap set
@@ -57,6 +66,7 @@ pub(super) fn build(directory: &Path, runtime: Option<&Path>) -> Result<(), Stri
             "--only-binary=:all:",
             "hatchling>=1.25",
             "httpx>=0.27,<1",
+            "certifi>=2026.10.19",
             "pydantic>=2.10,<3",
         ],
         directory,

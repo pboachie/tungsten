@@ -14,8 +14,8 @@ from paths import ROOT, WORK, ensure_work
 ASSETS = [
     (
         "go.zip",
-        "https://go.dev/dl/go1.27.2.windows-amd64.zip",
-        "1314008898bd40df77af4b014f777f08873dbdfbcd3d92308728ee03304fe04f",
+        "https://go.dev/dl/go1.27.3.windows-amd64.zip",
+        "f26081f438319757f8a1b46d7d0b2c5ec7583d4038e485e0aa725cfde7885fff",
     ),
     (
         "kokoro-v1.0.onnx",
@@ -28,6 +28,14 @@ ASSETS = [
         "bca610b8308e8d99f32e6fe4197e7ec01679264efed0cac9140fe9c29f1fbf7d",
     ),
 ]
+
+
+def pip_bootstrap():
+    """Use the bundled helper in exports, or its canonical compiler source."""
+    bundled = ROOT / "bootstrap_python.py"
+    if bundled.is_file():
+        return bundled
+    return ROOT.parents[1] / "crates/tungsten-cli/src/commands/bootstrap_python.py"
 
 
 def main():
@@ -66,6 +74,7 @@ def main():
     if not environment.is_dir():
         venv.create(environment, with_pip=True)
     python = environment / "Scripts/python.exe"
+    subprocess.run([str(python), "-I", str(pip_bootstrap())], check=True)
     subprocess.run(
         [str(python), "-m", "pip", "install", "--disable-pip-version-check", str(ROOT)],
         check=True,

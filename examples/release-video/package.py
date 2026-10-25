@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 """Package explicit sources and small, privacy-masked execution evidence."""
 from pathlib import Path
+from bootstrap import pip_bootstrap
 import hashlib
 import json
 import zipfile
@@ -43,6 +44,7 @@ def package(run):
         raise FileExistsError("Preserve this package and use a new run")
     selected = [(ROOT / name, name, False) for name in SOURCES]
     selected += [
+        (pip_bootstrap(), "bootstrap_python.py", False),
         (run / "reviewed-profile.json", "profile.json", False),
         (run / "plan.json", f"scripts/{version}.json", False),
         (icon_path(), "assets/tungsten-icon.png", False),

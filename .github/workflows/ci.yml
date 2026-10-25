@@ -42,9 +42,20 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # setup-python's archive installer upgrades pip before returning; force
+      # that bootstrap to use only the PSF hash-verified local wheel.
+      - name: Stage verified pip for interpreter setup
+        shell: bash
+        run: python -I crates/tungsten-cli/src/commands/bootstrap_python.py --fetch-only --wheel-dir "$RUNNER_TEMP/tungsten-pip-bootstrap"
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        env:
+          PIP_CONFIG_FILE: ${{ runner.os == 'Windows' && 'nul' || '/dev/null' }}
+          PIP_NO_INDEX: "1"
+          PIP_FIND_LINKS: ${{ runner.temp }}/tungsten-pip-bootstrap/pip-26.2.2-py3-none-any.whl
+          PIP_DISABLE_PIP_VERSION_CHECK: "1"
         with:
-          python-version: "3.12"
+          python-version: "3.12.15"
+          check-latest: true
       - name: Read and check declared floors
         id: floors
         run: python3 .github/scripts/check-msrv.py --toolchains >> "$GITHUB_OUTPUT"
@@ -118,9 +129,20 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # setup-python's archive installer upgrades pip before returning; force
+      # that bootstrap to use only the PSF hash-verified local wheel.
+      - name: Stage verified pip for interpreter setup
+        shell: bash
+        run: python -I crates/tungsten-cli/src/commands/bootstrap_python.py --fetch-only --wheel-dir "$RUNNER_TEMP/tungsten-pip-bootstrap"
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        env:
+          PIP_CONFIG_FILE: ${{ runner.os == 'Windows' && 'nul' || '/dev/null' }}
+          PIP_NO_INDEX: "1"
+          PIP_FIND_LINKS: ${{ runner.temp }}/tungsten-pip-bootstrap/pip-26.2.2-py3-none-any.whl
+          PIP_DISABLE_PIP_VERSION_CHECK: "1"
         with:
-          python-version: "3.12"
+          python-version: "3.12.15"
+          check-latest: true
       - name: Check all committed Cargo, npm and uv locks without installing packages
         run: python3 .github/scripts/dependency_audit.py
       - name: Check lockstep runtime manifests and identities
@@ -136,9 +158,20 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # setup-python's archive installer upgrades pip before returning; force
+      # that bootstrap to use only the PSF hash-verified local wheel.
+      - name: Stage verified pip for interpreter setup
+        shell: bash
+        run: python -I crates/tungsten-cli/src/commands/bootstrap_python.py --fetch-only --wheel-dir "$RUNNER_TEMP/tungsten-pip-bootstrap"
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        env:
+          PIP_CONFIG_FILE: ${{ runner.os == 'Windows' && 'nul' || '/dev/null' }}
+          PIP_NO_INDEX: "1"
+          PIP_FIND_LINKS: ${{ runner.temp }}/tungsten-pip-bootstrap/pip-26.2.2-py3-none-any.whl
+          PIP_DISABLE_PIP_VERSION_CHECK: "1"
         with:
-          python-version: "3.12"
+          python-version: "3.12.15"
+          check-latest: true
       # Keep this inside the existing required cargo-deny job, so an audit
       # failure cannot be ignored as an optional status check.
       - name: Check all committed dependency and release-tool locks without installing packages

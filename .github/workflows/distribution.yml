@@ -82,8 +82,11 @@ jobs:
               cmp "release-bundle/$asset" "distribution/$asset"
             done
           fi
-          python3 -m pip install --disable-pip-version-check jsonschema==4.25.1
-          python3 .github/scripts/validate-winget.py distribution/winget
+          python3 -m venv "$RUNNER_TEMP/tungsten-distribution"
+          distribution_python="$RUNNER_TEMP/tungsten-distribution/bin/python"
+          "$distribution_python" -I crates/tungsten-cli/src/commands/bootstrap_python.py
+          "$distribution_python" -m pip install --disable-pip-version-check jsonschema==4.25.1
+          "$distribution_python" .github/scripts/validate-winget.py distribution/winget
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           if [ "$DRY_RUN" = true ]; then echo 'publish=false' >> "$GITHUB_OUTPUT"; else echo 'publish=true' >> "$GITHUB_OUTPUT"; fi
       - name: Build both container architectures and smoke test amd64

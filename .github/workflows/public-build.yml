@@ -63,9 +63,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # requires-python floor and the newest CPython qualified; each minor
-        # resolves to its latest available patch.
-        python-version: ["3.10", "3.14"]
+        # EOL 3.10 is a compatibility-only lane, not a secure runtime claim.
+        # Exact patches avoid selecting an older cached interpreter.
+        python-version: ["3.10.22", "3.14.9"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -75,20 +75,33 @@ jobs:
         env:
           SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+      # setup-python's archive installer upgrades pip before returning; force
+      # that bootstrap to use only the PSF hash-verified local wheel.
+      - name: Stage verified pip for interpreter setup
+        shell: bash
+        run: python -I crates/tungsten-cli/src/commands/bootstrap_python.py --fetch-only --wheel-dir "$RUNNER_TEMP/tungsten-pip-bootstrap"
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        env:
+          PIP_CONFIG_FILE: ${{ runner.os == 'Windows' && 'nul' || '/dev/null' }}
+          PIP_NO_INDEX: "1"
+          PIP_FIND_LINKS: ${{ runner.temp }}/tungsten-pip-bootstrap/pip-26.2.2-py3-none-any.whl
+          PIP_DISABLE_PIP_VERSION_CHECK: "1"
         with:
           python-version: ${{ matrix.python-version }}
+          check-latest: true
       - name: Build and check the public sdist and wheel
         working-directory: runtimes/python
         run: |
-          python -m pip install --disable-pip-version-check build==1.6.1 twine==7.0.0
-          python -m build --outdir "$RUNNER_TEMP/python-dist"
+          python -I ../../crates/tungsten-cli/src/commands/bootstrap_python.py
+          python -m pip install --disable-pip-version-check build==1.6.1 twine==7.0.0 hatchling==1.32.4 "certifi>=2026.10.19"
+          python -m build --no-isolation --outdir "$RUNNER_TEMP/python-dist"
           python -m twine check "$RUNNER_TEMP/python-dist/"*
       - name: Install each archive into a clean environment and import it
         run: |
           for archive in "$RUNNER_TEMP"/python-dist/*.whl "$RUNNER_TEMP"/python-dist/*.tar.gz; do
             venv="$RUNNER_TEMP/consumer-$(basename "$archive")"
             python -m venv "$venv"
+            "$venv/bin/python" -I crates/tungsten-cli/src/commands/bootstrap_python.py
             "$venv/bin/python" -m pip install --disable-pip-version-check "$archive"
             "$venv/bin/python" -m pip freeze
             # Outside the checkout and isolated: the import must resolve to the installed package.
