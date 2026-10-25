@@ -1,9 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 /// <reference types="node" />
 /**
- * `@elysra/tungsten-runtime/node`: adapters that need Node APIs (also available in
- * Bun and Deno's Node compatibility). The core entry point never imports
- * this module.
+ * Node filesystem adapters for the Tungsten runtime.
+ *
+ * {@link FileIdempotencyStore} persists replay keys to a caller-owned file.
+ * Pass it as the core client's idempotencyStore option. Import this entry
+ * point separately from `@elysra/tungsten-runtime`; it imports Node APIs and
+ * should stay out of browser bundles. Applications own the file location,
+ * access controls and removal of abandoned leases.
+ *
+ * @module
  */
 import { randomBytes } from "node:crypto";
 import { mkdir, open, readFile, rename, rm } from "node:fs/promises";
@@ -133,9 +139,17 @@ const fileQueues = new Map<string, Promise<unknown>>();
  * then refuses; only its owner removes a lease.
  */
 export class FileIdempotencyStore implements IdempotencyStore {
+  /**
+   * Caller-supplied file path. Relative paths use the process working directory.
+   */
   readonly path: string;
   #queue: Promise<unknown> = Promise.resolve();
 
+  /**
+   * Choose a JSON store file; construction performs no filesystem I/O.
+   * Directories and files are created when writing.
+   * @param path Application-owned storage location.
+   */
   constructor(path: string) {
     this.path = path;
   }
@@ -158,6 +172,10 @@ export class FileIdempotencyStore implements IdempotencyStore {
     return parsed;
   }
 
+  /**
+   * Read a stored key, or undefined for a missing slot or file.
+   * Malformed store contents and other filesystem failures reject.
+   */
   async get(scope: string, logicalId: string): Promise<string | undefined> {
     await this.#queue.catch(() => undefined);
     const data = await this.#read();
@@ -165,6 +183,12 @@ export class FileIdempotencyStore implements IdempotencyStore {
     return scoped && Object.hasOwn(scoped, logicalId) ? scoped[logicalId] : undefined;
   }
 
+  /**
+   * Return an existing key or persist candidate while holding the shared
+   * file lease. Competing reservations are serialized; a busy lease is
+   * waited for up to two seconds and is never reclaimed automatically.
+   * Lease or storage failures reject before a new key is returned.
+   */
   async reserve(scope: string, logicalId: string, candidate: string): Promise<string> {
     const file = resolve(this.path);
     const result = (fileQueues.get(file) ?? Promise.resolve()).catch(() => undefined).then(async () => {
@@ -192,6 +216,10 @@ export class FileIdempotencyStore implements IdempotencyStore {
     return result;
   }
 
+  /**
+   * Write or replace a slot through this instance's write queue.
+   * Use reserve for competing writers: put does not acquire its cross-process lease.
+   */
   put(scope: string, logicalId: string, key: string): Promise<void> {
     return this.#write(scope, logicalId, key);
   }

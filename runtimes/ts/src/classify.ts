@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Classification of HTTP responses and lost requests into results and
- * diagnostic envelopes (planning/06 "Diagnostic error envelope",
- * "Unknown outcome", planning/04 "Remediation table resolution").
+ * diagnostic envelopes.
  */
 import { categoryForStatus, diagnostic, GENERIC_REMEDIATION, isCategory, isRetryable } from "./envelope.js";
 import { hasReplayProtection } from "./idempotency.js";

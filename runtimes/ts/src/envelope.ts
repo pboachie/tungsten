@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The diagnostic error envelope (planning/06): construction with stable
+ * The diagnostic error envelope: construction with stable
  * field order, default `retryable` per category, status → category
  * mapping and the generic remediation texts used when neither the
  * operation nor the API has a specific entry.
@@ -27,7 +27,10 @@ const CATEGORIES: readonly Category[] = [
 
 const RETRYABLE_VALUES: readonly Retryable[] = ["never", "after_delay", "same_key_only", "after_remediation"];
 
-/** Default `retryable` per category (planning/06 table). */
+/**
+ * Default retry guidance by diagnostic category. Operation and API
+ * remediation can override this guidance; it does not itself dispatch a retry.
+ */
 export const DEFAULT_RETRYABLE: Readonly<Record<Category, Retryable>> = {
   VALIDATION_FAILED: "never",
   MALFORMED_REQUEST: "never",
