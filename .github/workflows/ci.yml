@@ -170,7 +170,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.24"
+          go-version: "1.26.10"
           cache: false
       - name: gofmt
         run: |
@@ -203,7 +203,12 @@ jobs:
       - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
         with:
           distribution: temurin
-          java-version: "21"
+          java-version: "21.0.13+9"
+          check-latest: true
+      - name: Prepare job-local Java TLS trust
+        run: python3 .github/scripts/prepare_java_ci_trust.py --major 21
+      - name: Verify patched Java runtime and trust roots
+        run: python3 .github/scripts/check_java_toolchain.py --major 21
       - name: javac --release 17 -Xlint:all -Werror
         working-directory: runtimes/java
         run: |
@@ -238,7 +243,12 @@ jobs:
       - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
         with:
           distribution: temurin
-          java-version: "21"
+          java-version: "21.0.13+9"
+          check-latest: true
+      - name: Prepare job-local Java TLS trust
+        run: python3 .github/scripts/prepare_java_ci_trust.py --major 21
+      - name: Verify patched Java runtime and trust roots
+        run: python3 .github/scripts/check_java_toolchain.py --major 21
       - name: Install kotlinc (sha256 checked)
         run: |
           curl -fsSL --retry 3 -o "$RUNNER_TEMP/kotlin.zip" \
@@ -281,7 +291,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
-          dotnet-version: 10.0.401
+          dotnet-version: 10.0.402
       - name: dotnet format whitespace
         run: dotnet format whitespace runtimes/csharp --folder --verify-no-changes
       - name: dotnet build -warnaserror
@@ -309,7 +319,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
-          dotnet-version: 10.0.401
+          dotnet-version: 10.0.402
       - name: dotnet build -warnaserror
         run: dotnet build runtimes/fsharp/Tungsten.Runtime.FSharp.fsproj -warnaserror --artifacts-path "$RUNNER_TEMP/fsharp"
       - name: Pack and verify runtime notices
@@ -332,7 +342,7 @@ jobs:
           persist-credentials: false
       - uses: ruby/setup-ruby@651ff0d62c5c79bed6d53ec518387aae20e72c1a # v1.329.0
         with:
-          ruby-version: "3.3"
+          ruby-version: "3.3.13"
           bundler-cache: false
       - name: ruby -wc
         run: |
@@ -362,7 +372,7 @@ jobs:
           persist-credentials: false
       - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
         with:
-          sdk: 3.13.5
+          sdk: 3.13.7
       - name: dart pub get
         working-directory: runtimes/dart
         run: dart pub get

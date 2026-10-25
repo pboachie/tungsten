@@ -70,8 +70,8 @@ KOTLINX_COROUTINES_SHA256 = (
     "5ca175b38df331fd64155b35cd8cae1251fa9ee369709b36d42e0a288ccce3fd"
 )
 SEMVER = r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?"
-# Declared dependency floor of the F# package: the FSharp.Core the .NET SDK
-# 10.0.401 bundles and the layer is built and tested with.
+# Declared F# package dependency floor, kept independent of SDK patch upgrades.
+# Restore obtains this exact version when it is not bundled with the SDK.
 FSHARP_CORE = "10.1.401"
 LIMIT = 128 * 1024 * 1024
 
@@ -667,6 +667,40 @@ def verify(directory, package, version):
     return manifest
 
 
+def prefetch_fsharp_core(feed):
+    """Keep the published dependency floor available across SDK patch upgrades."""
+    with tempfile.TemporaryDirectory(prefix="tungsten-fsharp-core-") as temporary:
+        root = Path(temporary)
+        project = root / "prefetch.csproj"
+        project.write_text(
+            '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup>'
+            '<TargetFramework>net10.0</TargetFramework>'
+            '<TreatWarningsAsErrors>true</TreatWarningsAsErrors>'
+            '</PropertyGroup><ItemGroup><PackageReference Include="FSharp.Core" '
+            f'Version="[{FSHARP_CORE}]" /></ItemGroup></Project>\n',
+            encoding="utf-8",
+        )
+        config = root / "NuGet.Config"
+        config.write_text(
+            '<configuration><packageSources><clear />'
+            '<add key="nuget.org" value="https://api.nuget.org/v3/index.json" />'
+            '</packageSources></configuration>\n',
+            encoding="utf-8",
+        )
+        cache = root / "packages"
+        run(
+            ["dotnet", "restore", project, "--configfile", config, "--packages", cache],
+            root,
+        )
+        package = cache / "fsharp.core" / FSHARP_CORE / f"fsharp.core.{FSHARP_CORE}.nupkg"
+        metadata = xml(zip_files(package)["FSharp.Core.nuspec"])
+        if (text(metadata, "metadata/id"), text(metadata, "metadata/version")) != (
+            "FSharp.Core", FSHARP_CORE
+        ):
+            raise ValueError("prefetched FSharp.Core differs from the declared floor")
+        (Path(feed) / f"FSharp.Core.{FSHARP_CORE}.nupkg").write_bytes(regular(package))
+
+
 def build(directory, package, version):
     release_version(version)
     source_version(package, version)
@@ -756,6 +790,10 @@ def build(directory, package, version):
         # project then restores only from that feed, so its nuspec carries an
         # exact "[version]" dependency instead of a minimum.
         with tempfile.TemporaryDirectory() as feed:
+            # SDK servicing can replace its bundled FSharp.Core. Fetch only
+            # the existing exact dependency floor before the source-bound,
+            # local-only runtime pack; never add a remote runtime feed.
+            prefetch_fsharp_core(feed)
             run(
                 [
                     "dotnet",
