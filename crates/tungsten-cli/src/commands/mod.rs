@@ -35,6 +35,7 @@ pub(crate) mod support_bundle_attach;
 mod support_bundle_file;
 pub(crate) mod support_bundle_inspect;
 pub(crate) mod update;
+pub(crate) mod update_notice;
 mod wizard;
 
 use crate::args::{BundleCommand, Cli, Command, IrCommand, OverlayCommand, PolicyCommand};

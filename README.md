@@ -344,6 +344,26 @@ the command says so and prints no replacement command.
 `--offline` (also a global flag), `--no-update-check` and `TUNGSTEN_NO_UPDATE_CHECK=1`
 make no request and exit 6 with a reason in the `--json` result.
 
+Update notices are off by default. Enable them with `TUNGSTEN_UPDATE_NOTICE=stable` (or
+`prerelease`), or in the user settings file (`$XDG_CONFIG_HOME/tungsten/settings.json`,
+`~/Library/Application Support/tungsten/settings.json` on macOS,
+`%APPDATA%\tungsten\settings.json` on Windows, or `$TUNGSTEN_CONFIG_DIR/settings.json`):
+
+```json
+{ "update_notice": { "channel": "stable", "interval_hours": 24 } }
+```
+
+With notices on, `tungsten update check` saves its verified answer to `update-check.json`
+in the user cache directory (`TUNGSTEN_CACHE_DIR` overrides it). Other commands never make
+a request for notices: after an interactive command, tungsten reads that file and, at most
+once per interval (`TUNGSTEN_UPDATE_NOTICE_INTERVAL_HOURS`, 1 to 720, default 24), prints one
+line on stderr naming a newer release whose archive and `SHA256SUMS` the check confirmed.
+Answers older than 7 days are ignored. No notice is printed with `--json`, `--offline`,
+`--policy`, in CI, when stderr is not a terminal, or for `lsp` and `mock`.
+`TUNGSTEN_NO_UPDATE_CHECK=1` or `TUNGSTEN_UPDATE_NOTICE=off` turns notices off; an invalid
+setting also turns them off. A missing, corrupt or unwritable cache never changes a command's
+output or exit code.
+
 ### Runtime packages
 
 For a published compiler release and generated client, choose the runtime for the
