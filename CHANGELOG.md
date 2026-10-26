@@ -246,6 +246,11 @@ changes.
   itself when a part has such headers, because `FormData` cannot carry them.
   The other SDK targets do not send part headers.
 
+- Add the `file-transfer` gallery recipe (`python3 examples/run.py --only
+  file-transfer`): TypeScript, Python and Rust SDKs upload a 16 MiB file from
+  disk with a recreatable `UploadSource` and download it to a caller-chosen
+  path with matching SHA-256, and show a refused second save, a byte limit and
+  a missing file.
 - Generate streamed transfer methods in TypeScript, Python and Rust SDKs. An
   operation whose 2xx response is a binary body gets a `<method>Download` /
   `<method>_download` method returning the runtime's `Download` (Rust: async
