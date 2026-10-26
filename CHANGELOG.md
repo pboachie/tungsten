@@ -230,6 +230,11 @@ changes.
 
 ### Added
 
+- Generated Rust CLIs keep login sessions in the Windows Credential Locker
+  (through Windows PowerShell) by default on Windows. A session the locker
+  refuses, for example one above its secret size limit, fails with advice to
+  choose the owner-only file store explicitly.
+
 - Generated Rust CLIs sign in to OAuth2 `authorizationCode` schemes:
   `auth login` runs the runtime's managed S256 flow through a loopback
   redirect (bounded by the 10-minute attempt and `--deadline`), `auth switch`
