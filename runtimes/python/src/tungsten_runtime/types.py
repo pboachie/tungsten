@@ -747,6 +747,19 @@ class CallOptions(TypedDict, total=False):
     headers: Mapping[str, str]
 
 
+class DownloadOptions(CallOptions, total=False):
+    """Options of ``download``: those of a call, plus the transfer's own."""
+
+    #: Most body bytes the download may deliver. A larger declared
+    #: ``Content-Length`` fails before any byte is read; a body that grows past
+    #: it ends the download (``UNEXPECTED_RESPONSE``, ``code``
+    #: ``RESPONSE_TOO_LARGE``). ``max_response_bytes`` does not apply to a
+    #: streamed body, only to an error body. Default: no limit.
+    max_bytes: int | None
+    #: Called after every chunk with a ``TransferProgress``. What it raises is ignored.
+    on_progress: Callable[[Any], object]
+
+
 # ---------------------------------------------------------------- results
 
 
@@ -891,6 +904,7 @@ __all__ = [
     "CookiePart",
     "CursorPagination",
     "Diagnostic",
+    "DownloadOptions",
     "Err",
     "GatedStatus",
     "HeaderPart",

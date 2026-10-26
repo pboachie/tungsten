@@ -345,6 +345,12 @@ pub const FEATURES: &[FeatureDefinition] = &[
         None,
     ),
     def(
+        "streaming_downloads",
+        FeatureDomain::Runtime,
+        "explicit streamed response bodies with byte limits, progress, idle timeout and deadline",
+        None,
+    ),
+    def(
         "webhook_verification",
         FeatureDomain::Runtime,
         "framework-free incoming webhook verification: Stripe-compatible `t=,v1=` HMAC-SHA256 signatures compared in constant time, secret rotation, bounded body, timestamp tolerance and an application-owned replay hook",
@@ -495,7 +501,7 @@ targets! {
         summary: "Sync and async Python SDK, Pydantic v2 or dataclass models",
         options: &["package", "module", "version", "runtime", "runtime_path", "python_version", "models", "out"],
         environments: [Cpython],
-        features: &["typed_sdk", "pagination_helpers", "pagination_checkpoints", "dataclass_models", "webhook_verification"],
+        features: &["typed_sdk", "pagination_helpers", "pagination_checkpoints", "dataclass_models", "webhook_verification", "streaming_downloads"],
     },
     {
         id: "ruby", aliases: &["rb"], source: BuiltInEmitter, family: Some("ruby"), policy: true,
@@ -512,14 +518,14 @@ targets! {
         summary: "Async Rust SDK (serde, reqwest) and optional generated CLI",
         options: &["crate", "version", "runtime", "runtime_path", "cli", "out"],
         environments: [Native],
-        features: &["typed_sdk", "pagination_helpers", "pagination_checkpoints", "generated_cli", "webhook_verification", "cli_login_sessions"],
+        features: &["typed_sdk", "pagination_helpers", "pagination_checkpoints", "generated_cli", "webhook_verification", "cli_login_sessions", "streaming_downloads"],
     },
     {
         id: "typescript", aliases: &["ts"], source: BuiltInEmitter, family: Some("typescript"),
         policy: true, tools: JS, schema: Some(TargetOptionSchema::TypeScript),
         summary: "Typed TypeScript SDK, Result values, Zod validation",
         options: &["package", "version", "runtime", "runtime_path", "dependencies", "out"],
-        environments: [Node], features: &["typed_sdk", "pagination_helpers", "pagination_checkpoints", "webhook_verification"],
+        environments: [Node], features: &["typed_sdk", "pagination_helpers", "pagination_checkpoints", "webhook_verification", "streaming_downloads"],
     },
     {
         id: "webmcp", aliases: &[], source: BuiltInEmitter, family: Some("typescript"), policy: true,
