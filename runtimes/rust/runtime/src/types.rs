@@ -593,6 +593,8 @@ pub struct StreamDescriptor {
     /// Wire name of the boolean request body field that selects the stream;
     /// the stream call sets it to `true`.
     pub flag: Option<String>,
+    /// Every event's `data` is text delivered as written, not JSON.
+    pub text: bool,
 }
 
 #[derive(Debug, Clone)]

@@ -440,6 +440,8 @@ type StreamDescriptor struct {
 	// Flag is the wire name of the boolean body field that selects the
 	// stream; the stream call sets it to true.
 	Flag string
+	// Text marks every event's data as text delivered as written, not JSON.
+	Text bool
 }
 
 // OperationDescriptor is everything the runtime needs to call one

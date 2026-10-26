@@ -491,14 +491,16 @@ public final class EventStream<T> implements Iterator<Result<StreamEvent<T>>>, I
         }
         int index = o.count;
         String afterEffect = op.isMutation() ? " The call took effect; do not repeat it." : "";
-        Object value;
-        try {
-            value = Json.parse(ev.data());
-        } catch (Json.JsonException e) {
-            throw failure(o, core.diag(op.id(), Category.UNEXPECTED_RESPONSE).param("events[" + index + "]")
-                    .received(Text.envelopeValue(ev.data(), false)).expected("JSON in the data of every event")
-                    .remedy("Event " + index + " of the stream (event \"" + ev.event() + "\") does not carry JSON in its data."
-                            + afterEffect + " Events before it were delivered."));
+        Object value = ev.data();
+        if (!spec.text()) {
+            try {
+                value = Json.parse(ev.data());
+            } catch (Json.JsonException e) {
+                throw failure(o, core.diag(op.id(), Category.UNEXPECTED_RESPONSE).param("events[" + index + "]")
+                        .received(Text.envelopeValue(ev.data(), false)).expected("JSON in the data of every event")
+                        .remedy("Event " + index + " of the stream (event \"" + ev.event() + "\") does not carry JSON in its data."
+                                + afterEffect + " Events before it were delivered."));
+            }
         }
         if (core.validateResponses != ClientOptions.ValidateResponses.OFF && spec.event() != null) {
             List<Schema.Issue> issues = core.judge(op.id(), "events[" + index + "]", spec.event(), value, null);

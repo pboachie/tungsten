@@ -357,7 +357,7 @@ public final class Descriptors {
         if (o.get("stream") instanceof JsonObject) {
             JsonObject s = (JsonObject) o.get("stream");
             stream = new OperationDescriptor.Stream(
-                    Schema.read(s.get("event"), defs), str(s.get("done")), str(s.get("flag")));
+                    Schema.read(s.get("event"), defs), str(s.get("done")), str(s.get("flag")), bool(s.get("text")));
         }
         return new OperationDescriptor(
                 str(o.get("id"), ""),

@@ -281,8 +281,20 @@ public record OperationDescriptor(
      * @param event validates each event's decoded data, or null
      * @param done a data value that ends the stream, or null
      * @param flag the wire name of the boolean body field that selects the stream, or null
+     * @param text whether every event's data is text delivered as written, not JSON
      */
-    public record Stream(Schema event, String done, String flag) {}
+    public record Stream(Schema event, String done, String flag, boolean text) {
+        /**
+         * A stream whose event data is JSON.
+         *
+         * @param event validates each event's decoded data, or null
+         * @param done a data value that ends the stream, or null
+         * @param flag the wire name of the boolean body field that selects the stream, or null
+         */
+        public Stream(Schema event, String done, String flag) {
+            this(event, done, flag, false);
+        }
+    }
 
     /** Whether the operation changes state (any tier but read_only). */
     public boolean isMutation() {

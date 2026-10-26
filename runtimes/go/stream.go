@@ -589,7 +589,11 @@ func (c *ClientCore) accept(op *OperationDescriptor, spec *StreamDescriptor, o *
 	failure := func(b *diag) *Error {
 		return newError(scrubDiagnostic(b.status(o.meta.Status).requestID(o.meta.RequestID).retry(RetryNever).attempts(o.meta.Attempts).build(), &o.secrets))
 	}
-	value, err := ParseJSONString(ev.data)
+	var value any = ev.data
+	var err error
+	if !spec.Text {
+		value, err = ParseJSONString(ev.data)
+	}
 	if err != nil {
 		return nil, false, failure(newDiag(op.ID, UnexpectedResponse).param(fmt.Sprintf("events[%d]", index)).
 			received(envelopeValue(ev.data, false)).expected("JSON in the data of every event").

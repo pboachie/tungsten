@@ -147,6 +147,7 @@ final class OperationDescriptor {
             Schema(_map(_map(s)['event']), defs),
             _map(s)['done'] as String?,
             _map(s)['flag'] as String?,
+            _map(s)['text'] == true,
           )
         : null;
   }
@@ -326,7 +327,7 @@ final class OperationDescriptor {
 /// The event stream of an operation: the validator of each event's data,
 /// the data that ends the stream and the argument that asks for it.
 final class StreamDescriptor {
-  const StreamDescriptor._(this.event, this.done, this.flag);
+  const StreamDescriptor._(this.event, this.done, this.flag, this.text);
 
   /// The validator of each event's data.
   final Schema event;
@@ -336,6 +337,9 @@ final class StreamDescriptor {
 
   /// The argument set to true to ask for the stream, when there is one.
   final String? flag;
+
+  /// Whether every event's data is text delivered as written, not JSON.
+  final bool text;
 }
 
 /// A macro in the canonical form, from the SDK descriptor document.

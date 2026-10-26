@@ -1495,7 +1495,12 @@ pub(crate) fn stream_descriptor_rx(
         stmts,
         Rx::record(
             "StreamDescriptor",
-            vec![("event", event), ("done", done), ("flag", flag)],
+            vec![
+                ("event", event),
+                ("done", done),
+                ("flag", flag),
+                ("text", Rx::boolean(spec.text_data)),
+            ],
         ),
     ))
 }

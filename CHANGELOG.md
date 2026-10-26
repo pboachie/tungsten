@@ -831,6 +831,13 @@ changes.
   project pins or generated clients, or sends project data. `--json` output adds
   the `update check` command to the CLI output schema.
 
+- An OpenAPI 3.2 `text/event-stream` response whose `itemSchema` gives each
+  event a plain-text `data` string (no `contentMediaType`, or a `text/*` one,
+  and no `contentSchema`) compiles to a stream of string events. Every runtime
+  delivers such data as written instead of parsing it as JSON; the IR marks the
+  stream `text_data` and SDK descriptors carry `text: true`. Generated Rust
+  stream descriptors now always set the new `text` field.
+
 - OpenAPI 3.2 response `itemSchema` compiles onto the existing streaming
   support. On a JSON Lines response it is the type of one line. On a
   `text/event-stream` response whose item is an event object with a JSON `data`

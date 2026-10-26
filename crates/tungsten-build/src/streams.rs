@@ -10,8 +10,9 @@
 //!   success response: it is then the only thing a 2xx can be.
 //! - The event type is the media type's schema, usually a union tagged by
 //!   `type`, or in OpenAPI 3.2 the `contentSchema` of the `data` field of
-//!   its `itemSchema`. A media type without either gives events of any JSON
-//!   type (TG0530).
+//!   its `itemSchema`, or that `data` string itself when it is plain text
+//!   (`text_data`: events are not decoded as JSON). A media type without
+//!   any of these gives events of any JSON type (TG0530).
 //! - `x-tungsten-stream-done` on the media type object, else on the
 //!   operation, names a `data` value that ends the stream (`[DONE]`).
 //! - A boolean `stream` member of the JSON request body is the flag that
@@ -93,12 +94,14 @@ pub(crate) fn apply(cx: &mut Ctx<'_>, op: &mut Operation, at: &RefTarget) {
         crate::bodies::media_at(cx, &child(&t, "content"), &content.media_type)
     });
     let media = cx.get(&media_at);
-    // A 3.2 `itemSchema` whose event `data` is JSON types the events too.
-    let item_typed = crate::pathitem::reads_3_2(cx.ws, &media_at)
-        && media
-            .and_then(Value::as_object)
-            .and_then(|m| tungsten_openapi::response_item_schema(&content.media_type, m))
-            .is_some();
+    // A 3.2 `itemSchema` types the events too: their JSON `data`, or the
+    // `data` string itself when it is text.
+    let item = crate::pathitem::reads_3_2(cx.ws, &media_at)
+        .then(|| media.and_then(Value::as_object))
+        .flatten()
+        .and_then(|m| tungsten_openapi::response_item_schema(&content.media_type, m));
+    let item_typed = item.is_some();
+    let text_data = item == Some(tungsten_openapi::TEXT_EVENT_DATA);
     let typed = item_typed || media.is_some_and(|m| m.get("schema").is_some());
     if !typed {
         cx.report(
@@ -136,6 +139,7 @@ pub(crate) fn apply(cx: &mut Ctx<'_>, op: &mut Operation, at: &RefTarget) {
         done,
         request_flag,
         also_plain,
+        text_data,
     });
 }
 
