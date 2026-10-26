@@ -282,6 +282,9 @@ changes.
   limits the retries all callers of one scope make together; a retry it
   cannot pay for is not made. A runnable bulk-sync example shows a job staying
   within a local API's concurrency quota.
+  Optional caps across every scope (`maxActiveTotal`/`max_active_total`,
+  `maxStreamsTotal`/`max_streams_total`) bound requests in flight per
+  scheduler; scopes waiting for them take turns so none is starved.
 
 - Under a total operation deadline, the Rust runtime now stops waiting for an
   OAuth token request or 401 refresh at the deadline without cancelling a
