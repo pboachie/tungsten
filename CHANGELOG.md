@@ -290,6 +290,12 @@ changes.
   not modified. An interrupted apply is detected from its journal and restored
   with `--rollback`. The capability catalog lists the command for each
   converted input format as `refresh_command`.
+- `init` records the reviewed importer settings of a saved cURL, HTTP file or
+  HAR conversion (format, routes, shell dialect, HAR origin, path templates,
+  prefixes and redactions) under `settings` in `import-report.json`, and
+  `refresh-import` reuses them for flags that are not given again. `check` and
+  `generate` refuse a project with an interrupted `refresh-import --apply`
+  (TG0124) until `--rollback` restores it.
 
 - Add `tungsten upgrade rehearse`, run with a candidate release's binary: it
   regenerates the project from its locked inputs, offline and without
