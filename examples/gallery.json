@@ -192,6 +192,14 @@
     "outcome": "the generated client receives a nonempty typed Pet list from a loopback mock"
   },
   {
+    "name": "mock-scenarios",
+    "title": "Assert retries with saved mock scenarios",
+    "description": "Run an explicit integration against saved 429, interrupted-stream, malformed-response and lost-write scenarios, and fail deliberately broken retries.",
+    "mode": "scenario",
+    "prerequisites": "Linux for scenario run; no target-specific toolchain",
+    "outcome": "four saved scenarios pass, and broken retry, resume and replay behavior fails its assertions"
+  },
+  {
     "name": "ci-drift",
     "title": "Detect stale generated files in CI",
     "description": "Generate, change a copied contract, observe the no-diff gate fail, then regenerate and pass.",

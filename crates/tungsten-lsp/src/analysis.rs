@@ -69,6 +69,8 @@ pub struct Analysis {
     pub manifest: PathBuf,
     pub agent_file: PathBuf,
     pub overlays: Vec<PathBuf>,
+    /// Local profile files the manifest selected or included, as editor paths.
+    pub profiles: Vec<PathBuf>,
     /// OpenAPI documents the project read.
     pub inputs: BTreeSet<PathBuf>,
     /// Diagnostics by file, sorted by position.
@@ -115,6 +117,13 @@ pub fn analyze(
             .chain(config.inputs.iter().flat_map(|i| i.overlays.iter()));
         out.overlays = overlays.map(|o| normalize(&base.join(o))).collect();
     }
+    out.profiles = compiled
+        .profile_sources
+        .values()
+        .map(|path| profile_editor_path(path))
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
     out.inputs = compiled
         .workspace
         .documents

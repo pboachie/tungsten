@@ -1,0 +1,60 @@
+{
+  "openapi": "3.1.0",
+  "info": {"title": "Gallery Petstore", "version": "1.0.0"},
+  "paths": {
+    "/pets": {
+      "get": {
+        "operationId": "listPets",
+        "responses": {
+          "200": {
+            "description": "Pets",
+            "content": {"application/json": {"schema": {"type": "array", "items": {"$ref": "#/components/schemas/Pet"}}}}
+          }
+        }
+      },
+      "post": {
+        "operationId": "createPet",
+        "parameters": [
+          {"name": "Idempotency-Key", "in": "header", "required": true, "schema": {"type": "string"}}
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/NewPet"}}}
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Pet"}}}
+          }
+        }
+      }
+    },
+    "/pets/events": {
+      "get": {
+        "operationId": "watchPets",
+        "responses": {
+          "200": {
+            "description": "Pet changes",
+            "content": {"text/event-stream": {"schema": {"type": "string"}}}
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "NewPet": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {"name": {"type": "string"}},
+        "additionalProperties": false
+      },
+      "Pet": {
+        "type": "object",
+        "required": ["id", "name"],
+        "properties": {"id": {"type": "string"}, "name": {"type": "string"}},
+        "additionalProperties": false
+      }
+    }
+  }
+}

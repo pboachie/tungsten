@@ -349,6 +349,11 @@ pub(crate) struct BundleExportArgs {
     /// Export declared inputs whose names suggest credential or key material.
     #[arg(long)]
     pub allow_sensitive: bool,
+    /// Also carry the verified `.tungsten-inputs` pins and content of remote
+    /// inputs, so they reproduce offline. Check that the upstream terms allow
+    /// redistributing those documents.
+    #[arg(long)]
+    pub include_input_cache: bool,
 }
 
 #[derive(Debug, Args)]
@@ -431,6 +436,10 @@ pub(crate) struct CheckArgs {
     /// `--json` always lists every diagnostic.
     #[arg(long)]
     pub all_warnings: bool,
+    /// Fail (TG0128) unless the project matches its tungsten.lock.json
+    /// exactly. Implies offline input acquisition.
+    #[arg(long)]
+    pub locked: bool,
 }
 
 #[derive(Debug, Args)]
@@ -456,6 +465,10 @@ pub(crate) struct GenerateArgs {
     /// is written when there are any, in any target.
     #[arg(long)]
     pub strict: bool,
+    /// Refuse (TG0128) unless the project matches its tungsten.lock.json
+    /// exactly; nothing is written. Implies offline input acquisition.
+    #[arg(long)]
+    pub locked: bool,
 }
 
 #[derive(Debug, Args)]
@@ -654,6 +667,11 @@ pub(crate) struct InitArgs {
     /// Writes tungsten-profiles.toml with no credentials.
     #[arg(long, conflicts_with = "resume")]
     pub cli_profile: Vec<String>,
+    /// Select a shared local configuration profile (`tungsten_profile: 1`),
+    /// relative to --dir; repeatable, later profiles win. Its directory is the
+    /// include root. Explicit project settings still win over profile defaults.
+    #[arg(long, conflicts_with = "resume")]
+    pub profile: Vec<String>,
     /// Advanced: promote generation warnings to errors and withhold all outputs.
     #[arg(long)]
     pub strict: bool,

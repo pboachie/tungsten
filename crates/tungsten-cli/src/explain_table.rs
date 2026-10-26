@@ -263,6 +263,11 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
         "Fetch once online and retain both source.lock.json and its content file for offline use. Inspect permissions and unexpected cache entries before retrying. Partial *.pending writes from an interrupted fetch are discarded by the next online run; a held acquire.lock means another run is fetching the same source.",
     ),
     e(
+        "TG0128",
+        "A locked run (`generate --locked` or `check --locked`) found that the project does not match its generation lock: tungsten.lock.json is missing or corrupt, or a recorded source, reference, overlay, profile, target option, compiler or emitter identity changed. Nothing is generated.",
+        "Review the change and accept it explicitly with `tungsten lock --update`; `tungsten lock --check` lists every difference. Locked runs never fetch or refresh inputs.",
+    ),
+    e(
         "TG0130",
         "The Git input reference has an unsupported transport, URL credentials, query, invalid ref or unsafe subpath. Git authentication stays in the credential helper or environment.",
         "Use git+https://host/owner/repository@ref#path. Local hermetic inputs may use git+file:///absolute/repository@ref#path. Do not put secrets in the reference.",

@@ -691,7 +691,7 @@ tungsten [--json] <command>
 |---|---|
 | `init` | Write project manifests from any supported input ([Supported inputs](#supported-inputs)): `--from`, `--dir`, `--name`, `--targets`, `--force`; `--targets webmcp` includes a linked TypeScript SDK |
 | `check` | Validate the manifests and specs and report diagnostics (`--ci`, `--strict`); opt into response quality with `--audit-contracts` or audit-only enforcement with `--require-contracts`; `--ci` runs the emitters in memory, external ones included (`--no-external` skips them) |
-| `generate` | Generate every configured target (`--target`, `--dry-run`, `--check`, `--force`, `--strict`) |
+| `generate` | Generate every configured target (`--target`, `--dry-run`, `--check`, `--force`, `--strict`); `--locked` refuses (TG0128) unless the project matches `tungsten.lock.json` and acquires inputs offline |
 | `ir dump` | Write the IR as JSON (`--out`, `--compact`) |
 | `explain` | Explain a diagnostic code (`TG0201`), an operation or a type |
 | `schema` | Print a JSON Schema: `tungsten`, `agent`, `ir`, `cli-output`, `external-emitter`, `sdk-descriptors`, `tool-catalog`, `generation-lock`, `project-bundle` |
@@ -703,7 +703,7 @@ tungsten [--json] <command>
 | `doctor` | Report external tools; pass a project path and `--strict` to fail when its required tools are missing or too old |
 | `capabilities` | Query built-in target declarations without running tools or emitters; optionally select a target id or alias, such as `capabilities py --json`; `--matrix` prints the Markdown support matrix derived from the same declarations, and `--matrix --format markdown` wraps it in the markers of the README block CI checks |
 | `lock` | Capture the project generation lock `tungsten.lock.json` offline: content identities of the manifest, profiles, agent manifest, inputs, references and overlays (in order), compiler and built-in emitter identities, effective target option digests and consumer toolchains. `--check` fails when the lock is missing, stale or corrupt, `--preview` writes nothing, `--update` accepts changed identities |
-| `bundle export` / `bundle import` | Export the locked input closure and `tungsten.lock.json` into a new plain bundle directory with a digest inventory (`--preview` lists it; incomplete or credential-named content needs `--allow-incomplete` / `--allow-sensitive`), or validate a bundle completely and copy it into `--dest` without overwriting differing files. Neither runs emitters or grants trust |
+| `bundle export` / `bundle import` | Export the locked input closure and `tungsten.lock.json` into a new plain bundle directory with a digest inventory (`--preview` lists it; `--include-input-cache` carries the verified pins of remote inputs; incomplete or credential-named content needs `--allow-incomplete` / `--allow-sensitive`), or validate a bundle completely and copy it into `--dest` without overwriting differing files. Neither runs emitters or grants trust |
 | `support-bundle --preview` | Inspect the exact metadata-only support manifest without writing files; `--exclude <id>` removes an entry. On Linux and macOS, `--output <PATH>` instead publishes it to a new file in an existing, trusted directory; `--inspect <FILE>` checks and shows an existing bundle |
 
 With `--json`, stdout carries exactly one JSON document described by `tungsten schema cli-output` (`lsp` speaks the language server protocol on stdio instead). Color is used only on a terminal and never when `NO_COLOR` is set.
@@ -859,6 +859,11 @@ reports `applied` 2 and `replayed` 0, so the scenario fails. The report lists
 `effects` in file order only when the file declares any. Effect counts describe
 the mock's own processing; they do not prove a real provider's behavior or that
 the client received a response.
+
+The [mock-scenarios gallery recipe](examples/mock-scenarios/README.md) runs
+429-then-success, interrupted-stream, malformed-response and lost-write
+scenarios against a small integration, and shows each deliberately broken
+retry failing.
 
 Programs use the existing `/__tungsten/program` controls: `status` (200–599),
 optional JSON `body`, string-valued `headers`, `times`, error `code`, and

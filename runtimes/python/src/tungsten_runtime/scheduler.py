@@ -32,6 +32,9 @@ _KINDS: tuple[Kind, Kind] = ("call", "stream")
 #: The pause after a ``RATE_LIMITED`` answer that names no wait.
 _DEFAULT_PAUSE_MS = 1000.0
 _MAX_PAUSE_MS = 3_600_000.0
+#: Scopes whose retry budget is remembered; the least recently used is
+#: forgotten (and starts again from the reserve) beyond this.
+_MAX_BUDGETS = 1024
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +55,14 @@ class SchedulerOptions:
     #: ``"origin"``: one scope per tenant and request origin. ``"scheduler"``:
     #: one scope per tenant, whatever the origin.
     scope: Literal["origin", "scheduler"] = "origin"
+    #: Retries per call a scope may spend over time, shared by every caller of
+    #: the scope (0 to 1). Each call adds this much to the scope's retry budget
+    #: and each retry spends 1; a retry the budget cannot pay for is not made and
+    #: the call returns its last failure. None (default): retries are not budgeted.
+    retry_ratio: float | None = None
+    #: Retries a scope's budget holds before any call added to it, and the base
+    #: of its cap (``retry_reserve + 100 * retry_ratio``).
+    retry_reserve: int = 10
 
 
 @dataclass(frozen=True, slots=True)
@@ -150,6 +161,17 @@ class RequestScheduler:
         if options.scope not in ("origin", "scheduler"):
             raise ValueError(f'scope must be "origin" or "scheduler", got {options.scope!r}')
         self.scope: Literal["origin", "scheduler"] = options.scope
+        ratio = cast(object, options.retry_ratio)
+        if ratio is not None and (
+            not isinstance(ratio, int | float)
+            or isinstance(ratio, bool)
+            or not math.isfinite(ratio)
+            or not 0 <= ratio <= 1
+        ):
+            raise ValueError(f"retry_ratio must be a number from 0 to 1, got {ratio!r}")
+        self.retry_ratio: float | None = None if ratio is None else float(ratio)
+        self.retry_reserve = _integer(options.retry_reserve, 10, 0, 10_000, "retry_reserve")
+        self._budgets: dict[str, float] = {}
         self._lock = threading.Lock()
         self._pools: dict[str, _Pool] = {}
         self._idle = threading.Condition(self._lock)
@@ -171,6 +193,34 @@ class RequestScheduler:
             except ValueError:
                 origin = ""
         return f"{tenant or ''}\n{origin}"
+
+    # ------------------------------------------------------------ retry budget
+
+    def record_call(self, key: str) -> None:
+        """Add one call's share to the retry budget of ``key``."""
+        ratio = self.retry_ratio
+        if ratio is None:
+            return
+        with self._lock:
+            cap = self.retry_reserve + 100 * ratio
+            self._set_budget(key, min(cap, self._budgets.get(key, float(self.retry_reserve)) + ratio))
+
+    def allow_retry(self, key: str) -> bool:
+        """Spend one retry from the budget of ``key``; False when it cannot pay."""
+        if self.retry_ratio is None:
+            return True
+        with self._lock:
+            balance = self._budgets.get(key, float(self.retry_reserve))
+            if balance < 1:
+                return False
+            self._set_budget(key, balance - 1)
+            return True
+
+    def _set_budget(self, key: str, balance: float) -> None:
+        self._budgets.pop(key, None)
+        self._budgets[key] = balance
+        if len(self._budgets) > _MAX_BUDGETS:
+            del self._budgets[next(iter(self._budgets))]
 
     # ------------------------------------------------------------ admission
 
