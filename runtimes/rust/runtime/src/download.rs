@@ -402,8 +402,25 @@ impl ClientCore {
         opts: &CallOptions,
         transfer: DownloadOptions,
     ) -> Result<Download, Error> {
-        crate::verify::with_call_deadline(self, opts, self.download_with(op, &args, opts, transfer))
-            .await
+        // The operation ends when the answer is handed over; reading the
+        // body is not part of it.
+        let span = self.start_span(op, crate::TelemetryEntry::Download);
+        let pending =
+            crate::telemetry::Pending::new(span.as_ref(), crate::telemetry::PendingKind::Operation);
+        let result = crate::telemetry::scoped(
+            span.clone(),
+            crate::verify::with_call_deadline(
+                self,
+                opts,
+                self.download_with(op, &args, opts, transfer),
+            ),
+        )
+        .await;
+        pending.done();
+        if let Some(span) = span {
+            span.end(result.as_ref().err().map(|e| &*e.diagnostic), false, None);
+        }
+        result
     }
 
     async fn download_with(

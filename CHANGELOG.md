@@ -244,6 +244,10 @@ changes.
   failure the partial file is removed and the destination is untouched. An
   existing destination is refused (`DESTINATION_EXISTS`) unless overwrite is
   set. Server-suggested file names never choose the destination.
+- The runtime telemetry observer reports `download()` (`entry` `download`,
+  ending when the answer is handed over) and page exports (`export_pages`,
+  like `pages`) in TypeScript, Python and Rust. Unreleased 0.2.0 only.
+
 - Add the `examples/telemetry` gallery recipe: TypeScript, Python and Rust
   SDKs collect correlated operation, attempt and phase telemetry in memory for
   a read, a retried read and a missing record, print the same summary and
@@ -1023,8 +1027,8 @@ changes.
   TG0149 is retired and no longer reported.
 
 - Discriminator `defaultMapping` is honoured by more SDK targets: Java,
-  Kotlin, Ruby, C# and F# SDKs decode an object whose tag is absent, not a
-  string or claimed by no variant as the default variant, as TypeScript,
+  Kotlin, Ruby, C#, F#, Dart and Go SDKs decode an object whose tag is absent,
+  not a string or claimed by no variant as the default variant, as TypeScript,
   Python and Rust do. A non-string tag then fails only if the default
   variant's own field type refuses it.
 

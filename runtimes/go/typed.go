@@ -319,6 +319,9 @@ func PickVariant(s *Schema, data []byte) (int, error) {
 			return 0, errors.New("expected an object with the discriminator " + s.Tag)
 		}
 		tag, _ := o.vals[s.Tag].(string)
+		if s.DefaultTag != "" && !containsString(s.Tags, tag) {
+			tag = s.DefaultTag
+		}
 		for i, t := range s.Tags {
 			if t == tag {
 				return i, nil
