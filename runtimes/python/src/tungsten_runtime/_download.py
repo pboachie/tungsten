@@ -7,9 +7,13 @@ semantics of ``Download`` in ``runtimes/ts/src/download.ts``."""
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
+import errno
 import inspect
+import os
 import re
+import secrets
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from dataclasses import dataclass
 from types import TracebackType
@@ -18,7 +22,7 @@ from typing import Any, Literal, cast
 from ._effects import Chunk, ReadOutcome, StreamEnded
 from .types import Diagnostic, Err, Ok, ResponseMeta
 
-DownloadFailure = Literal["idle", "deadline", "aborted", "lost", "truncated", "oversized", "sink"]
+DownloadFailure = Literal["idle", "deadline", "aborted", "lost", "truncated", "oversized", "sink", "exists"]
 
 _DIGITS = re.compile(r"\d+")
 _HEX2 = re.compile(r"[0-9A-Fa-f]{2}")
@@ -143,6 +147,29 @@ def disposition_filename(value: str | None) -> str | None:
     return None if cleaned in ("", ".", "..") else cleaned
 
 
+def _error_name(error: BaseException) -> str:
+    """An OS error's errno name (``ENOSPC``), else the exception type."""
+    if isinstance(error, OSError) and error.errno is not None:
+        return errno.errorcode.get(error.errno, type(error).__name__)
+    return type(error).__name__
+
+
+def _part_path(target: str) -> str:
+    """A new temporary file next to ``target``: ``<name>.<random>.part``."""
+    return os.path.join(os.path.dirname(target), f"{os.path.basename(target)}.{secrets.token_hex(4)}.part")
+
+
+def _open_part(part: str) -> Any:
+    """Create ``part`` exclusively, readable by its owner only."""
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
+    return os.fdopen(os.open(part, flags, 0o600), "wb")
+
+
+def _discard_part(part: str) -> None:
+    with contextlib.suppress(OSError):
+        os.remove(part)
+
+
 class _Transfer:
     """The state both download handles share."""
 
@@ -243,10 +270,59 @@ class Download(_Transfer):
                 try:
                     sink(item.value)
                 except Exception as error:
-                    self._final = self._failed("sink", type(error).__name__)
+                    self._final = self._failed("sink", _error_name(error))
                     return self._final
         finally:
             self.close()
+
+    def abandon(self, why: DownloadFailure, detail: str | None = None) -> Err:
+        """End the download for a reason found outside it (``sink`` or
+        ``exists``) and release the connection; the failure every later read
+        returns."""
+        if isinstance(self._final, Err):
+            return self._final
+        failure = self._failed(why, detail)
+        self._final = failure
+        self._release()
+        return failure
+
+    def save_to(self, path: str | os.PathLike[str], *, overwrite: bool = False) -> Ok[int] | Err:
+        """Write the body to the file at ``path``, chosen by the caller (never
+        by the server: ``filename`` is only a suggestion). The bytes go to a
+        new temporary file next to it (``<name>.<random>.part``, created
+        exclusively), which replaces ``path`` only once the whole body
+        arrived; on any failure it is removed and ``path`` is left as it was.
+        Without ``overwrite``, an existing destination fails with ``code``
+        ``DESTINATION_EXISTS`` before any byte is read, and is checked again
+        before the replace. The parent directory must exist. The download is
+        closed when this returns."""
+        target = os.path.abspath(str(os.fspath(path)))
+        if not overwrite and os.path.lexists(target):
+            return self.abandon("exists")
+        part = _part_path(target)
+        try:
+            handle = _open_part(part)
+        except OSError as error:
+            return self.abandon("sink", _error_name(error))
+        result: Ok[int] | Err
+        try:
+            with handle:
+                result = self.write_to(handle.write)
+                if isinstance(result, Ok):
+                    handle.flush()
+                    os.fsync(handle.fileno())
+        except OSError as error:
+            result = self.abandon("sink", _error_name(error))
+        try:
+            if isinstance(result, Ok) and not overwrite and os.path.lexists(target):
+                result = self.abandon("exists")
+            if isinstance(result, Ok):
+                os.replace(part, target)
+        except OSError as error:
+            result = self.abandon("sink", _error_name(error))
+        if isinstance(result, Err):
+            _discard_part(part)
+        return result
 
     def close(self) -> None:
         """Abandon the download and release the connection. Safe to call more
@@ -315,10 +391,49 @@ class AsyncDownload(_Transfer):
                     if inspect.isawaitable(result):
                         await cast(Awaitable[object], result)
                 except Exception as error:
-                    self._final = self._failed("sink", type(error).__name__)
+                    self._final = self._failed("sink", _error_name(error))
                     return self._final
         finally:
             await self.aclose()
+
+    async def abandon(self, why: DownloadFailure, detail: str | None = None) -> Err:
+        """See ``Download.abandon``."""
+        if isinstance(self._final, Err):
+            return self._final
+        failure = self._failed(why, detail)
+        self._final = failure
+        await self._release()
+        return failure
+
+    async def save_to(self, path: str | os.PathLike[str], *, overwrite: bool = False) -> Ok[int] | Err:
+        """See ``Download.save_to``; file writes run in a worker thread."""
+        target = os.path.abspath(str(os.fspath(path)))
+        if not overwrite and os.path.lexists(target):
+            return await self.abandon("exists")
+        part = _part_path(target)
+        try:
+            handle = _open_part(part)
+        except OSError as error:
+            return await self.abandon("sink", _error_name(error))
+        result: Ok[int] | Err
+        try:
+            with handle:
+                result = await self.write_to(lambda chunk: asyncio.to_thread(handle.write, chunk))
+                if isinstance(result, Ok):
+                    handle.flush()
+                    await asyncio.to_thread(os.fsync, handle.fileno())
+        except OSError as error:
+            result = await self.abandon("sink", _error_name(error))
+        try:
+            if isinstance(result, Ok) and not overwrite and os.path.lexists(target):
+                result = await self.abandon("exists")
+            if isinstance(result, Ok):
+                os.replace(part, target)
+        except OSError as error:
+            result = await self.abandon("sink", _error_name(error))
+        if isinstance(result, Err):
+            _discard_part(part)
+        return result
 
     async def aclose(self) -> None:
         """See ``Download.close``."""

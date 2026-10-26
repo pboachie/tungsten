@@ -142,6 +142,12 @@ between chunks (`STREAM_IDLE`) and by `deadline_ms` (`DEADLINE_EXCEEDED`).
 with an `Err`; for a mutation the failure says the call took effect. The connection and its
 scheduler capacity are held until the body ends, fails or is closed (both handles are
 context managers). A download is never retried once its answer arrived and never resumed.
+`save_to(path, overwrite=False)` writes a download to a file the caller chose: an
+exclusively created `<name>.<random>.part` file next to `path` replaces it only after
+the whole body arrived; on failure the partial file is removed and `path` is
+untouched. An existing `path` fails before any byte is read (`DESTINATION_EXISTS`)
+unless `overwrite` is set. The parent directory must exist; the async core writes in
+a worker thread.
 `Download.filename` is the `Content-Disposition` name reduced to a base name without
 directory parts or control characters; it never chooses a destination.
 
