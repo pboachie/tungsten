@@ -99,6 +99,16 @@ let extraTyped (d: Decoder) (o: JsonObject) (known: string[]) (dec: Dec<'T>) : M
 /// The value of a discriminator member, else a mismatch at its path.
 let tag (d: Decoder) (o: JsonObject) (name: string) : string = d.Tag(o, name)
 
+/// The value of a discriminator member when it is a string, else `None`: a tagged union with an
+/// OpenAPI 3.2 `defaultMapping` decodes such an object as its default variant.
+let tagOption (o: JsonObject) (name: string) : string option =
+    match o.TryGetPropertyValue(name) with
+    | true, v ->
+        match Tungsten.Runtime.Json.TryString(v) with
+        | true, s -> Some s
+        | _ -> None
+    | _ -> None
+
 /// The failure for a tag value no variant has.
 let unknownTag (d: Decoder) (name: string) (value: string) (known: string[]) : exn =
     d.UnknownTag(name, value, known) :> exn
