@@ -226,6 +226,10 @@ changes.
 
 ### Added
 
+- Serve local profile files in `tungsten lsp`: completion and hover for
+  profile keys and target defaults from the shared profile schema, and file
+  watchers for profile directories outside the workspace folder so editing a
+  shared profile rechecks the project.
 - `scenario run --timeout-ms` now bounds the whole command, including input
   acquisition and compilation, and SIGINT/SIGTERM cancel a run that is still
   preparing. Such a run reports `timed_out` or `cancelled` before any port is
@@ -262,6 +266,11 @@ changes.
   bodies and verification, and a whole traversal, poll or macro. No attempt
   starts after it expires (`DEADLINE_EXCEEDED`); a mutation already sent still
   reports `OUTCOME_UNKNOWN`. Existing timeout semantics are unchanged.
+
+- Add the same total operation deadline to the C# runtime
+  (`ClientOptions.Deadline`, `CallOptions.Deadline`), measured on a monotonic
+  clock. Authentication and a shared OAuth refresh are waited for only until
+  the deadline, never cancelled for other callers.
 
 - Add a per-tool-call total deadline to the MCP adapter
   (`ServerOptions.toolDeadlineMs`, `<API>_MCP_DEADLINE_MS` in generated
@@ -520,6 +529,18 @@ changes.
   typed defaults/fallback policy and winning/shadowed authored origins. Plain
   text and JSON redact sensitive values and physical paths without compiling
   inputs, probing tools or executing emitters.
+
+- Select shared local configuration profiles from `tungsten init --profile PATH`
+  (repeatable) and from the guided setup. Selections are composed with the
+  compiler's limits before any file is written. Invalid, missing or remote
+  profiles are refused, and no files are written.
+
+- Apply profile defaults only to targets a project declares. A shared profile
+  no longer adds a TypeScript, Python or Rust output to a project that did not
+  ask for it.
+
+- Add a profile-reuse example: an app and a multi-target library share one
+  profile chain with per-project overrides, checked offline with the compiler.
 
 - Compose Python (`package`, `version`, `runtime`, `models`, `python_version`)
   and Rust (`crate`, `version`, `runtime`) defaults from the same bounded local
