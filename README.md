@@ -128,23 +128,22 @@ The support matrix below is generated from the capability catalog (`tungsten cap
 
 | Target | Aliases | Emits | Consumer toolchain | Runs on | Features | Imported-operation policy | Qualification | Artifacts |
 |---|---|---|---|---|---|---|---|---|
-| `csharp` | `cs` | C# SDK | dotnet >=10.0 | dotnet | `typed_sdk`, `pagination_helpers`, `imported_operation_policy` | enforced | unknown | unknown |
-| `dart` |  | Dart SDK (sealed unions, Future methods returning Result, Stream pages) | dart >=3.6 <4.0 | dart_io | `typed_sdk`, `pagination_helpers`, `imported_operation_policy` | enforced | unknown | unknown |
-| `docs` |  | llms.txt, llms-full.txt, tools.json and README | none | static | `llms_txt`, `imported_operation_policy` | enforced | unknown | unknown |
-| `fsharp` | `fs` | F# SDK (records, discriminated unions, Task of Result) | dotnet >=10.0 | dotnet | `typed_sdk`, `pagination_helpers`, `imported_operation_policy` | enforced | unknown | unknown |
-| `java` |  | Java SDK | java >=17.0; mvn installed | jvm | `typed_sdk`, `pagination_helpers`, `imported_operation_policy` | enforced | unknown | unknown |
-| `kotlin` | `kt` | Kotlin/JVM SDK (blocking functions returning Result; opt-in coroutines) | java >=17.0; gradle installed | jvm | `typed_sdk`, `pagination_helpers`, `imported_operation_policy`, `coroutines` | enforced | unknown | unknown |
-| `mcp` |  | MCP server over stdio or Streamable HTTP, discrete or progressive | node >=22.13 excluding 23.0.x, 23.1.x; npm installed | node | `mcp_stdio`, `mcp_streamable_http`, `mcp_embedding_search`, `mcp_script_sandbox`, `imported_operation_policy` | enforced | unknown | unknown |
+| `csharp` | `cs` | C# SDK | dotnet >=10.0 | dotnet | `typed_sdk`, `pagination_helpers` | enforced | unknown | unknown |
+| `dart` |  | Dart SDK (sealed unions, Future methods returning Result, Stream pages) | dart >=3.6 <4.0 | dart_io | `typed_sdk`, `pagination_helpers` | enforced | unknown | unknown |
+| `docs` |  | llms.txt, llms-full.txt, tools.json and README | none | static | `llms_txt` | enforced | unknown | unknown |
+| `fsharp` | `fs` | F# SDK (records, discriminated unions, Task of Result) | dotnet >=10.0 | dotnet | `typed_sdk`, `pagination_helpers` | enforced | unknown | unknown |
+| `java` |  | Java SDK | java >=17.0; mvn installed | jvm | `typed_sdk`, `pagination_helpers` | enforced | unknown | unknown |
+| `kotlin` | `kt` | Kotlin/JVM SDK (blocking functions returning Result; opt-in coroutines) | java >=17.0; gradle installed | jvm | `typed_sdk`, `pagination_helpers`, `coroutines` | enforced | unknown | unknown |
+| `mcp` |  | MCP server over stdio or Streamable HTTP, discrete or progressive | node >=22.13 excluding 23.0.x, 23.1.x; npm installed | node | `mcp_stdio`, `mcp_streamable_http`, `mcp_embedding_search`, `mcp_script_sandbox` | enforced | unknown | unknown |
 | `mock` |  | reserved; no emitter in this version | none |  |  | n/a | unknown | unknown |
-| `python` | `py` | Sync and async Python SDK, Pydantic v2 or dataclass models | python3 >=3.12 (`python_version` selects the minimum) | cpython | `typed_sdk`, `pagination_helpers`, `imported_operation_policy`, `dataclass_models` | enforced | unknown | unknown |
-| `ruby` | `rb` | Ruby SDK | ruby >=3.3; bundle installed | ruby | `typed_sdk`, `pagination_helpers`, `imported_operation_policy` | enforced | unknown | unknown |
-| `rust` | `rs` | Async Rust SDK (serde, reqwest) and optional generated CLI | cargo >=1.88; rustc >=1.88 | native | `typed_sdk`, `pagination_helpers`, `imported_operation_policy`, `generated_cli` | enforced | unknown | unknown |
-| `typescript` | `ts` | Typed TypeScript SDK, Result values, Zod validation | node >=22.0; npm installed | node | `typed_sdk`, `pagination_helpers`, `imported_operation_policy` | enforced | unknown | unknown |
-| `webmcp` |  | Browser ESM package with tool manifest and registration helper | node >=22.0; npm installed | browser | `webmcp_registration`, `imported_operation_policy` | enforced | unknown | unknown |
+| `python` | `py` | Sync and async Python SDK, Pydantic v2 or dataclass models | python3 >=3.12 (`python_version` selects the minimum) | cpython | `typed_sdk`, `pagination_helpers`, `dataclass_models` | enforced | unknown | unknown |
+| `ruby` | `rb` | Ruby SDK | ruby >=3.3; bundle installed | ruby | `typed_sdk`, `pagination_helpers` | enforced | unknown | unknown |
+| `rust` | `rs` | Async Rust SDK (serde, reqwest) and optional generated CLI | cargo >=1.88; rustc >=1.88 | native | `typed_sdk`, `pagination_helpers`, `generated_cli` | enforced | unknown | unknown |
+| `typescript` | `ts` | Typed TypeScript SDK, Result values, Zod validation | node >=22.0; npm installed | node | `typed_sdk`, `pagination_helpers` | enforced | unknown | unknown |
+| `webmcp` |  | Browser ESM package with tool manifest and registration helper | node >=22.0; npm installed | browser | `webmcp_registration` | enforced | unknown | unknown |
 
 | Feature | Domain | Opt-in option | Description |
 |---|---|---|---|
-| `imported_operation_policy` | runtime |  | enforces imported-operation policy (Postman, cURL, .http, HAR inputs) at run time |
 | `typed_sdk` | target |  | typed models and operation methods for every compiled operation |
 | `pagination_helpers` | target |  | page iteration helpers for operations with declared pagination |
 | `generated_cli` | target | `cli` | a command-line client crate next to the SDK |
@@ -162,6 +161,17 @@ The support matrix below is generated from the capability catalog (`tungsten cap
 | 3.0 | supported | 0 |
 | 3.1 | supported | 0 |
 | 3.2 | subset | 15 |
+
+| Input format | Versions | Route | Detection | Operations | Review flags | Acquisition |
+|---|---|---|---|---|---|---|
+| `openapi` | 3.0, 3.1, 3.2 | compiler | `openapi` member | native |  | local, https, git |
+| `swagger` | 2.0 | init_conversion | `swagger` member | imported |  | local, https, git |
+| `postman` | 2.1 | init_conversion | `info` and `item` members | imported |  | local, https, git |
+| `curl` |  | init_conversion | a leading `curl`, a `.curl` extension or `--input-format curl` | imported | `--route` | local, https, git |
+| `http` |  | init_conversion | a `.http` or `.rest` extension or `--input-format http` | imported | `--route` | local, https, git |
+| `har` | 1.2 | init_conversion | `log` member | imported | `--har-paths` | local, https, git |
+| `endpoint_manifest` | 1 | init_conversion | `endpoint_manifest` member | imported |  | local, https, git |
+| `manual_endpoint` |  | init_inference | `--method` and `--endpoint`, without `--from` | imported |  |  |
 
 Source declarations only: a declared feature or environment is not qualification, and `unknown` evidence never becomes a compatibility claim.
 <!-- tungsten-capabilities-matrix:end -->
@@ -704,7 +714,7 @@ tungsten [--json] <command>
 | `capabilities` | Query built-in target declarations without running tools or emitters; optionally select a target id or alias, such as `capabilities py --json`; `--matrix` prints the Markdown support matrix derived from the same declarations, and `--matrix --format markdown` wraps it in the markers of the README block CI checks |
 | `lock` | Capture the project generation lock `tungsten.lock.json` offline: content identities of the manifest, profiles, agent manifest, inputs, references and overlays (in order), compiler and built-in emitter identities, effective target option digests and consumer toolchains. `--check` fails when the lock is missing, stale or corrupt, `--preview` writes nothing, `--update` accepts changed identities |
 | `bundle export` / `bundle import` | Export the locked input closure and `tungsten.lock.json` into a new plain bundle directory with a digest inventory (`--preview` lists it; `--include-input-cache` carries the verified pins of remote inputs; incomplete or credential-named content needs `--allow-incomplete` / `--allow-sensitive`), or validate a bundle completely and copy it into `--dest` without overwriting differing files. Neither runs emitters or grants trust |
-| `support-bundle --preview` | Inspect the exact metadata-only support manifest without writing files; `--exclude <id>` removes an entry. On Linux and macOS, `--output <PATH>` instead publishes it to a new file in an existing, trusted directory; `--inspect <FILE>` checks and shows an existing bundle |
+| `support-bundle --preview` | Inspect the exact metadata-only support manifest without writing files; `--exclude <id>` removes an entry. On Linux, macOS and Windows, `--output <PATH>` instead publishes it to a new file in an existing, trusted directory; `--inspect <FILE>` checks and shows an existing bundle |
 
 With `--json`, stdout carries exactly one JSON document described by `tungsten schema cli-output` (`lsp` speaks the language server protocol on stdio instead). Color is used only on a terminal and never when `NO_COLOR` is set.
 
@@ -718,8 +728,8 @@ network. It excludes configuration values, private paths, URLs, credentials,
 source text, logs, hashes and project identifiers. Use `--exclude <id>` to omit
 an entry; collection of additional sensitive content is not supported.
 
-On Linux and macOS, `tungsten support-bundle --output <PATH>` creates a new
-local file.
+On Linux, macOS and Windows, `tungsten support-bundle --output <PATH>` creates
+a new local file.
 Its bytes are exactly the same manifest serialized as compact JSON with one
 trailing newline, capped at 128 KiB including metadata; entry payloads retain
 their 16 KiB individual and 64 KiB combined limits. The JSON command result is
@@ -739,8 +749,18 @@ operation semantics. Every path component is opened without following
 symlinks, so macOS paths through the `/tmp`, `/var` and `/etc` symlinks are
 refused; use the `/private/...` path or a directory in your home folder.
 Publication needs hard-link support in the destination filesystem, which some
-FAT, exFAT and network volumes lack. Other platforms refuse export before
-collecting data; preview remains available.
+FAT, exFAT and network volumes lack. On Windows, every directory from the
+drive root to the destination is held open without delete sharing, so none
+can be renamed or replaced during export; reparse points (symlinks and
+junctions), network shares, device paths, reserved device names and
+alternate data streams are refused. Windows does not check the directory's
+owner or ACL: export into a directory only you can write, such as one in your
+user profile. Other platforms refuse export before collecting data; preview
+remains available.
+
+Collection, for preview and export alike, stops after 30 seconds with nothing
+written. It only reads, so an abandoned collection has no side effects; in an
+embedding process its worker thread may keep running until it finishes.
 
 Library callers can cooperatively cancel an export before publication with
 `run_with_cancellation`. Successful publication is the commit point: a later
