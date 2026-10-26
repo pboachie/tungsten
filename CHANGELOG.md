@@ -244,6 +244,11 @@ changes.
   a JSON object is never overwritten. It never makes a network request.
   `--json` output adds the `update notice` command to the CLI output schema.
 
+- The runtime telemetry observer reports `stream()` in TypeScript, Python and
+  Rust as one `stream` operation covering its connection and every reconnect,
+  ending `ok`, `error` (final failure item) or `cancelled` (cancelled or left
+  early). Unreleased 0.2.0 only.
+
 - `tungsten update check` links the upgrade rehearsal: when a newer release is
   available, `rehearse_command` (new `--json` field) holds the
   `tungsten upgrade rehearse --to <version> --workspace <dir>` invocation, and
@@ -348,7 +353,12 @@ changes.
   without the cursor. Registered as the `pagination_checkpoints` capability for
   the `typescript`, `python` and `rust` targets. In Rust, `ExportPages::typed`
   decodes items and `blocking::Runtime::export_pages` iterates an export with
-  blocking calls.
+  blocking calls. Generated Rust CLIs accept `--checkpoint-file <PATH>` with
+  `--all` on read-only paginated commands: with `<PREFIX>_CHECKPOINT_KEY` set
+  to a secret of at least 32 bytes, the checkpoint is saved owner-only after
+  each page is printed, and rerunning with the same file prints only the
+  remaining pages; delete the file to start over. `checkpoint-file` is now a
+  reserved flag name.
 
 - Generated Rust CLIs sign in to OAuth2 `authorizationCode` schemes:
   `auth login` runs the runtime's managed S256 flow through a loopback
@@ -394,6 +404,10 @@ changes.
 - `refresh-import --apply` stages the reviewed content beside its backups, so
   `refresh-import --resume` finishes an interrupted apply (writes, pin and
   lock) as an alternative to `--rollback`.
+- `refresh-import` refreshes converted inputs acquired from Git sources
+  (`git+https://…@ref#path`). The preview resolves the ref into a private
+  scratch cache; `--apply` installs exactly that reviewed commit's pin and
+  tree, so the ref is never resolved again between review and apply.
 - The language server offers a disabled "Refresh the converted import" action
   on TG0122 for a converted input whose remote source changed, naming the
   `refresh-import` preview, `--apply` and `--offline` choices.
@@ -983,10 +997,11 @@ changes.
   as TG0306 and ignored. Other SDK targets still refuse an unmapped tag.
   TG0149 is retired and no longer reported.
 
-- Discriminator `defaultMapping` is honoured by more SDK targets: Java SDKs
-  decode an object whose tag is absent, not a string or claimed by no variant
-  as the default variant, as TypeScript, Python and Rust do. A non-string tag
-  then fails only if the default variant's own field type refuses it.
+- Discriminator `defaultMapping` is honoured by more SDK targets: Java and
+  Kotlin SDKs decode an object whose tag is absent, not a string or claimed by
+  no variant as the default variant, as TypeScript, Python and Rust do. A
+  non-string tag then fails only if the default variant's own field type
+  refuses it.
 
 - OpenAPI 3.2 security requirements that name a scheme by URI compile: a key
   such as `#/components/securitySchemes/apiKey`, or a URI into another input

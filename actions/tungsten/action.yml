@@ -152,6 +152,13 @@ runs:
         # The installer at the same commit as this action: pinning the action
         # by SHA pins the installer. It checks the archive against the
         # release's SHA256SUMS and its build provenance (GitHub CLI 2.102.0+).
+        # Provenance verification needs GitHub CLI 2.102.0 or newer. Say how to
+        # get it before the installer refuses; never fall back to checksums only.
+        gh_version=$(gh --version 2>/dev/null | awk 'NR == 1 { print $3 }' || true)
+        if [ -z "$gh_version" ] || ! printf '%s\n' "$gh_version" | awk -F. '{ exit !(NF >= 2 && ($1 > 2 || ($1 == 2 && $2 >= 102))) }'; then
+          echo "::error title=tungsten::GitHub CLI 2.102.0 or newer is required to verify the release provenance; this runner has ${gh_version:-no gh}. Update it in an earlier step (on macOS images: brew upgrade gh) or use a runner image with a newer GitHub CLI"
+          exit 1
+        fi
         installer="$GITHUB_ACTION_PATH/../../install.sh"
         [ -f "$installer" ] || { echo "::error title=tungsten::install.sh not found next to the action"; exit 1; }
         bin_dir="$RUNNER_TEMP/tungsten-$version/bin"
