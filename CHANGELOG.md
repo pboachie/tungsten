@@ -43,6 +43,12 @@ changes.
 
 ### Documentation
 
+- Add the `webhook-receiver` gallery recipe: TypeScript, Python and Rust
+  receivers for a non-sensitive `order.shipped` webhook verify signed
+  deliveries with example secrets, refuse a replay, a tampered body, a stale
+  timestamp and an incomplete payload, accept a rotated-secret delivery, and
+  print identical outcomes, without a web framework or network.
+
 - Add a migration note contrasting the new opt-in total operation deadline
   with the existing per-attempt `timeoutMs` and its equivalents, across the
   runtimes, the generated Rust CLI and the MCP server.
@@ -234,6 +240,12 @@ changes.
   Rust as one `stream` operation covering its connection and every reconnect,
   ending `ok`, `error` (final failure item) or `cancelled` (cancelled or left
   early). Unreleased 0.2.0 only.
+
+- `tungsten update check` links the upgrade rehearsal: when a newer release is
+  available, `rehearse_command` (new `--json` field) holds the
+  `tungsten upgrade rehearse --to <version> --workspace <dir>` invocation, and
+  the guidance for migrations names `upgrade rehearse` and `upgrade apply`
+  instead of the separate preview commands.
 
 - Concurrent commands of a generated Rust CLI refresh a stored login session
   one process at a time: the token is refreshed before the call under a
