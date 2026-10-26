@@ -34,7 +34,7 @@ pub enum SchedulerScope {
 
 /// Limits of a [`RequestScheduler`]. Every limit applies per scope, except
 /// the optional `max_active_total` and `max_streams_total`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone)]
 pub struct SchedulerOptions {
     /// Ordinary requests in flight at once. 1 to 10000.
     pub max_active: u32,
@@ -66,6 +66,101 @@ pub struct SchedulerOptions {
     /// Event streams open at once across every scope, on top of each scope's
     /// `max_streams`. `None` (default): no cap across scopes.
     pub max_streams_total: Option<u32>,
+    /// Receives every admission event, synchronously and outside the
+    /// scheduler's lock; see [`SchedulerEvent`]. A panic in it is caught and
+    /// ignored; it must not block. Default: none.
+    pub on_event: Option<SchedulerObserver>,
+}
+
+/// Receives the admission events of a [`RequestScheduler`].
+pub type SchedulerObserver = Arc<dyn Fn(&SchedulerEvent) + Send + Sync>;
+
+impl fmt::Debug for SchedulerOptions {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SchedulerOptions")
+            .field("max_active", &self.max_active)
+            .field("max_queued", &self.max_queued)
+            .field("max_streams", &self.max_streams)
+            .field("max_queue", &self.max_queue)
+            .field("scope", &self.scope)
+            .field("retry_ratio", &self.retry_ratio)
+            .field("retry_reserve", &self.retry_reserve)
+            .field("max_active_total", &self.max_active_total)
+            .field("max_streams_total", &self.max_streams_total)
+            .field("on_event", &self.on_event.is_some())
+            .finish()
+    }
+}
+
+impl PartialEq for SchedulerOptions {
+    fn eq(&self, other: &Self) -> bool {
+        self.max_active == other.max_active
+            && self.max_queued == other.max_queued
+            && self.max_streams == other.max_streams
+            && self.max_queue == other.max_queue
+            && self.scope == other.scope
+            && self.retry_ratio == other.retry_ratio
+            && self.retry_reserve == other.retry_reserve
+            && self.max_active_total == other.max_active_total
+            && self.max_streams_total == other.max_streams_total
+            && match (&self.on_event, &other.on_event) {
+                (None, None) => true,
+                (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+                _ => false,
+            }
+    }
+}
+
+/// One admission event (contract version 1). Events name no scope, tenant,
+/// URL or payload, so they carry no secret and few distinct values; read
+/// [`RequestScheduler::stats`] for counts. Durations are whole milliseconds;
+/// a field that does not apply is `None`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SchedulerEvent {
+    pub version: u8,
+    /// `admitted`: a request got capacity. `rejected`: it did not and was
+    /// not sent. `released`: a request gave its capacity back. `paused`: a
+    /// `RATE_LIMITED` answer paused its scope. `retry_denied`: the retry
+    /// budget refused a retry.
+    pub event: &'static str,
+    /// `call` or `stream`; `None` for `paused`.
+    pub kind: Option<&'static str>,
+    /// `admitted`, `rejected`: how long the request waited for capacity.
+    pub wait_ms: Option<u64>,
+    /// `released`: how long the request held its capacity.
+    pub held_ms: Option<u64>,
+    /// `paused`: how long the scope pauses; `rejected` with reason `paused`:
+    /// how long the pause still lasts.
+    pub pause_ms: Option<u64>,
+    /// `rejected`: `full`, `timeout`, `paused`, `closed` or `aborted` (the
+    /// waiting future was dropped).
+    pub reason: Option<&'static str>,
+}
+
+impl SchedulerEvent {
+    fn new(event: &'static str, kind: Option<Kind>) -> Self {
+        SchedulerEvent {
+            version: 1,
+            event,
+            kind: kind.map(|k| if k == Kind::Call { "call" } else { "stream" }),
+            wait_ms: None,
+            held_ms: None,
+            pause_ms: None,
+            reason: None,
+        }
+    }
+}
+
+fn whole_ms(duration: Duration) -> Option<u64> {
+    Some(u64::try_from(duration.as_millis()).unwrap_or(u64::MAX))
+}
+
+/// Hand one event to the observer, if any; never under the state lock.
+fn emit(shared: &Shared, event: SchedulerEvent) {
+    if let Some(observer) = &shared.on_event {
+        // Observers never change admission.
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| observer(&event)));
+    }
 }
 
 impl SchedulerOptions {
@@ -81,6 +176,7 @@ impl SchedulerOptions {
             retry_reserve: 10,
             max_active_total: None,
             max_streams_total: None,
+            on_event: None,
         }
     }
 }
@@ -169,6 +265,7 @@ struct Shared {
     state: Mutex<State>,
     /// Retry budget balance and last use of each scope.
     budgets: Mutex<Budgets>,
+    on_event: Option<SchedulerObserver>,
 }
 
 /// Admits requests within the configured bounds. Clone it into
@@ -199,6 +296,7 @@ pub(crate) struct Permit {
     kind: Kind,
     random: Random,
     settled: bool,
+    granted: Instant,
 }
 
 impl fmt::Debug for Permit {
@@ -257,6 +355,10 @@ impl Permit {
                 waiter.notify.notify_one();
             }
         }
+        drop(state);
+        let mut event = SchedulerEvent::new("paused", None);
+        event.pause_ms = Some((wait + spread).round() as u64);
+        emit(&self.shared, event);
     }
 }
 
@@ -274,6 +376,9 @@ impl Drop for Permit {
         for notify in granted {
             notify.notify_one();
         }
+        let mut event = SchedulerEvent::new("released", Some(self.kind));
+        event.held_ms = whole_ms(self.granted.elapsed());
+        emit(&shared, event);
     }
 }
 
@@ -359,6 +464,7 @@ impl RequestScheduler {
                 max_total: [max_active_total, max_streams_total],
                 state: Mutex::new(State::default()),
                 budgets: Mutex::new((HashMap::new(), 0)),
+                on_event: options.on_event,
             }),
         })
     }
@@ -377,7 +483,14 @@ impl RequestScheduler {
         if self.shared.retry_ratio.is_none() {
             return true;
         }
-        self.update_budget(key, |balance| (balance >= 1.0).then_some(balance - 1.0))
+        let allowed = self.update_budget(key, |balance| (balance >= 1.0).then_some(balance - 1.0));
+        if !allowed {
+            emit(
+                &self.shared,
+                SchedulerEvent::new("retry_denied", Some(Kind::Call)),
+            );
+        }
+        allowed
     }
 
     /// Apply `change` to the balance of `key`; false when it declined.
@@ -421,6 +534,51 @@ impl RequestScheduler {
     /// Wait for capacity in `key`; `deadline` also ends the wait. Dropping
     /// the future removes the request from the queue.
     pub(crate) async fn acquire(
+        &self,
+        key: &str,
+        kind: Kind,
+        deadline: Option<Instant>,
+        random: Random,
+    ) -> Result<Permit, Rejection> {
+        if self.shared.on_event.is_none() {
+            return self.acquire_inner(key, kind, deadline, random).await;
+        }
+        // Reports the outcome, or `aborted` when the future is dropped first.
+        struct Report<'a> {
+            shared: &'a Shared,
+            kind: Kind,
+            started: Instant,
+            outcome: Option<Result<(), Rejection>>,
+        }
+        impl Drop for Report<'_> {
+            fn drop(&mut self) {
+                let (name, reason, pause) = match self.outcome {
+                    Some(Ok(())) => ("admitted", None, None),
+                    Some(Err(Rejection::Full)) => ("rejected", Some("full"), None),
+                    Some(Err(Rejection::Timeout)) => ("rejected", Some("timeout"), None),
+                    Some(Err(Rejection::Paused(ms))) => ("rejected", Some("paused"), Some(ms)),
+                    Some(Err(Rejection::Closed)) => ("rejected", Some("closed"), None),
+                    None => ("rejected", Some("aborted"), None),
+                };
+                let mut event = SchedulerEvent::new(name, Some(self.kind));
+                event.wait_ms = whole_ms(self.started.elapsed());
+                event.reason = reason;
+                event.pause_ms = pause;
+                emit(self.shared, event);
+            }
+        }
+        let mut report = Report {
+            shared: &self.shared,
+            kind,
+            started: Instant::now(),
+            outcome: None,
+        };
+        let outcome = self.acquire_inner(key, kind, deadline, random).await;
+        report.outcome = Some(outcome.as_ref().map(|_| ()).map_err(|r| *r));
+        outcome
+    }
+
+    async fn acquire_inner(
         &self,
         key: &str,
         kind: Kind,
@@ -586,6 +744,7 @@ impl RequestScheduler {
             kind,
             random,
             settled: false,
+            granted: Instant::now(),
         }
     }
 

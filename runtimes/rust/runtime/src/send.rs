@@ -533,7 +533,7 @@ impl ClientCore {
                         request_id,
                         attempts,
                     },
-                    body,
+                    body: *body,
                 }));
             }
         };

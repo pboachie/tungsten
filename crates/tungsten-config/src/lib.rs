@@ -31,6 +31,7 @@ mod strict;
 pub mod target_options;
 pub mod transport;
 mod validate;
+pub mod workspace;
 mod yaml;
 
 use std::fmt;
@@ -127,7 +128,7 @@ pub struct InputConfig {
     /// Path relative to the manifest's directory.
     pub spec: String,
     /// Original remote source of a locally converted import. Its SHA256 pin is
-    /// verified before compilation; changed sources require explicit re-import.
+    /// verified before compilation; changed sources are refreshed with `tungsten refresh-import`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_url: Option<String>,
     /// SHA256 of the remote bytes used for the reviewed local conversion.

@@ -117,7 +117,7 @@ pub enum AttemptOutcome {
     Streaming {
         status: u16,
         headers: BTreeMap<String, String>,
-        body: EventBody,
+        body: Box<EventBody>,
     },
     /// The request cannot have reached the server (DNS, refused, TLS).
     NotSent(String),
@@ -297,7 +297,7 @@ pub async fn attempt(client: &reqwest::Client, req: &AttemptRequest<'_>) -> Atte
         return AttemptOutcome::Streaming {
             status,
             headers,
-            body: EventBody {
+            body: Box::new(EventBody {
                 response,
                 idle: req.idle.unwrap_or(req.timeout),
                 deadline: req
@@ -306,7 +306,7 @@ pub async fn attempt(client: &reqwest::Client, req: &AttemptRequest<'_>) -> Atte
                     .flatten()
                     .map(Instant::from_std),
                 permit: None,
-            },
+            }),
         };
     }
     let maximum = req.max_response_bytes;

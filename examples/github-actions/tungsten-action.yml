@@ -1,0 +1,53 @@
+# Copy this file to .github/workflows/tungsten.yml in your own repository.
+# It does what tungsten.yml in this directory does, through the reusable
+# action in actions/tungsten. See README.md in this directory.
+name: tungsten
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# The workflow never writes to the repository and uses no secrets.
+permissions:
+  contents: read
+
+concurrency:
+  group: tungsten-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contract:
+    name: Validate and check generated output
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The action is pinned by full commit SHA. No release tag contains
+      # actions/tungsten yet, so this is the main commit that added it; once
+      # one does, pin the commit of that release tag instead. `version` is the
+      # compiler release the action installs. See README.md for upgrades.
+      - name: Check the tungsten project
+        id: tungsten
+        uses: pboachie/tungsten/actions/tungsten@94776ac689e6745654ff9c1f617048647b46db9b # main
+        with:
+          version: "0.1.3"
+          # One project per line, relative to the repository root.
+          projects: |
+            .
+          # External targets stay off: a pull request can change tungsten.yml.
+          allow-external: "false"
+
+      - name: Keep the check logs
+        if: failure() && steps.tungsten.outputs.log-dir != ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: tungsten-logs
+          path: ${{ steps.tungsten.outputs.log-dir }}
+          retention-days: 7

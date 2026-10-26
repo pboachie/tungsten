@@ -35,6 +35,8 @@ from ._util import field
 from .types import (
     ApiDescriptor,
     CallOptions,
+    CheckpointOptions,
+    CheckpointPage,
     ClientOptions,
     Diagnostic,
     DownloadOptions,
@@ -116,6 +118,28 @@ class ClientCore:
                 yield cast(Ok[Page[Any]] | Err, page)
         except Exception as error:
             yield self._engine.internal(safe_id(op), error, "paginating")
+
+    def export_pages(
+        self,
+        op: OperationDescriptor,
+        args: Mapping[str, Any],
+        checkpoint: CheckpointOptions,
+        opts: CallOptions | None = None,
+    ) -> Iterator[Result[CheckpointPage[Any]]]:
+        """Iterate the pages of a read-only operation like ``pages``, each with
+        a sealed checkpoint token to persist once the page is committed to the
+        sink; pass a saved token as ``checkpoint["resume"]`` after a restart to
+        continue with the page after it. Never raises. A token that is
+        malformed, altered, sealed under another key, older than
+        ``max_age_ms``, stopped, or issued for other arguments, origin, tenant,
+        scope or contract is refused (``VALIDATION_FAILED``) before any
+        request. Page budgets, cycle detection, deadlines and cancellation
+        apply per run."""
+        try:
+            for page in self._driver.iterate(self._engine.export_pages(op, args, checkpoint, opts)):
+                yield cast(Ok[CheckpointPage[Any]] | Err, page)
+        except Exception as error:
+            yield self._engine.internal(safe_id(op), error, "exporting pages")
 
     def stream(
         self, op: OperationDescriptor, args: Mapping[str, Any], opts: CallOptions | None = None
@@ -296,6 +320,20 @@ class AsyncClientCore:
                 yield cast(Ok[Page[Any]] | Err, page)
         except Exception as error:
             yield self._engine.internal(safe_id(op), error, "paginating")
+
+    async def export_pages(
+        self,
+        op: OperationDescriptor,
+        args: Mapping[str, Any],
+        checkpoint: CheckpointOptions,
+        opts: CallOptions | None = None,
+    ) -> AsyncIterator[Result[CheckpointPage[Any]]]:
+        """See ``ClientCore.export_pages``."""
+        try:
+            async for page in self._driver.iterate(self._engine.export_pages(op, args, checkpoint, opts)):
+                yield cast(Ok[CheckpointPage[Any]] | Err, page)
+        except Exception as error:
+            yield self._engine.internal(safe_id(op), error, "exporting pages")
 
     def stream(
         self, op: OperationDescriptor, args: Mapping[str, Any], opts: CallOptions | None = None

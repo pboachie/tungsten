@@ -57,6 +57,20 @@ fn first_line(s: &str) -> &str {
         .unwrap_or("")
 }
 
+fn account_arg() -> Arg {
+    Arg::new("account")
+        .long("account")
+        .value_name("NAME")
+        .help("The account of the login session (default: the selected one)")
+}
+
+fn scheme_arg() -> Arg {
+    Arg::new("scheme")
+        .long("scheme")
+        .value_name("SCHEME")
+        .help("The OAuth2 scheme (when the API has several)")
+}
+
 fn global(name: &'static str, value: Option<&'static str>, help: &'static str) -> Arg {
     let a = Arg::new(name).long(name).global(true).help(help);
     match value {
@@ -421,7 +435,57 @@ pub(crate) fn build(spec: &CliSpec, relaxed: &BTreeSet<String>) -> Tree {
                 .arg_required_else_help(true)
                 .subcommand(
                     Command::new("status")
-                        .about("Show which credentials are present, never their values"),
+                        .about("Show which credentials and login sessions are present, never their values")
+                        .arg(account_arg()),
+                )
+                .subcommand(
+                    Command::new("login")
+                        .about("Sign in through the browser and store the session (interactive only)")
+                        .arg(account_arg())
+                        .arg(scheme_arg())
+                        .arg(
+                            Arg::new("store")
+                                .long("store")
+                                .value_name("STORE")
+                                .value_parser(["keychain", "file", "ephemeral"])
+                                .help("Where to keep the tokens: the OS keychain (default) or, explicitly, an owner-only file"),
+                        )
+                        .arg(
+                            Arg::new("scope")
+                                .long("scope")
+                                .value_name("SCOPE")
+                                .action(ArgAction::Append)
+                                .help("A scope to request (repeatable; default: the scheme's scopes)"),
+                        )
+                        .arg(
+                            Arg::new("no-browser")
+                                .long("no-browser")
+                                .action(ArgAction::SetTrue)
+                                .help("Print the sign-in URL without opening a browser"),
+                        ),
+                )
+                .subcommand(
+                    Command::new("switch")
+                        .about("Use another stored account for this profile")
+                        .arg(
+                            Arg::new("account-name")
+                                .value_name("ACCOUNT")
+                                .required(true)
+                                .help("The account to use"),
+                        )
+                        .arg(scheme_arg()),
+                )
+                .subcommand(
+                    Command::new("logout")
+                        .about("Remove the stored session of the selected account")
+                        .arg(account_arg())
+                        .arg(scheme_arg())
+                        .arg(
+                            Arg::new("all")
+                                .long("all")
+                                .action(ArgAction::SetTrue)
+                                .help("Remove every stored session of this CLI"),
+                        ),
                 ),
         );
     Tree { command, leaves }

@@ -22,7 +22,8 @@ pub enum TargetOptionSchema {
     Python,
     Rust,
     /// Field declarations mirroring the emitter's options module; see
-    /// [`crate::option_fields`]. Configuration inspection does not cover them.
+    /// [`crate::option_fields`]. Configuration inspection checks their JSON
+    /// types and fixed defaults; the emitter validates values.
     Declared(&'static crate::option_fields::DeclaredOptions),
 }
 
@@ -284,9 +285,21 @@ pub const FEATURES: &[FeatureDefinition] = &[
         None,
     ),
     def(
+        "pagination_checkpoints",
+        FeatureDomain::Runtime,
+        "sealed, caller-owned checkpoints that resume read-only page exports after a restart",
+        None,
+    ),
+    def(
         "generated_cli",
         FeatureDomain::Target,
         "a command-line client crate next to the SDK",
+        Some("cli"),
+    ),
+    def(
+        "cli_login_sessions",
+        FeatureDomain::Target,
+        "generated-CLI browser login, account switching and logout for OAuth2 authorizationCode schemes, with sessions in the macOS keychain or Secret Service, or an explicit owner-only file",
         Some("cli"),
     ),
     def(
@@ -338,6 +351,12 @@ pub const FEATURES: &[FeatureDefinition] = &[
         None,
     ),
     def(
+        "webhook_verification",
+        FeatureDomain::Runtime,
+        "framework-free incoming webhook verification: Stripe-compatible `t=,v1=` HMAC-SHA256 signatures compared in constant time, secret rotation, bounded body, timestamp tolerance and an application-owned replay hook",
+        None,
+    ),
+    def(
         "llms_txt",
         FeatureDomain::Target,
         "llms.txt, llms-full.txt and tools.json documentation",
@@ -355,6 +374,10 @@ const JS: &[ToolRequirement] = &[
     ToolRequirement::new("npm", None),
 ];
 // The MCP root graph imports stripTypeScriptTypes, added in 22.13 and 23.2.
+/// Newest Node.js major the public npm package build lanes check. Doctor
+/// reports newer majors as unqualified until a release promotes them.
+pub const NODE_NEWEST_CHECKED_MAJOR: u32 = 26;
+
 const MCP: &[ToolRequirement] = &[
     ToolRequirement {
         tool: "node",
@@ -478,7 +501,7 @@ targets! {
         summary: "Sync and async Python SDK, Pydantic v2 or dataclass models",
         options: &["package", "module", "version", "runtime", "runtime_path", "python_version", "models", "out"],
         environments: [Cpython],
-        features: &["typed_sdk", "pagination_helpers", "dataclass_models", "streaming_downloads"],
+        features: &["typed_sdk", "pagination_helpers", "pagination_checkpoints", "dataclass_models", "webhook_verification", "streaming_downloads"],
     },
     {
         id: "ruby", aliases: &["rb"], source: BuiltInEmitter, family: Some("ruby"), policy: true,
@@ -495,14 +518,14 @@ targets! {
         summary: "Async Rust SDK (serde, reqwest) and optional generated CLI",
         options: &["crate", "version", "runtime", "runtime_path", "cli", "out"],
         environments: [Native],
-        features: &["typed_sdk", "pagination_helpers", "generated_cli", "streaming_downloads"],
+        features: &["typed_sdk", "pagination_helpers", "pagination_checkpoints", "generated_cli", "webhook_verification", "cli_login_sessions", "streaming_downloads"],
     },
     {
         id: "typescript", aliases: &["ts"], source: BuiltInEmitter, family: Some("typescript"),
         policy: true, tools: JS, schema: Some(TargetOptionSchema::TypeScript),
         summary: "Typed TypeScript SDK, Result values, Zod validation",
         options: &["package", "version", "runtime", "runtime_path", "dependencies", "out"],
-        environments: [Node], features: &["typed_sdk", "pagination_helpers", "streaming_downloads"],
+        environments: [Node], features: &["typed_sdk", "pagination_helpers", "pagination_checkpoints", "webhook_verification", "streaming_downloads"],
     },
     {
         id: "webmcp", aliases: &[], source: BuiltInEmitter, family: Some("typescript"), policy: true,
@@ -541,7 +564,52 @@ pub struct CapabilityCatalog {
     pub init: InitCapability,
     /// Registered IR protocols and the targets generating each.
     pub protocols: Vec<ProtocolDefinition>,
+    /// Multi-project workspace discovery and selection.
+    pub workspace: WorkspaceCapability,
 }
+
+/// How several tungsten projects under one directory are found and
+/// selected (`tungsten workspace`, `--project`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct WorkspaceCapability {
+    /// Manifest file names that make a directory a project; a directory
+    /// with more than one is ambiguous (TG0641).
+    pub manifest_names: &'static [&'static str],
+    /// Directory names never searched, besides hidden directories and the
+    /// output directories of discovered projects.
+    pub skipped_directories: &'static [&'static str],
+    /// Discovery bounds; reaching one is TG0640.
+    pub limits: crate::workspace::DiscoveryLimits,
+    /// Whether discovery follows symbolic links (it never does).
+    pub follows_links: bool,
+    /// Commands that take `--project ID` to run on one project.
+    pub project_selection: &'static [&'static str],
+    /// Whether the language server routes documents to their owning
+    /// project across several workspace folders and projects.
+    pub editor_routing: bool,
+}
+
+/// The workspace declaration.
+pub const WORKSPACE: WorkspaceCapability = WorkspaceCapability {
+    manifest_names: &crate::workspace::MANIFEST_NAMES,
+    skipped_directories: crate::workspace::SKIPPED_DIRECTORIES,
+    limits: crate::workspace::DEFAULT_LIMITS,
+    follows_links: false,
+    project_selection: &[
+        "check",
+        "generate",
+        "lock",
+        "report",
+        "diff",
+        "mock",
+        "ir dump",
+        "overlay suggest",
+        "scenario validate",
+        "scenario run",
+    ],
+    editor_routing: false,
+};
 
 /// How an input format enters a project.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
@@ -582,6 +650,9 @@ pub struct InputFormatCapability {
     pub acquisition: &'static [InputAcquisition],
     /// The saved document a conversion or inference writes.
     pub saved_as: Option<&'static str>,
+    /// Command that refreshes a saved conversion in place from a new source
+    /// revision, with review; null when the input is not refreshed that way.
+    pub refresh_command: Option<&'static str>,
 }
 
 const DOCUMENT: &[InputAcquisition] = &[
@@ -605,6 +676,7 @@ const fn converted(
         review_flags,
         acquisition: DOCUMENT,
         saved_as: Some("imported.openapi.json"),
+        refresh_command: Some("refresh-import"),
     }
 }
 
@@ -619,6 +691,7 @@ pub const INPUT_FORMATS: &[InputFormatCapability] = &[
         review_flags: &[],
         acquisition: DOCUMENT,
         saved_as: None,
+        refresh_command: None,
     },
     converted("swagger", &["2.0"], "`swagger` member", &[]),
     converted("postman", &["2.1"], "`info` and `item` members", &[]),
@@ -650,6 +723,7 @@ pub const INPUT_FORMATS: &[InputFormatCapability] = &[
         review_flags: &[],
         acquisition: &[],
         saved_as: Some("inferred.openapi.json"),
+        refresh_command: None,
     },
 ];
 
