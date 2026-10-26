@@ -176,6 +176,19 @@ each supported platform, including Windows and WSL.
 
 ## Limits
 
+In unreleased 0.2.0, `deadline` (a `Duration` on `ClientOptions` or `CallOptions`) sets a total
+deadline for one logical call, separate from the per-attempt `timeout`. It is measured on a
+monotonic clock and covers authentication, idempotency-key reservation, every attempt (each one's
+`timeout` is cut to the time left), retry waits, response bodies and verification; for `pages`,
+`poll` and `runMacro` it covers the whole traversal, poll or macro, and nested work cannot restart
+it. No attempt starts after it expires: the call fails with `code` `DEADLINE_EXCEEDED`, and a
+mutation that was already sent reports `OUTCOME_UNKNOWN`, never a blind replay. A retry wait or
+poll interval that would end after the deadline is not waited for. For `stream` it bounds
+connecting and each reconnect, never an open stream (use `idleTimeout`). A shared OAuth token
+refresh or idempotency-store write is not cancelled at the deadline, only no longer waited for, so
+other callers still get its result; it stays bounded by its own timeout. Default: no total
+deadline.
+
 Managed OAuth admits at most 32 attempts, 32 token-work owners and 32 waiting
 read/refresh callers per client; retained scheme identities are also capped at
 32. Attempts expire after ten monotonic minutes. Captured configuration strings

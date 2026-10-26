@@ -268,7 +268,7 @@ fn readme(g: &Gen<'_, '_>) -> String {
         "Every method returns a `Future<Result<T>>`: `Ok` (`value`, `raw`, `meta`, `verification`) or `Err` (`error`: the diagnostic envelope with `category`, `remediation`, `retryable`, `nextAction`, ...). API and transport failures never throw.\n\n",
     );
     out.push_str("Models are final classes with `fromJson` and `toJson`. A required member is `T`, a required member that may be null `T?`, an optional member `T?` (null is not sent), and an optional member that may be null a `Patch<T>`: `Patch.absent()`, `Patch.nullValue()` or `Patch.of(value)`. Bytes are `Uint8List`.\n\n");
-    out.push_str("Call options (`CallOptions`): `idempotencyKey` (generate it once per intent and reuse it on every retry), `confirm` (`Confirm.yes` for a destructive operation, or the confirmation token of its preview, the only way for an irreversible one), `timeout`.\n\n");
+    out.push_str("Call options (`CallOptions`): `idempotencyKey` (generate it once per intent and reuse it on every retry), `confirm` (`Confirm.yes` for a destructive operation, or the confirmation token of its preview, the only way for an irreversible one), `timeout` (per attempt), `deadline` (total, across auth, retries and verification).\n\n");
     let mut destructive: Vec<String> = vec![];
     for op in &g.plan.operations {
         if matches!(op.safety, Safety::Destructive | Safety::Irreversible) {

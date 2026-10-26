@@ -307,6 +307,9 @@ changes.
 - Add the same total operation deadline to the Ruby runtime (`deadline_ms` on
   client and call options); generated Ruby SDKs document it.
 
+- Add the same total operation deadline to the Dart runtime (`deadline` on
+  `ClientOptions` and `CallOptions`); generated Dart SDKs document it.
+
 - Add a per-tool-call total deadline to the MCP adapter
   (`ServerOptions.toolDeadlineMs`, `<API>_MCP_DEADLINE_MS` in generated
   servers). It maps to the TypeScript runtime's `deadlineMs`; tool results
