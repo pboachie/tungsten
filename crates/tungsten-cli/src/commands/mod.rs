@@ -27,6 +27,7 @@ pub(crate) mod lsp;
 pub(crate) mod mock;
 pub(crate) mod overlay;
 mod policy;
+pub(crate) mod refresh_import;
 pub(crate) mod report;
 pub(crate) mod scenario;
 mod schema;
@@ -57,6 +58,7 @@ pub(crate) fn dispatch(
             command: IrCommand::Dump(args),
         } => Some(args.input.path.as_path()),
         Command::Init(args) => args.from.as_deref(),
+        Command::RefreshImport(args) => args.from.as_deref(),
         Command::Generate(args) => Some(args.input.path.as_path()),
         Command::Mock(args) => Some(args.input.path.as_path()),
         Command::Scenario { command } => Some(scenario::input(command)),
@@ -129,6 +131,7 @@ fn dispatch_with_inputs(
         Command::Config(args) => config::run(args, env),
         Command::Workspace(args) => workspace::run(args),
         Command::Lock(args) => lock::run(args, env),
+        Command::RefreshImport(args) => refresh_import::run(args, env, cli.no_external),
         Command::Bundle {
             command: BundleCommand::Export(args),
         } => bundle::export(args),

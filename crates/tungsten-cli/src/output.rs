@@ -91,6 +91,8 @@ pub enum CommandName {
     Workspace,
     #[serde(rename = "lock")]
     Lock,
+    #[serde(rename = "refresh-import")]
+    RefreshImport,
     #[serde(rename = "bundle export")]
     BundleExport,
     #[serde(rename = "bundle import")]
@@ -211,6 +213,7 @@ pub enum CommandResult {
     Config(tungsten_config::inspection::ConfigurationInspection),
     Workspace(crate::commands::workspace::WorkspaceResult),
     Lock(Box<crate::commands::lock::LockResult>),
+    RefreshImport(Box<crate::commands::refresh_import::RefreshImportResult>),
     BundleExport(Box<crate::commands::bundle::BundleExportResult>),
     BundleImport(Box<crate::commands::bundle::BundleImportResult>),
     PolicyDigest(tungsten_core::policy::PolicyDigestResult),
@@ -1059,6 +1062,7 @@ const RESULT_DEFS: &[(CommandName, &str)] = &[
     (CommandName::Config, "ConfigurationInspection"),
     (CommandName::Workspace, "WorkspaceResult"),
     (CommandName::Lock, "LockResult"),
+    (CommandName::RefreshImport, "RefreshImportResult"),
     (CommandName::BundleExport, "BundleExportResult"),
     (CommandName::BundleImport, "BundleImportResult"),
     (CommandName::PolicyDigest, "PolicyDigestResult"),

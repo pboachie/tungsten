@@ -255,7 +255,7 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
     e(
         "TG0122",
         "Downloaded or cached bytes differ from their SHA256 pin, or a converted import no longer matches its original remote source.",
-        "Review upstream changes before --refresh-inputs. Converted inputs require re-import into a fresh project and renewed review. Use --offline for the existing pin; restore corrupted cache bytes from a trusted copy.",
+        "Review upstream changes before --refresh-inputs. Converted inputs are refreshed with `tungsten refresh-import`, which previews the conversion and requires renewed review of changed approvals. Use --offline for the existing pin; restore corrupted cache bytes from a trusted copy.",
     ),
     e(
         "TG0123",
@@ -290,7 +290,7 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
     e(
         "TG0133",
         "The Git source lock or its materialized files are missing, invalid, modified, symlinked or not writable. Every reused content file is SHA256-verified.",
-        "Restore the pinned cache from a trusted copy or re-import into a fresh project. Retain .tungsten-inputs with the same access controls as the original source for offline use. Partial *.pending entries from an interrupted fetch are discarded by the next online run; a held acquire.lock means another run is fetching the same source.",
+        "Restore the pinned cache from a trusted copy, or refresh a converted input with `tungsten refresh-import`. Retain .tungsten-inputs with the same access controls as the original source for offline use. Partial *.pending entries from an interrupted fetch are discarded by the next online run; a held acquire.lock means another run is fetching the same source.",
     ),
     e(
         "TG0134",
