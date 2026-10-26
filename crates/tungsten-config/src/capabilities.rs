@@ -284,6 +284,12 @@ pub const FEATURES: &[FeatureDefinition] = &[
         None,
     ),
     def(
+        "pagination_checkpoints",
+        FeatureDomain::Runtime,
+        "sealed, caller-owned checkpoints that resume read-only page exports after a restart",
+        None,
+    ),
+    def(
         "generated_cli",
         FeatureDomain::Target,
         "a command-line client crate next to the SDK",
@@ -472,7 +478,7 @@ targets! {
         summary: "Sync and async Python SDK, Pydantic v2 or dataclass models",
         options: &["package", "module", "version", "runtime", "runtime_path", "python_version", "models", "out"],
         environments: [Cpython],
-        features: &["typed_sdk", "pagination_helpers", "dataclass_models"],
+        features: &["typed_sdk", "pagination_helpers", "pagination_checkpoints", "dataclass_models"],
     },
     {
         id: "ruby", aliases: &["rb"], source: BuiltInEmitter, family: Some("ruby"), policy: true,
@@ -489,14 +495,14 @@ targets! {
         summary: "Async Rust SDK (serde, reqwest) and optional generated CLI",
         options: &["crate", "version", "runtime", "runtime_path", "cli", "out"],
         environments: [Native],
-        features: &["typed_sdk", "pagination_helpers", "generated_cli"],
+        features: &["typed_sdk", "pagination_helpers", "pagination_checkpoints", "generated_cli"],
     },
     {
         id: "typescript", aliases: &["ts"], source: BuiltInEmitter, family: Some("typescript"),
         policy: true, tools: JS, schema: Some(TargetOptionSchema::TypeScript),
         summary: "Typed TypeScript SDK, Result values, Zod validation",
         options: &["package", "version", "runtime", "runtime_path", "dependencies", "out"],
-        environments: [Node], features: SDK,
+        environments: [Node], features: &["typed_sdk", "pagination_helpers", "pagination_checkpoints"],
     },
     {
         id: "webmcp", aliases: &[], source: BuiltInEmitter, family: Some("typescript"), policy: true,

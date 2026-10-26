@@ -58,6 +58,7 @@
 mod auth;
 pub mod b64;
 pub mod blocking;
+mod checkpoint;
 mod classify;
 mod client;
 mod confirm;
@@ -89,6 +90,10 @@ mod verify;
 
 pub mod types;
 
+pub use checkpoint::{
+    CHECKPOINT_PREFIX, CheckpointOptions, CheckpointPage, CheckpointState, CheckpointStatus,
+    ExportPages, MAX_CHECKPOINT_CHARS, describe_checkpoint,
+};
 pub use client::{ClientCore, ConfigError, Pages, Polled, TypedPages};
 pub use dispatch::{
     ByStatus, Dispatch, Mismatch, StatusDecode, decode, decode_by_status, decode_event,
