@@ -18,6 +18,10 @@ module Tungsten
 
       # Generated clients require this capability when redirects are forbidden.
       def self.require_redirect_policy_v1; end
+
+      # Generated clients require this capability when an operation carries
+      # an imported-operation policy.
+      def self.require_import_policy_v1; end
       DEFAULT_POLL_INTERVAL_MS = 1000
       DEFAULT_VERIFY_BUDGET_MS = 30_000
       RETRYABLE_CATEGORIES = %w[RATE_LIMITED UPSTREAM_UNAVAILABLE TRANSPORT_FAILED OUTCOME_UNKNOWN].freeze
@@ -433,6 +437,9 @@ module Tungsten
         end
         limit = response_limit(op, opts)
         return limit if limit.is_a?(Err)
+        if (err = import_scope_err(op, url_override || @base_url))
+          return err
+        end
 
         register(op)
         args = normalize_args(op, raw_args)
@@ -663,8 +670,37 @@ module Tungsten
           display = root + displayed + join.call(shown)
         end
         return bad_base(op) unless valid_base_url?(full)
+        if (err = import_scope_err(op, full))
+          return err
+        end
 
         [full, display]
+      end
+
+      # The origin (scheme, host and port) of an absolute http(s) URL without
+      # credentials, or nil.
+      def origin_of(url)
+        return nil unless url.is_a?(String) && valid_base_url?(url)
+
+        u = URI.parse(url)
+        "#{u.scheme.downcase}://#{u.host.downcase}:#{u.port}"
+      rescue URI::Error
+        nil
+      end
+
+      # Refuses a reviewed imported operation whose target lies outside the
+      # origins its review covers. A malformed or missing scope fails closed.
+      def import_scope_err(op, target)
+        policy = op.agent["import_policy"]
+        return nil unless policy.is_a?(Hash) && policy["reviewed"] == true
+
+        actual = origin_of(target)
+        origins = policy["allowed_origins"]
+        allowed = !actual.nil? && origins.is_a?(Array) && origins.any? { |o| origin_of(o) == actual }
+        return nil if allowed
+
+        Runtime.diag(op.id, "VALIDATION_FAILED").param("base_url").retrying("never")
+               .remedy("The target origin is outside this operation's saved review policy. Select a reviewed server or review a separate policy for this environment. Nothing was sent.").err
       end
 
       def query_pairs(raw)

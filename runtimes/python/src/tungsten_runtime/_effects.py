@@ -79,6 +79,9 @@ class Lost:
 class TimedOut:
     """No response within the attempt's deadline, after the request was (possibly) sent."""
 
+    #: The operation's total deadline, not the per-attempt timeout, ran out.
+    deadline: bool = False
+
 
 AttemptOutcome = Answered | Streaming | NotSent | Lost | TimedOut
 
@@ -202,6 +205,8 @@ class Acquire:
     key: str
     kind: Literal["call", "stream"]
     random: Callable[[], float]
+    #: Absolute ``time.monotonic()`` milliseconds that also end the wait.
+    deadline_ms: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -245,9 +250,13 @@ def close_stream(stream: object) -> Flow[None]:
 
 
 def acquire(
-    scheduler: object, key: str, kind: Literal["call", "stream"], random: Callable[[], float]
+    scheduler: object,
+    key: str,
+    kind: Literal["call", "stream"],
+    random: Callable[[], float],
+    deadline_ms: float | None = None,
 ) -> Flow[object]:
-    return (yield Acquire(scheduler, key, kind, random))
+    return (yield Acquire(scheduler, key, kind, random, deadline_ms))
 
 
 def sleep(ms: float) -> Flow[None]:

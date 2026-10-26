@@ -455,6 +455,15 @@ impl Ctx<'_> {
             .collect()
     }
 
+    /// Whether any operation carries an imported-operation policy, which the
+    /// runtime must enforce.
+    fn imported(&self) -> bool {
+        self.plan
+            .operations
+            .iter()
+            .any(|p| p.op.agent.import_policy.is_some())
+    }
+
     /// The client, `Ops`, `Dispatch` and `Macros`: (path, contents).
     pub fn root(&self, infos: &[OpInfo]) -> Vec<(String, String)> {
         let package = &self.opts.package;
@@ -473,6 +482,9 @@ impl Ctx<'_> {
         w.indent();
         if self.ir.agent.redirects == tungsten_ir::RedirectPolicy::None {
             w.line("static { io.github.pboachie.tungsten.runtime.ClientCore.requireRedirectPolicyV1(); }");
+        }
+        if self.imported() {
+            w.line("static { io.github.pboachie.tungsten.runtime.ClientCore.requireImportPolicyV1(); }");
         }
         w.line("/** The descriptor document, loaded once. */");
         w.line("public static final Descriptors DOCUMENT = Descriptors.load(Ops.class.getResourceAsStream(\"tungsten-descriptors.json\"));");

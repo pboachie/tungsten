@@ -839,6 +839,9 @@ pub struct ClientOptions {
     pub token_store: Option<Arc<dyn TokenStore>>,
     /// Per-attempt timeout. Default 30 s.
     pub timeout: Duration,
+    /// Total deadline of one logical call (see [`CallOptions::deadline`]).
+    /// Default `None`: only `timeout` per attempt.
+    pub deadline: Option<Duration>,
     /// Ordinary-response byte cap. Positive safe integer; None inherits the 4 MiB default.
     pub max_response_bytes: Option<u64>,
     /// Separate code/refresh token response cap; positive safe integer, default 64 KiB.
@@ -917,6 +920,7 @@ impl Default for ClientOptions {
             auth: AuthConfig::new(),
             token_store: None,
             timeout: Duration::from_secs(30),
+            deadline: None,
             max_response_bytes: None,
             max_oauth_token_response_bytes: crate::oauth_attempt::TOKEN_RESPONSE_BYTES,
             retries: PartialRetryOptions::default(),
@@ -948,6 +952,7 @@ impl fmt::Debug for ClientOptions {
             .field("base_url", &self.base_url)
             .field("auth", &self.auth)
             .field("timeout", &self.timeout)
+            .field("deadline", &self.deadline)
             .field("max_response_bytes", &self.max_response_bytes)
             .field("validate_responses", &self.validate_responses)
             .finish_non_exhaustive()
@@ -991,6 +996,18 @@ pub struct CallOptions {
     pub allow_confirm_true: bool,
     /// Per-attempt timeout; default: the client's.
     pub timeout: Option<Duration>,
+    /// Total deadline of this call, overriding the client's; `None` inherits
+    /// it and zero means none. Measured on a monotonic clock from the call,
+    /// it bounds authentication, idempotency-key reservation, every attempt
+    /// (each one's `timeout` is cut to the time left), retry waits, response
+    /// bodies and verification; for pages, polls and macros the whole
+    /// traversal, poll or macro. No attempt starts after it expires (`code`
+    /// `DEADLINE_EXCEEDED`). For `stream()` it bounds connecting and each
+    /// reconnect, not an open stream (see `idle_timeout`). A mutation already
+    /// sent reports `OUTCOME_UNKNOWN`, never a blind replay. An in-flight
+    /// token request is not cancelled: it completes within its own `timeout`
+    /// and the call then stops before sending.
+    pub deadline: Option<Duration>,
     /// Override the client ordinary-response byte cap.
     pub max_response_bytes: Option<u64>,
     /// Run the operation's verification hook after success.
@@ -1010,6 +1027,7 @@ impl fmt::Debug for CallOptions {
             .field("allow_confirm_true", &self.allow_confirm_true)
             .field("max_pages", &self.max_pages)
             .field("timeout", &self.timeout)
+            .field("deadline", &self.deadline)
             .field("max_response_bytes", &self.max_response_bytes)
             .field("verify", &self.verify)
             .field("headers", &self.headers.keys().collect::<Vec<_>>())
@@ -1025,6 +1043,7 @@ impl Default for CallOptions {
             confirm: None,
             allow_confirm_true: true,
             timeout: None,
+            deadline: None,
             max_response_bytes: None,
             verify: false,
             headers: BTreeMap::new(),

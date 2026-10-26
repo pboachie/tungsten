@@ -24,7 +24,7 @@ import uuid
 from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, replace
 from dataclasses import field as dataclass_field
-from typing import Any, Final, Literal, cast
+from typing import Any, Final, Literal, TypeVar, cast
 from urllib.parse import urljoin, urlsplit
 
 import httpx
@@ -58,13 +58,20 @@ from ._classify import (
 from ._confirm import CONFIRMATION_TTL_MS, check_token, issue_token, token_expiry
 from ._effects import (
     Answered,
+    AttemptOutcome,
     AttemptRequest,
     Bounded,
     Chunk,
+    CloseStream,
+    Emit,
     Flow,
     Lost,
     NotSent,
+    Observe,
     PollExpired,
+    ReadChunk,
+    Send,
+    Sleep,
     StreamEnded,
     StreamFailed,
     Streaming,
@@ -339,8 +346,82 @@ def _monotonic_ms() -> float:
     return time.monotonic() * 1000
 
 
+T = TypeVar("T")
+
+
 def _opt(opts: Mapping[str, object], key: str) -> object:
     return opts.get(key, UNSET)
+
+
+#: The call-options entry holding the absolute monotonic deadline (ms) of one
+#: logical call, fixed when a public entry point resolves ``deadline_ms``.
+#: Nested work (pages, polls, verification, macro steps) inherits it.
+_CALL_DEADLINE: Final = "\x00tungsten.call_deadline"
+
+
+def _deadline_of(opts: Mapping[str, object]) -> float | None:
+    value = opts.get(_CALL_DEADLINE)
+    return float(value) if is_number(value) else None
+
+
+def _deadline_failure(op_id: str, during: str) -> Err:
+    return _fail(
+        diagnostic(
+            op_id,
+            "TRANSPORT_FAILED",
+            code="DEADLINE_EXCEEDED",
+            retryable="never",
+            remediation=(
+                f"The operation deadline (deadline_ms) expired {during}, so the request was not sent. "
+                "Call again with a larger deadline_ms."
+            ),
+        )
+    )
+
+
+def _within_deadline(flow: Flow[T], deadline: float | None, expired: Callable[[bool], T]) -> Flow[T]:
+    """Run ``flow`` with every effect that may block on caller code (token
+    sources, stores, hooks) bounded by the call's deadline; attempts honour it
+    natively and retry waits check it themselves. A bounded effect is not
+    cancelled when the deadline passes, only no longer waited for: a shared
+    token refresh keeps running for its other waiters. ``expired(sent)``
+    answers the call when the deadline interrupted it."""
+    if deadline is None:
+        return (yield from flow)
+    sent: object = None
+    thrown: Exception | None = None
+    dispatched = False
+    try:
+        while True:
+            try:
+                effect = flow.throw(thrown) if thrown is not None else flow.send(sent)
+            except StopIteration as finished:
+                return cast(T, finished.value)
+            if isinstance(effect, Send):
+                dispatched = True
+            elif isinstance(effect, Bounded):
+                dispatched = dispatched or isinstance(effect.effect, Send)
+                effect = Bounded(effect.effect, min(effect.deadline_ms, deadline))
+            elif not isinstance(effect, Sleep | Emit | ReadChunk | CloseStream | Observe):
+                effect = Bounded(effect, deadline)
+            try:
+                sent = yield effect
+                thrown = None
+            except PollExpired:
+                raise
+            except Exception as error:
+                sent, thrown = None, error
+    except PollExpired:
+        return expired(dispatched)
+    finally:
+        flow.close()
+
+
+def _mark_deadline(outcome: AttemptOutcome, deadline: float | None) -> AttemptOutcome:
+    """A timeout at the operation deadline is reported as the deadline's."""
+    if isinstance(outcome, TimedOut) and deadline is not None and _monotonic_ms() >= deadline - 1:
+        return TimedOut(deadline=True)
+    return outcome
 
 
 class Engine:
@@ -423,11 +504,21 @@ class Engine:
     # ------------------------------------------------------------ public
 
     def call(self, op: OperationDescriptor, args: object, opts: object) -> Flow[Ok[Any] | Err]:
-        answer = yield from self._call(op, args, self._call_options(opts), None, None)
+        resolved = self._call_options(opts)
+        answer = yield from _within_deadline(
+            self._call(op, args, resolved, None, None),
+            _deadline_of(resolved),
+            lambda sent: Answer(self._deadline_expired(op, sent)),
+        )
         return answer.result
 
     def preview(self, op: OperationDescriptor, args: object, opts: object) -> Flow[Ok[PreviewResult] | Err]:
-        result = yield from self._preview(op, args, self._call_options(opts))
+        resolved = self._call_options(opts)
+        result = yield from _within_deadline(
+            self._preview(op, args, resolved),
+            _deadline_of(resolved),
+            lambda sent: self._deadline_expired(op, sent),
+        )
         return result
 
     def pages(self, op: OperationDescriptor, args: object, opts: object) -> Flow[None]:
@@ -435,7 +526,15 @@ class Engine:
             yield from emit(page.result)
             return True
 
-        yield from self._pages(op, args, self._call_options(opts), None, deliver)
+        resolved = self._call_options(opts)
+        expired: list[Err] = []
+        yield from _within_deadline(
+            self._pages(op, args, resolved, None, deliver),
+            _deadline_of(resolved),
+            lambda sent: expired.append(self._deadline_expired(op, sent)),
+        )
+        if expired:
+            yield from emit(expired[0])
 
     def stream(
         self, op: OperationDescriptor, args: object, opts: object, cancelled: Callable[[], bool] | None = None
@@ -451,20 +550,57 @@ class Engine:
         budget_ms: object,
         opts: object,
     ) -> Flow[Ok[Any] | Err]:
-        answer = yield from self._poll(
-            op, args, until, interval_ms, budget_ms, self._call_options(opts), None
+        resolved = self._call_options(opts)
+        answer = yield from _within_deadline(
+            self._poll(op, args, until, interval_ms, budget_ms, resolved, None),
+            _deadline_of(resolved),
+            lambda sent: Answer(self._deadline_expired(op, sent)),
         )
         return answer.result
 
     def run_macro(self, macro: MacroDescriptor, input: object, opts: object) -> Flow[Ok[Any] | Err]:
-        result = yield from self._run_macro(macro, input, self._call_options(opts))
+        resolved = self._call_options(opts)
+        result = yield from _within_deadline(
+            self._run_macro(macro, input, resolved),
+            _deadline_of(resolved),
+            lambda sent: self._deadline_expired(macro, sent),
+        )
         return result
 
     def preview_macro(
         self, macro: MacroDescriptor, input: object, opts: object
     ) -> Flow[Ok[PreviewResult] | Err]:
-        result = yield from self._preview_macro(macro, input, self._call_options(opts))
+        resolved = self._call_options(opts)
+        result = yield from _within_deadline(
+            self._preview_macro(macro, input, resolved),
+            _deadline_of(resolved),
+            lambda sent: self._deadline_expired(macro, sent),
+        )
         return result
+
+    def _deadline_expired(self, subject: object, sent: bool) -> Err:
+        """The answer of a call its deadline interrupted outside an attempt.
+        A mutation sent before is not known to have failed."""
+        subject_id = str_field(subject, "id") or str_field(subject, "name") or "<unknown>"
+        if (
+            sent
+            and is_record(subject)
+            and is_record(subject.get("agent"))
+            and is_mutation(cast(OperationDescriptor, subject))
+        ):
+            return _fail(
+                diagnostic(
+                    subject_id,
+                    "OUTCOME_UNKNOWN",
+                    code="DEADLINE_EXCEEDED",
+                    retryable="never",
+                    remediation=(
+                        "The operation deadline (deadline_ms) expired after the request was sent; it may have "
+                        "taken effect. Check its effect before repeating it with the same idempotency key."
+                    ),
+                )
+            )
+        return _deadline_failure(subject_id, "before the call completed")
 
     def internal(self, subject: str, error: BaseException, during: str) -> Err:
         return _fail(
@@ -482,7 +618,11 @@ class Engine:
     # ---------------------------------------------------------- options
 
     def _call_options(self, opts: object) -> dict[str, object]:
-        return dict(entries_of(opts))
+        resolved = {k: v for k, v in entries_of(opts).items() if k != _CALL_DEADLINE}
+        ms = bounded(_opt(resolved, "deadline_ms"), bounded(self.options.deadline_ms, 0, 0), 0)
+        if ms > 0:
+            resolved[_CALL_DEADLINE] = _monotonic_ms() + ms
+        return resolved
 
     def now(self) -> float:
         clock = self.options.now
@@ -1444,9 +1584,14 @@ class Engine:
         mutation = is_mutation(op)
         protected = has_replay_protection(op, prepared.key)
         timeout_ms = self._timeout(opts)
+        deadline = _deadline_of(opts)
         attempts = 0
         previous_mutation_failure: Answer | None = None
         while True:
+            if deadline is not None and _monotonic_ms() >= deadline:
+                return previous_mutation_failure or Answer(
+                    _deadline_failure(op["id"], "before the request could be sent")
+                )
             attempts += 1
             ctx = RequestContext(
                 operation=op,
@@ -1470,8 +1615,12 @@ class Engine:
                 return previous_mutation_failure or Answer(
                     _fail(diagnostic(op["id"], "AUTH_FAILED", remediation=INSECURE_HTTP_AUTH))
                 )
-            admitted = yield from self._admit(op, prepared.url, stream)
+            admitted = yield from self._admit(op, prepared.url, stream, deadline)
             if isinstance(admitted, Rejection):
+                if deadline is not None and _monotonic_ms() >= deadline:
+                    return previous_mutation_failure or Answer(
+                        _deadline_failure(op["id"], "while the request waited for capacity")
+                    )
                 return previous_mutation_failure or Answer(_fail(self._rejected(op, admitted, stream)))
             handed_off = False
             try:
@@ -1487,9 +1636,11 @@ class Engine:
                         timeout_ms,
                         stream,
                         idle_ms,
-                        max_response_bytes=self._max_response_bytes(opts),
+                        deadline,
+                        self._max_response_bytes(opts),
                     )
                 )
+                outcome = _mark_deadline(outcome, deadline)
                 current_url, current_method, current_body = prepared.url, prepared.method, prepared.body
                 hops = 0
                 while (
@@ -1521,9 +1672,11 @@ class Engine:
                             timeout_ms,
                             stream,
                             idle_ms,
-                            max_response_bytes=self._max_response_bytes(opts),
+                            deadline,
+                            self._max_response_bytes(opts),
                         )
                     )
+                    outcome = _mark_deadline(outcome, deadline)
                     hops += 1
                 # The read that shows whether an unprotected mutation took effect
                 # is only needed to explain an unknown outcome or a failure, so
@@ -1585,9 +1738,14 @@ class Engine:
                 yield from observe(_hook(m, "on_retry"), ctx, error)
             if mutation:
                 previous_mutation_failure = done
+            # A retry that could not start before the deadline is not waited for.
+            if deadline is not None and _monotonic_ms() + delay >= deadline:
+                return done
             yield from sleep(delay)
 
-    def _admit(self, op: OperationDescriptor, url: str, stream: bool) -> Flow[Permit | Rejection | None]:
+    def _admit(
+        self, op: OperationDescriptor, url: str, stream: bool, deadline: float | None
+    ) -> Flow[Permit | Rejection | None]:
         """Wait for scheduler capacity for one attempt: None without a
         scheduler, a ``Rejection`` (nothing is sent) when none was given."""
         scheduler = self.scheduler
@@ -1598,7 +1756,7 @@ class Engine:
             (lambda: bounded(source(), 0.5, 0, 1)) if callable(source) else random.random
         )
         key = scheduler.scope_key(url, self.options.tenant)
-        admitted = yield from acquire(scheduler, key, "stream" if stream else "call", rnd)
+        admitted = yield from acquire(scheduler, key, "stream" if stream else "call", rnd, deadline)
         return cast(Permit | Rejection, admitted)
 
     @staticmethod
@@ -1839,6 +1997,22 @@ class Engine:
                         op_id,
                         "TRANSPORT_FAILED",
                         remediation=f"{cause} This read has no side effects; call again.",
+                        attempts=attempts,
+                    )
+                )
+            )
+        if isinstance(outcome, TimedOut) and outcome.deadline:
+            cause = "The operation deadline expired before a response arrived."
+            return Answer(
+                _fail(
+                    outcome_unknown(call_ctx, cause)
+                    if mutation
+                    else diagnostic(
+                        op_id,
+                        "UPSTREAM_UNAVAILABLE",
+                        code="DEADLINE_EXCEEDED",
+                        retryable="never",
+                        remediation=f"{cause} This read has no side effects; call again with a larger deadline_ms.",
                         attempts=attempts,
                     )
                 )

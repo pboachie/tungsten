@@ -221,6 +221,13 @@ impl State {
         *lock(&self.inner) = Inner::default();
     }
 
+    /// Count a processed effect against the loaded scenario, if any.
+    pub fn effect(&self, operation: &str, effect: crate::scenario::Effect) {
+        if let Some(scenario) = &mut lock(&self.inner).scenario {
+            scenario.effect(operation, effect);
+        }
+    }
+
     /// Populate a new state before its server is bound or exposed to callers.
     pub fn install_scenario(&self, prepared: crate::scenario::Prepared) {
         self.queue(prepared.programs);

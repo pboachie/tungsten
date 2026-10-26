@@ -58,6 +58,8 @@ pub struct Pages {
     pub(crate) op: Arc<OperationDescriptor>,
     opts: CallOptions,
     state: PageState,
+    /// The traversal's total deadline, fixed when it was created.
+    deadline: Option<std::time::Instant>,
 }
 
 impl std::fmt::Debug for Pages {
@@ -77,18 +79,23 @@ impl Pages {
         args: Value,
         opts: CallOptions,
     ) -> Self {
+        let deadline = crate::verify::resolve_deadline(&core, &opts);
         Pages {
             core,
             op,
             opts,
             state: PageState::new(args),
+            deadline,
         }
     }
 
     pub async fn next(&mut self) -> Option<Result<Page<Value>>> {
-        self.core
-            .page_step(&self.op, &mut self.state, &self.opts, None)
-            .await
+        crate::verify::with_deadline_at(
+            self.deadline,
+            self.core
+                .page_step(&self.op, &mut self.state, &self.opts, None),
+        )
+        .await
     }
 
     /// Items typed as `T` (an item that does not decode is an

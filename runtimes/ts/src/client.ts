@@ -127,7 +127,14 @@ const MACRO_CONFIRMED: unique symbol = Symbol("tungsten.macroConfirmed");
  * step that fails pre-flight leaves the token unspent. */
 const MACRO_CLAIM: unique symbol = Symbol("tungsten.macroClaim");
 const POLL_DEADLINE: unique symbol = Symbol("tungsten.pollDeadline");
-type StepOptions = CallOptions & { [POLL_DEADLINE]?: number | undefined; [MACRO_CONFIRMED]?: true; [MACRO_CLAIM]?: () => Failure | null };
+/** Absolute monotonic deadline (`performance.now()` ms) of one logical
+ * call, fixed when a public entry point resolves `deadlineMs`. Nested work
+ * (pages, polls, verification, macro steps) inherits it and cannot restart it. */
+const CALL_DEADLINE: unique symbol = Symbol("tungsten.callDeadline");
+type StepOptions = CallOptions & { [POLL_DEADLINE]?: number | undefined; [CALL_DEADLINE]?: number | undefined; [MACRO_CONFIRMED]?: true; [MACRO_CLAIM]?: () => Failure | null };
+
+/** `#untilDeadline` gave up waiting. */
+const DEADLINE_EXPIRED: unique symbol = Symbol("tungsten.deadlineExpired");
 
 const SAFETY_RANK: Readonly<Record<string, number>> = { read_only: 0, mutating: 1, destructive: 2, irreversible: 3 };
 
@@ -647,7 +654,48 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
   // ------------------------------------------------------------ internals
 
   #callOptions(opts: unknown): CallOptions {
-    return isRecord(opts) ? (opts as CallOptions) : {};
+    const base = isRecord(opts) ? (opts as CallOptions) : {};
+    const ms = bounded(base.deadlineMs, bounded(this.options.deadlineMs, 0, 0), 0);
+    if (ms <= 0) return base;
+    const inherited = (base as StepOptions)[CALL_DEADLINE];
+    const deadline = performance.now() + ms;
+    return { ...base, [CALL_DEADLINE]: inherited === undefined ? deadline : Math.min(inherited, deadline) } as StepOptions;
+  }
+
+  /** The earliest absolute deadline bounding this work: the call's total
+   * deadline or a polling budget. */
+  #deadline(opts: CallOptions): number | undefined {
+    const call = (opts as StepOptions)[CALL_DEADLINE];
+    const poll = (opts as StepOptions)[POLL_DEADLINE];
+    return call === undefined ? poll : poll === undefined ? call : Math.min(call, poll);
+  }
+
+  #deadlineExpired(op: OperationDescriptor, during: string): Failure {
+    return fail(diagnostic(op.id, "TRANSPORT_FAILED", {
+      code: "DEADLINE_EXCEEDED",
+      retryable: "never",
+      remediation: `The operation deadline (deadlineMs) expired ${during}, so the request was not sent. Call again with a larger deadlineMs.`,
+    }));
+  }
+
+  /** Wait for `work` only until the call's deadline. The work is not
+   * cancelled: a shared token refresh or store write keeps running for its
+   * other waiters, bounded by its own timeout. */
+  async #untilDeadline<R>(work: Promise<R>, opts: CallOptions): Promise<R | typeof DEADLINE_EXPIRED> {
+    const deadline = (opts as StepOptions)[CALL_DEADLINE];
+    if (deadline === undefined) return work;
+    const remaining = deadline - performance.now();
+    if (remaining <= 0) {
+      work.catch(() => undefined);
+      return DEADLINE_EXPIRED;
+    }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const expired = new Promise<typeof DEADLINE_EXPIRED>((resolve) => { timer = setTimeout(() => resolve(DEADLINE_EXPIRED), remaining); });
+    try {
+      return await Promise.race([work, expired]);
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   #internal(op: unknown, error: unknown, during: string): Diagnostic {
@@ -711,8 +759,10 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     if (opts.signal?.aborted) return fail(diagnostic(op.id, "TRANSPORT_FAILED", {
       retryable: "never", remediation: "The caller cancelled the call before it was sent.",
     }));
-    const deadline = (opts as StepOptions)[POLL_DEADLINE];
-    if (deadline !== undefined && performance.now() >= deadline) return fail(diagnostic(op.id, "TRANSPORT_FAILED", {
+    const deadline = (opts as StepOptions)[CALL_DEADLINE];
+    if (deadline !== undefined && performance.now() >= deadline) return this.#deadlineExpired(op, "before the request could be sent");
+    const pollDeadline = (opts as StepOptions)[POLL_DEADLINE];
+    if (pollDeadline !== undefined && performance.now() >= pollDeadline) return fail(diagnostic(op.id, "TRANSPORT_FAILED", {
       retryable: "never", remediation: "The polling budget expired before the request was sent.",
     }));
     return null;
@@ -793,8 +843,8 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     const scheme = prepared.oauth;
     const current = prepared.headers.get("Authorization");
     if (scheme === null || current === undefined || !current.startsWith("Bearer ")) return rejected;
-    const token = await this.#oauth.refreshAfterRejection(scheme, current.slice("Bearer ".length));
-    if (token === null) return rejected;
+    const token = await this.#untilDeadline(this.#oauth.refreshAfterRejection(scheme, current.slice("Bearer ".length)), opts);
+    if (token === DEADLINE_EXPIRED || token === null) return rejected;
     prepared.headers.set("Authorization", `Bearer ${token}`, true);
     prepared.secrets.add(token);
     return this.#send<T>({ ...prepared, oauth: null }, opts);
@@ -1032,8 +1082,9 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     const beforeAuth = this.#beforeDispatch(op, opts);
     if (beforeAuth) return beforeAuth;
     const authTarget = urlOverride ?? (typeof this.options.baseUrl === "string" ? this.options.baseUrl : this.api.servers?.find(s => typeof s === "string"));
-    const auth = await resolveAuth(this.api, op, isRecord(this.options.auth) ? this.options.auth : {}, method, this.#tokenSource,
-      insecureHttp(authTarget, this.options.allowInsecureHttp) ? INSECURE_HTTP_AUTH : null);
+    const auth = await this.#untilDeadline(resolveAuth(this.api, op, isRecord(this.options.auth) ? this.options.auth : {}, method, this.#tokenSource,
+      insecureHttp(authTarget, this.options.allowInsecureHttp) ? INSECURE_HTTP_AUTH : null), opts);
+    if (auth === DEADLINE_EXPIRED) return this.#deadlineExpired(op, "while authenticating");
     if (!auth.ok) return fail(diagnostic(op.id, "AUTH_FAILED", { remediation: auth.remediation }));
     const secrets = new Set(auth.secrets.filter((s) => s !== ""));
     for (const p of op.params) {
@@ -1359,7 +1410,8 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
         if (purpose !== "call") return { ok: true, value: null };
         const logicalId = await argsDigest(args);
         try {
-          const key = await reserveKey(this.#store, op.id, logicalId, crypto.randomUUID());
+          const key = await this.#untilDeadline(reserveKey(this.#store, op.id, logicalId, crypto.randomUUID()), opts);
+          if (key === DEADLINE_EXPIRED) return this.#deadlineExpired(op, "while reserving an idempotency key");
           if (typeof key !== "string" || key === "") throw new Error("store returned an invalid key");
           return { ok: true, value: key };
         } catch (error) {
@@ -1468,7 +1520,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
           stream,
           idleMs,
           maxResponseBytes: this.#responseLimit(opts),
-          deadlineMs: (opts as StepOptions)[POLL_DEADLINE],
+          deadlineMs: this.#deadline(opts),
         });
         for (let hops = 0; !this.#redirectsDisabled && !mutation && hops < MAX_REDIRECTS && outcome.kind === "response" && outcome.bodyFailure !== "oversized" && REDIRECT_STATUSES.has(outcome.status); hops += 1) {
           const next = this.#redirectTarget(prepared, current.url, outcome.headers.location);
@@ -1492,7 +1544,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
             stream,
             idleMs,
             maxResponseBytes: this.#responseLimit(opts),
-            deadlineMs: (opts as StepOptions)[POLL_DEADLINE],
+            deadlineMs: this.#deadline(opts),
           });
         }
         const callCtx: CallContext = { api: this.api, op, key: prepared.key, keyHeader: prepared.keyHeader, attempts, check };
@@ -1539,6 +1591,9 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
           // Observers never change the call.
         }
       }
+      // A retry that could not start before the deadline is not waited for.
+      const deadline = (opts as StepOptions)[CALL_DEADLINE];
+      if (deadline !== undefined && performance.now() + delay >= deadline) return previousMutationFailure ?? done();
       if (!(await sleep(delay, opts.signal))) return previousMutationFailure ?? done();
     }
   }
@@ -1550,7 +1605,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     if (scheduler === null) return null;
     const random = typeof this.options.random === "function" ? () => bounded(this.options.random?.(), 0.5, 0, 1) : Math.random;
     const key = scheduler.scopeKey(url, this.options.tenant);
-    const admitted = await scheduler.acquire(key, stream ? "stream" : "call", opts.signal, (opts as StepOptions)[POLL_DEADLINE], random);
+    const admitted = await scheduler.acquire(key, stream ? "stream" : "call", opts.signal, this.#deadline(opts), random);
     if ("release" in admitted) {
       // Cancelled or expired while it waited: the request is never sent.
       const late = this.#beforeDispatch(op, opts);
@@ -1560,7 +1615,8 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
       }
       return admitted;
     }
-    return this.#rejected(op, admitted, stream);
+    // A wait ended by the caller's signal or deadline reports that.
+    return this.#beforeDispatch(op, opts) ?? this.#rejected(op, admitted, stream);
   }
 
   #rejected(op: OperationDescriptor, rejection: Rejection, stream: boolean): Failure {
@@ -1763,6 +1819,18 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
               }),
         );
       case "timeout":
+        if (outcome.deadline === true) {
+          return fail(
+            mutation
+              ? outcomeUnknown(callCtx, "The operation deadline expired before a response arrived.")
+              : diagnostic(op.id, "UPSTREAM_UNAVAILABLE", {
+                  code: "DEADLINE_EXCEEDED",
+                  retryable: "never",
+                  remediation: "The operation deadline expired before a response arrived. This read has no side effects; call again with a larger deadlineMs.",
+                  trace: { attempts },
+                }),
+          );
+        }
         return fail(
           mutation
             ? outcomeUnknown(callCtx, `No response arrived within ${timeoutMs} ms.`)

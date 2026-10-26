@@ -766,9 +766,17 @@ impl ClientCore {
 
         let header = key_header(op);
         crate::verify::check_poll_deadline(&op.id)?;
-        let key = self
-            .idempotency_key(op, &args, opts, purpose, encoded.hash_material.as_deref())
-            .await?;
+        let reserve =
+            self.idempotency_key(op, &args, opts, purpose, encoded.hash_material.as_deref());
+        // A store worker is not cancelled at the deadline, only no longer waited for.
+        let key = match crate::verify::call_deadline() {
+            Some(deadline) => tokio::time::timeout_at(deadline.into(), reserve)
+                .await
+                .map_err(|_| {
+                    crate::verify::deadline_exceeded(&op.id, "while reserving an idempotency key")
+                })??,
+            None => reserve.await?,
+        };
         if let Some(key) = &key {
             headers.set(&header, key.clone(), true);
             secrets.insert(key.clone());

@@ -72,7 +72,11 @@ impl ClientCore {
                 return Err(fail(scrub_diagnostic(
                     outcome_unknown(
                         &ctx,
-                        "The polling budget expired after a request was possibly sent.",
+                        if crate::verify::call_deadline_expired() {
+                            "The operation deadline expired after a request was possibly sent."
+                        } else {
+                            "The polling budget expired after a request was possibly sent."
+                        },
                         UnknownFields::default(),
                     ),
                     &prepared.secrets,
@@ -161,7 +165,14 @@ impl ClientCore {
                 m.on_request(&ctx);
             }
             self.check_send_deadline(prepared, attempts, check.as_ref())?;
-            let mut permit = self.admit(prepared, stream).await?;
+            let mut permit = match self.admit(prepared, stream).await {
+                Ok(permit) => permit,
+                Err(rejected) => {
+                    // A wait ended by the call's deadline reports that.
+                    self.check_send_deadline(prepared, attempts, check.as_ref())?;
+                    return Err(rejected);
+                }
+            };
             self.check_send_deadline(prepared, attempts, check.as_ref())?;
             // Redirects are never followed by the HTTP client: it would
             // forward custom credential headers (API keys, CSRF headers) to
@@ -325,7 +336,14 @@ impl ClientCore {
                 m.on_retry(&ctx, &diagnostic);
             }
             self.check_send_deadline(prepared, attempts, check.as_ref())?;
-            tokio::time::sleep(crate::util::duration_from_ms(delay_ms)).await;
+            let delay = crate::util::duration_from_ms(delay_ms);
+            // A retry that could not start before the deadline is not waited for.
+            if crate::verify::call_deadline()
+                .is_some_and(|deadline| std::time::Instant::now() + delay >= deadline)
+            {
+                return Err(done(diagnostic, partial));
+            }
+            tokio::time::sleep(delay).await;
         }
     }
 
@@ -344,7 +362,7 @@ impl ClientCore {
         let random = std::sync::Arc::new(move || core.random());
         let kind = if stream { Kind::Stream } else { Kind::Call };
         match scheduler
-            .acquire(&key, kind, crate::verify::poll_deadline(), random)
+            .acquire(&key, kind, crate::verify::effective_deadline(), random)
             .await
         {
             Ok(permit) => Ok(Some(permit)),
@@ -408,6 +426,25 @@ impl ClientCore {
                     Diag::new(op.id.clone(), Category::TransportFailed)
                         .remediation(format!(
                             "{cause} This read has no side effects; call again."
+                        ))
+                        .attempts(attempts)
+                        .build()
+                }));
+            }
+            AttemptOutcome::Timeout
+                if crate::verify::call_deadline().is_some_and(|deadline| {
+                    std::time::Instant::now() + std::time::Duration::from_millis(1) >= deadline
+                }) =>
+            {
+                let cause = "The operation deadline expired before a response arrived.";
+                return Err(fail(if mutation {
+                    outcome_unknown(call_ctx, cause, UnknownFields::default())
+                } else {
+                    Diag::new(op.id.clone(), Category::UpstreamUnavailable)
+                        .code(Some("DEADLINE_EXCEEDED".to_owned()))
+                        .retryable(Retryable::Never)
+                        .remediation(format!(
+                            "{cause} This read has no side effects; call again with a larger `deadline`."
                         ))
                         .attempts(attempts)
                         .build()

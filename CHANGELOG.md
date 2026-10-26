@@ -235,6 +235,64 @@ changes.
   `Retry-After` pauses between callers of one scope, resuming with a single
   probe. A scheduler can be shared by several clients, closed and drained.
 
+- Add an opt-in total operation deadline to the TypeScript (`deadlineMs`),
+  Python (`deadline_ms`) and Rust (`deadline`) runtimes, on client and call
+  options. Unlike the per-attempt timeout, it bounds one logical call across
+  authentication, idempotency-key reservation, retries and backoff, response
+  bodies and verification, and a whole traversal, poll or macro. No attempt
+  starts after it expires (`DEADLINE_EXCEEDED`); a mutation already sent still
+  reports `OUTCOME_UNKNOWN`. Existing timeout semantics are unchanged.
+
+- Add `tungsten lock`, a versioned single-project generation lock
+  (`tungsten.lock.json`). It records the declared input closure (manifest,
+  profiles, agent manifest, entry documents, local references and overlays in
+  application order) by content digest, with the compiler, IR and built-in
+  emitter identities, digests of the effective target options and each
+  target's consumer toolchain requirements. Capture compiles offline and never
+  fetches or refreshes inputs, runs emitters or probes tools; physical paths,
+  option values and credentials are not recorded. `lock --check` fails on a
+  missing, stale or corrupt lock and lists the drift; replacing a lock whose
+  identities changed requires `--update`. External emitters, remote inputs
+  and files outside the project are reported as reproduction gaps, and the
+  lock states that generated consumer dependencies are not vendored. The lock
+  grants no trust to external emitters. `tungsten schema generation-lock`
+  prints its schema.
+
+- Extend the versioned capability catalog with each built-in target's option
+  keys, execution environments and implemented features, plus a registry of
+  feature ids. `tungsten capabilities --matrix` prints the support matrix
+  derived from those declarations, and the command refuses to answer from a
+  catalog with conflicting declarations (duplicate names, unregistered
+  features, empty version ranges, undeclared options). Editor completion of
+  target option keys now comes from the catalog, adding the missing Python
+  `module`, `python_version` and `models` keys. Declarations remain source
+  statements: qualification and artifact availability stay `unknown`.
+
+- Add `tungsten support-bundle --inspect <FILE>` to review an existing support
+  bundle locally on any platform. It reads one bounded regular file, refuses
+  unsupported `bundle_schema_version` values by number, requires exactly the
+  schema's keys, observed metadata-only entries and payload sizes that match,
+  and lists the entries. Errors name schema locations only, never file content.
+
+- Offer language-server quick fixes for unknown operation ids (`TG0603`) and
+  unknown manifest fields or values (`TG0602`), replacing the value named by
+  the diagnostic with the closest known name. Fixes are version-pinned edits
+  of the current buffer and are withheld when the buffer no longer matches.
+
+- The `java` and `kotlin` targets now enforce imported-operation policy and may
+  be generated for projects converted from Postman, cURL, `.http` or HAR input.
+  The Java runtime reads each operation's `import_policy`, refuses a reviewed
+  imported operation whose target origin is outside its saved review scope
+  (`VALIDATION_FAILED` on `baseUrl`, nothing sent), and applies the effective
+  safety tier of unreviewed operations. Generated SDKs require a runtime with
+  `ClientCore.requireImportPolicyV1()`.
+
+- The `ruby` target now enforces imported-operation policy the same way: the
+  Ruby runtime refuses a reviewed imported operation whose target origin is
+  outside its saved review scope (`VALIDATION_FAILED` on `base_url`, nothing
+  sent), and generated gems require
+  `Tungsten::Runtime::ClientCore.require_import_policy_v1`.
+
 - Add explicit Linux support-bundle export to a new file in an existing,
   trusted user-owned directory. Export preserves the metadata-only preview
   manifest, caps complete artifacts at 128 KiB, refuses replacement and
@@ -367,6 +425,14 @@ changes.
   text and JSON redact sensitive values and physical paths without compiling
   inputs, probing tools or executing emitters.
 
+- Compose Python (`package`, `version`, `runtime`, `models`, `python_version`)
+  and Rust (`crate`, `version`, `runtime`) defaults from the same bounded local
+  profiles, so one profile serves a multi-target library. Explicit project
+  fields still win and each value keeps its winning/shadowed origin. Python and
+  Rust options are declared in the shared capability schema and inspected by
+  `tungsten config`. The emitters reuse the same validators, so TG0731/TG0740
+  fallbacks are unchanged.
+
 - Compose bounded local TypeScript profiles for package, version, runtime and
   dependency defaults. Retain authored provenance through the compiler driver,
   strict profile diagnostics and existing manifest fallback behavior.
@@ -374,6 +440,11 @@ changes.
 - Declare the existing TypeScript target options and supported-value schema in
   the shared capability contract. Keep emitter defaults and TG0711 fallback
   behavior compatible while configuration and generation share validation.
+
+- Assert mock-side effects in saved scenarios with optional `expect.effects`
+  counts of applied writes and idempotent replays, so a lost-write retry that
+  changes its idempotency key fails even when call counts match. Failed runs
+  name each failing assertion by file position in terminal output.
 
 - Validate saved mock scenarios portably and explicitly run integration argv on
   Linux with a run-phase deadline, cancellation, owned process-group cleanup,
@@ -410,6 +481,13 @@ changes.
 
 ### Changed
 
+- Check the npm runtime packages on Node 26 (Current) as well as Node 22 and 24,
+  and add an advisory Node 20 canary that does not imply support. The README
+  now has one Node.js support table: supported lines, the declared floor for
+  each artifact, the checked patch versions, and the build-only scope of the
+  WebMCP floor. The TypeScript runtime now type-checks against Node 22 types,
+  so it cannot rely on APIs newer than its floor.
+
 - Locate primary and related LSP profile diagnostics in their captured local
   files, including invalid profiles, while preserving portable compiler and
   configuration-inspection source names.
@@ -439,6 +517,13 @@ changes.
   reusing a compatible generated value or omitting an optional field. Required
   fields remain intact, and the full intersection must validate before a repair
   is accepted.
+
+- Generated TypeScript SDKs no longer lose a `PATTERN_UNCHECKED` diagnostic when
+  the first untagged-union variant that accepts a value has a pattern the engine
+  cannot compile and a later variant also accepts it. Diagnostics now come only
+  from the first accepting variant, as in Dart and Python; rejected variants no
+  longer report speculative patterns. Schema shapes, `.options` and encoding are
+  unchanged.
 
 - Dart schema validation now reports unchecked patterns from the first accepting
   untagged-union variant, preserving nested property and array paths. Rejected
