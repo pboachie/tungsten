@@ -219,7 +219,7 @@ pub mod codes {
         ),
         (
             "TG0140",
-            "OpenAPI 3.2 `$self` document identity is not supported",
+            "OpenAPI 3.2 `$self` would change how references resolve",
         ),
         (
             "TG0141",

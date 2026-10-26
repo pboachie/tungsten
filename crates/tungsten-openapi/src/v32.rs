@@ -16,7 +16,9 @@
 //! the member that introduces it.
 //!
 //! `additionalOperations` entries are compiled too, as custom methods sent
-//! as written; only tokens that cannot be sent are refused (TG0142).
+//! as written; only tokens that cannot be sent are refused (TG0142). `$self`
+//! is accepted when it cannot change how references resolve (TG0140
+//! otherwise).
 
 use std::collections::HashSet;
 
@@ -164,13 +166,8 @@ pub(crate) fn scan_document(root: &Value) -> Vec<Finding> {
     let Value::Object(doc) = root else {
         return out;
     };
-    if doc.contains_key("$self") {
-        out.push(error(
-            "TG0140",
-            "/$self".into(),
-            "the OpenAPI 3.2 `$self` document identity is not supported",
-            "remove `$self`; relative references resolve against the file location",
-        ));
+    if let Some(identity) = doc.get("$self") {
+        self_findings(identity, root, &mut out);
     }
     if let Some(Value::Array(tags)) = doc.get("tags") {
         for (i, tag) in tags.iter().enumerate() {
@@ -440,6 +437,99 @@ fn querystring_findings(pointer: &str, map: &Map<String, Value>, out: &mut Vec<F
         ),
     };
     out.push(error("TG0143", at, &message, HELP));
+}
+
+/// `$self` is compiled when it cannot change what a reference of the
+/// document resolves to: the document has no relative reference to another
+/// document, or `$self` names a file in the document's own directory. Any
+/// other `$self`, and references that name the document by its `$self` URI,
+/// are refused (TG0140): tungsten resolves references against the file
+/// location.
+fn self_findings(identity: &Value, root: &Value, out: &mut Vec<Finding>) {
+    const HELP: &str =
+        "remove `$self`, or keep references that resolve the same against the file location";
+    let refuse = |out: &mut Vec<Finding>, pointer: String, message: String| {
+        out.push(error("TG0140", pointer, &message, HELP));
+    };
+    let Some(identity) = identity.as_str().filter(|s| !s.is_empty()) else {
+        refuse(
+            out,
+            "/$self".into(),
+            "OpenAPI 3.2 `$self` must be a non-empty URI reference".into(),
+        );
+        return;
+    };
+    if identity.contains('#') {
+        refuse(
+            out,
+            "/$self".into(),
+            format!("OpenAPI 3.2 `$self` `{identity}` must not contain a fragment"),
+        );
+        return;
+    }
+    let absolute = has_scheme(identity) || identity.starts_with("//");
+    // A bare file name keeps the base directory; anything else moves it.
+    let same_directory =
+        !absolute && !identity.contains(['/', '?']) && identity != "." && identity != "..";
+    let mut refs = vec![];
+    external_refs(root, "", &mut refs);
+    for (pointer, target) in refs {
+        if has_scheme(target) || target.starts_with("//") {
+            let document = target.split('#').next().unwrap_or(target);
+            if absolute && document == identity {
+                refuse(
+                    out,
+                    pointer,
+                    format!(
+                        "`$ref` `{target}` names this document by its OpenAPI 3.2 `$self` URI, which is not supported"
+                    ),
+                );
+            }
+        } else if !same_directory {
+            refuse(
+                out,
+                pointer,
+                format!(
+                    "OpenAPI 3.2 `$self` `{identity}` changes the base URI of the relative `$ref` `{target}`, which tungsten resolves against the file location"
+                ),
+            );
+        }
+    }
+}
+
+/// Whether `s` starts with a URI scheme (`https:`).
+fn has_scheme(s: &str) -> bool {
+    let Some((scheme, _)) = s.split_once(':') else {
+        return false;
+    };
+    let mut chars = scheme.chars();
+    chars.next().is_some_and(|c| c.is_ascii_alphabetic())
+        && chars.all(|c| c.is_ascii_alphanumeric() || "+-.".contains(c))
+}
+
+/// Every `$ref` of the document that names another document, with its
+/// pointer; example values are data, not references.
+fn external_refs<'v>(value: &'v Value, pointer: &str, out: &mut Vec<(String, &'v str)>) {
+    match value {
+        Value::Object(map) => {
+            if let Some(Value::String(target)) = map.get("$ref")
+                && !target.starts_with('#')
+            {
+                out.push((join_pointer(pointer, "$ref"), target));
+            }
+            for (key, v) in map {
+                if key != "example" && key != "examples" {
+                    external_refs(v, &join_pointer(pointer, key), out);
+                }
+            }
+        }
+        Value::Array(items) => {
+            for (i, v) in items.iter().enumerate() {
+                external_refs(v, &join_pointer(pointer, &i.to_string()), out);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// Path item members that are operations; `additionalOperations` must not
