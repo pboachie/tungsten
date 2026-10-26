@@ -206,9 +206,9 @@ pub async fn attempt(client: &reqwest::Client, req: &AttemptRequest<'_>) -> Atte
     let mut deadline = now
         .checked_add(req.timeout)
         .unwrap_or_else(|| now + Duration::from_secs(86_400 * 365));
-    if let Some(poll_deadline) = crate::verify::poll_deadline() {
+    if let Some(poll_deadline) = crate::verify::effective_deadline() {
         if std::time::Instant::now() >= poll_deadline {
-            return AttemptOutcome::NotSent("polling deadline expired before send".to_owned());
+            return AttemptOutcome::NotSent("deadline expired before send".to_owned());
         }
         deadline = deadline.min(Instant::from_std(poll_deadline));
     }
