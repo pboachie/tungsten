@@ -230,6 +230,21 @@ changes.
 
 ### Added
 
+- TypeScript, Python and Rust runtimes verify incoming webhooks without a web
+  framework: `verifyWebhook` / `verify_webhook` check the Stripe-compatible
+  `t=<unix>,v1=<hex HMAC-SHA256 of "t.body">` signature header against one or
+  more secrets (rotation) in constant time, cap the body (default 1 MiB) and
+  the header (8192 characters), enforce a timestamp tolerance (default 300
+  seconds) and parse the JSON payload. Checks run in the same order in every
+  runtime and a rejection reports one stable reason (`body_too_large`,
+  `secret_missing`, `signature_missing`, `signature_malformed`,
+  `signature_mismatch`, `timestamp_out_of_tolerance`, `payload_invalid`,
+  `duplicate`) with a message that never holds the secret, signature or
+  payload. An optional application-owned `claim` hook rejects repeated
+  deliveries (keyed by the event `id`, else the timestamp and signature);
+  storage, queues and acknowledgement stay with the application.
+  `signWebhook` / `sign_webhook` build a header for local examples. Registered
+  as the `webhook_verification` runtime feature. Unreleased 0.2.0 only.
 - Add `tungsten_build::ProjectIdentity`, the shared in-process identity of
   one compilation: its manifest, the content digest of every source it read,
   the optional files it found absent, and a digest of the compiler version,
