@@ -1,0 +1,53 @@
+{
+  "openapi": "3.1.0",
+  "info": { "title": "Orders", "version": "1.0.0" },
+  "paths": {
+    "/orders/{id}": {
+      "get": {
+        "operationId": "getOrder",
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": {
+            "description": "The order.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Order" } } }
+          }
+        }
+      }
+    }
+  },
+  "webhooks": {
+    "order.shipped": {
+      "post": {
+        "operationId": "orderShipped",
+        "summary": "An order left the warehouse.",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OrderShipped" } } }
+        },
+        "responses": { "200": { "description": "Accepted." } }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Order": {
+        "type": "object",
+        "required": ["id", "status"],
+        "properties": { "id": { "type": "string" }, "status": { "type": "string" } }
+      },
+      "OrderShipped": {
+        "type": "object",
+        "required": ["id", "type", "data"],
+        "properties": {
+          "id": { "type": "string" },
+          "type": { "const": "order.shipped" },
+          "data": {
+            "type": "object",
+            "required": ["order_id", "carrier"],
+            "properties": { "order_id": { "type": "string" }, "carrier": { "type": "string" } }
+          }
+        }
+      }
+    }
+  }
+}
