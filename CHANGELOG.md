@@ -226,6 +226,18 @@ changes.
 
 ### Added
 
+- The `csharp` target now enforces imported-operation policy and may be
+  generated for projects converted from Postman, cURL, `.http` or HAR input.
+  The C# runtime reads each operation's `import_policy` (`AgentMeta.ImportPolicy`),
+  refuses a reviewed imported operation whose target origin is outside its saved
+  review scope (`VALIDATION_FAILED` on `BaseUrl`, nothing sent), and applies the
+  effective safety tier of unreviewed operations. Generated SDKs require a
+  runtime with `ClientCore.RequireImportPolicyV1()`.
+
+- Generated Python `pyproject.toml` files list a
+  `Programming Language :: Python :: 3.x` classifier for every minor from the
+  `python_version` floor up to 3.15, matching the runtime package.
+
 - Add an opt-in request scheduler to the TypeScript, Python and Rust runtimes
   (`ClientOptions.scheduler`, `ClientOptions.tenant`). It bounds ordinary
   attempts and event streams in flight per tenant and origin, queues a bounded
@@ -328,6 +340,11 @@ changes.
   retain preview and refuse export before collection. Cooperative library
   cancellation ends at publication; abrupt-termination cleanup is not promised.
 
+- Extend support-bundle export to macOS with the same no-clobber writer as
+  Linux. Every path component is opened without following symlinks, so the
+  macOS `/tmp` and `/var` symlinks are refused; publication needs hard-link
+  support in the destination filesystem.
+
 - A copyable GitHub Actions workflow in `examples/github-actions/` installs a pinned,
   checksum- and provenance-verified release through `install.sh`, runs `tungsten check`
   and fails on stale generated output with `tungsten generate --check`. It uses
@@ -365,6 +382,13 @@ changes.
   it. `query` members of OpenAPI 3.0 and 3.1 documents are still not
   operations. TG0141 is retired and no longer reported; `tungsten capabilities`
   lists `query` as a compiled 3.2 construct.
+
+- OpenAPI 3.2 reusable media types compile: a Media Type Object given by `$ref`
+  (usually to `components.mediaTypes`) in a request body, response, parameter
+  or header `content` map is read as if written in place, including its schema
+  and event-stream extensions. TG0148 is retired and no longer reported;
+  `tungsten capabilities` lists reusable media types as a compiled 3.2
+  construct.
 
 - OpenAPI 3.2.x documents are read: a document that uses only constructs OpenAPI
   3.1 has takes the 3.1 path and compiles to the same IR as its 3.1 twin. Each
