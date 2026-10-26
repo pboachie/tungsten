@@ -238,5 +238,13 @@
     "mode": "webhooks",
     "prerequisites": "Python venv and pip, Node 22 or later with npm, and the pinned Rust toolchain and Cargo",
     "outcome": "the TypeScript, Python and Rust receivers each accept the signed delivery and the rotated-secret delivery and reject the replay, the tampered body, the stale timestamp and the incomplete payload"
+  },
+  {
+    "name": "android-jni",
+    "title": "Embed a Rust SDK through JNI",
+    "description": "Call a generated Rust SDK from Java through a small JNI bridge with a bounded deadline and response size, error envelopes, cancellation and cleanup, as an Android app would.",
+    "mode": "android-jni",
+    "prerequisites": "the pinned Rust toolchain and Cargo, and Java 17 or later; for the optional Android cross-check, the Android Rust targets and an NDK",
+    "outcome": "Java reads pets through the bridge from a loopback mock, gets TRANSPORT_FAILED for an unreachable server, cancels a call in flight on close, refuses use after close and leaves no native threads after 50 create/call/close cycles"
   }
 ]
