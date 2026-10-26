@@ -117,6 +117,19 @@ longer waited for (on `ClientCore` they run on a bounded worker pool, as for
 injected transport that blocks without honouring the request's timeouts can
 delay the result past the deadline on `ClientCore`. Default: no total deadline.
 
+In unreleased 0.2.0, a whole binary request body also takes an `UploadSource`:
+`UploadSource.one_shot(chunks, length=..., sha256=...)` (an iterator of bytes, or an
+async iterator on `AsyncClientCore`, read at most once) or
+`UploadSource.recreatable(lambda: chunks, ...)` (opened again for every attempt). A
+one-shot body that was read is never sent again: a failure that would be retried is
+returned with a note, and redirects and token refresh resends stop. A declared
+`length` is sent as `Content-Length`; `length` and `sha256` are checked against the
+bytes and the last chunk is held back until they match (`UPLOAD_MISMATCH`). A source
+that raises ends the call (`UPLOAD_SOURCE_FAILED`; `OUTCOME_UNKNOWN` for a mutation).
+Operations whose idempotency key or confirmation depends on the body require
+`sha256`, which is also the `content_hash` key. Sources are refused inside JSON, form
+and multipart bodies. Ranged or resumable uploads are not supported.
+
 In unreleased 0.2.0, `download(op, args, {"max_bytes": ..., "on_progress": ...})` streams a
 2xx body instead of buffering it: read the returned `Download` (`AsyncDownload` on
 `AsyncClientCore`) with `read()`, iteration, or `write_to(sink)`, which calls the sink (and

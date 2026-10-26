@@ -29,6 +29,8 @@ base64.workspace = true
 regex.workspace = true
 url.workspace = true
 getrandom.workspace = true
+bytes.workspace = true
+http-body.workspace = true
 
 [lints]
 workspace = true

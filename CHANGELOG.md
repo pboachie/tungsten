@@ -230,6 +230,18 @@ changes.
 
 ### Added
 
+- Add streamed upload sources to the TypeScript, Python and Rust runtimes
+  (`UploadSource`; Rust `ClientCore::call_upload` / `preview_upload`) for a
+  whole binary request body. A source is one-shot (never sent again once
+  read: no retry, redirect or token-refresh resend) or recreatable (opened
+  again for every attempt). A declared length (sent as `Content-Length`) and
+  SHA-256 are checked against the bytes, holding back the last chunk so a
+  mismatching source never completes its request (`UPLOAD_MISMATCH`); a
+  failing source reports `OUTCOME_UNKNOWN` for a mutation
+  (`UPLOAD_SOURCE_FAILED`). Operations whose idempotency key or confirmation
+  depends on the body require a declared SHA-256, which is also the
+  `content_hash` key. Registered as the `streaming_uploads` runtime
+  capability.
 - TypeScript, Python and Rust clients can report optional local telemetry to
   an observer (`ClientOptions.telemetry`), off by default and never sent
   anywhere by the runtime. `call()` emits correlated `operation`, `attempt`

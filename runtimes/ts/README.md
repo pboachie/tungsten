@@ -163,6 +163,22 @@ no longer waited for, so other callers still get its result; it stays bounded by
 its own `timeoutMs`. A custom `fetch` that ignores its `AbortSignal` can keep
 running after the deadline. Default: no total deadline.
 
+In unreleased 0.2.0, a whole binary request body also takes an `UploadSource`:
+`UploadSource.oneShot(stream, { length, sha256 })` (a `ReadableStream` or async
+iterable read at most once) or `UploadSource.recreatable(() => stream, ...)` (opened
+again for every attempt). A one-shot body that was read is never sent again: a
+failure that would be retried is returned with a note, and redirects and token
+refresh resends stop. A declared `length` is sent as `Content-Length`; `length` and
+`sha256` are checked against the bytes and the last chunk is held back until they
+match, so a mismatching source fails with `UPLOAD_MISMATCH` before the request
+completes. A source that throws ends the call (`UPLOAD_SOURCE_FAILED`;
+`OUTCOME_UNKNOWN` for a mutation). Operations whose idempotency key or confirmation
+depends on the body (`auto`, `content_hash`, `content_identity`, destructive or
+irreversible) require `sha256`; it is the `content_hash` key, and tokens and keys
+bind to the declared length and SHA-256, never to bytes read for them. Sources are
+refused inside JSON, form and multipart bodies. Ranged or resumable uploads are not
+supported.
+
 In unreleased 0.2.0, `download(op, args, { maxBytes, onProgress })` streams a 2xx
 body instead of buffering it: read the returned `Download` with `read()`, `for
 await`, or `writeTo(sink)`, which awaits the sink before the next read. The body

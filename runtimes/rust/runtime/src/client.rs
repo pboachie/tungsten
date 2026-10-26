@@ -550,6 +550,11 @@ impl ClientCore {
         sink: Option<&mut (dyn crate::dispatch::BodySink + '_)>,
     ) -> std::result::Result<Response<Option<Value>>, crate::types::Error> {
         self.check_send_deadline(prepared, rejected.diagnostic.trace.attempts, None)?;
+        if let crate::serialize::Payload::Upload(source) = &prepared.payload
+            && !source.sendable()
+        {
+            return Err(crate::upload::one_shot_spent(rejected));
+        }
         let Some(scheme) = prepared.oauth.take() else {
             return Err(rejected);
         };
