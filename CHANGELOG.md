@@ -401,6 +401,13 @@ changes.
   listing it under the input's `overlays` in `tungsten.yml` when needed. No fix
   is offered from an analysis older than the latest edit.
 
+- Link language-server diagnostics to the configuration that is responsible
+  for them. A diagnostic in a profile points to the `profiles` entry of
+  `tungsten.yml` that selected it, or to the `profiles` list for an included
+  profile. A diagnostic at a composed target option names the declaration that
+  sets the effective value and the declarations it shadows. Locations come
+  from the compiled text, so unsaved buffers are reflected.
+
 - Explain unavailable language-server overlay fixes: editors that show disabled
   code actions show why no fix is offered for a `TG0403`/`TG0401` diagnostic (a
   pending check, no derivable action, an editor without versioned edits or file
