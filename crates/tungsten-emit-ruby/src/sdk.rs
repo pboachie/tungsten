@@ -3,7 +3,7 @@
 //! client, the macros, the dispatch table and the descriptor document.
 
 use tungsten_emit::Writer;
-use tungsten_emit::sdk::descriptors::{method_str, op_summary, safety_str};
+use tungsten_emit::sdk::descriptors::{op_summary, safety_str};
 use tungsten_emit::sdk::{
     ArgPlan, ArgSource, ClientPlan, DocumentOptions, MemberKind, MemberPlan, OpPlan, SuccessPlan,
     document_value,
@@ -197,7 +197,7 @@ fn op_doc(g: &Gen<'_, '_>, index: usize, op: &OpPlan<'_>, member: &str) -> Strin
     }
     parts.push(format!(
         "`{} {}` (`{}`). Safety: `{}`.",
-        method_str(o.method),
+        o.wire_method(),
         o.path.raw,
         o.id.0,
         safety_str(op.safety)

@@ -318,7 +318,7 @@ impl<'a> SchemaFormBuilder<'a> {
                 let tagged = u.strategy == UnionStrategy::Tagged
                     && u.discriminator
                         .as_ref()
-                        .is_some_and(|d| !d.property.is_empty())
+                        .is_some_and(|d| !d.property.is_empty() && d.default_mapping.is_none())
                     && !variants.is_empty()
                     && tags.len() == variants.len();
                 RuntimeSchema {

@@ -4,7 +4,7 @@
 //! pages and stream members, and a getter per child resource.
 
 use tungsten_emit::sdk::MemberKind;
-use tungsten_emit::sdk::descriptors::{method_str, safety_str};
+use tungsten_emit::sdk::descriptors::safety_str;
 use tungsten_ir::Doc;
 
 use crate::dart::{Code, Expr, one_line, str_lit};
@@ -150,7 +150,7 @@ fn op_doc(g: &Gen<'_, '_>, o: usize, args: &[Arg], tail: &str) -> String {
     }
     text.push_str(&format!(
         "`{} {}` (operation `{}`, {}).",
-        method_str(op.method),
+        op.wire_method(),
         op.path.raw,
         op.id.0,
         safety_str(op.agent.safety).replace('_', "-")

@@ -185,6 +185,7 @@ impl Ctx<'_> {
         s.push_str("Every call returns a `Result`: `Result.Ok` with the typed value and the response metadata, or `Result.Err` with the error envelope (`Diagnostic`: category, remediation, retryable, ...). Nothing throws for API or transport failures.\n\n");
         s.push_str("- Destructive and irreversible operations need `CallOptions.builder().confirm(...)`: a token from the operation's `preview...` method, or `Confirm.YES` for destructive ones.\n");
         s.push_str("- Mutations with a caller-owned idempotency key take `idempotencyKey(...)`; reuse it on every retry.\n");
+        s.push_str("- `deadline(Duration)` on `CallOptions.builder()` or `ClientOptions.builder()` bounds one call (a whole pagination, poll or macro) across authentication, retries and verification; expiry returns code `DEADLINE_EXCEEDED`, and a mutation already sent `OUTCOME_UNKNOWN`. `timeout(...)` stays per attempt.\n");
         s.push_str("- Paginated operations have a `...Pages` method (an `Iterable` of pages), streaming ones a `...Stream` method (an `EventStream`: iterate it, or use `on`, `collect`, `reduce`, `first`; `cancel` and `close`).\n");
         s.push_str(&format!(
             "- `client.dispatch()` runs operations by id with JSON arguments; `{}.Ops` holds the operation descriptors.\n\n",

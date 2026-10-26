@@ -27,10 +27,18 @@ use crate::args::SupportBundleArgs;
 use crate::output::{CliError, CommandName, CommandResult, ErrorKind, json_diagnostic};
 use crate::{CliEnv, Report, exit, input};
 
+use super::support_bundle_attach::{self as attach, AttachmentKind, AttachmentPayload};
 use super::support_bundle_file::{self as export, ExportError, Failure};
 
-/// Version of the preview/bundle manifest schema.
+/// Version of the metadata-only manifest schema, written when nothing user
+/// supplied is attached.
 pub(crate) const BUNDLE_SCHEMA_VERSION: u32 = 1;
+/// Version written when the user attached material; it adds labelled
+/// `user.attachment[N]` entries after the observed ones.
+pub(crate) const BUNDLE_SCHEMA_VERSION_ATTACHMENTS: u32 = 2;
+/// Every version `--inspect` reads.
+pub(crate) const SUPPORTED_SCHEMA_VERSIONS: [u32; 2] =
+    [BUNDLE_SCHEMA_VERSION, BUNDLE_SCHEMA_VERSION_ATTACHMENTS];
 /// Largest serialized payload of one entry; a larger one is withheld.
 pub(super) const MAX_ENTRY_BYTES: usize = 16 * 1024;
 /// Largest total of all entry payloads; later entries are withheld past it.
@@ -43,6 +51,8 @@ const MAX_TOOLS: usize = 64;
 const COLLECTION_TIME_LIMIT: std::time::Duration = std::time::Duration::from_secs(30);
 /// How often a waiting collection checks for cancellation.
 const COLLECTION_POLL: std::time::Duration = std::time::Duration::from_millis(50);
+
+const USER_SUPPLIED_WARNING: &str = "includes user-supplied text (user.attachment entries) after automatic redaction; redaction is not a guarantee, so review it before sharing.\n";
 
 /// Entry ids in manifest order; `--exclude` accepts exactly these.
 pub(super) const ENTRY_IDS: [&str; 6] = [
@@ -98,8 +108,9 @@ pub struct SupportBundlePreview {
     pub wrote_files: bool,
     /// True only if running the command started a program or extension.
     pub executed_programs: bool,
-    /// Every datum is an observation of the local installation or of the
-    /// project's declared configuration. Nothing here is user supplied.
+    /// Observed entries describe the local installation or the project's
+    /// declared configuration. Only schema version 2 adds user-supplied
+    /// `user.attachment` entries, and labels them so.
     pub privacy: BundlePrivacyDefaults,
     pub limits: BundleLimits,
     /// What a bundle would contain, in order, with the exact payloads.
@@ -173,6 +184,8 @@ pub struct BundleEntry {
 pub enum BundleEntryOrigin {
     /// Observed by tungsten; not supplied by the user.
     Observed,
+    /// A file the user explicitly attached (schema version 2 only).
+    UserSupplied,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
@@ -180,6 +193,9 @@ pub enum BundleEntryOrigin {
 pub enum BundleSensitivity {
     /// Names, states, counts and versions only.
     Metadata,
+    /// Arbitrary user-supplied text after automatic redaction; it may still
+    /// hold sensitive content (schema version 2 only).
+    UserSuppliedText,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
@@ -197,7 +213,9 @@ pub enum BundleEntryStatus {
 pub struct OmittedCategory {
     pub category: String,
     pub description: String,
-    /// Always `excluded_by_default`; opting in is not available yet.
+    /// Always `excluded_by_default`: tungsten never collects these itself.
+    /// Logs and configuration files enter a bundle only as labelled
+    /// `user.attachment` entries the user names explicitly.
     pub reason: String,
 }
 
@@ -211,6 +229,7 @@ pub enum BundlePayload {
     Diagnostics(DiagnosticSummary),
     Prerequisites(PrerequisiteSummary),
     Reproduction(ReproductionRecipe),
+    Attachment(AttachmentPayload),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
@@ -386,12 +405,28 @@ pub(crate) fn run(
     if args.output.is_some() && !export::supported() {
         return export_failed(report, Failure::Unsupported.into());
     }
+    let attachments = args.attach_log.len() + args.attach_config.len();
+    if attachments > attach::MAX_ATTACHMENTS {
+        return report.failed(
+            exit::USAGE,
+            CliError::new(
+                ErrorKind::Usage,
+                format!(
+                    "a support bundle holds at most {} attachments",
+                    attach::MAX_ATTACHMENTS
+                ),
+            ),
+        );
+    }
+    let attachment_ids: Vec<String> = (0..attachments).map(attach::entry_id).collect();
     for id in &args.exclude {
-        if !ENTRY_IDS.contains(&id.as_str()) {
+        if !ENTRY_IDS.contains(&id.as_str()) && !attachment_ids.contains(id) {
+            let mut valid: Vec<String> = ENTRY_IDS.map(String::from).to_vec();
+            valid.extend(attachment_ids);
             return report.failed(
                 exit::USAGE,
                 CliError::new(ErrorKind::Usage, "unknown support bundle entry id")
-                    .with_help(format!("valid entry ids: {}", ENTRY_IDS.join(", "))),
+                    .with_help(format!("valid entry ids: {}", valid.join(", "))),
             );
         }
     }
@@ -408,6 +443,18 @@ pub(crate) fn run(
                     ErrorKind::Refused,
                     "support bundle collection exceeded its 30 second time limit; nothing was written",
                 ),
+            );
+        }
+        Err(Collection::Attachment(index)) => {
+            return report.failed(
+                exit::FAILED,
+                CliError::new(
+                    ErrorKind::NotFound,
+                    format!(
+                        "attachment {index} is not a readable regular, nonsymlink file; nothing was written"
+                    ),
+                )
+                .with_help("attachments are numbered from 0: --attach-log files first, then --attach-config files"),
             );
         }
         Err(Collection::Failed) => {
@@ -435,9 +482,17 @@ pub(crate) fn run(
         Err(error) => return export_failed(report, error),
     };
     report.human = format!(
-        "Published a metadata-only support bundle ({} bytes). Nothing was uploaded or executed.\n",
+        "Published a {} support bundle ({} bytes). Nothing was uploaded or executed.\n",
+        if manifest.bundle_schema_version == BUNDLE_SCHEMA_VERSION {
+            "metadata-only"
+        } else {
+            "schema 2"
+        },
         bytes.len()
     );
+    if manifest.bundle_schema_version != BUNDLE_SCHEMA_VERSION {
+        report.human.push_str(USER_SUPPLIED_WARNING);
+    }
     report.result = Some(CommandResult::SupportBundleExport(Box::new(
         SupportBundleExportReceipt {
             manifest,
@@ -503,14 +558,14 @@ fn inspect_file(mut report: Report, file: &Path) -> Report {
                 format!("unsupported support bundle schema version {version}"),
             )
             .with_help(format!(
-                "this tungsten reads schema version {BUNDLE_SCHEMA_VERSION}; use the tungsten release that wrote the bundle"
+                "this tungsten reads schema versions {BUNDLE_SCHEMA_VERSION} and {BUNDLE_SCHEMA_VERSION_ATTACHMENTS}; use the tungsten release that wrote the bundle"
             )),
         ),
         InspectError::Invalid(problem) => (
             exit::REFUSED,
             CliError::new(
                 ErrorKind::Refused,
-                format!("support bundle does not match schema version {BUNDLE_SCHEMA_VERSION}: {problem}"),
+                format!("support bundle does not match its schema version: {problem}"),
             ),
         ),
     };
@@ -567,6 +622,8 @@ fn export_failed(report: Report, error: ExportError) -> Report {
 enum Collection {
     Cancelled,
     TimeLimit,
+    /// The attachment with this index could not be read.
+    Attachment(usize),
     /// The worker could not start or panicked.
     Failed,
 }
@@ -599,7 +656,7 @@ fn collect(
             return Err(Collection::TimeLimit);
         }
         match receiver.recv_timeout(remaining.min(COLLECTION_POLL)) {
-            Ok(manifest) => return Ok(manifest),
+            Ok(manifest) => return manifest.map_err(Collection::Attachment),
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
             // The worker panicked before sending.
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
@@ -609,12 +666,31 @@ fn collect(
     }
 }
 
+/// Reads the attachments in entry order; `Err` names the failing index.
+fn attachments(args: &SupportBundleArgs) -> Result<Vec<AttachmentPayload>, usize> {
+    let secrets = attach::Secrets::from_environment();
+    let files = (args
+        .attach_log
+        .iter()
+        .map(|path| (path, AttachmentKind::Log)))
+    .chain(
+        args.attach_config
+            .iter()
+            .map(|path| (path, AttachmentKind::Configuration)),
+    );
+    files
+        .enumerate()
+        .map(|(index, (path, kind))| attach::read(path, kind, &secrets).map_err(|_| index))
+        .collect()
+}
+
 fn build(
     args: &SupportBundleArgs,
     env: &CliEnv,
     offline: bool,
     no_external: bool,
-) -> SupportBundlePreview {
+) -> Result<SupportBundlePreview, usize> {
+    let attached = attachments(args)?;
     let project = inspect(&args.path, env);
     let search_path = env
         .search_path
@@ -657,11 +733,31 @@ fn build(
         }),
     ];
     let mut total = 0usize;
-    let entries: Vec<BundleEntry> = ENTRY_IDS
-        .iter()
-        .zip(payloads)
-        .map(|(id, payload)| {
-            let (status, bytes, payload) = if args.exclude.iter().any(|e| e == id) {
+    let observed = ENTRY_IDS.iter().zip(payloads).map(|(id, payload)| {
+        (
+            (*id).to_string(),
+            BundleEntryOrigin::Observed,
+            BundleSensitivity::Metadata,
+            payload,
+        )
+    });
+    let user_supplied = attached.into_iter().enumerate().map(|(index, payload)| {
+        (
+            attach::entry_id(index),
+            BundleEntryOrigin::UserSupplied,
+            BundleSensitivity::UserSuppliedText,
+            BundlePayload::Attachment(payload),
+        )
+    });
+    let version = if user_supplied.len() == 0 {
+        BUNDLE_SCHEMA_VERSION
+    } else {
+        BUNDLE_SCHEMA_VERSION_ATTACHMENTS
+    };
+    let entries: Vec<BundleEntry> = observed
+        .chain(user_supplied)
+        .map(|(id, origin, sensitivity, payload)| {
+            let (status, bytes, payload) = if args.exclude.contains(&id) {
                 (BundleEntryStatus::ExcludedByRequest, 0, None)
             } else {
                 let bytes = serde_json::to_string(&payload).map_or(usize::MAX, |s| s.len());
@@ -673,24 +769,32 @@ fn build(
                 }
             };
             BundleEntry {
-                id: (*id).to_string(),
-                origin: BundleEntryOrigin::Observed,
-                sensitivity: BundleSensitivity::Metadata,
+                id,
+                origin,
+                sensitivity,
                 status,
                 bytes,
                 payload,
             }
         })
         .collect();
-    SupportBundlePreview {
-        bundle_schema_version: BUNDLE_SCHEMA_VERSION,
+    let privacy = if version == BUNDLE_SCHEMA_VERSION {
+        BundlePrivacyDefaults {
+            level: "metadata_only".into(),
+            redaction: "names, states, counts and versions only; no values, digests, paths, URLs or text from the project".into(),
+        }
+    } else {
+        BundlePrivacyDefaults {
+            level: "metadata_and_user_supplied".into(),
+            redaction: "observed entries hold names, states, counts and versions only; user.attachment entries hold user-supplied text after automatic redaction, which is not a guarantee that it is safe to share".into(),
+        }
+    };
+    Ok(SupportBundlePreview {
+        bundle_schema_version: version,
         mode: BundlePreviewMode::Preview,
         wrote_files: false,
         executed_programs: false,
-        privacy: BundlePrivacyDefaults {
-            level: "metadata_only".into(),
-            redaction: "names, states, counts and versions only; no values, digests, paths, URLs or text from the project".into(),
-        },
+        privacy,
         limits: BundleLimits {
             max_entry_bytes: MAX_ENTRY_BYTES,
             max_total_bytes: MAX_TOTAL_BYTES,
@@ -707,7 +811,7 @@ fn build(
                 reason: "excluded_by_default".into(),
             })
             .collect(),
-    }
+    })
 }
 
 struct ProjectView {
@@ -945,9 +1049,16 @@ fn human(preview: &SupportBundlePreview) -> String {
         tungsten_build::TUNGSTEN_VERSION,
         preview.bundle_schema_version
     );
-    out.push_str(
-        "metadata only; nothing is written, uploaded or executed. These are the exact entries a bundle would hold.\n",
-    );
+    if preview.bundle_schema_version == BUNDLE_SCHEMA_VERSION {
+        out.push_str(
+            "metadata only; nothing is written, uploaded or executed. These are the exact entries a bundle would hold.\n",
+        );
+    } else {
+        out.push_str(
+            "nothing is written, uploaded or executed. These are the exact entries a bundle would hold.\n",
+        );
+        out.push_str(USER_SUPPLIED_WARNING);
+    }
     let _ = writeln!(
         out,
         "entries: {} bytes of {} allowed",
