@@ -285,6 +285,7 @@ pub(crate) fn run(args: &InitArgs, json: bool, env: &CliEnv) -> Report {
             check: false,
             force: false,
             strict: selected.strict,
+            locked: false,
         },
         env,
         // The wizard writes built-in targets only; never start a command.

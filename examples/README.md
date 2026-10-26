@@ -44,6 +44,7 @@ canonical inputs are never modified.
 | [Start with JSON Schema models](input-json-schema/README.md) | Declare JSON Schema models together with explicit HTTP routing in an endpoint manifest. |
 | [Preview and confirm a destructive call](preview-confirmation/README.md) | Reject an unconfirmed deletion, preview its identical arguments, then execute with the returned token. |
 | [Develop against a local mock](local-mock/README.md) | Run tungsten mock and call it through the generated Python client with strict response validation. |
+| [Assert retries with saved mock scenarios](mock-scenarios/README.md) | Run an explicit integration against saved 429, interrupted-stream, malformed-response and lost-write scenarios, and fail deliberately broken retries. |
 | [Detect stale generated files in CI](ci-drift/README.md) | Generate, change a copied contract, observe the no-diff gate fail, then regenerate and pass. |
 | [Review semver and migration changes](surface-diff/README.md) | Compare a generated baseline with an additive operation using both diff review modes. |
 

@@ -350,12 +350,12 @@ macro_rules! targets {
 targets! {
     {
         id: "csharp", aliases: &["cs"], source: BuiltInEmitter, family: Some("dotnet"),
-        policy: false, tools: DOTNET, summary: "C# SDK",
+        policy: true, tools: DOTNET, summary: "C# SDK",
         options: &["package_id", "namespace", "version", "runtime", "runtime_path", "out"],
-        environments: [Dotnet], features: SDK,
+        environments: [Dotnet], features: SDK_POLICY,
     },
     {
-        id: "dart", aliases: &[], source: BuiltInEmitter, family: Some("dart"), policy: false,
+        id: "dart", aliases: &[], source: BuiltInEmitter, family: Some("dart"), policy: true,
         tools: &[ToolRequirement {
             tool: "dart", minimum: Some([3, 6]), maximum_exclusive: Some([4, 0]), minimum_option: None, excluded_versions: &[],
         }],
@@ -590,11 +590,18 @@ pub struct OpenApiVersionCapability {
 use InputFeaturePolicy::{Ignored, Rejected};
 
 /// OpenAPI 3.2 constructs without a 3.1 equivalent that are compiled.
-pub const OPENAPI_32_SUPPORTED: &[SupportedInputFeature] = &[SupportedInputFeature {
-    id: "query_method",
-    member: "query",
-    behavior: "an operation sent with the HTTP QUERY method and its request body; safe, so read-only by default",
-}];
+pub const OPENAPI_32_SUPPORTED: &[SupportedInputFeature] = &[
+    SupportedInputFeature {
+        id: "query_method",
+        member: "query",
+        behavior: "an operation sent with the HTTP QUERY method and its request body; safe, so read-only by default",
+    },
+    SupportedInputFeature {
+        id: "reusable_media_types",
+        member: "components.mediaTypes, $ref media type",
+        behavior: "a media type object given by $ref is read as if written in place",
+    },
+];
 
 /// OpenAPI 3.2 constructs without a 3.1 equivalent that are diagnosed. A 3.2
 /// document using none of these is read as its 3.1 twin plus the supported
@@ -625,12 +632,6 @@ pub const OPENAPI_32_FEATURES: &[UnsupportedInputFeature] = &[
         "nested_encoding",
         "encoding, prefixEncoding, itemEncoding (Encoding Object)",
         "TG0147",
-        Rejected,
-    ),
-    feature(
-        "reusable_media_types",
-        "components.mediaTypes, $ref media type",
-        "TG0148",
         Rejected,
     ),
     feature(
