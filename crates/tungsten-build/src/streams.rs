@@ -11,8 +11,8 @@
 //! - The event type is the media type's schema, usually a union tagged by
 //!   `type`, or in OpenAPI 3.2 the `contentSchema` of the `data` field of
 //!   its `itemSchema`, or that `data` string itself when it is plain text
-//!   (`text_data`: events are not decoded as JSON). A media type without either gives events of any JSON
-//!   type (TG0530).
+//!   (`text_data`: events are not decoded as JSON). A media type without
+//!   any of these gives events of any JSON type (TG0530).
 //! - `x-tungsten-stream-done` on the media type object, else on the
 //!   operation, names a `data` value that ends the stream (`[DONE]`).
 //! - A boolean `stream` member of the JSON request body is the flag that

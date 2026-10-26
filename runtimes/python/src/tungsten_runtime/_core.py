@@ -2581,6 +2581,7 @@ class Engine:
         sensitive = [f for f in listed if isinstance(f, str)] if is_array(listed) else []
         validate = _hook(field(spec, "event"), "validate")
         done = str_field(spec, "done")
+        text_data = field(spec, "text") is True
         max_event_bytes = int(bounded(cast(object, self.options.max_event_bytes), DEFAULT_MAX_EVENT_BYTES, 1))
         max_reconnects = int(
             bounded(cast(object, self.options.max_reconnects), _DEFAULT_MAX_RECONNECTS, 0, 1000)
@@ -2691,18 +2692,20 @@ class Engine:
                     )
                 )
 
-            try:
-                value: object = parse_json(event.data)
-            except ValueError:
-                return failure(
-                    failed_parameter=f"events[{index}]",
-                    received_value=envelope_value(event.data, False),
-                    expected="JSON in the data of every event",
-                    remediation=(
-                        f'Event {index} of the stream (event "{event.event}") does not carry JSON in its '
-                        f"data.{after_effect} Events before it were delivered."
-                    ),
-                )
+            value: object = event.data
+            if not text_data:
+                try:
+                    value = parse_json(event.data)
+                except ValueError:
+                    return failure(
+                        failed_parameter=f"events[{index}]",
+                        received_value=envelope_value(event.data, False),
+                        expected="JSON in the data of every event",
+                        remediation=(
+                            f'Event {index} of the stream (event "{event.event}") does not carry JSON in its '
+                            f"data.{after_effect} Events before it were delivered."
+                        ),
+                    )
             if mode != "off" and callable(validate):
                 notes: list[PatternNote] = []
                 try:

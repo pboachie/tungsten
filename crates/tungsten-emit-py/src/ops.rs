@@ -938,6 +938,9 @@ pub(crate) fn descriptor_py(plan: &Plan<'_>, info: &OpInfo<'_>, shape: &OpShape<
         if let Some(flag) = &spec.request_flag {
             stream_entries.push(("flag", Py::str(flag)));
         }
+        if spec.text_data {
+            stream_entries.push(("text", Py::bool(true)));
+        }
         entries.push(("stream", Py::dict(stream_entries)));
     }
     let summary = op_summary(op);

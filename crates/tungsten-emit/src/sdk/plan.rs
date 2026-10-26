@@ -290,6 +290,8 @@ pub struct StreamPlan {
     pub flag: Option<String>,
     /// The same status also answers with a body that is not a stream.
     pub also_plain: bool,
+    /// Every event's `data` is text taken as written, not JSON.
+    pub text: bool,
 }
 
 /// One resource.
@@ -924,6 +926,7 @@ fn plan_op<'a>(
         done: s.done.clone(),
         flag: s.request_flag.clone(),
         also_plain: s.also_plain,
+        text: s.text_data,
     });
     OpPlan {
         op,

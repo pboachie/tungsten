@@ -409,6 +409,8 @@ export interface StreamDescriptor {
   /** Wire name of the boolean request body field that selects the stream;
    * `ClientCore.stream` sets it to `true`. */
   flag?: string;
+  /** Every event's `data` is text delivered as written, not JSON. */
+  text?: boolean;
 }
 
 /** The `authorizationCode` flow of an OAuth2 scheme (present only when the

@@ -969,7 +969,12 @@ impl ClientCore {
                 &open.secrets,
             ))
         };
-        let value: Value = match serde_json::from_str(&event.data) {
+        let parsed = if spec.text {
+            Ok(Value::String(event.data.clone()))
+        } else {
+            serde_json::from_str(&event.data)
+        };
+        let value: Value = match parsed {
             Ok(mut value) => {
                 crate::util::integral_numbers(&mut value);
                 value
