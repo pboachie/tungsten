@@ -936,7 +936,39 @@ impl Ctx<'_> {
             UnionPlan::Tagged {
                 tag,
                 variants: tagged,
-                ..
+                default: Some(fallback),
+            } => {
+                // OpenAPI 3.2 `defaultMapping`: an object whose tag is
+                // missing, not a string or claimed by no other variant
+                // decodes as the default variant.
+                let (dc, dft) = &variants[*fallback];
+                let arms: Vec<String> = tagged
+                    .iter()
+                    .filter(|(index, _)| index != fallback)
+                    .filter_map(|(index, tags)| variants.get(*index).map(|v| (v, tags)))
+                    .flat_map(|((c, ft), tags)| {
+                        tags.iter().map(move |value| {
+                            format!("| Some {} -> {}", lit(value), case(c, ft, "node", "d"))
+                        })
+                    })
+                    .collect();
+                let default = case(dc, dft, "node", "d");
+                if arms.is_empty() {
+                    w.line("Codec.object d node |> ignore");
+                    w.line(default);
+                } else {
+                    w.line("let o = Codec.object d node");
+                    w.line(format!("match Codec.tagOption o {} with", lit(tag)));
+                    for arm in arms {
+                        w.line(arm);
+                    }
+                    w.line(format!("| _ -> {default}"));
+                }
+            }
+            UnionPlan::Tagged {
+                tag,
+                variants: tagged,
+                default: None,
             } => {
                 w.line("let o = Codec.object d node");
                 w.line(format!("match Codec.tag d o {} with", lit(tag)));
