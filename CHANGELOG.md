@@ -243,6 +243,12 @@ changes.
   starts after it expires (`DEADLINE_EXCEEDED`); a mutation already sent still
   reports `OUTCOME_UNKNOWN`. Existing timeout semantics are unchanged.
 
+- Add a per-tool-call total deadline to the MCP adapter
+  (`ServerOptions.toolDeadlineMs`, `<API>_MCP_DEADLINE_MS` in generated
+  servers). It maps to the TypeScript runtime's `deadlineMs`; tool results
+  name `code: DEADLINE_EXCEEDED`, and a mutation already sent still reports
+  `OUTCOME_UNKNOWN`.
+
 - Add `tungsten lock`, a versioned single-project generation lock
   (`tungsten.lock.json`). It records the declared input closure (manifest,
   profiles, agent manifest, entry documents, local references and overlays in
