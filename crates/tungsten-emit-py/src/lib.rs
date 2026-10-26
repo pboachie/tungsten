@@ -53,6 +53,7 @@ mod plan;
 mod py;
 mod resources;
 mod types;
+mod webhooks;
 
 use tungsten_core::{Diagnostic, Diagnostics};
 use tungsten_emit::{CommentStyle, Emitter, FileSet, TargetConfig, header};
@@ -224,6 +225,12 @@ pub fn generate(ir: &Ir, opts: &Options) -> Vec<(String, String)> {
             format!("{header}\n\"\"\"Resource classes, one module per resource.\"\"\"\n"),
         ),
     ];
+    if tungsten_emit::webhooks::has_webhooks(ir) {
+        files.push((
+            format!("{m}/webhooks.py"),
+            webhooks::webhooks_file(&plan, &header),
+        ));
+    }
     if has_macros {
         files.push((
             format!("{m}/macros.py"),
