@@ -57,6 +57,13 @@ pub(crate) fn openapi_human(inputs: &[capabilities::OpenApiVersionCapability]) -
     let mut out = String::from("OpenAPI input versions\n");
     for input in inputs {
         let _ = writeln!(out, "  {:<12} {:?}", input.line, input.support);
+        for feature in input.supported_features {
+            let _ = writeln!(
+                out,
+                "    compiled  {}: {}",
+                feature.member, feature.behavior
+            );
+        }
         if !input.unsupported_features.is_empty() {
             let _ = writeln!(
                 out,

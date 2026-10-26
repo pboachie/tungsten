@@ -305,6 +305,18 @@ const fn feature(
     }
 }
 
+/// One construct of a version line that has no 3.1 equivalent and is
+/// compiled with its own semantics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct SupportedInputFeature {
+    pub id: &'static str,
+    /// The document member that introduces the construct.
+    pub member: &'static str,
+    /// What the compiled client does with it.
+    pub behavior: &'static str,
+}
+
 /// Source declaration for one `openapi` version line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
 #[schemars(deny_unknown_fields)]
@@ -312,16 +324,26 @@ pub struct OpenApiVersionCapability {
     /// Major.minor line; every patch version of it is accepted.
     pub line: &'static str,
     pub support: OpenApiSupport,
+    /// Constructs new in this line that are compiled.
+    #[serde(skip_serializing_if = "<[_]>::is_empty")]
+    pub supported_features: &'static [SupportedInputFeature],
     pub unsupported_features: &'static [UnsupportedInputFeature],
 }
 
 use InputFeaturePolicy::{Ignored, Rejected};
 
-/// OpenAPI 3.2 constructs without a 3.1 equivalent. A 3.2 document using none
-/// of them is read exactly as its 3.1 twin.
+/// OpenAPI 3.2 constructs without a 3.1 equivalent that are compiled.
+pub const OPENAPI_32_SUPPORTED: &[SupportedInputFeature] = &[SupportedInputFeature {
+    id: "query_method",
+    member: "query",
+    behavior: "an operation sent with the HTTP QUERY method and its request body; safe, so read-only by default",
+}];
+
+/// OpenAPI 3.2 constructs without a 3.1 equivalent that are diagnosed. A 3.2
+/// document using none of these is read as its 3.1 twin plus the supported
+/// constructs above.
 pub const OPENAPI_32_FEATURES: &[UnsupportedInputFeature] = &[
     feature("document_self", "$self", "TG0140", Rejected),
-    feature("query_method", "query", "TG0141", Rejected),
     feature(
         "additional_operations",
         "additionalOperations",
@@ -399,16 +421,19 @@ pub const OPENAPI_INPUTS: &[OpenApiVersionCapability] = &[
     OpenApiVersionCapability {
         line: "3.0",
         support: OpenApiSupport::Supported,
+        supported_features: &[],
         unsupported_features: &[],
     },
     OpenApiVersionCapability {
         line: "3.1",
         support: OpenApiSupport::Supported,
+        supported_features: &[],
         unsupported_features: &[],
     },
     OpenApiVersionCapability {
         line: "3.2",
         support: OpenApiSupport::Subset,
+        supported_features: OPENAPI_32_SUPPORTED,
         unsupported_features: OPENAPI_32_FEATURES,
     },
 ];

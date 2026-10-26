@@ -221,7 +221,10 @@ pub mod codes {
             "TG0140",
             "OpenAPI 3.2 `$self` document identity is not supported",
         ),
-        ("TG0141", "OpenAPI 3.2 `query` HTTP method is not supported"),
+        (
+            "TG0141",
+            "OpenAPI 3.2 `query` HTTP method (retired: now compiled)",
+        ),
         (
             "TG0142",
             "OpenAPI 3.2 `additionalOperations` custom HTTP methods are not supported",
