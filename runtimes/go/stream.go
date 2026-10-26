@@ -81,8 +81,10 @@ type EventStream struct {
 	opts  CallOptions
 	open  *openStream
 	state int // 0 idle, 1 open, 2 done
-	event *StreamEvent
-	err   *Error
+	// deadline bounds connecting and each reconnect, not an open stream.
+	deadline time.Time
+	event    *StreamEvent
+	err      *Error
 	// cancelled is set by Cancel, from any goroutine; mu guards body, the
 	// connection Cancel closes.
 	cancelled atomic.Bool
@@ -111,7 +113,7 @@ func (c *ClientCore) Stream(op *OperationDescriptor, spec *StreamDescriptor, arg
 	if spec == nil {
 		spec = &StreamDescriptor{}
 	}
-	return &EventStream{core: c, op: op, spec: spec, args: args, opts: opts}
+	return &EventStream{core: c, op: op, spec: spec, args: args, opts: opts, deadline: c.deadlineAt(opts)}
 }
 
 // Event is the event Next delivered.
@@ -165,6 +167,9 @@ func (s *EventStream) Next(ctx context.Context) bool {
 			if s.cancelled.Load() {
 				s.state = 2
 				return false
+			}
+			if !s.deadline.IsZero() && !time.Now().Before(s.deadline) {
+				return s.fail(deadlineExceeded(s.op.ID, "before the stream could connect"))
 			}
 			open, err := s.core.openStream(ctx, s.op, s.spec, s.args, s.opts, nil)
 			if err != nil {
@@ -241,6 +246,9 @@ func (s *EventStream) Next(ctx context.Context) bool {
 				return false
 			}
 			return s.fail(s.core.interrupted(s.op, o, why))
+		}
+		if !s.deadline.IsZero() && !time.Now().Before(s.deadline) {
+			return s.fail(deadlineExceeded(s.op.ID, "before the stream could reconnect"))
 		}
 		fresh, err := s.core.reconnect(ctx, s.op, s.spec, s.args, s.opts, o)
 		if s.cancelled.Load() {

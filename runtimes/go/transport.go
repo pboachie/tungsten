@@ -77,6 +77,8 @@ type attemptOutcome struct {
 	stream      *eventBody
 	detail      string
 	sent        bool
+	// deadline: an aborted attempt ended by its context's deadline.
+	deadline bool
 }
 
 // eventBody is the unread body of an event stream; each read waits at most
@@ -356,7 +358,7 @@ func attempt(ctx context.Context, client *http.Client, req attemptRequest) attem
 		case expired():
 			return attemptOutcome{kind: outcomeTimeout}
 		case ctx.Err() != nil:
-			return attemptOutcome{kind: outcomeAborted, sent: wasWritten()}
+			return attemptOutcome{kind: outcomeAborted, sent: wasWritten(), deadline: errors.Is(ctx.Err(), context.DeadlineExceeded)}
 		case notSentError(err):
 			return attemptOutcome{kind: outcomeNotSent, detail: failureDetail(err, false)}
 		}

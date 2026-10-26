@@ -164,6 +164,10 @@ func (c *ClientCore) sendWith(ctx context.Context, p *prepared, opts CallOptions
 		for _, m := range c.middleware {
 			m.OnRetry(rctx, d)
 		}
+		// A retry that could not start before the deadline is not waited for.
+		if deadline, ok := ctx.Deadline(); ok && !time.Now().Add(durationMs(delayMs)).Before(deadline) {
+			return nil, done
+		}
 		timer := time.NewTimer(durationMs(delayMs))
 		select {
 		case <-ctx.Done():
@@ -236,6 +240,18 @@ func (c *ClientCore) classifyResponse(cctx *callContext, p *prepared, outcome at
 		}
 		return nil, newDiag(op.ID, TransportFailed).remedy(cause + " This read has no side effects; call again.").attempts(attempts).err()
 	case outcomeAborted:
+		if outcome.deadline {
+			if mutation && outcome.sent {
+				return nil, newError(outcomeUnknown(cctx, "The operation deadline expired after the call was sent.", unknownFields{}))
+			}
+			if !outcome.sent {
+				return nil, deadlineExceeded(op.ID, "before the request could be sent")
+			}
+			code := "DEADLINE_EXCEEDED"
+			return nil, newDiag(op.ID, UpstreamUnavailable).code(&code).retry(RetryNever).
+				remedy("The operation deadline expired before a response arrived. This read has no side effects; call again with a larger Deadline.").
+				attempts(attempts).err()
+		}
 		if mutation && outcome.sent {
 			return nil, newError(outcomeUnknown(cctx, "The caller's context cancelled the call after it was sent.", unknownFields{}))
 		}

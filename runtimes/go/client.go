@@ -5,6 +5,7 @@ package tungsten
 import (
 	"context"
 	"encoding/binary"
+	"fmt"
 	"math"
 	"net/http"
 	"net/url"
@@ -31,6 +32,7 @@ type ClientCore struct {
 	headers                    map[string]string
 	baseURL                    string
 	timeout                    time.Duration
+	deadline                   time.Duration
 	maxEventBytes              int
 	maxCollectBytes            int
 	maxCollectTime             time.Duration
@@ -148,6 +150,7 @@ func NewClientCore(api *APIDescriptor, options ClientOptions) (*ClientCore, erro
 	if c.timeout <= 0 {
 		c.timeout = DefaultTimeout
 	}
+	c.deadline = options.Deadline
 	if c.maxEventBytes <= 0 {
 		c.maxEventBytes = DefaultMaxEventBytes
 	}
@@ -218,6 +221,8 @@ func (c *ClientCore) Operation(id string) (*OperationDescriptor, bool) {
 // rules, sends with retries and classifies the response. args is the
 // arguments object (keyed by argument name); a nil args is no arguments.
 func (c *ClientCore) Call(ctx context.Context, op *OperationDescriptor, args any, opts CallOptions) (*Outcome, error) {
+	ctx, cancel := c.withDeadline(ctx, opts)
+	defer cancel()
 	out, err := c.callWith(ctx, op, args, opts, "", nil)
 	if err != nil {
 		return nil, err
@@ -229,6 +234,8 @@ func (c *ClientCore) Call(ctx context.Context, op *OperationDescriptor, args any
 // header or endpoint preview). Mutating operations get a confirmation
 // token bound to these exact arguments for five minutes.
 func (c *ClientCore) Preview(ctx context.Context, op *OperationDescriptor, args any, opts CallOptions) (*Response[*PreviewResult], error) {
+	ctx, cancel := c.withDeadline(ctx, opts)
+	defer cancel()
 	out, err := c.preview(ctx, op, args, opts)
 	if err != nil {
 		return nil, err
@@ -238,7 +245,7 @@ func (c *ClientCore) Preview(ctx context.Context, op *OperationDescriptor, args 
 
 // Pages iterates the pages of a paginated operation.
 func (c *ClientCore) Pages(op *OperationDescriptor, args any, opts CallOptions) *Pages {
-	return &Pages{core: c, op: op, opts: opts, state: newPageState(args)}
+	return &Pages{core: c, op: op, opts: opts, state: newPageState(args), deadline: c.deadlineAt(opts)}
 }
 
 // Polled is the body a poll ended with.
@@ -251,6 +258,8 @@ type Polled struct {
 // Poll calls a read operation until until holds or the budget runs out; on
 // a timeout the last body is returned with TimedOut true.
 func (c *ClientCore) Poll(ctx context.Context, op *OperationDescriptor, args any, until any, interval, budget time.Duration, opts CallOptions) (*Response[Polled], error) {
+	ctx, cancel := c.withDeadline(ctx, opts)
+	defer cancel()
 	out, err := c.pollWith(ctx, op, args, pollSpec{until: until, interval: interval, budget: budget}, opts, nil)
 	if err != nil {
 		return nil, err
@@ -262,6 +271,8 @@ func (c *ClientCore) Poll(ctx context.Context, op *OperationDescriptor, args any
 // envelope with the completed steps' results as Partial. A destructive or
 // irreversible macro needs opts.Confirm.
 func (c *ClientCore) RunMacro(ctx context.Context, m *MacroDescriptor, input any, opts CallOptions) (*Outcome, error) {
+	ctx, cancel := c.withDeadline(ctx, opts)
+	defer cancel()
 	out, err := c.runMacro(ctx, m, input, opts)
 	if err != nil {
 		return nil, err
@@ -271,6 +282,8 @@ func (c *ClientCore) RunMacro(ctx context.Context, m *MacroDescriptor, input any
 
 // PreviewMacro previews a macro without sending anything.
 func (c *ClientCore) PreviewMacro(ctx context.Context, m *MacroDescriptor, input any, opts CallOptions) (*Response[*PreviewResult], error) {
+	ctx, cancel := c.withDeadline(ctx, opts)
+	defer cancel()
 	out, err := c.previewMacro(ctx, m, input, opts)
 	if err != nil {
 		return nil, err
@@ -396,6 +409,36 @@ func (c *ClientCore) retryOptions(op *OperationDescriptor) retry {
 		}
 	}
 	return out
+}
+
+// deadlineAt is the absolute total deadline of a call starting now; zero
+// when it has none.
+func (c *ClientCore) deadlineAt(opts CallOptions) time.Time {
+	d := opts.Deadline
+	if d == 0 {
+		d = c.deadline
+	}
+	if d <= 0 {
+		return time.Time{}
+	}
+	return time.Now().Add(d)
+}
+
+// withDeadline derives the call's context from its total deadline. An
+// earlier deadline of ctx stays in force.
+func (c *ClientCore) withDeadline(ctx context.Context, opts CallOptions) (context.Context, context.CancelFunc) {
+	if at := c.deadlineAt(opts); !at.IsZero() {
+		return context.WithDeadline(ctx, at)
+	}
+	return ctx, func() {}
+}
+
+// deadlineExceeded reports a call whose deadline expired before a request
+// was sent.
+func deadlineExceeded(operation, during string) *Error {
+	code := "DEADLINE_EXCEEDED"
+	return newDiag(operation, TransportFailed).code(&code).retry(RetryNever).
+		remedy(fmt.Sprintf("The operation deadline expired %s, so the request was not sent. Call again with a larger Deadline.", during)).err()
 }
 
 // attemptTimeout is the per-attempt timeout (at least one millisecond).
