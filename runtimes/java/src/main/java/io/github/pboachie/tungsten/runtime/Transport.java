@@ -160,8 +160,7 @@ final class Transport {
             }
             Object item;
             try {
-                long ms = Math.max(1, wait.toMillis());
-                item = queue.poll(ms, TimeUnit.MILLISECONDS);
+                item = queue.poll(nanos(wait), TimeUnit.NANOSECONDS);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 close();
@@ -214,6 +213,15 @@ final class Transport {
             return false;
         }
         return v.split(";", 2)[0].trim().equalsIgnoreCase("text/event-stream");
+    }
+
+    /** A wait in whole nanoseconds, at least one, saturated: millisecond rounding would end it early. */
+    private static long nanos(Duration wait) {
+        try {
+            return Math.max(1, wait.toNanos());
+        } catch (ArithmeticException e) {
+            return Long.MAX_VALUE;
+        }
     }
 
     private static boolean has(Throwable t, Class<? extends Throwable> type) {
@@ -694,7 +702,7 @@ final class Transport {
         }
         Head response;
         try {
-            response = head.get(Math.max(1, (deadline - System.nanoTime()) / 1_000_000), TimeUnit.MILLISECONDS);
+            response = head.get(Math.max(1, deadline - System.nanoTime()), TimeUnit.NANOSECONDS);
         } catch (TimeoutException e) {
             body.close();
             Outcome o = Outcome.of(Kind.TIMEOUT, "");

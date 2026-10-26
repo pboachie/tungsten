@@ -72,7 +72,10 @@ Incoming webhooks: `verify_webhook` accepts a body of at most 1 MiB by default
 timestamp more than 300 seconds from now by default (`tolerance_seconds`), and supports
 only the Stripe-compatible `t=,v1=` HMAC-SHA256 scheme (`v0` and other schemes
 are ignored). A payload whose arrays and objects nest more than 100 levels deep
-(`MAX_WEBHOOK_JSON_DEPTH`) is rejected as `payload_invalid`. Replay tracking is the
+(`MAX_WEBHOOK_JSON_DEPTH`) is rejected as `payload_invalid`, as is one with a `\u` escape that is a lone
+surrogate or a number outside the double range. A `str` body or secret is encoded as UTF-8 with each lone surrogate as
+U+FFFD, as TypeScript does. `claim` must be synchronous: an `async def` claim, or one
+returning an awaitable, raises `TypeError`. Replay tracking is the
 application's `claim` hook; the runtime keeps no delivery state. Unreleased 0.2.0 only.
 
 The OAuth 2.0 device authorization flow (OpenAPI 3.2 `deviceAuthorization`) is
