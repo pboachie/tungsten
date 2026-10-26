@@ -12,6 +12,7 @@
  * additive (new optional fields or union members), and update both sides
  * together.
  */
+import type { TelemetryEvent, TelemetryObserver } from "./telemetry.js";
 import type { TokenStore } from "./oauth.js";
 import type { Download, TransferProgress } from "./download.js";
 import type { EventStream } from "./streams.js";
@@ -651,6 +652,12 @@ export interface ClientOptions {
   /** The tenant or principal this client calls for. Clients sharing a
    * scheduler keep separate capacity, queues and pauses per tenant. */
   tenant?: string;
+  /** Receives local telemetry events for `call()`: the operation, each
+   * attempt, and the authentication, scheduler queue and retry backoff
+   * phases. Off by default; nothing is ever sent anywhere by the runtime.
+   * Events hold only bounded values (no URLs, headers, bodies, credentials
+   * or error text). See {@link TelemetryEvent}. */
+  telemetry?: TelemetryObserver;
 }
 
 /**

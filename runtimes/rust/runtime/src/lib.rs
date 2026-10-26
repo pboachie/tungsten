@@ -82,6 +82,7 @@ mod send;
 mod serialize;
 mod sse;
 mod stream;
+mod telemetry;
 mod transport;
 mod unchecked;
 mod util;
@@ -119,6 +120,10 @@ pub use stream::{
     DEFAULT_MAX_COLLECT_BYTES, DEFAULT_MAX_COLLECT_TIME, DEFAULT_MAX_RECONNECTS,
     DEFAULT_RECONNECT_MAX, EventHandlers, EventStream, Folded, StreamEvent, StreamResult,
     TypedEvents,
+};
+pub use telemetry::{
+    MemoryTelemetryCollector, TELEMETRY_SCHEMA_VERSION, TelemetryEntry, TelemetryEvent,
+    TelemetryEventName, TelemetryObserver, TelemetryOutcome, TelemetryPhase, TelemetryQueueReason,
 };
 pub use types::*;
 pub use unchecked::{PatternNote, note_unchecked_pattern};

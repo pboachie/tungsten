@@ -257,6 +257,24 @@ secret and few distinct values; nothing is buffered, and an observer's
 exception or panic is ignored. Read `stats()` for current counts.
 See the [bulk-sync example](https://github.com/pboachie/tungsten/tree/main/examples/bulk-sync).
 
+In unreleased 0.2.0, a client can report local telemetry for `call()` to an
+opt-in observer (`ClientOptions.telemetry`, a function or an object with `onEvent`). It is off by default and the runtime never sends
+telemetry anywhere. Each operation gets a `call_id`; events (`schema_version`
+1) mark `operation.start`/`operation.end`, `attempt.start`/`attempt.end` per
+attempt sent, and `phase` events for authentication (`auth`), request
+scheduler admission (`queue`, with `reason` `admitted`, `full`, `timeout`,
+`paused`, `closed`, `deadline` or `cancelled`) and the wait before a retry
+(`retry_backoff`). Each end carries `duration_ms` and an `outcome`: `ok`,
+`error` (with the diagnostic `category`), `cancelled`, `deadline_exceeded`, or
+`outcome_unknown` when a mutation may have taken effect. Events hold only the
+API name, operation id, enumerated values, HTTP status codes, attempt numbers
+and durations: never URLs, headers, bodies, argument values, credentials,
+confirmation tokens, tenant labels or error text. The observer is called
+synchronously and never awaited; one that throws or rejects never changes the call.
+`MemoryTelemetryCollector` keeps the newest events up to a capacity (default 1024, at most
+65536) and counts the ones it dropped. Previews, pages, polls, streams and
+macros do not emit telemetry yet.
+
 The core package is browser-safe; the separate `/node` adapter requires Node.js. No file-backed OAuth token store is provided.
 
 ## Related packages and documentation

@@ -37,6 +37,12 @@ from .scheduler import (
     SchedulerStats,
 )
 from .sentinels import UNSET, Unset
+from .telemetry import (
+    TELEMETRY_SCHEMA_VERSION,
+    MemoryTelemetryCollector,
+    TelemetryEvent,
+    TelemetryObserver,
+)
 from .types import *  # noqa: F403 (the contract types are the public API)
 from .webhooks import (
     DEFAULT_WEBHOOK_MAX_BODY_BYTES,
@@ -57,6 +63,7 @@ __all__ = [
     "DEFAULT_RETRYABLE",
     "MAX_CHECKPOINT_CHARS",
     "RUNTIME_VERSION",
+    "TELEMETRY_SCHEMA_VERSION",
     "UNSET",
     "AsyncClientCore",
     "AsyncDownload",
@@ -70,6 +77,7 @@ __all__ = [
     "FileIdempotencyStore",
     "IssuerDefense",
     "MemoryIdempotencyStore",
+    "MemoryTelemetryCollector",
     "MemoryTokenStore",
     "OAuthFlow",
     "OAuthOk",
@@ -83,6 +91,8 @@ __all__ = [
     "SchedulerStats",
     "StoredToken",
     "StreamResult",
+    "TelemetryEvent",
+    "TelemetryObserver",
     "TokenInfo",
     "TokenStore",
     "TransferProgress",

@@ -34,6 +34,7 @@ import httpcore
 import httpx
 
 from ._effects import (
+    CANCELLED_SEND,
     Acquire,
     Answered,
     AttemptOutcome,
@@ -541,7 +542,7 @@ def _drain(flow: Flow[Any], outcome: AttemptOutcome) -> object:
             if isinstance(effect.item, Err):
                 failure = effect.item.error
         elif isinstance(effect, Send):
-            sent = Lost("cancelled")
+            sent = CANCELLED_SEND
         elif isinstance(effect, ReadChunk):
             sent = StreamFailed("lost")
         elif isinstance(effect, StoreGet | StorePut | StoreReserve):
@@ -963,7 +964,7 @@ class AsyncDriver:
         except asyncio.CancelledError:
             effective = effect.effect if isinstance(effect, Bounded) else effect
             if isinstance(effective, Send):
-                self._report(_drain(flow, Lost("cancelled")))
+                self._report(_drain(flow, CANCELLED_SEND))
             flow.close()
             raise
 
