@@ -25,13 +25,32 @@ from dataclasses import dataclass
 from typing import Literal, cast
 from urllib.parse import urlsplit
 
-__all__ = ["Permit", "Rejection", "RequestScheduler", "SchedulerOptions", "SchedulerStats"]
+__all__ = ["Permit", "Rejection", "RequestScheduler", "RetryBudget", "SchedulerOptions", "SchedulerStats"]
 
 Kind = Literal["call", "stream"]
 _KINDS: tuple[Kind, Kind] = ("call", "stream")
 #: The pause after a ``RATE_LIMITED`` answer that names no wait.
 _DEFAULT_PAUSE_MS = 1000.0
 _MAX_PAUSE_MS = 3_600_000.0
+#: Slack for the sums of fractional retry earnings.
+_EPSILON = 1e-9
+
+
+@dataclass(frozen=True, slots=True)
+class RetryBudget:
+    """A token bucket of retries shared by the callers of one scope, so that
+    a failing upstream sees a bounded share of retries instead of every
+    caller's full retry policy at once. A scope starts with ``burst``
+    retries; each first attempt admitted earns ``ratio`` more and every
+    second earns ``min_per_second``, up to ``burst``. A retry spends one;
+    without one, the call stops retrying and returns its last failure as is."""
+
+    #: Retries earned per first attempt admitted, from 0 to 1.
+    ratio: float = 0.1
+    #: Retries earned per second whatever the traffic, from 0 to 10000.
+    min_per_second: float = 1.0
+    #: The most retries saved up, and the starting balance; 1 to 1000000.
+    burst: int = 10
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +71,9 @@ class SchedulerOptions:
     #: ``"origin"``: one scope per tenant and request origin. ``"scheduler"``:
     #: one scope per tenant, whatever the origin.
     scope: Literal["origin", "scheduler"] = "origin"
+    #: Retries shared by every call of one scope. None (default): only each
+    #: call's own retry policy limits retries.
+    retry_budget: RetryBudget | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,15 +103,29 @@ def _integer(value: object, fallback: int | None, low: int, high: int, name: str
     return value
 
 
+def _finite(value: object, low: float, high: float, name: str) -> float:
+    if (
+        not isinstance(value, int | float)
+        or isinstance(value, bool)
+        or not math.isfinite(value)
+        or not low <= value <= high
+    ):
+        raise ValueError(f"{name}: expected a number from {low:g} to {high:g}, got {value!r}")
+    return float(value)
+
+
 def _now() -> float:
     return time.monotonic() * 1000
 
 
 class _Waiter:
-    __slots__ = ("kind", "permit", "random", "rejection", "wake")
+    __slots__ = ("kind", "permit", "random", "rejection", "retry", "wake")
 
-    def __init__(self, kind: Kind, wake: Callable[[], None], random: Callable[[], float]) -> None:
+    def __init__(
+        self, kind: Kind, wake: Callable[[], None], random: Callable[[], float], retry: bool
+    ) -> None:
         self.kind: Kind = kind
+        self.retry = retry
         self.random = random
         self.permit: Permit | None = None
         self.rejection: Rejection | None = None
@@ -97,9 +133,12 @@ class _Waiter:
 
 
 class _Pool:
-    __slots__ = ("active", "paused_until", "probing", "queue")
+    __slots__ = ("active", "paused_until", "probing", "queue", "refilled_at", "tokens")
 
-    def __init__(self) -> None:
+    def __init__(self, tokens: float) -> None:
+        #: Retries left in the shared budget, as of ``refilled_at``.
+        self.tokens = tokens
+        self.refilled_at = _now()
         self.active: dict[Kind, int] = {"call": 0, "stream": 0}
         self.queue: dict[Kind, list[_Waiter]] = {"call": [], "stream": []}
         self.paused_until = 0.0
@@ -150,6 +189,18 @@ class RequestScheduler:
         if options.scope not in ("origin", "scheduler"):
             raise ValueError(f'scope must be "origin" or "scheduler", got {options.scope!r}')
         self.scope: Literal["origin", "scheduler"] = options.scope
+        budget = cast(object, options.retry_budget)
+        if budget is not None and not isinstance(budget, RetryBudget):
+            raise TypeError("retry_budget must be a RetryBudget")
+        self._retry_budget: tuple[float, float, int] | None = (
+            None
+            if budget is None
+            else (
+                _finite(budget.ratio, 0, 1, "retry_budget.ratio"),
+                _finite(budget.min_per_second, 0, 10_000, "retry_budget.min_per_second"),
+                _integer(budget.burst, None, 1, 1_000_000, "retry_budget.burst"),
+            )
+        )
         self._lock = threading.Lock()
         self._pools: dict[str, _Pool] = {}
         self._idle = threading.Condition(self._lock)
@@ -174,18 +225,30 @@ class RequestScheduler:
 
     # ------------------------------------------------------------ admission
 
+    def _pool(self, key: str) -> _Pool:
+        """Under the lock: the pool of ``key``, made when missing."""
+        pool = self._pools.get(key)
+        if pool is None:
+            # Scopes kept only for their unfinished pause or spent retry
+            # budget are dropped once neither matters any more.
+            for other, idle in list(self._pools.items()):
+                if self._disposable(idle):
+                    del self._pools[other]
+            pool = self._pools[key] = _Pool(
+                0.0 if self._retry_budget is None else float(self._retry_budget[2])
+            )
+        return pool
+
     def _try(
-        self, key: str, kind: Kind, budget_ms: float, random: Callable[[], float]
+        self, key: str, kind: Kind, budget_ms: float, random: Callable[[], float], retry: bool
     ) -> Permit | Rejection | _Pool:
         """Admit at once, refuse at once, or return the pool to wait in."""
         if self._closed:
             return Rejection("closed")
-        pool = self._pools.get(key)
-        if pool is None:
-            pool = self._pools[key] = _Pool()
+        pool = self._pool(key)
         paused = max(0.0, pool.paused_until - _now())
         if paused == 0 and not pool.queue[kind] and pool.active[kind] < self._limit(pool, kind):
-            return self._grant(key, pool, kind, random)
+            return self._grant(key, pool, kind, random, retry)
         if paused > budget_ms:
             self._forget(key, pool)
             return Rejection("paused", math.ceil(paused))
@@ -207,18 +270,21 @@ class RequestScheduler:
         kind: Kind,
         deadline_ms: float | None = None,
         random: Callable[[], float] = _random.random,
+        *,
+        retry: bool = False,
     ) -> Permit | Rejection:
         """Wait (blocking this thread) for capacity in ``key``.
         ``deadline_ms`` is an absolute ``time.monotonic()`` time in
-        milliseconds that also ends the wait."""
+        milliseconds that also ends the wait. ``retry`` marks a repeat of an
+        earlier attempt, which earns the retry budget nothing."""
         budget = self._budget(deadline_ms)
         until = _now() + budget
         event = threading.Event()
         with self._lock:
-            found = self._try(key, kind, budget, random)
+            found = self._try(key, kind, budget, random, retry)
             if not isinstance(found, _Pool):
                 return found
-            waiter = _Waiter(kind, event.set, random)
+            waiter = _Waiter(kind, event.set, random, retry)
             found.queue[kind].append(waiter)
         while True:
             with self._lock:
@@ -235,6 +301,8 @@ class RequestScheduler:
         kind: Kind,
         deadline_ms: float | None = None,
         random: Callable[[], float] = _random.random,
+        *,
+        retry: bool = False,
     ) -> Permit | Rejection:
         """Wait (without blocking the event loop) for capacity in ``key``.
         Cancelling the task removes the request from the queue."""
@@ -253,10 +321,10 @@ class RequestScheduler:
                 loop.call_soon_threadsafe(resolve)
 
         with self._lock:
-            found = self._try(key, kind, budget, random)
+            found = self._try(key, kind, budget, random, retry)
             if not isinstance(found, _Pool):
                 return found
-            waiter = _Waiter(kind, wake, random)
+            waiter = _Waiter(kind, wake, random, retry)
             found.queue[kind].append(waiter)
         try:
             while True:
@@ -300,6 +368,20 @@ class RequestScheduler:
             queue.remove(waiter)
         self._pump(key, pool)
         self._forget(key, pool)
+
+    def spend_retry(self, key: str) -> bool:
+        """Take one retry from the shared budget of ``key``. False when the
+        budget is spent: the caller must not retry. Always True without a
+        retry budget."""
+        if self._retry_budget is None:
+            return True
+        with self._lock:
+            pool = self._pool(key)
+            self._refill(pool)
+            if pool.tokens < 1 - _EPSILON:
+                return False
+            pool.tokens = max(0.0, pool.tokens - 1)
+            return True
 
     # ------------------------------------------------------------ shutdown
 
@@ -354,8 +436,31 @@ class RequestScheduler:
             return 1
         return self.max_active if kind == "call" else self.max_streams
 
-    def _grant(self, key: str, pool: _Pool, kind: Kind, random: Callable[[], float]) -> Permit:
+    def _refill(self, pool: _Pool) -> None:
+        """Under the lock: add what the budget earned per second since it
+        was last refilled."""
+        if self._retry_budget is None:
+            return
+        now = _now()
+        earned = max(0.0, now - pool.refilled_at) / 1000 * self._retry_budget[1]
+        pool.tokens = min(float(self._retry_budget[2]), pool.tokens + earned)
+        pool.refilled_at = now
+
+    def _disposable(self, pool: _Pool) -> bool:
+        """Under the lock: an idle scope whose pause has passed and whose
+        retry budget is full holds nothing worth keeping."""
+        if pool.busy() > 0 or pool.paused_until > _now():
+            return False
+        if self._retry_budget is None:
+            return True
+        self._refill(pool)
+        return pool.tokens >= self._retry_budget[2] - _EPSILON
+
+    def _grant(self, key: str, pool: _Pool, kind: Kind, random: Callable[[], float], retry: bool) -> Permit:
         pool.active[kind] += 1
+        if self._retry_budget is not None and not retry:
+            self._refill(pool)
+            pool.tokens = min(float(self._retry_budget[2]), pool.tokens + self._retry_budget[0])
 
         def settle(rate_limited_ms: float | None, limited: bool) -> None:
             with self._lock:
@@ -396,14 +501,15 @@ class RequestScheduler:
             queue = pool.queue[kind]
             while queue and pool.active[kind] < self._limit(pool, kind):
                 waiter = queue.pop(0)
-                waiter.permit = self._grant(key, pool, kind, waiter.random)
+                waiter.permit = self._grant(key, pool, kind, waiter.random, waiter.retry)
                 waiter.wake()
 
     def _forget(self, key: str, pool: _Pool) -> None:
-        """Under the lock: drop an idle scope once its pause has passed."""
+        """Under the lock: drop an idle scope once its pause has passed and
+        its retry budget is full again."""
         if pool.busy() > 0:
             return
-        if pool.paused_until <= _now() and self._pools.get(key) is pool:
+        if self._disposable(pool) and self._pools.get(key) is pool:
             del self._pools[key]
         if self._busy() == 0:
             self._idle.notify_all()

@@ -165,7 +165,7 @@ impl ClientCore {
                 m.on_request(&ctx);
             }
             self.check_send_deadline(prepared, attempts, check.as_ref())?;
-            let mut permit = match self.admit(prepared, stream).await {
+            let mut permit = match self.admit(prepared, stream, attempts > 1).await {
                 Ok(permit) => permit,
                 Err(rejected) => {
                     // A wait ended by the call's deadline reports that.
@@ -332,6 +332,14 @@ impl ClientCore {
                     }
                 }
             };
+            // Callers sharing a quota share one retry budget; once it is
+            // spent, the last failure stands.
+            if let Some(scheduler) = &self.inner.scheduler {
+                let key = scheduler.scope_key(&prepared.url, self.inner.tenant.as_deref());
+                if !scheduler.spend_retry(&key) {
+                    return Err(done(diagnostic, partial));
+                }
+            }
             for m in &self.inner.middleware {
                 m.on_retry(&ctx, &diagnostic);
             }
@@ -353,6 +361,7 @@ impl ClientCore {
         &self,
         prepared: &Prepared<'_>,
         stream: bool,
+        retry: bool,
     ) -> Step<Option<crate::scheduler::Permit>> {
         let Some(scheduler) = &self.inner.scheduler else {
             return Ok(None);
@@ -362,7 +371,13 @@ impl ClientCore {
         let random = std::sync::Arc::new(move || core.random());
         let kind = if stream { Kind::Stream } else { Kind::Call };
         match scheduler
-            .acquire(&key, kind, crate::verify::effective_deadline(), random)
+            .acquire(
+                &key,
+                kind,
+                crate::verify::effective_deadline(),
+                random,
+                retry,
+            )
             .await
         {
             Ok(permit) => Ok(Some(permit)),

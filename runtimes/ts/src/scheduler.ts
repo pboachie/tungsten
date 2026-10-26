@@ -29,6 +29,28 @@ export interface SchedulerOptions {
   /** `"origin"` (default): one scope per tenant and request origin.
    * `"scheduler"`: one scope per tenant, whatever the origin. */
   scope?: "origin" | "scheduler";
+  /** Retries shared by every call of one scope. Without it, only each
+   * call's own retry policy limits retries. */
+  retryBudget?: RetryBudgetOptions;
+}
+
+/**
+ * A token bucket of retries shared by the callers of one scope, so that a
+ * failing upstream sees a bounded share of retries instead of every
+ * caller's full retry policy at once. A scope starts with `burst` retries;
+ * each first attempt admitted earns `ratio` more and every second earns
+ * `minPerSecond`, up to `burst`. A retry spends one; without one, the call
+ * stops retrying and returns its last failure as is.
+ */
+export interface RetryBudgetOptions {
+  /** Retries earned per first attempt admitted, from 0 to 1. Default 0.1. */
+  ratio?: number;
+  /** Retries earned per second whatever the traffic, from 0 to 10000.
+   * Default 1. */
+  minPerSecond?: number;
+  /** The most retries saved up, and the starting balance; an integer from
+   * 1 to 1000000. Default 10. */
+  burst?: number;
 }
 
 /** Why a request was not admitted. */
@@ -58,6 +80,7 @@ type Kind = "call" | "stream";
 
 interface Waiter {
   kind: Kind;
+  retry: boolean;
   random: () => number;
   grant: (permit: Permit) => void;
   reject: (rejection: Rejection) => void;
@@ -69,16 +92,35 @@ interface Pool {
   pausedUntil: number;
   probing: boolean;
   timer: ReturnType<typeof setTimeout> | null;
+  /** Retries left in the shared budget, as of `refilledAt`. */
+  tokens: number;
+  refilledAt: number;
+}
+
+interface Budget {
+  ratio: number;
+  minPerSecond: number;
+  burst: number;
 }
 
 /** The pause after a `RATE_LIMITED` answer that names no wait. */
 const DEFAULT_PAUSE_MS = 1000;
 const MAX_PAUSE_MS = 3_600_000;
+/** Slack for the sums of fractional retry earnings. */
+const EPSILON = 1e-9;
 
 function integer(value: unknown, fallback: number, min: number, max: number): number {
   if (value === undefined || value === null) return fallback;
   if (typeof value !== "number" || !Number.isInteger(value) || value < min || value > max) {
     throw new RangeError(`expected an integer from ${min} to ${max}, got ${String(value)}`);
+  }
+  return value;
+}
+
+function finite(value: unknown, fallback: number, min: number, max: number): number {
+  if (value === undefined || value === null) return fallback;
+  if (typeof value !== "number" || !Number.isFinite(value) || value < min || value > max) {
+    throw new RangeError(`expected a number from ${min} to ${max}, got ${String(value)}`);
   }
   return value;
 }
@@ -95,6 +137,7 @@ export class RequestScheduler {
   readonly maxStreams: number;
   readonly maxQueueMs: number;
   readonly scope: "origin" | "scheduler";
+  readonly #budget: Budget | null;
   readonly #pools = new Map<string, Pool>();
   readonly #idle: Array<() => void> = [];
   #closed = false;
@@ -108,6 +151,12 @@ export class RequestScheduler {
       throw new RangeError(`scope must be "origin" or "scheduler", got ${String(options.scope)}`);
     }
     this.scope = options.scope ?? "origin";
+    const budget = options.retryBudget;
+    this.#budget = budget === undefined || budget === null ? null : {
+      ratio: finite(budget.ratio, 0.1, 0, 1),
+      minPerSecond: finite(budget.minPerSecond, 1, 0, 10_000),
+      burst: integer(budget.burst, 10, 1, 1_000_000),
+    };
   }
 
   /** The scope of a request to `url` made for `tenant`. */
@@ -126,9 +175,10 @@ export class RequestScheduler {
   /**
    * Wait for capacity in `key`. Resolves to a permit, or to why none was
    * given; a rejected request must not be sent. `deadline` is an absolute
-   * `performance.now()` time that also ends the wait.
+   * `performance.now()` time that also ends the wait. `retry` marks a
+   * repeat of an earlier attempt, which earns the retry budget nothing.
    */
-  acquire(key: string, kind: Kind, signal?: AbortSignal, deadline?: number, random: () => number = Math.random): Promise<Permit | Rejection> {
+  acquire(key: string, kind: Kind, signal?: AbortSignal, deadline?: number, random: () => number = Math.random, retry = false): Promise<Permit | Rejection> {
     if (this.#closed) return Promise.resolve({ reason: "closed" });
     if (signal?.aborted) return Promise.resolve({ reason: "aborted" });
     const pool = this.#pool(key);
@@ -136,7 +186,7 @@ export class RequestScheduler {
     const budget = Math.min(this.maxQueueMs, deadline === undefined ? Infinity : Math.max(0, deadline - now));
     const paused = Math.max(0, pool.pausedUntil - now);
     if (paused === 0 && pool.queue[kind].length === 0 && pool.active[kind] < this.#limit(pool, kind)) {
-      return Promise.resolve(this.#grant(key, pool, kind, random));
+      return Promise.resolve(this.#grant(key, pool, kind, random, retry));
     }
     if (paused > budget) {
       this.#forget(key, pool);
@@ -157,6 +207,7 @@ export class RequestScheduler {
       };
       const waiter: Waiter = {
         kind,
+        retry,
         random,
         grant: (permit) => { finish(); resolve(permit); },
         reject: (rejection) => { finish(); resolve(rejection); this.#forget(key, pool); this.#pump(key, pool); },
@@ -167,6 +218,19 @@ export class RequestScheduler {
       pool.queue[kind].push(waiter);
       this.#pump(key, pool);
     });
+  }
+
+  /** Take one retry from the shared budget of `key`. False when the
+   * budget is spent: the caller must not retry. Always true without a
+   * retry budget. */
+  spendRetry(key: string): boolean {
+    const budget = this.#budget;
+    if (budget === null) return true;
+    const pool = this.#pool(key);
+    this.#refill(pool, budget);
+    if (pool.tokens < 1 - EPSILON) return false;
+    pool.tokens = Math.max(0, pool.tokens - 1);
+    return true;
   }
 
   /** Reject every waiting request and every later one; requests in
@@ -200,10 +264,38 @@ export class RequestScheduler {
   #pool(key: string): Pool {
     let pool = this.#pools.get(key);
     if (pool === undefined) {
-      pool = { active: { call: 0, stream: 0 }, queue: { call: [], stream: [] }, pausedUntil: 0, probing: false, timer: null };
+      // Scopes kept only for their unfinished pause or spent retry budget
+      // are dropped once neither matters any more.
+      for (const [other, idle] of this.#pools) {
+        if (!this.#disposable(idle)) continue;
+        if (idle.timer !== null) clearTimeout(idle.timer);
+        this.#pools.delete(other);
+      }
+      pool = {
+        active: { call: 0, stream: 0 }, queue: { call: [], stream: [] }, pausedUntil: 0, probing: false, timer: null,
+        tokens: this.#budget?.burst ?? 0, refilledAt: performance.now(),
+      };
       this.#pools.set(key, pool);
     }
     return pool;
+  }
+
+  /** Add what the budget earned per second since it was last refilled. */
+  #refill(pool: Pool, budget: Budget): void {
+    const now = performance.now();
+    pool.tokens = Math.min(budget.burst, pool.tokens + (Math.max(0, now - pool.refilledAt) / 1000) * budget.minPerSecond);
+    pool.refilledAt = now;
+  }
+
+  /** An idle scope whose pause has passed and whose retry budget is full
+   * holds nothing worth keeping. */
+  #disposable(pool: Pool): boolean {
+    if (pool.active.call + pool.active.stream + pool.queue.call.length + pool.queue.stream.length > 0) return false;
+    if (pool.pausedUntil > performance.now()) return false;
+    const budget = this.#budget;
+    if (budget === null) return true;
+    this.#refill(pool, budget);
+    return pool.tokens >= budget.burst - EPSILON;
   }
 
   /** After a rate-limit pause, one request per kind probes the quota until
@@ -213,8 +305,13 @@ export class RequestScheduler {
     return kind === "call" ? this.maxActive : this.maxStreams;
   }
 
-  #grant(key: string, pool: Pool, kind: Kind, random: () => number): Permit {
+  #grant(key: string, pool: Pool, kind: Kind, random: () => number, retry: boolean): Permit {
     pool.active[kind] += 1;
+    const budget = this.#budget;
+    if (budget !== null && !retry) {
+      this.#refill(pool, budget);
+      pool.tokens = Math.min(budget.burst, pool.tokens + budget.ratio);
+    }
     let settled = false;
     let released = false;
     return {
@@ -260,7 +357,7 @@ export class RequestScheduler {
       const queue = pool.queue[kind];
       while (queue.length > 0 && pool.active[kind] < this.#limit(pool, kind)) {
         const waiter = queue[0] as Waiter;
-        waiter.grant(this.#grant(key, pool, kind, waiter.random));
+        waiter.grant(this.#grant(key, pool, kind, waiter.random, waiter.retry));
       }
     }
   }
@@ -270,11 +367,12 @@ export class RequestScheduler {
     return stats.active + stats.streams + stats.queued === 0;
   }
 
-  /** Drop an idle scope once its pause has passed; wake `drained()`. */
+  /** Drop an idle scope once its pause has passed and its retry budget
+   * is full again; wake `drained()`. */
   #forget(key: string, pool: Pool): void {
     const busy = pool.active.call + pool.active.stream + pool.queue.call.length + pool.queue.stream.length;
     if (busy > 0) return;
-    if (pool.pausedUntil <= performance.now()) {
+    if (this.#disposable(pool)) {
       if (pool.timer !== null) clearTimeout(pool.timer);
       this.#pools.delete(key);
     }

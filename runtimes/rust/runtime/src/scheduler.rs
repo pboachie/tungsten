@@ -18,6 +18,8 @@ use tokio::sync::Notify;
 /// The pause after a `RATE_LIMITED` answer that names no wait.
 const DEFAULT_PAUSE_MS: f64 = 1000.0;
 const MAX_PAUSE_MS: f64 = 3_600_000.0;
+/// Slack for the sums of fractional retry earnings.
+const EPSILON: f64 = 1e-9;
 
 /// How requests are grouped into scopes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -29,8 +31,36 @@ pub enum SchedulerScope {
     Scheduler,
 }
 
+/// A token bucket of retries shared by the callers of one scope, so that a
+/// failing upstream sees a bounded share of retries instead of every caller's
+/// full retry policy at once. A scope starts with `burst` retries; each first
+/// attempt admitted earns `ratio` more and every second earns
+/// `min_per_second`, up to `burst`. A retry spends one; without one, the call
+/// stops retrying and returns its last failure as is.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RetryBudget {
+    /// Retries earned per first attempt admitted, from 0 to 1. Default 0.1.
+    pub ratio: f64,
+    /// Retries earned per second whatever the traffic, from 0 to 10000.
+    /// Default 1.
+    pub min_per_second: f64,
+    /// The most retries saved up, and the starting balance; 1 to 1000000.
+    /// Default 10.
+    pub burst: u32,
+}
+
+impl Default for RetryBudget {
+    fn default() -> Self {
+        RetryBudget {
+            ratio: 0.1,
+            min_per_second: 1.0,
+            burst: 10,
+        }
+    }
+}
+
 /// Limits of a [`RequestScheduler`]. Every limit applies per scope.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SchedulerOptions {
     /// Ordinary requests in flight at once. 1 to 10000.
     pub max_active: u32,
@@ -45,6 +75,9 @@ pub struct SchedulerOptions {
     /// also end the wait. Default 30 s.
     pub max_queue: Duration,
     pub scope: SchedulerScope,
+    /// Retries shared by every call of one scope. `None` (default): only each
+    /// call's own retry policy limits retries.
+    pub retry_budget: Option<RetryBudget>,
 }
 
 impl SchedulerOptions {
@@ -56,6 +89,7 @@ impl SchedulerOptions {
             max_streams: None,
             max_queue: Duration::from_secs(30),
             scope: SchedulerScope::Origin,
+            retry_budget: None,
         }
     }
 }
@@ -91,19 +125,56 @@ type Random = Arc<dyn Fn() -> f64 + Send + Sync>;
 
 struct Waiter {
     id: u64,
+    retry: bool,
     notify: Arc<Notify>,
     random: Random,
 }
 
-#[derive(Default)]
 struct Pool {
     active: [usize; 2],
     queue: [VecDeque<Waiter>; 2],
     paused_until: Option<Instant>,
     probing: bool,
+    /// Retries left in the shared budget, as of `refilled_at`.
+    tokens: f64,
+    refilled_at: Instant,
 }
 
 impl Pool {
+    fn new(budget: Option<&RetryBudget>) -> Self {
+        Pool {
+            active: [0; 2],
+            queue: [VecDeque::new(), VecDeque::new()],
+            paused_until: None,
+            probing: false,
+            tokens: budget.map_or(0.0, |b| f64::from(b.burst)),
+            refilled_at: Instant::now(),
+        }
+    }
+
+    /// Add what the budget earned per second since it was last refilled.
+    fn refill(&mut self, budget: &RetryBudget, now: Instant) {
+        let earned = now
+            .saturating_duration_since(self.refilled_at)
+            .as_secs_f64()
+            * budget.min_per_second;
+        self.tokens = (self.tokens + earned).min(f64::from(budget.burst));
+        self.refilled_at = now;
+    }
+
+    /// An idle scope whose pause has passed and whose retry budget is full
+    /// holds nothing worth keeping.
+    fn disposable(&mut self, budget: Option<&RetryBudget>, now: Instant) -> bool {
+        if self.busy() > 0 || !self.paused_for(now).is_zero() {
+            return false;
+        }
+        let Some(budget) = budget else {
+            return true;
+        };
+        self.refill(budget, now);
+        self.tokens >= f64::from(budget.burst) - EPSILON
+    }
+
     fn busy(&self) -> usize {
         self.active[0] + self.active[1] + self.queue[0].len() + self.queue[1].len()
     }
@@ -130,6 +201,7 @@ struct Shared {
     max_streams: usize,
     max_queue: Duration,
     scope: SchedulerScope,
+    retry_budget: Option<RetryBudget>,
     state: Mutex<State>,
 }
 
@@ -161,6 +233,21 @@ pub(crate) struct Permit {
     kind: Kind,
     random: Random,
     settled: bool,
+}
+
+/// Under the lock: the pool of `key`, made when missing.
+fn pool_mut<'a>(shared: &Shared, state: &'a mut State, key: &str) -> &'a mut Pool {
+    if !state.pools.contains_key(key) {
+        // Scopes kept only for their unfinished pause or spent retry budget
+        // are dropped once neither matters any more.
+        let now = Instant::now();
+        let budget = shared.retry_budget.as_ref();
+        state.pools.retain(|_, pool| !pool.disposable(budget, now));
+    }
+    state
+        .pools
+        .entry(key.to_owned())
+        .or_insert_with(|| Pool::new(shared.retry_budget.as_ref()))
 }
 
 impl fmt::Debug for Permit {
@@ -230,7 +317,7 @@ impl Drop for Permit {
             pool.active[self.kind as usize] -= 1;
         }
         let granted = RequestScheduler::pump(&shared, &mut state, &self.key);
-        RequestScheduler::forget(&mut state, &self.key);
+        RequestScheduler::forget(&shared, &mut state, &self.key);
         drop(state);
         for notify in granted {
             notify.notify_one();
@@ -260,7 +347,7 @@ impl Drop for Withdraw<'_> {
         state.closed_waiters.retain(|id| *id != self.id);
         let permit = state.granted.remove(&self.id);
         let granted = RequestScheduler::pump(self.shared, &mut state, self.key);
-        RequestScheduler::forget(&mut state, self.key);
+        RequestScheduler::forget(self.shared, &mut state, self.key);
         drop(state);
         for notify in granted {
             notify.notify_one();
@@ -292,6 +379,21 @@ impl RequestScheduler {
         if options.max_queue > Duration::from_millis(MAX_PAUSE_MS as u64) {
             return Err("max_queue: at most one hour".to_owned());
         }
+        if let Some(budget) = &options.retry_budget {
+            if !(0.0..=1.0).contains(&budget.ratio) {
+                return Err(format!(
+                    "retry_budget.ratio: expected a number from 0 to 1, got {}",
+                    budget.ratio
+                ));
+            }
+            if !(0.0..=10_000.0).contains(&budget.min_per_second) {
+                return Err(format!(
+                    "retry_budget.min_per_second: expected a number from 0 to 10000, got {}",
+                    budget.min_per_second
+                ));
+            }
+            bounded(budget.burst, 1, 1_000_000, "retry_budget.burst")?;
+        }
         Ok(RequestScheduler {
             shared: Arc::new(Shared {
                 max_active,
@@ -299,6 +401,7 @@ impl RequestScheduler {
                 max_streams,
                 max_queue: options.max_queue,
                 scope: options.scope,
+                retry_budget: options.retry_budget,
                 state: Mutex::new(State::default()),
             }),
         })
@@ -316,13 +419,15 @@ impl RequestScheduler {
     }
 
     /// Wait for capacity in `key`; `deadline` also ends the wait. Dropping
-    /// the future removes the request from the queue.
+    /// the future removes the request from the queue. `retry` marks a repeat
+    /// of an earlier attempt, which earns the retry budget nothing.
     pub(crate) async fn acquire(
         &self,
         key: &str,
         kind: Kind,
         deadline: Option<Instant>,
         random: Random,
+        retry: bool,
     ) -> Result<Permit, Rejection> {
         let shared = &self.shared;
         let now = Instant::now();
@@ -340,12 +445,12 @@ impl RequestScheduler {
             }
             id = state.next_id;
             state.next_id += 1;
-            let pool = state.pools.entry(key.to_owned()).or_default();
+            let pool = pool_mut(shared, &mut state, key);
             let paused = pool.paused_for(now);
             let limit = Self::limit(shared, pool, kind);
             let queue = &pool.queue[kind as usize];
             if paused.is_zero() && queue.is_empty() && pool.active[kind as usize] < limit {
-                pool.active[kind as usize] += 1;
+                Self::admit(shared, pool, kind, retry);
                 return Ok(Self::permit(shared, key, kind, random));
             }
             let rejection = if paused > budget {
@@ -360,11 +465,12 @@ impl RequestScheduler {
                 None
             };
             if let Some(rejection) = rejection {
-                Self::forget(&mut state, key);
+                Self::forget(shared, &mut state, key);
                 return Err(rejection);
             }
             pool.queue[kind as usize].push_back(Waiter {
                 id,
+                retry,
                 notify: Arc::clone(&notify),
                 random,
             });
@@ -411,6 +517,24 @@ impl RequestScheduler {
         }
     }
 
+    /// Take one retry from the shared budget of `key`. False when the budget
+    /// is spent: the caller must not retry. Always true without a retry
+    /// budget.
+    pub(crate) fn spend_retry(&self, key: &str) -> bool {
+        let shared = &self.shared;
+        let Some(budget) = &shared.retry_budget else {
+            return true;
+        };
+        let mut state = lock(shared);
+        let pool = pool_mut(shared, &mut state, key);
+        pool.refill(budget, Instant::now());
+        if pool.tokens < 1.0 - EPSILON {
+            return false;
+        }
+        pool.tokens = (pool.tokens - 1.0).max(0.0);
+        true
+    }
+
     /// Reject every waiting request and every later one; requests in flight
     /// keep their capacity until they finish.
     pub fn close(&self) {
@@ -429,7 +553,7 @@ impl RequestScheduler {
         state.closed_waiters.extend(closed);
         let keys: Vec<String> = state.pools.keys().cloned().collect();
         for key in keys {
-            Self::forget(&mut state, &key);
+            Self::forget(&self.shared, &mut state, &key);
         }
         drop(state);
         for notify in woken {
@@ -474,6 +598,15 @@ impl RequestScheduler {
         }
     }
 
+    /// Count an admitted request; a first attempt earns the retry budget.
+    fn admit(shared: &Shared, pool: &mut Pool, kind: Kind, retry: bool) {
+        pool.active[kind as usize] += 1;
+        if let (Some(budget), false) = (&shared.retry_budget, retry) {
+            pool.refill(budget, Instant::now());
+            pool.tokens = (pool.tokens + budget.ratio).min(f64::from(budget.burst));
+        }
+    }
+
     fn permit(shared: &Arc<Shared>, key: &str, kind: Kind, random: Random) -> Permit {
         Permit {
             shared: Arc::clone(shared),
@@ -502,7 +635,7 @@ impl RequestScheduler {
                 let Some(waiter) = pool.queue[kind as usize].pop_front() else {
                     break;
                 };
-                pool.active[kind as usize] += 1;
+                Self::admit(shared, pool, kind, waiter.retry);
                 admitted.push((waiter.id, Self::permit(shared, key, kind, waiter.random)));
                 woken.push(waiter.notify);
             }
@@ -511,12 +644,14 @@ impl RequestScheduler {
         woken
     }
 
-    /// Under the lock: drop an idle scope once its pause has passed.
-    fn forget(state: &mut State, key: &str) {
+    /// Under the lock: drop an idle scope once its pause has passed and its
+    /// retry budget is full again.
+    fn forget(shared: &Shared, state: &mut State, key: &str) {
+        let budget = shared.retry_budget.as_ref();
         let idle = state
             .pools
-            .get(key)
-            .is_some_and(|pool| pool.busy() == 0 && pool.paused_for(Instant::now()).is_zero());
+            .get_mut(key)
+            .is_some_and(|pool| pool.disposable(budget, Instant::now()));
         if idle {
             state.pools.remove(key);
         }

@@ -183,6 +183,14 @@ scheduler rejects waiting and later requests; requests in flight keep their
 capacity until they finish, which `drained` waits for. Custom transports remain
 owned by the application and are not closed by the scheduler.
 
+A scheduler with `SchedulerOptions.retryBudget` also shares one retry budget per scope, so
+callers of one quota cannot multiply their retries against a failing upstream.
+A scope starts with `burst` retries (default 10); each first attempt admitted
+earns `ratio` more (default 0.1) and each second earns `minPerSecond` (default 1), up
+to `burst`. Every retry spends one; once the budget is spent, a call stops
+retrying and returns its last failure unchanged. Without a retry budget only
+each call's own retry policy limits retries.
+
 The core package is browser-safe; the separate `/node` adapter requires Node.js. No file-backed OAuth token store is provided.
 
 ## Related packages and documentation

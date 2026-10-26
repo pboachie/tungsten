@@ -1500,7 +1500,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
       }
       const interrupted = this.#beforeDispatch(op, opts);
       if (interrupted) return previousMutationFailure ?? interrupted;
-      const permit = await this.#admit(op, prepared.url, opts, stream);
+      const permit = await this.#admit(op, prepared.url, opts, stream, attempts > 1);
       if (permit !== null && "ok" in permit) return previousMutationFailure ?? permit;
       let result: Result<T>;
       let current = { url: prepared.url, method: prepared.method, body: prepared.body };
@@ -1584,6 +1584,10 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
         const random = typeof this.options.random === "function" ? bounded(this.options.random(), 0.5, 0, 1) : Math.random();
         delay = retries.jitter === "none" ? ceiling : retries.jitter === "equal" ? ceiling / 2 + (random * ceiling) / 2 : random * ceiling;
       }
+      // Callers sharing a quota share one retry budget; once it is spent,
+      // the last failure stands.
+      const scheduler = this.#scheduler;
+      if (scheduler !== null && !scheduler.spendRetry(scheduler.scopeKey(prepared.url, this.options.tenant))) return previousMutationFailure ?? done();
       for (const m of this.#middleware()) {
         try {
           await m.onRetry?.(ctx, error);
@@ -1600,12 +1604,12 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
 
   /** Wait for scheduler capacity for one attempt. Null without a
    * scheduler; a failure (nothing sent) when no capacity was given. */
-  async #admit(op: OperationDescriptor, url: string, opts: CallOptions, stream: boolean): Promise<Permit | Failure | null> {
+  async #admit(op: OperationDescriptor, url: string, opts: CallOptions, stream: boolean, retry: boolean): Promise<Permit | Failure | null> {
     const scheduler = this.#scheduler;
     if (scheduler === null) return null;
     const random = typeof this.options.random === "function" ? () => bounded(this.options.random?.(), 0.5, 0, 1) : Math.random;
     const key = scheduler.scopeKey(url, this.options.tenant);
-    const admitted = await scheduler.acquire(key, stream ? "stream" : "call", opts.signal, this.#deadline(opts), random);
+    const admitted = await scheduler.acquire(key, stream ? "stream" : "call", opts.signal, this.#deadline(opts), random, retry);
     if ("release" in admitted) {
       // Cancelled or expired while it waited: the request is never sent.
       const late = this.#beforeDispatch(op, opts);

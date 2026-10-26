@@ -26,7 +26,7 @@ from ._streams import ANY_EVENT, AsyncEventStream, EventStream, StreamResult
 from .client import AsyncClientCore, ClientCore
 from .errors import TungstenError, unwrap
 from .idempotency import FileIdempotencyStore, MemoryIdempotencyStore
-from .scheduler import Permit, Rejection, RequestScheduler, SchedulerOptions, SchedulerStats
+from .scheduler import Permit, Rejection, RequestScheduler, RetryBudget, SchedulerOptions, SchedulerStats
 from .sentinels import UNSET, Unset
 from .types import *  # noqa: F403 (the contract types are the public API)
 
@@ -54,6 +54,7 @@ __all__ = [
     "Pkce",
     "Rejection",
     "RequestScheduler",
+    "RetryBudget",
     "SchedulerOptions",
     "SchedulerStats",
     "StoredToken",

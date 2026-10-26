@@ -1615,7 +1615,7 @@ class Engine:
                 return previous_mutation_failure or Answer(
                     _fail(diagnostic(op["id"], "AUTH_FAILED", remediation=INSECURE_HTTP_AUTH))
                 )
-            admitted = yield from self._admit(op, prepared.url, stream, deadline)
+            admitted = yield from self._admit(op, prepared.url, stream, deadline, attempts > 1)
             if isinstance(admitted, Rejection):
                 if deadline is not None and _monotonic_ms() >= deadline:
                     return previous_mutation_failure or Answer(
@@ -1734,6 +1734,13 @@ class Engine:
                     delay = ceiling / 2 + rnd * ceiling / 2
                 else:
                     delay = rnd * ceiling
+            # Callers sharing a quota share one retry budget; once it is
+            # spent, the last failure stands.
+            scheduler = self.scheduler
+            if scheduler is not None and not scheduler.spend_retry(
+                scheduler.scope_key(prepared.url, self.options.tenant)
+            ):
+                return done
             for m in self._middleware():
                 yield from observe(_hook(m, "on_retry"), ctx, error)
             if mutation:
@@ -1744,7 +1751,7 @@ class Engine:
             yield from sleep(delay)
 
     def _admit(
-        self, op: OperationDescriptor, url: str, stream: bool, deadline: float | None
+        self, op: OperationDescriptor, url: str, stream: bool, deadline: float | None, retry: bool
     ) -> Flow[Permit | Rejection | None]:
         """Wait for scheduler capacity for one attempt: None without a
         scheduler, a ``Rejection`` (nothing is sent) when none was given."""
@@ -1756,7 +1763,7 @@ class Engine:
             (lambda: bounded(source(), 0.5, 0, 1)) if callable(source) else random.random
         )
         key = scheduler.scope_key(url, self.options.tenant)
-        admitted = yield from acquire(scheduler, key, "stream" if stream else "call", rnd, deadline)
+        admitted = yield from acquire(scheduler, key, "stream" if stream else "call", rnd, deadline, retry)
         return cast(Permit | Rejection, admitted)
 
     @staticmethod

@@ -226,6 +226,12 @@ changes.
 
 ### Added
 
+- Add an opt-in retry budget to the request scheduler of the TypeScript
+  (`retryBudget`), Python (`retry_budget`) and Rust (`retry_budget`) runtimes.
+  Callers of one scope share a token bucket of retries that first attempts and
+  time refill; once it is spent, calls return their last failure instead of
+  retrying.
+
 - Add an opt-in request scheduler to the TypeScript, Python and Rust runtimes
   (`ClientOptions.scheduler`, `ClientOptions.tenant`). It bounds ordinary
   attempts and event streams in flight per tenant and origin, queues a bounded

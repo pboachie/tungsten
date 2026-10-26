@@ -193,6 +193,14 @@ scheduler rejects waiting and later requests; requests in flight keep their
 capacity until they finish, which `drained().await` waits for. Custom transports remain
 owned by the application and are not closed by the scheduler.
 
+A scheduler with `SchedulerOptions::retry_budget` (a `RetryBudget`) also shares one retry budget per scope, so
+callers of one quota cannot multiply their retries against a failing upstream.
+A scope starts with `burst` retries (default 10); each first attempt admitted
+earns `ratio` more (default 0.1) and each second earns `min_per_second` (default 1), up
+to `burst`. Every retry spends one; once the budget is spent, a call stops
+retrying and returns its last failure unchanged. Without a retry budget only
+each call's own retry policy limits retries.
+
 No runtime ships a file-backed OAuth token store. Provide an application-owned
 token-store implementation when tokens must survive process restarts; protect
 stored credentials and avoid logging them. Registry publication and package

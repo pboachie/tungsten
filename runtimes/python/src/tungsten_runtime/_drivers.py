@@ -726,11 +726,15 @@ class SyncDriver:
         if isinstance(effect, Bounded) and isinstance(effect.effect, Acquire):
             inner = effect.effect
             return cast(RequestScheduler, inner.scheduler).acquire(
-                inner.key, inner.kind, _earliest(inner.deadline_ms, effect.deadline_ms), inner.random
+                inner.key,
+                inner.kind,
+                _earliest(inner.deadline_ms, effect.deadline_ms),
+                inner.random,
+                retry=inner.retry,
             )
         if isinstance(effect, Acquire):
             return cast(RequestScheduler, effect.scheduler).acquire(
-                effect.key, effect.kind, effect.deadline_ms, effect.random
+                effect.key, effect.kind, effect.deadline_ms, effect.random, retry=effect.retry
             )
         if isinstance(effect, Bounded):
             if isinstance(effect.effect, Send):
@@ -960,11 +964,15 @@ class AsyncDriver:
         if isinstance(effect, Bounded) and isinstance(effect.effect, Acquire):
             inner = effect.effect
             return await cast(RequestScheduler, inner.scheduler).acquire_async(
-                inner.key, inner.kind, _earliest(inner.deadline_ms, effect.deadline_ms), inner.random
+                inner.key,
+                inner.kind,
+                _earliest(inner.deadline_ms, effect.deadline_ms),
+                inner.random,
+                retry=inner.retry,
             )
         if isinstance(effect, Acquire):
             return await cast(RequestScheduler, effect.scheduler).acquire_async(
-                effect.key, effect.kind, effect.deadline_ms, effect.random
+                effect.key, effect.kind, effect.deadline_ms, effect.random, retry=effect.retry
             )
         if isinstance(effect, Bounded):
             if isinstance(effect.effect, Send):

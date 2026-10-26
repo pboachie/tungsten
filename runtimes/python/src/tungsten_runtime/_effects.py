@@ -207,6 +207,8 @@ class Acquire:
     random: Callable[[], float]
     #: Absolute ``time.monotonic()`` milliseconds that also end the wait.
     deadline_ms: float | None = None
+    #: A repeat of an earlier attempt (earns the retry budget nothing).
+    retry: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -255,8 +257,9 @@ def acquire(
     kind: Literal["call", "stream"],
     random: Callable[[], float],
     deadline_ms: float | None = None,
+    retry: bool = False,
 ) -> Flow[object]:
-    return (yield Acquire(scheduler, key, kind, random, deadline_ms))
+    return (yield Acquire(scheduler, key, kind, random, deadline_ms, retry))
 
 
 def sleep(ms: float) -> Flow[None]:
