@@ -338,6 +338,12 @@ pub const FEATURES: &[FeatureDefinition] = &[
         None,
     ),
     def(
+        "typed_webhooks",
+        FeatureDomain::Target,
+        "typed payloads of OpenAPI `webhooks` and a parse helper that verifies a delivery and validates its payload before the replay claim",
+        None,
+    ),
+    def(
         "llms_txt",
         FeatureDomain::Target,
         "llms.txt, llms-full.txt and tools.json documentation",
@@ -482,7 +488,7 @@ targets! {
         summary: "Sync and async Python SDK, Pydantic v2 or dataclass models",
         options: &["package", "module", "version", "runtime", "runtime_path", "python_version", "models", "out"],
         environments: [Cpython],
-        features: &["typed_sdk", "pagination_helpers", "dataclass_models", "webhook_verification"],
+        features: &["typed_sdk", "pagination_helpers", "dataclass_models", "webhook_verification", "typed_webhooks"],
     },
     {
         id: "ruby", aliases: &["rb"], source: BuiltInEmitter, family: Some("ruby"), policy: true,
@@ -499,14 +505,14 @@ targets! {
         summary: "Async Rust SDK (serde, reqwest) and optional generated CLI",
         options: &["crate", "version", "runtime", "runtime_path", "cli", "out"],
         environments: [Native],
-        features: &["typed_sdk", "pagination_helpers", "generated_cli", "webhook_verification"],
+        features: &["typed_sdk", "pagination_helpers", "generated_cli", "webhook_verification", "typed_webhooks"],
     },
     {
         id: "typescript", aliases: &["ts"], source: BuiltInEmitter, family: Some("typescript"),
         policy: true, tools: JS, schema: Some(TargetOptionSchema::TypeScript),
         summary: "Typed TypeScript SDK, Result values, Zod validation",
         options: &["package", "version", "runtime", "runtime_path", "dependencies", "out"],
-        environments: [Node], features: &["typed_sdk", "pagination_helpers", "webhook_verification"],
+        environments: [Node], features: &["typed_sdk", "pagination_helpers", "webhook_verification", "typed_webhooks"],
     },
     {
         id: "webmcp", aliases: &[], source: BuiltInEmitter, family: Some("typescript"), policy: true,

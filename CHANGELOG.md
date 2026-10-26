@@ -230,6 +230,20 @@ changes.
 
 ### Added
 
+- OpenAPI 3.1+ `webhooks` are compiled. Each operation of a `webhooks` entry
+  becomes an incoming webhook in the IR (`Namespace.webhooks`, omitted when
+  empty: event key, method, operation id, docs and the JSON request body as a
+  typed payload); webhooks are never callable. TypeScript, Python and Rust
+  SDKs of an API that declares webhooks gain a `webhooks` module: payload types
+  and schemas keyed by the `webhooks` key (`WebhookPayloads` /
+  `webhookSchemas`, `WEBHOOKS`, the `WebhookName` and `WebhookEvent` enums)
+  and `parseWebhook` / `parse_webhook`, which verifies a delivery with the
+  runtime's Stripe-compatible verifier and validates the payload, constraints
+  included, before the replay claim; a mismatch is `payload_invalid`. The
+  runtimes gain the matching hook (`parse` in TypeScript and Python,
+  `verify_webhook_with` in Rust). Registered as the `typed_webhooks` target
+  feature. Unreleased 0.2.0 only.
+
 - TypeScript, Python and Rust runtimes verify incoming webhooks without a web
   framework: `verifyWebhook` / `verify_webhook` check the Stripe-compatible
   `t=<unix>,v1=<hex HMAC-SHA256 of "t.body">` signature header against one or
