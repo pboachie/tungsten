@@ -230,6 +230,11 @@ changes.
 
 ### Added
 
+- Concurrent commands of a generated Rust CLI refresh a stored login session
+  one process at a time: the token is refreshed before the call under a
+  per-session lock file and read again first, so a refresh token is not
+  presented twice to providers that rotate refresh tokens.
+
 - The runtime telemetry observer now also reports `preview()`, `pages()` and
   `poll()` in TypeScript, Python and Rust as operations (`entry` `preview`,
   `pages` or `poll`), each covering every request it made with attempts
