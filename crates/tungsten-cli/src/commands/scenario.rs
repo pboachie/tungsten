@@ -99,9 +99,12 @@ pub(crate) fn run(command: &ScenarioCommand, cancellation: &RunCancellation) -> 
                         run.reason,
                         if run.passed { "passed" } else { "failed" }
                     );
+                    if let Some(scenario) = &run.scenario {
+                        report.human.push_str(&failed_assertions(scenario));
+                    }
                     if !run.passed {
                         report.exit = exit::FAILED;
-                        report.error = Some(CliError::new(ErrorKind::Usage, "scenario run did not satisfy its deadline, cleanup, exit and call assertions").with_help("inspect result.run.reason and the count-only assertion report"));
+                        report.error = Some(CliError::new(ErrorKind::Usage, "scenario run did not satisfy its deadline, cleanup, exit, call and effect assertions").with_help("inspect result.run.reason and the count-only assertion report"));
                     }
                     report.result = Some(CommandResult::Scenario(ScenarioResult {
                         action: ScenarioAction::Run,
@@ -113,6 +116,38 @@ pub(crate) fn run(command: &ScenarioCommand, cancellation: &RunCancellation) -> 
             }
         }
     }
+}
+
+/// One line per failing count, by file position; counts only, never values.
+fn failed_assertions(scenario: &tungsten_mock::ScenarioReport) -> String {
+    let mut lines = String::new();
+    let mut line = |what: String, count: &tungsten_mock::CountReport| {
+        if !count.passed {
+            lines.push_str(&format!(
+                "  {what}: expected {}, observed {}\n",
+                count.expected, count.actual
+            ));
+        }
+    };
+    line("expect.total_calls".into(), &scenario.total_calls);
+    for (index, count) in scenario.calls.iter().enumerate() {
+        line(format!("expect.calls[{index}]"), count);
+    }
+    for (index, effect) in scenario.effects.iter().enumerate() {
+        if let Some(count) = &effect.applied {
+            line(format!("expect.effects[{index}].applied"), count);
+        }
+        if let Some(count) = &effect.replayed {
+            line(format!("expect.effects[{index}].replayed"), count);
+        }
+    }
+    if scenario.programs_remaining != 0 {
+        lines.push_str(&format!(
+            "  programs: {} queued responses were not consumed\n",
+            scenario.programs_remaining
+        ));
+    }
+    lines
 }
 
 /// Pending binary signals drained during mask restoration still fail the run.

@@ -1357,6 +1357,7 @@ name = "tungsten-emit-py"
 version = "0.1.3"
 dependencies = [
  "serde_json",
+ "tungsten-config",
  "tungsten-core",
  "tungsten-emit",
  "tungsten-ir",
@@ -1367,6 +1368,7 @@ name = "tungsten-emit-rs"
 version = "0.1.3"
 dependencies = [
  "serde_json",
+ "tungsten-config",
  "tungsten-core",
  "tungsten-emit",
  "tungsten-ir",

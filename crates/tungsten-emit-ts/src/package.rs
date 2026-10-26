@@ -111,15 +111,66 @@ const TO_SCHEMA_LIKE: &str = r#"/** Set while a parse reaches a pattern this eng
  * and during the second pass that finds where (`probing`). */
 const patternProbe = { reached: false, probing: false };
 const UNCHECKED_PATTERN = "tungsten:unchecked-pattern:";
+/** The checks `withPattern` adds for patterns it cannot compile. */
+const uncheckedChecks = new WeakSet<object>();
+/** Schemas already walked for unions, and the unions already wrapped. */
+const probedRoots = new WeakSet<object>();
+const probedUnions = new WeakSet<object>();
 
-function collectUnchecked(issues: readonly z.core.$ZodIssue[], prefix: Array<string | number>, out: PatternNote[]): void {
+function isUnchecked(issue: z.core.$ZodRawIssue): boolean {
+  const fn = (issue.inst as { _zod?: { def?: { fn?: unknown } } } | undefined)?._zod?.def?.fn;
+  return typeof fn === "function" && uncheckedChecks.has(fn);
+}
+
+/** Make each union under `root` select, while probing, the variant the
+ * ordinary parse selects: the first one that fails only on unchecked
+ * patterns, rather than a later variant those failures would let through.
+ * Outside a probe the union parses as before. */
+function selectLikeParse(root: z.ZodType): void {
+  if (probedRoots.has(root)) return;
+  probedRoots.add(root);
+  const seen = new WeakSet<object>();
+  const stack: unknown[] = [root];
+  while (stack.length > 0) {
+    const node = stack.pop();
+    if (typeof node !== "object" || node === null || seen.has(node)) continue;
+    seen.add(node);
+    const internals = (node as { _zod?: z.core.$ZodTypeInternals })._zod;
+    if (internals === undefined) {
+      stack.push(...Object.values(node));
+      continue;
+    }
+    const def = internals.def as unknown as Record<string, unknown>;
+    if (def.type === "lazy") stack.push((internals as unknown as { innerType: unknown }).innerType);
+    stack.push(...Object.values(def));
+    if (def.type !== "union" || def.discriminator !== undefined || probedUnions.has(internals)) continue;
+    probedUnions.add(internals);
+    const options = def.options as z.core.$ZodType[];
+    const parse = internals.parse;
+    const probe: typeof parse = (payload, ctx) => {
+      if (!patternProbe.probing) return parse(payload, ctx);
+      for (const option of options) {
+        const result = option._zod.run({ value: payload.value, issues: [] }, ctx);
+        if (result instanceof Promise) return parse(payload, ctx);
+        if (result.issues.every(isUnchecked)) return result;
+      }
+      // No variant is selected: the union fails, and a rejected variant's
+      // unchecked patterns are not reported.
+      const failed = parse(payload, ctx);
+      if (!(failed instanceof Promise)) failed.issues = failed.issues.filter((issue) => !isUnchecked(issue));
+      return failed;
+    };
+    if (internals.run === parse) internals.run = probe;
+    internals.parse = probe;
+  }
+}
+
+function collectUnchecked(issues: readonly z.core.$ZodIssue[], out: PatternNote[]): void {
   for (const issue of issues) {
-    const path = [...prefix, ...issue.path.map((p) => (typeof p === "symbol" ? String(p) : p))];
+    const path = [...issue.path.map((p) => (typeof p === "symbol" ? String(p) : p))];
     if (issue.message.startsWith(UNCHECKED_PATTERN)) {
       const [pattern, reason] = JSON.parse(issue.message.slice(UNCHECKED_PATTERN.length)) as [string, string];
       out.push({ path, pattern, reason });
-    } else if (issue.code === "invalid_union") {
-      for (const branch of issue.errors) collectUnchecked(branch, path, out);
     }
   }
 }
@@ -129,9 +180,10 @@ function collectUnchecked(issues: readonly z.core.$ZodIssue[], prefix: Array<str
 function uncheckedPatterns(schema: z.ZodType, value: unknown): PatternNote[] {
   patternProbe.probing = true;
   try {
+    selectLikeParse(schema);
     const probe = schema.safeParse(value);
     const notes: PatternNote[] = [];
-    if (!probe.success) collectUnchecked(probe.error.issues, [], notes);
+    if (!probe.success) collectUnchecked(probe.error.issues, notes);
     return notes;
   } catch {
     return [];
@@ -180,11 +232,13 @@ export function withPattern<S extends { regex(pattern: RegExp): S; refine(check:
       if (error instanceof Error) reason = `this JavaScript engine cannot compile it (${error.message.slice(error.message.lastIndexOf(": ") + 2)})`;
     }
   }
+  const check = (): boolean => {
+    patternProbe.reached = true;
+    return !patternProbe.probing;
+  };
+  uncheckedChecks.add(check);
   return schema.refine(
-    () => {
-      patternProbe.reached = true;
-      return !patternProbe.probing;
-    },
+    check,
     { message: UNCHECKED_PATTERN + JSON.stringify([source, reason]) },
   );
 }"#;

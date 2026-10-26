@@ -6,7 +6,8 @@ use serde::Serialize;
 use serde_json::Value;
 
 use crate::profiles::{Declaration, EffectiveConfiguration, FieldProvenance, SourceKind};
-use crate::{TungstenConfig, capabilities, pointer, target_options::TypeScriptOptions};
+use crate::target_options::{PythonOptions, RustOptions, TypeScriptOptions};
+use crate::{TungstenConfig, capabilities, pointer};
 use tungsten_core::Diagnostics;
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
@@ -119,84 +120,87 @@ pub fn inspect(
             fields: vec![],
         };
         if !external && let Some(declaration) = declaration {
-            match declaration {
-                capabilities::TargetOptionSchema::TypeScript => {
-                    target.status = if raw.is_object() {
-                        InspectionTargetStatus::Supported
-                    } else {
-                        InspectionTargetStatus::NonMappingDefaults
-                    };
-                    let typed = serde_json::to_value(&effective.typescript)
-                        .expect("typed configuration serializes");
-                    let schema = declaration.json_schema();
-                    for (key, schema) in schema["properties"].as_object().expect("option schema") {
-                        let path = pointer::child("/targets/typescript", key);
-                        let (_, found) = raw.get(key).map_or_else(
-                            || (TypeScriptOptions::default(), Diagnostics::new()),
-                            |value| TypeScriptOptions::parse(&serde_json::json!({key:value})),
-                        );
-                        let errors = found.has_errors();
-                        let origin = effective
-                            .provenance
-                            .get(&path)
-                            .or_else(|| effective.provenance.get("/targets/typescript"));
-                        for mut diagnostic in found.0 {
-                            diagnostic.message = format!(
-                                "invalid `{key}` declaration; {}",
-                                schema["x-tungsten-inspection"]["invalid_policy"]
-                                    .as_str()
-                                    .unwrap_or("unsupported value")
-                            );
-                            diagnostic.help = Some("use a supported value from `tungsten capabilities typescript --json`; authored values and source excerpts are omitted".into());
-                            if let Some(origin) = origin {
-                                diagnostic = diagnostic.at(
-                                    &origin.winner.file,
-                                    &origin.winner.pointer,
-                                    None,
-                                );
-                            }
-                            diagnostics.push(diagnostic);
-                        }
-                        let invalid =
-                            raw.get(key).is_some() && (typed.get(key).is_none() || errors);
-                        let mut field = inspect_field(
+            let (id, typed, parse): (&str, Value, fn(&Value) -> Diagnostics) = match declaration {
+                capabilities::TargetOptionSchema::TypeScript => (
+                    "typescript",
+                    serde_json::to_value(&effective.typescript)
+                        .expect("typed configuration serializes"),
+                    |value| TypeScriptOptions::parse(value).1,
+                ),
+                capabilities::TargetOptionSchema::Python => (
+                    "python",
+                    serde_json::to_value(&effective.python)
+                        .expect("typed configuration serializes"),
+                    |value| PythonOptions::parse(value).1,
+                ),
+                capabilities::TargetOptionSchema::Rust => (
+                    "rust",
+                    serde_json::to_value(&effective.rust).expect("typed configuration serializes"),
+                    |value| RustOptions::parse(value).1,
+                ),
+            };
+            let base = format!("/targets/{id}");
+            target.status = if raw.is_object() {
+                InspectionTargetStatus::Supported
+            } else {
+                InspectionTargetStatus::NonMappingDefaults
+            };
+            let schema = declaration.json_schema();
+            for (key, schema) in schema["properties"].as_object().expect("option schema") {
+                let path = pointer::child(&base, key);
+                let found = raw.get(key).map_or_else(Diagnostics::new, |value| {
+                    parse(&serde_json::json!({key:value}))
+                });
+                let errors = found.has_errors();
+                let origin = effective
+                    .provenance
+                    .get(&path)
+                    .or_else(|| effective.provenance.get(&base));
+                for mut diagnostic in found.0 {
+                    diagnostic.message = format!(
+                        "invalid `{key}` declaration; {}",
+                        schema["x-tungsten-inspection"]["invalid_policy"]
+                            .as_str()
+                            .unwrap_or("unsupported value")
+                    );
+                    diagnostic.help = Some(format!(
+                        "use a supported value from `tungsten capabilities {id} --json`; authored values and source excerpts are omitted"
+                    ));
+                    if let Some(origin) = origin {
+                        diagnostic =
+                            diagnostic.at(&origin.winner.file, &origin.winner.pointer, None);
+                    }
+                    diagnostics.push(diagnostic);
+                }
+                let invalid = raw.get(key).is_some() && (typed.get(key).is_none() || errors);
+                let mut field =
+                    inspect_field(&path, typed.get(key), schema, origin, invalid, effective);
+                // A merged map has per-entry winners rather than a
+                // single winning object. Empty maps do not shadow entries.
+                if schema["x-tungsten-inspection"]["entries"] == true && !invalid {
+                    field.winner = None;
+                    field.shadowed.clear();
+                }
+                if let Some(overridden) = schema["x-tungsten-inspection"]["overridden_by"].as_str()
+                    && typed.get(overridden).is_some()
+                {
+                    field.applicable = false;
+                    field.overridden_by = Some(pointer::child(&base, overridden));
+                }
+                target.fields.push(field);
+                if schema["x-tungsten-inspection"]["entries"] == true
+                    && let Some(entries) = typed.get(key).and_then(Value::as_object)
+                {
+                    for (entry, value) in entries {
+                        let path = pointer::child(&path, entry);
+                        target.fields.push(inspect_field(
                             &path,
-                            typed.get(key),
-                            schema,
-                            origin,
-                            invalid,
+                            Some(value),
+                            &schema["additionalProperties"],
+                            effective.provenance.get(&path),
+                            false,
                             effective,
-                        );
-                        // A merged map has per-entry winners rather than a
-                        // single winning object. Empty maps do not shadow entries.
-                        if schema["x-tungsten-inspection"]["entries"] == true && !invalid {
-                            field.winner = None;
-                            field.shadowed.clear();
-                        }
-                        if let Some(overridden) =
-                            schema["x-tungsten-inspection"]["overridden_by"].as_str()
-                            && typed.get(overridden).is_some()
-                        {
-                            field.applicable = false;
-                            field.overridden_by =
-                                Some(pointer::child("/targets/typescript", overridden));
-                        }
-                        target.fields.push(field);
-                        if schema["x-tungsten-inspection"]["entries"] == true
-                            && let Some(entries) = typed.get(key).and_then(Value::as_object)
-                        {
-                            for (entry, value) in entries {
-                                let path = pointer::child(&path, entry);
-                                target.fields.push(inspect_field(
-                                    &path,
-                                    Some(value),
-                                    &schema["additionalProperties"],
-                                    effective.provenance.get(&path),
-                                    false,
-                                    effective,
-                                ));
-                            }
-                        }
+                        ));
                     }
                 }
             }

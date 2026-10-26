@@ -179,7 +179,11 @@
 //!   when started with [`MockServer::start_with_scenario`], otherwise `404`.
 //!   HTTP success does not mean assertions passed: inspect `passed` after
 //!   the integration has stopped making requests. Counts include calls whose
-//!   payloads were evicted, but represent observations, not applied effects.
+//!   payloads were evicted, but represent observations. Optional effect
+//!   assertions count fresh requests the mock processed to a 2xx answer
+//!   (`applied`, including dropped or replaced answers) and idempotent
+//!   replays (`replayed`); programmed answers are neither. These are the
+//!   mock's own effects, not a real provider's.
 //! - `POST /__tungsten/program`: queues scripted responses. The body is one
 //!   object or an array of objects `{operation, status, body?, headers?,
 //!   times?, code?, cut_after?}` or `{operation, inject, times?}`: `operation` is a
@@ -221,7 +225,7 @@ mod rules;
 mod runner;
 mod scenario;
 pub use runner::{RunCancellation, RunLimits, RunOptions, RunReason, RunReport, run_scenario};
-pub use scenario::{CountReport, MAX_SCENARIO_BYTES, ScenarioReport};
+pub use scenario::{CountReport, EffectReport, MAX_SCENARIO_BYTES, ScenarioReport};
 mod server;
 mod state;
 mod validate;

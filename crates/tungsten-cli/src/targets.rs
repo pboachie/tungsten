@@ -72,12 +72,27 @@ pub(crate) fn import_policy_refusal(name: &str) -> Diagnostic {
         "TG0705",
         format!("target `{name}` does not declare enforced imported-operation policy support"),
     )
-    .with_help(
-        "select a supported TypeScript, Python, Rust, MCP, WebMCP or docs target, or an \
-         external emitter that declares `import_policy` (`tungsten init --resume --add-targets \
-         <targets>` adds one); imported-policy metadata must not be discarded. `tungsten \
-         explain TG0705` has the details",
-    )
+    .with_help(format!(
+        "select a supported {} target, or an external emitter that declares `import_policy` \
+         (`tungsten init --resume --add-targets <targets>` adds one); imported-policy metadata \
+         must not be discarded. `tungsten explain TG0705` has the details",
+        import_policy_targets()
+    ))
+}
+
+/// The built-in targets declaring imported-operation policy, from the
+/// capability catalog, as `a, b or c`.
+fn import_policy_targets() -> String {
+    let ids: Vec<&str> = tungsten_config::capabilities::TARGETS
+        .iter()
+        .filter(|target| target.imported_operation_policy)
+        .map(|target| target.id)
+        .collect();
+    match ids.split_last() {
+        Some((last, rest)) if !rest.is_empty() => format!("{} or {last}", rest.join(", ")),
+        Some((last, _)) => (*last).to_string(),
+        None => String::new(),
+    }
 }
 
 /// A protocol-1 external emitter must explicitly declare policy enforcement
@@ -89,11 +104,12 @@ pub(crate) fn external_import_policy_refusal(name: &str) -> Diagnostic {
             "external target `{name}` does not declare enforced imported-operation policy support"
         ),
     )
-    .with_help(
+    .with_help(format!(
         "use an emitter whose --describe response declares `import_policy: true` and \
-         enforces imported-operation policy, or select a supported TypeScript, Python, \
-         Rust, MCP, WebMCP or docs target; `tungsten explain TG0808` has the details",
-    )
+         enforces imported-operation policy, or select a supported {} target; `tungsten \
+         explain TG0808` has the details",
+        import_policy_targets()
+    ))
 }
 
 /// The agent tool names target `id` serves (tool name → operation id or
