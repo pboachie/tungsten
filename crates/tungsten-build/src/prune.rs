@@ -6,9 +6,9 @@
 //! but not for an API whose operations are filtered (`include`): the types
 //! only the excluded operations use would be generated, validated and
 //! reported on for nothing. After the agent manifest has been applied, the
-//! types reachable from the operations (callable and planned), including the
-//! error envelopes, are kept and the others dropped, together with the
-//! warnings and notes about the schemas they came from.
+//! types reachable from the operations (callable and planned) and webhook
+//! payloads, including the error envelopes, are kept and the others dropped,
+//! together with the warnings and notes about the schemas they came from.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -28,7 +28,13 @@ pub(crate) fn prune_unreferenced(ir: &mut Ir, diagnostics: &mut Diagnostics) {
     if ops.is_empty() {
         return;
     }
-    let mut roots: Vec<&TypeRef> = vec![];
+    // Webhook payloads are reached by the receiving helpers.
+    let mut roots: Vec<&TypeRef> = ir
+        .namespaces
+        .iter()
+        .flat_map(|n| &n.webhooks)
+        .filter_map(|w| w.payload.as_ref().map(|p| &p.ty))
+        .collect();
     for op in &ops {
         let params = &op.params;
         roots.extend(
