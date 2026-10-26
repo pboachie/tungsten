@@ -362,10 +362,14 @@ rehearsal.
 `--offline` (also a global flag), `--no-update-check` and `TUNGSTEN_NO_UPDATE_CHECK=1`
 make no request and exit 6 with a reason in the `--json` result.
 
-Update notices are off by default. Enable them with `TUNGSTEN_UPDATE_NOTICE=stable` (or
-`prerelease`), or in the user settings file (`$XDG_CONFIG_HOME/tungsten/settings.json`,
-`~/Library/Application Support/tungsten/settings.json` on macOS,
-`%APPDATA%\tungsten\settings.json` on Windows, or `$TUNGSTEN_CONFIG_DIR/settings.json`):
+Update notices are off by default. Enable them with `tungsten update notice --enable`
+(`--enable prerelease`, `--disable`, `--interval-hours N`), which writes the user settings
+file and keeps its other keys, or with `TUNGSTEN_UPDATE_NOTICE=stable` (or `prerelease`).
+`tungsten update notice` alone shows the effective setting, where it came from, the file
+paths and the cached answer. The user settings file is `$TUNGSTEN_CONFIG_DIR/settings.json`
+if set, else `$XDG_CONFIG_HOME/tungsten/settings.json` (`~/.config/tungsten/settings.json`),
+`~/Library/Application Support/tungsten/settings.json` on macOS or
+`%APPDATA%\tungsten\settings.json` on Windows:
 
 ```json
 { "update_notice": { "channel": "stable", "interval_hours": 24 } }

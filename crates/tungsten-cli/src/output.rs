@@ -117,6 +117,8 @@ pub enum CommandName {
     SupportBundle,
     #[serde(rename = "update check")]
     UpdateCheck,
+    #[serde(rename = "update notice")]
+    UpdateNotice,
     #[serde(rename = "upgrade rehearse")]
     UpgradeRehearse,
     #[serde(rename = "upgrade apply")]
@@ -228,6 +230,7 @@ pub enum CommandResult {
     SupportBundleExport(Box<crate::commands::support_bundle::SupportBundleExportReceipt>),
     SupportBundleInspection(Box<crate::commands::support_bundle_inspect::SupportBundleInspection>),
     UpdateCheck(crate::commands::update::UpdateCheckResult),
+    UpdateNotice(crate::commands::update_notice::UpdateNoticeResult),
     UpgradeRehearse(Box<crate::commands::upgrade::RehearsalResult>),
     UpgradeApply(Box<crate::commands::upgrade_apply::UpgradeApplyResult>),
     Help(HelpResult),
@@ -1075,6 +1078,7 @@ const RESULT_DEFS: &[(CommandName, &str)] = &[
     (CommandName::OverlaySuggest, "OverlaySuggestResult"),
     (CommandName::SupportBundle, "SupportBundlePreview"),
     (CommandName::UpdateCheck, "UpdateCheckResult"),
+    (CommandName::UpdateNotice, "UpdateNoticeResult"),
     (CommandName::UpgradeRehearse, "RehearsalResult"),
     (CommandName::UpgradeApply, "UpgradeApplyResult"),
 ];
