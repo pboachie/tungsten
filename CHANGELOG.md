@@ -236,6 +236,12 @@ changes.
   `module`, `python_version` and `models` keys. Declarations remain source
   statements: qualification and artifact availability stay `unknown`.
 
+- Add `tungsten support-bundle --inspect <FILE>` to review an existing support
+  bundle locally on any platform. It reads one bounded regular file, refuses
+  unsupported `bundle_schema_version` values by number, requires exactly the
+  schema's keys, observed metadata-only entries and payload sizes that match,
+  and lists the entries. Errors name schema locations only, never file content.
+
 - Offer language-server quick fixes for unknown operation ids (`TG0603`) and
   unknown manifest fields or values (`TG0602`), replacing the value named by
   the diagnostic with the closest known name. Fixes are version-pinned edits
@@ -394,6 +400,11 @@ changes.
 - Declare the existing TypeScript target options and supported-value schema in
   the shared capability contract. Keep emitter defaults and TG0711 fallback
   behavior compatible while configuration and generation share validation.
+
+- Assert mock-side effects in saved scenarios with optional `expect.effects`
+  counts of applied writes and idempotent replays, so a lost-write retry that
+  changes its idempotency key fails even when call counts match. Failed runs
+  name each failing assertion by file position in terminal output.
 
 - Validate saved mock scenarios portably and explicitly run integration argv on
   Linux with a run-phase deadline, cancellation, owned process-group cleanup,

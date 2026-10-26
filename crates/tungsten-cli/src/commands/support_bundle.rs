@@ -32,16 +32,16 @@ use super::support_bundle_file::{self as export, ExportError, Failure};
 /// Version of the preview/bundle manifest schema.
 pub(crate) const BUNDLE_SCHEMA_VERSION: u32 = 1;
 /// Largest serialized payload of one entry; a larger one is withheld.
-const MAX_ENTRY_BYTES: usize = 16 * 1024;
+pub(super) const MAX_ENTRY_BYTES: usize = 16 * 1024;
 /// Largest total of all entry payloads; later entries are withheld past it.
-const MAX_TOTAL_BYTES: usize = 64 * 1024;
+pub(super) const MAX_TOTAL_BYTES: usize = 64 * 1024;
 const MAX_DIAGNOSTICS: usize = 50;
 const MAX_TARGETS: usize = 64;
 const MAX_FIELDS_PER_TARGET: usize = 64;
 const MAX_TOOLS: usize = 64;
 
 /// Entry ids in manifest order; `--exclude` accepts exactly these.
-const ENTRY_IDS: [&str; 6] = [
+pub(super) const ENTRY_IDS: [&str; 6] = [
     "tool.versions",
     "capabilities.catalog",
     "project.configuration",
@@ -364,6 +364,9 @@ pub(crate) fn run(
     cancellation: &tungsten_mock::RunCancellation,
 ) -> Report {
     let mut report = Report::new(CommandName::SupportBundle);
+    if let Some(file) = &args.inspect {
+        return inspect_file(report, file);
+    }
     if !args.preview && args.output.is_none() {
         return report.failed(
             exit::USAGE,
@@ -372,7 +375,7 @@ pub(crate) fn run(
                 "choose a support bundle preview or explicit export",
             )
             .with_help(
-                "use --preview, or --output <PATH> to create a new metadata-only file on Linux",
+                "use --preview, --output <PATH> to create a new metadata-only file on Linux, or --inspect <FILE> to review an existing bundle",
             ),
         );
     }
@@ -432,6 +435,61 @@ pub(crate) fn run(
         ));
     }
     report
+}
+
+fn inspect_file(mut report: Report, file: &Path) -> Report {
+    use super::support_bundle_inspect::{self as inspection, InspectError};
+    let error = match inspection::inspect(file) {
+        Ok(result) => {
+            report.human = inspection::human(&result);
+            report.result = Some(CommandResult::SupportBundleInspection(Box::new(result)));
+            return report;
+        }
+        Err(error) => error,
+    };
+    // Messages name schema locations and numbers only, never file content.
+    let (status, error) = match error {
+        InspectError::NotFound => (
+            exit::FAILED,
+            CliError::new(
+                ErrorKind::NotFound,
+                "no regular, nonsymlink support bundle file at the given path",
+            ),
+        ),
+        InspectError::TooLarge => (
+            exit::REFUSED,
+            CliError::new(
+                ErrorKind::Refused,
+                "support bundle file exceeds the complete 128 KiB artifact limit",
+            ),
+        ),
+        InspectError::Io => (
+            exit::INTERNAL,
+            CliError::new(ErrorKind::Io, "reading the support bundle file failed"),
+        ),
+        InspectError::NotJson => (
+            exit::REFUSED,
+            CliError::new(ErrorKind::Refused, "support bundle file is not a JSON object"),
+        ),
+        InspectError::UnsupportedVersion(version) => (
+            exit::REFUSED,
+            CliError::new(
+                ErrorKind::Refused,
+                format!("unsupported support bundle schema version {version}"),
+            )
+            .with_help(format!(
+                "this tungsten reads schema version {BUNDLE_SCHEMA_VERSION}; use the tungsten release that wrote the bundle"
+            )),
+        ),
+        InspectError::Invalid(problem) => (
+            exit::REFUSED,
+            CliError::new(
+                ErrorKind::Refused,
+                format!("support bundle does not match schema version {BUNDLE_SCHEMA_VERSION}: {problem}"),
+            ),
+        ),
+    };
+    report.failed(status, error)
 }
 
 fn export_failed(report: Report, error: ExportError) -> Report {
@@ -843,6 +901,6 @@ fn human(preview: &SupportBundlePreview) -> String {
     for item in &preview.omitted {
         let _ = writeln!(out, "  {:<28} {}", item.category, item.description);
     }
-    out.push_str("Remove an entry with --exclude <id>. Export to a new file on Linux with --output <PATH>.\n");
+    out.push_str("Remove an entry with --exclude <id>. Export to a new file on Linux with --output <PATH>; review a bundle file with --inspect <FILE>.\n");
     out
 }
