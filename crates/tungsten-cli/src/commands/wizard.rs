@@ -281,6 +281,7 @@ pub(crate) fn run(args: &InitArgs, json: bool, env: &CliEnv) -> Report {
         &GenerateArgs {
             input: InputArgs {
                 path: selected.dir.clone(),
+                project: None,
             },
             target: vec![],
             dry_run: false,
