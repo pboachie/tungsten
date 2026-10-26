@@ -44,6 +44,7 @@ canonical inputs are never modified.
 | [Start with JSON Schema models](input-json-schema/README.md) | Declare JSON Schema models together with explicit HTTP routing in an endpoint manifest. |
 | [Preview and confirm a destructive call](preview-confirmation/README.md) | Reject an unconfirmed deletion, preview its identical arguments, then execute with the returned token. |
 | [Develop against a local mock](local-mock/README.md) | Run tungsten mock and call it through the generated Python client with strict response validation. |
+| [Assert retries with saved mock scenarios](mock-scenarios/README.md) | Run an explicit integration against saved 429, interrupted-stream, malformed-response and lost-write scenarios, and fail deliberately broken retries. |
 | [Detect stale generated files in CI](ci-drift/README.md) | Generate, change a copied contract, observe the no-diff gate fail, then regenerate and pass. |
 | [Review semver and migration changes](surface-diff/README.md) | Compare a generated baseline with an additive operation using both diff review modes. |
 
@@ -62,5 +63,6 @@ Additional examples have their own runners and prerequisites:
 - [Six public APIs](showcase/README.md): pinned specifications and regenerated showcase.
 - [External Markdown emitter](external-emitter-markdown/README.md): implement the emitter protocol.
 - [Typed Python SSE](typed-sse/README.md): declare and consume named streams with explicit cleanup.
+- [Bulk sync within a quota](bulk-sync/README.md): bound concurrent calls, queue the rest and share 429 backoff with a request scheduler.
 - [Response-contract quality](response-contract-audit/README.md): audit weak responses and apply reviewed schema overlays.
 - [GitHub Actions workflow](github-actions/README.md): a copyable workflow that installs a pinned release, validates the contract and fails on stale generated output.

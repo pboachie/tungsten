@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "programs": [
+    {
+      "operation": "openapi.listPets",
+      "status": 200,
+      "headers": {"Content-Type": "application/json"},
+      "body": "{\"id\": \"pet-1\", "
+    }
+  ],
+  "expect": {
+    "total_calls": 1,
+    "calls": [{"operation": "openapi.listPets", "status": 200, "count": 1}]
+  }
+}

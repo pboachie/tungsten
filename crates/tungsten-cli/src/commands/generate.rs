@@ -596,6 +596,13 @@ pub(crate) fn run(args: &GenerateArgs, env: &CliEnv, no_external: bool) -> Repor
         report.exit = exit::FAILED;
         return report;
     };
+    if args.locked
+        && let Some(diagnostic) = super::lock::locked_diagnostic(&args.input.path, &compiled)
+    {
+        report.diagnostics.push(diagnostic);
+        report.exit = exit::FAILED;
+        return report;
+    }
     let names = match select(&compiled, &args.target) {
         Ok(names) => names,
         Err(error) => return report.failed(exit::FAILED, error),
