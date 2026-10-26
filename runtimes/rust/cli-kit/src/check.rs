@@ -12,6 +12,7 @@ pub const RESERVED_FLAGS: &[&str] = &[
     "all",
     "base-url",
     "body",
+    "checkpoint-file",
     "config",
     "deadline",
     "dry-run",

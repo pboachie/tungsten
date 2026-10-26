@@ -153,22 +153,41 @@ fn named_type(g: &Gen<'_, '_>, w: &mut Writer, t: &NamedType) {
             w.line("def self.from_json(value)");
             w.indent();
             match union {
-                UnionPlan::Tagged { tag, variants, .. } => {
+                UnionPlan::Tagged {
+                    tag,
+                    variants,
+                    default,
+                } => {
                     w.line("return value unless value.is_a?(Hash)");
                     w.blank();
-                    w.line(format!("case value[{}]", str_lit(tag)));
-                    for (i, tags) in variants {
-                        let Some(v) = u.variants.get(*i) else {
-                            continue;
-                        };
-                        let when: Vec<String> = tags.iter().map(|s| str_lit(s)).collect();
-                        let body = g
-                            .decode(&v.ty, "value", 1)
-                            .unwrap_or_else(|| "value".to_string());
-                        w.line(format!("when {} then {body}", when.join(", ")));
+                    // OpenAPI 3.2 `defaultMapping`: any other object decodes
+                    // as the default variant.
+                    let fallback = default
+                        .and_then(|i| u.variants.get(i))
+                        .and_then(|v| g.decode(&v.ty, "value", 1))
+                        .unwrap_or_else(|| "value".to_string());
+                    let arms: Vec<(String, String)> = variants
+                        .iter()
+                        .filter(|(i, tags)| !tags.is_empty() && *default != Some(*i))
+                        .filter_map(|(i, tags)| {
+                            let v = u.variants.get(*i)?;
+                            let when: Vec<String> = tags.iter().map(|s| str_lit(s)).collect();
+                            let body = g
+                                .decode(&v.ty, "value", 1)
+                                .unwrap_or_else(|| "value".to_string());
+                            Some((when.join(", "), body))
+                        })
+                        .collect();
+                    if arms.is_empty() {
+                        w.line(fallback);
+                    } else {
+                        w.line(format!("case value[{}]", str_lit(tag)));
+                        for (when, body) in arms {
+                            w.line(format!("when {when} then {body}"));
+                        }
+                        w.line(format!("else {fallback}"));
+                        w.line("end");
                     }
-                    w.line("else value");
-                    w.line("end");
                 }
                 UnionPlan::Empty => {
                     w.line("value");

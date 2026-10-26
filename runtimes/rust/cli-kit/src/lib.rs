@@ -20,7 +20,8 @@
 //!   body as one argument;
 //! - on operations that are not read-only: `--dry-run`, `--yes`,
 //!   `--i-understand`, `--idempotency-key` and `--verify`; on paginated
-//!   operations: `--all` and, with it, `--max-pages <N>`;
+//!   operations: `--all` and, with it, `--max-pages <N>` and (read-only
+//!   operations) `--checkpoint-file <PATH>`;
 //! - global flags: `--json`, `--base-url`, `--profile`, `--config`,
 //!   `--timeout`, `--deadline`, `--max-response-bytes`, `--no-color`;
 //! - `schema <command>` (the compact JSON Schema of the arguments),
@@ -58,7 +59,14 @@
 //!   page (the bytes of the array printed whole, but only one page is held in
 //!   memory); `--max-pages N` stops after N pages, closes the array, exits 0
 //!   and notes on standard error that more pages are available (no limit
-//!   without it). A failure after the first page leaves the array unterminated
+//!   without it). `--checkpoint-file PATH` (with `<PREFIX>_CHECKPOINT_KEY`,
+//!   a secret of at least 32 bytes) saves a sealed checkpoint to PATH,
+//!   owner-only, after each page is written, and a rerun with an existing
+//!   PATH prints only the pages after it; a crash between writing a page
+//!   and saving its checkpoint replays that page, so consumers deduplicate.
+//!   A checkpoint for other arguments, base URL, profile, account or key is
+//!   refused before any request; delete PATH to start over. The file holds
+//!   the provider's cursor: keep it private. A failure after the first page leaves the array unterminated
 //!   and reports the diagnostic on standard error with the failure's exit
 //!   code; a failure before it is the envelope as usual. A preview (`--dry-run`,
 //!   or a command that needs confirmation) is one document with the
