@@ -349,8 +349,8 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
     ),
     e(
         "TG0151",
-        "A security requirement names a scheme by URI reference rather than by a component name. tungsten resolves security requirements against `components.securitySchemes` only.",
-        "Declare the scheme under `components.securitySchemes` and name it there.",
+        "An OpenAPI 3.2 security requirement names a scheme by URI reference, and the URI does not resolve to an entry under `components.securitySchemes` of an input document. tungsten resolves a URI such as `#/components/securitySchemes/apiKey` (or one into another input document) to that scheme, but not a scheme in a file that is not an input, nor a URI to anything else.",
+        "Reference a scheme under `components.securitySchemes` of an input document, or name it by its component name.",
     ),
     e(
         "TG0152",

@@ -784,6 +784,11 @@ pub const OPENAPI_32_SUPPORTED: &[SupportedInputFeature] = &[
         member: "discriminator.defaultMapping",
         behavior: "a tagged union decodes a missing or unmapped tag as the default variant",
     },
+    SupportedInputFeature {
+        id: "security_scheme_by_uri",
+        member: "security requirement naming a URI",
+        behavior: "the scheme under components.securitySchemes of an input document the URI references; any other URI is TG0151",
+    },
 ];
 
 /// OpenAPI 3.2 constructs without a 3.1 equivalent that are diagnosed. A 3.2
@@ -815,12 +820,6 @@ pub const OPENAPI_32_FEATURES: &[UnsupportedInputFeature] = &[
         "oauth2_device_authorization",
         "flows.deviceAuthorization",
         "TG0150",
-        Rejected,
-    ),
-    feature(
-        "security_scheme_by_uri",
-        "security requirement naming a URI",
-        "TG0151",
         Rejected,
     ),
     feature(

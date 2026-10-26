@@ -602,6 +602,14 @@ changes.
   as TG0306 and ignored. Other SDK targets still refuse an unmapped tag.
   TG0149 is retired and no longer reported.
 
+- OpenAPI 3.2 security requirements that name a scheme by URI compile: a key
+  such as `#/components/securitySchemes/apiKey`, or a URI into another input
+  document's `components.securitySchemes`, selects that scheme. A component
+  name wins over a URI that reads the same. TG0151 now reports only a URI that
+  names no such scheme (for example a scheme in a file that is not an input),
+  and the build reports it instead of the frontend; `tungsten capabilities`
+  lists the construct as compiled.
+
 - OpenAPI 3.2.x documents are read: a document that uses only constructs OpenAPI
   3.1 has takes the 3.1 path and compiles to the same IR as its 3.1 twin. Each
   construct only 3.2 has is diagnosed at its member instead of being ignored, one
