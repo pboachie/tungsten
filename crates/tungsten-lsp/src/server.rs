@@ -432,11 +432,11 @@ impl Server<'_> {
             return;
         };
         let file = normalize(&root.join(&label.file));
-        let file = if file.is_dir() {
-            file.join(MANIFEST_NAMES[0])
-        } else {
-            file
-        };
+        if !file.is_file() {
+            // A limit reached in a directory: no file to show it on.
+            self.log(&format!("{}: {}", diagnostic.code, diagnostic.message));
+            return;
+        }
         let severity = match diagnostic.severity {
             tungsten_core::Severity::Error => lsp_types::DiagnosticSeverity::ERROR,
             tungsten_core::Severity::Warning => lsp_types::DiagnosticSeverity::WARNING,
@@ -651,7 +651,7 @@ impl Server<'_> {
     /// that read it, and the projects whose next check may read files they
     /// have not read yet when no project reads it or when it changed on
     /// disk (`disk`: opened, closed, saved or watched, as opposed to
-    /// typed). A manifest appearing also changes which projects are served.
+    /// typed).
     fn changed(&mut self, path: &Path, delay: Duration, disk: bool) -> Result<(), String> {
         let readers: BTreeSet<PathBuf> = self
             .projects
@@ -670,9 +670,6 @@ impl Server<'_> {
         }
         for manifest in affected {
             self.touch(&manifest, delay);
-        }
-        if is_manifest(path) && !self.projects.contains_key(path) {
-            self.refresh_projects()?;
         }
         Ok(())
     }
