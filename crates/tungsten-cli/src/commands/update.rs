@@ -43,7 +43,9 @@ pub const EXIT_UNCONFIRMED: i32 = exit::UPDATE_UNCONFIRMED;
 pub(crate) enum UpdateCommand {
     /// Ask GitHub once whether a newer release exists; never installs.
     ///
-    /// Prints installation-specific upgrade guidance.
+    /// Prints installation-specific upgrade guidance. When update notices
+    /// are enabled (TUNGSTEN_UPDATE_NOTICE or the user settings file), a
+    /// verified answer is cached for the opt-in interactive notice.
     /// Exit codes: 0 up to date, 5 newer release available, 6 could not
     /// confirm (offline, opted out, network or metadata failure, or the
     /// release lacks this platform's archive).
@@ -77,7 +79,16 @@ pub(crate) fn run(command: &UpdateCommand, offline: bool) -> Report {
     };
     let fetcher = HttpFetcher;
     let result = check(&GithubReleases { fetcher: &fetcher }, &ctx);
-    finish(result)
+    let recorded = super::update_notice::record(
+        &result,
+        &super::update_notice::NoticeEnv::from_process(),
+        std::time::SystemTime::now(),
+    );
+    let mut report = finish(result);
+    if let Some(path) = recorded {
+        let _ = writeln!(report.human, "Saved for update notices: {}", path.display());
+    }
+    report
 }
 
 fn finish(result: UpdateCheckResult) -> Report {
@@ -506,6 +517,12 @@ impl Version {
             text: text.to_string(),
         })
     }
+}
+
+/// Whether `candidate` is a strictly newer semantic version than `current`;
+/// `None` when either does not parse.
+pub(crate) fn newer_than(candidate: &str, current: &str) -> Option<bool> {
+    Some(Version::parse(candidate)? > Version::parse(current)?)
 }
 
 impl Ord for Version {
