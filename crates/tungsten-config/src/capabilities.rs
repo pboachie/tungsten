@@ -372,21 +372,21 @@ targets! {
         environments: [Dotnet], features: SDK,
     },
     {
-        id: "java", aliases: &[], source: BuiltInEmitter, family: Some("jvm"), policy: false,
+        id: "java", aliases: &[], source: BuiltInEmitter, family: Some("jvm"), policy: true,
         tools: &[ToolRequirement::new("java", Some([17, 0])), ToolRequirement::new("mvn", None)],
         summary: "Java SDK",
         options: &["group_id", "artifact_id", "package", "version", "runtime", "runtime_path", "out"],
-        environments: [Jvm], features: SDK,
+        environments: [Jvm], features: SDK_POLICY,
     },
     {
-        id: "kotlin", aliases: &["kt"], source: BuiltInEmitter, family: Some("jvm"), policy: false,
+        id: "kotlin", aliases: &["kt"], source: BuiltInEmitter, family: Some("jvm"), policy: true,
         tools: &[ToolRequirement::new("java", Some([17, 0])), ToolRequirement::new("gradle", None)],
         summary: "Kotlin/JVM SDK (blocking functions returning Result; opt-in coroutines)",
         options: &[
             "group", "artifact", "package", "version", "runtime", "runtime_path",
             "java_runtime_path", "coroutines", "coroutines_runtime_path", "out",
         ],
-        environments: [Jvm], features: &["typed_sdk", "pagination_helpers", "coroutines"],
+        environments: [Jvm], features: &["typed_sdk", "pagination_helpers", "imported_operation_policy", "coroutines"],
     },
     {
         id: "mcp", aliases: &[], source: BuiltInEmitter, family: Some("typescript"), policy: true,
@@ -418,11 +418,11 @@ targets! {
         features: &["typed_sdk", "pagination_helpers", "imported_operation_policy", "dataclass_models"],
     },
     {
-        id: "ruby", aliases: &["rb"], source: BuiltInEmitter, family: Some("ruby"), policy: false,
+        id: "ruby", aliases: &["rb"], source: BuiltInEmitter, family: Some("ruby"), policy: true,
         tools: &[ToolRequirement::new("ruby", Some([3, 3])), ToolRequirement::new("bundle", None)],
         summary: "Ruby SDK",
         options: &["gem", "module", "version", "runtime", "runtime_path", "out"],
-        environments: [Ruby], features: SDK,
+        environments: [Ruby], features: SDK_POLICY,
     },
     {
         id: "rust", aliases: &["rs"], source: BuiltInEmitter, family: Some("rust"), policy: true,

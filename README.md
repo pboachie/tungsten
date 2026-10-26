@@ -279,6 +279,28 @@ activated virtual environment.
 For current source builds, MCP servers require Node 22.13+ (Node 23 requires
 23.2+); TypeScript SDKs and WebMCP build tooling retain their Node 22 prerequisite.
 
+#### Node.js support
+
+Upstream lifecycle as of October 2026: 22 and 24 are LTS, 26 is Current, and
+20 is end-of-life. Odd-numbered branches, Node 18 and older, and unreleased
+majors are not supported. A new major is promoted only after it passes the
+package build lanes; a line is retired when upstream support ends.
+
+| Artifact | Supported lines | Declared floor | Lanes checked in public CI |
+|---|---|---|---|
+| `@elysra/tungsten-runtime` and generated TypeScript SDKs (run) | 22, 24, 26 | `>=22` | 22.23.4, 24.22.1, 26.12.1 |
+| `@elysra/tungsten-mcp` and generated MCP servers (run) | 22.13+, 24, 26 | `^22.13.0 \|\| >=23.2.0` | 22.23.4, 24.22.1, 26.12.1 |
+| `@elysra/tungsten-webmcp` and generated WebMCP packages (build) | 22, 24, 26 | `>=22` | 22.23.4, 24.22.1, 26.12.1 |
+| Node 20 (legacy) | Not supported | — | 20.20.2, advisory only |
+
+The WebMCP floor covers its npm build tooling only. Generated WebMCP bundles run
+in a browser that provides the WebMCP API. Passing an npm build does not make a
+browser compatible. The core runtime entry point uses Web APIs only; its `/node`
+export and the MCP runtime need Node. The Node 20 canary builds the packages and
+imports the SDK and WebMCP runtimes for information only. The MCP runtime cannot
+load on Node 20 because it needs `module.stripTypeScriptTypes` (Node 22.13 or
+23.2). The tungsten compiler and generated Rust CLIs never need Node.
+
 | Output | Runtime package | Install the published runtime |
 |---|---|---|
 | TypeScript SDK | [`@elysra/tungsten-runtime`](https://www.npmjs.com/package/@elysra/tungsten-runtime) | `npm install --save-exact @elysra/tungsten-runtime@0.1.3` |
@@ -630,7 +652,7 @@ tungsten [--json] <command>
 | `scenario validate` / `scenario run` | Validate a saved scenario, or run explicit integration argv with exit and call-count assertions (Linux run) |
 | `report` | Coverage, safety matrix, token budgets and diagnostics, as text, JSON or one static HTML file (`--html`); only configured targets run, `--all-targets` runs every known emitter |
 | `diff` | Show regeneration changes; `--semver` classifies the API surface, `--migration` adds upgrade actions and runtime requirement review |
-| `lsp` | Serve diagnostics, completion, hover, go-to-definition and symbols for `tungsten.yml`, `agent.yml` and overlays to an editor over stdio (`--config`) |
+| `lsp` | Serve diagnostics, quick fixes, completion, hover, go-to-definition and symbols for `tungsten.yml`, `agent.yml` and overlays to an editor over stdio (`--config`) |
 | `doctor` | Report external tools; pass a project path and `--strict` to fail when its required tools are missing or too old |
 | `capabilities` | Query built-in target declarations without running tools or emitters; optionally select a target id or alias, such as `capabilities py --json`; `--matrix` prints the Markdown support matrix derived from the same declarations |
 | `support-bundle --preview` | Inspect the exact metadata-only support manifest without writing files; `--exclude <id>` removes an entry. On Linux, `--output <PATH>` instead publishes it to a new file in an existing, trusted directory |
@@ -927,7 +949,7 @@ including invalid or unsaved included profiles outside the manifest directory.
 Compiler source names and exported configuration provenance remain portable.
 Dedicated profile completion and navigation remain follow-up work.
 
-`tungsten lsp` is a language server for `tungsten.yml`, `agent.yml` and the overlay files a project lists. It checks the project with the same compiler as `tungsten check` and shows the same `TG` diagnostics on their source lines. Unsaved JSON/YAML manifests, specs, overlays and local references participate in the same source snapshot, including new files in an existing input directory. Closing a buffer restores its disk contents; file watchers pick up saved changes and deletions. File-size limits and local-reference confinement still apply. The selected project's `.tungsten-inputs` acquisition cache is reserved for verified disk content: buffers cannot replace or extend a pinned Git tree, while explicitly selected local overlays outside the cache remain editable. It completes keys, enumerated values and the operation ids, gates and clusters of the compiled project; shows field documentation, operation signatures and diagnostic explanations on hover; jumps from an operation id to its place in the OpenAPI document; and outlines the manifests. The workspace is the directory of `tungsten.yml` (found from the editor's workspace folder, or given with `--config <path>`); one project is served per process.
+`tungsten lsp` is a language server for `tungsten.yml`, `agent.yml` and the overlay files a project lists. It checks the project with the same compiler as `tungsten check` and shows the same `TG` diagnostics on their source lines. Unsaved JSON/YAML manifests, specs, overlays and local references participate in the same source snapshot, including new files in an existing input directory. Closing a buffer restores its disk contents; file watchers pick up saved changes and deletions. File-size limits and local-reference confinement still apply. The selected project's `.tungsten-inputs` acquisition cache is reserved for verified disk content: buffers cannot replace or extend a pinned Git tree, while explicitly selected local overlays outside the cache remain editable. It completes keys, enumerated values and the operation ids, gates and clusters of the compiled project; shows field documentation, operation signatures and diagnostic explanations on hover; jumps from an operation id to its place in the OpenAPI document; and outlines the manifests. Quick fixes replace an unknown operation id (`TG0603`) or an unknown manifest field or value (`TG0602`) with the closest name the compiler knows; each fix is a single edit pinned to the buffer version it was computed for, so the editor previews it, refuses it after a later edit and can undo it. A fix never runs emitters, installs packages or refreshes inputs. The workspace is the directory of `tungsten.yml` (found from the editor's workspace folder, or given with `--config <path>`); one project is served per process.
 
 Edits retain the existing debounce and one active analysis worker. A newer edit
 cancels obsolete work cooperatively between compiler phases and during reference,

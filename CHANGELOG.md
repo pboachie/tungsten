@@ -236,6 +236,25 @@ changes.
   `module`, `python_version` and `models` keys. Declarations remain source
   statements: qualification and artifact availability stay `unknown`.
 
+- Offer language-server quick fixes for unknown operation ids (`TG0603`) and
+  unknown manifest fields or values (`TG0602`), replacing the value named by
+  the diagnostic with the closest known name. Fixes are version-pinned edits
+  of the current buffer and are withheld when the buffer no longer matches.
+
+- The `java` and `kotlin` targets now enforce imported-operation policy and may
+  be generated for projects converted from Postman, cURL, `.http` or HAR input.
+  The Java runtime reads each operation's `import_policy`, refuses a reviewed
+  imported operation whose target origin is outside its saved review scope
+  (`VALIDATION_FAILED` on `baseUrl`, nothing sent), and applies the effective
+  safety tier of unreviewed operations. Generated SDKs require a runtime with
+  `ClientCore.requireImportPolicyV1()`.
+
+- The `ruby` target now enforces imported-operation policy the same way: the
+  Ruby runtime refuses a reviewed imported operation whose target origin is
+  outside its saved review scope (`VALIDATION_FAILED` on `base_url`, nothing
+  sent), and generated gems require
+  `Tungsten::Runtime::ClientCore.require_import_policy_v1`.
+
 - Add explicit Linux support-bundle export to a new file in an existing,
   trusted user-owned directory. Export preserves the metadata-only preview
   manifest, caps complete artifacts at 128 KiB, refuses replacement and
@@ -411,6 +430,13 @@ changes.
 
 ### Changed
 
+- Check the npm runtime packages on Node 26 (Current) as well as Node 22 and 24,
+  and add an advisory Node 20 canary that does not imply support. The README
+  now has one Node.js support table: supported lines, the declared floor for
+  each artifact, the checked patch versions, and the build-only scope of the
+  WebMCP floor. The TypeScript runtime now type-checks against Node 22 types,
+  so it cannot rely on APIs newer than its floor.
+
 - Locate primary and related LSP profile diagnostics in their captured local
   files, including invalid profiles, while preserving portable compiler and
   configuration-inspection source names.
@@ -440,6 +466,13 @@ changes.
   reusing a compatible generated value or omitting an optional field. Required
   fields remain intact, and the full intersection must validate before a repair
   is accepted.
+
+- Generated TypeScript SDKs no longer lose a `PATTERN_UNCHECKED` diagnostic when
+  the first untagged-union variant that accepts a value has a pattern the engine
+  cannot compile and a later variant also accepts it. Diagnostics now come only
+  from the first accepting variant, as in Dart and Python; rejected variants no
+  longer report speculative patterns. Schema shapes, `.options` and encoding are
+  unchanged.
 
 - Dart schema validation now reports unchecked patterns from the first accepting
   untagged-union variant, preserving nested property and array paths. Rejected
