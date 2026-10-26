@@ -302,7 +302,12 @@ changes.
   without the cursor. Registered as the `pagination_checkpoints` capability for
   the `typescript`, `python` and `rust` targets. In Rust, `ExportPages::typed`
   decodes items and `blocking::Runtime::export_pages` iterates an export with
-  blocking calls.
+  blocking calls. Generated Rust CLIs accept `--checkpoint-file <PATH>` with
+  `--all` on read-only paginated commands: with `<PREFIX>_CHECKPOINT_KEY` set
+  to a secret of at least 32 bytes, the checkpoint is saved owner-only after
+  each page is printed, and rerunning with the same file prints only the
+  remaining pages; delete the file to start over. `checkpoint-file` is now a
+  reserved flag name.
 
 - Generated Rust CLIs sign in to OAuth2 `authorizationCode` schemes:
   `auth login` runs the runtime's managed S256 flow through a loopback

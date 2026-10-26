@@ -7,9 +7,9 @@ use std::ops::ControlFlow;
 use clap::ArgMatches;
 use serde_json::{Value, json};
 use tungsten_runtime::{
-    CallOptions, Category, ClientOptions, ConfigError, Confirm, Diagnostic, Dispatch, Error,
-    MAX_PAGES_REACHED, Page, PreviewResult, ResponseMeta, Retryable, Safety, Status, Trace,
-    Verification,
+    CallOptions, Category, CheckpointOptions, ClientOptions, ConfigError, Confirm, Diagnostic,
+    Dispatch, Error, MAX_PAGES_REACHED, Page, PreviewResult, Response, ResponseMeta, Retryable,
+    Safety, Status, Trace, Verification,
 };
 
 use crate::config::{self, Flags, Found, Settings};
@@ -18,6 +18,7 @@ use crate::exit;
 use crate::render::{
     error_human, human_array_item, human_value, json_doc, preview_human, preview_json,
 };
+use crate::session::write_private;
 use crate::spec::CliFlag;
 use crate::tree::{self, Leaf, Tree};
 use crate::{builtin, check, dotted, explain, login, values};
@@ -303,13 +304,19 @@ async fn print_all<D: Dispatch>(
     };
     let mut sink = |r| out.page(r);
     client.pages_each(operation, args, opts, &mut sink).await;
+    close_array(out, note, "Raise --max-pages to fetch more.")
+}
+
+/// Close the array of `--all` output: the failure, or the closing bracket,
+/// the `--max-pages` note (ending with `hint`) and the shown-once note.
+fn close_array(out: ArrayOut<'_, '_>, note: (&[String], bool), hint: &str) -> u8 {
     let ArrayOut {
         ctx,
         started,
         pages,
         capped,
         failed,
-        ..
+        max_pages,
     } = out;
     if let Some(e) = failed {
         return if started {
@@ -328,7 +335,7 @@ async fn print_all<D: Dispatch>(
         let limit = max_pages.unwrap_or_default();
         let line = format!(
             "{}: stopped after {pages} page{} (--max-pages {limit}); more pages are available. \
-             Raise --max-pages to fetch more.",
+             {hint}",
             ctx.err_style.yellow("note"),
             if pages == 1 { "" } else { "s" },
         );
@@ -336,6 +343,155 @@ async fn print_all<D: Dispatch>(
     }
     shown_once_note(ctx, note.0, note.1);
     exit::OK
+}
+
+/// `--all --checkpoint-file`: [`print_all`] over a checkpointed export.
+/// The output holds the items of the pages read by this run; after each
+/// page is written to standard output, its checkpoint replaces the file
+/// (owner-only, renamed into place), so a rerun with the same file
+/// continues after it. A crash between the two replays that page.
+async fn print_export<D: Dispatch>(
+    ctx: &mut Ctx<'_>,
+    client: &D,
+    operation: &str,
+    args: Value,
+    opts: CallOptions,
+    export: Export,
+    note: (&[String], bool),
+) -> u8 {
+    let Some(desc) = client.operations().iter().find(|d| d.id == operation) else {
+        ctx.err(&format!(
+            "error: the SDK has no operation {operation}; regenerate the CLI with the SDK"
+        ));
+        return exit::INTERNAL;
+    };
+    let resumed = export.resume.is_some();
+    let mut pages = client.core().export_pages(
+        std::sync::Arc::new(desc.clone()),
+        args,
+        CheckpointOptions {
+            key: export.key,
+            scope: Some(export.scope),
+            resume: export.resume,
+            max_age_ms: None,
+        },
+        opts.clone(),
+    );
+    let mut out = ArrayOut {
+        ctx,
+        started: false,
+        pages: 0,
+        capped: false,
+        failed: None,
+        max_pages: opts.max_pages,
+    };
+    let mut complete = resumed;
+    let mut saved = true;
+    while let Some(item) = pages.next().await {
+        let item = item.map(|r| {
+            let token = (r.value.checkpoint, r.value.complete);
+            let page = Response {
+                value: Page {
+                    items: r.value.items,
+                    body: r.value.body,
+                    next: r.value.next,
+                },
+                meta: r.meta,
+                verification: r.verification,
+            };
+            (page, token)
+        });
+        let (page, token) = match item {
+            Ok((page, token)) => (Ok(page), Some(token)),
+            Err(e) => (Err(e), None),
+        };
+        if out.page(page).is_break() {
+            break;
+        }
+        if let Some((token, done)) = token {
+            complete = done;
+            if let Err(e) = write_private(&export.path, format!("{token}\n").as_bytes()) {
+                out.ctx.out_part("\n");
+                out.ctx.err(&format!(
+                    "error: could not save the checkpoint to {}: {e}. The last page printed is not recorded; rerunning replays it.",
+                    export.path.display()
+                ));
+                saved = false;
+                break;
+            }
+        }
+    }
+    if !saved {
+        return exit::INTERNAL;
+    }
+    let path = export.path.display().to_string();
+    let failed = out.failed.is_some();
+    let read = out.pages;
+    let code = close_array(
+        out,
+        note,
+        &format!("Rerun the same command with --checkpoint-file {path} to continue."),
+    );
+    if !failed && complete {
+        let line = if read == 0 {
+            format!(
+                "{}: the export recorded in {path} is already complete; delete the file to export again from the first page.",
+                ctx.err_style.yellow("note")
+            )
+        } else {
+            format!(
+                "{}: export complete; {path} records it (delete the file to export again).",
+                ctx.err_style.yellow("note")
+            )
+        };
+        ctx.err(&line);
+    }
+    code
+}
+
+/// The checkpoint of an `--all --checkpoint-file` command.
+struct Export {
+    path: std::path::PathBuf,
+    key: Vec<u8>,
+    scope: String,
+    resume: Option<String>,
+}
+
+/// The checkpoint file, key and scope of `--checkpoint-file`, when given.
+fn export_of(ctx: &Ctx<'_>, m: &ArgMatches, settings: &Settings) -> Result<Option<Export>, Fail> {
+    let Some(path) = text(m, "checkpoint-file") else {
+        return Ok(None);
+    };
+    let prefix = &ctx.spec.env_prefix;
+    let var = format!("{prefix}_CHECKPOINT_KEY");
+    let key = ctx.env.get(&var).map(String::as_bytes).unwrap_or_default();
+    if key.len() < 32 {
+        return Err(Fail::Usage(format!(
+            "--checkpoint-file needs {var}: a secret of at least 32 bytes, kept the same across runs, that seals the checkpoint"
+        )));
+    }
+    let path = std::path::PathBuf::from(path);
+    let resume = match std::fs::read_to_string(&path) {
+        Ok(text) => Some(text.trim().to_string()).filter(|t| !t.is_empty()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => {
+            return Err(Fail::Usage(format!(
+                "--checkpoint-file {}: {e}",
+                path.display()
+            )));
+        }
+    };
+    let account = ctx
+        .env
+        .get(&format!("{prefix}_ACCOUNT"))
+        .cloned()
+        .unwrap_or_default();
+    Ok(Some(Export {
+        path,
+        key: key.to_vec(),
+        scope: format!("profile={}\naccount={account}", settings.profile),
+        resume,
+    }))
 }
 
 #[derive(Clone, Copy)]
@@ -353,6 +509,7 @@ struct Plan<'a> {
     yes: bool,
     understand: bool,
     all: bool,
+    export: Option<Export>,
     shown_once: bool,
     once_fields: Vec<String>,
 }
@@ -379,6 +536,7 @@ async fn execute<D: Dispatch>(ctx: &mut Ctx<'_>, client: &D, plan: Plan<'_>) -> 
         yes,
         understand,
         all,
+        export,
         shown_once,
         once_fields,
     } = plan;
@@ -413,6 +571,18 @@ async fn execute<D: Dispatch>(ctx: &mut Ctx<'_>, client: &D, plan: Plan<'_>) -> 
         };
     }
     if all && let Target::Op(id) = target {
+        if let Some(export) = export {
+            return print_export(
+                ctx,
+                client,
+                id,
+                args,
+                opts,
+                export,
+                (&once_fields, shown_once),
+            )
+            .await;
+        }
         return print_all(ctx, client, id, args, opts, (&once_fields, shown_once)).await;
     }
     let outcome = match target {
@@ -588,6 +758,7 @@ where
                 yes: flag(m, "yes"),
                 understand: flag(m, "i-understand"),
                 all: flag(m, "all"),
+                export: export_of(ctx, m, &conn.settings)?,
                 shown_once: desc.agent.shown_once,
                 once_fields: desc.agent.sensitive_response_fields.clone(),
             }
@@ -611,6 +782,7 @@ where
                 yes: flag(m, "yes"),
                 understand: flag(m, "i-understand"),
                 all: false,
+                export: None,
                 shown_once: desc.shown_once,
                 once_fields: desc.sensitive_response_fields.clone(),
             }
