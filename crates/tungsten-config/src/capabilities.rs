@@ -10,7 +10,7 @@ use crate::option_fields;
 
 pub mod init;
 pub mod protocols;
-pub use init::{CompanionTarget, INIT, InitCapability};
+pub use init::{CompanionTarget, INIT, InitCapability, InitPreset};
 pub use protocols::{PROTOCOLS, ProtocolDefinition};
 use serde::Serialize;
 

@@ -406,7 +406,7 @@ fn walkthrough(args: &mut InitArgs) -> io::Result<bool> {
                 eprintln!("  [ ] {line}");
             }
             eprintln!("Or one preset (explicit outputs and --strict still win):");
-            for (name, about) in super::init_preset::NAMES {
+            for (name, about) in super::init_preset::names() {
                 eprintln!("  ( ) {name} - {about}");
             }
             let defaults = match args.preset {

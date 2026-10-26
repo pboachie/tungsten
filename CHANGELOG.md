@@ -428,6 +428,13 @@ changes.
   and writes nothing when the limit is reached; library cancellation of an
   export is now honoured while collection runs.
 
+- Declare the `init --preset` starting points (`app`, `library`, `agent`)
+  in the capability catalog: `init` and the wizard read each preset's
+  targets and `--strict` default from it, `tungsten capabilities` reports
+  them under `init.presets` and the support matrix lists them. The catalog
+  check rejects a preset missing a companion target or a CLI preset without
+  a declaration.
+
 - Add the protocol design gate. An IR namespace may carry an optional
   `protocol` binding (a registered protocol id, its version and a
   protocol-specific `extension`); absent means HTTP, so existing IR is
