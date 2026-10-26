@@ -1015,7 +1015,8 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
     e(
         "TG0729",
         "The experimental `mcp-python` server (the `tungsten-mcp` Python runtime) serves \
-         tools over stdio, discrete or progressive. This API uses something it does not \
+         tools over stdio or Streamable HTTP, discrete or progressive. This API uses something \
+         it does not \
          serve: operations answering an event stream (their streamed calls return an \
          envelope and send nothing), or macros the Python SDK does not emit (their tools \
          answer a misconfiguration envelope). Nothing is weakened silently: each case is \
