@@ -18,6 +18,9 @@ use tokio::sync::Notify;
 /// The pause after a `RATE_LIMITED` answer that names no wait.
 const DEFAULT_PAUSE_MS: f64 = 1000.0;
 const MAX_PAUSE_MS: f64 = 3_600_000.0;
+/// Scopes whose retry budget is remembered; the least recently used is
+/// forgotten (and starts again from the reserve) beyond this.
+const MAX_BUDGETS: usize = 1024;
 
 /// How requests are grouped into scopes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -30,7 +33,7 @@ pub enum SchedulerScope {
 }
 
 /// Limits of a [`RequestScheduler`]. Every limit applies per scope.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SchedulerOptions {
     /// Ordinary requests in flight at once. 1 to 10000.
     pub max_active: u32,
@@ -45,6 +48,15 @@ pub struct SchedulerOptions {
     /// also end the wait. Default 30 s.
     pub max_queue: Duration,
     pub scope: SchedulerScope,
+    /// Retries per call a scope may spend over time, shared by every caller
+    /// of the scope (0 to 1). Each call adds this much to the scope's retry
+    /// budget and each retry spends 1; a retry the budget cannot pay for is
+    /// not made and the call returns its last failure. `None` (default):
+    /// retries are not budgeted.
+    pub retry_ratio: Option<f64>,
+    /// Retries a scope's budget holds before any call added to it, and the
+    /// base of its cap (`retry_reserve + 100 × retry_ratio`). Default 10.
+    pub retry_reserve: u32,
 }
 
 impl SchedulerOptions {
@@ -56,6 +68,8 @@ impl SchedulerOptions {
             max_streams: None,
             max_queue: Duration::from_secs(30),
             scope: SchedulerScope::Origin,
+            retry_ratio: None,
+            retry_reserve: 10,
         }
     }
 }
@@ -88,6 +102,9 @@ pub(crate) enum Kind {
 }
 
 type Random = Arc<dyn Fn() -> f64 + Send + Sync>;
+
+/// Balance and last use of each scope's retry budget, and the use clock.
+type Budgets = (HashMap<String, (f64, u64)>, u64);
 
 struct Waiter {
     id: u64,
@@ -130,7 +147,11 @@ struct Shared {
     max_streams: usize,
     max_queue: Duration,
     scope: SchedulerScope,
+    retry_ratio: Option<f64>,
+    retry_reserve: f64,
     state: Mutex<State>,
+    /// Retry budget balance and last use of each scope.
+    budgets: Mutex<Budgets>,
 }
 
 /// Admits requests within the configured bounds. Clone it into
@@ -292,6 +313,14 @@ impl RequestScheduler {
         if options.max_queue > Duration::from_millis(MAX_PAUSE_MS as u64) {
             return Err("max_queue: at most one hour".to_owned());
         }
+        if let Some(ratio) = options.retry_ratio
+            && !(ratio.is_finite() && (0.0..=1.0).contains(&ratio))
+        {
+            return Err(format!(
+                "retry_ratio must be a number from 0 to 1, got {ratio}"
+            ));
+        }
+        let retry_reserve = bounded(options.retry_reserve, 0, 10_000, "retry_reserve")?;
         Ok(RequestScheduler {
             shared: Arc::new(Shared {
                 max_active,
@@ -299,9 +328,56 @@ impl RequestScheduler {
                 max_streams,
                 max_queue: options.max_queue,
                 scope: options.scope,
+                retry_ratio: options.retry_ratio,
+                retry_reserve: retry_reserve as f64,
                 state: Mutex::new(State::default()),
+                budgets: Mutex::new((HashMap::new(), 0)),
             }),
         })
+    }
+
+    /// Add one call's share to the retry budget of `key`.
+    pub(crate) fn record_call(&self, key: &str) {
+        let Some(ratio) = self.shared.retry_ratio else {
+            return;
+        };
+        let cap = self.shared.retry_reserve + 100.0 * ratio;
+        self.update_budget(key, |balance| Some((balance + ratio).min(cap)));
+    }
+
+    /// Spend one retry from the budget of `key`; false when it cannot pay.
+    pub(crate) fn allow_retry(&self, key: &str) -> bool {
+        if self.shared.retry_ratio.is_none() {
+            return true;
+        }
+        self.update_budget(key, |balance| (balance >= 1.0).then_some(balance - 1.0))
+    }
+
+    /// Apply `change` to the balance of `key`; false when it declined.
+    fn update_budget(&self, key: &str, change: impl FnOnce(f64) -> Option<f64>) -> bool {
+        let mut guard = self
+            .shared
+            .budgets
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let (budgets, clock) = &mut *guard;
+        let balance = budgets
+            .get(key)
+            .map_or(self.shared.retry_reserve, |(balance, _)| *balance);
+        let Some(next) = change(balance) else {
+            return false;
+        };
+        *clock += 1;
+        budgets.insert(key.to_owned(), (next, *clock));
+        if budgets.len() > MAX_BUDGETS
+            && let Some(oldest) = budgets
+                .iter()
+                .min_by_key(|(_, (_, used))| *used)
+                .map(|(key, _)| key.clone())
+        {
+            budgets.remove(&oldest);
+        }
+        true
     }
 
     /// The scope of a request to `url` made for `tenant`.
