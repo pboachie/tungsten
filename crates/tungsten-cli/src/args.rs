@@ -282,6 +282,16 @@ pub(crate) struct CapabilitiesArgs {
     /// same declarations (JSON output is unchanged).
     #[arg(long)]
     pub matrix: bool,
+    /// Matrix rendering: `human` prints the table, `markdown` wraps it in
+    /// the start/end markers that delimit the README's generated block.
+    #[arg(long, value_enum, default_value_t = MatrixFormat::Human, requires = "matrix")]
+    pub format: MatrixFormat,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub(crate) enum MatrixFormat {
+    Human,
+    Markdown,
 }
 
 #[derive(Debug, Args)]
@@ -339,6 +349,11 @@ pub(crate) struct BundleExportArgs {
     /// Export declared inputs whose names suggest credential or key material.
     #[arg(long)]
     pub allow_sensitive: bool,
+    /// Also carry the verified `.tungsten-inputs` pins and content of remote
+    /// inputs, so they reproduce offline. Check that the upstream terms allow
+    /// redistributing those documents.
+    #[arg(long)]
+    pub include_input_cache: bool,
 }
 
 #[derive(Debug, Args)]
@@ -421,6 +436,10 @@ pub(crate) struct CheckArgs {
     /// `--json` always lists every diagnostic.
     #[arg(long)]
     pub all_warnings: bool,
+    /// Fail (TG0128) unless the project matches its tungsten.lock.json
+    /// exactly. Implies offline input acquisition.
+    #[arg(long)]
+    pub locked: bool,
 }
 
 #[derive(Debug, Args)]
@@ -446,6 +465,10 @@ pub(crate) struct GenerateArgs {
     /// is written when there are any, in any target.
     #[arg(long)]
     pub strict: bool,
+    /// Refuse (TG0128) unless the project matches its tungsten.lock.json
+    /// exactly; nothing is written. Implies offline input acquisition.
+    #[arg(long)]
+    pub locked: bool,
 }
 
 #[derive(Debug, Args)]
@@ -534,7 +557,7 @@ pub(crate) struct ScenarioRunArgs {
     pub input: InputArgs,
     #[arg(long, value_name = "FILE")]
     pub scenario: PathBuf,
-    /// Run-phase budget including cleanup; compilation/validation precede it.
+    /// Whole-command budget: acquisition, compilation, validation, run and cleanup.
     #[arg(long, default_value_t = 30_000, value_parser = clap::value_parser!(u64).range(20..=600_000))]
     pub timeout_ms: u64,
     #[arg(long, default_value_t = 0)]

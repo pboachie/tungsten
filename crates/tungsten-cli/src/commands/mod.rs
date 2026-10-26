@@ -59,9 +59,24 @@ pub(crate) fn dispatch(
         } => Some(args.input.path.as_path()),
         _ => None,
     };
+    // `--locked` reproduces from pinned inputs only: acquisition is offline
+    // and refreshing a pin is a separate, explicit step.
+    let locked = matches!(&cli.command, Command::Check(args) if args.locked)
+        || matches!(&cli.command, Command::Generate(args) if args.locked);
+    if locked && cli.refresh_inputs {
+        return crate::Report::new(cli.command_name().unwrap_or(crate::output::CommandName::Check))
+            .failed(
+                crate::exit::USAGE,
+                crate::output::CliError::new(
+                    crate::output::ErrorKind::Usage,
+                    "--locked cannot be combined with --refresh-inputs",
+                )
+                .with_help("refresh inputs and review them first, then run `tungsten lock --update` before a locked run"),
+            );
+    }
     tungsten_openapi::acquire::with_options(
         tungsten_openapi::acquire::Options {
-            offline: cli.offline,
+            offline: cli.offline || locked,
             refresh: cli.refresh_inputs,
             headers: cli.input_header.clone(),
             header_sources: source
