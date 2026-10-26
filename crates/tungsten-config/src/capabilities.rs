@@ -192,7 +192,7 @@ targets! {
     ("python", &["py"], BuiltInEmitter, Some("python"), true, &[ToolRequirement {
         tool: "python3", minimum: Some([3, 12]), maximum_exclusive: None, minimum_option: Some("python_version"), excluded_versions: &[],
     }]),
-    ("ruby", &["rb"], BuiltInEmitter, Some("ruby"), false, &[
+    ("ruby", &["rb"], BuiltInEmitter, Some("ruby"), true, &[
         ToolRequirement::new("ruby", Some([3, 3])), ToolRequirement::new("bundle", None),
     ]),
     ("rust", &["rs"], BuiltInEmitter, Some("rust"), true, &[
