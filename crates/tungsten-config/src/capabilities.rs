@@ -406,7 +406,7 @@ targets! {
     },
     {
         id: "fsharp", aliases: &["fs"], source: BuiltInEmitter, family: Some("dotnet"),
-        policy: false, tools: DOTNET,
+        policy: true, tools: DOTNET,
         summary: "F# SDK (records, discriminated unions, Task of Result)",
         options: &["package_id", "namespace", "version", "runtime", "runtime_path", "csharp_runtime_path", "out"],
         environments: [Dotnet], features: SDK,

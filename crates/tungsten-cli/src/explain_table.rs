@@ -819,8 +819,8 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
         "TG0705",
         "The project was imported from a Postman collection or another source whose operations \
          carry an enforced import policy (the runtime must apply it to every call), and a \
-         configured target cannot apply it. Only the typescript, python, rust, java, kotlin, ruby, \
-         csharp, dart, mcp, webmcp and docs targets declare that support, and an external emitter \
+         configured target cannot apply it. Every built-in SDK, MCP, WebMCP and docs target \
+         (`tungsten capabilities` lists them) declares that support, and an external emitter \
          declares it with `import_policy` in its `--describe` response (the Go emitter in \
          `emitters/go` does); generating any other target would \
          discard the policy. During input conversion, init refuses unsupported built-in \
@@ -829,7 +829,7 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
          still written, unless `--strict` asks for all or none.",
         "Generate only supported targets: remove the unsupported target from tungsten.yml, or \
          add a supported one with `tungsten init --resume --add-targets typescript,python` \
-         (any of typescript, python, rust, mcp, webmcp, docs), then run `tungsten generate` \
+         (any built-in SDK target, mcp, webmcp or docs), then run `tungsten generate` \
          again.",
     ),
     e(
@@ -1188,7 +1188,7 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
          The emitter is not run and no files are written for that target. Other supported \
          targets are still processed. Built-in targets without this capability use TG0705.",
         "Use an emitter that declares `import_policy: true` and enforces the imported \
-         metadata (the Go emitter in `emitters/go` does), or select a supported TypeScript, Python, Rust, Java, Kotlin, Ruby, C#, Dart, MCP, \
+         metadata (the Go emitter in `emitters/go` does), or select a built-in SDK, MCP, \
          WebMCP or docs target. Do not remove policy metadata merely to bypass this check. Protocol-1 \
          emitters remain compatible with projects that have no imported-operation policy.",
     ),

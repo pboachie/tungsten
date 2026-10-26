@@ -226,6 +226,11 @@ changes.
 
 ### Added
 
+- The `fsharp` target now enforces imported-operation policy through the C#
+  runtime core, so every built-in SDK target can be generated for projects
+  converted from Postman, cURL, `.http` or HAR input. Generated F# SDKs call
+  `ClientCore.RequireImportPolicyV1()`.
+
 - Declare every input format (OpenAPI, Swagger, Postman, saved cURL, HTTP
   request files, HAR, endpoint manifests and manual endpoints) in the
   capability catalog with its versions, route, detection, required review flags,
