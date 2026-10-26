@@ -230,6 +230,17 @@ changes.
 
 ### Added
 
+- Add explicit streamed downloads to the TypeScript, Python and Rust
+  runtimes: `download()` sends an operation by the rules of `call` and hands a
+  2xx body over unread, to read chunk by chunk or write to a caller-owned sink
+  with backpressure. A download has a total-byte limit (`maxBytes`, checked
+  against `Content-Length` before the first byte and against the bytes read),
+  progress reports, the idle timeout and the call deadline; a short body,
+  a lost connection, cancellation and a failing sink end it with a diagnostic,
+  and the connection and its scheduler capacity are released however it
+  ends. The `Content-Disposition` file name is reduced to a plain base name.
+  Buffered calls, `maxResponseBytes` and event streams are unchanged.
+  Registered as the `streaming_downloads` runtime capability.
 - Generated Rust CLIs keep login sessions in the Windows Credential Locker
   (through Windows PowerShell) by default on Windows. A session the locker
   refuses, for example one above its secret size limit, fails with advice to
