@@ -583,6 +583,13 @@ changes.
   non-JSON event `data` or `schema` declared beside it, still report TG0145.
   `itemSchema` in OpenAPI 3.0 and 3.1 documents is still not read.
 
+- A reusable OpenAPI 3.2 media type (`components.mediaTypes`) with
+  `itemSchema` compiles where a response's `content` map refers to it as JSON
+  Lines or an event stream. Its `itemSchema` is checked at each use, with the
+  media type of the referring `content` entry, instead of being refused at the
+  component. A use the compiler does not support, such as a request body,
+  reports TG0145 at the `$ref`.
+
 - The OpenAPI 3.2 `query` path-item method compiles to an operation sent with
   the HTTP `QUERY` method and its request body in generated clients.
   The IR gains the `QUERY` HTTP method, which is safe (read-only by default; set
