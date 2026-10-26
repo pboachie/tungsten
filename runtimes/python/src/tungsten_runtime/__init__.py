@@ -49,6 +49,7 @@ from .types import *  # noqa: F403 (the contract types are the public API)
 from .webhooks import (
     DEFAULT_WEBHOOK_MAX_BODY_BYTES,
     DEFAULT_WEBHOOK_TOLERANCE_SECONDS,
+    MAX_WEBHOOK_JSON_DEPTH,
     MAX_WEBHOOK_SIGNATURE_HEADER,
     RejectedWebhook,
     VerifiedWebhook,
@@ -116,6 +117,7 @@ __all__ += types.__all__
 __all__ += [
     "DEFAULT_WEBHOOK_MAX_BODY_BYTES",
     "DEFAULT_WEBHOOK_TOLERANCE_SECONDS",
+    "MAX_WEBHOOK_JSON_DEPTH",
     "MAX_WEBHOOK_SIGNATURE_HEADER",
     "RejectedWebhook",
     "VerifiedWebhook",
