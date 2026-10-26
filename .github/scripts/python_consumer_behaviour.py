@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import secrets
 import threading
 import time
 from collections.abc import Iterator
@@ -18,7 +19,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
 MODULE = "qualification_sdk"
-TOKEN = "qualification-token"
+# A fresh bearer value per run; the consumer receives it as its second argument.
+TOKEN = secrets.token_hex(16)
 ITEMS = [{"id": i, "label": f"item {i}", "value": v} for i, v in
          [("a", "one"), ("b", 2), ("c", "three"), ("d", 4), ("e", "five")]]
 
@@ -85,7 +87,7 @@ import sys
 from qualification_sdk import AsyncQualificationClient, ClientOptions, Err, Ok, QualificationClient
 from tungsten_runtime import RetryOptions
 
-TOKEN = "qualification-token"
+TOKEN = sys.argv[2]
 
 
 def options(base: str, token: str = TOKEN) -> ClientOptions:
@@ -98,7 +100,7 @@ def options(base: str, token: str = TOKEN) -> ClientOptions:
 
 
 def sync_calls(base: str) -> None:
-    with QualificationClient(options(base, "wrong-token")) as client:
+    with QualificationClient(options(base, TOKEN + "-rejected")) as client:
         denied = client.items.get(item_id="a")
         assert isinstance(denied, Err) and denied.error["category"] == "AUTH_FAILED", denied
     with QualificationClient(options(base)) as client:
