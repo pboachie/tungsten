@@ -23,6 +23,8 @@ export const DEFAULT_WEBHOOK_MAX_BODY_BYTES = 1_048_576;
 export const DEFAULT_WEBHOOK_TOLERANCE_SECONDS = 300;
 /** Longest accepted signature header, in UTF-16 code units (ASCII bytes). */
 export const MAX_WEBHOOK_SIGNATURE_HEADER = 8192;
+/** Deepest accepted nesting of arrays and objects in the payload (`[]` is 1). */
+export const MAX_WEBHOOK_JSON_DEPTH = 100;
 
 /** Why a delivery was rejected. Stable across runtimes. */
 export type WebhookRejection =
@@ -59,7 +61,8 @@ export interface VerifyWebhookOptions<T = unknown> {
   /**
    * Typed decoding of the parsed JSON payload, run before `claim`: return
    * the typed event, or throw to reject the delivery as `payload_invalid`
-   * (a Zod schema's `parse`, for example).
+   * (a Zod schema's `parse`, for example). A payload whose arrays and
+   * objects nest deeper than `MAX_WEBHOOK_JSON_DEPTH` is `payload_invalid`.
    */
   parse?: (event: unknown) => T;
 }
@@ -154,6 +157,32 @@ async function hmacKey(secret: string): Promise<CryptoKey> {
   ]);
 }
 
+/**
+ * Whether arrays and objects outside strings nest deeper than the limit.
+ * Scans bytes, so it runs before decoding and gives the same answer in every
+ * runtime, whatever else is wrong with the body.
+ */
+function tooDeep(body: Uint8Array): boolean {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (const byte of body) {
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (byte === 0x5c) escaped = true;
+      else if (byte === 0x22) inString = false;
+    } else if (byte === 0x22) {
+      inString = true;
+    } else if (byte === 0x5b || byte === 0x7b) {
+      depth += 1;
+      if (depth > MAX_WEBHOOK_JSON_DEPTH) return true;
+    } else if (byte === 0x5d || byte === 0x7d) {
+      depth -= 1;
+    }
+  }
+  return false;
+}
+
 function bodyBytes(body: Uint8Array | string): Uint8Array {
   return typeof body === "string" ? encoder.encode(body) : body;
 }
@@ -194,6 +223,7 @@ export async function verifyWebhook<T = unknown>(options: VerifyWebhookOptions<T
   if (Math.abs(now - timestamp) > tolerance) {
     return reject("timestamp_out_of_tolerance", `the signed timestamp is more than ${tolerance} seconds from now`);
   }
+  if (tooDeep(body)) return reject("payload_invalid", `the payload nests deeper than ${MAX_WEBHOOK_JSON_DEPTH} levels`);
   let event: unknown;
   try {
     event = JSON.parse(new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(body));

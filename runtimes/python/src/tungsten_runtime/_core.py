@@ -2152,6 +2152,8 @@ class Engine:
                 current_url, current_method = prepared.url, prepared.method
                 current_body: bytes | UploadAttempt | None = sending if sending is not None else prepared.body
                 hops = 0
+                # Set when a redirect is not followed because the one-shot upload cannot be sent again.
+                unreplayed = False
                 while (
                     not self._redirects_disabled
                     and not mutation
@@ -2166,6 +2168,7 @@ class Engine:
                     rewrite = outcome.status not in (307, 308) and current_method not in ("GET", "HEAD")
                     # A streamed body is read again for the redirect, never replayed from a spent one-shot source.
                     if upload is not None and not rewrite and not upload.sendable:
+                        unreplayed = True
                         break
                     sending = upload.attempt() if upload is not None and not rewrite else None
                     current_url = target[0]
@@ -2212,7 +2215,9 @@ class Engine:
                 if rejected is not None:
                     answer = Answer(rejected)
                 else:
-                    answer = yield from self._classify(call_ctx, prepared, outcome, ctx, timeout_ms)
+                    answer = yield from self._classify(
+                        call_ctx, prepared, outcome, ctx, timeout_ms, unreplayed
+                    )
                 if admitted is not None:
                     failure = answer.result.error if isinstance(answer.result, Err) else None
                     if failure is not None and failure["category"] == "RATE_LIMITED":
@@ -2518,6 +2523,7 @@ class Engine:
         outcome: Answered | Streaming | NotSent | Lost | TimedOut,
         ctx: RequestContext,
         timeout_ms: float,
+        unreplayed: bool = False,
     ) -> Flow[Answer]:
         op = prepared.op
         op_id = op["id"]
@@ -2675,6 +2681,11 @@ class Engine:
                     if mutation
                     else f"The server answered with a redirect{to}. Redirects are disabled; check redirects and base_url."
                     if self._redirects_disabled
+                    else f"The server answered with a redirect{to} that would need the upload body sent again. The "
+                    "body is one-shot and was already read, so it cannot be re-sent and the redirect was not "
+                    "followed; pass UploadSource.recreatable(...) so it can be read again, or call the redirect "
+                    "target directly."
+                    if unreplayed
                     else f"The server answered with a redirect{to} that leaves the API's origin (or too many "
                     "redirects). It is not followed, so credentials never leave the API's host; check base_url."
                 )

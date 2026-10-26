@@ -236,6 +236,38 @@ changes.
 
 ### Added
 
+- The experimental `mcp-python` server collects streamed (server-sent event)
+  results, as the TypeScript server does: at most 1,000 events (then
+  `truncated: true`), `max_stream_bytes` of JSON (4 MiB) and `max_stream_ms`
+  (60 s). Past a limit the call fails with an envelope that carries the events
+  so far as `partial`. TG0729 no longer reports streamed operations; it now
+  reports only macros the Python SDK does not emit.
+
+- The experimental `mcp-python` server serves Streamable HTTP: `--http
+  <port> [--host <host>] [--token-env <NAME>]`, with the TypeScript server's
+  rules. Requests are checked in order: a constant-time bearer token (401),
+  then the path (404), then the Host and Origin headers against DNS rebinding
+  (403). The server is loopback by default, has bounded sessions, request
+  bodies and idle time, and keeps one API client per MCP session, so
+  confirmation tokens never cross sessions.
+
+- The experimental `mcp-python` server serves progressive disclosure:
+  `search_tools` (BM25 over the manifest's index, optionally within a cluster),
+  `describe_tool`, `invoke`, `invoke_read`, `preview` by name and
+  `list_clusters`, with the tool's tier and hints in `_meta`, matching the
+  TypeScript server. The mode is the manifest's unless `<API>_MCP_MODE`
+  overrides it; a progressive manifest is no longer refused, and TG0729 no
+  longer reports it. Tool annotations are never less cautious than the safety
+  tier, and unknown names get "did you mean" suggestions.
+
+- Gallery recipe `first-mcp-python` (`python3 examples/run.py --only
+  first-mcp-python`): generate the Python SDK and the experimental
+  `mcp-python` server, install them without Node, and drive the server over
+  stdio with the official MCP Python client against a loopback mock: tool
+  listing, a typed read, a refused unconfirmed delete, a preview token that
+  does not confirm other arguments, and a confirmed delete (exactly one
+  DELETE reaches the mock).
+
 - Experimental `mcp-python` target and `tungsten-mcp` Python runtime
   (`runtimes/mcp-python`): a native Python MCP server, generated from the same
   tool manifest as the `mcp` target, that serves discrete tools over stdio on
@@ -1331,6 +1363,31 @@ changes.
   An attempt cut by the deadline could end a fraction of a millisecond early
   and send the request again after the deadline; it now reports the earlier
   `OUTCOME_UNKNOWN` without resending, as TypeScript, Python and Rust do.
+
+- Webhook verification in the TypeScript, Python and Rust runtimes applies
+  one documented nesting limit: a payload whose arrays and objects nest more
+  than 100 levels deep (`MAX_WEBHOOK_JSON_DEPTH`) is rejected as
+  `payload_invalid` ("the payload nests deeper than 100 levels") before it is
+  parsed. Previously a correctly signed body nested 100000 levels deep raised
+  `RecursionError` from Python's `verify_webhook`, which is documented never
+  to raise for a bad delivery. Rust rejected anything deeper than 127 levels
+  as "not UTF-8 JSON", and TypeScript had no limit.
+
+- A read whose one-shot upload is answered with a same-origin `307` or `308`
+  redirect no longer gets the cross-origin remediation ("leaves the API's
+  origin ... check base_url"). The TypeScript, Python and Rust runtimes now
+  say the body is one-shot and was already read, so it cannot be re-sent
+  and the redirect was not followed, and suggest
+  `UploadSource.recreatable(...)` (`UploadSource::recreatable(...)` in Rust)
+  or calling the redirect target directly.
+
+- The Rust runtime validates an OpenAPI 3.2 custom method
+  (`HttpMethod::Custom`) before sending, as the TypeScript and Python
+  runtimes do: a token that is not an RFC 9110 token, a case variant of a
+  standard method (`get`, `Post`, `query`), or `CONNECT` or `TRACK` in any
+  case now fails with `VALIDATION_FAILED` ("the operation descriptor is
+  invalid"), and nothing is sent. Previously such methods were sent, or a
+  non-token failed with `TRANSPORT_FAILED`.
 
 - Check the MCP Node.js floor (22.13+, or 23.2+ on Node 23) in `init` local
   setup when the MCP target is selected, matching `doctor`. Previously setup

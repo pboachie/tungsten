@@ -13,6 +13,10 @@ from tungsten_runtime import AsyncClientCore
 DEFAULT_MAX_RESULT_CHARS = 50_000
 #: Default cap on bytes read from each upstream response (4 MiB).
 DEFAULT_MAX_RESPONSE_BYTES = 4 * 1024 * 1024
+#: Default cap on the JSON bytes of the events one streamed call collects (4 MiB).
+DEFAULT_MAX_STREAM_BYTES = 4 * 1024 * 1024
+#: Default cap on the time one streamed call spends collecting events (60 s).
+DEFAULT_MAX_STREAM_MS = 60_000
 
 
 @dataclass
@@ -42,6 +46,18 @@ class ServerOptions:
     #: sent; a mutation already sent reports ``OUTCOME_UNKNOWN``. None or 0:
     #: none.
     tool_deadline_ms: int | None = None
+    #: Cap, in bytes of JSON, on the events one streamed tool call collects;
+    #: past it the call fails with an ``UNEXPECTED_RESPONSE`` envelope and the
+    #: events so far as ``partial``. A streamed call also stops after 1000
+    #: events (``truncated: true``).
+    max_stream_bytes: int = DEFAULT_MAX_STREAM_BYTES
+    #: Cap, in milliseconds, on the wall-clock time one streamed tool call may
+    #: spend collecting events (same failure). The call's deadline bounds
+    #: connecting and reconnects; this bounds collecting.
+    max_stream_ms: int = DEFAULT_MAX_STREAM_MS
+    #: Override the manifest's disclosure mode: ``discrete`` (every tool) or
+    #: ``progressive`` (``search_tools``, ``describe_tool``, ``invoke``...).
+    mode: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.max_result_chars, int) or self.max_result_chars < 200:
@@ -52,3 +68,9 @@ class ServerOptions:
             not isinstance(self.tool_deadline_ms, int) or self.tool_deadline_ms < 0
         ):
             raise ValueError("tool_deadline_ms must be a non-negative integer of milliseconds")
+        for name in ("max_stream_bytes", "max_stream_ms"):
+            value = getattr(self, name)
+            if not isinstance(value, int) or value < 1:
+                raise ValueError(f"{name} must be a positive integer")
+        if self.mode is not None and self.mode not in ("discrete", "progressive"):
+            raise ValueError('mode must be "discrete" or "progressive"')

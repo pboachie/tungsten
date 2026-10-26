@@ -2,7 +2,8 @@
 //! The experimental `mcp-python` target: a native Python MCP server package
 //! that serves the same manifest as the `mcp` target through the
 //! `tungsten-mcp` Python runtime (`runtimes/mcp-python`) on top of the
-//! generated Python SDK, over stdio, in discrete mode.
+//! generated Python SDK, over stdio or Streamable HTTP, in discrete or
+//! progressive mode.
 //!
 //! Files: `pyproject.toml`, `README.md`, `.env.example` and the package
 //! `<module>/` (`__init__.py`, `__main__.py`, `server.py`,
@@ -32,7 +33,7 @@ use tungsten_emit::{CommentStyle, Emitter, FileSet, TargetConfig, header};
 use tungsten_ir::Ir;
 
 use crate::env::{self, Credentials};
-use crate::manifest::{self, McpManifest, Mode, ToolKind};
+use crate::manifest::{self, McpManifest, ToolKind};
 
 /// Default version specifier of the `tungsten-mcp` runtime.
 pub const DEFAULT_RUNTIME: &str = ">=0.1.3,<0.2.0";
@@ -69,40 +70,6 @@ impl Emitter for McpPythonEmitter {
 /// What the Python runtime does not serve for this API (TG0729).
 fn gaps(ir: &Ir, manifest: &McpManifest) -> Diagnostics {
     let mut diags = Diagnostics::new();
-    if manifest.mode == Mode::Progressive {
-        diags.push(
-            Diagnostic::warning(
-                "TG0729",
-                "mcp-python serves discrete tools only, and this API's disclosure mode is progressive; the \
-                 server refuses to start unless its mode variable is `discrete`",
-            )
-            .with_help(format!(
-                "set {}=discrete to list every tool, set `disclosure.mode: discrete` in agent.yml, or use \
-                 the `mcp` target for progressive disclosure",
-                env::mode(ir)
-            )),
-        );
-    }
-    let streamed: Vec<&str> = ir
-        .operations()
-        .into_iter()
-        .filter(|op| op.stream.is_some())
-        .map(|op| op.id.0.as_str())
-        .filter(|id| manifest.tools.iter().any(|t| t.target == *id))
-        .collect();
-    if !streamed.is_empty() {
-        diags.push(
-            Diagnostic::warning(
-                "TG0729",
-                format!(
-                    "mcp-python does not collect event streams yet: streamed calls of {} return an envelope \
-                     and send nothing",
-                    streamed.join(", ")
-                ),
-            )
-            .with_help("use the `mcp` target, or the SDK's stream(), for these operations"),
-        );
-    }
     let python = tungsten_emit_py::PythonEmitter.supports(ir);
     let macros: Vec<String> = python
         .iter()
@@ -375,7 +342,8 @@ fn server_py(ir: &Ir, opts: &PythonOptions) -> String {
     let mut out = head(ir);
     out.push_str(&format!(
         "\n\"\"\"MCP server for the {title} API: serves manifest.json through tungsten-mcp on top of\n\
-         the generated Python SDK, over stdio. Configuration comes from the environment only\n\
+         the generated Python SDK, over stdio or Streamable HTTP. Configuration comes from the\n\
+         environment only\n\
          (README.md, .env.example).\"\"\"\n\
          \n\
          from __future__ import annotations\n\
@@ -431,21 +399,22 @@ fn server_py(ir: &Ir, opts: &PythonOptions) -> String {
          \n\
          \n\
          def main(argv: Sequence[str] | None = None) -> int:\n\
-         \x20   \"\"\"Serve over stdio; the exit status.\"\"\"\n\
+         \x20   \"\"\"Serve over stdio, or Streamable HTTP with `--http <port>`; the exit status.\"\"\"\n\
          \x20   manifest = load_manifest(__package__ or {module})\n\
          \x20   try:\n\
-         \x20       check_mode(manifest, _env(MODE_ENV), MODE_ENV)\n\
+         \x20       mode = check_mode(manifest, _env(MODE_ENV), MODE_ENV)\n\
          \x20       deadline = deadline_ms()\n\
          \x20   except ServeError as error:\n\
          \x20       print(f\"error: {{error}}\", file=sys.stderr)\n\
          \x20       return 1\n\
          \x20   options = ServerOptions(\n\
          \x20       manifest=manifest,\n\
-         \x20       # Over stdio one process serves one client: one core, created once.\n\
+         \x20       # One core per MCP session: confirmation tokens and shown-once state are per session.\n\
          \x20       create_core=lambda: {client}(client_options()).core,\n\
          \x20       name={name},\n\
          \x20       version={version},\n\
          \x20       tool_deadline_ms=deadline,\n\
+         \x20       mode=mode,\n\
          \x20   )\n\
          \x20   return run(customize(options), argv)\n",
         title = tungsten_ir::title_stem(&ir.api.title),
@@ -461,24 +430,9 @@ fn server_py(ir: &Ir, opts: &PythonOptions) -> String {
     out
 }
 
-/// The variables of `.env.example` and the README: the `mcp` target's, with
-/// the mode restricted to what this runtime serves.
+/// The variables of `.env.example` and the README: the `mcp` target's.
 fn variables(ir: &Ir) -> Vec<(String, String)> {
-    let mode = env::mode(ir);
     crate::package::variables(ir)
-        .into_iter()
-        .map(|(name, what)| {
-            if name == mode {
-                (
-                    name,
-                    "`discrete` (the only mode this server serves); `progressive` is refused at startup."
-                        .into(),
-                )
-            } else {
-                (name, what)
-            }
-        })
-        .collect()
 }
 
 fn env_example(ir: &Ir) -> String {
@@ -511,7 +465,7 @@ fn readme(ir: &Ir, opts: &PythonOptions, manifest: &McpManifest) -> String {
     out.push_str(&format!(
         "# {package}\n\n\
          **Experimental.** MCP server for the {title} API, generated by tungsten. It serves {tools} \
-         tools ({ops} operations, {macros} macros{preview}) over stdio through the `tungsten-mcp` \
+         tools ({ops} operations, {macros} macros{preview}) over stdio or Streamable HTTP through the `tungsten-mcp` \
          Python runtime, calling the API with the generated Python SDK `{sdk}`. It needs neither \
          Node nor the TypeScript SDK. The `mcp` target remains the supported MCP server; see Limits.\n\n",
         package = opts.package,
@@ -528,7 +482,11 @@ fn readme(ir: &Ir, opts: &PythonOptions, manifest: &McpManifest) -> String {
          Then configure your MCP client to launch `{package}` (or `python -m {module}`) with the \
          environment below. It speaks MCP on standard input and output; its own errors go to standard \
          error.\n\n\
-         ```json\n{{\n  \"mcpServers\": {{\n    {key}: {{\n      \"command\": {command},\n      \"env\": {{ {base}: \"https://...\" }}\n    }}\n  }}\n}}\n```\n\n",
+         ```json\n{{\n  \"mcpServers\": {{\n    {key}: {{\n      \"command\": {command},\n      \"env\": {{ {base}: \"https://...\" }}\n    }}\n  }}\n}}\n```\n\n\
+         `{package} --http 3000` serves Streamable HTTP at `http://127.0.0.1:3000/mcp` instead: one MCP \
+         session per `Mcp-Session-Id`, each with its own API client, loopback-bound with Host and Origin \
+         checks. Add `--token-env NAME` to require `Authorization: Bearer <the value of NAME>`; binding \
+         another interface with `--host` needs it (or your own access control).\n\n",
         package = opts.package,
         module = opts.module,
         key = lit(&opts.package),
@@ -550,10 +508,7 @@ fn readme(ir: &Ir, opts: &PythonOptions, manifest: &McpManifest) -> String {
          taken effect: check it, and retry only with the same idempotency key.\n\
          - Sensitive response fields and shown-once results are returned once per session.\n\n\
          ## Limits\n\n\
-         - stdio only: no Streamable HTTP, so no MCP-client authentication or Host/Origin checks.\n\
-         - Discrete tools only: a progressive manifest is refused unless the mode variable is `discrete`.\n\
-         - Streamed (server-sent event) results are not collected; such calls return an envelope and \
-         send nothing.\n\
+         - A streamed (server-sent event) call collects at most 1,000 events, 4 MiB of JSON and 60 seconds.\n\
          - No `run_script`, embedding search, resources or prompts.\n\
          - See the `tungsten-mcp` runtime README for the full list.\n\n\
          `custom/__init__.py` is yours: tungsten creates it once and never overwrites it.\n",

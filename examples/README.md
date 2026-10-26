@@ -28,6 +28,7 @@ canonical inputs are never modified.
 | [First python SDK](first-python/README.md) | Generate and build a small python package from a local OpenAPI 3.1 contract. |
 | [First rust SDK](first-rust/README.md) | Generate and build a small rust package from a local OpenAPI 3.1 contract. |
 | [First mcp SDK](first-mcp/README.md) | Generate and build a small mcp package from a local OpenAPI 3.1 contract. |
+| [First Python MCP server (experimental)](first-mcp-python/README.md) | Generate the experimental native Python MCP server on the generated Python SDK and call it over stdio with the official MCP client, without Node. |
 | [First webmcp SDK](first-webmcp/README.md) | Generate and build a small webmcp package from a local OpenAPI 3.1 contract. |
 | [First agent documentation](first-docs/README.md) | Generate agent-facing documentation from a local OpenAPI 3.1 contract. |
 | [First go SDK](first-go/README.md) | Generate and build a small go package from a local OpenAPI 3.1 contract. |
