@@ -109,8 +109,10 @@ each supported platform, including Windows and WSL.
 
 Multipart bodies: a field whose OpenAPI `encoding` entry declares a
 `contentType` is sent with that media type (the first entry without
-wildcards); a file part's own media type wins. Encoding `headers`, and
-positional or nested multipart encoding, are not sent. Unreleased 0.2.0 only.
+wildcards); a file part's own media type wins. Of the entry's `headers`, only
+those whose schema fixes one value (`const` or a one-value `enum`) are sent,
+on every part of the field; others are not, and neither is positional or
+nested multipart encoding. Unreleased 0.2.0 only.
 
 Incoming webhooks: `verifyWebhook` accepts a body of at most 1 MiB by default
 (`maxBodyBytes`) and a signature header of at most 8192 characters, rejects a signed

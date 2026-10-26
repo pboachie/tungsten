@@ -3,7 +3,9 @@
 
 use serde_json::Value;
 use tungsten_core::Diagnostic;
-use tungsten_ir::{Body, BodyContent, BodyEncoding, PartEncoding, Primitive, Shape, TypeRef};
+use tungsten_ir::{
+    Body, BodyContent, BodyEncoding, PartEncoding, PartHeader, Primitive, Shape, TypeRef,
+};
 use tungsten_openapi::RefTarget;
 
 use crate::ctx::{Ctx, child, doc, flag, str_of};
@@ -207,20 +209,64 @@ pub(crate) fn content(
 }
 
 /// The `encoding` map of the multipart Media Type Object at `media_at`: the
-/// entries whose `contentType` names a concrete media type. Keys that name
-/// no property of the schema are kept; runtimes only read the parts a value
-/// carries.
+/// entries whose `contentType` names a concrete media type or that declare a
+/// header with a fixed value. Keys that name no property of the schema are
+/// kept; runtimes only read the parts a value carries.
 fn part_encodings(cx: &Ctx<'_>, media_at: &RefTarget) -> Vec<PartEncoding> {
-    let Some(Value::Object(map)) = cx.get(&child(media_at, "encoding")) else {
+    let encoding_at = child(media_at, "encoding");
+    let Some(Value::Object(map)) = cx.get(&encoding_at) else {
         return vec![];
     };
     map.iter()
         .filter_map(|(name, encoding)| {
-            let content_type = str_of(encoding, "contentType").and_then(concrete_media_type)?;
-            Some(PartEncoding {
+            let content_type = str_of(encoding, "contentType").and_then(concrete_media_type);
+            let headers = part_headers(cx, &child(&child(&encoding_at, name), "headers"));
+            (content_type.is_some() || !headers.is_empty()).then(|| PartEncoding {
                 name: name.clone(),
-                content_type: Some(content_type),
+                content_type,
+                headers,
             })
+        })
+        .collect()
+}
+
+/// The headers of an Encoding Object's `headers` map at `at` whose schema
+/// fixes one scalar value. `Content-Type` (which the spec says to ignore
+/// there) and `Content-Disposition` (which names the part) are skipped, and
+/// so are names that are not header tokens and values a header cannot carry.
+fn part_headers(cx: &Ctx<'_>, at: &RefTarget) -> Vec<PartHeader> {
+    let Some(Value::Object(map)) = cx.get(at) else {
+        return vec![];
+    };
+    map.keys()
+        .filter(|name| {
+            !name.eq_ignore_ascii_case("content-type")
+                && !name.eq_ignore_ascii_case("content-disposition")
+                && !name.is_empty()
+                && name
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b))
+        })
+        .filter_map(|name| {
+            let (header_at, _) = cx.deref_value(&child(at, name))?;
+            let (_, schema) = cx.deref_value(&child(&header_at, "schema"))?;
+            let fixed = match (schema.get("const"), schema.get("enum")) {
+                (Some(value), _) => value,
+                (None, Some(Value::Array(values))) if values.len() == 1 => &values[0],
+                _ => return None,
+            };
+            let value = match fixed {
+                Value::String(text) => text.clone(),
+                Value::Number(_) | Value::Bool(_) => fixed.to_string(),
+                _ => return None,
+            };
+            value
+                .bytes()
+                .all(|b| b == b'\t' || (0x20..0x7f).contains(&b))
+                .then(|| PartHeader {
+                    name: name.clone(),
+                    value,
+                })
         })
         .collect()
 }

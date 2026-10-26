@@ -1361,6 +1361,23 @@ pub(crate) fn descriptor_rx(
                                             "content_type",
                                             Rx::opt_string(part.content_type.as_deref()),
                                         ),
+                                        (
+                                            "headers",
+                                            Rx::list(
+                                                part.headers
+                                                    .iter()
+                                                    .map(|h| {
+                                                        Rx::record(
+                                                            "PartHeader",
+                                                            vec![
+                                                                ("name", Rx::string(&h.name)),
+                                                                ("value", Rx::string(&h.value)),
+                                                            ],
+                                                        )
+                                                    })
+                                                    .collect(),
+                                            ),
+                                        ),
                                     ],
                                 )
                             })

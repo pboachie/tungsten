@@ -389,6 +389,15 @@ pub struct PartDescriptor {
     /// The media type each part of the field is sent with, unless a file
     /// part carries its own.
     pub content_type: Option<String>,
+    /// Headers with a fixed value sent on each part of the field.
+    pub headers: Vec<PartHeader>,
+}
+
+/// A header with a fixed value on a multipart part.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PartHeader {
+    pub name: String,
+    pub value: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

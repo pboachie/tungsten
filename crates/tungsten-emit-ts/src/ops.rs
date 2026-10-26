@@ -797,6 +797,15 @@ fn descriptor_js(plan: &Plan<'_>, info: &OpInfo<'_>, shape: &OpShape<'_>) -> Js 
                     if let Some(content_type) = &part.content_type {
                         entry.push(("contentType", Js::str(content_type)));
                     }
+                    if !part.headers.is_empty() {
+                        let headers = part.headers.iter().map(|h| {
+                            Js::obj(vec![
+                                ("name", Js::str(&h.name)),
+                                ("value", Js::str(&h.value)),
+                            ])
+                        });
+                        entry.push(("headers", Js::Array(headers.collect())));
+                    }
                     Js::obj(entry)
                 });
                 members.push(("parts", Js::Array(parts.collect())));
