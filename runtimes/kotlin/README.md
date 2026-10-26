@@ -68,6 +68,10 @@ Compatibility helpers retain application-owned custom-scheme policy.
 
 ## Limits
 
+The OAuth 2.0 device authorization flow (OpenAPI 3.2 `deviceAuthorization`) is
+not run by the client: configure the scheme with an access token obtained
+through it.
+
 This is a thin Kotlin layer over the Java runtime. Calls are synchronous (the
 coroutines artifact above wraps them);
 Java's lack of async calls, proxy configuration and pluggable transport also

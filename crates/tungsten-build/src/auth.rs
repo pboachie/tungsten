@@ -649,6 +649,7 @@ fn flow(kind: &str, f: &Value) -> OAuthFlow {
         token_url: url("tokenUrl"),
         authorization_url: url("authorizationUrl"),
         refresh_url: url("refreshUrl"),
+        device_authorization_url: url("deviceAuthorizationUrl"),
         scopes: f
             .get("scopes")
             .and_then(Value::as_object)

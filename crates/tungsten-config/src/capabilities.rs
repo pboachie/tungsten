@@ -7,6 +7,9 @@
 use schemars::JsonSchema;
 
 use crate::option_fields;
+
+pub mod init;
+pub use init::{CompanionTarget, INIT, InitCapability};
 use serde::Serialize;
 
 /// Component-owned schema declaration. An absent declaration is unknown,
@@ -526,6 +529,8 @@ pub struct CapabilityCatalog {
     /// native OpenAPI lines.
     pub input_formats: Vec<InputFormatCapability>,
     pub execution_policy: ExecutionPolicyCapability,
+    /// Target selection by `tungsten init` and the wizard.
+    pub init: InitCapability,
 }
 
 /// How an input format enters a project.
@@ -794,6 +799,11 @@ pub const OPENAPI_32_SUPPORTED: &[SupportedInputFeature] = &[
         member: "security requirement naming a URI",
         behavior: "the scheme under components.securitySchemes of an input document the URI references; any other URI is TG0151",
     },
+    SupportedInputFeature {
+        id: "oauth2_device_authorization",
+        member: "flows.deviceAuthorization",
+        behavior: "an OAuth2 flow kept with its deviceAuthorizationUrl; SDKs accept an access token obtained through it and do not run the device flow",
+    },
 ];
 
 /// OpenAPI 3.2 constructs without a 3.1 equivalent that are diagnosed. A 3.2
@@ -813,12 +823,6 @@ pub const OPENAPI_32_FEATURES: &[UnsupportedInputFeature] = &[
         "nested_encoding",
         "encoding, prefixEncoding, itemEncoding (Encoding Object)",
         "TG0147",
-        Rejected,
-    ),
-    feature(
-        "oauth2_device_authorization",
-        "flows.deviceAuthorization",
-        "TG0150",
         Rejected,
     ),
     feature(
@@ -872,6 +876,7 @@ pub const OPENAPI_INPUTS: &[OpenApiVersionCapability] = &[
 pub fn validate() -> Vec<String> {
     let mut errors = validate_parts(TARGETS, FEATURES, OPENAPI_INPUTS);
     errors.extend(validate_inputs(INPUT_FORMATS, OPENAPI_INPUTS));
+    errors.extend(INIT.validate(TARGETS));
     errors
 }
 

@@ -1,0 +1,32 @@
+# What agents may do with the API. Defaults apply to every operation; the
+# entries under `tools` narrow them for specific operations.
+agent: 1
+
+defaults:
+  safety:
+    get: read_only
+    post: mutating
+    put: mutating
+    patch: mutating
+    delete: destructive
+  idempotency: none
+  preview: local
+  unknown_outcome:
+    on_timeout: unknown
+    on_connection_reset: unknown
+    on_ambiguous_status: unknown
+  retries:
+    read_only: { max: 3, backoff: { base_ms: 200, max_ms: 5000, jitter: full } }
+    mutating: { max: 0 }
+    honor_retry_after: true
+  disclosure:
+    mode: discrete
+
+tools:
+  # Opening a ticket needs a local preview and an argument-bound confirmation.
+  - operation: tickets.createTicket
+    safety: irreversible
+    preview: local
+  # Deleting is never offered to agents; the SDK still has it for humans.
+  - operation: tickets.deleteTicket
+    hidden: true

@@ -1,0 +1,28 @@
+# A restricted agent integration: an MCP server on the TypeScript SDK that can
+# read tickets, must preview and confirm creating one, and cannot delete.
+tungsten: 1
+
+api:
+  name: ticket_desk
+  title: "Ticket Desk"
+
+inputs:
+  - namespace: tickets
+    spec: openapi.json
+
+servers:
+  default: "https://tickets.example.com"
+  allow_override: false
+
+profiles:
+  - path: profiles/agent.yml
+    root: profiles
+
+# Project fields win over the profile; `tungsten config` shows both sources.
+transport:
+  account: helpdesk-agent
+  environment: staging
+
+targets:
+  typescript: { out: generated/typescript, package: "@example/ticket-desk" }
+  mcp: { out: generated/mcp, sdk_path: ../typescript }

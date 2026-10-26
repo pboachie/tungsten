@@ -850,14 +850,25 @@ pub(crate) struct DoctorArgs {
     pub strict: bool,
 }
 
+/// Accept built-in emitter targets and the `cli` output; refuse a reserved
+/// target before any file is written.
 fn parse_init_target(s: &str) -> Result<String, String> {
     let target = crate::targets::canonical(s.trim());
-    if target == "cli" || tungsten_config::KNOWN_TARGETS.contains(&target) {
+    if target == tungsten_config::capabilities::INIT.cli_alias
+        || crate::targets::emitter(target).is_some()
+    {
         Ok(target.to_string())
+    } else if let Some(reserved) = tungsten_config::capabilities::target(target) {
+        Err(format!(
+            "target `{}` is {}; choose {}",
+            reserved.id,
+            reserved.summary,
+            crate::targets::init_choices()
+        ))
     } else {
         Err(format!(
             "unknown target `{s}`; choose {}",
-            tungsten_config::KNOWN_TARGETS.join(", ")
+            crate::targets::init_choices()
         ))
     }
 }

@@ -230,6 +230,16 @@ changes.
 
 ### Added
 
+- Add the `examples/restricted-agent` customization example: an MCP server
+  that reads freely, confirms writes and hides deletion, with transport
+  references and SDK defaults from a shared profile and a check that verifies
+  sources and the generated tool manifest offline.
+- Declare proxy, `NO_PROXY`, private CA, mTLS and account/provider references
+  under `transport` in profiles and `tungsten.yml`. Values are references
+  (`{env: NAME}`, `{file: path}`, `{store: store:item}`) or non-secret names;
+  inline material and settings that would disable certificate verification are
+  refused. `tungsten config` explains each reference's source; tungsten never
+  reads what they point to.
 - `scenario run` now works on macOS and Windows as well as Linux. macOS owns
   the integration through a process group and non-reaping `waitid`, Windows
   through a Job Object; the binary cancels on Ctrl-C/SIGTERM on both.
@@ -415,6 +425,16 @@ changes.
 - Support-bundle collection, for preview and export, is limited to 30 seconds
   and writes nothing when the limit is reached; library cancellation of an
   export is now honoured while collection runs.
+
+- Derive `tungsten init` and wizard target selection from the capability
+  catalog, which now declares the default targets, the wizard defaults, the
+  targets local setup (`--local-example`) covers and companion targets
+  (`mcp` and `webmcp` add `typescript`); `tungsten capabilities` reports them
+  under `init` and the support matrix lists them. `init --targets` and
+  `--add-targets` refuse the reserved `mock` target before writing anything,
+  naming the accepted outputs. The wizard's output list comes from the
+  catalog and no longer says source-only targets refuse imported operations
+  when they enforce the policy.
 
 - Declare a typed `options_schema` for every built-in target in
   `tungsten capabilities`: C#, F#, Dart, Java, Kotlin, Ruby, MCP, WebMCP and
@@ -618,6 +638,13 @@ changes.
   names no such scheme (for example a scheme in a file that is not an input),
   and the build reports it instead of the frontend; `tungsten capabilities`
   lists the construct as compiled.
+
+- The OpenAPI 3.2 OAuth 2.0 `deviceAuthorization` flow compiles. It is kept in
+  the IR like the `password` and `implicit` flows, and `OAuthFlow` gains an
+  optional `device_authorization_url` (additive). Generated clients accept an
+  access token obtained through the device flow as the scheme's credential;
+  they do not run the device flow (RFC 8628) themselves. TG0150 is retired and
+  no longer reported.
 
 - OpenAPI 3.2.x documents are read: a document that uses only constructs OpenAPI
   3.1 has takes the 3.1 path and compiles to the same IR as its 3.1 twin. Each

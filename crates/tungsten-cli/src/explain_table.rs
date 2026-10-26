@@ -344,8 +344,8 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
     ),
     e(
         "TG0150",
-        "A security scheme declares `flows.deviceAuthorization`, the OpenAPI 3.2 device flow. tungsten does not implement the device flow.",
-        "Declare a supported flow, or obtain the token outside the client.",
+        "Retired. Earlier releases refused a security scheme with `flows.deviceAuthorization`, the OpenAPI 3.2 device flow. tungsten now keeps the flow and its `deviceAuthorizationUrl` in the IR, like the `password` and `implicit` flows: generated clients accept an access token obtained through it as the scheme's credential, but do not run the device flow themselves. This code is no longer reported.",
+        "Nothing to do; configure the scheme with an access token obtained through the device flow.",
     ),
     e(
         "TG0151",
