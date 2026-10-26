@@ -108,6 +108,8 @@ struct Server<'c> {
     shutdown: bool,
     /// What workspace edits the client can apply.
     edits: EditSupport,
+    /// Whether the client shows disabled code actions with their reason.
+    disabled_actions: bool,
 }
 
 impl Drop for Server<'_> {
@@ -170,6 +172,13 @@ pub fn serve(connection: &Connection, options: Options) -> Result<i32, String> {
         done_tx,
         shutdown: false,
         edits: edit_support(&params),
+        disabled_actions: params
+            .capabilities
+            .text_document
+            .as_ref()
+            .and_then(|t| t.code_action.as_ref())
+            .and_then(|c| c.disabled_support)
+            .unwrap_or(false),
     };
     server.manifest = server.discover(&params);
     server.watch = watch_support(&params);
@@ -764,6 +773,7 @@ impl Server<'_> {
                             let buffer = Buffer {
                                 uri,
                                 version: d.version,
+                                document_changes: self.edits.document_changes,
                                 text: &d.text,
                                 lines: &d.lines,
                             };
@@ -772,7 +782,17 @@ impl Server<'_> {
                         _ => vec![],
                     };
                     if wants_fixes {
-                        list.extend(self.overlay_fixes(uri, &p.context.diagnostics));
+                        let overlays = self.overlay_fixes(uri, &p.context.diagnostics);
+                        if self.disabled_actions
+                            && let Some(why) = actions::unavailable_overlay(
+                                &p.context.diagnostics,
+                                &overlays,
+                                || self.overlay_unavailable(uri),
+                            )
+                        {
+                            list.push(why);
+                        }
+                        list.extend(overlays);
                     }
                     self.reply(id, list)
                 }
@@ -811,6 +831,34 @@ impl Server<'_> {
             manifest,
             self.edits,
             &read,
+        )
+    }
+
+    /// Why the overlay fixes of the file at `uri` were not offered.
+    fn overlay_unavailable(&self, uri: &Uri) -> String {
+        const COMMAND: &str = "run `tungsten overlay suggest --namespace <namespace> --write <file>` and list the file under `overlays` of the input in tungsten.yml";
+        if self.analysis_generation != self.generation || self.running {
+            return "the project is being checked again; retry when its diagnostics update".into();
+        }
+        if !self.edits.document_changes {
+            return format!("the editor does not take versioned workspace edits; {COMMAND}");
+        }
+        let path = uri_to_path(uri);
+        let derived = self.analysis.as_ref().is_some_and(|a| {
+            a.overlay_fixes
+                .iter()
+                .any(|f| f.fixes.iter().any(|(p, _, _)| Some(p) == path.as_ref()))
+        });
+        if !derived {
+            return "no overlay action derives a fix for this diagnostic from the current check; `tungsten overlay suggest` reports why".into();
+        }
+        if !self.edits.create_files {
+            return format!(
+                "the fix may need a new overlay file and the editor cannot create files from a quick fix; {COMMAND}"
+            );
+        }
+        format!(
+            "tungsten.yml or the suggested overlay does not have the shape a quick fix edits (for example a flow-style input or an unreadable file); {COMMAND}"
         )
     }
 
