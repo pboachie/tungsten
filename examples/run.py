@@ -631,6 +631,39 @@ and `run_script` are refused, never weakened (TG0729 reports them at generate
 time). See the `tungsten-mcp` runtime README's Limits section and
 [#154](https://github.com/pboachie/tungsten/issues/154).
 """,
+    "webmcp-python": """
+## Problem: browser tools for a Python web app
+
+A page's WebMCP tools run in the browser, but a Python application wants the API
+called from its server, with its own sessions and without API credentials in
+the page. The recipe generates the Python SDK and the experimental
+`mcp-python` server with `webmcp: true`, which adds `petstore_mcp/webmcp.py`.
+It then runs [app.py](app.py), a small ASGI app that mounts that dispatch under
+`/webmcp` with the app's own sign-in. [page.mjs](page.mjs) plays the page: it
+calls `registerRemoteWebMcp({ endpoint: "/webmcp" })` from
+`@elysra/tungsten-webmcp` against a stub `document.modelContext`, and calls the
+tools the way an agent in the browser would. The API is a loopback
+`tungsten mock`. Expected output:
+
+```text
+registered for alice: pets_pets_list, pets_pets_delete, pets_pets_delete__preview
+pets_pets_list: typed pets from the Python SDK
+pets_pets_delete without a token: CONFIRMATION_REQUIRED, nothing sent
+bob cannot use alice's confirmation token
+alice's confirmed delete: done
+signed out: the tool listing is refused (401)
+dispose: every owned tool removed
+```
+
+The server decides which tools a user sees and authorizes every call: reads
+by default, plus the delete that `app.py` allowlists. Each user has their own
+API client and confirmation tokens. Every request needs the
+`X-Tungsten-WebMCP: 1` header and a same-origin `Origin`, and no CORS headers
+are sent. This is experimental. It runs in Node with a stub WebMCP backend, and
+a real WebMCP browser has not been qualified. See the `tungsten-mcp` and
+`@elysra/tungsten-webmcp` READMEs and
+[#155](https://github.com/pboachie/tungsten/issues/155).
+""",
     "bulk-sync": """
 ## Problem: a bulk job turns into a storm of 429s
 
@@ -1523,6 +1556,64 @@ def python_mcp(binary: str, example: Path, work: Path, build_packages: bool) -> 
         assert len(deletes) == 1, f"expected exactly one confirmed DELETE, the server saw {len(deletes)}"
 
 
+@contextlib.contextmanager
+def python_app(python: Path, script: Path, work: Path, env: dict[str, str]):
+    """An example's Python web app on a free port; yields its base URL."""
+    with (work / "app.log").open("w+") as log:
+        process = subprocess.Popen([str(python), str(script), "0"], cwd=work, stdout=subprocess.PIPE,
+                                   stderr=log, text=True, env={**os.environ, **env})
+        try:
+            line = process.stdout.readline() if process.stdout else ""
+            if not line.startswith("listening on "):
+                raise RuntimeError(f"{script.name} exited before listening; see {work / 'app.log'}")
+            yield line.removeprefix("listening on ").strip()
+        finally:
+            process.terminate()
+            process.wait(timeout=10)
+
+
+def webmcp_python(binary: str, example: Path, work: Path, build_packages: bool) -> None:
+    shutil.copyfile(example / "openapi.json", work / "openapi.json")
+    runtime = REPO / "runtimes"
+    write_json(work / "tungsten.yml", {
+        "tungsten": 1, "api": {"name": "petstore", "title": "Gallery Petstore"},
+        "inputs": [{"namespace": "pets", "spec": "openapi.json"}],
+        "servers": {"default": "http://127.0.0.1:4010", "allow_override": True},
+        "targets": {
+            "python": {"package": "petstore-sdk", "module": "petstore_sdk", "out": "sdk"},
+            "mcp-python": {"out": "mcp-python", "webmcp": True,
+                           "runtime_path": relative(runtime / "mcp-python", work / "mcp-python"),
+                           "sdk_path": "../sdk",
+                           "sdk_runtime_path": relative(runtime / "python", work / "mcp-python")},
+        },
+    })
+    outputs = ("sdk", "mcp-python")
+    tungsten(binary, work, "check")
+    tungsten(binary, work, "generate")
+    first = {name: digest_tree(work / name) for name in outputs}
+    assert all(first.values()), "a target produced no files; inspect skipped/refused target diagnostics"
+    assert (work / "mcp-python/petstore_mcp/webmcp.py").is_file(), "webmcp: true did not generate webmcp.py"
+    tungsten(binary, work, "generate")
+    assert first == {name: digest_tree(work / name) for name in outputs}, "regeneration was not deterministic"
+    tungsten(binary, work, "generate", "--check")
+    if not build_packages:
+        return
+    python = python_environment(work)
+    uv = shutil.which("uv")
+    install = ([uv, "pip", "install", "--python", str(python)] if uv
+               else [str(python), "-m", "pip", "install", "--disable-pip-version-check"])
+    command([*install, str(runtime / "mcp-python"), str(work / "mcp-python")], work)
+    npm_build(runtime / "ts")
+    npm_build(runtime / "webmcp")
+    adapter = (runtime / "webmcp/dist/index.js").as_uri()
+    with mock(binary, work) as base, python_app(python, example / "app.py", work, {"PETSTORE_BASE_URL": base}) as app:
+        print(command(["node", str(example / "page.mjs"), adapter, app], work).stdout, end="", flush=True)
+        with urllib.request.urlopen(base + "/__tungsten/calls", timeout=10) as response:
+            calls = json.load(response)
+        deletes = [call for call in calls if call["method"] == "DELETE"]
+        assert len(deletes) == 1, f"expected exactly one confirmed DELETE, the API saw {len(deletes)}"
+
+
 def digest_tree(root: Path) -> dict[str, str]:
     return {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest()
             for p in root.rglob("*") if p.is_file()}
@@ -1543,6 +1634,9 @@ def execute(entry: dict, binary: str, build_packages: bool) -> None:
         return
     if mode == "telemetry":
         telemetry_trace(binary, example, work, build_packages)
+        return
+    if mode == "webmcp-python":
+        webmcp_python(binary, example, work, build_packages)
         return
     if mode == "mcp-python":
         python_mcp(binary, example, work, build_packages)
@@ -1727,7 +1821,7 @@ def main() -> None:
         execute(entry, binary, not args.generate_only)
         if args.generate_only and entry["mode"] == "target" and entry["target"] != "docs":
             print(f"OK: {entry['target']} generation is deterministic and fresh; package build was not run", flush=True)
-        elif args.generate_only and entry["mode"] in ("bulk-sync", "file-transfer", "webhooks", "telemetry", "android-jni", "mcp-python"):
+        elif args.generate_only and entry["mode"] in ("bulk-sync", "file-transfer", "webhooks", "telemetry", "android-jni", "mcp-python", "webmcp-python"):
             print("OK: generation is deterministic and fresh; the clients were not run", flush=True)
         else:
             print(f"OK: {entry['outcome']}", flush=True)
