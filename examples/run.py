@@ -608,6 +608,29 @@ client.files().get_download(get(), &opts, DownloadOptions::default()).await?.sav
 - Range requests and resumable uploads are not supported. See each runtime
   README's Limits section.
 """,
+    "first-mcp-python": """
+## An experimental native Python MCP server
+
+The recipe generates the `python` SDK and the experimental `mcp-python` server
+from the same contract, installs both with the `tungsten-mcp` runtime into a
+virtual environment, and drives the server over stdio with the official MCP
+Python client (`mcp==2.3.0`) against a loopback `tungsten mock`. Node is not
+involved. Expected output:
+
+```text
+tools/list: pets_pets_delete, pets_pets_list, preview
+pets_pets_list: typed pets as structuredContent
+pets_pets_delete without a token: CONFIRMATION_REQUIRED, nothing sent
+the preview token for pet-1 does not confirm pet-2
+pets_pets_delete with the preview token: deleted
+```
+
+The server serves the same manifest as the `mcp` target, but only discrete
+tools over stdio: progressive disclosure, Streamable HTTP, streamed results
+and `run_script` are refused, never weakened (TG0729 reports them at generate
+time). See the `tungsten-mcp` runtime README's Limits section and
+[#154](https://github.com/pboachie/tungsten/issues/154).
+""",
     "bulk-sync": """
 ## Problem: a bulk job turns into a storm of 429s
 
@@ -1426,6 +1449,80 @@ tokio = {{ version = "1", features = ["rt-multi-thread", "sync", "macros"] }}
         print("android: cross-check not requested (set TUNGSTEN_ANDROID_TARGETS)", flush=True)
 
 
+PYTHON_MCP_CLIENT = r'''import json, sys
+import anyio
+from mcp.client.session import ClientSession
+from mcp.client.stdio import StdioServerParameters, stdio_client
+
+
+async def main(command: str, base: str) -> None:
+    server = StdioServerParameters(command=command, env={"PETSTORE_BASE_URL": base, "PETSTORE_MCP_DEADLINE_MS": "10000"})
+    async with stdio_client(server) as (read, write), ClientSession(read, write) as session:
+        await session.initialize()
+        tools = {tool.name: tool for tool in (await session.list_tools()).tools}
+        print("tools/list:", ", ".join(sorted(tools)))
+        listed = await session.call_tool("pets_pets_list", {})
+        assert not listed.is_error and listed.structured_content["value"], listed
+        print("pets_pets_list: typed pets as structuredContent")
+        refused = await session.call_tool("pets_pets_delete", {"pet_id": "pet-1"})
+        assert refused.is_error and refused.structured_content["category"] == "CONFIRMATION_REQUIRED", refused
+        print("pets_pets_delete without a token: CONFIRMATION_REQUIRED, nothing sent")
+        preview = await session.call_tool("preview", {"tool": "pets_pets_delete", "arguments": {"pet_id": "pet-1"}})
+        token = preview.structured_content["confirmation_token"]
+        assert isinstance(token, str) and token, preview
+        other = await session.call_tool("pets_pets_delete", {"pet_id": "pet-2", "confirmation_token": token})
+        assert other.is_error and other.structured_content["category"] == "CONFIRMATION_REQUIRED", other
+        print("the preview token for pet-1 does not confirm pet-2")
+        done = await session.call_tool("pets_pets_delete", {"pet_id": "pet-1", "confirmation_token": token})
+        assert not done.is_error, done
+        print("pets_pets_delete with the preview token: deleted")
+
+
+anyio.run(main, sys.argv[1], sys.argv[2])
+'''
+
+
+def python_mcp(binary: str, example: Path, work: Path, build_packages: bool) -> None:
+    shutil.copyfile(example / "openapi.json", work / "openapi.json")
+    runtime = REPO / "runtimes"
+    write_json(work / "tungsten.yml", {
+        "tungsten": 1, "api": {"name": "petstore", "title": "Gallery Petstore"},
+        "inputs": [{"namespace": "pets", "spec": "openapi.json"}],
+        "servers": {"default": "http://127.0.0.1:4010", "allow_override": True},
+        "targets": {
+            "python": {"package": "petstore-sdk", "module": "petstore_sdk", "out": "sdk"},
+            "mcp-python": {"out": "mcp-python",
+                           "runtime_path": relative(runtime / "mcp-python", work / "mcp-python"),
+                           "sdk_path": "../sdk",
+                           "sdk_runtime_path": relative(runtime / "python", work / "mcp-python")},
+        },
+    })
+    outputs = ("sdk", "mcp-python")
+    tungsten(binary, work, "check")
+    tungsten(binary, work, "generate")
+    first = {name: digest_tree(work / name) for name in outputs}
+    assert all(first.values()), "a target produced no files; inspect skipped/refused target diagnostics"
+    tungsten(binary, work, "generate")
+    assert first == {name: digest_tree(work / name) for name in outputs}, "regeneration was not deterministic"
+    tungsten(binary, work, "generate", "--check")
+    if not build_packages:
+        return
+    python = python_environment(work)
+    # Installed from the local runtime and the generated package; no Node.
+    uv = shutil.which("uv")
+    install = ([uv, "pip", "install", "--python", str(python)] if uv
+               else [str(python), "-m", "pip", "install", "--disable-pip-version-check"])
+    command([*install, str(runtime / "mcp-python"), str(work / "mcp-python")], work)
+    (work / "mcp_client.py").write_text(PYTHON_MCP_CLIENT)
+    server = python.parent / ("petstore-mcp.exe" if os.name == "nt" else "petstore-mcp")
+    with mock(binary, work) as base:
+        print(command([str(python), str(work / "mcp_client.py"), str(server), base], work).stdout, end="", flush=True)
+        with urllib.request.urlopen(base + "/__tungsten/calls", timeout=10) as response:
+            calls = json.load(response)
+        deletes = [call for call in calls if call["method"] == "DELETE"]
+        assert len(deletes) == 1, f"expected exactly one confirmed DELETE, the server saw {len(deletes)}"
+
+
 def digest_tree(root: Path) -> dict[str, str]:
     return {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest()
             for p in root.rglob("*") if p.is_file()}
@@ -1446,6 +1543,9 @@ def execute(entry: dict, binary: str, build_packages: bool) -> None:
         return
     if mode == "telemetry":
         telemetry_trace(binary, example, work, build_packages)
+        return
+    if mode == "mcp-python":
+        python_mcp(binary, example, work, build_packages)
         return
     if mode == "android-jni":
         android_jni(binary, example, work, build_packages)
