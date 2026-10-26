@@ -192,7 +192,7 @@ pub fn run(
     )
 }
 
-/// Embed scenario execution or Linux support-bundle export with cooperative
+/// Embed scenario execution or support-bundle export with cooperative
 /// cancellation; never changes signal masks. Export commits at publication.
 pub fn run_with_cancellation(
     args: impl IntoIterator<Item = OsString>,
@@ -211,7 +211,8 @@ pub fn run_with_cancellation(
     )
 }
 
-/// Process entry point. Scenario runs own scoped SIGINT/SIGTERM (Ctrl-C) capture;
+/// Process entry point. Scenario runs (Ctrl-C on macOS and Windows) and Linux
+/// support-bundle exports own scoped SIGINT/SIGTERM capture;
 /// library callers use `run` or `run_with_cancellation` instead.
 pub fn run_binary(
     args: impl IntoIterator<Item = OsString>,
@@ -254,13 +255,22 @@ fn run_inner(
     };
     let env = &selected_env;
     #[cfg(any(target_os = "linux", target_vendor = "apple", windows))]
-    let signals = if _binary_signals
+    let signals = if cfg!(target_os = "linux")
+        && _binary_signals
+        && matches!(&cli.command, args::Command::SupportBundle(bundle) if bundle.output.is_some())
+    {
+        // Turns SIGINT/SIGTERM into cooperative cancellation so an interrupted
+        // export removes its temporary file. Without capture, the default
+        // disposition applies, as before.
+        commands::scenario::BinarySignals::capture_interrupts().ok()
+    } else if _binary_signals
         && matches!(
             &cli.command,
             args::Command::Scenario {
                 command: args::ScenarioCommand::Run(_)
             }
-        ) {
+        )
+    {
         match commands::scenario::BinarySignals::capture() {
             Ok(signals) => Some(signals),
             Err(_) => {
@@ -312,6 +322,8 @@ fn run_inner(
     #[cfg(any(target_os = "linux", target_vendor = "apple", windows))]
     if let Some(signals) = signals {
         match signals.restore() {
+            // Export commits at publication; a later signal changes nothing.
+            Ok(true) if matches!(&cli.command, args::Command::SupportBundle(_)) => {}
             Ok(true) => commands::scenario::reject_late_cancellation(&mut report),
             Ok(false) => {}
             Err(_) => {

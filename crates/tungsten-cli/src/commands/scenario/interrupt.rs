@@ -38,6 +38,11 @@ impl Signals {
         Ok(Self(()))
     }
 
+    /// The same capture; these platforms have no child-reaping preflight.
+    pub fn capture_interrupts() -> io::Result<Self> {
+        Self::capture()
+    }
+
     pub fn cancellation(&self) -> RunCancellation {
         RunCancellation(std::sync::Arc::new(|| PENDING.load(Ordering::SeqCst)))
     }

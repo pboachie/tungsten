@@ -263,6 +263,9 @@ pub struct CheckResult {
     /// With `--ci`: every configured target, its generated output compared
     /// with what the emitters produce now. Empty without `--ci`.
     pub outputs: Vec<TargetReport>,
+    /// Locked run (`--locked` or `locked: true`): inputs were read offline
+    /// and the project was verified against tungsten.lock.json (TG0128).
+    pub locked: bool,
 }
 
 /// `tungsten generate`.
@@ -280,6 +283,9 @@ pub struct GenerateResult {
     pub strict: bool,
     /// Warnings promoted to errors by `--strict`.
     pub promoted: usize,
+    /// Locked run (`--locked` or `locked: true`): inputs were read offline
+    /// and the project matched tungsten.lock.json before any emitter ran.
+    pub locked: bool,
 }
 
 /// One target of `generate`, or of `check --ci`.

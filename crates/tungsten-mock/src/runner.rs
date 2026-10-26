@@ -88,6 +88,24 @@ pub struct RunReport {
     pub scenario: Option<ScenarioReport>,
 }
 
+impl RunReport {
+    /// A failed report for a run stopped before its server or child existed,
+    /// for example while a caller was still acquiring or compiling inputs.
+    pub fn interrupted(reason: RunReason, expected_exit: u8) -> Self {
+        Self {
+            version: 1,
+            passed: false,
+            reason,
+            expected_exit,
+            actual_exit: None,
+            group_signalled: false,
+            leader_reaped: false,
+            unfinished_calls: 0,
+            scenario: None,
+        }
+    }
+}
+
 #[cfg(not(any(target_os = "linux", target_vendor = "apple", windows)))]
 pub fn run_scenario(_ir: Ir, _scenario: &[u8], _options: RunOptions) -> std::io::Result<RunReport> {
     Err(std::io::Error::new(

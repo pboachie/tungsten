@@ -61,6 +61,7 @@ module Tungsten
         @auth = (o.auth || {}).to_h.transform_keys(&:to_s)
         @headers = (o.headers || {}).to_h.transform_keys(&:to_s)
         @timeout_ms = positive(o.timeout_ms) || DEFAULT_TIMEOUT_MS
+        @deadline_ms = positive(o.deadline_ms)
         @max_event_bytes = positive(o.max_event_bytes) || DEFAULT_MAX_EVENT_BYTES
         @max_response_bytes = o.max_response_bytes.nil? ? 4 * 1024 * 1024 : o.max_response_bytes
         @max_oauth_token_response_bytes = o.max_oauth_token_response_bytes.nil? ? 64 * 1024 : o.max_oauth_token_response_bytes
@@ -160,7 +161,51 @@ module Tungsten
           return Runtime.diag(d.id, "VALIDATION_FAILED").param("opts").expected("call options")
                         .remedy("Pass the call options as a Hash of idempotency_key, confirm, timeout_ms, verify and headers (#{e.message}).").err
         end
-        yield d, o
+        yield d, with_call_deadline(o)
+      end
+
+      # `until_deadline` gave up waiting.
+      DEADLINE_EXPIRED = Object.new.freeze
+
+      # The options with the absolute deadline of one logical call, fixed
+      # when a public entry point starts it. Nested work (pages, polls,
+      # verification, macro steps) inherits it and takes the earlier one, so
+      # it is never restarted or extended.
+      def with_call_deadline(opts)
+        ms = opts.deadline_ms.is_a?(Numeric) && opts.deadline_ms.positive? ? opts.deadline_ms : @deadline_ms
+        return opts unless ms
+
+        at = monotonic_ms + ms
+        opts.with(call_deadline: opts.call_deadline ? [opts.call_deadline, at].min : at)
+      end
+
+      # Milliseconds left before the call's deadline, nil without one.
+      def deadline_left(opts) = opts.call_deadline && (opts.call_deadline - monotonic_ms)
+
+      def deadline_passed?(opts)
+        left = deadline_left(opts)
+        !left.nil? && left <= 0
+      end
+
+      def deadline_expired(op, during)
+        Runtime.diag(op.id, "TRANSPORT_FAILED").code("DEADLINE_EXCEEDED").retrying("never")
+               .remedy("The operation deadline (deadline_ms) expired #{during}, so the request was not sent. Call again with a larger deadline_ms.").err
+      end
+
+      # The block's value, waited for only until the call's deadline
+      # (DEADLINE_EXPIRED after it). The work runs on its own thread and is
+      # not cancelled: a shared token refresh or store write keeps running
+      # for its other waiters, bounded by its own timeout.
+      def until_deadline(opts, &work)
+        left = deadline_left(opts)
+        return work.call if left.nil?
+        return DEADLINE_EXPIRED if left <= 0
+
+        worker = Thread.new do
+          Thread.current.report_on_exception = false
+          work.call
+        end
+        worker.join(left / 1000.0) ? worker.value : DEADLINE_EXPIRED
       end
 
       def random
@@ -247,8 +292,8 @@ module Tungsten
         current = p.headers.get("Authorization")
         return rejected unless current&.start_with?("Bearer ")
 
-        token = refresh_after_rejection(scheme, current.delete_prefix("Bearer "))
-        return rejected unless token
+        token = until_deadline(opts) { refresh_after_rejection(scheme, current.delete_prefix("Bearer ")) }
+        return rejected if DEADLINE_EXPIRED.equal?(token) || !token
 
         p.headers.set("Authorization", "Bearer #{token}", true)
         p.secrets << token
@@ -460,7 +505,10 @@ module Tungsten
           return err if err
         end
         method = op.http_method
-        auth = resolve_auth(op, method, insecure_http?(url_override || @base_url) ? INSECURE_HTTP_AUTH : nil)
+        return deadline_expired(op, "before the request could be sent") if deadline_passed?(opts)
+
+        auth = until_deadline(opts) { resolve_auth(op, method, insecure_http?(url_override || @base_url) ? INSECURE_HTTP_AUTH : nil) }
+        return deadline_expired(op, "while authenticating") if DEADLINE_EXPIRED.equal?(auth)
         return Runtime.diag(op.id, "AUTH_FAILED").remedy(auth.failed).err if auth.failed
 
         secrets = auth.secrets
@@ -495,7 +543,8 @@ module Tungsten
         end
         headers.set("Content-Type", encoded.content_type, false) if encoded.content_type
         header = Keys.header(op)
-        key = idempotency_key(op, args, opts, purpose, encoded)
+        key = until_deadline(opts) { idempotency_key(op, args, opts, purpose, encoded) }
+        return deadline_expired(op, "while reserving an idempotency key") if DEADLINE_EXPIRED.equal?(key)
         return key if key.is_a?(Err)
 
         policy = op.agent["idempotency"]["policy"]
@@ -864,6 +913,12 @@ module Tungsten
         attempts = 0
         loop do
           attempts += 1
+          return deadline_expired(op, "before the request could be sent") if deadline_passed?(opts)
+
+          # Each attempt's timeout is cut to the time left before the call's deadline.
+          left = deadline_left(opts)
+          by_deadline = !left.nil? && left < timeout
+          attempt_ms = by_deadline ? [left.to_i, 1].max : timeout
           rctx = request_context(p, attempts)
           hook(:on_request, rctx)
           target = p.url
@@ -871,8 +926,9 @@ module Tungsten
           body = p.body
           headers = p.headers.entries.map { |e| [e.name, e.value] }
           send_once = lambda do
-            Transport.attempt(url: target, method: method, headers: headers, body: body, timeout_ms: timeout, stream: stream,
-                              idle_ms: stream ? @idle_timeout_ms : nil, max_response_bytes: cap)
+            # An open stream keeps the idle bound of an uncut attempt; the deadline only bounds connecting.
+            Transport.attempt(url: target, method: method, headers: headers, body: body, timeout_ms: attempt_ms, stream: stream,
+                              idle_ms: stream ? @idle_timeout_ms || timeout : nil, max_response_bytes: cap)
           end
           outcome = send_once.call
           unless mutation || @redirects_disabled
@@ -894,7 +950,12 @@ module Tungsten
           end
           p.final_url = target
           ctx = Classify::CallContext.new(api: @api, op: op, key: p.key, key_header: p.key_header, attempts: attempts, check: check)
-          result = classify_response(ctx, p, outcome, rctx, timeout)
+          result =
+            if by_deadline && (outcome.kind == :timeout || (outcome.kind == :response && outcome.body_failure == "timeout" && !mutation))
+              deadline_timeout(ctx, outcome.kind == :response ? outcome.status : nil)
+            else
+              classify_response(ctx, p, outcome, rctx, timeout)
+            end
           return result unless result.is_a?(Err)
 
           d = Util.scrub_diagnostic(result.error, p.secrets)
@@ -916,9 +977,23 @@ module Tungsten
               else r * ceiling
               end
           end
+          # A retry that could not start before the deadline is not waited for.
+          left = deadline_left(opts)
+          return done if left && left <= delay
+
           hook(:on_retry, rctx, d)
           sleep([delay, 0].max / 1000.0)
         end
+      end
+
+      # The call's deadline ran out before a response (or a read's body) arrived.
+      def deadline_timeout(ctx, status)
+        cause = "The operation deadline expired before a response arrived."
+        return Err.new(error: Classify.outcome_unknown(ctx, cause)) if ctx.op.mutation?
+
+        Runtime.diag(ctx.op.id, "UPSTREAM_UNAVAILABLE").code("DEADLINE_EXCEEDED").status(status).retrying("never")
+               .remedy("#{cause} This read has no side effects; call again with a larger deadline_ms.")
+               .attempts(ctx.attempts).err
       end
 
       def classify_response(ctx, p, outcome, rctx, timeout)
@@ -1218,6 +1293,10 @@ module Tungsten
           if done || out_of_time
             return Ok.new(value: { "body" => body, "timed_out" => out_of_time }, raw: body, meta: response.meta)
           end
+
+          # The next poll could not be sent before the call's deadline, so it is not waited for.
+          left = deadline_left(opts)
+          return deadline_expired(op, "before the next poll") if left && left <= interval_ms
 
           sleep(interval_ms / 1000.0)
         end

@@ -106,7 +106,7 @@ helpers retain their own platform limits.
 
 | Input | You provide | Entry point and conversion | Limits and required review |
 |---|---|---|---|
-| OpenAPI 3.0 / 3.1 | JSON or YAML document | `tungsten init --from openapi.json` (default when unset: `openapi.json`, `openapi.yaml` or `openapi.yml` in the target directory). The document is kept in place, so relative references retain meaning, and goes through the native frontend: `$ref` resolution, overlays | The full frontend surface; overlays remain optional. OpenAPI 3.2 documents are read when they use only constructs 3.1 has plus the `query` method (sent as HTTP `QUERY` with its body); each other 3.2-only construct gets its own diagnostic (TG0140 to TG0156), an error unless it only adds metadata, and `tungsten capabilities` lists them |
+| OpenAPI 3.0 / 3.1 | JSON or YAML document | `tungsten init --from openapi.json` (default when unset: `openapi.json`, `openapi.yaml` or `openapi.yml` in the target directory). The document is kept in place, so relative references retain meaning, and goes through the native frontend: `$ref` resolution, overlays | The full frontend surface; overlays remain optional. OpenAPI 3.2 documents are read when they use only constructs 3.1 has plus the `query` method (sent as HTTP `QUERY` with its body) and response `itemSchema` for JSON Lines and JSON server-sent events; each other 3.2-only construct gets its own diagnostic (TG0140 to TG0156), an error unless it only adds metadata, and `tungsten capabilities` lists them |
 | Swagger 2.0 | JSON or YAML document | `tungsten init --from swagger.json` (also a default name) or any path. Bounded offline conversion to OpenAPI, saved as `imported.openapi.json` | Unsupported semantics fail explicitly instead of being guessed; conversion never resolves external references |
 | Postman Collection v2.1 | JSON collection | `tungsten init --from collection.json`. Structural import; omissions are listed in `import-report.json` | Scripts and requests are never executed: script-dependent behavior, non-JSON bodies and saved responses and unsupported auth helpers are omitted per item, not interpreted — this is not a Postman runtime |
 | Saved cURL command | A saved command as text | `tungsten init --from command.curl --route '/pets/{id}'` (auto-detected by a leading `curl`, a `.curl` extension, or `--input-format curl`). Parsed as data against POSIX, cmd or PowerShell quoting (`--shell-dialect`) | Exactly one explicit `--route` path template is required; the command is parsed, never executed |
@@ -115,27 +115,84 @@ helpers retain their own platform limits.
 | Endpoint manifest v1 | JSON manifest with declared models | `tungsten init --from endpoints.json`. Loaded by the endpoint-manifest frontend | Explicit HTTP routing metadata (base URL and endpoints) and JSON Schema 2020-12 models within the supported subset are required — not arbitrary standalone JSON-Schema-to-API inference |
 | Manual endpoint | No document | `tungsten init --method get --endpoint /pets/{id}`, with optional `--request-example` and `--response-example` JSON files (only their structure is persisted; the response is recorded at status 200). Writes `inferred.openapi.json` and `inference-report.json` | Explicit offline evidence only; not schema-free API discovery |
 
-All conversion routes share these limits: setup inputs are bounded (8 MiB, with larger OpenAPI documents served by the explicit compiler flow below); every converted operation is marked as imported, and targets that cannot enforce imported-operation policy refuse it (TG0705 for built-in targets, TG0808 for external emitters that do not declare support) — `typescript`, `python`, `rust`, `mcp`, `webmcp` and `docs` are supported, the Java, Kotlin, C#, F#, Dart and Ruby targets and non-opted-in external emitters are not, and `init` refuses unsupported built-in selections before saving the converted input or project manifests. Imported observations are incomplete contracts: review the inferred response types, authentication, safety tiers and origins in `agent.yml` and mark reviewed operations before live use.
+All conversion routes share these limits: setup inputs are bounded (8 MiB, with larger OpenAPI documents served by the explicit compiler flow below); every converted operation is marked as imported, and targets that cannot enforce imported-operation policy refuse it (TG0705 for built-in targets, TG0808 for external emitters that do not declare support) — the [support matrix](#targets) lists which built-in targets enforce it, non-opted-in external emitters do not, and `init` refuses unsupported built-in selections before saving the converted input or project manifests. Imported observations are incomplete contracts: review the inferred response types, authentication, safety tiers and origins in `agent.yml` and mark reviewed operations before live use.
 
 `init` is the only entry point for the alternative inputs. The other commands (`check`, `generate`, `mock`, `diff`, `report`) take an initialized project (a directory with `tungsten.yml`, or the manifest), or — for the native format only — a single OpenAPI document passed directly.
 
 ## Targets
 
-| Target | Emits | Minimum toolchain | Runtime and installation |
+The support matrix below is generated from the capability catalog (`tungsten capabilities --matrix`; `--json` gives the same declarations as data), and CI checks that it matches. A declared feature or execution environment describes source behavior, not qualification.
+
+<!-- tungsten-capabilities-matrix:start -->
+<!-- generated by `tungsten capabilities --matrix` (contract 1) -->
+
+| Target | Aliases | Emits | Consumer toolchain | Runs on | Features | Imported-operation policy | Qualification | Artifacts |
+|---|---|---|---|---|---|---|---|---|
+| `csharp` | `cs` | C# SDK | dotnet >=10.0 | dotnet | `typed_sdk`, `pagination_helpers` | enforced | unknown | unknown |
+| `dart` |  | Dart SDK (sealed unions, Future methods returning Result, Stream pages) | dart >=3.6 <4.0 | dart_io | `typed_sdk`, `pagination_helpers` | enforced | unknown | unknown |
+| `docs` |  | llms.txt, llms-full.txt, tools.json and README | none | static | `llms_txt` | enforced | unknown | unknown |
+| `fsharp` | `fs` | F# SDK (records, discriminated unions, Task of Result) | dotnet >=10.0 | dotnet | `typed_sdk`, `pagination_helpers` | enforced | unknown | unknown |
+| `java` |  | Java SDK | java >=17.0; mvn installed | jvm | `typed_sdk`, `pagination_helpers` | enforced | unknown | unknown |
+| `kotlin` | `kt` | Kotlin/JVM SDK (blocking functions returning Result; opt-in coroutines) | java >=17.0; gradle installed | jvm | `typed_sdk`, `pagination_helpers`, `coroutines` | enforced | unknown | unknown |
+| `mcp` |  | MCP server over stdio or Streamable HTTP, discrete or progressive | node >=22.13 excluding 23.0.x, 23.1.x; npm installed | node | `mcp_stdio`, `mcp_streamable_http`, `mcp_embedding_search`, `mcp_script_sandbox` | enforced | unknown | unknown |
+| `mock` |  | reserved; no emitter in this version | none |  |  | n/a | unknown | unknown |
+| `python` | `py` | Sync and async Python SDK, Pydantic v2 or dataclass models | python3 >=3.12 (`python_version` selects the minimum) | cpython | `typed_sdk`, `pagination_helpers`, `dataclass_models` | enforced | unknown | unknown |
+| `ruby` | `rb` | Ruby SDK | ruby >=3.3; bundle installed | ruby | `typed_sdk`, `pagination_helpers` | enforced | unknown | unknown |
+| `rust` | `rs` | Async Rust SDK (serde, reqwest) and optional generated CLI | cargo >=1.88; rustc >=1.88 | native | `typed_sdk`, `pagination_helpers`, `generated_cli` | enforced | unknown | unknown |
+| `typescript` | `ts` | Typed TypeScript SDK, Result values, Zod validation | node >=22.0; npm installed | node | `typed_sdk`, `pagination_helpers` | enforced | unknown | unknown |
+| `webmcp` |  | Browser ESM package with tool manifest and registration helper | node >=22.0; npm installed | browser | `webmcp_registration` | enforced | unknown | unknown |
+
+| Feature | Domain | Opt-in option | Description |
 |---|---|---|---|
-| `typescript` | Typed SDK, `Result` values, Zod validation | Node 22 | `@elysra/tungsten-runtime`: matching npm package or built source |
-| `python` | Sync and async SDK, Pydantic v2 or dataclass models | Python 3.12 by default; [opt-in 3.10/3.11](#python-interpreter-compatibility) | PyPI runtime for a matching published release, or matching `runtimes/python` source |
-| `rust` | Async SDK (serde, reqwest) and optional generated CLI | Rust 1.88 | Matching source paths to `runtimes/rust/runtime` and, for a CLI, `runtimes/rust/cli-kit`; see [installation](runtimes/rust/README.md) |
-| `go` (external) | Models, resources, typed client, pagination and stream helpers | Go 1.22 | Build `tungsten-emit-go` from `emitters/go`; use `runtime_path` to matching `runtimes/go` source; see [module status](runtimes/go/README.md) |
-| `java` | Java SDK | Java 17 and Maven | Use `runtime_path` to matching `runtimes/java` source |
-| `kotlin` (`kt`) | Kotlin/JVM SDK (data classes, sealed interfaces, blocking functions returning `Result`; opt-in `suspend` functions and cold `Flow`s with `coroutines: true`) | Java 17 and Gradle | Use `runtime_path` to matching `runtimes/kotlin` ([limits](runtimes/kotlin/README.md#limits)); it builds on the Java runtime in `runtimes/java` (`java_runtime_path`). The coroutine surface adds the `tungsten-runtime-kotlin-coroutines` artifact (`runtimes/kotlin/coroutines`, `coroutines_runtime_path`) and `kotlinx-coroutines-core` |
-| `csharp` (`cs`) | C# SDK | .NET 10 | Use `runtime_path` to matching `runtimes/csharp`, referencing `Tungsten.Runtime.csproj` ([limits](runtimes/csharp/README.md#limits)) |
-| `fsharp` (`fs`) | F# SDK (records, discriminated unions, `Task` of `Result`) | .NET 10 | Use `runtime_path` to matching `runtimes/fsharp` ([limits](runtimes/fsharp/README.md#limits)); it references the .NET runtime in `runtimes/csharp` (`csharp_runtime_path`) |
-| `dart` | Dart SDK (final model classes, sealed unions, `Future` methods returning `Result`, `Stream` pages) | Dart 3.6 | Use `runtime_path` to matching `runtimes/dart` (`tungsten_runtime`, a `dart:io` package; [limits](runtimes/dart/README.md#limits)) |
-| `ruby` (`rb`) | Ruby SDK | Ruby 3.3 and Bundler | Use `runtime_path` to matching `runtimes/ruby` source |
-| `mcp` | MCP server over stdio or Streamable HTTP, discrete or progressive | Node 22.13+; Node 23 needs 23.2+ | `@elysra/tungsten-mcp`: matching npm package or built source |
-| `webmcp` | Browser ESM package with tool manifest and registration helper | Node 22 to build; compatible browser to run | `@elysra/tungsten-webmcp` and the generated TypeScript SDK |
-| `docs` | `llms.txt`, `llms-full.txt`, `tools.json`, README | None beyond the compiler | No runtime dependency |
+| `typed_sdk` | target |  | typed models and operation methods for every compiled operation |
+| `pagination_helpers` | target |  | page iteration helpers for operations with declared pagination |
+| `generated_cli` | target | `cli` | a command-line client crate next to the SDK |
+| `dataclass_models` | target | `models` | stdlib dataclass models without a Pydantic dependency |
+| `coroutines` | target | `coroutines` | suspend functions and cold Flows next to the blocking surface |
+| `mcp_stdio` | protocol |  | Model Context Protocol server over stdio |
+| `mcp_streamable_http` | protocol |  | Model Context Protocol server over Streamable HTTP |
+| `mcp_embedding_search` | target | `search` | optional embedding index for tool search |
+| `mcp_script_sandbox` | runtime | `sandbox` | opt-in run_script sandbox |
+| `webmcp_registration` | protocol |  | browser tool manifest and WebMCP registration helper |
+| `llms_txt` | target |  | llms.txt, llms-full.txt and tools.json documentation |
+
+| OpenAPI line | Support | Diagnosed constructs |
+|---|---|---|
+| 3.0 | supported | 0 |
+| 3.1 | supported | 0 |
+| 3.2 | subset | 15 |
+
+| Input format | Versions | Route | Detection | Operations | Review flags | Acquisition |
+|---|---|---|---|---|---|---|
+| `openapi` | 3.0, 3.1, 3.2 | compiler | `openapi` member | native |  | local, https, git |
+| `swagger` | 2.0 | init_conversion | `swagger` member | imported |  | local, https, git |
+| `postman` | 2.1 | init_conversion | `info` and `item` members | imported |  | local, https, git |
+| `curl` |  | init_conversion | a leading `curl`, a `.curl` extension or `--input-format curl` | imported | `--route` | local, https, git |
+| `http` |  | init_conversion | a `.http` or `.rest` extension or `--input-format http` | imported | `--route` | local, https, git |
+| `har` | 1.2 | init_conversion | `log` member | imported | `--har-paths` | local, https, git |
+| `endpoint_manifest` | 1 | init_conversion | `endpoint_manifest` member | imported |  | local, https, git |
+| `manual_endpoint` |  | init_inference | `--method` and `--endpoint`, without `--from` | imported |  |  |
+
+Source declarations only: a declared feature or environment is not qualification, and `unknown` evidence never becomes a compatibility claim.
+<!-- tungsten-capabilities-matrix:end -->
+
+Runtime installation and toolchain notes per target:
+
+| Target | Toolchain notes | Runtime and installation |
+|---|---|---|
+| `typescript` | Node 22 | `@elysra/tungsten-runtime`: matching npm package or built source |
+| `python` | Python 3.12 by default; [opt-in 3.10/3.11](#python-interpreter-compatibility) | PyPI runtime for a matching published release, or matching `runtimes/python` source |
+| `rust` | Rust 1.88 | Matching source paths to `runtimes/rust/runtime` and, for a CLI, `runtimes/rust/cli-kit`; see [installation](runtimes/rust/README.md) |
+| `go` (external) | Go 1.22 | External emitter (Models, resources, typed client, pagination and stream helpers). Build `tungsten-emit-go` from `emitters/go`; use `runtime_path` to matching `runtimes/go` source; see [module status](runtimes/go/README.md) |
+| `java` | Java 17 and Maven | Use `runtime_path` to matching `runtimes/java` source |
+| `kotlin` (`kt`) | Java 17 and Gradle | Use `runtime_path` to matching `runtimes/kotlin` ([limits](runtimes/kotlin/README.md#limits)); it builds on the Java runtime in `runtimes/java` (`java_runtime_path`). The coroutine surface adds the `tungsten-runtime-kotlin-coroutines` artifact (`runtimes/kotlin/coroutines`, `coroutines_runtime_path`) and `kotlinx-coroutines-core` |
+| `csharp` (`cs`) | .NET 10 | Use `runtime_path` to matching `runtimes/csharp`, referencing `Tungsten.Runtime.csproj` ([limits](runtimes/csharp/README.md#limits)) |
+| `fsharp` (`fs`) | .NET 10 | Use `runtime_path` to matching `runtimes/fsharp` ([limits](runtimes/fsharp/README.md#limits)); it references the .NET runtime in `runtimes/csharp` (`csharp_runtime_path`) |
+| `dart` | Dart 3.6 | Use `runtime_path` to matching `runtimes/dart` (`tungsten_runtime`, a `dart:io` package; [limits](runtimes/dart/README.md#limits)) |
+| `ruby` (`rb`) | Ruby 3.3 and Bundler | Use `runtime_path` to matching `runtimes/ruby` source |
+| `mcp` | Node 22.13+; Node 23 needs 23.2+ | `@elysra/tungsten-mcp`: matching npm package or built source |
+| `webmcp` | Node 22 to build; compatible browser to run | `@elysra/tungsten-webmcp` and the generated TypeScript SDK |
+| `docs` | None beyond the compiler | No runtime dependency |
 
 These targets are implemented in source. Starting with 0.1.3,
 compiler and runtime package versions advance together with the release tag.
@@ -469,6 +526,24 @@ uninterruptible callbacks retain capacity until completion and late results are
 rejected, without a hard settlement deadline. OS resolver cancellation depends on
 the platform.
 
+Migrating to the total deadline (unreleased 0.2.0): `timeoutMs` and its
+equivalents keep their meaning. They bound one attempt, so retries, backoff,
+authentication, pages and verification can together take several times as long.
+To bound what a caller waits for one logical call, set the new opt-in total
+deadline as well: `deadlineMs` (TypeScript), `deadline_ms` (Python), `deadline`
+(Rust), `Deadline` (Go), `--deadline <SECONDS>` with `<PREFIX>_DEADLINE` or the
+profile key `deadline` (generated Rust CLI), and `toolDeadlineMs` with
+`<API>_MCP_DEADLINE_MS` (MCP server, per tool call). Other runtimes describe
+their support in their README's `Limits` section. With both set, each attempt
+gets at most the time the deadline has left, and queue admission waits no longer
+than the deadline. No attempt starts after the deadline expires (`code`
+`DEADLINE_EXCEEDED`). A mutation already sent at that point reports
+`OUTCOME_UNKNOWN` and is never replayed blindly, so retry it only with the same
+idempotency key. An open event stream is not cut by the deadline; its idle and
+collection limits apply. Shared token refreshes and custom transports or stores
+that ignore cancellation are no longer waited for, but they are not stopped.
+Without a deadline, behaviour is unchanged.
+
 For a saved collection, start with [Postman import and contract review](examples/input-postman/README.md).
 For an API change, use the [stale-output and regeneration walkthrough](examples/ci-drift/README.md).
 Both build on the existing gallery recipes.
@@ -644,7 +719,7 @@ tungsten [--json] <command>
 |---|---|
 | `init` | Write project manifests from any supported input ([Supported inputs](#supported-inputs)): `--from`, `--dir`, `--name`, `--targets`, `--force`; `--targets webmcp` includes a linked TypeScript SDK |
 | `check` | Validate the manifests and specs and report diagnostics (`--ci`, `--strict`); opt into response quality with `--audit-contracts` or audit-only enforcement with `--require-contracts`; `--ci` runs the emitters in memory, external ones included (`--no-external` skips them) |
-| `generate` | Generate every configured target (`--target`, `--dry-run`, `--check`, `--force`, `--strict`) |
+| `generate` | Generate every configured target (`--target`, `--dry-run`, `--check`, `--force`, `--strict`); `--locked` refuses (TG0128) unless the project matches `tungsten.lock.json` and acquires inputs offline |
 | `ir dump` | Write the IR as JSON (`--out`, `--compact`) |
 | `explain` | Explain a diagnostic code (`TG0201`), an operation or a type |
 | `schema` | Print a JSON Schema: `tungsten`, `agent`, `ir`, `cli-output`, `external-emitter`, `sdk-descriptors`, `tool-catalog`, `generation-lock`, `project-bundle` |
@@ -654,10 +729,10 @@ tungsten [--json] <command>
 | `diff` | Show regeneration changes; `--semver` classifies the API surface, `--migration` adds upgrade actions and runtime requirement review |
 | `lsp` | Serve diagnostics, quick fixes, completion, hover, go-to-definition and symbols for `tungsten.yml`, `agent.yml` and overlays to an editor over stdio (`--config`) |
 | `doctor` | Report external tools; pass a project path and `--strict` to fail when its required tools are missing or too old |
-| `capabilities` | Query built-in target declarations without running tools or emitters; optionally select a target id or alias, such as `capabilities py --json`; `--matrix` prints the Markdown support matrix derived from the same declarations |
+| `capabilities` | Query built-in target declarations without running tools or emitters; optionally select a target id or alias, such as `capabilities py --json`; `--matrix` prints the Markdown support matrix derived from the same declarations, and `--matrix --format markdown` wraps it in the markers of the README block CI checks |
 | `lock` | Capture the project generation lock `tungsten.lock.json` offline: content identities of the manifest, profiles, agent manifest, inputs, references and overlays (in order), compiler and built-in emitter identities, effective target option digests and consumer toolchains. `--check` fails when the lock is missing, stale or corrupt, `--preview` writes nothing, `--update` accepts changed identities |
-| `bundle export` / `bundle import` | Export the locked input closure and `tungsten.lock.json` into a new plain bundle directory with a digest inventory (`--preview` lists it; incomplete or credential-named content needs `--allow-incomplete` / `--allow-sensitive`), or validate a bundle completely and copy it into `--dest` without overwriting differing files. Neither runs emitters or grants trust |
-| `support-bundle --preview` | Inspect the exact metadata-only support manifest without writing files; `--exclude <id>` removes an entry. On Linux and macOS, `--output <PATH>` instead publishes it to a new file in an existing, trusted directory; `--inspect <FILE>` checks and shows an existing bundle |
+| `bundle export` / `bundle import` | Export the locked input closure and `tungsten.lock.json` into a new plain bundle directory with a digest inventory (`--preview` lists it; `--include-input-cache` carries the verified pins of remote inputs; incomplete or credential-named content needs `--allow-incomplete` / `--allow-sensitive`), or validate a bundle completely and copy it into `--dest` without overwriting differing files. Neither runs emitters or grants trust |
+| `support-bundle --preview` | Inspect the exact metadata-only support manifest without writing files; `--exclude <id>` removes an entry. On Linux, macOS and Windows, `--output <PATH>` instead publishes it to a new file in an existing, trusted directory; `--inspect <FILE>` checks and shows an existing bundle |
 
 With `--json`, stdout carries exactly one JSON document described by `tungsten schema cli-output` (`lsp` speaks the language server protocol on stdio instead). Color is used only on a terminal and never when `NO_COLOR` is set.
 
@@ -671,8 +746,8 @@ network. It excludes configuration values, private paths, URLs, credentials,
 source text, logs, hashes and project identifiers. Use `--exclude <id>` to omit
 an entry; collection of additional sensitive content is not supported.
 
-On Linux and macOS, `tungsten support-bundle --output <PATH>` creates a new
-local file.
+On Linux, macOS and Windows, `tungsten support-bundle --output <PATH>` creates
+a new local file.
 Its bytes are exactly the same manifest serialized as compact JSON with one
 trailing newline, capped at 128 KiB including metadata; entry payloads retain
 their 16 KiB individual and 64 KiB combined limits. The JSON command result is
@@ -692,15 +767,31 @@ operation semantics. Every path component is opened without following
 symlinks, so macOS paths through the `/tmp`, `/var` and `/etc` symlinks are
 refused; use the `/private/...` path or a directory in your home folder.
 Publication needs hard-link support in the destination filesystem, which some
-FAT, exFAT and network volumes lack. Other platforms refuse export before
-collecting data; preview remains available.
+FAT, exFAT and network volumes lack. On Windows, every directory from the
+drive root to the destination is held open without delete sharing, so none
+can be renamed or replaced during export; reparse points (symlinks and
+junctions), network shares, device paths, reserved device names and
+alternate data streams are refused. Windows does not check the directory's
+owner or ACL: export into a directory only you can write, such as one in your
+user profile. Other platforms refuse export before collecting data; preview
+remains available.
+
+Collection, for preview and export alike, stops after 30 seconds with nothing
+written. It only reads, so an abandoned collection has no side effects; in an
+embedding process its worker thread may keep running until it finishes.
 
 Library callers can cooperatively cancel an export before publication with
 `run_with_cancellation`. Successful publication is the commit point: a later
 cancellation does not remove the file. A cleanup failure after publication
 returns a nonzero status while retaining `published: true` in the receipt.
-Abrupt process termination and binary signal cleanup are not qualified by this
-command. Abrupt termination or unconfirmed cleanup can leave one owned
+On Linux, the `tungsten` binary blocks SIGINT and SIGTERM for the duration of
+an export and turns them into the same cooperative cancellation: an
+interrupted export stops collection or writing within about 50 ms, removes its
+temporary file and exits with status 4 without publishing. A signal after
+publication leaves the published file and the success status in place. On
+macOS and Windows the default signal and console-control behavior still
+applies. Abrupt termination (SIGKILL, a crash or power loss), interrupts on
+macOS and Windows, or unconfirmed cleanup can leave one owned
 `.tungsten-support-*.pending` entry per invocation; later commands do not sweep
 existing temporary entries. File syncing before publication does not establish
 a power-loss durability guarantee. There is no automatic upload or issue creation.
@@ -813,6 +904,11 @@ reports `applied` 2 and `replayed` 0, so the scenario fails. The report lists
 the mock's own processing; they do not prove a real provider's behavior or that
 the client received a response.
 
+The [mock-scenarios gallery recipe](examples/mock-scenarios/README.md) runs
+429-then-success, interrupted-stream, malformed-response and lost-write
+scenarios against a small integration, and shows each deliberately broken
+retry failing.
+
 Programs use the existing `/__tungsten/program` controls: `status` (200–599),
 optional JSON `body`, string-valued `headers`, `times`, error `code`, and
 `cut_after` bytes; or `inject` with optional `times`. For malformed JSON, use a
@@ -854,10 +950,16 @@ only to an `.exe` (for example `python`); name a script shim in full, such as
 `npm.cmd`. Other platforms reject `run` before input acquisition, port
 binding or process creation; `validate` remains portable.
 
-The run-phase deadline starts after compilation and scenario validation. It
-covers server startup, process execution, cleanup and final assertions; a small
-part of that budget is reserved for cleanup. It does not bound input acquisition
-or compilation. The runner owns a fresh loopback port and a process group (a Job Object on
+`--timeout-ms` bounds the whole command. It starts before input acquisition
+and compilation, and covers scenario validation, server startup, process
+execution, cleanup and final assertions; a small part of the time left for the
+run is reserved for cleanup. Cancellation is also observed during acquisition
+and compilation. A run stopped there reports `timed_out` or `cancelled` with
+`validated: false` and never binds a port or starts the integration. Inputs
+still being acquired are abandoned, not interrupted: a remote fetch continues
+in the background only until the process exits or its own acquisition limit
+expires. Library callers' `RunOptions.timeout` remains the run-phase budget.
+The runner owns a fresh loopback port and a process group (a Job Object on
 Windows), stops
 its server before reading final counts, and fails on cancellation, timeout,
 cleanup failure, unfinished admitted requests, unexpected exit or unmet counts.
@@ -1006,7 +1108,7 @@ including invalid or unsaved included profiles outside the manifest directory.
 Compiler source names and exported configuration provenance remain portable.
 Dedicated profile completion and navigation remain follow-up work.
 
-`tungsten lsp` is a language server for `tungsten.yml`, `agent.yml` and the overlay files a project lists. It checks the project with the same compiler as `tungsten check` and shows the same `TG` diagnostics on their source lines. Unsaved JSON/YAML manifests, specs, overlays and local references participate in the same source snapshot, including new files in an existing input directory. Closing a buffer restores its disk contents; file watchers pick up saved changes and deletions. File-size limits and local-reference confinement still apply. The selected project's `.tungsten-inputs` acquisition cache is reserved for verified disk content: buffers cannot replace or extend a pinned Git tree, while explicitly selected local overlays outside the cache remain editable. It completes keys, enumerated values and the operation ids, gates and clusters of the compiled project; shows field documentation, operation signatures and diagnostic explanations on hover; jumps from an operation id to its place in the OpenAPI document; and outlines the manifests. Quick fixes replace an unknown operation id (`TG0603`) or an unknown manifest field or value (`TG0602`) with the closest name the compiler knows; each fix is a single edit pinned to the buffer version it was computed for, so the editor previews it, refuses it after a later edit and can undo it. A fix never runs emitters, installs packages or refreshes inputs. The workspace is the directory of `tungsten.yml` (found from the editor's workspace folder, or given with `--config <path>`); one project is served per process.
+`tungsten lsp` is a language server for `tungsten.yml`, `agent.yml` and the overlay files a project lists. It checks the project with the same compiler as `tungsten check` and shows the same `TG` diagnostics on their source lines. Unsaved JSON/YAML manifests, specs, overlays and local references participate in the same source snapshot, including new files in an existing input directory. Closing a buffer restores its disk contents; file watchers pick up saved changes and deletions. File-size limits and local-reference confinement still apply. The selected project's `.tungsten-inputs` acquisition cache is reserved for verified disk content: buffers cannot replace or extend a pinned Git tree, while explicitly selected local overlays outside the cache remain editable. It completes keys, enumerated values and the operation ids, gates and clusters of the compiled project; shows field documentation, operation signatures and diagnostic explanations on hover; jumps from an operation id to its place in the OpenAPI document; and outlines the manifests. Quick fixes replace an unknown operation id (`TG0603`) or an unknown manifest field or value (`TG0602`) with the closest name the compiler knows; each fix is a single edit pinned to the buffer version it was computed for, so the editor previews it, refuses it after a later edit and can undo it. An operation without an `operationId` (`TG0403`) or with a repeated one (`TG0401`) gets the overlay action `tungsten overlay suggest` derives, added to the input's suggested overlay in one previewed edit. When a fix cannot be offered, editors that show disabled code actions show why and the equivalent command. Editors without versioned workspace edits get plain edits for the replacement fixes, still checked against the current buffer. A fix never runs emitters, installs packages or refreshes inputs. The workspace is the directory of `tungsten.yml` (found from the editor's workspace folder, or given with `--config <path>`); one project is served per process.
 
 Edits retain the existing debounce and one active analysis worker. A newer edit
 cancels obsolete work cooperatively between compiler phases and during reference,

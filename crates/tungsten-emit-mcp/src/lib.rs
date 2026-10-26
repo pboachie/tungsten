@@ -210,7 +210,7 @@ pub mod __testing {
     }
 
     /// The environment variable names of `ir`'s server: base URL, every
-    /// credential, mode.
+    /// credential, mode, tool-call deadline.
     pub fn env_names(ir: &Ir) -> Vec<String> {
         let mut out = vec![crate::env::base_url(ir)];
         for s in crate::env::schemes(ir) {
@@ -222,6 +222,7 @@ pub mod __testing {
             }
         }
         out.push(crate::env::mode(ir));
+        out.push(crate::env::deadline(ir));
         out
     }
 }
