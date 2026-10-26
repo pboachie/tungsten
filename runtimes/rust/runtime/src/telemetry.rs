@@ -81,11 +81,16 @@ pub enum TelemetryQueueReason {
     Cancelled,
 }
 
-/// The public entry point that started the operation.
+/// The public entry point that started the operation. One `pages`
+/// operation covers every page it fetched, one `poll` operation every read
+/// it made; their attempts are numbered across the whole operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TelemetryEntry {
     Call,
+    Pages,
+    Poll,
+    Preview,
 }
 
 /// One telemetry event. Fields that do not apply to an event are `None`
@@ -113,7 +118,8 @@ pub struct TelemetryEvent {
     pub outcome: Option<TelemetryOutcome>,
     /// The diagnostic category of a failed operation, attempt or phase.
     pub category: Option<Category>,
-    /// The HTTP status of an attempt that received a response.
+    /// The HTTP status of an attempt that received a response, and of a
+    /// `call` operation's final answer.
     pub http_status: Option<u16>,
     /// For a `queue` phase.
     pub reason: Option<TelemetryQueueReason>,

@@ -53,7 +53,7 @@ import { declaredLength, Download, type DownloadFailure } from "./download.js";
 import { EventStream } from "./streams.js";
 import { attempt, type AttemptOutcome, nextLink, parseRetryAfter, StreamBody } from "./transport.js";
 import { type Permit, type Rejection, RequestScheduler } from "./scheduler.js";
-import { Telemetry, type TelemetryQueueReason, type TelemetrySpan } from "./telemetry.js";
+import { Telemetry, type TelemetryEntry, type TelemetryQueueReason, type TelemetrySpan } from "./telemetry.js";
 import type {
   ApiDescriptor,
   CallOptions,
@@ -625,42 +625,66 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
   /** Validate, authenticate, apply idempotency and confirmation rules,
    * send with retries and classify the response. Never throws. */
   async call<T>(op: OperationDescriptor, args: Record<string, unknown>, opts?: CallOptions): Promise<Result<T>> {
-    const span = this.#startSpan(op);
-    let result: Result<T>;
+    return this.#traced(op, "call", opts, (resolved) => this.#call<T>(op, args, resolved, null), "building or sending the request");
+  }
+
+  /** Run one public entry point as a telemetry operation (when telemetry
+   * is on); `run` gets the resolved call options carrying the span. */
+  async #traced<R extends Result<unknown>>(op: OperationDescriptor, entry: TelemetryEntry, opts: CallOptions | undefined, run: (resolved: CallOptions) => Promise<R>, during: string): Promise<R> {
+    const span = this.#startSpan(op, entry);
+    let result: R;
     try {
       const resolved = this.#callOptions(opts);
-      result = await this.#call<T>(op, args, span === null ? resolved : ({ ...resolved, [TELEMETRY_SPAN]: span } as StepOptions), null);
+      result = await run(span === null ? resolved : ({ ...resolved, [TELEMETRY_SPAN]: span } as StepOptions));
     } catch (error) {
-      result = fail(this.#internal(op, error, "building or sending the request"));
+      result = fail(this.#internal(op, error, during)) as R;
     }
-    if (span !== null) {
-      try {
-        span.end(result.ok ? null : result.error, !result.ok && (opts as CallOptions | undefined)?.signal?.aborted === true, result.ok ? result.meta.status : result.error.http_status);
-      } catch {
-        // Telemetry never changes the call.
-      }
-    }
+    if (span !== null) this.#endSpan(span, result, opts, entry === "call");
     return result;
+  }
+
+  /** Only a `call` reports its final HTTP status. */
+  #endSpan(span: TelemetrySpan, result: Result<unknown>, opts: CallOptions | undefined, call: boolean): void {
+    try {
+      const status = !call ? null : result.ok ? result.meta.status : result.error.http_status;
+      span.end(result.ok ? null : result.error, !result.ok && (opts as CallOptions | undefined)?.signal?.aborted === true, status);
+    } catch {
+      // Telemetry never changes the call.
+    }
   }
 
   /** Run the operation's preview mode: local rendering (no network), a
    * dry-run header, or a preview endpoint. Mutating operations get a
    * confirmation token bound to these exact arguments for five minutes. */
   async preview(op: OperationDescriptor, args: Record<string, unknown>, opts?: CallOptions): Promise<Result<PreviewResult>> {
-    try {
-      return await this.#preview(op, args, this.#callOptions(opts));
-    } catch (error) {
-      return fail(this.#internal(op, error, "rendering the preview"));
-    }
+    return this.#traced(op, "preview", opts, (resolved) => this.#preview(op, args, resolved), "rendering the preview");
   }
 
   /** Iterate pages (cursor, offset, page number or `Link` header); stops
    * after the last page or after yielding the first error. */
   async *pages<T>(op: OperationDescriptor, args: Record<string, unknown>, opts?: CallOptions): AsyncIterable<Result<Page<T>>> {
+    const span = this.#startSpan(op, "pages");
+    // The iteration's last item, and whether it ended (not stopped early by the caller).
+    let last: Result<unknown> | null = null;
+    let finished = false;
     try {
-      yield* this.#pages<T>(op, args, this.#callOptions(opts));
+      const resolved = this.#callOptions(opts);
+      for await (const page of this.#pages<T>(op, args, span === null ? resolved : ({ ...resolved, [TELEMETRY_SPAN]: span } as StepOptions))) {
+        last = page;
+        yield page;
+      }
+      finished = true;
     } catch (error) {
-      yield fail(this.#internal(op, error, "paginating"));
+      const failed = fail(this.#internal(op, error, "paginating"));
+      last = failed;
+      finished = true;
+      yield failed;
+    } finally {
+      if (span !== null) {
+        if (finished && last !== null) this.#endSpan(span, last, opts, false);
+        else if (finished) span.end(null, false, null);
+        else span.end({}, true, null);
+      }
     }
   }
 
@@ -738,11 +762,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     budgetMs: number,
     opts?: CallOptions,
   ): Promise<Result<T> & { timedOut?: boolean }> {
-    try {
-      return await this.#poll<T>(op, args, until, intervalMs, budgetMs, this.#callOptions(opts));
-    } catch (error) {
-      return fail(this.#internal(op, error, "polling"));
-    }
+    return this.#traced(op, "poll", opts, (resolved) => this.#poll<T>(op, args, until, intervalMs, budgetMs, resolved), "polling");
   }
 
   /** Run a compiled macro: steps in order, each step's success body bound
@@ -945,10 +965,10 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
   }
 
   /** Start the telemetry of one operation; null when telemetry is off. */
-  #startSpan(op: OperationDescriptor): TelemetrySpan | null {
+  #startSpan(op: OperationDescriptor, entry: TelemetryEntry): TelemetrySpan | null {
     if (this.#telemetry === null) return null;
     try {
-      return this.#telemetry.start(safeName(this.api, "name", ""), safeId(op), "call", isRecord(op) && isRecord(op.agent) && isMutation(op));
+      return this.#telemetry.start(safeName(this.api, "name", ""), safeId(op), entry, isRecord(op) && isRecord(op.agent) && isMutation(op));
     } catch {
       return null;
     }
