@@ -345,6 +345,9 @@ changes.
   `refresh-import` reuses them for flags that are not given again. `check` and
   `generate` refuse a project with an interrupted `refresh-import --apply`
   (TG0124) until `--rollback` restores it.
+- `refresh-import --apply` stages the reviewed content beside its backups, so
+  `refresh-import --resume` finishes an interrupted apply (writes, pin and
+  lock) as an alternative to `--rollback`.
 - The language server offers a disabled "Refresh the converted import" action
   on TG0122 for a converted input whose remote source changed, naming the
   `refresh-import` preview, `--apply` and `--offline` choices.
