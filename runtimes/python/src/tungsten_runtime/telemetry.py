@@ -387,10 +387,10 @@ def open_telemetry_observer(tracer: object, max_open_spans: int = 10000) -> Call
     kind: object = None
     error_status: object = None
     try:
-        from opentelemetry.trace import SpanKind, Status, StatusCode  # pyright: ignore[reportMissingImports]
+        import opentelemetry.trace as otel_trace  # pyright: ignore[reportMissingImports, reportUnknownVariableType]
 
-        kind = SpanKind.CLIENT  # pyright: ignore[reportUnknownMemberType]
-        error_status = Status(StatusCode.ERROR)  # pyright: ignore[reportUnknownMemberType]
+        kind = otel_trace.SpanKind.CLIENT  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        error_status = otel_trace.Status(otel_trace.StatusCode.ERROR)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
     except Exception:  # the API is optional
         pass
 
