@@ -36,6 +36,10 @@ Compatibility helpers retain application-owned custom-scheme policy.
 
 ## Limits
 
+The OAuth 2.0 device authorization flow (OpenAPI 3.2 `deviceAuthorization`) is
+not run by the client: configure the scheme with an access token obtained
+through it.
+
 In unreleased 0.2.0, the total operation deadline is the .NET runtime's: set `Deadline` (a
 `TimeSpan`) on `ClientOptions` or per call with `CallOptions(Deadline = TimeSpan.FromSeconds 5.0)`.
 Unlike the per-attempt `Timeout`, it bounds one logical call across authentication, idempotency-key

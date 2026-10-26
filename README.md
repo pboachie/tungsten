@@ -106,7 +106,7 @@ helpers retain their own platform limits.
 
 | Input | You provide | Entry point and conversion | Limits and required review |
 |---|---|---|---|
-| OpenAPI 3.0 / 3.1 | JSON or YAML document | `tungsten init --from openapi.json` (default when unset: `openapi.json`, `openapi.yaml` or `openapi.yml` in the target directory). The document is kept in place, so relative references retain meaning, and goes through the native frontend: `$ref` resolution, overlays | The full frontend surface; overlays remain optional. OpenAPI 3.2 documents are read when they use only constructs 3.1 has plus the `query` method (sent as HTTP `QUERY` with its body) and response `itemSchema` for JSON Lines and JSON server-sent events; each other 3.2-only construct gets its own diagnostic (TG0140 to TG0156), an error unless it only adds metadata, and `tungsten capabilities` lists them |
+| OpenAPI 3.0 / 3.1 | JSON or YAML document | `tungsten init --from openapi.json` (default when unset: `openapi.json`, `openapi.yaml` or `openapi.yml` in the target directory). The document is kept in place, so relative references retain meaning, and goes through the native frontend: `$ref` resolution, overlays | The full frontend surface; overlays remain optional. OpenAPI 3.2 documents are read when they use only constructs 3.1 has plus the `query` method (sent as HTTP `QUERY` with its body), `additionalOperations` (sent with their method token as written), form-encoded `in: querystring` objects and response `itemSchema` for JSON Lines and JSON server-sent events; each other 3.2-only construct gets its own diagnostic (TG0140 to TG0156), an error unless it only adds metadata, and `tungsten capabilities` lists them |
 | Swagger 2.0 | JSON or YAML document | `tungsten init --from swagger.json` (also a default name) or any path. Bounded offline conversion to OpenAPI, saved as `imported.openapi.json` | Unsupported semantics fail explicitly instead of being guessed; conversion never resolves external references |
 | Postman Collection v2.1 | JSON collection | `tungsten init --from collection.json`. Structural import; omissions are listed in `import-report.json` | Scripts and requests are never executed: script-dependent behavior, non-JSON bodies and saved responses and unsupported auth helpers are omitted per item, not interpreted — this is not a Postman runtime |
 | Saved cURL command | A saved command as text | `tungsten init --from command.curl --route '/pets/{id}'` (auto-detected by a leading `curl`, a `.curl` extension, or `--input-format curl`). Parsed as data against POSIX, cmd or PowerShell quoting (`--shell-dialect`) | Exactly one explicit `--route` path template is required; the command is parsed, never executed |
@@ -160,7 +160,7 @@ The support matrix below is generated from the capability catalog (`tungsten cap
 |---|---|---|
 | 3.0 | supported | 0 |
 | 3.1 | supported | 0 |
-| 3.2 | subset | 15 |
+| 3.2 | subset | 10 |
 
 | Input format | Versions | Route | Detection | Operations | Review flags | Acquisition |
 |---|---|---|---|---|---|---|
@@ -172,6 +172,21 @@ The support matrix below is generated from the capability catalog (`tungsten cap
 | `har` | 1.2 | init_conversion | `log` member | imported | `--har-paths` | local, https, git |
 | `endpoint_manifest` | 1 | init_conversion | `endpoint_manifest` member | imported |  | local, https, git |
 | `manual_endpoint` |  | init_inference | `--method` and `--endpoint`, without `--from` | imported |  |  |
+
+| IR protocol | Status | Targets | Protocol-specific extension |
+|---|---|---|---|
+| `http` | implemented | every built-in target | none; method, path, parameters and bodies are the common contract |
+| `graphql` | reserved | none (refused, TG0706) | selection sets, fragments and subscription transport |
+| `grpc` | reserved | none (refused, TG0706) | service and method names, streaming mode and status codes |
+| `async_messaging` | reserved | none (refused, TG0706) | channel bindings, delivery guarantees and acknowledgment |
+
+| `init` selection | Targets |
+|---|---|
+| Default (`--targets` omitted) | `typescript`, `python`, `docs` |
+| Wizard default | `typescript`, `docs` |
+| Local setup (`--local-example`, wizard) | `typescript`, `python`, `rust`, `mcp`, `webmcp`, `docs`, and `cli` (Rust SDK and CLI) |
+| Selecting `mcp` adds | `typescript` |
+| Selecting `webmcp` adds | `typescript` |
 
 Source declarations only: a declared feature or environment is not qualification, and `unknown` evidence never becomes a compatibility claim.
 <!-- tungsten-capabilities-matrix:end -->
@@ -731,7 +746,7 @@ tungsten [--json] <command>
 | `doctor` | Report external tools; pass a project path and `--strict` to fail when its required tools are missing or too old |
 | `capabilities` | Query built-in target declarations without running tools or emitters; optionally select a target id or alias, such as `capabilities py --json`; `--matrix` prints the Markdown support matrix derived from the same declarations, and `--matrix --format markdown` wraps it in the markers of the README block CI checks |
 | `lock` | Capture the project generation lock `tungsten.lock.json` offline: content identities of the manifest, profiles, agent manifest, inputs, references and overlays (in order), compiler and built-in emitter identities, effective target option digests and consumer toolchains. `--check` fails when the lock is missing, stale or corrupt, `--preview` writes nothing, `--update` accepts changed identities |
-| `bundle export` / `bundle import` | Export the locked input closure and `tungsten.lock.json` into a new plain bundle directory with a digest inventory (`--preview` lists it; `--include-input-cache` carries the verified pins of remote inputs; incomplete or credential-named content needs `--allow-incomplete` / `--allow-sensitive`), or validate a bundle completely and copy it into `--dest` without overwriting differing files. Neither runs emitters or grants trust |
+| `bundle export` / `bundle import` | Export the locked input closure and `tungsten.lock.json` into a new plain bundle directory with a digest inventory (`--preview` lists it; `--include-input-cache` carries the verified pins of remote inputs; `--include-consumer-cache DIR` carries a prepared consumer dependency directory with provenance and platform notes; incomplete or credential-named content needs `--allow-incomplete` / `--allow-sensitive`), or validate a bundle completely and copy it into `--dest` without overwriting differing files. Neither runs emitters or grants trust |
 | `support-bundle --preview` | Inspect the exact metadata-only support manifest without writing files; `--exclude <id>` removes an entry. On Linux, macOS and Windows, `--output <PATH>` instead publishes it to a new file in an existing, trusted directory; `--inspect <FILE>` checks and shows an existing bundle |
 
 With `--json`, stdout carries exactly one JSON document described by `tungsten schema cli-output` (`lsp` speaks the language server protocol on stdio instead). Color is used only on a terminal and never when `NO_COLOR` is set.
@@ -744,7 +759,24 @@ declared prerequisites. Collection works with a broken project and does not
 compile it, read API documents, probe tool versions, run extensions or contact a
 network. It excludes configuration values, private paths, URLs, credentials,
 source text, logs, hashes and project identifiers. Use `--exclude <id>` to omit
-an entry; collection of additional sensitive content is not supported.
+an entry.
+
+Logs and configuration files are never collected unless you name them.
+`--attach-log <FILE>` and `--attach-config <FILE>` (repeatable, at most four in
+total) add `user.attachment[N]` entries, numbered from 0 with log files first.
+Each entry has origin `user_supplied` and sensitivity `user_supplied_text`.
+Such a bundle uses `bundle_schema_version: 2` with privacy level
+`metadata_and_user_supplied`; without attachments the bundle stays version 1
+and unchanged. Each file must be a regular, nonsymlink file, and its path is
+never recorded. Only its last 8 KiB are kept, starting at a line boundary.
+Automatic redaction then replaces environment variable values, values of
+credential-like keys (`password`, `token`, `secret`, `api_key`, `authorization`
+and similar), `Bearer`/`Basic` credentials, private-key blocks, URLs, user names
+in home directory paths and long token-like strings, and counts its
+replacements. Redaction is not a guarantee that arbitrary text is safe to
+share: review the preview, and use `--exclude user.attachment[N]` to drop an
+attachment. An unreadable attachment fails the command before anything is
+written.
 
 On Linux, macOS and Windows, `tungsten support-bundle --output <PATH>` creates
 a new local file.
@@ -800,10 +832,12 @@ a power-loss durability guarantee. There is no automatic upload or issue creatio
 platform before you share it. It reads one regular, nonsymlink file of at most
 128 KiB, writes nothing and starts no program. A bundle whose
 `bundle_schema_version` this tungsten does not read is refused with that
-number. Otherwise every object must have exactly the keys of that schema
-version, every entry must be an observed, metadata-only entry, and recorded
-sizes, statuses and totals must match the payloads; free text is limited to
-printable ASCII. The result lists each entry with its exact payload. Errors name
+number; versions 1 and 2 are read. Otherwise every object must have exactly
+the keys of that schema version, and the six observed entries must be
+metadata only. Version 2 may follow them with up to four entries labelled
+user supplied. Recorded sizes, statuses and totals must match the payloads.
+Free text in observed entries is limited to printable ASCII, and attachment
+text to 12 KiB without control characters other than newline and tab. The result lists each entry with its exact payload. Errors name
 only schema locations such as `/entries/0/payload/os`, never file content or
 unexpected keys. These checks confirm the bundle's shape, not that its text is
 safe to publish.
@@ -936,7 +970,7 @@ Validate without binding a server or launching a process on any platform:
 tungsten scenario validate . --scenario retry.json
 ```
 
-On Linux (including WSL), run your integration explicitly:
+On Linux (including WSL), macOS or Windows, run your integration explicitly:
 
 ```sh
 tungsten --json scenario run . --scenario retry.json --timeout-ms 30000 --expect-exit 0 -- python3 integration.py
@@ -945,9 +979,10 @@ tungsten --json scenario run . --scenario retry.json --timeout-ms 30000 --expect
 The integration reads its URL from `TUNGSTEN_MOCK_BASE_URL`. Arguments after
 `--` are passed directly to the named executable. There is no implicit shell;
 commands cannot be supplied by the saved file. An interpreter such as `python3`
-runs only when explicitly named by the caller. Other platforms reject `run`
-before input acquisition, port binding or process creation; `validate` remains
-portable.
+runs only when explicitly named by the caller. On Windows, a bare name resolves
+only to an `.exe` (for example `python`); name a script shim in full, such as
+`npm.cmd`. Other platforms reject `run` before input acquisition, port
+binding or process creation; `validate` remains portable.
 
 `--timeout-ms` bounds the whole command. It starts before input acquisition
 and compilation, and covers scenario validation, server startup, process
@@ -958,19 +993,23 @@ and compilation. A run stopped there reports `timed_out` or `cancelled` with
 still being acquired are abandoned, not interrupted: a remote fetch continues
 in the background only until the process exits or its own acquisition limit
 expires. Library callers' `RunOptions.timeout` remains the run-phase budget.
-The runner owns a fresh loopback port and process group, stops
+The runner owns a fresh loopback port and a process group (a Job Object on
+Windows), stops
 its server before reading final counts, and fails on cancellation, timeout,
 cleanup failure, unfinished admitted requests, unexpected exit or unmet counts.
 Request completion tracks server-side handler and response-body generation,
 independently of when a call was counted; it does not prove transport delivery.
-The binary handles SIGINT/SIGTERM for this run; library callers supply explicit
-cancellation instead of installing signal handlers. The Linux binary refuses an
+The binary handles SIGINT/SIGTERM for this run (Ctrl-C, Ctrl-Break and console
+close on Windows); library callers supply explicit cancellation instead of
+installing signal handlers. Linux uses a scoped signal mask; macOS and Windows
+install one Ctrl-C handler in the binary on first use. The Linux binary refuses an
 unreadable or malformed `/proc/self/status` and observable ignored/caught SIGCHLD
 dispositions before acquiring inputs or creating a server or child. Embeddings
 must exclusively reap their runner children, avoid auto-reap dispositions and
 keep SIGCHLD disposition stable; the binary preflight does not establish these
 conditions for a concurrent embedding or inspect every `SA_NOCLDWAIT` setting.
-Process groups cover ordinary
+macOS has no equivalent preflight; the same embedding requirements apply.
+Windows terminates the Job Object on cleanup. Process groups and Job Objects cover ordinary
 descendants, not processes that deliberately leave the group. Signal delivery
 and leader reaping do not prove that every descendant has settled, and this is
 not a sandbox.
@@ -1000,12 +1039,25 @@ unknown major contract versions before interpreting them.
 
 The TypeScript declaration also includes `options_schema`, a JSON Schema for
 supported raw `package`, `version`, `runtime`, `runtime_path` and `dependencies`
-values. The `ts` alias returns the same declaration. Other targets report null
-until their option schemas are declared. This does not change generation policy:
+values. The `ts` alias returns the same declaration. Python and Rust declare
+their typed options the same way. Every other built-in target declares a field
+schema with the JSON type, fixed default and description of each option it
+reads (besides `out`), plus the warning code an invalid value produces; the
+emitter keeps the semantic validators, and `config` inspection covers only the
+TypeScript, Python and Rust schemas. The reserved `mock` target reports null.
+This does not change generation policy:
 invalid TypeScript scalars still produce TG0711 warnings and use defaults;
 invalid custom dependencies produce errors. Unknown keys remain ignored, and
 defaults that depend on the compiled API remain in the emitter. This is an
 option declaration; existing project target validation remains compatible.
+
+The catalog also registers the IR's protocols under `protocols`. Every IR
+namespace without a `protocol` binding is HTTP, which every built-in target
+generates; `graphql`, `grpc` and `async_messaging` are reserved for future
+frontends, which keep the common operation contract and put
+protocol-specific contract in the binding's `extension` rather than in REST
+fields. A target is refused with TG0706, before anything is written for it,
+when the IR binds a protocol the target does not declare.
 
 ### Local TypeScript profiles
 
@@ -1060,9 +1112,61 @@ The compiler driver returns typed declarations and winning/shadowed authored
 origins in memory; emitter defaults still depend on the compiled API. Profile
 source/digest names are portable (`profile[0]/base.yml`), while physical identity
 stays in provenance for confinement. A name collision with another compilation
-input is an error. This result is not a replayable approval document. Dedicated
-profile navigation and setup presets remain follow-up work. Hosts can select the
-external-emitter restrictions described above; executable approval remains separate.
+input is an error. This result is not a replayable approval document. Hosts can
+select the external-emitter restrictions described above; executable approval
+remains separate.
+
+#### Transport and account references
+
+Profiles and `tungsten.yml` can declare where a runtime finds enterprise
+transport material, without holding it:
+
+```yaml
+transport:
+  proxy: { env: CORP_HTTPS_PROXY }        # env only: proxy URLs can carry credentials
+  no_proxy: { env: CORP_NO_PROXY }
+  ca_bundle: { file: certs/corp-ca.pem }  # env or a relative file, relative to the project
+  client_certificate: { env: CORP_MTLS_CERT }
+  client_key: { store: "keychain:corp-mtls" }  # env or a secure-store item, never a file
+  credential_provider: secure_store       # environment, secure_store or hook
+  account: build-bot                      # non-secret names
+  environment: staging
+```
+
+Fields compose like scalar target defaults: later profiles win, explicit project
+fields win over profiles, and `tungsten config` shows each reference with its
+winning and shadowed source. Inline values (a proxy URL, a PEM block, a token) are
+refused, as is any key that would disable certificate verification; trust a
+private CA with `ca_bundle` instead. References are names only: tungsten never
+reads the variables, files or store items they point to, and generated SDKs do not
+consume them yet. Wire them into a native or custom transport that keeps TLS
+verification, redirect/auth rules, deadlines and admission in place.
+
+`tungsten lsp` serves profile files too: completion and hover from the profile
+schema, diagnostics in the profile that caused them, and watchers for profile
+directories outside the workspace folder.
+
+#### Init presets
+
+`tungsten init --preset NAME` starts from a named set of outputs; the same names
+are accepted at the guided setup's outputs prompt. Explicit `--targets` and
+`--strict` win, and a preset never selects inputs, reviews operations or changes
+`agent.yml` safety defaults.
+
+| Preset | Outputs | Also |
+| --- | --- | --- |
+| `app` | TypeScript SDK, docs | |
+| `library` | TypeScript, Python and Rust SDKs, docs | writes `profiles/library.yml` (shared package versions) and selects it, so other projects can reuse it |
+| `agent` | MCP server on the TypeScript SDK | generates with `--strict` |
+
+```sh
+tungsten init --no-interactive --preset library --from openapi.json --dir my-sdk
+tungsten init --no-interactive --preset app --from openapi.json --generate --local-example
+```
+
+Exit codes are those of `init`: 0 on success, 1 when the input has errors, 2 for
+an unknown preset, 4 when an existing manifest or profile would be overwritten
+without `--force` (nothing is written). `--no-interactive` never prompts.
 
 Inspect the supported effective configuration without compiling API inputs:
 
@@ -1195,8 +1299,11 @@ Public CI builds the runtime sdist and wheel on the latest patch of CPython
 3.10, 3.11, 3.12, 3.13, 3.14 and 3.15 (macOS and Windows on 3.14), and
 installs them with freshly generated SDKs into clean environments: both model
 modes, `"3.10"` output on every minor and default output on 3.12 and newer,
-with compile, import, strict Pyright and sync/async mock-request checks. The
-3.10 lane also runs the lowest declared dependency versions. Python 3.10 is
+with compile, import, strict Pyright and sync/async requests covering
+confirmation, auth, pagination, safe retries, validation, deadlines,
+cancellation, unknown outcomes and server-sent events. The 3.10 lane also runs
+the lowest declared dependency versions. Generated packages list classifiers
+for these minors from their `python_version` upward. Python 3.10 is
 end-of-life upstream: it remains a compatibility lane, not a
 security-maintained runtime. Prerelease interpreters are not claimed, and
 `requires-python` sets only a floor.

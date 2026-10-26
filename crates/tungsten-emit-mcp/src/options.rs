@@ -25,7 +25,7 @@ use tungsten_emit::TargetConfig;
 use tungsten_ir::Ir;
 
 /// Default version range of `@elysra/tungsten-mcp` and `@elysra/tungsten-runtime`.
-pub const DEFAULT_RANGE: &str = "^0.1.3";
+pub const DEFAULT_RANGE: &str = tungsten_config::option_fields::NPM_RUNTIME_RANGE;
 /// TypeScript version pinned in the generated package.
 pub const TYPESCRIPT_VERSION: &str = "5.9.3";
 /// `@types/node` version pinned in the generated package.

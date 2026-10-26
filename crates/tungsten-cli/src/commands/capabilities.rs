@@ -39,6 +39,8 @@ pub(crate) fn run(args: &CapabilitiesArgs) -> Report {
         openapi_inputs: capabilities::OPENAPI_INPUTS.to_vec(),
         input_formats: capabilities::INPUT_FORMATS.to_vec(),
         execution_policy: capabilities::execution_policy(),
+        init: capabilities::INIT,
+        protocols: capabilities::PROTOCOLS.to_vec(),
     };
     if args.matrix {
         report.human = match args.format {
@@ -253,6 +255,52 @@ fn matrix(catalog: &CapabilityCatalog) -> String {
                 .map(snake)
                 .collect::<Vec<_>>()
                 .join(", "),
+        );
+    }
+    out.push_str(
+        "\n| IR protocol | Status | Targets | Protocol-specific extension |\n|---|---|---|---|\n",
+    );
+    for protocol in &catalog.protocols {
+        let targets = match protocol.targets {
+            capabilities::protocols::ProtocolTargets::AllBuiltIn => "every built-in target".into(),
+            capabilities::protocols::ProtocolTargets::Only([]) => "none (refused, TG0706)".into(),
+            capabilities::protocols::ProtocolTargets::Only(ids) => ids
+                .iter()
+                .map(|id| format!("`{id}`"))
+                .collect::<Vec<_>>()
+                .join(", "),
+        };
+        let _ = writeln!(
+            out,
+            "| `{}` | {} | {} | {} |",
+            protocol.id,
+            snake(&protocol.status),
+            targets,
+            protocol.extension
+        );
+    }
+    let code = |ids: &[&str]| {
+        ids.iter()
+            .map(|id| format!("`{id}`"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let _ = write!(
+        out,
+        "\n| `init` selection | Targets |\n|---|---|\n\
+         | Default (`--targets` omitted) | {} |\n\
+         | Wizard default | {} |\n\
+         | Local setup (`--local-example`, wizard) | {}, and `{}` (Rust SDK and CLI) |\n",
+        code(catalog.init.default_targets),
+        code(catalog.init.wizard_default_targets),
+        code(catalog.init.local_setup_targets),
+        catalog.init.cli_alias,
+    );
+    for companion in catalog.init.companions {
+        let _ = writeln!(
+            out,
+            "| Selecting `{}` adds | `{}` |",
+            companion.target, companion.requires
         );
     }
     out.push_str(

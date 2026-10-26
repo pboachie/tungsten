@@ -304,13 +304,13 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
     ),
     e(
         "TG0142",
-        "A Path Item lists OpenAPI 3.2 `additionalOperations`, operations under methods outside the fixed set. tungsten would leave them out of the client.",
-        "Describe the calls with the standard methods, or remove them.",
+        "An OpenAPI 3.2 `additionalOperations` entry cannot be sent: `additionalOperations` is not a map, or its key is not an RFC 9110 method token, is a case variant of a method the Path Item has a fixed field for (`get` to `query`), or is `CONNECT` or `TRACK`. Other entries compile to operations sent with their method token as written.",
+        "Use the method token the server expects, or describe the call under the matching fixed field such as `post`.",
     ),
     e(
         "TG0143",
-        "A parameter uses `in: querystring`, the OpenAPI 3.2 location that treats the whole query string as one value described by `content`. tungsten models the query as named parameters.",
-        "Describe the query as separate `in: query` parameters.",
+        "An OpenAPI 3.2 `in: querystring` parameter (the whole query string as one value described by `content`) cannot be compiled. tungsten compiles one whose `content` is a single `application/x-www-form-urlencoded` media type with an object schema, sent as one `key=value` pair per property, when it is the operation's only query parameter. Other media types, a schema that is not an object, or `query` parameters beside it are refused, and the parameter is left out.",
+        "Describe the query string as one form-encoded object, or as separate `in: query` parameters.",
     ),
     e(
         "TG0144",
@@ -339,18 +339,18 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
     ),
     e(
         "TG0149",
-        "A discriminator uses OpenAPI 3.2 `defaultMapping`, the schema chosen when the discriminating value matches no mapping. A client without it would reject payloads the API accepts.",
-        "Remove `defaultMapping`, or model the fallback as an explicit union member.",
+        "Retired. Earlier releases refused the OpenAPI 3.2 discriminator `defaultMapping`. tungsten now decodes a value whose tag is missing or maps to no variant as the default variant (TypeScript, Python and Rust SDKs and the mock), and no longer reports this code. A `defaultMapping` that is not a variant of the union is reported as TG0306 and ignored.",
+        "Nothing to do; regenerate to pick up the default variant.",
     ),
     e(
         "TG0150",
-        "A security scheme declares `flows.deviceAuthorization`, the OpenAPI 3.2 device flow. tungsten does not implement the device flow.",
-        "Declare a supported flow, or obtain the token outside the client.",
+        "Retired. Earlier releases refused a security scheme with `flows.deviceAuthorization`, the OpenAPI 3.2 device flow. tungsten now keeps the flow and its `deviceAuthorizationUrl` in the IR, like the `password` and `implicit` flows: generated clients accept an access token obtained through it as the scheme's credential, but do not run the device flow themselves. This code is no longer reported.",
+        "Nothing to do; configure the scheme with an access token obtained through the device flow.",
     ),
     e(
         "TG0151",
-        "A security requirement names a scheme by URI reference rather than by a component name. tungsten resolves security requirements against `components.securitySchemes` only.",
-        "Declare the scheme under `components.securitySchemes` and name it there.",
+        "An OpenAPI 3.2 security requirement names a scheme by URI reference, and the URI does not resolve to an entry under `components.securitySchemes` of an input document. tungsten resolves a URI such as `#/components/securitySchemes/apiKey` (or one into another input document) to that scheme, but not a scheme in a file that is not an input, nor a URI to anything else.",
+        "Reference a scheme under `components.securitySchemes` of an input document, or name it by its component name.",
     ),
     e(
         "TG0152",
@@ -814,6 +814,18 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
          written.",
         "Remove the symlink from the output directory. If the path is under `.tungsten/`, \
          the emitter is at fault: report it.",
+    ),
+    e(
+        "TG0706",
+        "The compiled IR binds a namespace to a protocol other than HTTP (its `protocol` \
+         field), and a configured target does not declare that protocol in the capability \
+         catalog. Operations of another protocol are never reshaped into REST methods and \
+         paths, so the target is refused before anything is written for it. External \
+         emitters cannot declare protocols in this version and are refused too. Other \
+         targets are still processed, unless `--strict` asks for all or none.",
+        "Remove the target from tungsten.yml, or select a target that declares the protocol: \
+         `tungsten capabilities --json` lists each protocol's targets under `protocols`. A \
+         reserved protocol has no generating target yet.",
     ),
     e(
         "TG0705",

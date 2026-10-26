@@ -88,11 +88,110 @@ fn import_policy_targets() -> String {
         .filter(|target| target.imported_operation_policy)
         .map(|target| target.id)
         .collect();
+    either(&ids)
+}
+
+/// The refusal of target `name` for IR bound to protocols it does not
+/// declare, one per protocol (TG0706).
+pub(crate) fn protocol_refusals(name: &str, ir: &Ir) -> Vec<Diagnostic> {
+    use tungsten_config::capabilities::{TARGETS, protocols};
+    protocols::unsupported(name, &ir.protocols())
+        .into_iter()
+        .map(|protocol| {
+            let known = protocols::protocol(protocol).is_some();
+            let supporting = protocols::supporting_targets(protocol, TARGETS);
+            let alternative = if supporting.is_empty() {
+                format!("no built-in target generates `{protocol}` in this version")
+            } else {
+                format!("generate it with {}", either(&supporting))
+            };
+            Diagnostic::error(
+                "TG0706",
+                if known {
+                    format!("target `{name}` does not declare the `{protocol}` protocol")
+                } else {
+                    format!("target `{name}`: IR protocol `{protocol}` is not registered")
+                },
+            )
+            .with_help(format!(
+                "{alternative}; `tungsten capabilities --json` lists the protocols each target \
+                 declares. REST fields are never reused for another protocol. \
+                 `tungsten explain TG0706` has the details"
+            ))
+        })
+        .collect()
+}
+
+/// `a, b or c` from a list of names.
+fn either(ids: &[&str]) -> String {
     match ids.split_last() {
         Some((last, rest)) if !rest.is_empty() => format!("{} or {last}", rest.join(", ")),
         Some((last, _)) => (*last).to_string(),
         None => String::new(),
     }
+}
+
+/// The outputs `init` accepts, from the capability catalog: every built-in
+/// emitter target and the `cli` output, as `a, b or c`.
+pub(crate) fn init_choices() -> String {
+    let init = &tungsten_config::capabilities::INIT;
+    let mut ids: Vec<&str> = tungsten_config::capabilities::TARGETS
+        .iter()
+        .filter(|target| emitter(target.id).is_some())
+        .map(|target| target.id)
+        .collect();
+    ids.push(init.cli_alias);
+    either(&ids)
+}
+
+/// The wizard's output list, from the capability catalog: local-setup
+/// targets first (with the `cli` output after `rust`), then source-only ones.
+pub(crate) fn wizard_output_lines() -> Vec<String> {
+    use tungsten_config::capabilities::{INIT, TARGETS, TargetCapability};
+    let line = |target: &TargetCapability| {
+        let mut notes: Vec<String> = target
+            .prerequisites
+            .iter()
+            .map(|requirement| requirement.tool.to_string())
+            .collect();
+        notes.extend(
+            INIT.companions
+                .iter()
+                .filter(|companion| companion.target == target.id)
+                .map(|companion| format!("adds {}", companion.requires)),
+        );
+        if !INIT.local_setup(target.id) {
+            notes.push("source generation only, no local setup".into());
+        }
+        if !target.imported_operation_policy {
+            notes.push("declared OpenAPI only; refuses imported operations (TG0705)".into());
+        }
+        let mut text = format!("{} - {}", target.id, target.summary);
+        if !notes.is_empty() {
+            text.push_str(&format!(" ({})", notes.join("; ")));
+        }
+        text
+    };
+    let mut lines = Vec::new();
+    let targets = INIT
+        .local_setup_targets
+        .iter()
+        .filter_map(|id| TARGETS.iter().find(|target| target.id == *id))
+        .chain(
+            TARGETS
+                .iter()
+                .filter(|target| !INIT.local_setup(target.id) && emitter(target.id).is_some()),
+        );
+    for target in targets {
+        lines.push(line(target));
+        if target.id == "rust" {
+            lines.push(format!(
+                "{} - command-line client (Rust SDK and CLI; cargo)",
+                INIT.cli_alias
+            ));
+        }
+    }
+    lines
 }
 
 /// A protocol-1 external emitter must explicitly declare policy enforcement

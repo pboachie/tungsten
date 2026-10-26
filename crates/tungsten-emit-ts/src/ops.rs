@@ -9,10 +9,10 @@ use tungsten_core::{Diagnostic, Diagnostics};
 use tungsten_emit::args::{BodyArg, args_layout};
 use tungsten_emit::{CommentStyle, Imports, Writer};
 use tungsten_ir::{
-    ApiKeyIn, AuthScheme, BodyContent, BodyEncoding, CompositePart, HttpMethod, IdempotencyKind,
-    Ir, Jitter, OperationAgentMeta, OperationStatus, PaginationStyle, Param, ParamRole, ParamStyle,
-    Presence, PreviewMode, Remediation, ResponseKind, RetryPolicy, Retryable, Safety, Shape,
-    StatusMatch, TypeRef,
+    ApiKeyIn, AuthScheme, BodyContent, BodyEncoding, CompositePart, IdempotencyKind, Ir, Jitter,
+    OperationAgentMeta, OperationStatus, PaginationStyle, Param, ParamRole, ParamStyle, Presence,
+    PreviewMode, Remediation, ResponseKind, RetryPolicy, Retryable, Safety, Shape, StatusMatch,
+    TypeRef,
 };
 
 use crate::models::{
@@ -364,20 +364,6 @@ fn items_ref<'p>(plan: &'p Plan<'_>, body: &'p TypeRef, items_field: &str) -> Op
     tungsten_emit::args::page_items_ref(plan.ir, body, items_field)
 }
 
-pub(crate) fn method_str(m: HttpMethod) -> &'static str {
-    match m {
-        HttpMethod::Get => "GET",
-        HttpMethod::Put => "PUT",
-        HttpMethod::Post => "POST",
-        HttpMethod::Delete => "DELETE",
-        HttpMethod::Options => "OPTIONS",
-        HttpMethod::Head => "HEAD",
-        HttpMethod::Patch => "PATCH",
-        HttpMethod::Trace => "TRACE",
-        HttpMethod::Query => "QUERY",
-    }
-}
-
 pub(crate) fn safety_str(s: Safety) -> &'static str {
     match s {
         Safety::ReadOnly => "read_only",
@@ -727,7 +713,7 @@ pub(crate) fn write_args_type(w: &mut Writer, info: &OpInfo<'_>, shape: &OpShape
         &format!(
             "Arguments of `{}` ({} {}).",
             info.op.id.0,
-            method_str(info.op.method),
+            info.op.wire_method(),
             info.op.path.raw
         ),
     );
@@ -870,7 +856,7 @@ fn descriptor_js(plan: &Plan<'_>, info: &OpInfo<'_>, shape: &OpShape<'_>) -> Js 
     request.push_str(&format!(" satisfies z.ZodType<{}>,\n)", info.args_type));
     let mut entries = vec![
         ("id", Js::str(&op.id.0)),
-        ("method", Js::str(method_str(op.method))),
+        ("method", Js::str(op.wire_method())),
         ("path", Js::str(&op.path.raw)),
         ("params", params),
         ("body", body),
@@ -1190,7 +1176,7 @@ pub(crate) fn descriptors_file(
         body.doc(
             CommentStyle::JsDoc,
             &paragraphs([
-                format!("`{} {}`", method_str(info.op.method), info.op.path.raw),
+                format!("`{} {}`", info.op.wire_method(), info.op.path.raw),
                 summary,
             ]),
         );

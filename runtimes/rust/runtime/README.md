@@ -120,6 +120,10 @@ each supported platform, including Windows and WSL.
 
 ## Limits
 
+The OAuth 2.0 device authorization flow (OpenAPI 3.2 `deviceAuthorization`) is
+not run by the client: configure the scheme with an access token obtained
+through it.
+
 In unreleased 0.2.0, `deadline` (on `ClientOptions` or `CallOptions`) sets a total
 deadline for one logical call, separate from the per-attempt `timeout`. It is
 measured on a monotonic clock and covers authentication, idempotency-key
@@ -130,11 +134,12 @@ cannot restart it. No attempt starts after it expires: the call fails with
 `code` `DEADLINE_EXCEEDED`, and a mutation that was already sent reports
 `OUTCOME_UNKNOWN`, never a blind replay. A retry wait that would end after the
 deadline returns the last failure at once. For `stream()` it bounds connecting
-and each reconnect, never an open stream (use `idle_timeout`). Under a deadline, an
-OAuth token request runs as its own task: the call stops waiting for it at the
-deadline, while the request is not cancelled, so a shared refresh still serves
-its other callers within its own `timeout`. A blocking idempotency-store worker is no longer waited for at
-the deadline but runs to completion. Default: no total deadline.
+and each reconnect, never an open stream (use `idle_timeout`). An OAuth token
+request runs as its own task: the call stops waiting for it at the deadline or
+when its future is dropped, but the request is not cancelled, so a shared
+refresh still serves its other callers within its own `timeout`. A blocking
+idempotency-store worker is no longer waited for at the deadline but runs to
+completion. Default: no total deadline.
 
 In unreleased 0.2.0, schema `minLength` and `maxLength` count Unicode code points, as
 JSON Schema does: an emoji outside the Basic Multilingual Plane is one character, and a

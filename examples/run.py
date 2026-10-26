@@ -50,9 +50,9 @@ run binds its own port and mock state, so runs never share responses or counts.
 The runner validates all four files, runs each correct integration, and
 requires each broken variant to fail. The lost-write broken variant matches
 every call count; only `expect.effects` (`applied` 2, `replayed` 0) rejects it.
-`scenario run` is currently Linux-only, and this recipe fails explicitly on
-other platforms after validation. Assertions describe the mock's observations
-and its own processing, not a real provider's behavior.
+`scenario run` works on Linux, macOS and Windows; on any other platform this
+recipe fails explicitly after validation. Assertions describe the mock's
+observations and its own processing, not a real provider's behavior.
 """,
     "input-postman": """
 ## Problem: a collection is not yet a client contract
@@ -578,8 +578,8 @@ def scenario_run(binary: str, work: Path, name: str, broken: bool) -> dict:
 def scenarios(binary: str, work: Path) -> None:
     for name in SCENARIOS:
         tungsten(binary, work, "scenario", "validate", "openapi.json", "--scenario", f"scenarios/{name}.json")
-    if not sys.platform.startswith("linux"):
-        raise RuntimeError("scenario files validated, but scenario run is currently available on Linux only")
+    if not sys.platform.startswith(("linux", "darwin", "win32")):
+        raise RuntimeError("scenario files validated, but scenario run is available on Linux, macOS and Windows only")
     for name in SCENARIOS:
         run = scenario_run(binary, work, name, broken=False)
         assert run["passed"] and run["reason"] == "completed", (name, run)

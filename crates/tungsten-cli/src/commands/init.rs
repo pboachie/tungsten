@@ -85,9 +85,12 @@ pub(crate) fn run(args: &InitArgs) -> Report {
 
     let manifest_path = input::join(dir, "tungsten.yml");
     let agent_path = input::join(dir, "agent.yml");
+    let preset_profile = super::init_preset::writes_profile(args)
+        .then(|| input::join(dir, super::init_preset::LIBRARY_PROFILE));
     let entry = |p: &PathBuf| std::fs::symlink_metadata(p).ok();
     let existing: Vec<&PathBuf> = [&manifest_path, &agent_path]
         .into_iter()
+        .chain(preset_profile.as_ref())
         .filter(|p| entry(p).is_some())
         .collect();
     if !args.force && !existing.is_empty() {
@@ -119,7 +122,8 @@ pub(crate) fn run(args: &InitArgs) -> Report {
             .with_help("remove the symlink or other entry, then run init again"),
         );
     }
-    if let Err(err) = std::fs::create_dir_all(dir) {
+    let profile_dir = preset_profile.as_ref().and_then(|p| p.parent());
+    if let Err(err) = std::fs::create_dir_all(profile_dir.unwrap_or(dir)) {
         return report.failed(
             exit::INTERNAL,
             CliError::new(
@@ -153,7 +157,11 @@ pub(crate) fn run(args: &InitArgs) -> Report {
         );
     };
     // Selected profiles compose before anything is written, with the compiler's limits.
-    let checked = super::init_advanced::check_profiles(&mut parsed, dir);
+    let preset_text = super::init_preset::library_profile();
+    let pending = preset_profile
+        .as_deref()
+        .map(|path| (path, preset_text.as_str()));
+    let checked = super::init_advanced::check_profiles(&mut parsed, dir, pending);
     if checked.has_errors() {
         report.diagnostics = checked.0;
         return report.failed(
@@ -179,6 +187,9 @@ pub(crate) fn run(args: &InitArgs) -> Report {
     let mut contents = vec![(&manifest_path, &manifest), (&agent_path, &agent)];
     if let Some(text) = &profile_text {
         contents.push((&profile_path, text));
+    }
+    if let Some(path) = &preset_profile {
+        contents.push((path, &preset_text));
     }
     for (path, text) in contents {
         let action = if args.force && path != &profile_path && entry(path).is_some() {
@@ -436,12 +447,21 @@ fn tungsten_yml(
             let _ = writeln!(out, "    source_sha256: {}", yaml_scalar(hash));
         }
     }
-    if !args.profile.is_empty() {
+    let preset_profile = super::init_preset::writes_profile(args);
+    if preset_profile || !args.profile.is_empty() {
         out.push_str(
             "\n# Shared local defaults, applied in order before this file's targets;\n\
              # explicit target settings below win. `tungsten config` explains each value.\n\
              profiles:\n",
         );
+        if preset_profile {
+            let _ = writeln!(
+                out,
+                "  - path: {}\n    root: {}",
+                super::init_preset::LIBRARY_PROFILE,
+                super::init_preset::LIBRARY_PROFILE_ROOT
+            );
+        }
         for profile in &args.profile {
             let _ = writeln!(
                 out,
@@ -463,14 +483,18 @@ fn tungsten_yml(
          # (an MCP server) and webmcp (a browser adapter on the TypeScript SDK).\n\
          targets:\n",
     );
+    let init = &tungsten_config::capabilities::INIT;
     let mut targets: Vec<&str> = if selected.is_empty() {
-        vec!["typescript", "python", "docs"]
+        init.default_targets.to_vec()
     } else {
         selected.iter().map(String::as_str).collect()
     };
-    if (targets.contains(&"webmcp") || targets.contains(&"mcp")) && !targets.contains(&"typescript")
+    for (index, companion) in init
+        .required_companions(&targets, &[])
+        .into_iter()
+        .enumerate()
     {
-        targets.insert(0, "typescript");
+        targets.insert(index, companion);
     }
     let has_cli = targets.contains(&"cli");
     let has_typescript = targets.contains(&"typescript");

@@ -1,0 +1,12 @@
+# Reviewed defaults for agent integrations, shared by every project that
+# selects this file. Projects override any field in their own tungsten.yml.
+tungsten_profile: 1
+transport:
+  # References only: the runtime reads these; tungsten never does.
+  proxy: { env: CORP_HTTPS_PROXY }
+  no_proxy: { env: CORP_NO_PROXY }
+  ca_bundle: { env: CORP_CA_BUNDLE }
+  credential_provider: environment
+targets:
+  typescript:
+    version: 0.4.0

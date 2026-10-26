@@ -5,6 +5,13 @@
 //! executed to build this catalog.
 
 use schemars::JsonSchema;
+
+use crate::option_fields;
+
+pub mod init;
+pub mod protocols;
+pub use init::{CompanionTarget, INIT, InitCapability};
+pub use protocols::{PROTOCOLS, ProtocolDefinition};
 use serde::Serialize;
 
 /// Component-owned schema declaration. An absent declaration is unknown,
@@ -14,6 +21,9 @@ pub enum TargetOptionSchema {
     TypeScript,
     Python,
     Rust,
+    /// Field declarations mirroring the emitter's options module; see
+    /// [`crate::option_fields`]. Configuration inspection does not cover them.
+    Declared(&'static crate::option_fields::DeclaredOptions),
 }
 
 impl TargetOptionSchema {
@@ -22,6 +32,7 @@ impl TargetOptionSchema {
             Self::TypeScript => crate::target_options::typescript_json_schema(),
             Self::Python => crate::target_options::python_json_schema(),
             Self::Rust => crate::target_options::rust_json_schema(),
+            Self::Declared(options) => options.json_schema(),
         }
     }
 }
@@ -386,7 +397,8 @@ macro_rules! targets {
 targets! {
     {
         id: "csharp", aliases: &["cs"], source: BuiltInEmitter, family: Some("dotnet"),
-        policy: true, tools: DOTNET, summary: "C# SDK",
+        policy: true, tools: DOTNET,
+        schema: Some(TargetOptionSchema::Declared(&option_fields::CSHARP)), summary: "C# SDK",
         options: &["package_id", "namespace", "version", "runtime", "runtime_path", "out"],
         environments: [Dotnet], features: SDK,
     },
@@ -395,18 +407,21 @@ targets! {
         tools: &[ToolRequirement {
             tool: "dart", minimum: Some([3, 6]), maximum_exclusive: Some([4, 0]), minimum_option: None, excluded_versions: &[],
         }],
+        schema: Some(TargetOptionSchema::Declared(&option_fields::DART)),
         summary: "Dart SDK (sealed unions, Future methods returning Result, Stream pages)",
         options: &["package", "version", "runtime", "runtime_path", "out"],
         environments: [DartIo], features: SDK,
     },
     {
         id: "docs", aliases: &[], source: BuiltInEmitter, family: None, policy: true, tools: &[],
+        schema: Some(TargetOptionSchema::Declared(&option_fields::DOCS)),
         summary: "llms.txt, llms-full.txt, tools.json and README", options: &["out"],
         environments: [Static], features: &["llms_txt"],
     },
     {
         id: "fsharp", aliases: &["fs"], source: BuiltInEmitter, family: Some("dotnet"),
         policy: true, tools: DOTNET,
+        schema: Some(TargetOptionSchema::Declared(&option_fields::FSHARP)),
         summary: "F# SDK (records, discriminated unions, Task of Result)",
         options: &["package_id", "namespace", "version", "runtime", "runtime_path", "csharp_runtime_path", "out"],
         environments: [Dotnet], features: SDK,
@@ -414,6 +429,7 @@ targets! {
     {
         id: "java", aliases: &[], source: BuiltInEmitter, family: Some("jvm"), policy: true,
         tools: &[ToolRequirement::new("java", Some([17, 0])), ToolRequirement::new("mvn", None)],
+        schema: Some(TargetOptionSchema::Declared(&option_fields::JAVA)),
         summary: "Java SDK",
         options: &["group_id", "artifact_id", "package", "version", "runtime", "runtime_path", "out"],
         environments: [Jvm], features: SDK,
@@ -421,6 +437,7 @@ targets! {
     {
         id: "kotlin", aliases: &["kt"], source: BuiltInEmitter, family: Some("jvm"), policy: true,
         tools: &[ToolRequirement::new("java", Some([17, 0])), ToolRequirement::new("gradle", None)],
+        schema: Some(TargetOptionSchema::Declared(&option_fields::KOTLIN)),
         summary: "Kotlin/JVM SDK (blocking functions returning Result; opt-in coroutines)",
         options: &[
             "group", "artifact", "package", "version", "runtime", "runtime_path",
@@ -431,6 +448,7 @@ targets! {
     {
         id: "mcp", aliases: &[], source: BuiltInEmitter, family: Some("typescript"), policy: true,
         tools: MCP,
+        schema: Some(TargetOptionSchema::Declared(&option_fields::MCP)),
         summary: "MCP server over stdio or Streamable HTTP, discrete or progressive",
         options: &[
             "package", "version", "sdk", "sdk_path", "runtime", "runtime_path", "sdk_runtime",
@@ -459,6 +477,7 @@ targets! {
     {
         id: "ruby", aliases: &["rb"], source: BuiltInEmitter, family: Some("ruby"), policy: true,
         tools: &[ToolRequirement::new("ruby", Some([3, 3])), ToolRequirement::new("bundle", None)],
+        schema: Some(TargetOptionSchema::Declared(&option_fields::RUBY)),
         summary: "Ruby SDK",
         options: &["gem", "module", "version", "runtime", "runtime_path", "out"],
         environments: [Ruby], features: SDK,
@@ -482,6 +501,7 @@ targets! {
     {
         id: "webmcp", aliases: &[], source: BuiltInEmitter, family: Some("typescript"), policy: true,
         tools: JS,
+        schema: Some(TargetOptionSchema::Declared(&option_fields::WEBMCP)),
         summary: "Browser ESM package with tool manifest and registration helper",
         options: &[
             "package", "version", "runtime", "runtime_path", "sdk", "sdk_path", "sdk_runtime",
@@ -511,6 +531,10 @@ pub struct CapabilityCatalog {
     /// native OpenAPI lines.
     pub input_formats: Vec<InputFormatCapability>,
     pub execution_policy: ExecutionPolicyCapability,
+    /// Target selection by `tungsten init` and the wizard.
+    pub init: InitCapability,
+    /// Registered IR protocols and the targets generating each.
+    pub protocols: Vec<ProtocolDefinition>,
 }
 
 /// How an input format enters a project.
@@ -745,6 +769,16 @@ pub const OPENAPI_32_SUPPORTED: &[SupportedInputFeature] = &[
         behavior: "an operation sent with the HTTP QUERY method and its request body; safe, so read-only by default",
     },
     SupportedInputFeature {
+        id: "querystring_parameter",
+        member: "in: querystring",
+        behavior: "an object argument sent as the whole query string, one form-encoded key=value pair per property. Other media types, a non-object schema or other query parameters beside it are refused with TG0143",
+    },
+    SupportedInputFeature {
+        id: "additional_operations",
+        member: "additionalOperations",
+        behavior: "each entry is an operation sent with its method token exactly as written; unsafe and not idempotent by default. Tokens that cannot be sent (not an RFC 9110 token, a fixed method, CONNECT or TRACK) are refused with TG0142",
+    },
+    SupportedInputFeature {
         id: "reusable_media_types",
         member: "components.mediaTypes, $ref media type",
         behavior: "a media type object given by $ref is read as if written in place",
@@ -759,6 +793,21 @@ pub const OPENAPI_32_SUPPORTED: &[SupportedInputFeature] = &[
         member: "itemSchema (text/event-stream response, JSON `data`)",
         behavior: "the event type of a server-sent event stream: the `contentSchema` of the event's `data`",
     },
+    SupportedInputFeature {
+        id: "discriminator_default_mapping",
+        member: "discriminator.defaultMapping",
+        behavior: "a tagged union decodes a missing or unmapped tag as the default variant",
+    },
+    SupportedInputFeature {
+        id: "security_scheme_by_uri",
+        member: "security requirement naming a URI",
+        behavior: "the scheme under components.securitySchemes of an input document the URI references; any other URI is TG0151",
+    },
+    SupportedInputFeature {
+        id: "oauth2_device_authorization",
+        member: "flows.deviceAuthorization",
+        behavior: "an OAuth2 flow kept with its deviceAuthorizationUrl; SDKs accept an access token obtained through it and do not run the device flow",
+    },
 ];
 
 /// OpenAPI 3.2 constructs without a 3.1 equivalent that are diagnosed. A 3.2
@@ -766,18 +815,6 @@ pub const OPENAPI_32_SUPPORTED: &[SupportedInputFeature] = &[
 /// constructs above.
 pub const OPENAPI_32_FEATURES: &[UnsupportedInputFeature] = &[
     feature("document_self", "$self", "TG0140", Rejected),
-    feature(
-        "additional_operations",
-        "additionalOperations",
-        "TG0142",
-        Rejected,
-    ),
-    feature(
-        "querystring_parameter",
-        "in: querystring",
-        "TG0143",
-        Rejected,
-    ),
     feature("cookie_style", "style: cookie", "TG0144", Rejected),
     feature("item_schema", "itemSchema (other uses)", "TG0145", Rejected),
     feature(
@@ -790,24 +827,6 @@ pub const OPENAPI_32_FEATURES: &[UnsupportedInputFeature] = &[
         "nested_encoding",
         "encoding, prefixEncoding, itemEncoding (Encoding Object)",
         "TG0147",
-        Rejected,
-    ),
-    feature(
-        "discriminator_default_mapping",
-        "discriminator.defaultMapping",
-        "TG0149",
-        Rejected,
-    ),
-    feature(
-        "oauth2_device_authorization",
-        "flows.deviceAuthorization",
-        "TG0150",
-        Rejected,
-    ),
-    feature(
-        "security_scheme_by_uri",
-        "security requirement naming a URI",
-        "TG0151",
         Rejected,
     ),
     feature(
@@ -861,6 +880,8 @@ pub const OPENAPI_INPUTS: &[OpenApiVersionCapability] = &[
 pub fn validate() -> Vec<String> {
     let mut errors = validate_parts(TARGETS, FEATURES, OPENAPI_INPUTS);
     errors.extend(validate_inputs(INPUT_FORMATS, OPENAPI_INPUTS));
+    errors.extend(INIT.validate(TARGETS));
+    errors.extend(protocols::validate(PROTOCOLS, TARGETS));
     errors
 }
 
@@ -971,6 +992,16 @@ pub fn validate_parts(
                     errors.push(format!(
                         "target `{id}`: option schema property `{property}` is not a declared option key"
                     ));
+                }
+            }
+            // Field declarations are complete: every key but `out` is typed.
+            if let Some(TargetOptionSchema::Declared(options)) = target.options_schema {
+                for key in target.option_keys {
+                    if *key != "out" && !options.fields.iter().any(|field| field.key == *key) {
+                        errors.push(format!(
+                            "target `{id}`: option key `{key}` has no declared field"
+                        ));
+                    }
                 }
             }
         }

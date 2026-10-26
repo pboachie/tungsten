@@ -153,6 +153,29 @@ ir_struct! {
         /// decode their error bodies.
         #[serde(default)]
         pub errors: ErrorModel,
+        /// The wire protocol of this document's operations; absent means
+        /// HTTP. Targets that do not declare the protocol refuse the IR.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub protocol: Option<ProtocolBinding>,
+    }
+}
+
+ir_struct! {
+    /// A non-HTTP protocol binding. Operations keep the common contract
+    /// (names, parameters, bodies, responses, errors and agent metadata);
+    /// what that contract cannot express (GraphQL selections, RPC streaming
+    /// modes, broker acknowledgment) goes in `extension`, never in REST
+    /// fields such as `method` or `path`.
+    pub struct ProtocolBinding {
+        /// A protocol id registered in the capability catalog.
+        pub protocol: String,
+        /// The protocol version the document describes.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub version: Option<String>,
+        /// Protocol-specific contract, shaped by the frontend that owns the
+        /// protocol and versioned with it.
+        #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
+        pub extension: serde_json::Value,
     }
 }
 
@@ -203,9 +226,30 @@ pub enum HttpMethod {
     Trace,
     /// OpenAPI 3.2 `query`: a safe, idempotent request that carries a body.
     Query,
+    /// An OpenAPI 3.2 `additionalOperations` method. The token sent on the
+    /// wire is `Operation::custom_method`; nothing is assumed about its
+    /// semantics, so it is treated as unsafe and not idempotent.
+    Custom,
 }
 
 impl HttpMethod {
+    /// The standard method name; `Custom` has no name of its own (see
+    /// `Operation::wire_method`).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            HttpMethod::Get => "GET",
+            HttpMethod::Put => "PUT",
+            HttpMethod::Post => "POST",
+            HttpMethod::Delete => "DELETE",
+            HttpMethod::Options => "OPTIONS",
+            HttpMethod::Head => "HEAD",
+            HttpMethod::Patch => "PATCH",
+            HttpMethod::Trace => "TRACE",
+            HttpMethod::Query => "QUERY",
+            HttpMethod::Custom => "CUSTOM",
+        }
+    }
+
     pub fn is_safe(self) -> bool {
         matches!(
             self,
@@ -227,6 +271,10 @@ ir_struct! {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub operation_id: Option<String>,
         pub method: HttpMethod,
+        /// The method token sent on the wire, exactly as written, when
+        /// `method` is `Custom`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub custom_method: Option<String>,
         pub path: PathTemplate,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub doc: Option<Doc>,
@@ -260,6 +308,16 @@ ir_struct! {
         #[serde(default)]
         pub agent: OperationAgentMeta,
         pub source: SourceRef,
+    }
+}
+
+impl Operation {
+    /// The method token sent on the wire (`GET`, or a custom token).
+    pub fn wire_method(&self) -> &str {
+        match (self.method, &self.custom_method) {
+            (HttpMethod::Custom, Some(token)) => token,
+            (method, _) => method.as_str(),
+        }
     }
 }
 
@@ -591,7 +649,8 @@ impl AuthScheme {
 
 ir_struct! {
     pub struct OAuthFlow {
-        /// `clientCredentials`, `authorizationCode`, `password`, `implicit`.
+        /// `clientCredentials`, `authorizationCode`, `password`, `implicit`,
+        /// or (OpenAPI 3.2) `deviceAuthorization`.
         pub kind: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub token_url: Option<String>,
@@ -601,6 +660,11 @@ ir_struct! {
         pub refresh_url: Option<String>,
         #[serde(default)]
         pub scopes: BTreeMap<String, String>,
+        /// The device authorization endpoint of a `deviceAuthorization`
+        /// flow (RFC 8628). Generated clients do not run the device flow;
+        /// they accept an access token obtained through it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub device_authorization_url: Option<String>,
     }
 }
 
@@ -745,6 +809,18 @@ ir_struct! {
 }
 
 impl Ir {
+    /// The protocol ids the namespaces bind, sorted and deduplicated; empty
+    /// when every namespace is implicitly HTTP.
+    pub fn protocols(&self) -> Vec<&str> {
+        let ids: std::collections::BTreeSet<&str> = self
+            .namespaces
+            .iter()
+            .filter_map(|namespace| namespace.protocol.as_ref())
+            .map(|binding| binding.protocol.as_str())
+            .collect();
+        ids.into_iter().collect()
+    }
+
     /// All callable operations in deterministic order (namespace, then
     /// depth-first resource order).
     pub fn operations(&self) -> Vec<&Operation> {

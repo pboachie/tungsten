@@ -23,11 +23,13 @@
 pub mod capabilities;
 pub mod execution_policy;
 pub mod inspection;
+pub mod option_fields;
 pub mod pointer;
 pub mod profiles;
 mod source;
 mod strict;
 pub mod target_options;
+pub mod transport;
 mod validate;
 mod yaml;
 
@@ -84,6 +86,11 @@ pub struct TungstenConfig {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[schemars(length(max = 64))]
     pub profiles: Vec<profiles::ProfileSelection>,
+    /// Proxy, private CA, mTLS and account references; names only, never the
+    /// material. Explicit fields here win over profile defaults.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Option<transport::TransportReferences>")]
+    pub transport: Option<serde_json::Value>,
     #[serde(default)]
     pub output: Option<serde_json::Value>,
     /// Path of the agent manifest, relative to this file. When absent,
@@ -420,6 +427,7 @@ impl TungstenConfig {
             types: TypesConfig::default(),
             targets: IndexMap::new(),
             profiles: vec![],
+            transport: None,
             output: None,
             agent: None,
             locked: false,

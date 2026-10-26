@@ -230,6 +230,25 @@ changes.
 
 ### Added
 
+- Add the `examples/restricted-agent` customization example: an MCP server
+  that reads freely, confirms writes and hides deletion, with transport
+  references and SDK defaults from a shared profile and a check that verifies
+  sources and the generated tool manifest offline.
+- Declare proxy, `NO_PROXY`, private CA, mTLS and account/provider references
+  under `transport` in profiles and `tungsten.yml`. Values are references
+  (`{env: NAME}`, `{file: path}`, `{store: store:item}`) or non-secret names;
+  inline material and settings that would disable certificate verification are
+  refused. `tungsten config` explains each reference's source; tungsten never
+  reads what they point to.
+- `scenario run` now works on macOS and Windows as well as Linux. macOS owns
+  the integration through a process group and non-reaping `waitid`, Windows
+  through a Job Object; the binary cancels on Ctrl-C/SIGTERM on both.
+- Add `tungsten init --preset app|library|agent`, also accepted at the guided
+  setup's outputs prompt. `library` writes and selects a local profile
+  (`profiles/library.yml`) with shared SDK versions; `agent` configures an MCP
+  server and generates with `--strict`. Explicit `--targets` and `--strict`
+  win; presets never select inputs or change agent safety defaults.
+
 - The `fsharp` target now enforces imported-operation policy through the
   .NET runtime it wraps and may be generated for projects converted from
   Postman, cURL, `.http` or HAR input. Generated F# SDKs require a .NET runtime
@@ -288,10 +307,6 @@ changes.
   The bulk-sync example is now a gallery recipe (`python3 examples/run.py
   --only bulk-sync`) that runs it in TypeScript, Python and Rust.
 
-- Under a total operation deadline, the Rust runtime now stops waiting for an
-  OAuth token request or 401 refresh at the deadline without cancelling a
-  refresh other callers share, and reports `DEADLINE_EXCEEDED`.
-
 - Add an opt-in total operation deadline to the TypeScript (`deadlineMs`),
   Python (`deadline_ms`) and Rust (`deadline`) runtimes, on client and call
   options. Unlike the per-attempt timeout, it bounds one logical call across
@@ -308,6 +323,9 @@ changes.
 
 - Add the same total operation deadline to the Ruby runtime (`deadline_ms` on
   client and call options); generated Ruby SDKs document it.
+
+- Add the same total operation deadline to the Dart runtime (`deadline` on
+  `ClientOptions` and `CallOptions`); generated Dart SDKs document it.
 
 - Add a per-tool-call total deadline to the MCP adapter
   (`ServerOptions.toolDeadlineMs`, `<API>_MCP_DEADLINE_MS` in generated
@@ -330,6 +348,10 @@ changes.
   `Duration`). Blocking token or store work the calling thread performs is
   checked when it returns; a caller waiting on shared token work stops at its
   deadline without cancelling it.
+
+- Kotlin: add `deadline(kotlin.time.Duration)` extensions on the client and
+  call option builders, and describe the total deadline in the generated Java
+  and Kotlin SDK READMEs.
 
 - Add `tungsten lock`, a versioned single-project generation lock
   (`tungsten.lock.json`). It records the declared input closure (manifest,
@@ -370,6 +392,20 @@ changes.
   of the project a locked run as with `--locked`. The JSON results of both
   commands report `locked`.
 
+- Add `bundle export --include-consumer-cache DIR` (repeatable) to carry a
+  prepared, project-relative directory of consumer dependencies, such as
+  `npm pack` tarballs, `pip download` wheels or `cargo vendor` output, for
+  offline builds of generated consumers. Files are copied as supplied, with
+  role `consumer_cache`. The inventory's new `consumer_caches` records each
+  directory with its file count and size, provenance, the exporting platform
+  (`exported_on`) and a redistribution notice. Directories that overlap,
+  lie outside the project, sit in `.tungsten-inputs` or VCS metadata, or
+  overlap generated output are refused, as are links. Import accepts
+  `consumer_cache` entries only below a declared directory. Offline consumer
+  builds remain not guaranteed: tungsten does not check that a cache covers
+  every dependency, and native packages may install only on the exporting
+  platform.
+
 - Add `bundle export --include-input-cache` to carry the verified
   `.tungsten-inputs` pin records and pinned content of remote HTTP(S) and Git
   inputs, and of the reviewed sources of converted imports, so such projects
@@ -392,10 +428,47 @@ changes.
   and writes nothing when the limit is reached; library cancellation of an
   export is now honoured while collection runs.
 
+- Add the protocol design gate. An IR namespace may carry an optional
+  `protocol` binding (a registered protocol id, its version and a
+  protocol-specific `extension`); absent means HTTP, so existing IR is
+  unchanged. The capability catalog registers protocols under `protocols`
+  (`http` for every built-in target; `graphql`, `grpc` and
+  `async_messaging` reserved with no generating target) and the support
+  matrix lists them. Generation refuses a target, before writing it, for IR
+  bound to a protocol the target does not declare (TG0706), so new
+  frontends never reshape their operations into REST fields.
+
+- Derive `tungsten init` and wizard target selection from the capability
+  catalog, which now declares the default targets, the wizard defaults, the
+  targets local setup (`--local-example`) covers and companion targets
+  (`mcp` and `webmcp` add `typescript`); `tungsten capabilities` reports them
+  under `init` and the support matrix lists them. `init --targets` and
+  `--add-targets` refuse the reserved `mock` target before writing anything,
+  naming the accepted outputs. The wizard's output list comes from the
+  catalog and no longer says source-only targets refuse imported operations
+  when they enforce the policy.
+
+- Declare a typed `options_schema` for every built-in target in
+  `tungsten capabilities`: C#, F#, Dart, Java, Kotlin, Ruby, MCP, WebMCP and
+  docs now list each option's JSON type, fixed default, description and the
+  warning code an invalid value produces. The emitters read their fixed
+  defaults from the same declarations, the catalog check rejects an option
+  key without a declared field, and editor hover shows the descriptions.
+
 - On Linux, the `tungsten` binary turns SIGINT and SIGTERM during
   `support-bundle --output` into cooperative cancellation: the interrupted
   export removes its temporary file and exits with status 4 without
   publishing. A signal after publication does not change the outcome.
+
+- Add opt-in, explicitly labelled user-supplied material to support bundles:
+  `--attach-log <FILE>` and `--attach-config <FILE>` (at most four) add
+  `user.attachment[N]` entries holding the redacted last 8 KiB of each file,
+  with origin `user_supplied` and sensitivity `user_supplied_text`. Paths are
+  not recorded. Environment values, credential-like values, URLs, private keys,
+  home-path user names and long tokens are redacted, but redaction is not a
+  guarantee. Such bundles use `bundle_schema_version: 2`. Bundles without
+  attachments are unchanged version 1, and `support-bundle --inspect` reads
+  both versions.
 
 - Generate the README support matrix from the capability catalog.
   `tungsten capabilities --matrix --format markdown` prints the matrix
@@ -428,6 +501,20 @@ changes.
   profile. A diagnostic at a composed target option names the declaration that
   sets the effective value and the declarations it shadows. Locations come
   from the compiled text, so unsaved buffers are reflected.
+
+- Explain in the language server why an OpenAPI construct the capability
+  catalog declares as not compiled (for example OpenAPI 3.2 `$self`, `TG0140`)
+  has no fix. Editors that show disabled code actions get one per diagnostic
+  code, with the construct, its refused or ignored policy and the
+  `tungsten capabilities` and `tungsten explain` pointers.
+
+- Reuse the language server's last check while its inputs are unchanged. A
+  save, or a watched-file event such as output written by `tungsten generate`,
+  no longer recompiles the project when every source the check read has the
+  same content digest in the open buffers and on disk, and no optional file
+  it found missing has appeared. Checks with errors or remote documents are
+  never reused, and modification times are not consulted. On a 3,000-operation
+  spec, a save without changes dropped from about 3 s to about 1 ms.
 
 - Explain unavailable language-server overlay fixes: editors that show disabled
   code actions show why no fix is offered for a `TG0403`/`TG0401` diagnostic (a
@@ -520,6 +607,13 @@ changes.
   non-JSON event `data` or `schema` declared beside it, still report TG0145.
   `itemSchema` in OpenAPI 3.0 and 3.1 documents is still not read.
 
+- A reusable OpenAPI 3.2 media type (`components.mediaTypes`) with
+  `itemSchema` compiles where a response's `content` map refers to it as JSON
+  Lines or an event stream. Its `itemSchema` is checked at each use, with the
+  media type of the referring `content` entry, instead of being refused at the
+  component. A use the compiler does not support, such as a request body,
+  reports TG0145 at the `$ref`.
+
 - The OpenAPI 3.2 `query` path-item method compiles to an operation sent with
   the HTTP `QUERY` method and its request body in generated clients.
   The IR gains the `QUERY` HTTP method, which is safe (read-only by default; set
@@ -528,6 +622,26 @@ changes.
   operations. TG0141 is retired and no longer reported; `tungsten capabilities`
   lists `query` as a compiled 3.2 construct.
 
+- OpenAPI 3.2 `in: querystring` parameters compile when their `content` is one
+  `application/x-www-form-urlencoded` media type with an object schema: the
+  argument is an object sent as the whole query string, one form-encoded
+  `key=value` pair per property (the IR records it as an exploded `form` query
+  parameter, so runtimes need no change). TG0143 now reports only querystring
+  parameters that cannot be sent this way: another media type, a schema that
+  is not an object, or other query parameters beside it. `tungsten
+  capabilities` lists `in: querystring` as a compiled 3.2 construct.
+
+- OpenAPI 3.2 `additionalOperations` compile: each entry is an operation sent
+  with its method token exactly as written (for example `COPY` or `LINK`),
+  treated as unsafe and not idempotent. The IR gains the `CUSTOM` HTTP method
+  and the operation's `custom_method` wire token; the TypeScript, Python and
+  Rust runtimes accept a custom method token in descriptors (the Rust runtime's
+  `HttpMethod` gains `Custom(&'static str)`), and other runtimes already send
+  the method as given. TG0142 now reports only entries that cannot be sent: a
+  key that is not an RFC 9110 token, a case variant of a fixed path item
+  method, `CONNECT` or `TRACK`. `tungsten capabilities` lists
+  `additionalOperations` as a compiled 3.2 construct.
+
 - OpenAPI 3.2 reusable media types compile: a Media Type Object given by `$ref`
   (usually to `components.mediaTypes`) in a request body, response, parameter
   or header `content` map is read as if written in place, including its schema
@@ -535,11 +649,35 @@ changes.
   `tungsten capabilities` lists reusable media types as a compiled 3.2
   construct.
 
+- OpenAPI 3.2 discriminator `defaultMapping` compiles: the IR `Discriminator`
+  gains an optional `default_mapping` (additive), and TypeScript, Python and
+  Rust SDKs and the mock decode a value whose tag is absent, not a string or
+  mapped to no variant as that default variant instead of refusing it. Tool
+  JSON schemas list such a union with `anyOf` and leave the default variant's
+  tag open. A `defaultMapping` that is not a variant of the union is reported
+  as TG0306 and ignored. Other SDK targets still refuse an unmapped tag.
+  TG0149 is retired and no longer reported.
+
+- OpenAPI 3.2 security requirements that name a scheme by URI compile: a key
+  such as `#/components/securitySchemes/apiKey`, or a URI into another input
+  document's `components.securitySchemes`, selects that scheme. A component
+  name wins over a URI that reads the same. TG0151 now reports only a URI that
+  names no such scheme (for example a scheme in a file that is not an input),
+  and the build reports it instead of the frontend; `tungsten capabilities`
+  lists the construct as compiled.
+
+- The OpenAPI 3.2 OAuth 2.0 `deviceAuthorization` flow compiles. It is kept in
+  the IR like the `password` and `implicit` flows, and `OAuthFlow` gains an
+  optional `device_authorization_url` (additive). Generated clients accept an
+  access token obtained through the device flow as the scheme's credential;
+  they do not run the device flow (RFC 8628) themselves. TG0150 is retired and
+  no longer reported.
+
 - OpenAPI 3.2.x documents are read: a document that uses only constructs OpenAPI
   3.1 has takes the 3.1 path and compiles to the same IR as its 3.1 twin. Each
   construct only 3.2 has is diagnosed at its member instead of being ignored, one
   code per feature. These are errors, because a client built without them would
-  differ from the API: `$self` (TG0140), `additionalOperations` (TG0142), `in: querystring` (TG0143), `style: cookie`
+  differ from the API: `$self` (TG0140), `style: cookie`
   (TG0144), other `itemSchema` uses (TG0145), `prefixEncoding` and `itemEncoding` (TG0146),
   nested encodings (TG0147), `components.mediaTypes` and media types given by
   `$ref` (TG0148), discriminator `defaultMapping` (TG0149), the OAuth 2.0 device
@@ -702,6 +840,15 @@ changes.
 
 ### Changed
 
+- The `mock-scenarios` gallery recipe (429 then success, stream interruption,
+  malformed response and lost write) now runs on macOS and Windows as well as
+  Linux, matching `scenario run`.
+
+- The Python clean-consumer CI lane now also calls a second generated SDK sync and async,
+  covering bearer auth, cursor pagination, nullable and union models, a safe
+  retry, client-side validation, an operation deadline, async cancellation, an
+  unknown mutation outcome that is not replayed, and server-sent events.
+
 - Check the Python runtime archives on every CPython minor from 3.10 to 3.15
   (latest patches) in public CI, with macOS and Windows archive smoke, and add
   a clean-consumer check that installs the runtime wheel/sdist and freshly
@@ -732,6 +879,15 @@ changes.
   nontransactional across files and directories.
 
 ### Fixed
+
+- The Rust runtime runs an OAuth2 token fetch or refresh as its own task: a
+  caller whose `deadline` passes, or whose future is dropped, stops waiting
+  (with `DEADLINE_EXCEEDED` for an expired deadline) instead of cutting short
+  a fetch other callers share, which then failed them with `AUTH_FAILED` and
+  sent a second token request. The TypeScript runtime also stops waiting for
+  authentication, an OAuth rejection refresh or an idempotency key
+  reservation when the caller's `signal` aborts. Python already behaved this
+  way.
 
 - Record profile files in `tungsten.lock.json` by their manifest-relative
   path below the selected profile root, instead of the logical
