@@ -236,6 +236,11 @@ changes.
 
 ### Added
 
+- Add the `examples/telemetry` gallery recipe: TypeScript, Python and Rust
+  SDKs collect correlated operation, attempt and phase telemetry in memory for
+  a read, a retried read and a missing record, print the same summary and
+  check that no event holds a URL or payload.
+
 - Add streamed upload sources to the TypeScript, Python and Rust runtimes
   (`UploadSource`; Rust `ClientCore::call_upload` / `preview_upload`) for a
   whole binary request body. A source is one-shot (never sent again once
