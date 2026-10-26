@@ -230,6 +230,10 @@ changes.
 
 ### Added
 
+- Add the `examples/restricted-agent` customization example: an MCP server
+  that reads freely, confirms writes and hides deletion, with transport
+  references and SDK defaults from a shared profile and a check that verifies
+  sources and the generated tool manifest offline.
 - Declare proxy, `NO_PROXY`, private CA, mTLS and account/provider references
   under `transport` in profiles and `tungsten.yml`. Values are references
   (`{env: NAME}`, `{file: path}`, `{store: store:item}`) or non-secret names;

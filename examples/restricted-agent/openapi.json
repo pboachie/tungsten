@@ -1,0 +1,65 @@
+{
+  "openapi": "3.1.0",
+  "info": { "title": "Ticket Desk", "version": "1.0.0" },
+  "servers": [{ "url": "https://tickets.example.com" }],
+  "paths": {
+    "/tickets": {
+      "get": {
+        "operationId": "listTickets",
+        "summary": "List open tickets",
+        "responses": {
+          "200": {
+            "description": "Tickets",
+            "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Ticket" } } } }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createTicket",
+        "summary": "Open a ticket",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/NewTicket" } } }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Ticket" } } }
+          }
+        }
+      }
+    },
+    "/tickets/{id}": {
+      "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "get": {
+        "operationId": "getTicket",
+        "summary": "Get one ticket",
+        "responses": {
+          "200": {
+            "description": "Ticket",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Ticket" } } }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteTicket",
+        "summary": "Delete a ticket permanently",
+        "responses": { "204": { "description": "Deleted" } }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "NewTicket": {
+        "type": "object",
+        "required": ["title"],
+        "properties": { "title": { "type": "string" }, "body": { "type": "string" } }
+      },
+      "Ticket": {
+        "type": "object",
+        "required": ["id", "title"],
+        "properties": { "id": { "type": "string" }, "title": { "type": "string" }, "body": { "type": "string" } }
+      }
+    }
+  }
+}
