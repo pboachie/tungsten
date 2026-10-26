@@ -18,6 +18,15 @@ pub fn args_digest(args: &Value) -> String {
     sha256_hex(canonical_json(args).as_bytes())
 }
 
+/// [`args_digest`] of the arguments of `operation`; an upload source of the
+/// call is bound by its declared length and SHA-256.
+pub(crate) fn digest_for(operation: &str, args: &Value) -> String {
+    match crate::upload::digest_text(operation, args) {
+        Some(text) => sha256_hex(text.as_bytes()),
+        None => args_digest(args),
+    }
+}
+
 /// The text a token's signature covers.
 pub fn token_payload(operation: &str, digest: &str, expiry: u64) -> String {
     format!("{operation}\n{digest}\n{expiry}")
@@ -34,7 +43,7 @@ pub fn issue_token(key: &[u8], operation: &str, args: &Value, now: u64) -> Strin
     let expiry = now.saturating_add(CONFIRMATION_TTL_MS);
     format!(
         "{PREFIX}.{expiry}.{}",
-        signature(key, operation, &args_digest(args), expiry)
+        signature(key, operation, &digest_for(operation, args), expiry)
     )
 }
 
@@ -68,7 +77,7 @@ pub fn check_token(key: &[u8], token: &str, operation: &str, args: &Value, now: 
     let Some((expiry, given)) = token_expiry(token) else {
         return TokenCheck::Malformed;
     };
-    let expected = signature(key, operation, &args_digest(args), expiry);
+    let expected = signature(key, operation, &digest_for(operation, args), expiry);
     if !timing_safe_equal(&expected, given) {
         TokenCheck::Mismatch
     } else if expiry > now {

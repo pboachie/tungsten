@@ -14,6 +14,7 @@ from urllib.parse import quote
 import httpx
 
 from ._json import FilePart, canonical_json, iso_datetime, js_number, json_text, parse_json
+from ._upload import UploadSource
 from ._util import REDACTED, binary_size, is_array, is_binary, is_record, usv, utf8
 from .sentinels import UNSET
 from .types import BodyDescriptor, OperationDescriptor, ParamDescriptor
@@ -198,9 +199,30 @@ class EncodedBody:
     raw: object
     #: Bytes or text whose SHA-256 is the ``content_hash`` key.
     hash_material: str | bytes | None
+    #: A streamed body: ``body`` is then None and each attempt reads the source.
+    upload: UploadSource | None = None
 
 
 NO_BODY = EncodedBody(None, None, None, None, None)
+
+
+def _upload_path(value: object, path: str, depth: int = 0) -> str | None:
+    """The path of an ``UploadSource`` inside ``value``, or None."""
+    if isinstance(value, UploadSource):
+        return path
+    if depth > 64:
+        return None
+    if is_record(value):
+        for k, v in value.items():
+            found = _upload_path(v, f"{path}.{k}", depth + 1)
+            if found is not None:
+                return found
+    elif is_array(value):
+        for i, v in enumerate(value):
+            found = _upload_path(v, f"{path}[{i}]", depth + 1)
+            if found is not None:
+                return found
+    return None
 
 
 def body_value(op: OperationDescriptor, args: Mapping[str, object], param_names: Collection[str]) -> object:
@@ -284,6 +306,15 @@ def encode_body(
     encoding = descriptor["encoding"] if descriptor is not None else "json"
     media_type = descriptor["media_type"] if descriptor is not None else "application/json"
     parameter = "body"
+    nested = (
+        None if encoding == "bytes" and isinstance(value, UploadSource) else _upload_path(value, parameter)
+    )
+    if nested is not None:
+        raise SerializationError(
+            nested,
+            "bytes or a binary file: an UploadSource can only be the whole body of a binary request",
+            "<upload>",
+        )
     if encoding == "json":
         try:
             text = json_text(value)
@@ -338,6 +369,10 @@ def encode_body(
             canonical_json(value),
         )
     if encoding == "bytes":
+        if isinstance(value, UploadSource):
+            size = "unknown length" if value.length is None else f"{value.length} bytes"
+            summary = f"<upload of {size}{f' of {media_type}' if media_type else ''}>"
+            return EncodedBody(None, media_type, summary, summary, None, value)
         if is_binary(value):
             material = value.content if isinstance(value, FilePart) else bytes(value)
         elif isinstance(value, str):

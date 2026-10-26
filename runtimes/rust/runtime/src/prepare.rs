@@ -27,12 +27,12 @@ use crate::serialize::{
     valid_header_name, valid_header_value,
 };
 use crate::types::{
-    BodyShape, Category, Confirm, Error, HttpMethod, IdempotencyKind, OperationDescriptor,
-    ParamDescriptor, ParamLocation, ParamRole, PathSegment, PreviewMode, ResponseKind, Retryable,
-    Safety, Validation,
+    BodyEncoding, BodyShape, Category, Confirm, Error, HttpMethod, IdempotencyKind,
+    OperationDescriptor, ParamDescriptor, ParamLocation, ParamRole, PathSegment, PreviewMode,
+    ResponseKind, Retryable, Safety, Validation,
 };
 use crate::util::{
-    MAX_ARG_DEPTH, REDACTED, SecretSet, canonical_json, envelope_value, get_path, integral_numbers,
+    MAX_ARG_DEPTH, REDACTED, SecretSet, envelope_value, get_path, integral_numbers,
     looks_sensitive, nests_deeper_than, redact_paths, redact_sensitive_keys, sha256_hex,
     split_path, uuid_v4,
 };
@@ -792,14 +792,82 @@ impl ClientCore {
                 ));
             }
         };
+        let mut encoded = encoded;
+        let upload = crate::upload::active_for(&op.id);
+        if let Some(active) = &upload {
+            let path = Self::key_path(&active.arg);
+            if op.body.as_ref().map(|b| b.encoding) != Some(BodyEncoding::Bytes) {
+                return Err(self.validation(
+                    op,
+                    &path,
+                    Some(&Value::String("<upload>".to_owned())),
+                    "bytes: an UploadSource can only be the whole body of a binary request",
+                    format!("Pass {} as bytes: an UploadSource can only be the whole body of a binary request.", active.arg),
+                ));
+            }
+            let source = &active.source;
+            let keyed = matches!(
+                op.agent.idempotency.policy,
+                IdempotencyKind::Auto
+                    | IdempotencyKind::ContentHash
+                    | IdempotencyKind::ContentIdentity
+            );
+            let confirmed = matches!(op.agent.safety, Safety::Destructive | Safety::Irreversible);
+            if source.sha256().is_none() && (keyed || confirmed) {
+                return Err(self.validation(
+                    op,
+                    &path,
+                    Some(&Value::String("<upload>".to_owned())),
+                    "an UploadSource with a declared sha256",
+                    format!(
+                        "Declare the SHA-256 of the upload (UploadSource sha256) so the {} of {} binds to its bytes. Nothing was sent.",
+                        if keyed { "idempotency key" } else { "confirmation" },
+                        op.id
+                    ),
+                ));
+            }
+            let media_type = encoded.content_type.clone().unwrap_or_default();
+            let shown = Value::String(format!(
+                "<upload of {}{}>",
+                source
+                    .length()
+                    .map_or_else(|| "unknown length".to_owned(), |n| format!("{n} bytes")),
+                if media_type.is_empty() {
+                    String::new()
+                } else {
+                    format!(" of {media_type}")
+                }
+            ));
+            encoded = EncodedBody {
+                payload: Payload::Upload(source.clone()),
+                content_type: encoded.content_type,
+                display: shown.clone(),
+                raw: shown,
+                hash_material: None,
+            };
+            if let Some(length) = source.length() {
+                headers.set("Content-Length", length.to_string(), false);
+            }
+        }
         if let Some(content_type) = &encoded.content_type {
             headers.set("Content-Type", content_type.clone(), false);
         }
 
         let header = key_header(op);
         crate::verify::check_poll_deadline(&op.id)?;
-        let reserve =
-            self.idempotency_key(op, &args, opts, purpose, encoded.hash_material.as_deref());
+        let declared = upload
+            .as_ref()
+            .filter(|_| op.agent.idempotency.policy == IdempotencyKind::ContentHash)
+            .map(|active| active.source.sha256().map(str::to_owned));
+        let reserve = async {
+            match declared {
+                Some(key) => Ok(key),
+                None => {
+                    self.idempotency_key(op, &args, opts, purpose, encoded.hash_material.as_deref())
+                        .await
+                }
+            }
+        };
         // A store worker is not cancelled at the deadline, only no longer waited for.
         let key = match crate::verify::call_deadline() {
             Some(deadline) => tokio::time::timeout_at(deadline.into(), reserve)
@@ -1275,7 +1343,7 @@ impl ClientCore {
                             .build(),
                     )
                 };
-                let logical = sha256_hex(canonical_json(&Value::Object(args.clone())).as_bytes());
+                let logical = crate::confirm::digest_for(&op.id, &Value::Object(args.clone()));
                 static CAPACITY: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
                 let permit = CAPACITY
                     .acquire()

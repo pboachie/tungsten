@@ -50,6 +50,10 @@ pub(crate) enum UpdateCommand {
     /// confirm (offline, opted out, network or metadata failure, or the
     /// release lacks this platform's archive).
     Check(UpdateCheckArgs),
+    /// Show, enable or disable the opt-in update notice. Writes only the
+    /// user settings file, and only with --enable, --disable or
+    /// --interval-hours; never makes a network request.
+    Notice(super::update_notice::UpdateNoticeArgs),
 }
 
 #[derive(Debug, Args)]
@@ -68,7 +72,10 @@ pub(crate) struct UpdateCheckArgs {
 }
 
 pub(crate) fn run(command: &UpdateCommand, offline: bool) -> Report {
-    let UpdateCommand::Check(args) = command;
+    let args = match command {
+        UpdateCommand::Check(args) => args,
+        UpdateCommand::Notice(args) => return super::update_notice::run(args),
+    };
     let ctx = Context {
         current: tungsten_build::TUNGSTEN_VERSION.to_string(),
         include_prerelease: args.include_prerelease,
