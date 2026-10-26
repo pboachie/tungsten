@@ -176,6 +176,9 @@ func (c *ClientCore) pollWith(ctx context.Context, op *OperationDescriptor, args
 				last.Value.TimedOut = true
 				return last, nil
 			}
+			if deadlineExpired(ctx) {
+				return nil, deadlineFailure(op.ID, "before the poll's predicate held")
+			}
 			return nil, newDiag(op.ID, TransportFailed).retry(RetryNever).
 				remedy("The poll was cancelled by the caller's context before its predicate held.").err()
 		case <-timer.C:
