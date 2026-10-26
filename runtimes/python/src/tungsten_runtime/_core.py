@@ -184,7 +184,7 @@ from .idempotency import MemoryIdempotencyStore
 from .scheduler import Permit, Rejection, RequestScheduler, SchedulerOptions
 from .schema import PatternNote, collect_pattern_notes
 from .sentinels import UNSET
-from .telemetry import Telemetry, TelemetryQueueReason, TelemetrySpan, now_ms
+from .telemetry import Telemetry, TelemetryEntry, TelemetryQueueReason, TelemetrySpan, now_ms
 from .types import (
     CheckpointPage,
     ClientOptions,
@@ -384,6 +384,17 @@ def _span_of(opts: Mapping[str, object]) -> TelemetrySpan | None:
     return span if isinstance(span, TelemetrySpan) else None
 
 
+def _end_span(span: TelemetrySpan, result: object, call: bool) -> None:
+    """End ``span`` with a public result (none: the iteration ended without
+    an item). Only a ``call`` reports its final HTTP status."""
+    if isinstance(result, Ok):
+        span.end(None, False, cast(Ok[object], result).meta.status if call else None)
+    elif isinstance(result, Err):
+        span.end(result.error, False, result.error["http_status"] if call else None)
+    else:
+        span.end(None, False, None)
+
+
 def _queue_reason(refused: Mapping[str, object] | None) -> TelemetryQueueReason:
     """The ``reason`` of a ``queue`` telemetry phase: why admission ended."""
     if refused is None:
@@ -548,29 +559,44 @@ class Engine:
     # ------------------------------------------------------------ public
 
     def call(self, op: OperationDescriptor, args: object, opts: object) -> Flow[Ok[Any] | Err]:
-        resolved = self._call_options(opts)
-        span = self._start_span(op)
-        if span is not None:
-            resolved[_TELEMETRY_SPAN] = span
-        try:
-            answer = yield from _within_deadline(
+        answer = yield from self._traced(
+            op,
+            "call",
+            opts,
+            lambda resolved: _within_deadline(
                 self._call(op, args, resolved, None, None),
                 _deadline_of(resolved),
                 lambda sent: Answer(self._deadline_expired(op, sent)),
-            )
+            ),
+            lambda answer: answer.result,
+        )
+        return answer.result
+
+    def _traced(
+        self,
+        op: object,
+        entry: TelemetryEntry,
+        opts: object,
+        run: Callable[[dict[str, object]], Flow[T]],
+        result_of: Callable[[T], object],
+    ) -> Flow[T]:
+        """Run one public entry point as a telemetry operation (when telemetry
+        is on); ``run`` gets the resolved call options carrying the span."""
+        resolved = self._call_options(opts)
+        span = self._start_span(op, entry)
+        if span is not None:
+            resolved[_TELEMETRY_SPAN] = span
+        try:
+            value = yield from run(resolved)
         except BaseException:
             if span is not None:
                 span.end({}, True, None)
             raise
         if span is not None:
-            result = answer.result
-            if isinstance(result, Ok):
-                span.end(None, False, result.meta.status)
-            else:
-                span.end(result.error, False, result.error["http_status"])
-        return answer.result
+            _end_span(span, result_of(value), entry == "call")
+        return value
 
-    def _start_span(self, op: object) -> TelemetrySpan | None:
+    def _start_span(self, op: object, entry: TelemetryEntry) -> TelemetrySpan | None:
         """Start the telemetry of one operation; None when telemetry is off."""
         if self._telemetry is None:
             return None
@@ -581,35 +607,47 @@ class Engine:
             return self._telemetry.start(
                 str_field(self.api, "name") or "",
                 str_field(op, "id") or "<unknown operation>",
-                "call",
+                entry,
                 mutation,
             )
         except Exception:
             return None
 
     def preview(self, op: OperationDescriptor, args: object, opts: object) -> Flow[Ok[PreviewResult] | Err]:
-        resolved = self._call_options(opts)
-        result = yield from _within_deadline(
-            self._preview(op, args, resolved),
-            _deadline_of(resolved),
-            lambda sent: self._deadline_expired(op, sent),
+        result = yield from self._traced(
+            op,
+            "preview",
+            opts,
+            lambda resolved: _within_deadline(
+                self._preview(op, args, resolved),
+                _deadline_of(resolved),
+                lambda sent: self._deadline_expired(op, sent),
+            ),
+            lambda result: result,
         )
         return result
 
     def pages(self, op: OperationDescriptor, args: object, opts: object) -> Flow[None]:
+        # The iteration's last item.
+        last: list[object] = []
+
         def deliver(page: PageAnswer) -> Flow[bool]:
+            last[:] = [page.result]
             yield from emit(page.result)
             return True
 
-        resolved = self._call_options(opts)
-        expired: list[Err] = []
-        yield from _within_deadline(
-            self._pages(op, args, resolved, None, deliver),
-            _deadline_of(resolved),
-            lambda sent: expired.append(self._deadline_expired(op, sent)),
-        )
-        if expired:
-            yield from emit(expired[0])
+        def run(resolved: dict[str, object]) -> Flow[None]:
+            expired: list[Err] = []
+            yield from _within_deadline(
+                self._pages(op, args, resolved, None, deliver),
+                _deadline_of(resolved),
+                lambda sent: expired.append(self._deadline_expired(op, sent)),
+            )
+            if expired:
+                last[:] = [expired[0]]
+                yield from emit(expired[0])
+
+        yield from self._traced(op, "pages", opts, run, lambda _: last[0] if last else None)
 
     def export_pages(
         self, op: OperationDescriptor, args: object, checkpoint: object, opts: object
@@ -649,11 +687,16 @@ class Engine:
         budget_ms: object,
         opts: object,
     ) -> Flow[Ok[Any] | Err]:
-        resolved = self._call_options(opts)
-        answer = yield from _within_deadline(
-            self._poll(op, args, until, interval_ms, budget_ms, resolved, None),
-            _deadline_of(resolved),
-            lambda sent: Answer(self._deadline_expired(op, sent)),
+        answer = yield from self._traced(
+            op,
+            "poll",
+            opts,
+            lambda resolved: _within_deadline(
+                self._poll(op, args, until, interval_ms, budget_ms, resolved, None),
+                _deadline_of(resolved),
+                lambda sent: Answer(self._deadline_expired(op, sent)),
+            ),
+            lambda answer: answer.result,
         )
         return answer.result
 
