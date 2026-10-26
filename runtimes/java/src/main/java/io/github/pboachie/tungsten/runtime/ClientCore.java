@@ -1374,9 +1374,14 @@ public final class ClientCore {
         Duration idle = stream ? idleTimeout : null;
         Long deadline = Deadline.current();
         int attempts = 0;
+        TungstenException previousMutation = null;
         while (true) {
             attempts++;
-            if (attempts == 1 && Deadline.expired()) {
+            // No attempt starts once the deadline has passed; a mutation already sent keeps its outcome.
+            if (Deadline.expired()) {
+                if (previousMutation != null) {
+                    throw previousMutation;
+                }
                 throw Deadline.failure(this, op.id(), "before the request could be sent");
             }
             Middleware.RequestContext rctx = context(p, attempts, p.method, p.displayUrl);
@@ -1418,6 +1423,10 @@ public final class ClientCore {
             }
             Diagnostic d = failure.diagnostic().scrubbed(p.secrets);
             TungstenException done = new TungstenException(d, failure.partial(), failure.hasPartial());
+            if (mutation && (previousMutation == null || previousMutation.diagnostic().category() != Category.OUTCOME_UNKNOWN
+                    || d.category() == Category.OUTCOME_UNKNOWN)) {
+                previousMutation = done;
+            }
             if (attempts > policy.max() || !retryableCategory(d.category())) {
                 throw done;
             }

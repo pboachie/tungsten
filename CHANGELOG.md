@@ -1359,6 +1359,11 @@ changes.
 
 ### Fixed
 
+- Java and C# no longer retry a keyed mutation once its deadline has passed.
+  An attempt cut by the deadline could end a fraction of a millisecond early
+  and send the request again after the deadline; it now reports the earlier
+  `OUTCOME_UNKNOWN` without resending, as TypeScript, Python and Rust do.
+
 - Webhook verification behaves the same in the TypeScript, Python and Rust
   runtimes:
   - A JSON payload with a `\u` escape that is a lone surrogate, or with a
