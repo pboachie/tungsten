@@ -1673,8 +1673,8 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
     ),
 ];
 
-// `explanation` binary-searches the table: an entry out of order would be
-// unreachable, so the build fails instead.
+// The table stays sorted by code for readers: an entry out of order or a
+// duplicate code fails the build.
 const _: () = assert!(
     strictly_sorted(EXPLANATIONS),
     "EXPLANATIONS must stay sorted by code"
