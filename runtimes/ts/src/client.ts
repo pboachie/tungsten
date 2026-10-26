@@ -724,12 +724,28 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     if (caller?.aborted === true) controller.abort();
     else caller?.addEventListener("abort", forward, { once: true });
     const items = async function* (core: ClientCore): AsyncGenerator<StreamItem<T>> {
+      const span = core.#startSpan(op, "stream");
+      // The stream's last item, and whether it ended (not cancelled or left early).
+      let last: StreamItem<T> | null = null;
+      let finished = false;
       try {
-        yield* core.#stream<T>(op, args, { ...callOptions, signal: controller.signal });
+        for await (const item of core.#stream<T>(op, args, { ...callOptions, signal: controller.signal, [TELEMETRY_SPAN]: span ?? undefined } as StepOptions)) {
+          last = item;
+          yield item;
+        }
+        finished = true;
       } catch (error) {
-        yield fail(core.#internal(op, error, "streaming"));
+        const failed = fail(core.#internal(op, error, "streaming"));
+        last = failed;
+        finished = true;
+        yield failed;
       } finally {
         caller?.removeEventListener("abort", forward);
+        if (span !== null) {
+          if (finished && last !== null && !last.ok) span.end(last.error, controller.signal.aborted, null);
+          else if (finished && !controller.signal.aborted) span.end(null, false, null);
+          else span.end({}, true, null);
+        }
       }
     };
     return new EventStream<T>(items(this), () => controller.abort(), safeId(op), !(isRecord(op) && isRecord(op.agent) && op.agent.safety === "read_only"));
