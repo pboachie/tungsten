@@ -196,7 +196,14 @@ applies only to error bodies of a download. A body shorter than its
 (`SINK_FAILED`) ends it with a failure; for a mutation the failure says the call
 took effect. The connection and its scheduler capacity are held until the body
 ends, fails or `close()` is called. A download is never retried once its answer
-arrived and never resumed. `Download.filename` is the `Content-Disposition`
+arrived and never resumed. `saveDownload(download, path, { overwrite })` from `@elysra/tungsten-runtime/node`
+writes a download to a file the caller chose: an exclusively created
+`<name>.<random>.part` file next to `path` replaces it only after the whole body
+arrived; on failure the partial file is removed and `path` is untouched. An existing
+`path` fails before any byte is read (`DESTINATION_EXISTS`) unless `overwrite` is
+set; it is checked again before the rename, but a file created in between can be
+replaced on platforms whose rename replaces. The parent directory must exist.
+`Download.filename` is the `Content-Disposition`
 name reduced to a base name without directory parts or control characters; it
 never chooses a destination.
 

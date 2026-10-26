@@ -64,6 +64,7 @@ enum Why {
     Truncated,
     Oversized,
     Sink,
+    Exists,
 }
 
 /// What a failure of the download says, fixed when it opened.
@@ -89,6 +90,7 @@ impl Context {
             Why::Deadline => Some("DEADLINE_EXCEEDED"),
             Why::Oversized => Some("RESPONSE_TOO_LARGE"),
             Why::Sink => Some("SINK_FAILED"),
+            Why::Exists => Some("DESTINATION_EXISTS"),
             _ => None,
         }
         .map(str::to_owned);
@@ -115,6 +117,9 @@ impl Context {
                 "The sink failed ({}) {after}; the download was abandoned.",
                 detail.unwrap_or("error")
             ),
+            Why::Exists => format!(
+                "The destination file exists and overwrite is off; nothing was written and the download was abandoned {after}."
+            ),
         };
         let diag = if self.mutation {
             Diag::new(self.op.clone(), Category::UnexpectedResponse)
@@ -128,6 +133,7 @@ impl Context {
             let category = match why {
                 Why::Idle | Why::Deadline => Category::UpstreamUnavailable,
                 Why::Oversized => Category::UnexpectedResponse,
+                Why::Exists => Category::ValidationFailed,
                 _ => Category::TransportFailed,
             };
             let again = match why {
@@ -135,11 +141,14 @@ impl Context {
                 Why::Idle => "call again later or with a larger `idle_timeout`",
                 Why::Deadline => "call again with a larger `deadline`",
                 Why::Oversized => "raise `max_bytes` if a body this large is expected",
+                Why::Exists => {
+                    "pass `overwrite: true` to replace the file, or choose another path, and call again"
+                }
                 _ => "call again",
             };
             let local = matches!(
                 why,
-                Why::Aborted | Why::Sink | Why::Oversized | Why::Deadline
+                Why::Aborted | Why::Sink | Why::Oversized | Why::Deadline | Why::Exists
             );
             Diag::new(self.op.clone(), category)
                 .retryable_opt(local.then_some(Retryable::Never))
@@ -282,6 +291,77 @@ impl Download {
                 }
             }
         }
+    }
+
+    /// Write the body to the file at `path`, chosen by the caller (never by
+    /// the server: [`Download::filename`] is only a suggestion). The bytes go
+    /// to a new temporary file next to it (`<name>.<random>.part`, created
+    /// exclusively), which replaces `path` only once the whole body arrived;
+    /// on any failure it is removed and `path` is left as it was. Without
+    /// `overwrite`, an existing destination fails with `code`
+    /// `DESTINATION_EXISTS` before any byte is read, and is checked again
+    /// before the rename. The parent directory must exist. Writes use
+    /// blocking file I/O. The download is closed when this returns.
+    pub async fn save_to(
+        mut self,
+        path: impl AsRef<std::path::Path>,
+        overwrite: bool,
+    ) -> Result<u64, Error> {
+        use std::io::Write;
+        let target =
+            std::path::absolute(path.as_ref()).unwrap_or_else(|_| path.as_ref().to_path_buf());
+        let exists = |p: &std::path::Path| std::fs::symlink_metadata(p).is_ok();
+        let kind = |error: &std::io::Error| format!("{:?}", error.kind());
+        if !overwrite && exists(&target) {
+            return Err(self.end(Why::Exists, None));
+        }
+        let suffix: String = crate::util::random_bytes::<4>()
+            .unwrap_or_default()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        let name = target
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let part = target.with_file_name(format!("{name}.{suffix}.part"));
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+        let mut file = match options.open(&part) {
+            Ok(file) => file,
+            Err(error) => return Err(self.end(Why::Sink, Some(&kind(&error)))),
+        };
+        let written = loop {
+            match self.read().await {
+                Err(error) => break Err(error),
+                Ok(None) => {
+                    break file
+                        .sync_all()
+                        .map(|()| self.received)
+                        .map_err(|e| self.end(Why::Sink, Some(&kind(&e))));
+                }
+                Ok(Some(chunk)) => {
+                    if let Err(error) = file.write_all(&chunk) {
+                        break Err(self.end(Why::Sink, Some(&kind(&error))));
+                    }
+                }
+            }
+        };
+        drop(file);
+        let result = written.and_then(|bytes| {
+            if !overwrite && exists(&target) {
+                return Err(self.end(Why::Exists, None));
+            }
+            std::fs::rename(&part, &target)
+                .map(|()| bytes)
+                .map_err(|error| self.end(Why::Sink, Some(&kind(&error))))
+        });
+        if result.is_err() {
+            let _ = std::fs::remove_file(&part);
+        }
+        result
     }
 
     /// Abandon the download and release the connection. Safe to call more

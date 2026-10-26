@@ -246,6 +246,14 @@ changes.
   listed as `multipart_part_encoding`. Per-part `headers`, and positional or
   nested multipart encoding (TG0146/TG0147), are not supported.
 
+- Save streamed downloads to a caller-chosen file: `saveDownload` in the
+  TypeScript runtime's `/node` entry point, `Download.save_to` /
+  `AsyncDownload.save_to` in Python and `Download::save_to` in Rust. Bytes go
+  to an exclusively created `<name>.<random>.part` file next to the
+  destination, which replaces it only after the whole body arrived; on any
+  failure the partial file is removed and the destination is untouched. An
+  existing destination is refused (`DESTINATION_EXISTS`) unless overwrite is
+  set. Server-suggested file names never choose the destination.
 - The runtime telemetry observer reports macro runs and previews in
   TypeScript, Python and Rust as one `macro` or `macro_preview` operation
   named after the macro, covering every step. Unreleased 0.2.0 only.

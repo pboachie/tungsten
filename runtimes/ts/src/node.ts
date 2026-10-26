@@ -12,9 +12,11 @@
  * @module
  */
 import { randomBytes } from "node:crypto";
-import { mkdir, open, readFile, rename, rm } from "node:fs/promises";
+import { lstat, mkdir, open, readFile, rename, rm } from "node:fs/promises";
 import { hostname } from "node:os";
-import { dirname, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
+
+import type { Download, DownloadResult } from "./download.js";
 
 import type { IdempotencyStore } from "./types.js";
 
@@ -253,4 +255,69 @@ export class FileIdempotencyStore implements IdempotencyStore {
     this.#queue = write;
     return write;
   }
+}
+
+/** Options of {@link saveDownload}. */
+export interface SaveOptions {
+  /** Replace an existing file at the destination. Default false: an
+   * existing file (or link) fails the save before any byte is read. */
+  overwrite?: boolean;
+}
+
+/**
+ * Write a download to the file at `path`, chosen by the caller (never by
+ * the server: `Download.filename` is only a suggestion). The bytes go to a
+ * new temporary file next to it (`<name>.<random>.part`, created
+ * exclusively), which replaces `path` only once the whole body arrived; on
+ * any failure the temporary file is removed and `path` is left as it was.
+ * Without `overwrite`, an existing destination fails with `code`
+ * `DESTINATION_EXISTS` before any byte is read, and is checked again
+ * before the rename (a file created in between is still kept, except on
+ * platforms whose rename replaces it: check before downloading when that
+ * matters). The parent directory must exist. The download is closed when
+ * this returns. Never throws.
+ */
+export async function saveDownload(download: Download, path: string, options?: SaveOptions): Promise<DownloadResult> {
+  const target = resolve(path);
+  const overwrite = options?.overwrite === true;
+  const exists = async (): Promise<boolean> => {
+    try {
+      await lstat(target);
+      return true;
+    } catch (error) {
+      return codeOf(error) !== "ENOENT";
+    }
+  };
+  if (!overwrite && (await exists())) return download.abandon("exists");
+  const part = join(dirname(target), `${basename(target)}.${randomBytes(4).toString("hex")}.part`);
+  let handle;
+  try {
+    handle = await open(part, "wx", 0o600);
+  } catch (error) {
+    return download.abandon("sink", errorName(error));
+  }
+  let result: DownloadResult;
+  try {
+    result = await download.writeTo(async (chunk) => {
+      await handle.write(chunk);
+    });
+    if (result.ok) await handle.sync();
+  } catch (error) {
+    result = download.abandon("sink", errorName(error));
+  } finally {
+    await handle.close().catch(() => undefined);
+  }
+  try {
+    if (result.ok && !overwrite && (await exists())) result = download.abandon("exists");
+    if (result.ok) await rename(part, target);
+  } catch (error) {
+    result = download.abandon("sink", errorName(error));
+  }
+  if (!result.ok) await rm(part, { force: true }).catch(() => undefined);
+  return result;
+}
+
+function errorName(error: unknown): string {
+  const code = codeOf(error);
+  return typeof code === "string" ? code : error instanceof Error ? error.name : "error";
 }

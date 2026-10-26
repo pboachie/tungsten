@@ -135,7 +135,11 @@ body shorter than its `Content-Length`, a lost connection, `close()` or a sink e
 (`SINK_FAILED`) ends it with an error; for a mutation the error says the call took
 effect. The connection and its scheduler capacity are held until the body ends, fails,
 is closed or the `Download` is dropped. A download is never retried once its answer
-arrived and never resumed. `Download::filename` is the `Content-Disposition` name
+arrived and never resumed. `Download::save_to(path, overwrite)` writes a download to
+a file the caller chose: an exclusively created `<name>.<random>.part` file next to
+`path` replaces it only after the whole body arrived (blocking file I/O); on failure
+the partial file is removed and `path` is untouched. An existing `path` fails before
+any byte is read (`DESTINATION_EXISTS`) unless `overwrite` is set. `Download::filename` is the `Content-Disposition` name
 reduced to a base name without directory parts or control characters; it never chooses a
 destination.
 
