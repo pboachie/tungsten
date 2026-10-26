@@ -282,6 +282,12 @@ changes.
   `module`, `python_version` and `models` keys. Declarations remain source
   statements: qualification and artifact availability stay `unknown`.
 
+- Support-bundle export with `--output` now works on macOS and other Unix
+  platforms with the same descriptor-anchored, no-clobber writer and trust
+  checks as Linux; Windows still refuses export before collection. Collection
+  for preview and export is limited to 30 seconds and writes nothing when the
+  limit is reached; library cancellation is now honoured during collection.
+
 - Add `tungsten support-bundle --inspect <FILE>` to review an existing support
   bundle locally on any platform. It reads one bounded regular file, refuses
   unsupported `bundle_schema_version` values by number, requires exactly the

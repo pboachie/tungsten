@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Bounded serialization and Linux-only, no-clobber support-bundle publication.
+//! Bounded serialization and Unix-only, no-clobber support-bundle publication.
 //!
 //! Directory descriptors anchor every operation. The final directory must be
 //! owned by the effective user and must not be writable by group or others;
@@ -45,7 +45,7 @@ pub(super) struct Publication {
 }
 
 pub(super) fn supported() -> bool {
-    cfg!(target_os = "linux")
+    cfg!(unix)
 }
 
 /// The exact manifest, with one trailing newline. Bound serialized bytes before
@@ -104,7 +104,7 @@ pub(super) fn publish(
     platform::publish(destination, bytes, cancelled)
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(unix))]
 mod platform {
     use super::*;
 
@@ -117,7 +117,7 @@ mod platform {
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 mod platform {
     use std::ffi::{OsStr, OsString};
     use std::fs::File;
@@ -250,7 +250,14 @@ mod platform {
                 self.name.as_os_str(),
                 AtFlags::AT_SYMLINK_NOFOLLOW,
             )
-            .is_ok_and(|metadata| metadata.st_dev == self.device && metadata.st_ino == self.inode)
+            .is_ok_and(|metadata| {
+                // `st_dev` and `st_ino` are narrower or signed on some Unix
+                // platforms; `MetadataExt` reports both as u64.
+                #[allow(clippy::unnecessary_cast)]
+                let same =
+                    metadata.st_dev as u64 == self.device && metadata.st_ino as u64 == self.inode;
+                same
+            })
         }
 
         fn cleanup(&mut self) -> bool {
