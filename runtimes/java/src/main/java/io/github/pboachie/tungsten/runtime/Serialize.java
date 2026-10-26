@@ -451,19 +451,28 @@ final class Serialize {
                         list.add(item);
                     }
                     List<Object> shown = new ArrayList<>();
+                    String declared = d.partContentTypes().get(k);
+                    boolean declaredJson = declared != null && Classify.isJsonMedia(
+                            declared.split(";", 2)[0].trim().toLowerCase(java.util.Locale.ROOT));
                     for (Object x : list) {
                         Binary bin = Binary.of(x);
                         if (bin != null) {
                             if (bin.contentType() != null && !Text.validMediaType(bin.contentType())) {
                                 throw new Problem("body", "multipart file content types that are valid media types", v);
                             }
-                            shown.add(binaryDisplay(bin.length(), bin.contentType()));
+                            String own = bin.contentType() != null ? bin.contentType() : declared;
+                            shown.add(binaryDisplay(bin.length(), own));
                             parts.add(new Part(k, "file", null, bin.data(),
                                     bin.filename() != null ? bin.filename() : k,
-                                    bin.contentType() != null ? bin.contentType() : "application/octet-stream"));
+                                    own != null ? own : "application/octet-stream"));
                         } else if (x instanceof JsonObject) {
-                            parts.add(new Part(k, "json", Json.write(x), null, null, null));
+                            parts.add(new Part(k, "json", Json.write(x), null, null,
+                                    declaredJson ? declared : "application/json"));
                             shown.add(x);
+                        } else if (declared != null) {
+                            parts.add(new Part(k, "typed", declaredJson ? Json.write(x) : scalar(x), null, null,
+                                    declared));
+                            shown.add(scalar(x));
                         } else {
                             parts.add(new Part(k, "text", scalar(x), null, null, null));
                             shown.add(scalar(x));
@@ -526,8 +535,9 @@ final class Serialize {
                     head.append("Content-Type: ").append(p.contentType()).append("\r\n");
                     break;
                 case "json":
+                case "typed":
                     head.append("Content-Disposition: form-data; name=\"").append(escapeQuotes(p.name())).append("\"\r\n");
-                    head.append("Content-Type: application/json\r\n");
+                    head.append("Content-Type: ").append(p.contentType()).append("\r\n");
                     break;
                 default:
                     head.append("Content-Disposition: form-data; name=\"").append(escapeQuotes(p.name())).append("\"\r\n");

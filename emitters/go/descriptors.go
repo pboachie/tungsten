@@ -382,6 +382,15 @@ func (g *gen) descriptorLit(p *opPlan) string {
 		} else {
 			parts = append(parts, "Arg: "+goString(body.arg))
 		}
+		var declared []string
+		for _, part := range body.content.Parts {
+			if part.ContentType != nil {
+				declared = append(declared, fmt.Sprintf("{Name: %s, ContentType: %s}", goString(part.Name), goString(*part.ContentType)))
+			}
+		}
+		if len(declared) > 0 {
+			parts = append(parts, "Parts: []tungsten.PartDescriptor{"+strings.Join(declared, ", ")+"}")
+		}
 		line("Body: &tungsten.BodyDescriptor{%s},", strings.Join(parts, ", "))
 	}
 	var responses []string

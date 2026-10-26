@@ -14,7 +14,7 @@ module Tungsten
       Encoded = Data.define(:empty, :bytes, :parts, :content_type, :display, :hashed)
       EMPTY = Encoded.new(empty: true, bytes: nil, parts: nil, content_type: nil, display: nil, hashed: nil)
 
-      # One multipart part: `kind` :text, :json or :file.
+      # One multipart part: `kind` :text, :json (a typed text part) or :file.
       Part = Data.define(:name, :kind, :text, :data, :filename, :content_type)
 
       module_function
@@ -240,7 +240,7 @@ module Tungsten
           text = pairs.map { |k, v| "#{encode_form_component(k)}=#{encode_form_component(v)}" }.join("&")
           Encoded.new(empty: false, bytes: text.b, parts: nil, content_type: media, display: redact.call(pairs.to_h),
                       hashed: text.b)
-        when "multipart" then multipart(value, redact)
+        when "multipart" then multipart(value, redact, desc.parts)
         when "bytes"
           bin = Json.binary_of(value)
           data =
@@ -270,7 +270,7 @@ module Tungsten
         end
       end
 
-      def multipart(value, redact)
+      def multipart(value, redact, declared_parts = {})
         unless value.is_a?(Hash)
           return SerializationError.new(parameter: "body", expected: "an object of multipart fields", value: value)
         end
@@ -282,10 +282,12 @@ module Tungsten
 
           list = item.is_a?(Array) ? item.reject(&:nil?) : [item]
           shown = []
+          declared = declared_parts[k.to_s]
+          declared_json = !declared.nil? && Classify.json_media?(declared.split(";", 2).first.to_s.strip.downcase)
           list.each do |x|
             bin = Json.binary_of(x)
             if !UNSET.equal?(bin)
-              content_type = bin.content_type || "application/octet-stream"
+              content_type = bin.content_type || declared || "application/octet-stream"
               unless valid_media_type?(content_type)
                 return SerializationError.new(parameter: "body", expected: "multipart file content types that are valid media types",
                                               value: value)
@@ -293,12 +295,17 @@ module Tungsten
 
               # Keep the checked header value stable until the body is sent.
               content_type = content_type.dup.freeze
-              shown << binary_display(bin.bytesize, bin.content_type)
+              shown << binary_display(bin.bytesize, bin.content_type || declared)
               parts << Part.new(name: k, kind: :file, text: nil, data: bin.data, filename: bin.filename || k,
                                 content_type: content_type)
             elsif x.is_a?(Hash)
-              parts << Part.new(name: k, kind: :json, text: Json.text(x), data: nil, filename: nil, content_type: nil)
+              parts << Part.new(name: k, kind: :json, text: Json.text(x), data: nil, filename: nil,
+                                content_type: declared_json ? declared : "application/json")
               shown << x
+            elsif declared
+              parts << Part.new(name: k, kind: :json, text: declared_json ? Json.text(x) : scalar(x), data: nil,
+                                filename: nil, content_type: declared)
+              shown << scalar(x)
             else
               parts << Part.new(name: k, kind: :text, text: scalar(x), data: nil, filename: nil, content_type: nil)
               shown << scalar(x)
@@ -323,7 +330,7 @@ module Tungsten
             out << "Content-Type: #{p.content_type}\r\n\r\n".b << p.data.b
           when :json
             out << %(Content-Disposition: form-data; name="#{quote.call(p.name)}"\r\n).b
-            out << "Content-Type: application/json\r\n\r\n".b << p.text.b
+            out << "Content-Type: #{p.content_type}\r\n\r\n".b << p.text.b
           else
             out << %(Content-Disposition: form-data; name="#{quote.call(p.name)}"\r\n\r\n).b << p.text.b
           end
