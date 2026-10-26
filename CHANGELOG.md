@@ -285,6 +285,8 @@ changes.
   Optional caps across every scope (`maxActiveTotal`/`max_active_total`,
   `maxStreamsTotal`/`max_streams_total`) bound requests in flight per
   scheduler; scopes waiting for them take turns so none is starved.
+  The bulk-sync example is now a gallery recipe (`python3 examples/run.py
+  --only bulk-sync`) that runs it in TypeScript, Python and Rust.
 
 - Under a total operation deadline, the Rust runtime now stops waiting for an
   OAuth token request or 401 refresh at the deadline without cancelling a
