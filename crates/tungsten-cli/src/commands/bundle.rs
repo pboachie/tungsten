@@ -4,8 +4,9 @@
 //! A bundle is a plain directory: the project's declared input closure at its
 //! manifest-relative paths, the current generation lock and an inventory
 //! (`tungsten-bundle.json`) naming every file with its size and digest. Export
-//! copies only the files the lock records, never credentials, input caches,
-//! generated output or unrelated files. Import validates the whole inventory
+//! copies only the files the lock records, never credentials, generated
+//! output or unrelated files; input pins and prepared consumer dependency
+//! caches are carried only on explicit request. Import validates the whole inventory
 //! (limits, path confinement, no links, digests, lock consistency) before it
 //! writes anything, never overwrites a differing file, and runs nothing.
 //! Bundled metadata grants no trust: external emitters and execution policy
@@ -53,6 +54,27 @@ pub struct BundleInventory {
     /// True when nothing is excluded and no target needs an external emitter.
     pub complete: bool,
     pub notice: String,
+    /// Prepared consumer dependency caches carried for offline consumer
+    /// builds (`--include-consumer-cache`), sorted by directory. Their files
+    /// are listed in `files` with role `consumer_cache`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub consumer_caches: Vec<ConsumerCache>,
+}
+
+/// One prepared consumer dependency cache directory in a bundle.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ConsumerCache {
+    /// Project-relative directory with `/` separators.
+    pub dir: String,
+    pub files: usize,
+    pub bytes: u64,
+    /// Where the content comes from. Tungsten neither produced nor vetted it.
+    pub provenance: String,
+    /// Operating system and architecture of the exporting machine
+    /// (`linux-x86_64`); native packages may install only on a matching one.
+    pub exported_on: String,
+    pub redistribution: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -177,13 +199,19 @@ pub(crate) fn export(args: &BundleExportArgs) -> Report {
             .with_help("review the project, run `tungsten lock` (or `tungsten lock --update`), then export again; a bundle carries only reviewed, locked identities"),
         );
     }
-    let inventory = match inventory(&base, &recipe, &lock_path, args.include_input_cache) {
+    let inventory = match inventory(
+        &base,
+        &recipe,
+        &lock_path,
+        args.include_input_cache,
+        &args.include_consumer_cache,
+    ) {
         Ok(inventory) => inventory,
         Err(message) => {
             return report.failed(
                 exit::FAILED,
                 CliError::new(ErrorKind::Io, message).with_help(
-                    "run `tungsten lock --check`; an input changed or is not a regular file",
+                    "run `tungsten lock --check`; an input changed or is not a regular file. A consumer cache must be a project directory of regular files outside generated output",
                 ),
             );
         }
@@ -235,6 +263,7 @@ fn inventory(
     recipe: &GenerationRecipe,
     lock_path: &Path,
     include_input_cache: bool,
+    consumer_cache_dirs: &[String],
 ) -> Result<BundleInventory, String> {
     let mut files = vec![];
     let mut excluded = vec![];
@@ -318,6 +347,53 @@ fn inventory(
             });
         }
     }
+    let mut dirs = BTreeSet::new();
+    for requested in consumer_cache_dirs {
+        dirs.insert(consumer_cache_dir(requested, recipe)?);
+    }
+    if let Some((outer, inner)) = nested_pair(&dirs) {
+        return Err(format!(
+            "consumer caches {outer} and {inner} overlap; pass only {outer}"
+        ));
+    }
+    let mut consumer_caches = vec![];
+    for dir in dirs {
+        let mut found = vec![];
+        collect_files(base, &dir, &mut found)?;
+        let (mut count, mut bytes_total) = (0, 0u64);
+        for path in found {
+            if files.iter().any(|f: &BundleFile| f.path == path) {
+                continue;
+            }
+            if files.len() >= MAX_FILES {
+                return Err("the bundle exceeds 10000 files".into());
+            }
+            let bytes = read_regular(&base.join(&path), base)
+                .map_err(|reason| format!("cannot export {path}: {reason}"))?;
+            total += bytes.len() as u64;
+            if total > MAX_TOTAL_BYTES {
+                return Err("the bundle exceeds 256 MiB".into());
+            }
+            count += 1;
+            bytes_total += bytes.len() as u64;
+            files.push(BundleFile {
+                sensitive: sensitive(&path),
+                path,
+                role: Some(FileRole::ConsumerCache),
+                bytes: bytes.len() as u64,
+                digest: Digest::of(&bytes).0,
+            });
+        }
+        consumer_caches.push(ConsumerCache {
+            dir,
+            files: count,
+            bytes: bytes_total,
+            provenance: "prepared by the exporter and copied as supplied; tungsten did not produce, resolve or vet these packages and does not check that they cover every dependency".into(),
+            exported_on: format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH),
+            redistribution: "third-party packages remain under their own licences; check that they allow redistribution before sharing the bundle".into(),
+        });
+    }
+    consumer_caches.sort_by(|a, b| a.dir.cmp(&b.dir));
     let lock_bytes = read_regular(lock_path, base)
         .map_err(|reason| format!("cannot export {}: {reason}", lock::LOCK_FILE))?;
     total += lock_bytes.len() as u64;
@@ -346,7 +422,98 @@ fn inventory(
         excluded,
         complete,
         notice: NOTICE.into(),
+        consumer_caches,
     })
+}
+
+/// Two directories of `dirs` where the second lies within the first.
+fn nested_pair(dirs: &BTreeSet<String>) -> Option<(&String, &String)> {
+    dirs.iter().find_map(|outer| {
+        dirs.iter()
+            .find(|inner| inner.starts_with(&format!("{outer}/")))
+            .map(|inner| (outer, inner))
+    })
+}
+
+/// Validate a requested consumer cache directory: project-relative, not the
+/// input cache, VCS metadata or a target's generated output.
+fn consumer_cache_dir(requested: &str, recipe: &GenerationRecipe) -> Result<String, String> {
+    let trimmed = requested
+        .replace('\\', "/")
+        .trim_start_matches("./")
+        .trim_end_matches('/')
+        .to_string();
+    let dir = safe_relative(&trimmed).ok_or_else(|| {
+        format!("consumer cache {requested:?} must be a directory inside the project, given relative to the manifest")
+    })?;
+    let first = dir.split('/').next().unwrap_or_default();
+    if matches!(first, ".tungsten-inputs" | ".git" | ".hg" | ".svn") {
+        return Err(format!(
+            "consumer cache {dir} lies in {first}, which is never carried as a consumer cache"
+        ));
+    }
+    let within =
+        |inner: &str, outer: &str| inner == outer || inner.starts_with(&format!("{outer}/"));
+    for target in &recipe.targets {
+        if let Some(out) = target.out.as_deref().and_then(safe_relative)
+            && (within(&dir, &out) || within(&out, &dir))
+        {
+            return Err(format!(
+                "consumer cache {dir} overlaps the generated output of target {}",
+                target.name
+            ));
+        }
+    }
+    Ok(dir)
+}
+
+/// Every regular file below `base/dir`, as sorted `/`-separated relative
+/// paths. Links and special files are refused, not followed or skipped.
+fn collect_files(base: &Path, dir: &str, found: &mut Vec<String>) -> Result<(), String> {
+    let mut pending = vec![dir.to_string()];
+    let mut seen = 0usize;
+    while let Some(current) = pending.pop() {
+        if current.split('/').count() > MAX_DEPTH {
+            return Err(format!("{current} is nested too deeply"));
+        }
+        let path = base.join(&current);
+        match std::fs::symlink_metadata(&path) {
+            Ok(meta) if meta.file_type().is_dir() => {}
+            Ok(_) => return Err(format!("consumer cache {current} is not a directory")),
+            Err(error) => return Err(format!("cannot read {current}: {error}")),
+        }
+        let entries =
+            std::fs::read_dir(&path).map_err(|error| format!("cannot read {current}: {error}"))?;
+        for entry in entries {
+            let entry = entry.map_err(|error| format!("cannot read {current}: {error}"))?;
+            seen += 1;
+            if seen > MAX_FILES {
+                return Err(format!("consumer cache {dir} has more than 10000 entries"));
+            }
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else {
+                return Err(format!("{current} contains a name that is not UTF-8"));
+            };
+            let child = format!("{current}/{name}");
+            let kind = entry
+                .file_type()
+                .map_err(|error| format!("cannot read {child}: {error}"))?;
+            if kind.is_dir() {
+                pending.push(child);
+            } else if kind.is_file() {
+                found.push(
+                    safe_relative(&child)
+                        .ok_or_else(|| format!("{child} is not a portable path"))?,
+                );
+            } else {
+                return Err(format!(
+                    "{child} is a symbolic link or special file; consumer caches carry regular files only"
+                ));
+            }
+        }
+    }
+    found.sort();
+    Ok(())
 }
 
 /// Copy into a fresh sibling staging directory, verify every digest again,
@@ -570,7 +737,33 @@ fn validate(bundle: &Path) -> Result<(BundleInventory, Vec<Vec<u8>>), String> {
             None => return Err(format!("locked input {} is missing", locked.path)),
         }
     }
+    let mut cache_dirs = BTreeSet::new();
+    for cache in &inventory.consumer_caches {
+        let dir = safe_relative(&cache.dir)
+            .filter(|dir| *dir == cache.dir)
+            .ok_or_else(|| format!("unsafe consumer cache directory {:?}", cache.dir))?;
+        let first = dir.split('/').next().unwrap_or_default();
+        if matches!(first, ".tungsten-inputs" | ".git" | ".hg" | ".svn") {
+            return Err(format!("consumer cache {dir} lies in {first}"));
+        }
+        if !cache_dirs.insert(dir) {
+            return Err(format!("duplicate consumer cache {}", cache.dir));
+        }
+    }
+    if let Some((outer, inner)) = nested_pair(&cache_dirs) {
+        return Err(format!("consumer caches {outer} and {inner} overlap"));
+    }
     for file in &inventory.files {
+        if file.role == Some(FileRole::ConsumerCache)
+            && !cache_dirs
+                .iter()
+                .any(|dir| file.path.starts_with(&format!("{dir}/")))
+        {
+            return Err(format!(
+                "consumer cache entry {} lies outside every declared consumer cache",
+                file.path
+            ));
+        }
         if file.role == Some(FileRole::InputCache) && !file.path.starts_with(".tungsten-inputs/") {
             return Err(format!(
                 "input cache entry {} lies outside .tungsten-inputs",
@@ -578,11 +771,10 @@ fn validate(bundle: &Path) -> Result<(BundleInventory, Vec<Vec<u8>>), String> {
             ));
         }
     }
-    for file in inventory
-        .files
-        .iter()
-        .filter(|f| f.role.is_some_and(|role| role != FileRole::InputCache))
-    {
+    for file in inventory.files.iter().filter(|f| {
+        f.role
+            .is_some_and(|role| !matches!(role, FileRole::InputCache | FileRole::ConsumerCache))
+    }) {
         if !recipe.files.iter().any(|l| l.path == file.path) {
             return Err(format!(
                 "{} is not part of the locked input closure",
@@ -761,6 +953,18 @@ fn export_human(inventory: &BundleInventory, bundle_dir: Option<&str>) -> String
         .any(|f| f.role == Some(FileRole::InputCache))
     {
         text.push_str("  includes pinned remote input documents from .tungsten-inputs; check that their terms allow redistribution\n");
+    }
+    for cache in &inventory.consumer_caches {
+        let _ = writeln!(
+            text,
+            "  consumer cache {}: {} files, {} bytes, exported on {}",
+            cache.dir, cache.files, cache.bytes, cache.exported_on
+        );
+        let _ = writeln!(text, "    provenance: {}", cache.provenance);
+        let _ = writeln!(text, "    redistribution: {}", cache.redistribution);
+    }
+    if !inventory.consumer_caches.is_empty() {
+        text.push_str("  offline consumer builds are not guaranteed: native packages may install only on the exporting platform, and missing dependencies still need the network\n");
     }
     let _ = writeln!(text, "{}", inventory.notice);
     text

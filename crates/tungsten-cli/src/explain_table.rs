@@ -304,8 +304,8 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
     ),
     e(
         "TG0142",
-        "A Path Item lists OpenAPI 3.2 `additionalOperations`, operations under methods outside the fixed set. tungsten would leave them out of the client.",
-        "Describe the calls with the standard methods, or remove them.",
+        "An OpenAPI 3.2 `additionalOperations` entry cannot be sent: `additionalOperations` is not a map, or its key is not an RFC 9110 method token, is a case variant of a method the Path Item has a fixed field for (`get` to `query`), or is `CONNECT` or `TRACK`. Other entries compile to operations sent with their method token as written.",
+        "Use the method token the server expects, or describe the call under the matching fixed field such as `post`.",
     ),
     e(
         "TG0143",
@@ -349,8 +349,8 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
     ),
     e(
         "TG0151",
-        "A security requirement names a scheme by URI reference rather than by a component name. tungsten resolves security requirements against `components.securitySchemes` only.",
-        "Declare the scheme under `components.securitySchemes` and name it there.",
+        "An OpenAPI 3.2 security requirement names a scheme by URI reference, and the URI does not resolve to an entry under `components.securitySchemes` of an input document. tungsten resolves a URI such as `#/components/securitySchemes/apiKey` (or one into another input document) to that scheme, but not a scheme in a file that is not an input, nor a URI to anything else.",
+        "Reference a scheme under `components.securitySchemes` of an input document, or name it by its component name.",
     ),
     e(
         "TG0152",

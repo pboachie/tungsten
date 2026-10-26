@@ -4,10 +4,11 @@
 //!
 //! Inspection reads one bounded regular file, starts no program, writes
 //! nothing and contacts no network. A bundle with an unknown
-//! `bundle_schema_version` is refused by number. Every object must have exactly
-//! the keys this schema version defines, every entry must be an observed,
-//! metadata-only entry, and recorded sizes and statuses must match the
-//! payloads. Error messages name only schema-defined locations; they never echo
+//! `bundle_schema_version` is refused by number; versions 1 and 2 are read.
+//! Every object must have exactly the keys its schema version defines. The six
+//! observed entries must be metadata only; version 2 may follow them with up to
+//! four `user.attachment[N]` entries labelled user supplied. Recorded sizes and
+//! statuses must match the payloads. Error messages name only schema-defined locations; they never echo
 //! file content, unknown keys or values.
 
 use std::fmt::Write as _;
@@ -19,8 +20,10 @@ use serde::Serialize;
 use serde_json::{Map, Value};
 
 use super::support_bundle::{
-    BUNDLE_SCHEMA_VERSION, BundleEntryStatus, ENTRY_IDS, MAX_ENTRY_BYTES, MAX_TOTAL_BYTES,
+    BUNDLE_SCHEMA_VERSION, BundleEntryOrigin, BundleEntryStatus, BundleSensitivity, ENTRY_IDS,
+    MAX_ENTRY_BYTES, MAX_TOTAL_BYTES, SUPPORTED_SCHEMA_VERSIONS,
 };
+use super::support_bundle_attach::{MAX_ATTACHMENT_TEXT_BYTES, MAX_ATTACHMENTS, entry_id};
 use super::support_bundle_file::MAX_ARTIFACT_BYTES;
 
 /// The `--inspect` result.
@@ -58,6 +61,9 @@ pub enum BundleInspectMode {
 #[schemars(deny_unknown_fields)]
 pub struct InspectedEntry {
     pub id: String,
+    /// `user_supplied` entries hold text the user attached (version 2).
+    pub origin: BundleEntryOrigin,
+    pub sensitivity: BundleSensitivity,
     pub status: BundleEntryStatus,
     pub bytes: usize,
     /// The payload as stored; null unless `included`.
@@ -91,10 +97,13 @@ pub(super) fn inspect(path: &Path) -> Result<SupportBundleInspection, InspectErr
             .ok_or_else(|| invalid("/bundle_schema_version", "is not a version number"))?,
         _ => return Err(invalid("/bundle_schema_version", "is missing")),
     };
-    if version != u64::from(BUNDLE_SCHEMA_VERSION) {
+    let Some(version) = SUPPORTED_SCHEMA_VERSIONS
+        .into_iter()
+        .find(|known| u64::from(*known) == version)
+    else {
         return Err(InspectError::UnsupportedVersion(version));
-    }
-    check_v1(&document)?;
+    };
+    check_document(&document, version)?;
     let mut entries = vec![];
     let mut total = 0usize;
     let mut producer_version = None;
@@ -102,9 +111,13 @@ pub(super) fn inspect(path: &Path) -> Result<SupportBundleInspection, InspectErr
     for (index, entry) in listed.enumerate() {
         let at = format!("/entries/{index}");
         let id = entry["id"].as_str().unwrap_or_default();
-        if ENTRY_IDS.get(index) != Some(&id) {
+        let expected = ENTRY_IDS
+            .get(index)
+            .map_or_else(|| entry_id(index - ENTRY_IDS.len()), |id| (*id).to_string());
+        if id != expected {
             return Err(invalid(&format!("{at}/id"), "is not the expected entry id"));
         }
+        let observed = index < ENTRY_IDS.len();
         let status = match entry["status"].as_str() {
             Some("included") => BundleEntryStatus::Included,
             Some("excluded_by_request") => BundleEntryStatus::ExcludedByRequest,
@@ -123,6 +136,12 @@ pub(super) fn inspect(path: &Path) -> Result<SupportBundleInspection, InspectErr
             (_, BundleEntryStatus::Included) => {
                 let payload = entry["payload"].clone();
                 check(&payload, &payload_shape(id), &format!("{at}/payload"))?;
+                if !observed && !matches!(payload["kind"].as_str(), Some("log" | "configuration")) {
+                    return Err(invalid(
+                        &format!("{at}/payload/kind"),
+                        "is not a known attachment kind",
+                    ));
+                }
                 let actual = serde_json::to_string(&payload).map_or(usize::MAX, |s| s.len());
                 if actual != bytes || bytes > MAX_ENTRY_BYTES {
                     return Err(invalid(
@@ -145,13 +164,27 @@ pub(super) fn inspect(path: &Path) -> Result<SupportBundleInspection, InspectErr
         };
         entries.push(InspectedEntry {
             id: id.to_string(),
+            origin: if observed {
+                BundleEntryOrigin::Observed
+            } else {
+                BundleEntryOrigin::UserSupplied
+            },
+            sensitivity: if observed {
+                BundleSensitivity::Metadata
+            } else {
+                BundleSensitivity::UserSuppliedText
+            },
             status,
             bytes,
             payload,
         });
     }
-    if entries.len() != ENTRY_IDS.len() {
+    if entries.len() < ENTRY_IDS.len() {
         return Err(invalid("/entries", "does not list every entry"));
+    }
+    let attachments = entries.len() - ENTRY_IDS.len();
+    if (version == BUNDLE_SCHEMA_VERSION && attachments > 0) || attachments > MAX_ATTACHMENTS {
+        return Err(invalid("/entries", "has too many entries"));
     }
     if as_usize(&document["total_bytes"]) != Some(total) || total > MAX_TOTAL_BYTES {
         return Err(invalid(
@@ -167,8 +200,8 @@ pub(super) fn inspect(path: &Path) -> Result<SupportBundleInspection, InspectErr
         .collect();
     Ok(SupportBundleInspection {
         mode: BundleInspectMode::Inspect,
-        bundle_schema_version: BUNDLE_SCHEMA_VERSION,
-        supported_schema_versions: vec![BUNDLE_SCHEMA_VERSION],
+        bundle_schema_version: version,
+        supported_schema_versions: SUPPORTED_SCHEMA_VERSIONS.to_vec(),
         wrote_files: false,
         executed_programs: false,
         artifact_bytes: bytes.len(),
@@ -221,10 +254,13 @@ fn read_bounded(path: &Path) -> Result<Vec<u8>, InspectError> {
     Ok(bytes)
 }
 
-/// The expected JSON shape of a schema-version-1 value.
+/// The expected JSON shape of a schema value.
 enum Shape {
     /// Printable ASCII of at most 512 bytes.
     Text,
+    /// User-supplied text: at most `MAX_ATTACHMENT_TEXT_BYTES`, with no
+    /// control characters other than newline and tab.
+    Attachment,
     /// A snake_case name of at most 64 bytes.
     Token,
     Int,
@@ -246,8 +282,9 @@ fn opt(inner: Shape) -> Shape {
     Shape::Optional(Box::new(inner))
 }
 
-/// Top-level keys other than `entries`, which are checked per entry.
-fn check_v1(document: &Map<String, Value>) -> Result<(), InspectError> {
+/// Top-level keys other than `entries`, which are checked per entry. Both
+/// versions share the layout; they differ in privacy level and entry labels.
+fn check_document(document: &Map<String, Value>, version: u32) -> Result<(), InspectError> {
     let entry = obj(vec![
         ("id", Shape::Text),
         ("origin", Shape::Token),
@@ -290,12 +327,38 @@ fn check_v1(document: &Map<String, Value>) -> Result<(), InspectError> {
     if document["mode"] != "preview" {
         return Err(invalid("/mode", "is not a known mode"));
     }
+    let level = if version == BUNDLE_SCHEMA_VERSION {
+        "metadata_only"
+    } else {
+        "metadata_and_user_supplied"
+    };
+    if document["privacy"]["level"] != level {
+        return Err(invalid(
+            "/privacy/level",
+            "does not match the schema version",
+        ));
+    }
     for (index, entry) in document["entries"]
         .as_array()
         .into_iter()
         .flatten()
         .enumerate()
     {
+        if index >= ENTRY_IDS.len() && version != BUNDLE_SCHEMA_VERSION {
+            if entry["origin"] != "user_supplied" {
+                return Err(invalid(
+                    &format!("/entries/{index}/origin"),
+                    "is not labelled user supplied",
+                ));
+            }
+            if entry["sensitivity"] != "user_supplied_text" {
+                return Err(invalid(
+                    &format!("/entries/{index}/sensitivity"),
+                    "is not labelled user-supplied text",
+                ));
+            }
+            continue;
+        }
         if entry["origin"] != "observed" {
             return Err(invalid(
                 &format!("/entries/{index}/origin"),
@@ -392,11 +455,18 @@ fn payload_shape(id: &str) -> Shape {
             ),
             ("tools_omitted", Shape::Int),
         ]),
-        // reproduction.recipe; ids are checked before payloads.
-        _ => obj(vec![
+        "reproduction.recipe" => obj(vec![
             ("steps", list(Shape::Text)),
             ("offline", Shape::Bool),
             ("no_external", Shape::Bool),
+        ]),
+        // user.attachment[N]; ids are checked before payloads.
+        _ => obj(vec![
+            ("kind", Shape::Token),
+            ("source_bytes", Shape::Int),
+            ("truncated", Shape::Bool),
+            ("redactions", Shape::Int),
+            ("text", Shape::Attachment),
         ]),
     }
 }
@@ -407,6 +477,12 @@ fn check(value: &Value, shape: &Shape, at: &str) -> Result<(), InspectError> {
         (Shape::Optional(inner), _) => return check(value, inner, at),
         (Shape::Text, Value::String(text)) => {
             text.len() <= 512 && text.bytes().all(|b| (0x20..0x7f).contains(&b))
+        }
+        (Shape::Attachment, Value::String(text)) => {
+            text.len() <= MAX_ATTACHMENT_TEXT_BYTES
+                && text
+                    .chars()
+                    .all(|c| !c.is_control() || c == '\n' || c == '\t')
         }
         (Shape::Token, Value::String(text)) => {
             !text.is_empty()
@@ -474,6 +550,15 @@ pub(super) fn human(inspection: &SupportBundleInspection) -> String {
     out.push_str(
         "matches its schema; read locally, nothing was written, uploaded or executed. Review these entries before sharing the file.\n",
     );
+    if inspection
+        .entries
+        .iter()
+        .any(|entry| entry.origin == BundleEntryOrigin::UserSupplied && entry.payload.is_some())
+    {
+        out.push_str(
+            "contains user-supplied text (user.attachment entries); automatic redaction is not a guarantee that it is safe to share.\n",
+        );
+    }
     for entry in &inspection.entries {
         let _ = writeln!(
             out,

@@ -760,6 +760,16 @@ pub const OPENAPI_32_SUPPORTED: &[SupportedInputFeature] = &[
         behavior: "an operation sent with the HTTP QUERY method and its request body; safe, so read-only by default",
     },
     SupportedInputFeature {
+        id: "querystring_parameter",
+        member: "in: querystring",
+        behavior: "an object argument sent as the whole query string, one form-encoded key=value pair per property. Other media types, a non-object schema or other query parameters beside it are refused with TG0143",
+    },
+    SupportedInputFeature {
+        id: "additional_operations",
+        member: "additionalOperations",
+        behavior: "each entry is an operation sent with its method token exactly as written; unsafe and not idempotent by default. Tokens that cannot be sent (not an RFC 9110 token, a fixed method, CONNECT or TRACK) are refused with TG0142",
+    },
+    SupportedInputFeature {
         id: "reusable_media_types",
         member: "components.mediaTypes, $ref media type",
         behavior: "a media type object given by $ref is read as if written in place",
@@ -779,6 +789,11 @@ pub const OPENAPI_32_SUPPORTED: &[SupportedInputFeature] = &[
         member: "discriminator.defaultMapping",
         behavior: "a tagged union decodes a missing or unmapped tag as the default variant",
     },
+    SupportedInputFeature {
+        id: "security_scheme_by_uri",
+        member: "security requirement naming a URI",
+        behavior: "the scheme under components.securitySchemes of an input document the URI references; any other URI is TG0151",
+    },
 ];
 
 /// OpenAPI 3.2 constructs without a 3.1 equivalent that are diagnosed. A 3.2
@@ -786,12 +801,6 @@ pub const OPENAPI_32_SUPPORTED: &[SupportedInputFeature] = &[
 /// constructs above.
 pub const OPENAPI_32_FEATURES: &[UnsupportedInputFeature] = &[
     feature("document_self", "$self", "TG0140", Rejected),
-    feature(
-        "additional_operations",
-        "additionalOperations",
-        "TG0142",
-        Rejected,
-    ),
     feature("cookie_style", "style: cookie", "TG0144", Rejected),
     feature("item_schema", "itemSchema (other uses)", "TG0145", Rejected),
     feature(
@@ -810,12 +819,6 @@ pub const OPENAPI_32_FEATURES: &[UnsupportedInputFeature] = &[
         "oauth2_device_authorization",
         "flows.deviceAuthorization",
         "TG0150",
-        Rejected,
-    ),
-    feature(
-        "security_scheme_by_uri",
-        "security requirement naming a URI",
-        "TG0151",
         Rejected,
     ),
     feature(

@@ -106,7 +106,7 @@ helpers retain their own platform limits.
 
 | Input | You provide | Entry point and conversion | Limits and required review |
 |---|---|---|---|
-| OpenAPI 3.0 / 3.1 | JSON or YAML document | `tungsten init --from openapi.json` (default when unset: `openapi.json`, `openapi.yaml` or `openapi.yml` in the target directory). The document is kept in place, so relative references retain meaning, and goes through the native frontend: `$ref` resolution, overlays | The full frontend surface; overlays remain optional. OpenAPI 3.2 documents are read when they use only constructs 3.1 has plus the `query` method (sent as HTTP `QUERY` with its body) and response `itemSchema` for JSON Lines and JSON server-sent events; each other 3.2-only construct gets its own diagnostic (TG0140 to TG0156), an error unless it only adds metadata, and `tungsten capabilities` lists them |
+| OpenAPI 3.0 / 3.1 | JSON or YAML document | `tungsten init --from openapi.json` (default when unset: `openapi.json`, `openapi.yaml` or `openapi.yml` in the target directory). The document is kept in place, so relative references retain meaning, and goes through the native frontend: `$ref` resolution, overlays | The full frontend surface; overlays remain optional. OpenAPI 3.2 documents are read when they use only constructs 3.1 has plus the `query` method (sent as HTTP `QUERY` with its body), `additionalOperations` (sent with their method token as written), form-encoded `in: querystring` objects and response `itemSchema` for JSON Lines and JSON server-sent events; each other 3.2-only construct gets its own diagnostic (TG0140 to TG0156), an error unless it only adds metadata, and `tungsten capabilities` lists them |
 | Swagger 2.0 | JSON or YAML document | `tungsten init --from swagger.json` (also a default name) or any path. Bounded offline conversion to OpenAPI, saved as `imported.openapi.json` | Unsupported semantics fail explicitly instead of being guessed; conversion never resolves external references |
 | Postman Collection v2.1 | JSON collection | `tungsten init --from collection.json`. Structural import; omissions are listed in `import-report.json` | Scripts and requests are never executed: script-dependent behavior, non-JSON bodies and saved responses and unsupported auth helpers are omitted per item, not interpreted — this is not a Postman runtime |
 | Saved cURL command | A saved command as text | `tungsten init --from command.curl --route '/pets/{id}'` (auto-detected by a leading `curl`, a `.curl` extension, or `--input-format curl`). Parsed as data against POSIX, cmd or PowerShell quoting (`--shell-dialect`) | Exactly one explicit `--route` path template is required; the command is parsed, never executed |
@@ -160,7 +160,7 @@ The support matrix below is generated from the capability catalog (`tungsten cap
 |---|---|---|
 | 3.0 | supported | 0 |
 | 3.1 | supported | 0 |
-| 3.2 | subset | 15 |
+| 3.2 | subset | 11 |
 
 | Input format | Versions | Route | Detection | Operations | Review flags | Acquisition |
 |---|---|---|---|---|---|---|
@@ -731,7 +731,7 @@ tungsten [--json] <command>
 | `doctor` | Report external tools; pass a project path and `--strict` to fail when its required tools are missing or too old |
 | `capabilities` | Query built-in target declarations without running tools or emitters; optionally select a target id or alias, such as `capabilities py --json`; `--matrix` prints the Markdown support matrix derived from the same declarations, and `--matrix --format markdown` wraps it in the markers of the README block CI checks |
 | `lock` | Capture the project generation lock `tungsten.lock.json` offline: content identities of the manifest, profiles, agent manifest, inputs, references and overlays (in order), compiler and built-in emitter identities, effective target option digests and consumer toolchains. `--check` fails when the lock is missing, stale or corrupt, `--preview` writes nothing, `--update` accepts changed identities |
-| `bundle export` / `bundle import` | Export the locked input closure and `tungsten.lock.json` into a new plain bundle directory with a digest inventory (`--preview` lists it; `--include-input-cache` carries the verified pins of remote inputs; incomplete or credential-named content needs `--allow-incomplete` / `--allow-sensitive`), or validate a bundle completely and copy it into `--dest` without overwriting differing files. Neither runs emitters or grants trust |
+| `bundle export` / `bundle import` | Export the locked input closure and `tungsten.lock.json` into a new plain bundle directory with a digest inventory (`--preview` lists it; `--include-input-cache` carries the verified pins of remote inputs; `--include-consumer-cache DIR` carries a prepared consumer dependency directory with provenance and platform notes; incomplete or credential-named content needs `--allow-incomplete` / `--allow-sensitive`), or validate a bundle completely and copy it into `--dest` without overwriting differing files. Neither runs emitters or grants trust |
 | `support-bundle --preview` | Inspect the exact metadata-only support manifest without writing files; `--exclude <id>` removes an entry. On Linux, macOS and Windows, `--output <PATH>` instead publishes it to a new file in an existing, trusted directory; `--inspect <FILE>` checks and shows an existing bundle |
 
 With `--json`, stdout carries exactly one JSON document described by `tungsten schema cli-output` (`lsp` speaks the language server protocol on stdio instead). Color is used only on a terminal and never when `NO_COLOR` is set.
@@ -744,7 +744,24 @@ declared prerequisites. Collection works with a broken project and does not
 compile it, read API documents, probe tool versions, run extensions or contact a
 network. It excludes configuration values, private paths, URLs, credentials,
 source text, logs, hashes and project identifiers. Use `--exclude <id>` to omit
-an entry; collection of additional sensitive content is not supported.
+an entry.
+
+Logs and configuration files are never collected unless you name them.
+`--attach-log <FILE>` and `--attach-config <FILE>` (repeatable, at most four in
+total) add `user.attachment[N]` entries, numbered from 0 with log files first.
+Each entry has origin `user_supplied` and sensitivity `user_supplied_text`.
+Such a bundle uses `bundle_schema_version: 2` with privacy level
+`metadata_and_user_supplied`; without attachments the bundle stays version 1
+and unchanged. Each file must be a regular, nonsymlink file, and its path is
+never recorded. Only its last 8 KiB are kept, starting at a line boundary.
+Automatic redaction then replaces environment variable values, values of
+credential-like keys (`password`, `token`, `secret`, `api_key`, `authorization`
+and similar), `Bearer`/`Basic` credentials, private-key blocks, URLs, user names
+in home directory paths and long token-like strings, and counts its
+replacements. Redaction is not a guarantee that arbitrary text is safe to
+share: review the preview, and use `--exclude user.attachment[N]` to drop an
+attachment. An unreadable attachment fails the command before anything is
+written.
 
 On Linux, macOS and Windows, `tungsten support-bundle --output <PATH>` creates
 a new local file.
@@ -800,10 +817,12 @@ a power-loss durability guarantee. There is no automatic upload or issue creatio
 platform before you share it. It reads one regular, nonsymlink file of at most
 128 KiB, writes nothing and starts no program. A bundle whose
 `bundle_schema_version` this tungsten does not read is refused with that
-number. Otherwise every object must have exactly the keys of that schema
-version, every entry must be an observed, metadata-only entry, and recorded
-sizes, statuses and totals must match the payloads; free text is limited to
-printable ASCII. The result lists each entry with its exact payload. Errors name
+number; versions 1 and 2 are read. Otherwise every object must have exactly
+the keys of that schema version, and the six observed entries must be
+metadata only. Version 2 may follow them with up to four entries labelled
+user supplied. Recorded sizes, statuses and totals must match the payloads.
+Free text in observed entries is limited to printable ASCII, and attachment
+text to 12 KiB without control characters other than newline and tab. The result lists each entry with its exact payload. Errors name
 only schema locations such as `/entries/0/payload/os`, never file content or
 unexpected keys. These checks confirm the bundle's shape, not that its text is
 safe to publish.
