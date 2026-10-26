@@ -230,6 +230,12 @@ changes.
 
 ### Added
 
+- `tungsten update check` links the upgrade rehearsal: when a newer release is
+  available, `rehearse_command` (new `--json` field) holds the
+  `tungsten upgrade rehearse --to <version> --workspace <dir>` invocation, and
+  the guidance for migrations names `upgrade rehearse` and `upgrade apply`
+  instead of the separate preview commands.
+
 - The TypeScript and Python runtimes include an optional OpenTelemetry
   adapter for the telemetry observer (`openTelemetryObserver(tracer)`,
   `open_telemetry_observer(tracer)`): one client span per operation named after
