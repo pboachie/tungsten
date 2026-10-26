@@ -553,6 +553,12 @@ pub(crate) struct UpgradeRehearseArgs {
     /// Require the running compiler to be this candidate version.
     #[arg(long, value_name = "VERSION")]
     pub to: Option<String>,
+    /// The saved `tungsten update check --json` output (run with the current
+    /// release) that selected the candidate. Read offline; the rehearsal
+    /// requires its candidate to be the running compiler and its discovering
+    /// version to be the locked one. Nothing is fetched or installed.
+    #[arg(long, value_name = "FILE")]
+    pub candidate: Option<PathBuf>,
     /// Run the command after `--` in this target's staged output directory
     /// once staging finishes (requires --workspace); a failure blocks the
     /// rehearsal. It runs with your privileges and environment: not a
