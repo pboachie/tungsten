@@ -32,7 +32,8 @@ pub enum SchedulerScope {
     Scheduler,
 }
 
-/// Limits of a [`RequestScheduler`]. Every limit applies per scope.
+/// Limits of a [`RequestScheduler`]. Every limit applies per scope, except
+/// the optional `max_active_total` and `max_streams_total`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SchedulerOptions {
     /// Ordinary requests in flight at once. 1 to 10000.
@@ -57,6 +58,14 @@ pub struct SchedulerOptions {
     /// Retries a scope's budget holds before any call added to it, and the
     /// base of its cap (`retry_reserve + 100 × retry_ratio`). Default 10.
     pub retry_reserve: u32,
+    /// Ordinary requests in flight at once across every scope, on top of each
+    /// scope's `max_active`. Scopes waiting for this capacity take turns, one
+    /// request each, so a busy scope cannot starve a quiet one. `None`
+    /// (default): no cap across scopes. 1 to 1000000.
+    pub max_active_total: Option<u32>,
+    /// Event streams open at once across every scope, on top of each scope's
+    /// `max_streams`. `None` (default): no cap across scopes.
+    pub max_streams_total: Option<u32>,
 }
 
 impl SchedulerOptions {
@@ -70,6 +79,8 @@ impl SchedulerOptions {
             scope: SchedulerScope::Origin,
             retry_ratio: None,
             retry_reserve: 10,
+            max_active_total: None,
+            max_streams_total: None,
         }
     }
 }
@@ -139,6 +150,10 @@ struct State {
     closed_waiters: Vec<u64>,
     closed: bool,
     next_id: u64,
+    /// Requests in flight across every scope, per kind.
+    total: [usize; 2],
+    /// The scope served last under a cap across scopes, per kind.
+    served: [Option<String>; 2],
 }
 
 struct Shared {
@@ -149,6 +164,8 @@ struct Shared {
     scope: SchedulerScope,
     retry_ratio: Option<f64>,
     retry_reserve: f64,
+    /// Caps across every scope, per kind.
+    max_total: [Option<usize>; 2],
     state: Mutex<State>,
     /// Retry budget balance and last use of each scope.
     budgets: Mutex<Budgets>,
@@ -250,6 +267,7 @@ impl Drop for Permit {
         if let Some(pool) = state.pools.get_mut(&self.key) {
             pool.active[self.kind as usize] -= 1;
         }
+        state.total[self.kind as usize] -= 1;
         let granted = RequestScheduler::pump(&shared, &mut state, &self.key);
         RequestScheduler::forget(&mut state, &self.key);
         drop(state);
@@ -321,6 +339,14 @@ impl RequestScheduler {
             ));
         }
         let retry_reserve = bounded(options.retry_reserve, 0, 10_000, "retry_reserve")?;
+        let max_active_total = options
+            .max_active_total
+            .map(|cap| bounded(cap, 1, 1_000_000, "max_active_total"))
+            .transpose()?;
+        let max_streams_total = options
+            .max_streams_total
+            .map(|cap| bounded(cap, 1, 1_000_000, "max_streams_total"))
+            .transpose()?;
         Ok(RequestScheduler {
             shared: Arc::new(Shared {
                 max_active,
@@ -330,6 +356,7 @@ impl RequestScheduler {
                 scope: options.scope,
                 retry_ratio: options.retry_ratio,
                 retry_reserve: retry_reserve as f64,
+                max_total: [max_active_total, max_streams_total],
                 state: Mutex::new(State::default()),
                 budgets: Mutex::new((HashMap::new(), 0)),
             }),
@@ -416,12 +443,14 @@ impl RequestScheduler {
             }
             id = state.next_id;
             state.next_id += 1;
+            let room = Self::room(shared, &state, kind);
             let pool = state.pools.entry(key.to_owned()).or_default();
             let paused = pool.paused_for(now);
             let limit = Self::limit(shared, pool, kind);
             let queue = &pool.queue[kind as usize];
-            if paused.is_zero() && queue.is_empty() && pool.active[kind as usize] < limit {
+            if paused.is_zero() && queue.is_empty() && pool.active[kind as usize] < limit && room {
                 pool.active[kind as usize] += 1;
+                Self::count(shared, &mut state, key, kind);
                 return Ok(Self::permit(shared, key, kind, random));
             }
             let rejection = if paused > budget {
@@ -563,6 +592,9 @@ impl RequestScheduler {
     /// Under the lock: admit waiting requests in order while capacity
     /// allows. Returns the waiters to wake once the lock is released.
     fn pump(shared: &Arc<Shared>, state: &mut State, key: &str) -> Vec<Arc<Notify>> {
+        if shared.max_total.iter().any(Option::is_some) {
+            return Self::pump_all(shared, state);
+        }
         let mut woken = Vec::new();
         let mut admitted = Vec::new();
         let Some(pool) = state.pools.get_mut(key) else {
@@ -583,7 +615,76 @@ impl RequestScheduler {
                 woken.push(waiter.notify);
             }
         }
+        for (_, permit) in &admitted {
+            state.total[permit.kind as usize] += 1;
+        }
         state.granted.extend(admitted);
+        woken
+    }
+
+    /// Whether the cap across scopes, if any, leaves room for one more.
+    fn room(shared: &Shared, state: &State, kind: Kind) -> bool {
+        shared.max_total[kind as usize].is_none_or(|cap| state.total[kind as usize] < cap)
+    }
+
+    /// Under the lock: count a request admitted in `key`.
+    fn count(shared: &Shared, state: &mut State, key: &str, kind: Kind) {
+        state.total[kind as usize] += 1;
+        if shared.max_total[kind as usize].is_some() {
+            state.served[kind as usize] = Some(key.to_owned());
+        }
+    }
+
+    /// Under the lock, with a cap across scopes: admit waiting requests while
+    /// capacity allows, one per scope in turn (scopes in key order, starting
+    /// after the one served last), each scope's own queue first in, first
+    /// out. Returns the waiters to wake once the lock is released.
+    fn pump_all(shared: &Arc<Shared>, state: &mut State) -> Vec<Arc<Notify>> {
+        let mut woken = Vec::new();
+        let now = Instant::now();
+        for kind in [Kind::Call, Kind::Stream] {
+            let mut keys: Vec<String> = state
+                .pools
+                .iter()
+                .filter(|(_, pool)| {
+                    !pool.queue[kind as usize].is_empty() && pool.paused_for(now).is_zero()
+                })
+                .map(|(key, _)| key.clone())
+                .collect();
+            if keys.is_empty() {
+                continue;
+            }
+            keys.sort();
+            let start = state.served[kind as usize]
+                .as_ref()
+                .and_then(|last| keys.iter().position(|key| key > last))
+                .unwrap_or(0);
+            keys.rotate_left(start);
+            let mut progress = true;
+            while progress && Self::room(shared, state, kind) {
+                progress = false;
+                for key in &keys {
+                    if !Self::room(shared, state, kind) {
+                        break;
+                    }
+                    let Some(pool) = state.pools.get_mut(key) else {
+                        continue;
+                    };
+                    if pool.active[kind as usize] >= Self::limit(shared, pool, kind) {
+                        continue;
+                    }
+                    let Some(waiter) = pool.queue[kind as usize].pop_front() else {
+                        continue;
+                    };
+                    pool.active[kind as usize] += 1;
+                    Self::count(shared, state, key, kind);
+                    let permit = Self::permit(shared, key, kind, waiter.random);
+                    state.granted.insert(waiter.id, permit);
+                    woken.push(waiter.notify);
+                    progress = true;
+                }
+            }
+        }
         woken
     }
 

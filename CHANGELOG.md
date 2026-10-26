@@ -282,6 +282,13 @@ changes.
   limits the retries all callers of one scope make together; a retry it
   cannot pay for is not made. A runnable bulk-sync example shows a job staying
   within a local API's concurrency quota.
+  Optional caps across every scope (`maxActiveTotal`/`max_active_total`,
+  `maxStreamsTotal`/`max_streams_total`) bound requests in flight per
+  scheduler; scopes waiting for them take turns so none is starved.
+
+- Under a total operation deadline, the Rust runtime now stops waiting for an
+  OAuth token request or 401 refresh at the deadline without cancelling a
+  refresh other callers share, and reports `DEADLINE_EXCEEDED`.
 
 - Add an opt-in total operation deadline to the TypeScript (`deadlineMs`),
   Python (`deadline_ms`) and Rust (`deadline`) runtimes, on client and call
@@ -729,6 +736,12 @@ changes.
   nontransactional across files and directories.
 
 ### Fixed
+
+- Record profile files in `tungsten.lock.json` by their manifest-relative
+  path below the selected profile root, instead of the logical
+  `profile[N]/...` name. `bundle export` failed for any project that selected
+  a profile. Locks written before this change report the profile file as
+  drift; accept it with `tungsten lock --update`.
 
 - Require Pydantic 2.10.1 or newer in generated Python packages and in
   guided `init` package setup: generated models failed to import with

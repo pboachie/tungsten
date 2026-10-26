@@ -829,7 +829,7 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
          still written, unless `--strict` asks for all or none.",
         "Generate only supported targets: remove the unsupported target from tungsten.yml, or \
          add a supported one with `tungsten init --resume --add-targets typescript,python` \
-         (any of typescript, python, rust, mcp, webmcp, docs), then run `tungsten generate` \
+         (any built-in SDK target, mcp, webmcp or docs), then run `tungsten generate` \
          again.",
     ),
     e(
