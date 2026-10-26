@@ -1,0 +1,12 @@
+/home/user/tungsten/runtimes/csharp/bin/Debug/net10.0/Tungsten.Runtime.deps.json
+/home/user/tungsten/runtimes/csharp/bin/Debug/net10.0/Tungsten.Runtime.dll
+/home/user/tungsten/runtimes/csharp/bin/Debug/net10.0/Tungsten.Runtime.pdb
+/home/user/tungsten/runtimes/csharp/obj/Debug/net10.0/Tungsten.Runtime.GeneratedMSBuildEditorConfig.editorconfig
+/home/user/tungsten/runtimes/csharp/obj/Debug/net10.0/Tungsten.Runtime.AssemblyInfoInputs.cache
+/home/user/tungsten/runtimes/csharp/obj/Debug/net10.0/Tungsten.Runtime.AssemblyInfo.cs
+/home/user/tungsten/runtimes/csharp/obj/Debug/net10.0/Tungsten.Runtime.csproj.CoreCompileInputs.cache
+/home/user/tungsten/runtimes/csharp/obj/Debug/net10.0/Tungsten.Runtime.sourcelink.json
+/home/user/tungsten/runtimes/csharp/obj/Debug/net10.0/Tungsten.Runtime.dll
+/home/user/tungsten/runtimes/csharp/obj/Debug/net10.0/refint/Tungsten.Runtime.dll
+/home/user/tungsten/runtimes/csharp/obj/Debug/net10.0/Tungsten.Runtime.pdb
+/home/user/tungsten/runtimes/csharp/obj/Debug/net10.0/ref/Tungsten.Runtime.dll

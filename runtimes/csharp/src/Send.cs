@@ -63,6 +63,15 @@ public sealed partial class ClientCore
         while (true)
         {
             attempts++;
+            CheckDeadline(op, opts, "before the request could be sent");
+            // Each attempt's timeout is cut to the time left before the call's deadline.
+            var timeoutNow = attemptTimeout;
+            bool byDeadline = false;
+            if (Remaining(opts) is TimeSpan left && left < attemptTimeout)
+            {
+                timeoutNow = left < TimeSpan.FromMilliseconds(1) ? TimeSpan.FromMilliseconds(1) : left;
+                byDeadline = true;
+            }
             var rctx = new RequestContext
             {
                 Operation = op.Id,
@@ -80,8 +89,9 @@ public sealed partial class ClientCore
             var method = p.Method;
             var body = p.Payload;
             var entries = p.Headers.Entries.ToList();
-            var idle = stream ? idleTimeout : null;
-            var outcome = await Transport.AttemptAsync(http, new AttemptRequest { Url = target, Method = method, Headers = entries, Body = body, Timeout = attemptTimeout, Stream = stream, Idle = idle, MaxResponseBytes = cap }, ct).ConfigureAwait(false);
+            // An open stream keeps the idle bound of an uncut attempt; the deadline only bounds connecting.
+            var idle = stream ? idleTimeout ?? attemptTimeout : (TimeSpan?)null;
+            var outcome = await Transport.AttemptAsync(http, new AttemptRequest { Url = target, Method = method, Headers = entries, Body = body, Timeout = timeoutNow, Stream = stream, Idle = idle, MaxResponseBytes = cap }, ct).ConfigureAwait(false);
             for (int hops = 0; !redirectsDisabled && !mutation && hops < MaxRedirects; hops++)
             {
                 if (outcome.Kind != OutcomeKind.Response || outcome.BodyFailure == "oversized" || !IsRedirect(outcome.Status))
@@ -104,13 +114,17 @@ public sealed partial class ClientCore
                 }
                 rctx.Url = next.Value.Shown;
                 rctx.Method = method;
-                outcome = await Transport.AttemptAsync(http, new AttemptRequest { Url = target, Method = method, Headers = entries, Body = body, Timeout = attemptTimeout, Stream = stream, Idle = idle, MaxResponseBytes = cap }, ct).ConfigureAwait(false);
+                outcome = await Transport.AttemptAsync(http, new AttemptRequest { Url = target, Method = method, Headers = entries, Body = body, Timeout = timeoutNow, Stream = stream, Idle = idle, MaxResponseBytes = cap }, ct).ConfigureAwait(false);
             }
             p.FinalUrl = target;
             var cctx = new CallContext { Api = api, Op = op, Key = p.Key, HasKey = p.HasKey, KeyHeader = p.KeyHeader, Attempts = attempts, Check = check };
             TungstenError error;
             try
             {
+                if (byDeadline && (outcome.Kind == OutcomeKind.Timeout || (outcome.Kind == OutcomeKind.Response && outcome.BodyFailure == "timeout" && !mutation)))
+                {
+                    throw DeadlineTimeout(cctx, outcome.Kind == OutcomeKind.Response ? outcome.Status : null);
+                }
                 return ClassifyResponse(cctx, p, outcome, rctx, attemptTimeout);
             }
             catch (Failure f)
@@ -151,6 +165,11 @@ public sealed partial class ClientCore
                     _ => r * ceiling,
                 };
             }
+            // A retry that could not start before the deadline is not waited for.
+            if (Remaining(opts) is TimeSpan rest && rest <= Util.DurationMs(delayMs))
+            {
+                throw new Failure(done);
+            }
             Hooks(m => m.OnRetry(rctx, d));
             try
             {
@@ -161,6 +180,19 @@ public sealed partial class ClientCore
                 throw new Failure(done);
             }
         }
+    }
+
+    /// <summary>The call's deadline ran out before a response (or a read's body) arrived.</summary>
+    private static Failure DeadlineTimeout(CallContext cctx, int? status)
+    {
+        const string cause = "The operation deadline expired before a response arrived.";
+        if (Classify.IsMutation(cctx.Op))
+        {
+            return new Failure(Classify.OutcomeUnknown(cctx, cause, new UnknownFields()));
+        }
+        return new Diag(cctx.Op.Id, Category.UpstreamUnavailable).Code("DEADLINE_EXCEEDED").Status(status).Retry(Retryable.Never)
+            .Remedy(cause + " This read has no side effects; call again with a larger Deadline.")
+            .Attempts(cctx.Attempts).Fail();
     }
 
     /// <summary>The URL a read's redirect points to when it stays on the request's origin, with the auth query re-applied.</summary>
