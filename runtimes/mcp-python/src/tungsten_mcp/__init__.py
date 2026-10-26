@@ -9,10 +9,12 @@ from ._http import HttpOptions
 from ._options import DEFAULT_MAX_RESPONSE_BYTES, DEFAULT_MAX_RESULT_CHARS, ServerOptions
 from ._server import ServeError, Sessions, check_mode, create_server, load_manifest, run, serve_http, serve_stdio
 from ._session import Session
+from ._webmcp import DISPATCH_VERSION, WebMcpDispatch, WebMcpOptions, webmcp_app
 
 __all__ = [
     "DEFAULT_MAX_RESPONSE_BYTES",
     "DEFAULT_MAX_RESULT_CHARS",
+    "DISPATCH_VERSION",
     "MODES",
     "Catalog",
     "CatalogTool",
@@ -22,6 +24,8 @@ __all__ = [
     "ServerOptions",
     "Session",
     "Sessions",
+    "WebMcpDispatch",
+    "WebMcpOptions",
     "build_catalog",
     "check_mode",
     "create_server",
@@ -30,4 +34,5 @@ __all__ = [
     "run",
     "serve_http",
     "serve_stdio",
+    "webmcp_app",
 ]

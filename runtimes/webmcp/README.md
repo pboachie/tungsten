@@ -58,6 +58,23 @@ For route-based loading, use `createWebMcpRegistrationController` with dynamical
 
 For lower-level integration, `registerTungstenWebMcp` accepts a `ClientCore`, a generated manifest and registration options. An abort signal cancels active calls and removes owned tools. Streaming and binary results require explicit bounded collection or rendering policies.
 
+## Python-backed tools (experimental)
+
+`registerRemoteWebMcp({ endpoint: "/webmcp" })` registers the tools that a dispatch endpoint
+of the page's own application exposes to the signed-in user. Each call is sent there and
+runs on the server. An example is the Python dispatch app generated with `webmcp: true` on
+the `mcp-python` target (see the `tungsten-mcp` README). The page needs no SDK and holds
+no API credentials.
+
+- The endpoint must be on the page's own origin. Requests carry `X-Tungsten-WebMCP: 1`
+  and same-origin credentials only.
+- The server decides which tools a user sees and authorizes every call. Hiding a tool here
+  is not access control.
+- Results are the server's `{ok, value}` or `{ok: false, error}` envelopes, bounded by
+  `maxResultBytes`. A failed or cancelled request for a mutation says the call may have
+  taken effect.
+- Registration, ownership, abort and `dispose()` behave as for `registerTungstenWebMcp`.
+
 ## Browser authorization
 
 Use your application's browser session and API authorization. The API must enforce access controls; tool annotations do not grant access. Configure CORS and CSRF protections for your deployment, and keep server credentials out of frontend bundles. Keep the separate `@elysra/tungsten-runtime/node` export out of browser code.

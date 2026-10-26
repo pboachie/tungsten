@@ -349,6 +349,12 @@ pub const MCP_PYTHON: DeclaredOptions = DeclaredOptions {
             "sdk_runtime_path",
             "`tungsten-runtime` from a local path (a uv path source)",
         ),
+        OptionField {
+            key: "webmcp",
+            kind: FieldType::Boolean,
+            description: "also generate `webmcp.py`, an experimental ASGI dispatch app backing browser WebMCP tools",
+            default: Some("false"),
+        },
     ],
 };
 

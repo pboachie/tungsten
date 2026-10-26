@@ -258,6 +258,14 @@ export async function registerTungstenWebMcp(options: RegisterTungstenWebMcpOpti
     tools.push(create(false));
     if (entry.reserved.confirmationToken !== null) tools.push(create(true));
   }
+  return registerOwned(backend, tools, controller, abort, options.signal);
+}
+
+/** Register `tools` on `backend`, owned by this registration: names are
+ * claimed per model context, registration rolls back on failure, and dispose
+ * (or aborting `controller`) removes only owned tools. */
+export async function registerOwned(backend: WebMcpBackend, tools: WebMcpTool[], controller: AbortController, abort: () => void, signal: AbortSignal | undefined): Promise<WebMcpRegistration> {
+  const options = { signal };
   const names = tools.map((tool) => tool.name);
   if (names.some((name) => !NAME.test(name)) || new Set(names).size !== names.length) invalid("Invalid or colliding generated preview tool names.");
   let claims = owned.get(backend.modelContext);
