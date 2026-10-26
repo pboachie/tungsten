@@ -411,7 +411,21 @@ public final class Descriptors {
                 str(a.get("remediation_note")),
                 strings(a.get("sensitive_response_fields")),
                 sensitiveRequest,
-                bool(a.get("shown_once")));
+                bool(a.get("shown_once")),
+                importPolicy(a.get("import_policy")));
+    }
+
+    private static OperationDescriptor.ImportPolicy importPolicy(Object raw) {
+        if (!(raw instanceof JsonObject)) {
+            return null;
+        }
+        JsonObject p = (JsonObject) raw;
+        // Only a literal true counts as reviewed; anything else fails closed.
+        return new OperationDescriptor.ImportPolicy(
+                strings(p.get("allowed_origins")),
+                Safety.fromWire(str(p.get("inferred_safety"), "irreversible")),
+                Boolean.TRUE.equals(p.get("reviewed")),
+                str(p.get("source"), ""));
     }
 
     private static MacroDescriptor macro(JsonObject m) {

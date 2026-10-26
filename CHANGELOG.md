@@ -226,6 +226,14 @@ changes.
 
 ### Added
 
+- The `java` and `kotlin` targets now enforce imported-operation policy and may
+  be generated for projects converted from Postman, cURL, `.http` or HAR input.
+  The Java runtime reads each operation's `import_policy`, refuses a reviewed
+  imported operation whose target origin is outside its saved review scope
+  (`VALIDATION_FAILED` on `baseUrl`, nothing sent), and applies the effective
+  safety tier of unreviewed operations. Generated SDKs require a runtime with
+  `ClientCore.requireImportPolicyV1()`.
+
 - Add explicit Linux support-bundle export to a new file in an existing,
   trusted user-owned directory. Export preserves the metadata-only preview
   manifest, caps complete artifacts at 128 KiB, refuses replacement and
