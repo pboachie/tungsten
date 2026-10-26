@@ -241,7 +241,9 @@ changes.
   crash before the token is saved replays that page once, so sinks must
   deduplicate. `describeCheckpoint` / `describe_checkpoint` reports status
   without the cursor. Registered as the `pagination_checkpoints` capability for
-  the `typescript`, `python` and `rust` targets.
+  the `typescript`, `python` and `rust` targets. In Rust, `ExportPages::typed`
+  decodes items and `blocking::Runtime::export_pages` iterates an export with
+  blocking calls.
 
 - Generated Rust CLIs sign in to OAuth2 `authorizationCode` schemes:
   `auth login` runs the runtime's managed S256 flow through a loopback

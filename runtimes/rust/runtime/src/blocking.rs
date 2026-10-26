@@ -16,6 +16,7 @@ use std::thread::JoinHandle;
 
 use serde::de::DeserializeOwned;
 
+use crate::checkpoint::{CheckpointPage, TypedExportPages};
 use crate::client::{ConfigError, TypedPages};
 use crate::envelope::Diag;
 use crate::idempotency::lock;
@@ -119,6 +120,15 @@ impl Runtime {
         }
     }
 
+    /// Iterate a checkpointed export with blocking `next` calls.
+    pub fn export_pages<T>(&self, operation: &str, pages: TypedExportPages<T>) -> ExportPages<T> {
+        ExportPages {
+            runtime: self.clone(),
+            operation: operation.to_owned(),
+            inner: Some(pages),
+        }
+    }
+
     /// Iterate the events of a stream with blocking `next` calls.
     pub fn events<T>(&self, operation: &str, events: TypedEvents<T>) -> Events<T> {
         Events {
@@ -158,6 +168,44 @@ impl<T> std::fmt::Debug for Pages<T> {
 
 impl<T: DeserializeOwned + Send + 'static> Iterator for Pages<T> {
     type Item = Result<Page<T>>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let mut pages = self.inner.take()?;
+        let step = self.runtime.exec(async move {
+            let item = pages.next().await;
+            (pages, item)
+        });
+        match step {
+            Some((pages, item)) => {
+                if item.as_ref().is_some_and(|i| i.is_ok()) {
+                    self.inner = Some(pages);
+                }
+                item
+            }
+            None => Some(Err(stopped(&self.operation))),
+        }
+    }
+}
+
+/// A blocking checkpointed page iterator (see
+/// [`ClientCore::export_pages`](crate::ClientCore::export_pages)); it ends
+/// after the last page or the first error.
+pub struct ExportPages<T> {
+    runtime: Runtime,
+    operation: String,
+    inner: Option<TypedExportPages<T>>,
+}
+
+impl<T> std::fmt::Debug for ExportPages<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ExportPages")
+            .field("operation", &self.operation)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<T: DeserializeOwned + Send + 'static> Iterator for ExportPages<T> {
+    type Item = Result<CheckpointPage<T>>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let mut pages = self.inner.take()?;
