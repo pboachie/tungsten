@@ -516,6 +516,19 @@ pub(crate) struct UpgradeRehearseArgs {
     /// Require the running compiler to be this candidate version.
     #[arg(long, value_name = "VERSION")]
     pub to: Option<String>,
+    /// Run the command after `--` in this target's staged output directory
+    /// once staging finishes (requires --workspace); a failure blocks the
+    /// rehearsal. It runs with your privileges and environment: not a
+    /// sandbox. No shell interpolation is performed.
+    #[arg(long, value_name = "TARGET", requires_all = ["workspace", "consumer_command"])]
+    pub consumer_target: Option<String>,
+    /// Stop the consumer command after this many seconds (only the started
+    /// process is stopped, not processes it started).
+    #[arg(long, default_value_t = 600, value_parser = clap::value_parser!(u64).range(1..=86_400))]
+    pub consumer_timeout_secs: u64,
+    /// Clean-consumer command and arguments, after `--`.
+    #[arg(last = true, num_args = 1.., value_name = "COMMAND", requires = "consumer_target")]
+    pub consumer_command: Vec<std::ffi::OsString>,
     /// Only these targets, comma-separated. Default: every target in
     /// tungsten.yml.
     #[arg(long, value_name = "TARGETS", value_delimiter = ',')]
