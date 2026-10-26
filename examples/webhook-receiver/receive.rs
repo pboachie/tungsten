@@ -3,13 +3,11 @@
 
 use std::cell::RefCell;
 use std::collections::BTreeSet;
+use std::hash::{BuildHasher, RandomState};
 
 use orders_sdk::webhooks::{WebhookEvent, WebhookName, parse_webhook};
 use tungsten_runtime::webhooks::{VerifyWebhookOptions, sign_webhook};
 
-// Example values only: a real endpoint reads its secrets from configuration.
-const SECRET: &str = "whsec_gallery_current";
-const PREVIOUS: &str = "whsec_gallery_previous";
 const NOW: u64 = 1_700_000_000;
 
 const SHIPPED: &[u8] = br#"{"id":"evt_1001","type":"order.shipped","data":{"order_id":"ord_42","carrier":"parcelpost"}}"#;
@@ -18,12 +16,21 @@ const INCOMPLETE: &[u8] =
     br#"{"id":"evt_1002","type":"order.shipped","data":{"order_id":"ord_44"}}"#;
 const ROTATED: &[u8] = br#"{"id":"evt_1003","type":"order.shipped","data":{"order_id":"ord_45","carrier":"parcelpost"}}"#;
 
+/// A fresh example secret per run: a real endpoint reads its secrets from
+/// configuration.
+fn example_secret(n: u64) -> String {
+    let state = RandomState::new();
+    format!("{:016x}{:016x}", state.hash_one(n), state.hash_one(!n))
+}
+
 fn main() {
+    let (current, rotated) = (example_secret(0), example_secret(1));
+    let (secret, previous) = (current.as_str(), rotated.as_str());
     // Application-owned replay tracking: accept each event id once.
     let seen = RefCell::new(BTreeSet::new());
     let claim = |key: &str| seen.borrow_mut().insert(key.to_string());
     let options = VerifyWebhookOptions {
-        secrets: &[SECRET, PREVIOUS],
+        secrets: &[secret, previous],
         now: Some(NOW),
         claim: Some(&claim),
         ..Default::default()
@@ -46,11 +53,11 @@ fn main() {
         }
     };
 
-    let signed = sign_webhook(SHIPPED, SECRET, NOW);
+    let signed = sign_webhook(SHIPPED, secret, NOW);
     receive(SHIPPED, &signed);
     receive(SHIPPED, &signed);
     receive(TAMPERED, &signed);
-    receive(SHIPPED, &sign_webhook(SHIPPED, SECRET, NOW - 600));
-    receive(INCOMPLETE, &sign_webhook(INCOMPLETE, SECRET, NOW));
-    receive(ROTATED, &sign_webhook(ROTATED, PREVIOUS, NOW));
+    receive(SHIPPED, &sign_webhook(SHIPPED, secret, NOW - 600));
+    receive(INCOMPLETE, &sign_webhook(INCOMPLETE, secret, NOW));
+    receive(ROTATED, &sign_webhook(ROTATED, previous, NOW));
 }
