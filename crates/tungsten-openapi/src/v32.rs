@@ -217,14 +217,6 @@ fn node_findings(node: &Node<'_>, schemes: &BTreeSet<String>, out: &mut Vec<Find
     match node.kind {
         Kind::Document => {}
         Kind::PathItem => {
-            if map.contains_key("query") {
-                out.push(error(
-                    "TG0141",
-                    at("query"),
-                    "the OpenAPI 3.2 `query` HTTP method is not supported; the operation would be left out",
-                    "describe the call with a supported method such as `post`",
-                ));
-            }
             if map.contains_key("additionalOperations") {
                 out.push(error(
                     "TG0142",

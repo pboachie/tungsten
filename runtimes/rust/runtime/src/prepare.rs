@@ -728,7 +728,9 @@ impl ClientCore {
         let params = arg_params(op);
         let param_names: Vec<&str> = params.iter().map(|p| p.name.as_str()).collect();
         let body_paths = sensitive_body_paths(op);
-        let value = if is_safe_method(method) && method != HttpMethod::Options {
+        let value = if is_safe_method(method)
+            && !matches!(method, HttpMethod::Options | HttpMethod::Query)
+        {
             None
         } else {
             body_value(op, &args, &param_names)

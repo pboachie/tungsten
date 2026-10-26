@@ -1024,7 +1024,7 @@ class Engine:
         try:
             value = (
                 UNSET
-                if is_safe_method(method) and method != "OPTIONS"
+                if is_safe_method(method) and method not in ("OPTIONS", "QUERY")
                 else body_value(op, args, {p["name"] for p in arg_params(op)})
             )
             body_paths = sensitive_body_paths(op)

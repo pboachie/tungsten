@@ -62,7 +62,7 @@ export class TokenError extends Error {
   rejected = false;
 }
 
-const SAFE_METHODS: ReadonlySet<HttpMethod> = new Set<HttpMethod>(["GET", "HEAD", "OPTIONS", "TRACE"]);
+const SAFE_METHODS: ReadonlySet<HttpMethod> = new Set<HttpMethod>(["GET", "HEAD", "OPTIONS", "TRACE", "QUERY"]);
 
 export function isSafeMethod(method: HttpMethod): boolean {
   return SAFE_METHODS.has(method);

@@ -73,7 +73,7 @@ public sealed partial class ClientCore
         return ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork
             ? ip.GetAddressBytes()[0] != 127 : !ip.Equals(System.Net.IPAddress.IPv6Loopback);
     }
-    internal static bool IsSafeMethod(string method) => method is "GET" or "HEAD" or "OPTIONS" or "TRACE";
+    internal static bool IsSafeMethod(string method) => method is "GET" or "HEAD" or "OPTIONS" or "TRACE" or "QUERY";
 
     private static string CompositeConfigKey(CompositePart p)
     {

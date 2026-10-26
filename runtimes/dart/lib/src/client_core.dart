@@ -948,7 +948,7 @@ final class ClientCore {
     final paramNames = [for (final p in op.argumentParams) p.name];
     final bodyPaths = _Helpers.sensitiveBodyPaths(op);
     Object? value = unset;
-    if (!_Auth.safeMethod(method) || method == 'OPTIONS') {
+    if (!_Auth.safeMethod(method) || method == 'OPTIONS' || method == 'QUERY') {
       value = _Serialize.bodyValue(op, args, paramNames);
     }
     Object? redact(Object? display) {

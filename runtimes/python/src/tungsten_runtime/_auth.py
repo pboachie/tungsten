@@ -25,7 +25,7 @@ from ._json import js_string
 from ._util import b64, is_array, is_record, looks_sensitive, str_field, utf8
 from .types import HttpMethod
 
-SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "TRACE"})
+SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "TRACE", "QUERY"})
 
 INSECURE_HTTP_AUTH = "Refusing to send credentials over non-loopback HTTP. Use HTTPS, or set ClientOptions.allow_insecure_http = True for intentional insecure transport. Nothing was sent."
 

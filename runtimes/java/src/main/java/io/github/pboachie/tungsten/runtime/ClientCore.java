@@ -885,7 +885,7 @@ public final class ClientCore {
         }
         List<String> bodyPaths = Args.sensitiveBodyPaths(op);
         Object value = Json.ABSENT;
-        if (!Auth.isSafeMethod(method) || method.equals("OPTIONS")) {
+        if (!Auth.isSafeMethod(method) || method.equals("OPTIONS") || method.equals("QUERY")) {
             value = Serialize.bodyValue(op, args, paramNames);
         }
         Serialize.Encoded encoded;

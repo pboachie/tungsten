@@ -375,6 +375,7 @@ fn method(op: &Operation) -> &'static str {
         Head => "HEAD",
         Patch => "PATCH",
         Trace => "TRACE",
+        Query => "QUERY",
     }
 }
 
