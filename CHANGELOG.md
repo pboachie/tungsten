@@ -799,6 +799,14 @@ changes.
   text and JSON redact sensitive values and physical paths without compiling
   inputs, probing tools or executing emitters.
 
+- Check transport references in `tungsten doctor <project>`: report whether each
+  referenced environment variable is set and each project file exists, without
+  reading them. `--strict` fails on a missing referenced file.
+
+- Keep the specific, value-free messages of profile and `transport` diagnostics
+  in `tungsten config`, instead of a generic "configuration declaration is
+  invalid". Other manifest diagnostics stay redacted.
+
 - Select shared local configuration profiles from `tungsten init --profile PATH`
   (repeatable) and from the guided setup. Selections are composed with the
   compiler's limits before any file is written. Invalid, missing or remote
