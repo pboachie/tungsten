@@ -246,7 +246,10 @@ changes.
   Exposure is read-only by default, with a server-enforced allowlist and an
   optional per-user `authorize`. Secret-bearing, streamed and binary results
   are refused, and request and result bytes are bounded. The capability
-  catalog lists it as `webmcp_python_dispatch`.
+  catalog lists it as `webmcp_python_dispatch`. In the page,
+  `registerRemoteWebMcp({ endpoint })` of `@elysra/tungsten-webmcp` registers
+  those tools on the page's own origin, with the same owned registration and
+  cleanup as `registerTungstenWebMcp`.
 
 - The experimental `mcp-python` server collects streamed (server-sent event)
   results, as the TypeScript server does: at most 1,000 events (then
