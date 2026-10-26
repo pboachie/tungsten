@@ -230,6 +230,15 @@ changes.
 
 ### Added
 
+- `scenario run` now works on macOS and Windows as well as Linux. macOS owns
+  the integration through a process group and non-reaping `waitid`, Windows
+  through a Job Object; the binary cancels on Ctrl-C/SIGTERM on both.
+- Add `tungsten init --preset app|library|agent`, also accepted at the guided
+  setup's outputs prompt. `library` writes and selects a local profile
+  (`profiles/library.yml`) with shared SDK versions; `agent` configures an MCP
+  server and generates with `--strict`. Explicit `--targets` and `--strict`
+  win; presets never select inputs or change agent safety defaults.
+
 - The `fsharp` target now enforces imported-operation policy through the
   .NET runtime it wraps and may be generated for projects converted from
   Postman, cURL, `.http` or HAR input. Generated F# SDKs require a .NET runtime
@@ -282,6 +291,9 @@ changes.
   limits the retries all callers of one scope make together; a retry it
   cannot pay for is not made. A runnable bulk-sync example shows a job staying
   within a local API's concurrency quota.
+  Optional caps across every scope (`maxActiveTotal`/`max_active_total`,
+  `maxStreamsTotal`/`max_streams_total`) bound requests in flight per
+  scheduler; scopes waiting for them take turns so none is starved.
 
 - Add an opt-in total operation deadline to the TypeScript (`deadlineMs`),
   Python (`deadline_ms`) and Rust (`deadline`) runtimes, on client and call
@@ -296,6 +308,12 @@ changes.
   clock. Authentication and a shared OAuth refresh are waited for only until
   the deadline, never cancelled for other callers. F# SDKs use the same
   options through the .NET runtime.
+
+- Add the same total operation deadline to the Ruby runtime (`deadline_ms` on
+  client and call options); generated Ruby SDKs document it.
+
+- Add the same total operation deadline to the Dart runtime (`deadline` on
+  `ClientOptions` and `CallOptions`); generated Dart SDKs document it.
 
 - Add a per-tool-call total deadline to the MCP adapter
   (`ServerOptions.toolDeadlineMs`, `<API>_MCP_DEADLINE_MS` in generated
@@ -318,6 +336,10 @@ changes.
   `Duration`). Blocking token or store work the calling thread performs is
   checked when it returns; a caller waiting on shared token work stops at its
   deadline without cancelling it.
+
+- Kotlin: add `deadline(kotlin.time.Duration)` extensions on the client and
+  call option builders, and describe the total deadline in the generated Java
+  and Kotlin SDK READMEs.
 
 - Add `tungsten lock`, a versioned single-project generation lock
   (`tungsten.lock.json`). It records the declared input closure (manifest,
@@ -358,6 +380,20 @@ changes.
   of the project a locked run as with `--locked`. The JSON results of both
   commands report `locked`.
 
+- Add `bundle export --include-consumer-cache DIR` (repeatable) to carry a
+  prepared, project-relative directory of consumer dependencies, such as
+  `npm pack` tarballs, `pip download` wheels or `cargo vendor` output, for
+  offline builds of generated consumers. Files are copied as supplied, with
+  role `consumer_cache`. The inventory's new `consumer_caches` records each
+  directory with its file count and size, provenance, the exporting platform
+  (`exported_on`) and a redistribution notice. Directories that overlap,
+  lie outside the project, sit in `.tungsten-inputs` or VCS metadata, or
+  overlap generated output are refused, as are links. Import accepts
+  `consumer_cache` entries only below a declared directory. Offline consumer
+  builds remain not guaranteed: tungsten does not check that a cache covers
+  every dependency, and native packages may install only on the exporting
+  platform.
+
 - Add `bundle export --include-input-cache` to carry the verified
   `.tungsten-inputs` pin records and pinned content of remote HTTP(S) and Git
   inputs, and of the reviewed sources of converted imports, so such projects
@@ -379,6 +415,13 @@ changes.
 - Support-bundle collection, for preview and export, is limited to 30 seconds
   and writes nothing when the limit is reached; library cancellation of an
   export is now honoured while collection runs.
+
+- Declare a typed `options_schema` for every built-in target in
+  `tungsten capabilities`: C#, F#, Dart, Java, Kotlin, Ruby, MCP, WebMCP and
+  docs now list each option's JSON type, fixed default, description and the
+  warning code an invalid value produces. The emitters read their fixed
+  defaults from the same declarations, the catalog check rejects an option
+  key without a declared field, and editor hover shows the descriptions.
 
 - On Linux, the `tungsten` binary turns SIGINT and SIGTERM during
   `support-bundle --output` into cooperative cancellation: the interrupted
@@ -419,6 +462,19 @@ changes.
   the action to `<namespace>.suggested-overlay.yaml`, creating that file and
   listing it under the input's `overlays` in `tungsten.yml` when needed. No fix
   is offered from an analysis older than the latest edit.
+
+- Link language-server diagnostics to the configuration that is responsible
+  for them. A diagnostic in a profile points to the `profiles` entry of
+  `tungsten.yml` that selected it, or to the `profiles` list for an included
+  profile. A diagnostic at a composed target option names the declaration that
+  sets the effective value and the declarations it shadows. Locations come
+  from the compiled text, so unsaved buffers are reflected.
+
+- Explain in the language server why an OpenAPI construct the capability
+  catalog declares as not compiled (for example OpenAPI 3.2 `$self`, `TG0140`)
+  has no fix. Editors that show disabled code actions get one per diagnostic
+  code, with the construct, its refused or ignored policy and the
+  `tungsten capabilities` and `tungsten explain` pointers.
 
 - Explain unavailable language-server overlay fixes: editors that show disabled
   code actions show why no fix is offered for a `TG0403`/`TG0401` diagnostic (a
@@ -525,6 +581,15 @@ changes.
   and event-stream extensions. TG0148 is retired and no longer reported;
   `tungsten capabilities` lists reusable media types as a compiled 3.2
   construct.
+
+- OpenAPI 3.2 discriminator `defaultMapping` compiles: the IR `Discriminator`
+  gains an optional `default_mapping` (additive), and TypeScript, Python and
+  Rust SDKs and the mock decode a value whose tag is absent, not a string or
+  mapped to no variant as that default variant instead of refusing it. Tool
+  JSON schemas list such a union with `anyOf` and leave the default variant's
+  tag open. A `defaultMapping` that is not a variant of the union is reported
+  as TG0306 and ignored. Other SDK targets still refuse an unmapped tag.
+  TG0149 is retired and no longer reported.
 
 - OpenAPI 3.2.x documents are read: a document that uses only constructs OpenAPI
   3.1 has takes the 3.1 path and compiles to the same IR as its 3.1 twin. Each
@@ -693,6 +758,11 @@ changes.
 
 ### Changed
 
+- The Python clean-consumer CI lane now also calls a second generated SDK sync and async,
+  covering bearer auth, cursor pagination, nullable and union models, a safe
+  retry, client-side validation, an operation deadline, async cancellation, an
+  unknown mutation outcome that is not replayed, and server-sent events.
+
 - Check the Python runtime archives on every CPython minor from 3.10 to 3.15
   (latest patches) in public CI, with macOS and Windows archive smoke, and add
   a clean-consumer check that installs the runtime wheel/sdist and freshly
@@ -723,6 +793,21 @@ changes.
   nontransactional across files and directories.
 
 ### Fixed
+
+- The Rust runtime runs an OAuth2 token fetch or refresh as its own task: a
+  caller whose `deadline` passes, or whose future is dropped, stops waiting
+  (with `DEADLINE_EXCEEDED` for an expired deadline) instead of cutting short
+  a fetch other callers share, which then failed them with `AUTH_FAILED` and
+  sent a second token request. The TypeScript runtime also stops waiting for
+  authentication, an OAuth rejection refresh or an idempotency key
+  reservation when the caller's `signal` aborts. Python already behaved this
+  way.
+
+- Record profile files in `tungsten.lock.json` by their manifest-relative
+  path below the selected profile root, instead of the logical
+  `profile[N]/...` name. `bundle export` failed for any project that selected
+  a profile. Locks written before this change report the profile file as
+  drift; accept it with `tungsten lock --update`.
 
 - Require Pydantic 2.10.1 or newer in generated Python packages and in
   guided `init` package setup: generated models failed to import with

@@ -148,6 +148,10 @@ Retries are not budgeted unless `retry_ratio` (0 to 1) is set: then each scope
 keeps a retry budget that starts at `retry_reserve` (default 10), gains `retry_ratio`
 per call (up to `retry_reserve` + 100 × `retry_ratio`) and loses one per retry. A retry
 the budget cannot pay for is not made; the call returns its last failure.
+Optionally, `max_active_total` and `max_streams_total` cap ordinary requests and event streams in
+flight across every scope, on top of each scope's `max_active` and `max_streams` (default:
+no cap across scopes). Scopes waiting for that shared capacity take turns, one
+request each, in scope order, so one busy tenant or origin cannot starve another.
 See the [bulk-sync example](https://github.com/pboachie/tungsten/tree/main/examples/bulk-sync).
 
 No runtime ships a file-backed OAuth token store. Provide an application-owned

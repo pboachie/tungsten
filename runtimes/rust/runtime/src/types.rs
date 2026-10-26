@@ -1006,9 +1006,10 @@ pub struct CallOptions {
     /// traversal, poll or macro. No attempt starts after it expires (`code`
     /// `DEADLINE_EXCEEDED`). For `stream()` it bounds connecting and each
     /// reconnect, not an open stream (see `idle_timeout`). A mutation already
-    /// sent reports `OUTCOME_UNKNOWN`, never a blind replay. An in-flight
-    /// token request is not cancelled: it completes within its own `timeout`
-    /// and the call then stops before sending.
+    /// sent reports `OUTCOME_UNKNOWN`, never a blind replay. A token
+    /// request runs as its own task: the call stops waiting for it at the
+    /// deadline, but it is not cancelled, so a shared refresh still serves
+    /// other callers.
     pub deadline: Option<Duration>,
     /// Override the client ordinary-response byte cap.
     pub max_response_bytes: Option<u64>,

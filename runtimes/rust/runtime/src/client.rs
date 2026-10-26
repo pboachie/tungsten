@@ -488,6 +488,7 @@ impl ClientCore {
         else {
             return Err(rejected);
         };
+        // The refresh is a detached task the call waits for only until its deadline.
         let refreshed = self.refresh_after_rejection(&scheme, &current).await;
         self.check_send_deadline(prepared, rejected.diagnostic.trace.attempts, None)?;
         let Some(token) = refreshed else {

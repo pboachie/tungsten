@@ -147,6 +147,60 @@ pub fn unavailable_overlay(
     }))
 }
 
+/// Disabled actions explaining, from the capability catalog, why a
+/// diagnostic about an input construct tungsten does not compile has no
+/// fix: one per diagnostic code, for editors that show disabled actions.
+/// The catalog's version lines declare each construct with its stable
+/// code; nothing here is an editor-only rule.
+pub fn unsupported_inputs(diagnostics: &[Diagnostic]) -> Vec<CodeActionOrCommand> {
+    use tungsten_config::capabilities::{InputFeaturePolicy, OPENAPI_INPUTS};
+    let mut by_code: Vec<(String, Vec<Diagnostic>)> = vec![];
+    for d in diagnostics
+        .iter()
+        .filter(|d| d.source.as_deref() == Some("tungsten"))
+        .take(MAX_DIAGNOSTICS)
+    {
+        let Some(NumberOrString::String(code)) = &d.code else {
+            continue;
+        };
+        match by_code.iter_mut().find(|(c, _)| c == code) {
+            Some((_, list)) => list.push(d.clone()),
+            None => by_code.push((code.clone(), vec![d.clone()])),
+        }
+    }
+    let mut out = vec![];
+    for (code, list) in by_code {
+        let declared = OPENAPI_INPUTS.iter().find_map(|line| {
+            line.unsupported_features
+                .iter()
+                .find(|f| f.diagnostic == code)
+                .map(|f| (line.line, f))
+        });
+        let Some((line, feature)) = declared else {
+            continue;
+        };
+        let effect = match feature.policy {
+            InputFeaturePolicy::Rejected => "is refused, so nothing is generated from the document",
+            InputFeaturePolicy::Ignored => "is ignored and has no effect on the output",
+        };
+        let reason = format!(
+            "OpenAPI {line} `{}` ({}) is not compiled by tungsten and {effect}; no edit \
+             derives an equivalent. Remove or rewrite it in the spec or with an overlay. \
+             `tungsten capabilities` lists the supported constructs and `tungsten explain \
+             {code}` has the details",
+            feature.member, feature.id,
+        );
+        out.push(CodeActionOrCommand::CodeAction(CodeAction {
+            title: format!("Fix `{}` ({code})", feature.member),
+            kind: Some(CodeActionKind::QUICKFIX),
+            diagnostics: Some(list),
+            disabled: Some(CodeActionDisabled { reason }),
+            ..CodeAction::default()
+        }));
+    }
+    out
+}
+
 /// The wrong value a diagnostic names and the names that could replace it.
 fn wanted(d: &Diagnostic, index: Option<&Index>) -> Option<(String, Vec<String>)> {
     let Some(NumberOrString::String(code)) = &d.code else {

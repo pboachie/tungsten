@@ -100,6 +100,10 @@ pub enum FileRole {
     /// Bundle inventories only: a verified `.tungsten-inputs` pin record or
     /// pinned content file of a remote input. Never part of a lock's files.
     InputCache,
+    /// Bundle inventories only: a file of a prepared consumer dependency
+    /// cache (`bundle export --include-consumer-cache`). Never part of a
+    /// lock's files.
+    ConsumerCache,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -453,6 +457,13 @@ pub(crate) fn capture(manifest: &Path, compiled: &Compiled) -> Option<Generation
     let mut files = vec![];
     for (name, digest) in &ir.generator.inputs {
         let role = role_of(name, config, &manifest_name, &profiles);
+        // Profiles are named `profile[N]/<path below its root>`; the file
+        // itself lives below the root the manifest selected for it.
+        let name = match role {
+            FileRole::Profile => profile_file(name, config).unwrap_or_else(|| name.clone()),
+            _ => name.clone(),
+        };
+        let name = &name;
         let path = portable(name);
         if role != FileRole::RemoteInput && outside_project(name) {
             gaps.push(RecipeGap {
@@ -602,6 +613,19 @@ fn role_of(
     } else {
         FileRole::Reference
     }
+}
+
+/// The manifest-relative path of a captured profile named
+/// `profile[N]/<path below the selected root>`.
+fn profile_file(name: &str, config: &TungstenConfig) -> Option<String> {
+    let (index, below) = name.strip_prefix("profile[")?.split_once("]/")?;
+    let selection = config.profiles.get(index.parse::<usize>().ok()?)?;
+    Some(
+        Path::new(&selection.root)
+            .join(below)
+            .to_string_lossy()
+            .into_owned(),
+    )
 }
 
 /// Manifest-relative path with `/` separators; an absolute path keeps only

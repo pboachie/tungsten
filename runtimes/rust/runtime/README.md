@@ -130,11 +130,12 @@ cannot restart it. No attempt starts after it expires: the call fails with
 `code` `DEADLINE_EXCEEDED`, and a mutation that was already sent reports
 `OUTCOME_UNKNOWN`, never a blind replay. A retry wait that would end after the
 deadline returns the last failure at once. For `stream()` it bounds connecting
-and each reconnect, never an open stream (use `idle_timeout`). An in-flight
-OAuth token request is not cancelled, so a shared refresh still serves its
-other callers: it completes within its own `timeout` and the call then stops
-before sending. A blocking idempotency-store worker is no longer waited for at
-the deadline but runs to completion. Default: no total deadline.
+and each reconnect, never an open stream (use `idle_timeout`). An OAuth token
+request runs as its own task: the call stops waiting for it at the deadline or
+when its future is dropped, but the request is not cancelled, so a shared
+refresh still serves its other callers within its own `timeout`. A blocking
+idempotency-store worker is no longer waited for at the deadline but runs to
+completion. Default: no total deadline.
 
 In unreleased 0.2.0, schema `minLength` and `maxLength` count Unicode code points, as
 JSON Schema does: an emoji outside the Basic Multilingual Plane is one character, and a
@@ -196,6 +197,10 @@ Retries are not budgeted unless `retry_ratio` (0 to 1) is set: then each scope
 keeps a retry budget that starts at `retry_reserve` (default 10), gains `retry_ratio`
 per call (up to `retry_reserve` + 100 × `retry_ratio`) and loses one per retry. A retry
 the budget cannot pay for is not made; the call returns its last failure.
+Optionally, `max_active_total` and `max_streams_total` cap ordinary requests and event streams in
+flight across every scope, on top of each scope's `max_active` and `max_streams` (default:
+no cap across scopes). Scopes waiting for that shared capacity take turns, one
+request each, in scope order, so one busy tenant or origin cannot starve another.
 See the [bulk-sync example](https://github.com/pboachie/tungsten/tree/main/examples/bulk-sync).
 
 No runtime ships a file-backed OAuth token store. Provide an application-owned

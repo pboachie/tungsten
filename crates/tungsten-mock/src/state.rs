@@ -125,7 +125,7 @@ impl State {
         }
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_vendor = "apple", windows))]
     pub fn with_run_limits(mut self, limits: crate::runner::RunLimits) -> Self {
         self.run_limits = Some(limits);
         self
@@ -174,16 +174,19 @@ impl State {
         }
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_vendor = "apple", windows))]
     pub fn run_limit_exceeded(&self) -> u8 {
         self.exceeded.load(Ordering::SeqCst)
     }
-    #[cfg(all(feature = "testing", target_os = "linux"))]
+    #[cfg(all(
+        feature = "testing",
+        any(target_os = "linux", target_vendor = "apple", windows)
+    ))]
     pub fn admitted_calls(&self) -> u64 {
         self.admitted.load(Ordering::SeqCst)
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_vendor = "apple", windows))]
     pub fn unfinished_calls(&self) -> u64 {
         self.admitted
             .load(Ordering::SeqCst)

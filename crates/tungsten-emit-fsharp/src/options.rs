@@ -18,7 +18,7 @@ use tungsten_ir::Ir;
 use tungsten_ir::naming::{self, Role, Target};
 
 /// The version of the runtime packages generated SDKs depend on.
-pub const DEFAULT_RUNTIME: &str = "0.1.3";
+pub const DEFAULT_RUNTIME: &str = tungsten_config::option_fields::FSHARP_RUNTIME;
 
 /// The published FSharp.Core compatibility floor, independent of patch toolchain upgrades.
 /// Restore downloads this package when the SDK library pack contains a newer version.
@@ -82,7 +82,7 @@ impl Options {
             }
         });
         let version = read("version", &is_version, "a version such as 1.2.3")
-            .unwrap_or_else(|| "0.1.0".to_string());
+            .unwrap_or_else(|| tungsten_config::option_fields::PACKAGE_VERSION.to_string());
         let runtime = read("runtime", &is_version, "a runtime version such as 0.1.0")
             .unwrap_or_else(|| DEFAULT_RUNTIME.to_string());
         let runtime_path = read("runtime_path", &is_path, "a non-empty relative path");

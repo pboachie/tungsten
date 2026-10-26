@@ -362,6 +362,14 @@ pub(crate) struct BundleExportArgs {
     /// redistributing those documents.
     #[arg(long)]
     pub include_input_cache: bool,
+    /// Also carry this project-relative directory of prepared consumer
+    /// dependencies (for example `npm pack` tarballs, `pip download` wheels
+    /// or `cargo vendor` output) for offline consumer builds. Repeatable.
+    /// Its files are copied as supplied, recorded with provenance, the
+    /// exporting platform and a redistribution notice; tungsten does not
+    /// verify that they cover every dependency.
+    #[arg(long, value_name = "DIR")]
+    pub include_consumer_cache: Vec<String>,
 }
 
 #[derive(Debug, Args)]
@@ -663,8 +671,25 @@ pub enum SchemaName {
     ProjectBundle,
 }
 
+/// Named starting points for `tungsten init`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum InitPreset {
+    /// TypeScript SDK and docs for one application.
+    App,
+    /// TypeScript, Python and Rust SDKs with docs, sharing a local profile
+    /// (profiles/library.yml) that other projects can select.
+    Library,
+    /// An MCP server on the TypeScript SDK for an agent integration,
+    /// generated with --strict. Agent safety defaults are unchanged.
+    Agent,
+}
+
 #[derive(Debug, Clone, Args)]
 pub(crate) struct InitArgs {
+    /// Start from a preset; explicit --targets and --strict still win. The
+    /// same names are accepted at the guided setup's outputs prompt.
+    #[arg(long, value_enum, conflicts_with = "resume")]
+    pub preset: Option<InitPreset>,
     /// Acquisition provenance for a converted remote import, set internally.
     #[arg(skip)]
     pub source_url: Option<String>,
