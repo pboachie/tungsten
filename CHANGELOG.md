@@ -230,6 +230,12 @@ changes.
 
 ### Added
 
+- Add `tungsten init --preset app|library|agent`, also accepted at the guided
+  setup's outputs prompt. `library` writes and selects a local profile
+  (`profiles/library.yml`) with shared SDK versions; `agent` configures an MCP
+  server and generates with `--strict`. Explicit `--targets` and `--strict`
+  win; presets never select inputs or change agent safety defaults.
+
 - The `fsharp` target now enforces imported-operation policy through the
   .NET runtime it wraps and may be generated for projects converted from
   Postman, cURL, `.http` or HAR input. Generated F# SDKs require a .NET runtime
