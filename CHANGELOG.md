@@ -230,6 +230,14 @@ changes.
 
 ### Added
 
+- `tungsten update check` classifies a newer release as `compatible` or
+  `migration` (new `upgrade` field in `--json`). Before 1.0 a minor release, from
+  1.0 a major release, any prerelease, or notes with a Breaking section count as
+  migration; release notes can only make it stricter. Guidance names the
+  non-writing preview commands (`diff --migration`, `lock --preview`,
+  `generate --dry-run`) for migrations and `generate --check` otherwise, and the
+  cached update notice says when a migration may be required.
+
 - TypeScript, Python and Rust runtimes verify incoming webhooks without a web
   framework: `verifyWebhook` / `verify_webhook` check the Stripe-compatible
   `t=<unix>,v1=<hex HMAC-SHA256 of "t.body">` signature header against one or
@@ -245,6 +253,7 @@ changes.
   storage, queues and acknowledgement stay with the application.
   `signWebhook` / `sign_webhook` build a header for local examples. Registered
   as the `webhook_verification` runtime feature. Unreleased 0.2.0 only.
+
 - Add `tungsten_build::ProjectIdentity`, the shared in-process identity of
   one compilation: its manifest, the content digest of every source it read,
   the optional files it found absent, and a digest of the compiler version,
