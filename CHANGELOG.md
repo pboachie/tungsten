@@ -230,6 +230,28 @@ changes.
 
 ### Added
 
+- Add `tungsten_build::ProjectIdentity`, the shared in-process identity of
+  one compilation: its manifest, the content digest of every source it read,
+  the optional files it found absent, and a digest of the compiler version,
+  load limits, acquisition and remote-reference policy and invocation policy.
+  It revalidates against unsaved buffers and disk without modification times,
+  reports which files a project depends on, and is never persisted. The
+  language server uses it for result reuse, and a watched-file change to a
+  file the last check neither read nor looked for no longer cancels or starts
+  a check.
+
+- `tungsten workspace [PATH]` lists the tungsten projects under a directory
+  with deterministic ids (the project directory relative to PATH), their
+  output directories and declared inputs. Discovery is bounded (8 levels,
+  4,096 directories, 64 projects, 1 MiB manifests; TG0640), never follows
+  symbolic links (TG0643), refuses directories with two manifests (TG0641)
+  and reports output directories shared or nested across projects (TG0642).
+  `--project ID` on `check`, `generate`, `lock`, `report`, `diff`, `mock`,
+  `ir dump`, `overlay suggest` and `scenario` runs the command on one project
+  of the workspace at PATH (unknown ids are TG0644), and `generate` refuses to
+  write a project whose outputs collide with another's. The capability catalog
+  declares the workspace contract under `workspace`.
+
 - A reusable composite GitHub Action, `actions/tungsten`, installs a pinned
   tungsten release through `install.sh` from the action's own commit (checksum
   and build provenance verified, provenance cannot be disabled), then runs
