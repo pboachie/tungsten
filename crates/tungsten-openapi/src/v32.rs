@@ -6,14 +6,15 @@
 //! media types (`components.mediaTypes`, `$ref` in a `content` map, followed
 //! like any other reference), response `itemSchema` where
 //! [`response_item_schema`] places it, and a discriminator's
-//! `defaultMapping`. Every other construct 3.2 added is either refused with an
+//! `defaultMapping`. Security requirements that name a scheme by URI are
+//! resolved by the build (TG0151 when the URI names no scheme). Every other construct 3.2 added is either refused with an
 //! error (when ignoring it would produce a client that behaves differently
 //! from the API) or reported as a warning (when it only adds metadata the
 //! compiler has no use for). Nothing is dropped silently. Codes
 //! `TG0140`-`TG0156` form one family, one code per feature, each located at
 //! the member that introduces it.
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::HashSet;
 
 use serde_json::{Map, Value};
 use tungsten_core::Diagnostic;
@@ -167,7 +168,6 @@ pub(crate) fn scan_document(root: &Value) -> Vec<Finding> {
             "remove `$self`; relative references resolve against the file location",
         ));
     }
-    let schemes = scheme_names(doc);
     if let Some(Value::Array(tags)) = doc.get("tags") {
         for (i, tag) in tags.iter().enumerate() {
             if let Value::Object(tag) = tag {
@@ -176,28 +176,19 @@ pub(crate) fn scan_document(root: &Value) -> Vec<Finding> {
         }
     }
     server_findings("/servers", doc.get("servers"), &mut out);
-    requirements(doc.get("security"), "/security", &schemes, &mut out);
     walk(root, "", Kind::Document, |node| {
-        node_findings(node, &schemes, &mut out);
+        node_findings(node, &mut out);
         true
     });
     out
 }
 
 /// Findings of the subtree of a fragment at `pointer`, read as `kind`.
-/// Security names use the input entry's component names, as in the builder;
-/// a fragment's own members cannot introduce a different namespace. Whole
-/// document-only members are checked separately by `scan_document`.
-pub(crate) fn scan_subtree(
-    value: &Value,
-    pointer: &str,
-    kind: Kind,
-    entry: &Value,
-) -> Vec<Finding> {
+/// Whole document-only members are checked separately by `scan_document`.
+pub(crate) fn scan_subtree(value: &Value, pointer: &str, kind: Kind) -> Vec<Finding> {
     let mut out = vec![];
-    let schemes = entry.as_object().map(scheme_names).unwrap_or_default();
     walk(value, pointer, kind, |node| {
-        node_findings(node, &schemes, &mut out);
+        node_findings(node, &mut out);
         true
     });
     out
@@ -212,14 +203,6 @@ impl Reported {
     pub(crate) fn first(&mut self, doc: usize, finding: &Finding) -> bool {
         self.0.insert((doc, finding.pointer.clone(), finding.code))
     }
-}
-
-fn scheme_names(doc: &Map<String, Value>) -> BTreeSet<String> {
-    doc.get("components")
-        .and_then(|c| c.get("securitySchemes"))
-        .and_then(Value::as_object)
-        .map(|m| m.keys().cloned().collect())
-        .unwrap_or_default()
 }
 
 fn tag_findings(pointer: &str, tag: &Map<String, Value>, out: &mut Vec<Finding>) {
@@ -256,40 +239,7 @@ fn server_findings(pointer: &str, servers: Option<&Value>, out: &mut Vec<Finding
     }
 }
 
-/// A security requirement key that is not a component name but looks like a
-/// URI reference names a Security Scheme Object by location (3.2).
-fn requirements(
-    value: Option<&Value>,
-    pointer: &str,
-    schemes: &BTreeSet<String>,
-    out: &mut Vec<Finding>,
-) {
-    let Some(Value::Array(list)) = value else {
-        return;
-    };
-    for (i, requirement) in list.iter().enumerate() {
-        let Value::Object(requirement) = requirement else {
-            continue;
-        };
-        for key in requirement.keys() {
-            let by_uri = !schemes.contains(key)
-                && !key.starts_with("x-")
-                && (key.starts_with('.') || key.contains([':', '/', '#']));
-            if by_uri {
-                out.push(error(
-                    "TG0151",
-                    join_pointer(&join_pointer(pointer, &i.to_string()), key),
-                    &format!(
-                        "OpenAPI 3.2 security requirement `{key}` names a security scheme by URI, which is not supported"
-                    ),
-                    "name a scheme declared under `components.securitySchemes`",
-                ));
-            }
-        }
-    }
-}
-
-fn node_findings(node: &Node<'_>, schemes: &BTreeSet<String>, out: &mut Vec<Finding>) {
+fn node_findings(node: &Node<'_>, out: &mut Vec<Finding>) {
     let map = node.value;
     let at = |key: &str| join_pointer(&node.pointer, key);
     match node.kind {
@@ -307,7 +257,6 @@ fn node_findings(node: &Node<'_>, schemes: &BTreeSet<String>, out: &mut Vec<Find
         }
         Kind::Operation => {
             server_findings(&at("servers"), map.get("servers"), out);
-            requirements(map.get("security"), &at("security"), schemes, out);
         }
         Kind::Parameter => {
             if map.get("in").and_then(Value::as_str) == Some("querystring") {
