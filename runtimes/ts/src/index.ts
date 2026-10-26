@@ -18,6 +18,17 @@ export { ClientCore } from "./client.js";
 export { ANY_EVENT, EventStream, type CollectOptions, type EventHandler, type StreamEvent, type StreamResult } from "./streams.js";
 export { DEFAULT_MAX_EVENT_BYTES, SseParser, type SseEvent } from "./sse.js";
 export { MemoryIdempotencyStore } from "./idempotency.js";
+export {
+  MemoryTelemetryCollector,
+  TELEMETRY_SCHEMA_VERSION,
+  type TelemetryEntry,
+  type TelemetryEvent,
+  type TelemetryEventName,
+  type TelemetryObserver,
+  type TelemetryOutcome,
+  type TelemetryPhase,
+  type TelemetryQueueReason,
+} from "./telemetry.js";
 export { RequestScheduler, type Permit, type Rejection, type SchedulerOptions, type SchedulerStats } from "./scheduler.js";
 export {
   generatePkce,

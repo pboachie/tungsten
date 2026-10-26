@@ -51,6 +51,7 @@ import { DEFAULT_MAX_EVENT_BYTES, SseParser, type SseEvent } from "./sse.js";
 import { EventStream } from "./streams.js";
 import { attempt, type AttemptOutcome, nextLink, parseRetryAfter, StreamBody } from "./transport.js";
 import { type Permit, type Rejection, RequestScheduler } from "./scheduler.js";
+import { Telemetry, type TelemetryQueueReason, type TelemetrySpan } from "./telemetry.js";
 import type {
   ApiDescriptor,
   CallOptions,
@@ -140,7 +141,10 @@ const POLL_DEADLINE: unique symbol = Symbol("tungsten.pollDeadline");
  * call, fixed when a public entry point resolves `deadlineMs`. Nested work
  * (pages, polls, verification, macro steps) inherits it and cannot restart it. */
 const CALL_DEADLINE: unique symbol = Symbol("tungsten.callDeadline");
-type StepOptions = CallOptions & { [POLL_DEADLINE]?: number | undefined; [CALL_DEADLINE]?: number | undefined; [MACRO_CONFIRMED]?: true; [MACRO_CLAIM]?: () => Failure | null };
+/** The telemetry span of the operation a public entry point started; only
+ * work belonging to that operation reads it. */
+const TELEMETRY_SPAN: unique symbol = Symbol("tungsten.telemetrySpan");
+type StepOptions = CallOptions & { [POLL_DEADLINE]?: number | undefined; [CALL_DEADLINE]?: number | undefined; [TELEMETRY_SPAN]?: TelemetrySpan | undefined; [MACRO_CONFIRMED]?: true; [MACRO_CLAIM]?: () => Failure | null };
 
 /** `#untilDeadline` gave up waiting. */
 const DEADLINE_EXPIRED: unique symbol = Symbol("tungsten.deadlineExpired");
@@ -210,6 +214,19 @@ function safeName(value: unknown, key: string, fallback: string): string {
     return typeof name === "string" && name !== "" ? name : fallback;
   } catch {
     return fallback;
+  }
+}
+
+/** The `reason` of a `queue` telemetry phase: why admission ended. */
+function queueReason(refused: Diagnostic | null): TelemetryQueueReason {
+  if (refused === null) return "admitted";
+  switch (refused.code) {
+    case "QUEUE_FULL": return "full";
+    case "QUEUE_TIMEOUT": return "timeout";
+    case "RATE_LIMIT_PAUSED": return "paused";
+    case "SCHEDULER_CLOSED": return "closed";
+    case "DEADLINE_EXCEEDED": return "deadline";
+    default: return "cancelled";
   }
 }
 
@@ -493,6 +510,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
 
   readonly #redirectsDisabled: boolean;
   readonly #scheduler: RequestScheduler | null = null;
+  readonly #telemetry: Telemetry | null = null;
   readonly #redirectPolicyInvalid: boolean;
 
   /**
@@ -541,6 +559,11 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     }
     if (this.options.tenant !== undefined && typeof this.options.tenant !== "string") throw new TypeError("tenant must be a string");
     try {
+      this.#telemetry = Telemetry.of(this.options.telemetry);
+    } catch {
+      // Unreadable options: telemetry stays off.
+    }
+    try {
       const candidate = this.options.idempotencyStore;
       if (isRecord(candidate) && typeof candidate.get === "function" && typeof candidate.put === "function") store = candidate;
       if (Array.isArray(this.options.operations)) this.register(...this.options.operations);
@@ -574,11 +597,22 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
   /** Validate, authenticate, apply idempotency and confirmation rules,
    * send with retries and classify the response. Never throws. */
   async call<T>(op: OperationDescriptor, args: Record<string, unknown>, opts?: CallOptions): Promise<Result<T>> {
+    const span = this.#startSpan(op);
+    let result: Result<T>;
     try {
-      return await this.#call<T>(op, args, this.#callOptions(opts), null);
+      const resolved = this.#callOptions(opts);
+      result = await this.#call<T>(op, args, span === null ? resolved : ({ ...resolved, [TELEMETRY_SPAN]: span } as StepOptions), null);
     } catch (error) {
-      return fail(this.#internal(op, error, "building or sending the request"));
+      result = fail(this.#internal(op, error, "building or sending the request"));
     }
+    if (span !== null) {
+      try {
+        span.end(result.ok ? null : result.error, !result.ok && (opts as CallOptions | undefined)?.signal?.aborted === true, result.ok ? result.meta.status : result.error.http_status);
+      } catch {
+        // Telemetry never changes the call.
+      }
+    }
+    return result;
   }
 
   /** Run the operation's preview mode: local rendering (no network), a
@@ -838,6 +872,16 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     return Array.isArray(this.options.middleware) ? this.options.middleware.filter(isRecord) : [];
   }
 
+  /** Start the telemetry of one operation; null when telemetry is off. */
+  #startSpan(op: OperationDescriptor): TelemetrySpan | null {
+    if (this.#telemetry === null) return null;
+    try {
+      return this.#telemetry.start(safeName(this.api, "name", ""), safeId(op), "call", isRecord(op) && isRecord(op.agent) && isMutation(op));
+    } catch {
+      return null;
+    }
+  }
+
   async #call<T>(op: OperationDescriptor, args: Record<string, unknown>, opts: CallOptions, urlOverride: string | null, pageUrls?: Set<string>): Promise<Result<T>> {
     const prepared = await this.#prepare(op, args, opts, "call", urlOverride);
     if (!prepared.ok) return prepared;
@@ -852,7 +896,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
       result = await this.#retryRejected(prepared.value, result, opts);
     }
     if (result.ok && opts.verify === true && op.agent.verify) {
-      return { ...result, verification: await this.#verify(op, prepared.value.args, result.value, opts) };
+      return { ...result, verification: await this.#verify(op, prepared.value.args, result.value, { ...opts, [TELEMETRY_SPAN]: undefined } as StepOptions) };
     }
     return result;
   }
@@ -1106,11 +1150,26 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     const beforeAuth = this.#beforeDispatch(op, opts);
     if (beforeAuth) return beforeAuth;
     const authTarget = urlOverride ?? (typeof this.options.baseUrl === "string" ? this.options.baseUrl : this.api.servers?.find(s => typeof s === "string"));
+    const span = (opts as StepOptions)[TELEMETRY_SPAN];
+    const authStart = performance.now();
     const auth = await this.#untilDeadline(resolveAuth(this.api, op, isRecord(this.options.auth) ? this.options.auth : {}, method, this.#tokenSource,
       insecureHttp(authTarget, this.options.allowInsecureHttp) ? INSECURE_HTTP_AUTH : null), opts);
-    if (auth === DEADLINE_EXPIRED) return this.#deadlineExpired(op, "while authenticating");
-    if (auth === CALLER_CANCELLED) return this.#callerCancelled(op);
-    if (!auth.ok) return fail(diagnostic(op.id, "AUTH_FAILED", { remediation: auth.remediation }));
+    if (auth === DEADLINE_EXPIRED) {
+      const expired = this.#deadlineExpired(op, "while authenticating");
+      span?.phase("auth", authStart, expired.error, false);
+      return expired;
+    }
+    if (auth === CALLER_CANCELLED) {
+      const cancelled = this.#callerCancelled(op);
+      span?.phase("auth", authStart, cancelled.error, true);
+      return cancelled;
+    }
+    if (!auth.ok) {
+      const failed = fail(diagnostic(op.id, "AUTH_FAILED", { remediation: auth.remediation }));
+      span?.phase("auth", authStart, failed.error, false);
+      return failed;
+    }
+    span?.phase("auth", authStart, null, false);
     const secrets = new Set(auth.secrets.filter((s) => s !== ""));
     for (const p of op.params) {
       const value = args[p.name];
@@ -1504,6 +1563,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     const protectedReplay = hasReplayProtection(op, prepared.key);
     const check = mutation && !protectedReplay ? this.#outcomeCheck(op, prepared.args) : null;
     const timeoutMs = this.#timeout(opts);
+    const span = (opts as StepOptions)[TELEMETRY_SPAN];
     let attempts = 0;
     let previousMutationFailure: Failure | undefined;
     for (;;) {
@@ -1526,8 +1586,15 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
       }
       const interrupted = this.#beforeDispatch(op, opts);
       if (interrupted) return previousMutationFailure ?? interrupted;
+      const queueStart = performance.now();
       const permit = await this.#admit(op, prepared.url, opts, stream);
+      if (permit !== null && span !== undefined) {
+        const refused = "ok" in permit ? permit.error : null;
+        span.phase("queue", queueStart, refused, opts.signal?.aborted === true, { attempt: span.attempt + 1, reason: queueReason(refused) });
+      }
       if (permit !== null && "ok" in permit) return previousMutationFailure ?? permit;
+      const attemptNumber = span?.nextAttempt() ?? 0;
+      const attemptStart = span?.attemptStart(attemptNumber) ?? 0;
       if (permit !== null && attempts === 1) this.#scheduler?.recordCall(this.#scopeKey(prepared.url));
       let result: Result<T>;
       let current = { url: prepared.url, method: prepared.method, body: prepared.body };
@@ -1588,6 +1655,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
       } finally {
         if (!handedOff) permit?.release();
       }
+      span?.attemptEnd(attemptNumber, attemptStart, result.ok ? null : result.error, !result.ok && opts.signal?.aborted === true, result.ok ? result.meta.status : result.error.http_status);
       if (result.ok) { pageRequestUrls.set(result.meta, current.url); return result; }
       const error = scrubDiagnostic(result.error, prepared.secrets);
       const done = (): Failure => (result.partial === undefined ? fail(error) : { ok: false, error, partial: result.partial });
@@ -1622,8 +1690,14 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
       }
       // A retry that could not start before the deadline is not waited for.
       const deadline = (opts as StepOptions)[CALL_DEADLINE];
-      if (deadline !== undefined && performance.now() + delay >= deadline) return previousMutationFailure ?? done();
-      if (!(await sleep(delay, opts.signal))) return previousMutationFailure ?? done();
+      if (deadline !== undefined && performance.now() + delay >= deadline) {
+        span?.phase("retry_backoff", performance.now(), { code: "DEADLINE_EXCEEDED" }, false, { attempt: attemptNumber });
+        return previousMutationFailure ?? done();
+      }
+      const backoffStart = performance.now();
+      const slept = await sleep(delay, opts.signal);
+      span?.phase("retry_backoff", backoffStart, slept ? null : {}, !slept, { attempt: attemptNumber });
+      if (!slept) return previousMutationFailure ?? done();
     }
   }
 
