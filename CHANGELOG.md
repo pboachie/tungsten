@@ -230,6 +230,11 @@ changes.
 
 ### Added
 
+- Generated Rust CLIs keep login sessions in the Windows Credential Locker
+  (through Windows PowerShell) by default on Windows. A session the locker
+  refuses, for example one above its secret size limit, fails with advice to
+  choose the owner-only file store explicitly.
+
 - `tungsten lsp` serves every project in the editor's workspace folders, found
   as `tungsten workspace` finds them, plus any `tungsten.yml` that is opened.
   Edits, saves and watched changes re-check only the projects that read the
@@ -253,7 +258,9 @@ changes.
   crash before the token is saved replays that page once, so sinks must
   deduplicate. `describeCheckpoint` / `describe_checkpoint` reports status
   without the cursor. Registered as the `pagination_checkpoints` capability for
-  the `typescript`, `python` and `rust` targets.
+  the `typescript`, `python` and `rust` targets. In Rust, `ExportPages::typed`
+  decodes items and `blocking::Runtime::export_pages` iterates an export with
+  blocking calls.
 
 - Generated Rust CLIs sign in to OAuth2 `authorizationCode` schemes:
   `auth login` runs the runtime's managed S256 flow through a loopback
