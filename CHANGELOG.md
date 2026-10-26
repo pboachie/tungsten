@@ -230,6 +230,11 @@ changes.
 
 ### Added
 
+- Generated Rust CLIs keep login sessions in the Windows Credential Locker
+  (through Windows PowerShell) by default on Windows. A session the locker
+  refuses, for example one above its secret size limit, fails with advice to
+  choose the owner-only file store explicitly.
+
 - `tungsten lsp` serves every project in the editor's workspace folders, found
   as `tungsten workspace` finds them, plus any `tungsten.yml` that is opened.
   Edits, saves and watched changes re-check only the projects that read the
