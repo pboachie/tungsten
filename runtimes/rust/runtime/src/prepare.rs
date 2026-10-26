@@ -679,6 +679,14 @@ impl ClientCore {
                 ));
             }
             AuthResolution::Failed { remediation } => {
+                // A token wait cut short by the deadline reports that.
+                if crate::verify::call_deadline_expired() {
+                    return Err(crate::verify::deadline_exceeded(
+                        &op.id,
+                        "while authenticating",
+                    ));
+                }
+                crate::verify::check_poll_deadline(&op.id)?;
                 return Err(fail(
                     Diag::new(op.id.clone(), Category::AuthFailed)
                         .remediation(remediation)

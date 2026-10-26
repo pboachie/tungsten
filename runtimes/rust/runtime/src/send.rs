@@ -931,17 +931,52 @@ impl ClientCore {
         None
     }
 
-    /// Fetch (and cache) an OAuth2 client-credentials token.
+    /// Fetch (and cache) an OAuth2 client-credentials token. The fetch is
+    /// its own task: a caller whose deadline passes, or whose future is
+    /// dropped, stops waiting without cancelling a fetch others share.
     async fn oauth_token(&self, client: OAuthClient<'_>) -> std::result::Result<String, String> {
         if crate::auth::insecure_http(client.token_url, self.inner.allow_insecure_http) {
             return Err(crate::auth::INSECURE_HTTP_AUTH.to_owned());
         }
+        let core = self.clone();
+        let name = client.name.to_owned();
+        let token_url = client.token_url.to_owned();
+        let scopes = client.scopes.to_vec();
+        let client_id = client.client_id.to_owned();
+        let client_secret = client.client_secret.to_owned();
+        let fetch = async move {
+            core.fetch_client_token(OAuthClient {
+                name: &name,
+                token_url: &token_url,
+                scopes: &scopes,
+                client_id: &client_id,
+                client_secret: &client_secret,
+            })
+            .await
+        };
+        match crate::verify::detached(fetch).await {
+            Ok(result) => result,
+            Err(crate::verify::Abandoned::Expired) => Err(format!(
+                "The operation deadline expired while fetching the OAuth2 token for {}.",
+                client.name
+            )),
+            Err(crate::verify::Abandoned::Stopped) => Err(format!(
+                "The OAuth2 token fetch for {} stopped before it finished; call again.",
+                client.name
+            )),
+        }
+    }
+
+    async fn fetch_client_token(
+        &self,
+        client: OAuthClient<'_>,
+    ) -> std::result::Result<String, String> {
         // Short map locks; only refreshes of this scheme wait for each other.
         let gate = {
             let mut gates = self.inner.oauth_refreshes.lock().await;
             gates.entry(client.name.to_owned()).or_default().clone()
         };
-        // Dropping a cancelled owner releases this gate; another waiter can retry.
+        // Fetches run as detached tasks, so a caller dropping out never holds this gate.
         let _refresh = gate.lock().await;
         let cache = self.inner.oauth_tokens.lock().await;
         let real_now = std::time::SystemTime::now()

@@ -17,7 +17,8 @@ import kotlinx.coroutines.runInterruptible
  * timeout. The suspend call then ends with a `CancellationException` (structured cancellation),
  * not with a [Result]. A mutation cancelled after it was sent has an unknown outcome; do not
  * repeat it blindly (reuse its idempotency key). A coroutine that is already cancelled sends
- * nothing.
+ * nothing. To bound a call and still get a [Result] (code `DEADLINE_EXCEEDED`), set the
+ * runtime's `deadline` call or client option rather than wrapping it in `withTimeout`.
  */
 public suspend fun <T> suspending(
     dispatcher: CoroutineDispatcher = Dispatchers.IO,
