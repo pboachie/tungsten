@@ -226,6 +226,12 @@ changes.
 
 ### Added
 
+- Add `tungsten support-bundle --inspect <FILE>` to review an existing support
+  bundle locally on any platform. It reads one bounded regular file, refuses
+  unsupported `bundle_schema_version` values by number, requires exactly the
+  schema's keys, observed metadata-only entries and payload sizes that match,
+  and lists the entries. Errors name schema locations only, never file content.
+
 - Add explicit Linux support-bundle export to a new file in an existing,
   trusted user-owned directory. Export preserves the metadata-only preview
   manifest, caps complete artifacts at 128 KiB, refuses replacement and

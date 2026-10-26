@@ -633,7 +633,7 @@ tungsten [--json] <command>
 | `lsp` | Serve diagnostics, completion, hover, go-to-definition and symbols for `tungsten.yml`, `agent.yml` and overlays to an editor over stdio (`--config`) |
 | `doctor` | Report external tools; pass a project path and `--strict` to fail when its required tools are missing or too old |
 | `capabilities` | Query built-in target declarations without running tools or emitters; optionally select a target id or alias, such as `capabilities py --json` |
-| `support-bundle --preview` | Inspect the exact metadata-only support manifest without writing files; `--exclude <id>` removes an entry. On Linux, `--output <PATH>` instead publishes it to a new file in an existing, trusted directory |
+| `support-bundle --preview` | Inspect the exact metadata-only support manifest without writing files; `--exclude <id>` removes an entry. On Linux, `--output <PATH>` instead publishes it to a new file in an existing, trusted directory; `--inspect <FILE>` checks and shows an existing bundle |
 
 With `--json`, stdout carries exactly one JSON document described by `tungsten schema cli-output` (`lsp` speaks the language server protocol on stdio instead). Color is used only on a terminal and never when `NO_COLOR` is set.
 
@@ -675,6 +675,18 @@ command. Abrupt termination or unconfirmed cleanup can leave one owned
 `.tungsten-support-*.pending` entry per invocation; later commands do not sweep
 existing temporary entries. File syncing before publication does not establish
 a power-loss durability guarantee. There is no automatic upload or issue creation.
+
+`tungsten support-bundle --inspect <FILE>` reviews an existing bundle on any
+platform before you share it. It reads one regular, nonsymlink file of at most
+128 KiB, writes nothing and starts no program. A bundle whose
+`bundle_schema_version` this tungsten does not read is refused with that
+number. Otherwise every object must have exactly the keys of that schema
+version, every entry must be an observed, metadata-only entry, and recorded
+sizes, statuses and totals must match the payloads; free text is limited to
+printable ASCII. The result lists each entry with its exact payload. Errors name
+only schema locations such as `/entries/0/payload/os`, never file content or
+unexpected keys. These checks confirm the bundle's shape, not that its text is
+safe to publish.
 
 Generation prepares compatible Java, Kotlin, C#, F#, Dart and Ruby SDK structure
 once per command, preserving each target's naming. Writing runs stage one
