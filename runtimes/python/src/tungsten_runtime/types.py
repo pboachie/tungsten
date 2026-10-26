@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from typing import Any, Generic, Literal, Protocol, TypedDict, TypeVar
 
 from .scheduler import RequestScheduler, SchedulerOptions
+from .telemetry import TelemetryObserver
 
 if sys.version_info >= (3, 11):
     from typing import NotRequired
@@ -687,6 +688,13 @@ class ClientOptions:
     #: The tenant or principal this client calls for. Clients sharing a
     #: scheduler keep separate capacity, queues and pauses per tenant.
     tenant: str | None = None
+    #: Receives local telemetry events for ``call()``: the operation, each
+    #: attempt, and the authentication, scheduler queue and retry backoff
+    #: phases. A callable or an object with ``on_event``. Off by default;
+    #: nothing is ever sent anywhere by the runtime. Events hold only bounded
+    #: values (no URLs, headers, bodies, credentials or error text); see
+    #: ``tungsten_runtime.telemetry.TelemetryEvent``.
+    telemetry: TelemetryObserver | None = None
     #: Largest server-sent event ``stream()`` accepts, in UTF-8 bytes (the
     #: field lines of one event plus the line being read). A larger one ends
     #: the stream with an ``UNEXPECTED_RESPONSE`` failure. Default 1 MiB.

@@ -75,6 +75,11 @@ class Lost:
     detail: str
 
 
+#: The outcome of every send of a flow finished without I/O after its task
+#: was cancelled; compared by identity.
+CANCELLED_SEND = Lost("cancelled")
+
+
 @dataclass(frozen=True, slots=True)
 class TimedOut:
     """No response within the attempt's deadline, after the request was (possibly) sent."""

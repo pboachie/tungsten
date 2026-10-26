@@ -28,6 +28,12 @@ from .errors import TungstenError, unwrap
 from .idempotency import FileIdempotencyStore, MemoryIdempotencyStore
 from .scheduler import Permit, Rejection, RequestScheduler, SchedulerOptions, SchedulerStats
 from .sentinels import UNSET, Unset
+from .telemetry import (
+    TELEMETRY_SCHEMA_VERSION,
+    MemoryTelemetryCollector,
+    TelemetryEvent,
+    TelemetryObserver,
+)
 from .types import *  # noqa: F403 (the contract types are the public API)
 
 __all__ = [
@@ -35,6 +41,7 @@ __all__ = [
     "CONFIRMATION_TTL_MS",
     "DEFAULT_RETRYABLE",
     "RUNTIME_VERSION",
+    "TELEMETRY_SCHEMA_VERSION",
     "UNSET",
     "AsyncClientCore",
     "AsyncEventStream",
@@ -46,6 +53,7 @@ __all__ = [
     "FileIdempotencyStore",
     "IssuerDefense",
     "MemoryIdempotencyStore",
+    "MemoryTelemetryCollector",
     "MemoryTokenStore",
     "OAuthFlow",
     "OAuthOk",
@@ -58,6 +66,8 @@ __all__ = [
     "SchedulerStats",
     "StoredToken",
     "StreamResult",
+    "TelemetryEvent",
+    "TelemetryObserver",
     "TokenInfo",
     "TokenStore",
     "TungstenError",

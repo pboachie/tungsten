@@ -149,8 +149,9 @@ export function telemetryOutcome(error: FailureFields | null, cancelled: boolean
   return "error";
 }
 
-function categoryOf(error: FailureFields | null): Category | null {
-  return error !== null && typeof error.category === "string" && CATEGORIES.has(error.category) ? (error.category as Category) : null;
+/** The category of a failure; none for a cancelled one. */
+function categoryOf(error: FailureFields | null, outcome: TelemetryOutcome): Category | null {
+  return error !== null && outcome !== "cancelled" && typeof error.category === "string" && CATEGORIES.has(error.category) ? (error.category as Category) : null;
 }
 
 function statusOf(status: unknown): number | null {
@@ -257,7 +258,7 @@ export class TelemetrySpan {
       phase,
       duration_ms: millis(start),
       outcome: telemetryOutcome(error, cancelled),
-      category: categoryOf(error),
+      category: categoryOf(error, telemetryOutcome(error, cancelled)),
       ...extra,
     });
   }
@@ -272,7 +273,7 @@ export class TelemetrySpan {
       attempt,
       duration_ms: millis(start),
       outcome: telemetryOutcome(error, cancelled),
-      category: categoryOf(error),
+      category: categoryOf(error, telemetryOutcome(error, cancelled)),
       http_status: statusOf(status),
     });
   }
@@ -284,7 +285,7 @@ export class TelemetrySpan {
     this.emit("operation.end", {
       duration_ms: millis(this.#start),
       outcome: telemetryOutcome(error, cancelled),
-      category: categoryOf(error),
+      category: categoryOf(error, telemetryOutcome(error, cancelled)),
       http_status: statusOf(status),
       attempts: this.#attempts,
     });

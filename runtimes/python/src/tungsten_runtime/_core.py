@@ -57,6 +57,7 @@ from ._classify import (
 )
 from ._confirm import CONFIRMATION_TTL_MS, check_token, issue_token, token_expiry
 from ._effects import (
+    CANCELLED_SEND,
     Answered,
     AttemptOutcome,
     AttemptRequest,
@@ -180,6 +181,7 @@ from .idempotency import MemoryIdempotencyStore
 from .scheduler import Permit, Rejection, RequestScheduler, SchedulerOptions
 from .schema import PatternNote, collect_pattern_notes
 from .sentinels import UNSET
+from .telemetry import Telemetry, TelemetryQueueReason, TelemetrySpan, now_ms
 from .types import (
     ClientOptions,
     Diagnostic,
@@ -357,6 +359,32 @@ def _opt(opts: Mapping[str, object], key: str) -> object:
 #: logical call, fixed when a public entry point resolves ``deadline_ms``.
 #: Nested work (pages, polls, verification, macro steps) inherits it.
 _CALL_DEADLINE: Final = "\x00tungsten.call_deadline"
+#: The call-options entry holding the telemetry span of the operation a
+#: public entry point started; only work belonging to that operation reads it.
+_TELEMETRY_SPAN: Final = "\x00tungsten.telemetry_span"
+
+
+def _span_of(opts: Mapping[str, object]) -> TelemetrySpan | None:
+    span = opts.get(_TELEMETRY_SPAN)
+    return span if isinstance(span, TelemetrySpan) else None
+
+
+def _queue_reason(refused: Mapping[str, object] | None) -> TelemetryQueueReason:
+    """The ``reason`` of a ``queue`` telemetry phase: why admission ended."""
+    if refused is None:
+        return "admitted"
+    code = refused.get("code")
+    if code == "QUEUE_FULL":
+        return "full"
+    if code == "QUEUE_TIMEOUT":
+        return "timeout"
+    if code == "RATE_LIMIT_PAUSED":
+        return "paused"
+    if code == "SCHEDULER_CLOSED":
+        return "closed"
+    if code == "DEADLINE_EXCEEDED":
+        return "deadline"
+    return "cancelled"
 
 
 def _deadline_of(opts: Mapping[str, object]) -> float | None:
@@ -475,6 +503,7 @@ class Engine:
             self.scheduler = RequestScheduler(configured)
         elif configured is not None:
             raise TypeError("scheduler must be a RequestScheduler or SchedulerOptions")
+        self._telemetry = Telemetry.of(getattr(self.options, "telemetry", None))
         if not isinstance(cast(object, self.options.tenant), str | None):
             raise TypeError("tenant must be a string")
         operations: object = self.options.operations
@@ -505,12 +534,43 @@ class Engine:
 
     def call(self, op: OperationDescriptor, args: object, opts: object) -> Flow[Ok[Any] | Err]:
         resolved = self._call_options(opts)
-        answer = yield from _within_deadline(
-            self._call(op, args, resolved, None, None),
-            _deadline_of(resolved),
-            lambda sent: Answer(self._deadline_expired(op, sent)),
-        )
+        span = self._start_span(op)
+        if span is not None:
+            resolved[_TELEMETRY_SPAN] = span
+        try:
+            answer = yield from _within_deadline(
+                self._call(op, args, resolved, None, None),
+                _deadline_of(resolved),
+                lambda sent: Answer(self._deadline_expired(op, sent)),
+            )
+        except BaseException:
+            if span is not None:
+                span.end({}, True, None)
+            raise
+        if span is not None:
+            result = answer.result
+            if isinstance(result, Ok):
+                span.end(None, False, result.meta.status)
+            else:
+                span.end(result.error, False, result.error["http_status"])
         return answer.result
+
+    def _start_span(self, op: object) -> TelemetrySpan | None:
+        """Start the telemetry of one operation; None when telemetry is off."""
+        if self._telemetry is None:
+            return None
+        try:
+            mutation = (
+                is_record(op) and is_record(op.get("agent")) and is_mutation(cast(OperationDescriptor, op))
+            )
+            return self._telemetry.start(
+                str_field(self.api, "name") or "",
+                str_field(op, "id") or "<unknown operation>",
+                "call",
+                mutation,
+            )
+        except Exception:
+            return None
 
     def preview(self, op: OperationDescriptor, args: object, opts: object) -> Flow[Ok[PreviewResult] | Err]:
         resolved = self._call_options(opts)
@@ -618,7 +678,7 @@ class Engine:
     # ---------------------------------------------------------- options
 
     def _call_options(self, opts: object) -> dict[str, object]:
-        resolved = {k: v for k, v in entries_of(opts).items() if k != _CALL_DEADLINE}
+        resolved = {k: v for k, v in entries_of(opts).items() if k not in (_CALL_DEADLINE, _TELEMETRY_SPAN)}
         ms = bounded(_opt(resolved, "deadline_ms"), bounded(self.options.deadline_ms, 0, 0), 0)
         if ms > 0:
             resolved[_CALL_DEADLINE] = _monotonic_ms() + ms
@@ -764,7 +824,9 @@ class Engine:
             and _opt(opts, "verify") is True
             and is_record(field(op["agent"], "verify"))
         ):
-            verification = yield from self._verify(op, prepared.args, answer.raw, opts)
+            verification = yield from self._verify(
+                op, prepared.args, answer.raw, {k: v for k, v in opts.items() if k != _TELEMETRY_SPAN}
+            )
             return replace(answer, result=replace(answer.result, verification=verification))
         return answer
 
@@ -1125,22 +1187,37 @@ class Engine:
 
         method = op["method"]
         configured_auth: object = self.options.auth
-        auth = yield from resolve_auth(
-            field(self.api, "auth"),
-            op_id,
-            op["security"],
-            entries_of(configured_auth),
-            method,
-            self._token_source,
-            INSECURE_HTTP_AUTH
-            if insecure_http(
-                url_override if url_override is not None else self._base_url(),
-                self.options.allow_insecure_http,
+        span = _span_of(opts)
+        auth_start = now_ms()
+        try:
+            auth = yield from resolve_auth(
+                field(self.api, "auth"),
+                op_id,
+                op["security"],
+                entries_of(configured_auth),
+                method,
+                self._token_source,
+                INSECURE_HTTP_AUTH
+                if insecure_http(
+                    url_override if url_override is not None else self._base_url(),
+                    self.options.allow_insecure_http,
+                )
+                else None,
             )
-            else None,
-        )
+        except BaseException:
+            if span is not None:
+                # Interrupted: by the call's deadline, else by cancellation.
+                deadline = _deadline_of(opts)
+                expired = deadline is not None and _monotonic_ms() >= deadline
+                span.phase("auth", auth_start, {"code": "DEADLINE_EXCEEDED"} if expired else {}, not expired)
+            raise
         if isinstance(auth, AuthMissing):
-            return _fail(diagnostic(op_id, "AUTH_FAILED", remediation=auth.remediation))
+            failed = _fail(diagnostic(op_id, "AUTH_FAILED", remediation=auth.remediation))
+            if span is not None:
+                span.phase("auth", auth_start, failed.error, False)
+            return failed
+        if span is not None:
+            span.phase("auth", auth_start, None, False)
         secrets = {s for s in auth.secrets if s != ""}
         for p in op["params"]:
             value = args.get(p["name"])
@@ -1585,6 +1662,7 @@ class Engine:
         protected = has_replay_protection(op, prepared.key)
         timeout_ms = self._timeout(opts)
         deadline = _deadline_of(opts)
+        span = _span_of(opts)
         attempts = 0
         previous_mutation_failure: Answer | None = None
         while True:
@@ -1615,13 +1693,36 @@ class Engine:
                 return previous_mutation_failure or Answer(
                     _fail(diagnostic(op["id"], "AUTH_FAILED", remediation=INSECURE_HTTP_AUTH))
                 )
+            queue_start = now_ms()
             admitted = yield from self._admit(op, prepared.url, stream, deadline)
             if isinstance(admitted, Rejection):
                 if deadline is not None and _monotonic_ms() >= deadline:
-                    return previous_mutation_failure or Answer(
-                        _deadline_failure(op["id"], "while the request waited for capacity")
+                    expired = _deadline_failure(op["id"], "while the request waited for capacity")
+                    if span is not None:
+                        span.phase(
+                            "queue",
+                            queue_start,
+                            expired.error,
+                            False,
+                            attempt=span.attempt + 1,
+                            reason="deadline",
+                        )
+                    return previous_mutation_failure or Answer(expired)
+                refused = self._rejected(op, admitted, stream)
+                if span is not None:
+                    span.phase(
+                        "queue",
+                        queue_start,
+                        refused,
+                        refused.get("code") is None,
+                        attempt=span.attempt + 1,
+                        reason=_queue_reason(refused),
                     )
-                return previous_mutation_failure or Answer(_fail(self._rejected(op, admitted, stream)))
+                return previous_mutation_failure or Answer(_fail(refused))
+            if admitted is not None and span is not None:
+                span.phase("queue", queue_start, None, False, attempt=span.attempt + 1, reason="admitted")
+            attempt_number = span.next_attempt() if span is not None else 0
+            attempt_start = span.attempt_start(attempt_number) if span is not None else 0.0
             if admitted is not None and attempts == 1 and self.scheduler is not None:
                 self.scheduler.record_call(self._scope_key(prepared.url))
             handed_off = False
@@ -1643,6 +1744,9 @@ class Engine:
                     )
                 )
                 outcome = _mark_deadline(outcome, deadline)
+                if span is not None and outcome is CANCELLED_SEND:
+                    # The task was cancelled: the rest of the flow runs without I/O.
+                    span.cancel()
                 current_url, current_method, current_body = prepared.url, prepared.method, prepared.body
                 hops = 0
                 while (
@@ -1711,6 +1815,13 @@ class Engine:
                 if admitted is not None and not handed_off:
                     admitted.release()
             result = answer.result
+            if span is not None:
+                if isinstance(result, Ok):
+                    span.attempt_end(attempt_number, attempt_start, None, False, result.meta.status)
+                else:
+                    span.attempt_end(
+                        attempt_number, attempt_start, result.error, False, result.error["http_status"]
+                    )
             if isinstance(result, Ok):
                 return replace(answer, request_url=current_url)
             error = scrub_diagnostic(result.error, prepared.secrets)
@@ -1745,8 +1856,24 @@ class Engine:
                 previous_mutation_failure = done
             # A retry that could not start before the deadline is not waited for.
             if deadline is not None and _monotonic_ms() + delay >= deadline:
+                if span is not None:
+                    span.phase(
+                        "retry_backoff",
+                        now_ms(),
+                        {"code": "DEADLINE_EXCEEDED"},
+                        False,
+                        attempt=attempt_number,
+                    )
                 return done
-            yield from sleep(delay)
+            backoff_start = now_ms()
+            try:
+                yield from sleep(delay)
+            except BaseException:
+                if span is not None:
+                    span.phase("retry_backoff", backoff_start, {}, True, attempt=attempt_number)
+                raise
+            if span is not None:
+                span.phase("retry_backoff", backoff_start, None, False, attempt=attempt_number)
 
     def _admit(
         self, op: OperationDescriptor, url: str, stream: bool, deadline: float | None
