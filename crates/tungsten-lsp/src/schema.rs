@@ -35,6 +35,27 @@ impl Schema {
         Self { root }
     }
 
+    /// A schema that embeds other generated schemas, with their nested
+    /// `$defs` lifted to the root so their `#/$defs/...` references resolve.
+    /// The first definition of a name wins.
+    pub fn embedding(mut root: Value) -> Self {
+        let mut defs = serde_json::Map::new();
+        lift_defs(&mut root, &mut defs, 0);
+        if !defs.is_empty()
+            && let Some(object) = root.as_object_mut()
+        {
+            let own = object
+                .entry("$defs")
+                .or_insert_with(|| Value::Object(serde_json::Map::new()));
+            if let Some(own) = own.as_object_mut() {
+                for (name, def) in defs {
+                    own.entry(name).or_insert(def);
+                }
+            }
+        }
+        Self { root }
+    }
+
     /// The alternatives at `path`.
     pub fn at<'a>(&'a self, path: &[Seg]) -> Vec<&'a Value> {
         let mut nodes = self.expand(&self.root);
@@ -205,5 +226,31 @@ impl Schema {
                 .replace('\n', " ")
                 .replace('\u{0}', "\n\n"),
         )
+    }
+}
+
+fn lift_defs(node: &mut Value, defs: &mut serde_json::Map<String, Value>, depth: usize) {
+    if depth > 16 {
+        return;
+    }
+    match node {
+        Value::Object(object) => {
+            if depth > 0
+                && let Some(Value::Object(nested)) = object.remove("$defs")
+            {
+                for (name, def) in nested {
+                    defs.entry(name).or_insert(def);
+                }
+            }
+            for child in object.values_mut() {
+                lift_defs(child, defs, depth + 1);
+            }
+        }
+        Value::Array(items) => {
+            for child in items {
+                lift_defs(child, defs, depth + 1);
+            }
+        }
+        _ => {}
     }
 }

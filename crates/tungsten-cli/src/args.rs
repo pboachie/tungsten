@@ -241,7 +241,7 @@ pub(crate) enum Command {
     Lsp(LspArgs),
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Clone, Args)]
 pub(crate) struct SupportBundleArgs {
     /// Local project directory or tungsten manifest.
     #[arg(default_value = ".")]
@@ -667,6 +667,11 @@ pub(crate) struct InitArgs {
     /// Writes tungsten-profiles.toml with no credentials.
     #[arg(long, conflicts_with = "resume")]
     pub cli_profile: Vec<String>,
+    /// Select a shared local configuration profile (`tungsten_profile: 1`),
+    /// relative to --dir; repeatable, later profiles win. Its directory is the
+    /// include root. Explicit project settings still win over profile defaults.
+    #[arg(long, conflicts_with = "resume")]
+    pub profile: Vec<String>,
     /// Advanced: promote generation warnings to errors and withhold all outputs.
     #[arg(long)]
     pub strict: bool,

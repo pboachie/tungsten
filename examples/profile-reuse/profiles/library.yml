@@ -1,0 +1,8 @@
+# Defaults for multi-target libraries, layered on the organization defaults.
+# Included profiles apply first; this file's values win over them.
+tungsten_profile: 1
+includes:
+  - org.yml
+targets:
+  python:
+    models: dataclasses

@@ -1,0 +1,25 @@
+# A multi-target library: three SDKs share the library profile, which itself
+# includes the organization defaults. Package identities stay per project.
+tungsten: 1
+
+api:
+  name: catalog
+  title: Catalog
+
+inputs:
+  - namespace: pets
+    spec: ../openapi.json
+
+profiles:
+  - path: ../profiles/library.yml
+    root: ../profiles
+
+targets:
+  typescript:
+    out: generated/typescript
+  python:
+    out: generated/python
+    package: catalog-client
+  rust:
+    out: generated/rust
+    crate: catalog-client
