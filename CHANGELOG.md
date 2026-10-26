@@ -314,6 +314,11 @@ changes.
   retain preview and refuse export before collection. Cooperative library
   cancellation ends at publication; abrupt-termination cleanup is not promised.
 
+- Extend support-bundle export to macOS with the same no-clobber writer as
+  Linux. Every path component is opened without following symlinks, so the
+  macOS `/tmp` and `/var` symlinks are refused; publication needs hard-link
+  support in the destination filesystem.
+
 - A copyable GitHub Actions workflow in `examples/github-actions/` installs a pinned,
   checksum- and provenance-verified release through `install.sh`, runs `tungsten check`
   and fails on stale generated output with `tungsten generate --check`. It uses
