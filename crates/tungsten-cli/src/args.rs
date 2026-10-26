@@ -338,6 +338,11 @@ pub(crate) struct BundleExportArgs {
     /// Export declared inputs whose names suggest credential or key material.
     #[arg(long)]
     pub allow_sensitive: bool,
+    /// Also carry the verified `.tungsten-inputs` pins and content of remote
+    /// inputs, so they reproduce offline. Check that the upstream terms allow
+    /// redistributing those documents.
+    #[arg(long)]
+    pub include_input_cache: bool,
 }
 
 #[derive(Debug, Args)]

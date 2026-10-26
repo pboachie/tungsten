@@ -97,6 +97,9 @@ pub enum FileRole {
     RemoteInput,
     Reference,
     Overlay,
+    /// Bundle inventories only: a verified `.tungsten-inputs` pin record or
+    /// pinned content file of a remote input. Never part of a lock's files.
+    InputCache,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -368,7 +371,10 @@ pub(crate) fn compile_offline(manifest: &Path) -> Compiled {
 /// same compilation means no input can change between verification and use.
 /// `None` when the project matches, or when it did not compile (its own
 /// diagnostics already fail the command).
-pub(crate) fn locked_diagnostic(path: &Path, compiled: &Compiled) -> Option<tungsten_core::Diagnostic> {
+pub(crate) fn locked_diagnostic(
+    path: &Path,
+    compiled: &Compiled,
+) -> Option<tungsten_core::Diagnostic> {
     let refuse = |message: String| {
         Some(
             tungsten_core::Diagnostic::error("TG0128", message)
@@ -383,7 +389,9 @@ pub(crate) fn locked_diagnostic(path: &Path, compiled: &Compiled) -> Option<tung
     let base = manifest.parent().map(Path::to_path_buf).unwrap_or_default();
     match read_lock(&input::join(&base, LOCK_FILE)) {
         Existing::Missing => refuse(format!("{LOCK_FILE} is missing")),
-        Existing::Corrupt => refuse(format!("{LOCK_FILE} is corrupt (unreadable, unknown version or digest mismatch)")),
+        Existing::Corrupt => refuse(format!(
+            "{LOCK_FILE} is corrupt (unreadable, unknown version or digest mismatch)"
+        )),
         Existing::Valid(locked) => {
             let drift = compare(&locked, &recipe);
             if drift.is_empty() {
@@ -397,7 +405,10 @@ pub(crate) fn locked_diagnostic(path: &Path, compiled: &Compiled) -> Option<tung
             if drift.len() > 8 {
                 listed.push(format!("and {} more", drift.len() - 8));
             }
-            refuse(format!("the project does not match {LOCK_FILE}: {}", listed.join(", ")))
+            refuse(format!(
+                "the project does not match {LOCK_FILE}: {}",
+                listed.join(", ")
+            ))
         }
     }
 }
