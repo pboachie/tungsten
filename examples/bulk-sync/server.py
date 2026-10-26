@@ -72,6 +72,8 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    server = ThreadingHTTPServer(("127.0.0.1", int(sys.argv[1])), Handler)
+    server = ThreadingHTTPServer(("127.0.0.1", int(sys.argv[1]) if len(sys.argv) > 1 else 0), Handler)
     server.daemon_threads = True
+    # The runner reads the chosen port from this line.
+    print(f"listening on http://127.0.0.1:{server.server_address[1]}", flush=True)
     server.serve_forever()

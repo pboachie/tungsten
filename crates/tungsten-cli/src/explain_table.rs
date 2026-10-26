@@ -816,6 +816,18 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
          the emitter is at fault: report it.",
     ),
     e(
+        "TG0706",
+        "The compiled IR binds a namespace to a protocol other than HTTP (its `protocol` \
+         field), and a configured target does not declare that protocol in the capability \
+         catalog. Operations of another protocol are never reshaped into REST methods and \
+         paths, so the target is refused before anything is written for it. External \
+         emitters cannot declare protocols in this version and are refused too. Other \
+         targets are still processed, unless `--strict` asks for all or none.",
+        "Remove the target from tungsten.yml, or select a target that declares the protocol: \
+         `tungsten capabilities --json` lists each protocol's targets under `protocols`. A \
+         reserved protocol has no generating target yet.",
+    ),
+    e(
         "TG0705",
         "The project was imported from a Postman collection or another source whose operations \
          carry an enforced import policy (the runtime must apply it to every call), and a \

@@ -10,7 +10,8 @@ use crate::{Report, exit};
 
 pub(crate) fn run(args: &CapabilitiesArgs) -> Report {
     let mut report = Report::new(CommandName::Capabilities);
-    let conflicts = capabilities::validate();
+    let mut conflicts = capabilities::validate();
+    conflicts.extend(super::init_preset::undeclared());
     if !conflicts.is_empty() {
         return report.failed(
             exit::INTERNAL,
@@ -40,6 +41,7 @@ pub(crate) fn run(args: &CapabilitiesArgs) -> Report {
         input_formats: capabilities::INPUT_FORMATS.to_vec(),
         execution_policy: capabilities::execution_policy(),
         init: capabilities::INIT,
+        protocols: capabilities::PROTOCOLS.to_vec(),
     };
     if args.matrix {
         report.human = match args.format {
@@ -256,6 +258,28 @@ fn matrix(catalog: &CapabilityCatalog) -> String {
                 .join(", "),
         );
     }
+    out.push_str(
+        "\n| IR protocol | Status | Targets | Protocol-specific extension |\n|---|---|---|---|\n",
+    );
+    for protocol in &catalog.protocols {
+        let targets = match protocol.targets {
+            capabilities::protocols::ProtocolTargets::AllBuiltIn => "every built-in target".into(),
+            capabilities::protocols::ProtocolTargets::Only([]) => "none (refused, TG0706)".into(),
+            capabilities::protocols::ProtocolTargets::Only(ids) => ids
+                .iter()
+                .map(|id| format!("`{id}`"))
+                .collect::<Vec<_>>()
+                .join(", "),
+        };
+        let _ = writeln!(
+            out,
+            "| `{}` | {} | {} | {} |",
+            protocol.id,
+            snake(&protocol.status),
+            targets,
+            protocol.extension
+        );
+    }
     let code = |ids: &[&str]| {
         ids.iter()
             .map(|id| format!("`{id}`"))
@@ -273,6 +297,15 @@ fn matrix(catalog: &CapabilityCatalog) -> String {
         code(catalog.init.local_setup_targets),
         catalog.init.cli_alias,
     );
+    for preset in catalog.init.presets {
+        let _ = writeln!(
+            out,
+            "| `--preset {}`{} | {} |",
+            preset.name,
+            if preset.strict { " (`--strict`)" } else { "" },
+            code(preset.targets)
+        );
+    }
     for companion in catalog.init.companions {
         let _ = writeln!(
             out,

@@ -304,6 +304,8 @@ changes.
   Optional caps across every scope (`maxActiveTotal`/`max_active_total`,
   `maxStreamsTotal`/`max_streams_total`) bound requests in flight per
   scheduler; scopes waiting for them take turns so none is starved.
+  The bulk-sync example is now a gallery recipe (`python3 examples/run.py
+  --only bulk-sync`) that runs it in TypeScript, Python and Rust.
 
 - Add an opt-in total operation deadline to the TypeScript (`deadlineMs`),
   Python (`deadline_ms`) and Rust (`deadline`) runtimes, on client and call
@@ -425,6 +427,23 @@ changes.
 - Support-bundle collection, for preview and export, is limited to 30 seconds
   and writes nothing when the limit is reached; library cancellation of an
   export is now honoured while collection runs.
+
+- Declare the `init --preset` starting points (`app`, `library`, `agent`)
+  in the capability catalog: `init` and the wizard read each preset's
+  targets and `--strict` default from it, `tungsten capabilities` reports
+  them under `init.presets` and the support matrix lists them. The catalog
+  check rejects a preset missing a companion target or a CLI preset without
+  a declaration.
+
+- Add the protocol design gate. An IR namespace may carry an optional
+  `protocol` binding (a registered protocol id, its version and a
+  protocol-specific `extension`); absent means HTTP, so existing IR is
+  unchanged. The capability catalog registers protocols under `protocols`
+  (`http` for every built-in target; `graphql`, `grpc` and
+  `async_messaging` reserved with no generating target) and the support
+  matrix lists them. Generation refuses a target, before writing it, for IR
+  bound to a protocol the target does not declare (TG0706), so new
+  frontends never reshape their operations into REST fields.
 
 - Derive `tungsten init` and wizard target selection from the capability
   catalog, which now declares the default targets, the wizard defaults, the

@@ -153,6 +153,29 @@ ir_struct! {
         /// decode their error bodies.
         #[serde(default)]
         pub errors: ErrorModel,
+        /// The wire protocol of this document's operations; absent means
+        /// HTTP. Targets that do not declare the protocol refuse the IR.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub protocol: Option<ProtocolBinding>,
+    }
+}
+
+ir_struct! {
+    /// A non-HTTP protocol binding. Operations keep the common contract
+    /// (names, parameters, bodies, responses, errors and agent metadata);
+    /// what that contract cannot express (GraphQL selections, RPC streaming
+    /// modes, broker acknowledgment) goes in `extension`, never in REST
+    /// fields such as `method` or `path`.
+    pub struct ProtocolBinding {
+        /// A protocol id registered in the capability catalog.
+        pub protocol: String,
+        /// The protocol version the document describes.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub version: Option<String>,
+        /// Protocol-specific contract, shaped by the frontend that owns the
+        /// protocol and versioned with it.
+        #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
+        pub extension: serde_json::Value,
     }
 }
 
@@ -789,6 +812,18 @@ ir_struct! {
 }
 
 impl Ir {
+    /// The protocol ids the namespaces bind, sorted and deduplicated; empty
+    /// when every namespace is implicitly HTTP.
+    pub fn protocols(&self) -> Vec<&str> {
+        let ids: std::collections::BTreeSet<&str> = self
+            .namespaces
+            .iter()
+            .filter_map(|namespace| namespace.protocol.as_ref())
+            .map(|binding| binding.protocol.as_str())
+            .collect();
+        ids.into_iter().collect()
+    }
+
     /// All callable operations in deterministic order (namespace, then
     /// depth-first resource order).
     pub fn operations(&self) -> Vec<&Operation> {

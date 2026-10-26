@@ -176,13 +176,24 @@ pub(crate) fn emit_target(
 ) -> Emitted {
     let ir = prepared.ir();
     let cfg = targets::target_config_for(compiled.config.as_ref(), name, &project.base_dir, live);
-    if compiled.workspace.is_cancelled() || unsupported_import_policy(ir, name) {
+    let protocol_refusals = targets::protocol_refusals(name, ir);
+    if compiled.workspace.is_cancelled()
+        || !protocol_refusals.is_empty()
+        || unsupported_import_policy(ir, name)
+    {
         let mut diagnostics = Diagnostics::new();
-        diagnostics.push(if compiled.workspace.is_cancelled() {
-            Diagnostic::error("TG0701", "generation cancelled before target emission")
+        if compiled.workspace.is_cancelled() {
+            diagnostics.push(Diagnostic::error(
+                "TG0701",
+                "generation cancelled before target emission",
+            ));
+        } else if !protocol_refusals.is_empty() {
+            protocol_refusals
+                .into_iter()
+                .for_each(|diagnostic| diagnostics.push(diagnostic));
         } else {
-            targets::import_policy_refusal(name)
-        });
+            diagnostics.push(targets::import_policy_refusal(name));
+        }
         return Emitted {
             cfg,
             files: Some(FileSet::new()),
