@@ -226,6 +226,11 @@ changes.
 
 ### Added
 
+- `scenario run --timeout-ms` now bounds the whole command, including input
+  acquisition and compilation, and SIGINT/SIGTERM cancel a run that is still
+  preparing. Such a run reports `timed_out` or `cancelled` before any port is
+  bound or integration started.
+
 - Add an opt-in request scheduler to the TypeScript, Python and Rust runtimes
   (`ClientOptions.scheduler`, `ClientOptions.tenant`). It bounds ordinary
   attempts and event streams in flight per tenant and origin, queues a bounded

@@ -848,10 +848,16 @@ runs only when explicitly named by the caller. Other platforms reject `run`
 before input acquisition, port binding or process creation; `validate` remains
 portable.
 
-The run-phase deadline starts after compilation and scenario validation. It
-covers server startup, process execution, cleanup and final assertions; a small
-part of that budget is reserved for cleanup. It does not bound input acquisition
-or compilation. The runner owns a fresh loopback port and process group, stops
+`--timeout-ms` bounds the whole command. It starts before input acquisition
+and compilation, and covers scenario validation, server startup, process
+execution, cleanup and final assertions; a small part of the time left for the
+run is reserved for cleanup. Cancellation is also observed during acquisition
+and compilation. A run stopped there reports `timed_out` or `cancelled` with
+`validated: false` and never binds a port or starts the integration. Inputs
+still being acquired are abandoned, not interrupted: a remote fetch continues
+in the background only until the process exits or its own acquisition limit
+expires. Library callers' `RunOptions.timeout` remains the run-phase budget.
+The runner owns a fresh loopback port and process group, stops
 its server before reading final counts, and fails on cancellation, timeout,
 cleanup failure, unfinished admitted requests, unexpected exit or unmet counts.
 Request completion tracks server-side handler and response-body generation,

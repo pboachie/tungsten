@@ -533,7 +533,7 @@ pub(crate) struct ScenarioRunArgs {
     pub input: InputArgs,
     #[arg(long, value_name = "FILE")]
     pub scenario: PathBuf,
-    /// Run-phase budget including cleanup; compilation/validation precede it.
+    /// Whole-command budget: acquisition, compilation, validation, run and cleanup.
     #[arg(long, default_value_t = 30_000, value_parser = clap::value_parser!(u64).range(20..=600_000))]
     pub timeout_ms: u64,
     #[arg(long, default_value_t = 0)]
