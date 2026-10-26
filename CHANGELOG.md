@@ -230,6 +230,11 @@ changes.
 
 ### Added
 
+- Concurrent commands of a generated Rust CLI refresh a stored login session
+  one process at a time: the token is refreshed before the call under a
+  per-session lock file and read again first, so a refresh token is not
+  presented twice to providers that rotate refresh tokens.
+
 - The TypeScript and Python runtimes include an optional OpenTelemetry
   adapter for the telemetry observer (`openTelemetryObserver(tracer)`,
   `open_telemetry_observer(tracer)`): one client span per operation named after
