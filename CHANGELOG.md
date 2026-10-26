@@ -231,6 +231,11 @@ changes.
   Postman, cURL, `.http` or HAR input. Generated F# SDKs require a .NET runtime
   with `ClientCore.RequireImportPolicyV1()`.
 
+- `scenario run --timeout-ms` now bounds the whole command, including input
+  acquisition and compilation, and SIGINT/SIGTERM cancel a run that is still
+  preparing. Such a run reports `timed_out` or `cancelled` before any port is
+  bound or integration started.
+
 - The `csharp` target now enforces imported-operation policy and may be
   generated for projects converted from Postman, cURL, `.http` or HAR input.
   The C# runtime reads each operation's `import_policy` (`AgentMeta.ImportPolicy`),
@@ -259,6 +264,10 @@ changes.
   bodies and verification, and a whole traversal, poll or macro. No attempt
   starts after it expires (`DEADLINE_EXCEEDED`); a mutation already sent still
   reports `OUTCOME_UNKNOWN`. Existing timeout semantics are unchanged.
+
+- Add the same total operation deadline to the Go runtime
+  (`ClientOptions.Deadline`, `CallOptions.Deadline`), applied as a
+  `context.Context` deadline on top of the caller's context.
 
 - Add `tungsten lock`, a versioned single-project generation lock
   (`tungsten.lock.json`). It records the declared input closure (manifest,
@@ -299,6 +308,13 @@ changes.
   `module`, `python_version` and `models` keys. Declarations remain source
   statements: qualification and artifact availability stay `unknown`.
 
+- Generate the README support matrix from the capability catalog.
+  `tungsten capabilities --matrix --format markdown` prints the matrix
+  between the markers that delimit README's generated block, and CI fails
+  when the README differs (`.github/scripts/check-support-matrix.py --write`
+  refreshes it). The README Targets table now reports the catalog's
+  imported-operation policy, which had drifted for Java, Kotlin and Ruby.
+
 - Add `tungsten support-bundle --inspect <FILE>` to review an existing support
   bundle locally on any platform. It reads one bounded regular file, refuses
   unsupported `bundle_schema_version` values by number, requires exactly the
@@ -323,6 +339,11 @@ changes.
   outside its saved review scope (`VALIDATION_FAILED` on `base_url`, nothing
   sent), and generated gems require
   `Tungsten::Runtime::ClientCore.require_import_policy_v1`.
+
+- The `dart` target now enforces imported-operation policy the same way: the
+  Dart runtime refuses a reviewed imported operation whose target origin is
+  outside its saved review scope (`VALIDATION_FAILED` on `base_url`, nothing
+  sent), and generated clients require `ClientCore.requireImportPolicyV1()`.
 
 - Add explicit Linux support-bundle export to a new file in an existing,
   trusted user-owned directory. Export preserves the metadata-only preview
