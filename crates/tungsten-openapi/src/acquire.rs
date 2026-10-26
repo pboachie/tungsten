@@ -158,6 +158,11 @@ pub(crate) fn hash(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 
+/// Lowercase hex SHA256 of `bytes`, the form recorded as `source_sha256`.
+pub fn sha256(bytes: &[u8]) -> String {
+    hash(bytes)
+}
+
 /// SHA256 of a bounded, regular acquired file, for conversion provenance.
 pub fn content_hash(path: &Path) -> Result<String, Diagnostic> {
     read(path, MAX_BYTES).map(|bytes| hash(&bytes))
@@ -383,14 +388,11 @@ pub fn pinned_files(source: &str, project: &Path) -> Result<Vec<String>, Diagnos
     ])
 }
 
-/// Fetch or reuse a pinned input. The per-source lock and immutable content live
-/// in `project/.tungsten-inputs/<sha256-of-url>/`. Retain this directory securely
-/// when offline reproducibility is required. Ordinary online loads verify
-/// upstream bytes against the pin; only explicit refresh replaces a pin.
-pub fn acquire(source: &str, project: &Path, options: &Options) -> Result<PathBuf, Diagnostic> {
-    if crate::git_input::is_source(source) {
-        return crate::git_input::acquire(source, project, options);
-    }
+/// Validate a source URL and select the headers it may receive.
+fn request(
+    source: &str,
+    options: &Options,
+) -> Result<(Url, Vec<(ureq::http::HeaderName, ureq::http::HeaderValue)>), Diagnostic> {
     let invalid = || {
         diagnostic(
             "TG0120",
@@ -408,13 +410,6 @@ pub fn acquire(source: &str, project: &Path, options: &Options) -> Result<PathBu
         || source.len() > 8192
     {
         return Err(invalid());
-    }
-    if options.offline && options.refresh {
-        return Err(diagnostic(
-            "TG0120",
-            "offline input acquisition cannot refresh pins",
-            "choose --offline to reuse verified bytes or --refresh-inputs to accept new bytes online",
-        ));
     }
     // Validate headers without ever echoing a supplied value. Restrict framing
     // headers so credentials cannot change the request destination or message.
@@ -464,51 +459,14 @@ pub fn acquire(source: &str, project: &Path, options: &Options) -> Result<PathBu
             headers.push((name, value));
         }
     }
-    std::fs::create_dir_all(project).map_err(|_| cache_error())?;
-    let root = project.join(".tungsten-inputs");
-    directory(&root)?;
-    let dir = root.join(hash(url.as_str().as_bytes()));
-    directory(&dir)?;
-    // Pin inspection and its possible replacement belong to the same online
-    // transaction. A process paused before taking the lock must not reuse an
-    // earlier observation that no pin existed. Offline readers never mutate.
-    let _lock = (!options.offline)
-        .then(|| SourceLock::acquire(&dir, "TG0123"))
-        .transpose()?;
-    let lock = dir.join("source.lock.json");
-    let pin = match std::fs::symlink_metadata(&lock) {
-        Ok(_) => {
-            let pin: Pin =
-                serde_json::from_slice(&read(&lock, LOCK_LIMIT)?).map_err(|_| cache_error())?;
-            if pin.version != 1
-                || pin.url != url.as_str()
-                || pin.sha256.len() != 64
-                || !pin
-                    .sha256
-                    .bytes()
-                    .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
-            {
-                return Err(cache_error());
-            }
-            Some(pin)
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-        Err(_) => return Err(cache_error()),
-    };
-    let extension = content_extension(&url);
-    let content_path = |digest: &str| dir.join(format!("{digest}.{extension}"));
-    if options.offline {
-        let pin = pin.ok_or_else(|| diagnostic("TG0123", "remote input has no offline pin", "run once online to fetch and pin the source, then retain .tungsten-inputs with the project"))?;
-        let path = content_path(&pin.sha256);
-        if hash(&read(&path, MAX_BYTES)?) != pin.sha256 {
-            return Err(diagnostic(
-                "TG0122",
-                "cached remote input does not match its SHA256 pin",
-                "restore the pinned cache from a trusted copy or fetch online; never edit a cached source in place",
-            ));
-        }
-        return Ok(path);
-    }
+    Ok((url, headers))
+}
+
+/// One bounded GET of `url` with no redirects.
+fn download(
+    url: &Url,
+    headers: Vec<(ureq::http::HeaderName, ureq::http::HeaderValue)>,
+) -> Result<Vec<u8>, Diagnostic> {
     let agent = ureq::Agent::config_builder()
         .timeout_global(Some(Duration::from_secs(30)))
         .timeout_connect(Some(Duration::from_secs(10)))
@@ -519,7 +477,7 @@ pub fn acquire(source: &str, project: &Path, options: &Options) -> Result<PathBu
         .new_agent();
     // Redirects are disabled above, so headers never follow a Location to
     // another origin; they reach only the URL named here.
-    warn_cleartext_headers(&url, headers.len());
+    warn_cleartext_headers(url, headers.len());
     let mut request = agent.get(url.as_str());
     for (name, value) in headers {
         request = request.header(name, value);
@@ -552,6 +510,79 @@ pub fn acquire(source: &str, project: &Path, options: &Options) -> Result<PathBu
             "provide a smaller document or download and review it through the explicit local compiler flow",
         ));
     }
+    Ok(bytes)
+}
+
+/// Write verified `bytes` and point the pin at them; the caller holds the lock.
+fn store(dir: &Path, url: Url, pin: Option<&Pin>, bytes: &[u8]) -> Result<PathBuf, Diagnostic> {
+    let sha256 = hash(bytes);
+    // Content files are addressed by the SHA256 of these verified bytes, so a
+    // missing or truncated one (an interrupted write) is restored in place.
+    let path = dir.join(format!("{sha256}.{}", content_extension(&url)));
+    if !std::fs::symlink_metadata(&path).is_ok_and(|meta| meta.file_type().is_file())
+        || read(&path, MAX_BYTES)? != bytes
+    {
+        write_atomic(dir, &path, bytes, "TG0123")?;
+    }
+    if pin.is_none_or(|pin| pin.sha256 != sha256) {
+        let pin = Pin {
+            version: 1,
+            url: url.into(),
+            sha256,
+        };
+        write_atomic(
+            dir,
+            &dir.join("source.lock.json"),
+            &serde_json::to_vec_pretty(&pin).map_err(|_| cache_error())?,
+            "TG0123",
+        )?;
+    }
+    Ok(path)
+}
+
+/// Fetch or reuse a pinned input. The per-source lock and immutable content live
+/// in `project/.tungsten-inputs/<sha256-of-url>/`. Retain this directory securely
+/// when offline reproducibility is required. Ordinary online loads verify
+/// upstream bytes against the pin; only explicit refresh replaces a pin.
+pub fn acquire(source: &str, project: &Path, options: &Options) -> Result<PathBuf, Diagnostic> {
+    if crate::git_input::is_source(source) {
+        return crate::git_input::acquire(source, project, options);
+    }
+    let (url, headers) = request(source, options)?;
+    if options.offline && options.refresh {
+        return Err(diagnostic(
+            "TG0120",
+            "offline input acquisition cannot refresh pins",
+            "choose --offline to reuse verified bytes or --refresh-inputs to accept new bytes online",
+        ));
+    }
+    std::fs::create_dir_all(project).map_err(|_| cache_error())?;
+    let root = project.join(".tungsten-inputs");
+    directory(&root)?;
+    let dir = root.join(hash(url.as_str().as_bytes()));
+    directory(&dir)?;
+    // Pin inspection and its possible replacement belong to the same online
+    // transaction. A process paused before taking the lock must not reuse an
+    // earlier observation that no pin existed. Offline readers never mutate.
+    let _lock = (!options.offline)
+        .then(|| SourceLock::acquire(&dir, "TG0123"))
+        .transpose()?;
+    let pin = read_pin(&dir, &url)?;
+    let extension = content_extension(&url);
+    let content_path = |digest: &str| dir.join(format!("{digest}.{extension}"));
+    if options.offline {
+        let pin = pin.ok_or_else(|| diagnostic("TG0123", "remote input has no offline pin", "run once online to fetch and pin the source, then retain .tungsten-inputs with the project"))?;
+        let path = content_path(&pin.sha256);
+        if hash(&read(&path, MAX_BYTES)?) != pin.sha256 {
+            return Err(diagnostic(
+                "TG0122",
+                "cached remote input does not match its SHA256 pin",
+                "restore the pinned cache from a trusted copy or fetch online; never edit a cached source in place",
+            ));
+        }
+        return Ok(path);
+    }
+    let bytes = download(&url, headers)?;
     let sha256 = hash(&bytes);
     if let Some(pin) = &pin
         && pin.sha256 != sha256
@@ -563,26 +594,83 @@ pub fn acquire(source: &str, project: &Path, options: &Options) -> Result<PathBu
             "review the upstream change, then pass --refresh-inputs explicitly to accept it; use --offline to regenerate from the existing pin",
         ));
     }
-    // Content files are addressed by the SHA256 of these verified bytes, so a
-    // missing or truncated one (an interrupted write) is restored in place.
-    let path = content_path(&sha256);
-    if !std::fs::symlink_metadata(&path).is_ok_and(|meta| meta.file_type().is_file())
-        || read(&path, MAX_BYTES)? != bytes
-    {
-        write_atomic(&dir, &path, &bytes, "TG0123")?;
+    store(&dir, url, pin.as_ref(), &bytes)
+}
+
+/// The verified pin of one source cache directory, if any.
+fn read_pin(dir: &Path, url: &Url) -> Result<Option<Pin>, Diagnostic> {
+    let lock = dir.join("source.lock.json");
+    Ok(match std::fs::symlink_metadata(&lock) {
+        Ok(_) => {
+            let pin: Pin =
+                serde_json::from_slice(&read(&lock, LOCK_LIMIT)?).map_err(|_| cache_error())?;
+            if pin.version != 1
+                || pin.url != url.as_str()
+                || pin.sha256.len() != 64
+                || !pin
+                    .sha256
+                    .bytes()
+                    .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+            {
+                return Err(cache_error());
+            }
+            Some(pin)
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(_) => return Err(cache_error()),
+    })
+}
+
+/// The project cache directory of an HTTP(S) source, created when absent.
+fn source_dir(source: &str, project: &Path) -> Result<(Url, PathBuf), Diagnostic> {
+    let (url, _) = request(source, &Options::default())?;
+    std::fs::create_dir_all(project).map_err(|_| cache_error())?;
+    let root = project.join(".tungsten-inputs");
+    directory(&root)?;
+    let dir = root.join(hash(url.as_str().as_bytes()));
+    directory(&dir)?;
+    Ok((url, dir))
+}
+
+/// Fetch the current bytes of an HTTP(S) source without reading, verifying or
+/// replacing its pin, so a reviewed refresh can compare them first. Git
+/// sources are refused; they are refreshed through their own pin.
+pub fn fetch(source: &str, options: &Options) -> Result<Vec<u8>, Diagnostic> {
+    if crate::git_input::is_source(source) {
+        return Err(diagnostic(
+            "TG0120",
+            "converted inputs from Git sources cannot be refreshed in place",
+            "convert a local checkout of the reviewed revision and pass it with --from",
+        ));
     }
-    if pin.as_ref().is_none_or(|pin| pin.sha256 != sha256) {
-        let pin = Pin {
-            version: 1,
-            url: url.into(),
-            sha256,
-        };
-        write_atomic(
-            &dir,
-            &lock,
-            &serde_json::to_vec_pretty(&pin).map_err(|_| cache_error())?,
+    if options.offline {
+        return Err(diagnostic(
             "TG0123",
-        )?;
+            "refreshing a remote input requires network access",
+            "run without --offline, or download the source and pass the local copy with --from",
+        ));
     }
-    Ok(path)
+    let (url, headers) = request(source, options)?;
+    download(&url, headers)
+}
+
+/// The project-relative pin file of an HTTP(S) source, whether or not it exists.
+pub fn pin_file(source: &str) -> Result<String, Diagnostic> {
+    let (url, _) = request(source, &Options::default())?;
+    Ok(format!(
+        ".tungsten-inputs/{}/source.lock.json",
+        hash(url.as_str().as_bytes())
+    ))
+}
+
+/// Pin explicitly reviewed `bytes` as the current content of `source` in the
+/// project cache, replacing an earlier pin. Returns the content path.
+pub fn pin(source: &str, project: &Path, bytes: &[u8]) -> Result<PathBuf, Diagnostic> {
+    if bytes.len() > MAX_BYTES {
+        return Err(cache_error());
+    }
+    let (url, dir) = source_dir(source, project)?;
+    let _lock = SourceLock::acquire(&dir, "TG0123")?;
+    let pin = read_pin(&dir, &url)?;
+    store(&dir, url, pin.as_ref(), bytes)
 }

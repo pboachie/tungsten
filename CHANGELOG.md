@@ -239,6 +239,21 @@ changes.
 - The `init --targets` help lists the default and companion targets from the
   capability catalog.
 
+- Add `tungsten refresh-import` to refresh a converted import (Postman, HAR,
+  saved cURL, HTTP file, Swagger or endpoint manifest) in place instead of
+  re-importing into a fresh project. It converts the new source revision
+  (`--from`, or the recorded `source_url`) and previews the converted-document
+  diff, added, removed and changed operations with the facts that changed, the
+  approved imported operations that need renewed review, the regenerated
+  output and API surface changes, and the generation lock outcome. `--apply`
+  writes only after every changed approval is confirmed with `--accept-review`
+  and an optional `--expect` digest still matches, then updates the
+  conversion, import report, `source_sha256`, the remote pin and a current
+  `tungsten.lock.json` together. Overlays, agent.yml and generated outputs are
+  not modified. An interrupted apply is detected from its journal and restored
+  with `--rollback`. The capability catalog lists the command for each
+  converted input format as `refresh_command`.
+
 - Add `tungsten upgrade rehearse`, run with a candidate release's binary: it
   regenerates the project from its locked inputs, offline and without
   touching the project, and reports compiler, emitter, consumer toolchain,
@@ -255,6 +270,7 @@ changes.
   any output file changed since the rehearsal, backs up what it replaces,
   keeps custom files, and records a journal; `--restore` undoes an
   interrupted or completed apply.
+
 - `tungsten update check` classifies a newer release as `compatible` or
   `migration` (new `upgrade` field in `--json`). Before 1.0 a minor release, from
   1.0 a major release, any prerelease, or notes with a Breaking section count as
@@ -319,6 +335,7 @@ changes.
   suppressed with `--json`, `--offline`, `--policy`, in CI, without a terminal
   and for `lsp` and `mock`. Cached answers expire after 7 days; a corrupt or
   unwritable cache is ignored.
+
 - Add the `examples/restricted-agent` customization example: an MCP server
   that reads freely, confirms writes and hides deletion, with transport
   references and SDK defaults from a shared profile and a check that verifies
@@ -510,6 +527,17 @@ changes.
   copied; import accepts them only below `.tungsten-inputs`. Without the flag,
   the reviewed source of a converted import is now listed as excluded too.
   Check that upstream terms allow redistributing bundled documents.
+
+- Add `lock --outputs` to record, and with `--check` verify, the identity of
+  the bytes each built-in target generates (file count and a digest over every
+  generated path and content digest), by running the built-in emitters in
+  memory; external emitters are never run and stay unrecorded. When the lock
+  records outputs, `generate --locked` also fails with `TG0129` before writing
+  if a selected built-in target generates different bytes from the same locked
+  identities, which certifies byte-identical reproduction on another machine
+  and surfaces platform-dependent differences explicitly. Plain `lock` and
+  `lock --check` still never run emitters; they leave the recorded outputs of
+  a current lock in place, and `lock --update` without `--outputs` drops them.
 
 - Extend the versioned capability catalog with each built-in target's option
   keys, execution environments and implemented features, plus a registry of
@@ -885,6 +913,14 @@ changes.
   typed defaults/fallback policy and winning/shadowed authored origins. Plain
   text and JSON redact sensitive values and physical paths without compiling
   inputs, probing tools or executing emitters.
+
+- Check transport references in `tungsten doctor <project>`: report whether each
+  referenced environment variable is set and each project file exists, without
+  reading them. `--strict` fails on a missing referenced file.
+
+- Keep the specific, value-free messages of profile and `transport` diagnostics
+  in `tungsten config`, instead of a generic "configuration declaration is
+  invalid". Other manifest diagnostics stay redacted.
 
 - Select shared local configuration profiles from `tungsten init --profile PATH`
   (repeatable) and from the guided setup. Selections are composed with the
