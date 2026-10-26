@@ -241,6 +241,23 @@ changes.
   ends. The `Content-Disposition` file name is reduced to a plain base name.
   Buffered calls, `maxResponseBytes` and event streams are unchanged.
   Registered as the `streaming_downloads` runtime capability.
+- Generated Rust CLIs keep login sessions in the Windows Credential Locker
+  (through Windows PowerShell) by default on Windows. A session the locker
+  refuses, for example one above its secret size limit, fails with advice to
+  choose the owner-only file store explicitly.
+
+- `tungsten lsp` serves every project in the editor's workspace folders, found
+  as `tungsten workspace` finds them, plus any `tungsten.yml` that is opened.
+  Edits, saves and watched changes re-check only the projects that read the
+  changed file, so one project's edits never dirty another while a shared spec
+  (including its unsaved buffer) re-checks every project using it. One check
+  runs at a time across the session; diagnostics of a file read by several
+  projects are merged; completion, hover, definitions and quick fixes come from
+  the project owning the document. Adding or removing workspace folders
+  (`workspace/didChangeWorkspaceFolders`) starts or cancels their projects'
+  checks and clears stale diagnostics. Discovery findings (TG0640-TG0643) are
+  shown on the files they name. The capability catalog's
+  `workspace.editor_routing` is now `true`.
 - Add durable checkpoints for resumable read-only page exports to the
   TypeScript, Python and Rust runtimes (`exportPages` / `export_pages`). Each
   page carries a caller-owned, HMAC-sealed `checkpoint` token to persist after
@@ -252,7 +269,9 @@ changes.
   crash before the token is saved replays that page once, so sinks must
   deduplicate. `describeCheckpoint` / `describe_checkpoint` reports status
   without the cursor. Registered as the `pagination_checkpoints` capability for
-  the `typescript`, `python` and `rust` targets.
+  the `typescript`, `python` and `rust` targets. In Rust, `ExportPages::typed`
+  decodes items and `blocking::Runtime::export_pages` iterates an export with
+  blocking calls.
 
 - Generated Rust CLIs sign in to OAuth2 `authorizationCode` schemes:
   `auth login` runs the runtime's managed S256 flow through a loopback
@@ -289,6 +308,15 @@ changes.
   not modified. An interrupted apply is detected from its journal and restored
   with `--rollback`. The capability catalog lists the command for each
   converted input format as `refresh_command`.
+- `init` records the reviewed importer settings of a saved cURL, HTTP file or
+  HAR conversion (format, routes, shell dialect, HAR origin, path templates,
+  prefixes and redactions) under `settings` in `import-report.json`, and
+  `refresh-import` reuses them for flags that are not given again. `check` and
+  `generate` refuse a project with an interrupted `refresh-import --apply`
+  (TG0124) until `--rollback` restores it.
+- The language server offers a disabled "Refresh the converted import" action
+  on TG0122 for a converted input whose remote source changed, naming the
+  `refresh-import` preview, `--apply` and `--offline` choices.
 
 - Add `tungsten upgrade rehearse`, run with a candidate release's binary: it
   regenerates the project from its locked inputs, offline and without

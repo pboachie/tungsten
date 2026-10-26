@@ -15,8 +15,9 @@
 //!
 //! - `keychain` (the default): the macOS login keychain through
 //!   `/usr/bin/security`, or the Secret Service (GNOME Keyring, KWallet)
-//!   through `secret-tool` on Linux and the BSDs. Other platforms have no
-//!   keychain adapter; the store is reported as unavailable.
+//!   through `secret-tool` on Linux and the BSDs, or the Windows Credential
+//!   Locker through Windows PowerShell. Other platforms have no keychain
+//!   adapter; the store is reported as unavailable.
 //! - `file`: one file per session, created with mode 0600, under
 //!   `sessions/` next to the index. Only used when chosen explicitly
 //!   (`--store file`, `<PREFIX>_SESSION_STORE=file` or the profile key
@@ -436,6 +437,9 @@ enum KeychainTool {
     Security,
     /// libsecret `secret-tool`.
     SecretTool,
+    /// The Windows Credential Locker (`PasswordVault`) through Windows
+    /// PowerShell.
+    CredentialLocker,
 }
 
 const UNAVAILABLE: &str = "no keychain is available";
@@ -452,6 +456,8 @@ impl Keychain {
             target_os = "dragonfly"
         )) {
             KeychainTool::SecretTool
+        } else if cfg!(windows) {
+            KeychainTool::CredentialLocker
         } else {
             return Err(format!(
                 "{UNAVAILABLE}: this platform has no supported keychain adapter"
@@ -467,7 +473,29 @@ impl Keychain {
         match self.tool {
             KeychainTool::Security => "/usr/bin/security",
             KeychainTool::SecretTool => "secret-tool",
+            KeychainTool::CredentialLocker => "powershell.exe",
         }
+    }
+
+    /// Run a Windows PowerShell script against the Credential Locker. The
+    /// script is fixed text naming the service and item; a secret is read
+    /// from standard input.
+    fn locker(&self, body: &str, input: Option<&[u8]>) -> Result<(bool, Vec<u8>), String> {
+        let script = format!(
+            "$ErrorActionPreference='Stop';\
+             [void][Windows.Security.Credentials.PasswordVault,Windows.Security.Credentials,ContentType=WindowsRuntime];\
+             $v=New-Object Windows.Security.Credentials.PasswordVault;{body}"
+        );
+        self.run(
+            &[
+                "-NoLogo",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                &script,
+            ],
+            input,
+        )
     }
 
     fn run(&self, args: &[&str], input: Option<&[u8]>) -> Result<(bool, Vec<u8>), String> {
@@ -492,6 +520,11 @@ impl Keychain {
             .map_err(|e| format!("{UNAVAILABLE}: {}: {e}", self.program()))?;
         Ok((out.status.success(), out.stdout))
     }
+}
+
+/// A PowerShell single-quoted string body.
+fn ps_quote(text: &str) -> String {
+    text.replace('\'', "''")
 }
 
 /// Secrets travel hex-encoded so no keychain tool has to quote them.
@@ -521,6 +554,14 @@ impl Vault for Keychain {
             KeychainTool::SecretTool => {
                 self.run(&["lookup", "service", &self.service, "account", id], None)?
             }
+            KeychainTool::CredentialLocker => self.locker(
+                &format!(
+                    "try{{$c=$v.Retrieve('{}','{}')}}catch{{exit 3}};$c.RetrievePassword();[Console]::Out.Write($c.Password)",
+                    ps_quote(&self.service),
+                    ps_quote(id)
+                ),
+                None,
+            )?,
         };
         let text = String::from_utf8_lossy(&out);
         if !ok || text.trim().is_empty() {
@@ -528,7 +569,13 @@ impl Vault for Keychain {
             // or denied keychain; a later write tells them apart.
             return Ok(None);
         }
-        unhex(&text)
+        let decoded = match self.tool {
+            // The Credential Locker keeps the text as given: its secret size
+            // limit is small, so it is not hex-encoded.
+            KeychainTool::CredentialLocker => Some(text.trim().to_string()),
+            _ => unhex(&text),
+        };
+        decoded
             .map(Some)
             .ok_or_else(|| "the keychain item of this session is not readable".to_string())
     }
@@ -561,6 +608,16 @@ impl Vault for Keychain {
                 )?
                 .0
             }
+            KeychainTool::CredentialLocker => {
+                let (service, item) = (ps_quote(&self.service), ps_quote(id));
+                let body = format!(
+                    "$p=[Console]::In.ReadLine();\
+                     try{{$v.Remove($v.Retrieve('{service}','{item}'))}}catch{{}};\
+                     $v.Add((New-Object Windows.Security.Credentials.PasswordCredential('{service}','{item}',$p)))"
+                );
+                let line = format!("{secret}\n");
+                self.locker(&body, Some(line.as_bytes()))?.0
+            }
         };
         // Read it back: interactive `security` reports success even when an
         // item was not written, and a locked collection can refuse quietly.
@@ -581,6 +638,16 @@ impl Vault for Keychain {
             }
             KeychainTool::SecretTool => {
                 self.run(&["clear", "service", &self.service, "account", id], None)?;
+            }
+            KeychainTool::CredentialLocker => {
+                self.locker(
+                    &format!(
+                        "try{{$v.Remove($v.Retrieve('{}','{}'))}}catch{{}}",
+                        ps_quote(&self.service),
+                        ps_quote(id)
+                    ),
+                    None,
+                )?;
             }
         }
         match self.read(id)? {

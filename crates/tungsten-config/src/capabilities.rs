@@ -299,7 +299,7 @@ pub const FEATURES: &[FeatureDefinition] = &[
     def(
         "cli_login_sessions",
         FeatureDomain::Target,
-        "generated-CLI browser login, account switching and logout for OAuth2 authorizationCode schemes, with sessions in the macOS keychain or Secret Service, or an explicit owner-only file",
+        "generated-CLI browser login, account switching and logout for OAuth2 authorizationCode schemes, with sessions in the macOS keychain, Secret Service or Windows Credential Locker, or an explicit owner-only file",
         Some("cli"),
     ),
     def(
@@ -608,7 +608,7 @@ pub const WORKSPACE: WorkspaceCapability = WorkspaceCapability {
         "scenario validate",
         "scenario run",
     ],
-    editor_routing: false,
+    editor_routing: true,
 };
 
 /// How an input format enters a project.

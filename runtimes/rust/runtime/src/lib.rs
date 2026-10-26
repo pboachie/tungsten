@@ -94,7 +94,7 @@ pub mod types;
 
 pub use checkpoint::{
     CHECKPOINT_PREFIX, CheckpointOptions, CheckpointPage, CheckpointState, CheckpointStatus,
-    ExportPages, MAX_CHECKPOINT_CHARS, describe_checkpoint,
+    ExportPages, MAX_CHECKPOINT_CHARS, TypedExportPages, describe_checkpoint,
 };
 pub use client::{ClientCore, ConfigError, Pages, Polled, TypedPages};
 pub use dispatch::{
