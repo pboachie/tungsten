@@ -230,6 +230,17 @@ changes.
 
 ### Added
 
+- Add explicit streamed downloads to the TypeScript, Python and Rust
+  runtimes: `download()` sends an operation by the rules of `call` and hands a
+  2xx body over unread, to read chunk by chunk or write to a caller-owned sink
+  with backpressure. A download has a total-byte limit (`maxBytes`, checked
+  against `Content-Length` before the first byte and against the bytes read),
+  progress reports, the idle timeout and the call deadline; a short body,
+  a lost connection, cancellation and a failing sink end it with a diagnostic,
+  and the connection and its scheduler capacity are released however it
+  ends. The `Content-Disposition` file name is reduced to a plain base name.
+  Buffered calls, `maxResponseBytes` and event streams are unchanged.
+  Registered as the `streaming_downloads` runtime capability.
 - Add the `examples/restricted-agent` customization example: an MCP server
   that reads freely, confirms writes and hides deletion, with transport
   references and SDK defaults from a shared profile and a check that verifies
