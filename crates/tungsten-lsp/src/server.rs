@@ -17,6 +17,7 @@ use std::time::{Duration, Instant};
 use crossbeam_channel::{Receiver, Sender, never, select};
 use lsp_server::{Connection, ErrorCode, Message, Notification, Request, RequestId, Response};
 use lsp_types::{
+    CodeActionKind, CodeActionOptions, CodeActionParams, CodeActionProviderCapability,
     CompletionOptions, CompletionParams, CompletionResponse, DidChangeTextDocumentParams,
     DidChangeWatchedFilesRegistrationOptions, DidCloseTextDocumentParams,
     DidOpenTextDocumentParams, DocumentSymbolParams, DocumentSymbolResponse, FileSystemWatcher,
@@ -29,6 +30,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tungsten_openapi::CancellationToken;
 
+use crate::actions::{self, Buffer};
 use crate::analysis::{Analysis, Index, analyze};
 use crate::complete::{Inputs, complete};
 use crate::docs::Kind;
@@ -180,6 +182,10 @@ fn capabilities() -> ServerCapabilities {
         hover_provider: Some(HoverProviderCapability::Simple(true)),
         definition_provider: Some(OneOf::Left(true)),
         document_symbol_provider: Some(OneOf::Left(true)),
+        code_action_provider: Some(CodeActionProviderCapability::Options(CodeActionOptions {
+            code_action_kinds: Some(vec![CodeActionKind::QUICKFIX]),
+            ..CodeActionOptions::default()
+        })),
         ..ServerCapabilities::default()
     }
 }
@@ -624,6 +630,34 @@ impl Server<'_> {
                     self.reply(id, list)
                 }
                 None => self.fail(id, ErrorCode::InvalidParams, "invalid symbol parameters"),
+            },
+            "textDocument/codeAction" => match parse::<CodeActionParams>(req.params) {
+                Some(p) => {
+                    let wants_fixes = p.context.only.as_ref().is_none_or(|only| {
+                        only.iter()
+                            .any(|k| CodeActionKind::QUICKFIX.as_str().starts_with(k.as_str()))
+                    });
+                    let uri = &p.text_document.uri;
+                    let doc = uri_to_path(uri).and_then(|path| self.docs.get(&path));
+                    let list = match doc {
+                        Some(d) if wants_fixes => {
+                            let buffer = Buffer {
+                                uri,
+                                version: d.version,
+                                text: &d.text,
+                                lines: &d.lines,
+                            };
+                            actions::actions(&buffer, &p.context.diagnostics, self.index.as_ref())
+                        }
+                        _ => vec![],
+                    };
+                    self.reply(id, list)
+                }
+                None => self.fail(
+                    id,
+                    ErrorCode::InvalidParams,
+                    "invalid code action parameters",
+                ),
             },
             _ => self.fail(id, ErrorCode::MethodNotFound, "method not supported"),
         }
