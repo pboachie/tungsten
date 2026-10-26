@@ -346,6 +346,10 @@ changes.
   scheduler; scopes waiting for them take turns so none is starved.
   The bulk-sync example is now a gallery recipe (`python3 examples/run.py
   --only bulk-sync`) that runs it in TypeScript, Python and Rust.
+  An optional scheduler observer (`onEvent`/`on_event`) receives versioned
+  `admitted`, `rejected`, `released`, `paused` and `retry_denied` events with
+  queue wait, hold and pause durations. Events carry no scope, tenant, URL or
+  payload, are not buffered, and an observer's exception or panic is ignored.
 
 - Add `toolDeadlineMs` to the WebMCP adapter's registration options: each
   tool call gets that total deadline, passed to the TypeScript runtime as
