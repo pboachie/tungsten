@@ -401,6 +401,13 @@ changes.
 
 ### Changed
 
+- Check the npm runtime packages on Node 26 (Current) as well as Node 22 and 24,
+  and add an advisory Node 20 canary that does not imply support. The README
+  now has one Node.js support table: supported lines, the declared floor for
+  each artifact, the checked patch versions, and the build-only scope of the
+  WebMCP floor. The TypeScript runtime now type-checks against Node 22 types,
+  so it cannot rely on APIs newer than its floor.
+
 - Locate primary and related LSP profile diagnostics in their captured local
   files, including invalid profiles, while preserving portable compiler and
   configuration-inspection source names.
