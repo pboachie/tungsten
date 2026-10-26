@@ -1382,6 +1382,8 @@ changes.
 
 ### Fixed
 
+- Register TG0124, TG0128 and TG0129 in the diagnostic code registry, so
+  `tungsten explain` and editor hovers describe them.
 - A TypeScript call whose `deadlineMs` runs out while it waits in the request
   scheduler's queue now reports `TRANSPORT_FAILED` `DEADLINE_EXCEEDED`
   (`retryable: never`), as Python and Rust do. Previously the queue timer
