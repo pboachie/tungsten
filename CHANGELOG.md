@@ -226,6 +226,21 @@ changes.
 
 ### Added
 
+- Add `tungsten lock`, a versioned single-project generation lock
+  (`tungsten.lock.json`). It records the declared input closure (manifest,
+  profiles, agent manifest, entry documents, local references and overlays in
+  application order) by content digest, with the compiler, IR and built-in
+  emitter identities, digests of the effective target options and each
+  target's consumer toolchain requirements. Capture compiles offline and never
+  fetches or refreshes inputs, runs emitters or probes tools; physical paths,
+  option values and credentials are not recorded. `lock --check` fails on a
+  missing, stale or corrupt lock and lists the drift; replacing a lock whose
+  identities changed requires `--update`. External emitters, remote inputs
+  and files outside the project are reported as reproduction gaps, and the
+  lock states that generated consumer dependencies are not vendored. The lock
+  grants no trust to external emitters. `tungsten schema generation-lock`
+  prints its schema.
+
 - Extend the versioned capability catalog with each built-in target's option
   keys, execution environments and implemented features, plus a registry of
   feature ids. `tungsten capabilities --matrix` prints the support matrix

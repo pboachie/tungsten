@@ -145,6 +145,7 @@ impl Cli {
             Command::Doctor(_) => CommandName::Doctor,
             Command::Capabilities(_) => CommandName::Capabilities,
             Command::Config(_) => CommandName::Config,
+            Command::Lock(_) => CommandName::Lock,
             Command::Policy { .. } => CommandName::PolicyDigest,
             Command::Emitters(_) => CommandName::Emitters,
             Command::Generate(_) => CommandName::Generate,
@@ -183,6 +184,9 @@ pub(crate) enum Command {
     Capabilities(CapabilitiesArgs),
     /// Explain supported effective configuration without compiling or running tools.
     Config(ConfigArgs),
+    /// Capture or verify the project's generation lock (tungsten.lock.json)
+    /// offline; never fetches inputs or runs emitters.
+    Lock(LockArgs),
     /// Explicit host policy utilities; never approves or runs executables.
     Policy {
         #[command(subcommand)]
@@ -275,6 +279,23 @@ pub(crate) struct ConfigArgs {
     /// Fail on supported-option warnings as well as configuration errors.
     #[arg(long)]
     pub strict: bool,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct LockArgs {
+    /// Local project directory or tungsten manifest.
+    #[arg(default_value = ".")]
+    pub path: PathBuf,
+    /// Verify the existing lock; fail when it is missing, stale or corrupt.
+    /// Never writes.
+    #[arg(long, conflicts_with_all = ["preview", "update"])]
+    pub check: bool,
+    /// Print the recipe and its drift from the existing lock; never writes.
+    #[arg(long, conflicts_with = "update")]
+    pub preview: bool,
+    /// Accept changed identities and replace a stale or corrupt lock.
+    #[arg(long)]
+    pub update: bool,
 }
 
 #[derive(Debug, Subcommand)]
@@ -548,6 +569,8 @@ pub enum SchemaName {
     ToolCatalog,
     /// Built-in target capability declarations, independent of qualification.
     Capabilities,
+    /// The project generation lock written by `lock` (tungsten.lock.json).
+    GenerationLock,
 }
 
 #[derive(Debug, Clone, Args)]
