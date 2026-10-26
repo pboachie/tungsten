@@ -43,6 +43,12 @@ changes.
 
 ### Documentation
 
+- Add the `webhook-receiver` gallery recipe: TypeScript, Python and Rust
+  receivers for a non-sensitive `order.shipped` webhook verify signed
+  deliveries with example secrets, refuse a replay, a tampered body, a stale
+  timestamp and an incomplete payload, accept a rotated-secret delivery, and
+  print identical outcomes, without a web framework or network.
+
 - Add a migration note contrasting the new opt-in total operation deadline
   with the existing per-attempt `timeoutMs` and its equivalents, across the
   runtimes, the generated Rust CLI and the MCP server.
