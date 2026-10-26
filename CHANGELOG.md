@@ -230,6 +230,16 @@ changes.
 
 ### Added
 
+- Add `tungsten_build::ProjectIdentity`, the shared in-process identity of
+  one compilation: its manifest, the content digest of every source it read,
+  the optional files it found absent, and a digest of the compiler version,
+  load limits, acquisition and remote-reference policy and invocation policy.
+  It revalidates against unsaved buffers and disk without modification times,
+  reports which files a project depends on, and is never persisted. The
+  language server uses it for result reuse, and a watched-file change to a
+  file the last check neither read nor looked for no longer cancels or starts
+  a check.
+
 - `tungsten workspace [PATH]` lists the tungsten projects under a directory
   with deterministic ids (the project directory relative to PATH), their
   output directories and declared inputs. Discovery is bounded (8 levels,
