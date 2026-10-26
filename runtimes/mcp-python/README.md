@@ -91,8 +91,12 @@ standard input and output and writes its own errors to standard error.
   that request, and destructive calls cannot be confirmed without a session.
 - **Search is keyword only.** The embedding (hybrid) search of the TypeScript server is not
   served; `search_tools` ranks with BM25 alone.
-- **No streamed results.** A tool whose operation answers an event stream returns a
-  `VALIDATION_FAILED` envelope, and nothing is sent.
+- **Streamed results.** A tool whose operation answers an event stream collects its events
+  in order: at most 1,000 (then `truncated: true`), at most `max_stream_bytes` of JSON
+  (default 4 MiB) and at most `max_stream_ms` (default 60 s). Past a limit the call fails
+  with an `UNEXPECTED_RESPONSE` envelope and the events collected so far as `partial`.
+  The deadline bounds connecting and reconnects, and these limits bound collecting.
+  Progress notifications are not sent.
 - **No `run_script`.** Unrestricted Python evaluation is never offered.
 - **No embedding search, resources, prompts or server-to-client features.**
 - **Macros** run only when the generated Python SDK emits them (see its TG0730

@@ -236,6 +236,13 @@ changes.
 
 ### Added
 
+- The experimental `mcp-python` server collects streamed (server-sent event)
+  results, as the TypeScript server does: at most 1,000 events (then
+  `truncated: true`), `max_stream_bytes` of JSON (4 MiB) and `max_stream_ms`
+  (60 s). Past a limit the call fails with an envelope that carries the events
+  so far as `partial`. TG0729 no longer reports streamed operations; it now
+  reports only macros the Python SDK does not emit.
+
 - The experimental `mcp-python` server serves Streamable HTTP: `--http
   <port> [--host <host>] [--token-env <NAME>]`, with the TypeScript server's
   rules. Requests are checked in order: a constant-time bearer token (401),

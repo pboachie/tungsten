@@ -1014,15 +1014,12 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
     ),
     e(
         "TG0729",
-        "The experimental `mcp-python` server (the `tungsten-mcp` Python runtime) serves \
-         tools over stdio or Streamable HTTP, discrete or progressive. This API uses something \
-         it does not \
-         serve: operations answering an event stream (their streamed calls return an \
-         envelope and send nothing), or macros the Python SDK does not emit (their tools \
-         answer a misconfiguration envelope). Nothing is weakened silently: each case is \
-         answered with an envelope, and no request is sent.",
-        "Use the `mcp` target (the TypeScript server) for these features, or fix the macros \
-         the python target reports with TG0730.",
+        "The experimental `mcp-python` server (the `tungsten-mcp` Python runtime) runs macros \
+         through the generated Python SDK, and that SDK does not emit some macros of this API \
+         (see the python target's TG0730). Their tools answer a misconfiguration envelope and \
+         send nothing; nothing is weakened silently.",
+        "Fix the macros the python target reports with TG0730, or use the `mcp` target (the \
+         TypeScript server) for them.",
     ),
     e(
         "TG0730",

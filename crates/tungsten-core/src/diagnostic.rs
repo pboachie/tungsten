@@ -479,7 +479,7 @@ pub mod codes {
         ("TG0728", "invalid mcp-python target option; default used"),
         (
             "TG0729",
-            "the experimental mcp-python server does not serve part of this API",
+            "the experimental mcp-python server cannot run macros the Python SDK does not emit",
         ),
         (
             "TG0730",
