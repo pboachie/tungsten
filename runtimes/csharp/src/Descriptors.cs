@@ -45,6 +45,8 @@ public sealed record BodyDescriptor
     /// <summary>The arguments key of a whole-body argument; null for a merged body.</summary>
     public string? Arg { get; init; }
     public string? ArgName { get; init; }
+    /// <summary>The media type each multipart field's parts are sent with (OpenAPI <c>encoding</c>), by wire name; a file part's own media type wins.</summary>
+    public IReadOnlyDictionary<string, string> PartContentTypes { get; init; } = new Dictionary<string, string>();
 }
 
 /// <summary>One declared response.</summary>
@@ -555,8 +557,18 @@ public sealed class SdkDescriptors
         {
             var shape = Obj(b["shape"]);
             bool merged = Str(shape["kind"]) == "merged";
+            var partTypes = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var part in Arr(b["parts"]))
+            {
+                var po = Obj(part);
+                if (Str(po["content_type"]) is { } partType)
+                {
+                    partTypes.TryAdd(Str(po["name"]) ?? "", partType);
+                }
+            }
             body = new BodyDescriptor
             {
+                PartContentTypes = partTypes,
                 MediaType = Str(b["media_type"]) ?? "application/json",
                 Encoding = Str(b["encoding"]) ?? "json",
                 Required = Bool(b["required"]),

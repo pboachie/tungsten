@@ -247,6 +247,11 @@ changes.
   device-qualified, and uses bundled Mozilla roots rather than Android's
   trust store.
 
+- Go, Java, Kotlin, C#, F#, Ruby and Dart SDKs honour multipart per-part
+  `encoding.contentType` with the same rules as the TypeScript, Python and Rust
+  SDKs. The SDK descriptor document's `BodyDescriptor` gains an optional
+  `parts` list, and the targets list the `multipart_part_encoding` capability.
+
 - Multipart request bodies honour the OpenAPI `encoding` map: a field whose
   Encoding Object declares a `contentType` is sent with that media type (the
   first entry of the list without wildcards) in TypeScript, Python and Rust

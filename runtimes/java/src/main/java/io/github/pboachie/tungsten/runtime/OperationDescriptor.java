@@ -93,9 +93,29 @@ public record OperationDescriptor(
      * @param required whether a body must be sent
      * @param fields the merged fields
      * @param arg the argument holding the whole body, or null
+     * @param partContentTypes the media type each multipart field is sent with (OpenAPI
+     *     {@code encoding}), by wire name; a file part's own media type wins
      */
     public record Body(
-            String mediaType, String encoding, boolean required, List<MergedField> fields, String arg) {}
+            String mediaType,
+            String encoding,
+            boolean required,
+            List<MergedField> fields,
+            String arg,
+            Map<String, String> partContentTypes) {
+        /**
+         * A body without declared part encodings.
+         *
+         * @param mediaType the media type
+         * @param encoding json, form, multipart, bytes or text
+         * @param required whether a body must be sent
+         * @param fields the merged fields
+         * @param arg the argument holding the whole body, or null
+         */
+        public Body(String mediaType, String encoding, boolean required, List<MergedField> fields, String arg) {
+            this(mediaType, encoding, required, fields, arg, Map.of());
+        }
+    }
 
     /**
      * One declared response.
