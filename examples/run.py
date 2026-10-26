@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import socket
 import subprocess
 import sys
 import time
@@ -231,6 +232,119 @@ messages. Replay tracking, queues and the acknowledgement are the
 application's: `claim` is called only for a verified, well-formed delivery, so
 answer `2xx` once the event is durably handed off, and a non-`2xx` status lets
 the provider redeliver. See each runtime README's Limits section.
+""",
+    "android-jni": """
+## Problem: calling a Rust SDK from an Android app
+
+An Android app can use a generated Rust SDK as a native library behind a small
+JNI layer. That keeps one client implementation, but the app then owns a
+native handle: its async runtime, its threads, how long a call may block, what
+an error looks like on the Java side, and when the memory is freed. The recipe
+generates the Rust SDK for the committed Petstore contract, builds
+[bridge.rs](bridge.rs) as a `cdylib`, and drives it from Java
+([PetstoreNative.java](PetstoreNative.java),
+[PetstoreException.java](PetstoreException.java), [Demo.java](Demo.java))
+against a loopback `tungsten mock`. It runs on the development host; the same
+bridge cross-compiles for Android.
+
+Expected output:
+
+```text
+listPets: a JSON array of pets
+unreachable server: PetstoreException TRANSPORT_FAILED
+close during a call: the call ends with CANCELLED
+after close: IllegalStateException, the native handle is never reused
+50 create/call/close cycles: no native threads left behind
+android: cross-check not requested (set TUNGSTEN_ANDROID_TARGETS)
+```
+
+## The bridge
+
+- **Compiler and runtime are separate.** `tungsten` runs on the development
+  host and writes Rust source; only the generated SDK, the Rust runtime and
+  the bridge are compiled into the app's `.so`. Nothing in the app depends on
+  the compiler.
+- **One handle, one runtime.** `create` builds the client and a Tokio runtime
+  with one worker thread and returns a pointer as a `long`. Each call blocks
+  the calling Java thread with `block_on`, so call it from a background thread
+  or an `Dispatchers.IO` coroutine, never the main thread. Several threads may
+  call at once.
+- **Bounded calls.** The client's total `deadline` bounds each call as a whole
+  (authentication, retries and backoff, the body), and `max_response_bytes`
+  bounds a response. Use the runtime's own options for these rather than
+  timers in Java.
+- **Errors are values.** A failure throws `PetstoreException` whose message is
+  the runtime's diagnostic envelope as JSON (`category`, `code`,
+  `remediation`, ...), so the app can branch on `category` and show the
+  remediation. A Rust panic is caught at the boundary and becomes an
+  `IllegalStateException`; it never unwinds into the JVM.
+- **Cancellation and cleanup.** `close()` first cancels every call in flight on
+  the handle (each returns `CANCELLED` at once; the request is abandoned),
+  then waits for them under a write lock and frees the handle, which stops the
+  runtime's threads. After that every call throws `IllegalStateException`, so
+  a late call can never reach a freed handle. Tie `close()` to the owning
+  component (a `ViewModel`'s `onCleared`, a service's `onDestroy`). Android
+  can kill the process without any callback; nothing here survives that, and a
+  mutation that was sent when the call was cancelled or the process died keeps
+  the runtime's `OUTCOME_UNKNOWN` contract: retry it only with the same
+  idempotency key.
+
+## Building for Android
+
+Install the Rust targets and an Android NDK, then build the bridge per ABI,
+for example with [cargo-ndk](https://github.com/bbqsrc/cargo-ndk):
+
+```sh
+rustup target add aarch64-linux-android x86_64-linux-android
+cargo ndk -t arm64-v8a -t x86_64 --platform 28 -o app/src/main/jniLibs build --release
+```
+
+This places `libpetstore_jni.so` under `jniLibs/<abi>/`, where Gradle packages
+it. Copy `PetstoreNative.java` and `PetstoreException.java` into the app (they
+work from Kotlin unchanged) and keep their package, or rename the
+`Java_example_petstore_...` functions in the bridge to match a new one.
+
+- **ABIs.** Only `arm64-v8a` (devices) and `x86_64` (emulators) are in scope.
+  `armeabi-v7a` and `x86` are not covered.
+- **16 KB pages.** Android 15 devices can use 16 KB memory pages, and Google
+  Play requires native libraries aligned for them. NDK r28 and later link with
+  16 KB alignment by default; with an older NDK, pass
+  `-C link-arg=-Wl,-z,max-page-size=16384`.
+- **Cross-check here.** With the targets and an NDK compiler configured
+  (`CC_aarch64_linux_android` and so on, which `ring` needs), set
+  `TUNGSTEN_ANDROID_TARGETS=aarch64-linux-android,x86_64-linux-android` and the
+  recipe also runs `cargo check` for each. That is compile evidence only: it
+  does not link, package or run anything on a device.
+
+## TLS and trust
+
+The Rust runtime uses `reqwest` with `rustls` and the bundled Mozilla root
+store (`webpki-roots`). It does **not** read Android's system trust store,
+user-installed CAs or the app's network security configuration, and it does
+not apply certificate pinning declared there. To trust a private CA, or to
+pin, build a `reqwest::Client` with your roots
+(`tls_built_in_root_certs(false)`, `add_root_certificate(...)`), with
+`redirect(reqwest::redirect::Policy::none())`, and pass it as
+`ClientOptions::http_client`.
+
+## Credentials
+
+The example calls an API without credentials. For OAuth, keep tokens in
+application-owned secure storage: implement the runtime's `TokenStore` over
+storage the app protects (for example values encrypted with an Android
+Keystore key, reached through JNI) and pass it as `ClientOptions::token_store`.
+Do not persist tokens in plain files or `SharedPreferences`.
+
+## What this does not establish
+
+The recipe proves that the bridge, the SDK and the runtime build and behave as
+described on the development host, and, when requested, that they type-check
+for the Android targets. It is not device or emulator qualification: network
+behaviour on a device, the platform TLS stack, lifecycle interruption and
+packaging are not exercised here. Qualified Android combinations are recorded
+by the maintainer in the capability contract (`tungsten capabilities`) once
+they exist; until then treat Android as unqualified. See the Rust runtime
+README's Limits section.
 """,
     "bulk-sync": """
 ## Problem: a bulk job turns into a storm of 429s
@@ -912,6 +1026,61 @@ tungsten-runtime = {{ path = "{relative(runtime / "rust/runtime", consumer)}" }}
         print(f"{language}: " + printed.replace("\n", "; ").rstrip("; "), flush=True)
 
 
+def android_jni(binary: str, example: Path, work: Path, build_packages: bool) -> None:
+    shutil.copyfile(example / "openapi.json", work / "openapi.json")
+    write_json(work / "tungsten.yml", manifest("rust", work))
+    tungsten(binary, work, "check")
+    tungsten(binary, work, "generate")
+    first = digest_tree(work / "sdk")
+    assert first, "the rust target produced no files; inspect skipped/refused target diagnostics"
+    tungsten(binary, work, "generate")
+    assert first == digest_tree(work / "sdk"), "regeneration was not deterministic"
+    tungsten(binary, work, "generate", "--check")
+    if not build_packages:
+        return
+    bridge = work / "bridge"
+    bridge.mkdir()
+    shutil.copyfile(example / "bridge.rs", bridge / "bridge.rs")
+    (bridge / "Cargo.toml").write_text(f'''[package]
+name = "petstore-jni"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[lib]
+name = "petstore_jni"
+path = "bridge.rs"
+crate-type = ["cdylib"]
+
+[dependencies]
+petstore-sdk = {{ path = "../sdk/petstore-sdk" }}
+jni = "0.21"
+serde_json = "1"
+tokio = {{ version = "1", features = ["rt-multi-thread", "sync", "macros"] }}
+
+[workspace]
+''')
+    command(["cargo", "build", "--quiet"], bridge)
+    java = work / "java"
+    sources = [str(example / name) for name in ("PetstoreNative.java", "PetstoreException.java", "Demo.java")]
+    command(["javac", "-d", str(java), *sources], work)
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        unreachable = f"http://127.0.0.1:{probe.getsockname()[1]}"
+    with mock(binary, work) as base:
+        demo = command(["java", f"-Djava.library.path={bridge / 'target/debug'}", "-cp", str(java),
+                        "example.petstore.Demo", base, unreachable], work)
+        print(demo.stdout, end="", flush=True)
+    # Cross-checking for Android needs the Rust targets and an NDK C compiler
+    # (for ring); it runs only when requested.
+    targets = [t for t in os.environ.get("TUNGSTEN_ANDROID_TARGETS", "").split(",") if t]
+    for target in targets:
+        command(["cargo", "check", "--quiet", "--target", target], bridge)
+        print(f"android: the SDK, runtime and bridge type-check for {target}", flush=True)
+    if not targets:
+        print("android: cross-check not requested (set TUNGSTEN_ANDROID_TARGETS)", flush=True)
+
+
 def digest_tree(root: Path) -> dict[str, str]:
     return {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest()
             for p in root.rglob("*") if p.is_file()}
@@ -929,6 +1098,9 @@ def execute(entry: dict, binary: str, build_packages: bool) -> None:
         return
     if mode == "telemetry":
         telemetry_trace(binary, example, work, build_packages)
+        return
+    if mode == "android-jni":
+        android_jni(binary, example, work, build_packages)
         return
     if mode == "input":
         args = ["init", "--from", str(example / entry["input"]), "--dir", str(work / "project"),
@@ -1107,7 +1279,7 @@ def main() -> None:
         execute(entry, binary, not args.generate_only)
         if args.generate_only and entry["mode"] == "target" and entry["target"] != "docs":
             print(f"OK: {entry['target']} generation is deterministic and fresh; package build was not run", flush=True)
-        elif args.generate_only and entry["mode"] in ("bulk-sync", "webhooks", "telemetry"):
+        elif args.generate_only and entry["mode"] in ("bulk-sync", "webhooks", "telemetry", "android-jni"):
             print("OK: generation is deterministic and fresh; the clients were not run", flush=True)
         else:
             print(f"OK: {entry['outcome']}", flush=True)

@@ -87,6 +87,16 @@ responsible for authorization and server-side idempotency.
 
 ## Limits
 
+Android: generated SDKs and this runtime type-check for `aarch64-linux-android`
+and `x86_64-linux-android`; nothing has been qualified on a device or emulator,
+so treat Android as unqualified until the maintainer records evidence in
+`tungsten capabilities`. TLS uses `rustls` with the bundled Mozilla roots
+(`webpki-roots`), never Android's system or user trust store or network
+security configuration: pass `ClientOptions::http_client` for private roots or
+pinning. The [JNI embedding example](../../examples/android-jni/README.md)
+shows handle ownership, threading, deadlines, error envelopes, cancellation and
+cleanup, packaging per ABI and 16 KB page alignment. Unreleased 0.2.0 only.
+
 Multipart bodies: a field whose OpenAPI `encoding` entry declares a
 `contentType` is sent with that media type (the first entry without
 wildcards); a file part's own media type wins. Encoding `headers`, and

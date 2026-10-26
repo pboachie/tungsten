@@ -50,6 +50,7 @@ canonical inputs are never modified.
 | [Bulk sync within a quota](bulk-sync/README.md) | Bound concurrent calls, queue the rest and share 429 backoff with a request scheduler in TypeScript, Python and Rust. |
 | [Trace calls with local telemetry](telemetry/README.md) | Collect correlated operation, attempt and phase telemetry in memory from the TypeScript, Python and Rust SDKs, with nothing sent anywhere. |
 | [Receive signed webhooks](webhook-receiver/README.md) | Verify signed order.shipped deliveries and decode typed payloads with the TypeScript, Python and Rust SDKs, without a web framework. |
+| [Embed a Rust SDK through JNI](android-jni/README.md) | Call a generated Rust SDK from Java through a small JNI bridge with a bounded deadline and response size, error envelopes, cancellation and cleanup, as an Android app would. |
 
 JSON Schema needs explicit HTTP routing: its recipe uses a versioned endpoint
 manifest with declared models, rather than guessing an API from a bare schema.
