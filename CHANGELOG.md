@@ -1359,6 +1359,14 @@ changes.
 
 ### Fixed
 
+- A TypeScript call whose `deadlineMs` runs out while it waits in the request
+  scheduler's queue now reports `TRANSPORT_FAILED` `DEADLINE_EXCEEDED`
+  (`retryable: never`), as Python and Rust do. Previously the queue timer
+  could fire just before the clock reached the deadline, and the call
+  reported `RATE_LIMITED` `QUEUE_TIMEOUT` (`after_delay`). The queue wait now
+  ends at the deadline itself in TypeScript and Python, as it does in Rust.
+  A wait bounded by `maxQueueMs` still reports `QUEUE_TIMEOUT`.
+
 - A Java call that starts an OAuth2 token refresh now stops waiting at its
   own deadline and reports `DEADLINE_EXCEEDED`, as the Rust and TypeScript
   runtimes do. Previously the call that owned the refresh ran it inline and
