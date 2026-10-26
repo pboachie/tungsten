@@ -115,6 +115,10 @@ pub enum CommandName {
     SupportBundle,
     #[serde(rename = "update check")]
     UpdateCheck,
+    #[serde(rename = "upgrade rehearse")]
+    UpgradeRehearse,
+    #[serde(rename = "upgrade apply")]
+    UpgradeApply,
 }
 
 /// A diagnostic flattened to its first label.
@@ -221,6 +225,8 @@ pub enum CommandResult {
     SupportBundleExport(Box<crate::commands::support_bundle::SupportBundleExportReceipt>),
     SupportBundleInspection(Box<crate::commands::support_bundle_inspect::SupportBundleInspection>),
     UpdateCheck(crate::commands::update::UpdateCheckResult),
+    UpgradeRehearse(Box<crate::commands::upgrade::RehearsalResult>),
+    UpgradeApply(Box<crate::commands::upgrade_apply::UpgradeApplyResult>),
     Help(HelpResult),
 }
 
@@ -1065,6 +1071,8 @@ const RESULT_DEFS: &[(CommandName, &str)] = &[
     (CommandName::OverlaySuggest, "OverlaySuggestResult"),
     (CommandName::SupportBundle, "SupportBundlePreview"),
     (CommandName::UpdateCheck, "UpdateCheckResult"),
+    (CommandName::UpgradeRehearse, "RehearsalResult"),
+    (CommandName::UpgradeApply, "UpgradeApplyResult"),
 ];
 
 /// The JSON Schema (draft 2020-12) of [`CliOutput`]. Beyond the generated

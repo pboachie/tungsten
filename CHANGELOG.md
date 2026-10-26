@@ -230,6 +230,22 @@ changes.
 
 ### Added
 
+- Add `tungsten upgrade rehearse`, run with a candidate release's binary: it
+  regenerates the project from its locked inputs, offline and without
+  touching the project, and reports compiler, emitter, consumer toolchain,
+  runtime family and option identity changes against `tungsten.lock.json`,
+  input drift, file and API surface changes with `diff --migration` actions,
+  and conflicts with edited generated files or files tungsten does not own.
+  Generated-source compatibility is reported apart from package availability
+  and runtime acceptance, which it does not check. With `--workspace` it
+  stages the output, proposed lock and rehearsal record for review;
+  `--from`/`--to` check the explicit identities. External emitters are never
+  started.
+- Add `tungsten upgrade apply --workspace DIR` to apply an accepted rehearsal
+  as a separate step. It refuses when inputs, the lock, the staged files or
+  any output file changed since the rehearsal, backs up what it replaces,
+  keeps custom files, and records a journal; `--restore` undoes an
+  interrupted or completed apply.
 - `tungsten update check` classifies a newer release as `compatible` or
   `migration` (new `upgrade` field in `--json`). Before 1.0 a minor release, from
   1.0 a major release, any prerelease, or notes with a Breaking section count as
