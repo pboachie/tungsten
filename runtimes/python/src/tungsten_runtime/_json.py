@@ -42,6 +42,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TypeGuard
 
+from ._upload import UploadSource, upload_marker
 from .sentinels import UNSET
 
 
@@ -168,6 +169,8 @@ class _Encoder:
                 kind = "null" if value.content_type is None else js_string(value.content_type)
                 return f'{{"$file":{{"bytes":{js_string(_b64(value.content))},"name":{name},"type":{kind}}}}}'
             return self.unsupported(f"{len(value.content)} bytes")
+        if isinstance(value, UploadSource):
+            return upload_marker(value) if self.binary else self.unsupported("upload")
         if isinstance(value, Mapping | list | tuple):
             return self.container(value)  # pyright: ignore[reportUnknownArgumentType]
         return self.unsupported(type(value).__name__)

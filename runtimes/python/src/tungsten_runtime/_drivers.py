@@ -63,6 +63,7 @@ from ._effects import (
     Streaming,
     TimedOut,
 )
+from ._upload import UploadAttempt
 from .scheduler import RequestScheduler
 
 T = TypeVar("T")
@@ -438,11 +439,14 @@ def _request(
     # A stream waits at most the idle timeout for each read (httpx's read timeout).
     idle = max(1.0, req.idle_ms) / 1000 if req.stream and req.idle_ms is not None else seconds
     body_deadline = req.deadline_ms / 1000 if req.stream == "bytes" and req.deadline_ms is not None else None
+    content: object = req.body
+    if isinstance(content, UploadAttempt):
+        content = content.async_chunks() if isinstance(client, httpx.AsyncClient) else content.sync_chunks()
     return client.build_request(
         req.method,
         req.url,
         headers=headers,
-        content=req.body,
+        content=cast(Any, content),
         timeout=httpx.Timeout(seconds, read=idle),
         extensions={
             "tungsten_deadline": deadline,
