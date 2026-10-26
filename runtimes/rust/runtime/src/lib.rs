@@ -75,6 +75,7 @@ mod oauth_attempt;
 mod pages;
 mod prepare;
 mod preview;
+mod scheduler;
 mod send;
 mod serialize;
 mod sse;
@@ -102,6 +103,9 @@ pub use oauth_attempt::{
     AuthorizationAttempt, AuthorizationUrlParams, ExchangeCodeParams, IssuerDefense,
 };
 pub use pages::MAX_PAGES_REACHED;
+pub use scheduler::{
+    Rejection, RequestScheduler, SchedulerOptions, SchedulerScope, SchedulerStats,
+};
 pub use stream::{
     DEFAULT_MAX_COLLECT_BYTES, DEFAULT_MAX_COLLECT_TIME, DEFAULT_MAX_RECONNECTS,
     DEFAULT_RECONNECT_MAX, EventHandlers, EventStream, Folded, StreamEvent, StreamResult,

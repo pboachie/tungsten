@@ -47,9 +47,16 @@ pub enum BodyRead {
 pub struct EventBody {
     response: reqwest::Response,
     idle: Duration,
+    /// Scheduler capacity held until the stream is dropped.
+    permit: Option<crate::scheduler::Permit>,
 }
 
 impl EventBody {
+    /// Keep `permit` until this body (the connection) is dropped.
+    pub(crate) fn hold(&mut self, permit: crate::scheduler::Permit) {
+        self.permit = Some(permit);
+    }
+
     pub async fn read(&mut self) -> BodyRead {
         match tokio::time::timeout(self.idle, self.response.chunk()).await {
             Err(_) => BodyRead::Timeout,
@@ -270,6 +277,7 @@ pub async fn attempt(client: &reqwest::Client, req: &AttemptRequest<'_>) -> Atte
             body: EventBody {
                 response,
                 idle: req.idle.unwrap_or(req.timeout),
+                permit: None,
             },
         };
     }
