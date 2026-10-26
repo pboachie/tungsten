@@ -78,7 +78,14 @@ impl Doc {
     }
 }
 
-type Done = (u64, Option<Analysis>);
+/// The result of one check: a new analysis (`None` when it failed), or
+/// the previous one still holds because no input changed.
+enum Checked {
+    Fresh(Option<Box<Analysis>>),
+    Unchanged,
+}
+
+type Done = (u64, Checked);
 
 struct Server<'c> {
     conn: &'c Connection,
@@ -319,8 +326,8 @@ impl Server<'_> {
                     }
                 }
                 recv(done_rx) -> done => {
-                    if let Ok((generation, analysis)) = done {
-                        self.finished(generation, analysis)?;
+                    if let Ok((generation, checked)) = done {
+                        self.finished(generation, checked)?;
                     }
                 }
                 recv(timer) -> _ => self.start(),
@@ -453,20 +460,40 @@ impl Server<'_> {
         self.running = true;
         let cancellation = CancellationToken::default();
         self.cancellation = Some(cancellation.clone());
+        let key = self.analysis.as_ref().and_then(|a| a.inputs_key.clone());
         std::thread::spawn(move || {
-            let result = std::panic::catch_unwind(|| analyze(&manifest, overrides, cancellation))
-                .ok()
-                .flatten();
+            let result = std::panic::catch_unwind(|| {
+                if key.is_some_and(|k| k.unchanged(&manifest, &overrides, &cancellation)) {
+                    return Checked::Unchanged;
+                }
+                Checked::Fresh(analyze(&manifest, overrides, cancellation).map(Box::new))
+            })
+            .unwrap_or(Checked::Fresh(None));
             let _ = tx.send((generation, result));
         });
     }
 
-    fn finished(&mut self, generation: u64, analysis: Option<Analysis>) -> Result<(), String> {
+    fn finished(&mut self, generation: u64, checked: Checked) -> Result<(), String> {
         self.running = false;
         self.cancellation = None;
         if self.shutdown || generation != self.generation {
             return Ok(());
         }
+        let analysis = match checked {
+            Checked::Fresh(analysis) => analysis.map(|a| *a),
+            Checked::Unchanged => {
+                // The published diagnostics and the index still describe
+                // these inputs; the analysis is current again.
+                self.analysis_generation = generation;
+                if let Some(a) = &self.analysis {
+                    self.log(&format!(
+                        "checked {}: inputs unchanged, kept the previous result",
+                        file_name(&a.manifest)
+                    ));
+                }
+                return Ok(());
+            }
+        };
         let Some(analysis) = analysis else {
             self.log("the project check failed unexpectedly; see the server's stderr");
             return Ok(());
