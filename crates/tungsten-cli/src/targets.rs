@@ -91,6 +91,37 @@ fn import_policy_targets() -> String {
     either(&ids)
 }
 
+/// The refusal of target `name` for IR bound to protocols it does not
+/// declare, one per protocol (TG0706).
+pub(crate) fn protocol_refusals(name: &str, ir: &Ir) -> Vec<Diagnostic> {
+    use tungsten_config::capabilities::{TARGETS, protocols};
+    protocols::unsupported(name, &ir.protocols())
+        .into_iter()
+        .map(|protocol| {
+            let known = protocols::protocol(protocol).is_some();
+            let supporting = protocols::supporting_targets(protocol, TARGETS);
+            let alternative = if supporting.is_empty() {
+                format!("no built-in target generates `{protocol}` in this version")
+            } else {
+                format!("generate it with {}", either(&supporting))
+            };
+            Diagnostic::error(
+                "TG0706",
+                if known {
+                    format!("target `{name}` does not declare the `{protocol}` protocol")
+                } else {
+                    format!("target `{name}`: IR protocol `{protocol}` is not registered")
+                },
+            )
+            .with_help(format!(
+                "{alternative}; `tungsten capabilities --json` lists the protocols each target \
+                 declares. REST fields are never reused for another protocol. \
+                 `tungsten explain TG0706` has the details"
+            ))
+        })
+        .collect()
+}
+
 /// `a, b or c` from a list of names.
 fn either(ids: &[&str]) -> String {
     match ids.split_last() {

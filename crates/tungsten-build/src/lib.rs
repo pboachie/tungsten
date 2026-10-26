@@ -142,6 +142,7 @@ pub fn build_with_manifest(input: &BuildInput<'_>, manifest: &str) -> BuildOutpu
             resources,
             planned: ops.planned.into_iter().map(|b| b.op).collect(),
             errors,
+            protocol: None,
         });
     }
     check_operation_refs(&mut cx, &known_ids);
