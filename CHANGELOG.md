@@ -230,6 +230,18 @@ changes.
 
 ### Added
 
+- Generated Rust CLIs sign in to OAuth2 `authorizationCode` schemes:
+  `auth login` runs the runtime's managed S256 flow through a loopback
+  redirect (bounded by the 10-minute attempt and `--deadline`), `auth switch`
+  selects a stored account per profile, `auth logout` removes local sessions
+  (tokens are not revoked at the provider) and `auth status` lists sessions
+  without secrets. Sessions are partitioned by scheme, account, token
+  endpoint, client id, base-URL origin and scopes. Tokens live in the macOS
+  keychain or the Secret Service (`secret-tool`), or in an owner-only file
+  only when `--store file` / `session_store = "file"` is chosen; a locked or
+  missing keychain never falls back to plaintext. Login refuses to run in CI
+  or without a terminal, and no other command starts one.
+
 - `tungsten config` now inspects the C#, F#, Dart, Java, Kotlin, Ruby, MCP,
   WebMCP and docs target options declared in the capability catalog (status
   `declared_fields`): each declared field reports its authored value or fixed

@@ -291,6 +291,12 @@ pub const FEATURES: &[FeatureDefinition] = &[
         Some("cli"),
     ),
     def(
+        "cli_login_sessions",
+        FeatureDomain::Target,
+        "generated-CLI browser login, account switching and logout for OAuth2 authorizationCode schemes, with sessions in the macOS keychain or Secret Service, or an explicit owner-only file",
+        Some("cli"),
+    ),
+    def(
         "dataclass_models",
         FeatureDomain::Target,
         "stdlib dataclass models without a Pydantic dependency",
@@ -500,7 +506,7 @@ targets! {
         summary: "Async Rust SDK (serde, reqwest) and optional generated CLI",
         options: &["crate", "version", "runtime", "runtime_path", "cli", "out"],
         environments: [Native],
-        features: &["typed_sdk", "pagination_helpers", "generated_cli", "webhook_verification"],
+        features: &["typed_sdk", "pagination_helpers", "generated_cli", "webhook_verification", "cli_login_sessions"],
     },
     {
         id: "typescript", aliases: &["ts"], source: BuiltInEmitter, family: Some("typescript"),
