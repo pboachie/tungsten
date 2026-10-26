@@ -95,6 +95,45 @@ with environment values taking precedence. Protect any file containing secrets.
 Sensitive operation flags accept `env:NAME` or `-` to read one line from standard
 input, rather than a literal secret on the command line.
 
+## Sign in with a browser and keep the session
+
+For an API with an OAuth2 `authorizationCode` scheme, set the client id the
+`auth status` output names (for example `PETSTORE_OAUTH_CLIENT_ID`), then:
+
+```sh
+example-cli auth login                     # default account, OS keychain
+example-cli auth login --account work      # a second identity
+example-cli auth switch work               # this profile now uses `work`
+example-cli auth status                    # sessions, never token values
+example-cli auth logout                    # remove the selected account's session
+example-cli auth logout --all
+```
+
+`auth login` prints the authorization URL, opens the browser (not with
+`--no-browser`) and waits on a loopback redirect, by default
+`http://127.0.0.1:<free port>/callback`; set `<PREFIX>_<SCHEME>_REDIRECT_URI`
+(profile key `<scheme>_redirect_uri`) to a registered loopback URL instead,
+and `<PREFIX>_<SCHEME>_ISSUER` to require the provider's `iss` callback
+parameter. The provider must support S256 PKCE. The wait ends after 10 minutes
+or `--deadline`. Login refuses to run when `CI` is set or there is no
+terminal, and no other command ever starts it: non-interactive jobs keep using
+credentials from the environment or profile.
+
+A session belongs to a scheme, account, token endpoint, client id, base-URL
+origin and scope set; another account, client or `--base-url` never uses it.
+Commands pick the account from `<PREFIX>_ACCOUNT` or the profile key
+`account`, then the one chosen with `auth switch`, then the only stored one.
+Tokens are refreshed as needed and written back; a refresh that loses to
+another process or to a logout is not kept.
+
+Tokens are kept by the session store: `keychain` (default; macOS keychain,
+the Secret Service through `secret-tool`, or the Windows Credential Locker), `file` (`sessions/` next to the
+config file, mode 0600, only when chosen with `--store file`,
+`<PREFIX>_SESSION_STORE=file` or `session_store = "file"`), or `ephemeral`
+(stored sessions are ignored). A non-secret index `sessions.json` records
+which sessions exist. `auth logout` removes local tokens only; revoke them at
+the provider if they may have been exposed.
+
 ## Pass structured arguments without shell escaping
 
 For a JSON-valued flag, use a file or dotted members instead of embedding a large
@@ -188,9 +227,13 @@ That host field is empty off Linux; it is diagnostic information, not a
 cross-host exclusion guarantee. Applications own file-store permissions and
 coordination across hosts.
 
-No runtime ships a file-backed OAuth token store. Provide an application-owned
-token-store implementation when tokens must survive process restarts; protect
-stored credentials and avoid logging them. Registry publication and package
+No runtime ships a file-backed OAuth token store. Generated CLIs keep login
+sessions in the macOS keychain, the Secret Service (`secret-tool`) or the
+Windows Credential Locker (through Windows PowerShell; sessions larger than its
+secret size limit are refused, so use the explicit file store for them). Other
+platforms have no keychain adapter and need the explicit owner-only file store. Device authorization and remote token revocation are not
+supported. Concurrent CLI processes coordinate refreshes through the store's
+current content, not an exclusive lock. Registry publication and package
 availability are separate from building this source checkout.
 
 ## License

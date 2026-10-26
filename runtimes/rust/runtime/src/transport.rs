@@ -25,8 +25,12 @@ pub struct AttemptRequest<'a> {
     /// Hand a `text/event-stream` answer with a 2xx status back unread, as
     /// [`AttemptOutcome::Streaming`]; any other answer is read as usual.
     pub stream: bool,
-    /// With `stream`: the silence after which a read of the body times out.
-    /// Default `timeout`.
+    /// Hand any 2xx answer that has a body (a download) back unread, as
+    /// [`AttemptOutcome::Streaming`], its reads still bounded by the call's
+    /// deadline.
+    pub download: bool,
+    /// With `stream` or `download`: the silence after which a read of the
+    /// body times out. Default `timeout`.
     pub idle: Option<Duration>,
 }
 
@@ -37,16 +41,20 @@ pub enum BodyRead {
     End,
     /// No bytes arrived within the attempt timeout.
     Timeout,
+    /// The deadline a download was opened with ran out.
+    Deadline,
     /// The connection failed before the stream ended.
     Lost,
 }
 
-/// The unread body of an event stream; each read waits at most the attempt
-/// timeout, so an idle stream ends with [`BodyRead::Timeout`].
+/// The unread body of an event stream or download; each read waits at most
+/// the attempt timeout, so an idle stream ends with [`BodyRead::Timeout`],
+/// and a download's reads also end at its deadline.
 #[derive(Debug)]
 pub struct EventBody {
     response: reqwest::Response,
     idle: Duration,
+    deadline: Option<Instant>,
     /// Scheduler capacity held until the stream is dropped.
     permit: Option<crate::scheduler::Permit>,
 }
@@ -58,7 +66,17 @@ impl EventBody {
     }
 
     pub async fn read(&mut self) -> BodyRead {
-        match tokio::time::timeout(self.idle, self.response.chunk()).await {
+        let now = Instant::now();
+        let idle_at = now
+            .checked_add(self.idle)
+            .unwrap_or(now + Duration::from_secs(86_400 * 365));
+        let (until, by_deadline) = match self.deadline {
+            Some(deadline) if deadline <= now => return BodyRead::Deadline,
+            Some(deadline) if deadline < idle_at => (deadline, true),
+            _ => (idle_at, false),
+        };
+        match timeout_at(until, self.response.chunk()).await {
+            Err(_) if by_deadline => BodyRead::Deadline,
             Err(_) => BodyRead::Timeout,
             Ok(Err(_)) => BodyRead::Lost,
             Ok(Ok(None)) => BodyRead::End,
@@ -99,7 +117,7 @@ pub enum AttemptOutcome {
     Streaming {
         status: u16,
         headers: BTreeMap<String, String>,
-        body: EventBody,
+        body: Box<EventBody>,
     },
     /// The request cannot have reached the server (DNS, refused, TLS).
     NotSent(String),
@@ -270,15 +288,25 @@ pub async fn attempt(client: &reqwest::Client, req: &AttemptRequest<'_>) -> Atte
             }
         }
     }
-    if req.stream && (200..=299).contains(&status) && is_event_stream(&headers) {
+    let hand_over = if req.download {
+        req.method != HttpMethod::Head && !matches!(status, 204 | 205 | 304)
+    } else {
+        req.stream && is_event_stream(&headers)
+    };
+    if hand_over && (200..=299).contains(&status) {
         return AttemptOutcome::Streaming {
             status,
             headers,
-            body: EventBody {
+            body: Box::new(EventBody {
                 response,
                 idle: req.idle.unwrap_or(req.timeout),
+                deadline: req
+                    .download
+                    .then(crate::verify::effective_deadline)
+                    .flatten()
+                    .map(Instant::from_std),
                 permit: None,
-            },
+            }),
         };
     }
     let maximum = req.max_response_bytes;

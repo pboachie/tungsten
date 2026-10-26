@@ -58,11 +58,13 @@
 mod auth;
 pub mod b64;
 pub mod blocking;
+mod checkpoint;
 mod classify;
 mod client;
 mod confirm;
 pub mod crypto;
 mod dispatch;
+mod download;
 mod envelope;
 mod expr;
 mod helpers;
@@ -86,14 +88,20 @@ mod util;
 mod validate;
 mod value;
 mod verify;
+pub mod webhooks;
 
 pub mod types;
 
+pub use checkpoint::{
+    CHECKPOINT_PREFIX, CheckpointOptions, CheckpointPage, CheckpointState, CheckpointStatus,
+    ExportPages, MAX_CHECKPOINT_CHARS, TypedExportPages, describe_checkpoint,
+};
 pub use client::{ClientCore, ConfigError, Pages, Polled, TypedPages};
 pub use dispatch::{
     ByStatus, Dispatch, Mismatch, StatusDecode, decode, decode_by_status, decode_event,
     decode_page, decode_variant, no_stream,
 };
+pub use download::{Download, DownloadOptions, TransferProgress, disposition_filename};
 pub use idempotency::{FileIdempotencyStore, MemoryIdempotencyStore};
 pub use oauth::{
     LowLevelAuthorizationUrlParams, LowLevelExchangeCodeParams, MemoryTokenStore, OAuthFlow, Pkce,
@@ -104,7 +112,8 @@ pub use oauth_attempt::{
 };
 pub use pages::MAX_PAGES_REACHED;
 pub use scheduler::{
-    Rejection, RequestScheduler, SchedulerOptions, SchedulerScope, SchedulerStats,
+    Rejection, RequestScheduler, SchedulerEvent, SchedulerObserver, SchedulerOptions,
+    SchedulerScope, SchedulerStats,
 };
 pub use stream::{
     DEFAULT_MAX_COLLECT_BYTES, DEFAULT_MAX_COLLECT_TIME, DEFAULT_MAX_RECONNECTS,

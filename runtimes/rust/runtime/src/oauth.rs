@@ -707,6 +707,7 @@ impl ClientCore {
                 body: &body,
                 timeout: self.inner.timeout.max(Duration::from_millis(1)),
                 stream: false,
+                download: false,
                 idle: None,
                 max_response_bytes: Some(limit),
             },

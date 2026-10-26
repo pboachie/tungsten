@@ -87,6 +87,13 @@ responsible for authorization and server-side idempotency.
 
 ## Limits
 
+Incoming webhooks: `webhooks::verify_webhook` accepts a body of at most 1 MiB by default
+(`max_body_bytes`) and a signature header of at most 8192 characters, rejects a signed
+timestamp more than 300 seconds from now by default (`tolerance_seconds`), and supports
+only the Stripe-compatible `t=,v1=` HMAC-SHA256 scheme (`v0` and other schemes
+are ignored). Replay tracking is the application's `claim` hook; the runtime
+keeps no delivery state. Unreleased 0.2.0 only.
+
 This section describes the 0.1.3 runtime. Its ordinary
 response-byte cap is an addition after the `v0.1.2` runtime.
 
@@ -98,6 +105,21 @@ counted even without that header. Overflow closes the body and returns
 `UNEXPECTED_RESPONSE` with code `RESPONSE_TOO_LARGE` and `retryable: never`.
 A mutation may have taken effect: inspect API state before retrying. The cap
 does not limit a successful SSE stream; use its event and collection limits.
+
+In unreleased 0.2.0, `ClientCore::download(op, args, &opts, DownloadOptions { max_bytes,
+on_progress })` streams a 2xx body instead of buffering it: read the returned `Download`
+with `read()` or `write_to(sink)`, which awaits the sink's future before the next read.
+The body is bounded by `max_bytes` (default: no limit; a larger `Content-Length` fails
+before any byte is read, `code` `RESPONSE_TOO_LARGE`), by `ClientOptions::idle_timeout`
+(default the attempt `timeout`) between chunks (`STREAM_IDLE`) and by `deadline`
+(`DEADLINE_EXCEEDED`). `max_response_bytes` applies only to error bodies of a download. A
+body shorter than its `Content-Length`, a lost connection, `close()` or a sink error
+(`SINK_FAILED`) ends it with an error; for a mutation the error says the call took
+effect. The connection and its scheduler capacity are held until the body ends, fails,
+is closed or the `Download` is dropped. A download is never retried once its answer
+arrived and never resumed. `Download::filename` is the `Content-Disposition` name
+reduced to a base name without directory parts or control characters; it never chooses a
+destination.
 
 File idempotency leases read their owner host from `/proc/sys/kernel/hostname`.
 That host field is empty off Linux; it is diagnostic information, not a

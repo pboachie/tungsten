@@ -109,6 +109,20 @@ pub fn inspect_project(manifest: &Path, options: &CompileOptions) -> InspectedPr
         if matches!(diagnostic.code.as_str(), "TG0809" | "TG0810" | "TG0811") {
             continue;
         }
+        // Profile composition and `transport` validation build their messages
+        // from fixed text and known field names only; keep those actionable.
+        // Manifest schema errors elsewhere may quote unknown keys or values.
+        let project_name = loaded.parsed.source.name();
+        let value_free = diagnostic.code == "TG0602"
+            && diagnostic.labels.first().is_some_and(|label| {
+                (label.file != project_name
+                    && names
+                        .get(&label.file)
+                        .is_some_and(|name| name.starts_with("profile[")))
+                    || (label.file == project_name
+                        && (label.pointer == "/transport"
+                            || label.pointer.starts_with("/transport/")))
+            });
         // Parse/semantic diagnostics can include arbitrary invalid values,
         // unknown keys, filenames or credential-bearing input URLs.
         let (message, help) = match diagnostic.code.as_str() {
@@ -141,8 +155,12 @@ pub fn inspect_project(manifest: &Path, options: &CompileOptions) -> InspectedPr
                 "check the manifest/profile schema, supported version, relative selections, include roots, cycles and documented graph limits",
             ),
         };
-        diagnostic.message = message.into();
-        diagnostic.help = Some(help.into());
+        if !value_free {
+            diagnostic.message = message.into();
+            diagnostic.help = Some(help.into());
+        } else if diagnostic.help.is_none() {
+            diagnostic.help = Some(help.into());
+        }
         for label in &mut diagnostic.labels {
             label.file = names
                 .get(&label.file)

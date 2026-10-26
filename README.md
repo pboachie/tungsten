@@ -44,8 +44,10 @@ The first fetch records the source URL and SHA256 under
 `.tungsten-inputs/<url-sha256>/source.lock.json`, beside immutable downloaded
 content. Retain the complete source cache directory for offline use. Online commands verify upstream
 bytes against the pin and refuse changed content. `--refresh-inputs` explicitly
-accepts a new OpenAPI pin; converted imports instead require re-import into a
-fresh project and another operation review. Their `source_url` and
+accepts a new OpenAPI pin; converted imports are instead refreshed with
+`tungsten refresh-import`, which previews the converted diff, operation and
+output changes and requires renewed review of changed approvals before
+`--apply` writes the conversion, pin and lock. Their `source_url` and
 `source_sha256` manifest fields preserve that provenance on every compilation.
 
 For authentication, repeat `--input-header 'Authorization: Bearer ...'`, or set
@@ -136,10 +138,10 @@ The support matrix below is generated from the capability catalog (`tungsten cap
 | `kotlin` | `kt` | Kotlin/JVM SDK (blocking functions returning Result; opt-in coroutines) | java >=17.0; gradle installed | jvm | `typed_sdk`, `pagination_helpers`, `coroutines` | enforced | unknown | unknown |
 | `mcp` |  | MCP server over stdio or Streamable HTTP, discrete or progressive | node >=22.13 excluding 23.0.x, 23.1.x; npm installed | node | `mcp_stdio`, `mcp_streamable_http`, `mcp_embedding_search`, `mcp_script_sandbox` | enforced | unknown | unknown |
 | `mock` |  | reserved; no emitter in this version | none |  |  | n/a | unknown | unknown |
-| `python` | `py` | Sync and async Python SDK, Pydantic v2 or dataclass models | python3 >=3.12 (`python_version` selects the minimum) | cpython | `typed_sdk`, `pagination_helpers`, `dataclass_models` | enforced | unknown | unknown |
+| `python` | `py` | Sync and async Python SDK, Pydantic v2 or dataclass models | python3 >=3.12 (`python_version` selects the minimum) | cpython | `typed_sdk`, `pagination_helpers`, `dataclass_models`, `webhook_verification` | enforced | unknown | unknown |
 | `ruby` | `rb` | Ruby SDK | ruby >=3.3; bundle installed | ruby | `typed_sdk`, `pagination_helpers` | enforced | unknown | unknown |
-| `rust` | `rs` | Async Rust SDK (serde, reqwest) and optional generated CLI | cargo >=1.88; rustc >=1.88 | native | `typed_sdk`, `pagination_helpers`, `generated_cli` | enforced | unknown | unknown |
-| `typescript` | `ts` | Typed TypeScript SDK, Result values, Zod validation | node >=22.0; npm installed | node | `typed_sdk`, `pagination_helpers` | enforced | unknown | unknown |
+| `rust` | `rs` | Async Rust SDK (serde, reqwest) and optional generated CLI | cargo >=1.88; rustc >=1.88 | native | `typed_sdk`, `pagination_helpers`, `generated_cli`, `webhook_verification` | enforced | unknown | unknown |
+| `typescript` | `ts` | Typed TypeScript SDK, Result values, Zod validation | node >=22.0; npm installed | node | `typed_sdk`, `pagination_helpers`, `webhook_verification` | enforced | unknown | unknown |
 | `webmcp` |  | Browser ESM package with tool manifest and registration helper | node >=22.0; npm installed | browser | `webmcp_registration` | enforced | unknown | unknown |
 
 | Feature | Domain | Opt-in option | Description |
@@ -154,6 +156,7 @@ The support matrix below is generated from the capability catalog (`tungsten cap
 | `mcp_embedding_search` | target | `search` | optional embedding index for tool search |
 | `mcp_script_sandbox` | runtime | `sandbox` | opt-in run_script sandbox |
 | `webmcp_registration` | protocol |  | browser tool manifest and WebMCP registration helper |
+| `webhook_verification` | runtime |  | framework-free incoming webhook verification: Stripe-compatible `t=,v1=` HMAC-SHA256 signatures compared in constant time, secret rotation, bounded body, timestamp tolerance and an application-owned replay hook |
 | `llms_txt` | target |  | llms.txt, llms-full.txt and tools.json documentation |
 
 | OpenAPI line | Support | Diagnosed constructs |
@@ -333,6 +336,14 @@ your platform and `SHA256SUMS`. Upgrade guidance depends on how the CLI was inst
 pinned installer command for the release installer, `cargo install` for cargo, and
 package-manager guidance for npm. When the installation route cannot be determined,
 the command says so and prints no replacement command.
+
+A newer release is also classified in `upgrade`: `compatible` stays on your compatibility
+line (a patch release before 1.0, a minor or patch release from 1.0) and is followed by
+`tungsten generate --check`; `migration` starts a new line (a minor or major release before
+1.0, a major release from 1.0), is a prerelease, or has a Breaking section in its notes, and
+the guidance asks you to preview with `tungsten diff --migration`, `tungsten lock --preview`
+and `tungsten generate --dry-run` before replacing generated clients. Release notes can only
+make the classification stricter.
 
 | Exit code | Meaning |
 | --- | --- |
@@ -768,7 +779,7 @@ tungsten [--json] <command>
 | `lsp` | Serve diagnostics, quick fixes, completion, hover, go-to-definition and symbols for `tungsten.yml`, `agent.yml` and overlays to an editor over stdio (`--config`) |
 | `doctor` | Report external tools; pass a project path and `--strict` to fail when its required tools are missing or too old |
 | `capabilities` | Query built-in target declarations without running tools or emitters; optionally select a target id or alias, such as `capabilities py --json`; `--matrix` prints the Markdown support matrix derived from the same declarations, and `--matrix --format markdown` wraps it in the markers of the README block CI checks |
-| `lock` | Capture the project generation lock `tungsten.lock.json` offline: content identities of the manifest, profiles, agent manifest, inputs, references and overlays (in order), compiler and built-in emitter identities, effective target option digests and consumer toolchains. `--check` fails when the lock is missing, stale or corrupt, `--preview` writes nothing, `--update` accepts changed identities |
+| `lock` | Capture the project generation lock `tungsten.lock.json` offline: content identities of the manifest, profiles, agent manifest, inputs, references and overlays (in order), compiler and built-in emitter identities, effective target option digests and consumer toolchains. `--check` fails when the lock is missing, stale or corrupt, `--preview` writes nothing, `--update` accepts changed identities; `--outputs` also records or verifies the identity of the bytes each built-in target generates |
 | `bundle export` / `bundle import` | Export the locked input closure and `tungsten.lock.json` into a new plain bundle directory with a digest inventory (`--preview` lists it; `--include-input-cache` carries the verified pins of remote inputs; `--include-consumer-cache DIR` carries a prepared consumer dependency directory with provenance and platform notes; incomplete or credential-named content needs `--allow-incomplete` / `--allow-sensitive`), or validate a bundle completely and copy it into `--dest` without overwriting differing files. Neither runs emitters or grants trust |
 | `support-bundle --preview` | Inspect the exact metadata-only support manifest without writing files; `--exclude <id>` removes an entry. On Linux, macOS and Windows, `--output <PATH>` instead publishes it to a new file in an existing, trusted directory; `--inspect <FILE>` checks and shows an existing bundle |
 
@@ -1162,7 +1173,10 @@ winning and shadowed source. Inline values (a proxy URL, a PEM block, a token) a
 refused, as is any key that would disable certificate verification; trust a
 private CA with `ca_bundle` instead. References are names only: tungsten never
 reads the variables, files or store items they point to, and generated SDKs do not
-consume them yet. Wire them into a native or custom transport that keeps TLS
+consume them yet. `tungsten doctor <project>` reports whether each referenced
+environment variable is set and each referenced project file exists, without reading
+either; `--strict` fails on a missing file, while variables may be supplied where
+the client runs and store items are left to the runtime's adapter. Wire them into a native or custom transport that keeps TLS
 verification, redirect/auth rules, deadlines and admission in place.
 
 `tungsten lsp` serves profile files too: completion and hover from the profile
@@ -1230,7 +1244,7 @@ including invalid or unsaved included profiles outside the manifest directory.
 Compiler source names and exported configuration provenance remain portable.
 Dedicated profile completion and navigation remain follow-up work.
 
-`tungsten lsp` is a language server for `tungsten.yml`, `agent.yml` and the overlay files a project lists. It checks the project with the same compiler as `tungsten check` and shows the same `TG` diagnostics on their source lines. Unsaved JSON/YAML manifests, specs, overlays and local references participate in the same source snapshot, including new files in an existing input directory. Closing a buffer restores its disk contents; file watchers pick up saved changes and deletions. File-size limits and local-reference confinement still apply. The selected project's `.tungsten-inputs` acquisition cache is reserved for verified disk content: buffers cannot replace or extend a pinned Git tree, while explicitly selected local overlays outside the cache remain editable. It completes keys, enumerated values and the operation ids, gates and clusters of the compiled project; shows field documentation, operation signatures and diagnostic explanations on hover; jumps from an operation id to its place in the OpenAPI document; and outlines the manifests. Quick fixes replace an unknown operation id (`TG0603`) or an unknown manifest field or value (`TG0602`) with the closest name the compiler knows; each fix is a single edit pinned to the buffer version it was computed for, so the editor previews it, refuses it after a later edit and can undo it. An operation without an `operationId` (`TG0403`) or with a repeated one (`TG0401`) gets the overlay action `tungsten overlay suggest` derives, added to the input's suggested overlay in one previewed edit. When a fix cannot be offered, editors that show disabled code actions show why and the equivalent command. Editors without versioned workspace edits get plain edits for the replacement fixes, still checked against the current buffer. A fix never runs emitters, installs packages or refreshes inputs. The workspace is the directory of `tungsten.yml` (found from the editor's workspace folder, or given with `--config <path>`); one project is served per process.
+`tungsten lsp` is a language server for `tungsten.yml`, `agent.yml` and the overlay files a project lists. It checks the project with the same compiler as `tungsten check` and shows the same `TG` diagnostics on their source lines. Unsaved JSON/YAML manifests, specs, overlays and local references participate in the same source snapshot, including new files in an existing input directory. Closing a buffer restores its disk contents; file watchers pick up saved changes and deletions. File-size limits and local-reference confinement still apply. The selected project's `.tungsten-inputs` acquisition cache is reserved for verified disk content: buffers cannot replace or extend a pinned Git tree, while explicitly selected local overlays outside the cache remain editable. It completes keys, enumerated values and the operation ids, gates and clusters of the compiled project; shows field documentation, operation signatures and diagnostic explanations on hover; jumps from an operation id to its place in the OpenAPI document; and outlines the manifests. Quick fixes replace an unknown operation id (`TG0603`) or an unknown manifest field or value (`TG0602`) with the closest name the compiler knows; each fix is a single edit pinned to the buffer version it was computed for, so the editor previews it, refuses it after a later edit and can undo it. An operation without an `operationId` (`TG0403`) or with a repeated one (`TG0401`) gets the overlay action `tungsten overlay suggest` derives, added to the input's suggested overlay in one previewed edit. When a fix cannot be offered, editors that show disabled code actions show why and the equivalent command. Editors without versioned workspace edits get plain edits for the replacement fixes, still checked against the current buffer. A fix never runs emitters, installs packages or refreshes inputs. Every project in the editor's workspace folders is served at once: projects are found the way `tungsten workspace` finds them (bounded, never following links), a folder inside a project serves that project, and opening a `tungsten.yml` elsewhere serves it too; `--config <path>` serves exactly one project. Each project is checked on its own, one check at a time for the whole session: editing a file re-checks only the projects that read it, so a shared spec updates every project using it and no other, diagnostics of a file read by several projects are merged, and removing a workspace folder cancels its projects' checks and clears their diagnostics. Requests about a file are answered from the project that owns it (its manifest, else the first project reading it, else the innermost project directory holding it).
 
 Edits retain the existing debounce and one active analysis worker. A newer edit
 cancels obsolete work cooperatively between compiler phases and during reference,
@@ -1261,7 +1275,7 @@ if not configs.tungsten then
   configs.tungsten = {
     default_config = {
       cmd = { 'tungsten', 'lsp' },
-      filetypes = { 'yaml' },
+      filetypes = { 'yaml', 'json' },
       root_dir = util.root_pattern('tungsten.yml', 'tungsten.yaml'),
     },
   }
@@ -1270,7 +1284,9 @@ end
 require('lspconfig').tungsten.setup({})
 ```
 
-Any other client works the same way: start `tungsten lsp` as a stdio server for YAML files.
+Any other client works the same way: start `tungsten lsp` as a stdio server for YAML files, and for JSON files too when the project has JSON specs or overlays, so their unsaved edits are checked (the Neovim example attaches to both).
+
+Quick fixes are ordinary code actions: the light bulb or `Ctrl+.` in Visual Studio Code, `vim.lsp.buf.code_action()` in Neovim. Overlay fixes create a file and edit `tungsten.yml` in one workspace edit, so the client must support `documentChanges` with the `create` resource operation; clients with change-annotation support ask for confirmation and preview every file first (Visual Studio Code opens its refactor preview). Neovim applies the edit directly; undo it per buffer with `u`, and delete the created overlay to revert fully. A client that shows disabled code actions explains why a fix is unavailable, with the equivalent `tungsten overlay suggest` command.
 
 | Exit code | Meaning |
 |---|---|

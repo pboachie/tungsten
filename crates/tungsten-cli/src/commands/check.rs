@@ -28,6 +28,9 @@ pub(crate) fn run(args: &CheckArgs, env: &CliEnv, no_external: bool) -> Report {
     {
         diagnostics.push(diagnostic);
     }
+    if let Some(diagnostic) = super::refresh_import::pending_diagnostic(&args.input.path) {
+        diagnostics.push(diagnostic);
+    }
     // Whether the project compiles, before `--strict` turns warnings into
     // errors: the staleness comparison runs whenever the emitters can.
     let compiles = !has_errors(&diagnostics);

@@ -749,6 +749,19 @@ class CallOptions(TypedDict, total=False):
     headers: Mapping[str, str]
 
 
+class DownloadOptions(CallOptions, total=False):
+    """Options of ``download``: those of a call, plus the transfer's own."""
+
+    #: Most body bytes the download may deliver. A larger declared
+    #: ``Content-Length`` fails before any byte is read; a body that grows past
+    #: it ends the download (``UNEXPECTED_RESPONSE``, ``code``
+    #: ``RESPONSE_TOO_LARGE``). ``max_response_bytes`` does not apply to a
+    #: streamed body, only to an error body. Default: no limit.
+    max_bytes: int | None
+    #: Called after every chunk with a ``TransferProgress``. What it raises is ignored.
+    on_progress: Callable[[Any], object]
+
+
 # ---------------------------------------------------------------- results
 
 
@@ -794,6 +807,55 @@ class Page(Generic[_T]):
 
 
 @dataclass(frozen=True, slots=True)
+class CheckpointPage(Page[_T]):
+    """A page of a checkpointed export (``ClientCore.export_pages``). Persist
+    ``checkpoint`` only after the page's items are committed to the sink: a
+    crash before persisting replays this page on resume, so the sink must
+    deduplicate."""
+
+    #: Sensitive token (it holds the provider's next-page cursor or URL)
+    #: recording progress through this page.
+    checkpoint: str
+    #: The token records a finished traversal; resuming it reads nothing.
+    complete: bool
+
+
+class CheckpointOptions(TypedDict, total=False):
+    """A durable, resumable read-only export (``ClientCore.export_pages``).
+    The checkpoint token is bound to the API, operation, pagination contract,
+    base URL, ``ClientOptions.tenant``, ``scope`` and every argument except the
+    page position; a token from another traversal, key or runtime contract is
+    refused before any request."""
+
+    #: HMAC-SHA-256 key of at least 32 bytes that seals and verifies tokens.
+    #: Keep it as a secret, stable across restarts. Required.
+    key: bytes
+    #: The account or principal the export reads for, when
+    #: ``ClientOptions.tenant`` does not already say. Never a credential.
+    scope: str
+    #: A token from an acknowledged page to resume after; omitted starts from
+    #: the first page. Restarting is the caller's explicit choice.
+    resume: str
+    #: Refuse a token issued more than this many milliseconds ago.
+    max_age_ms: float
+
+
+class CheckpointStatus(TypedDict):
+    """The secret-free part of a checkpoint (``describe_checkpoint``)."""
+
+    version: Literal[1]
+    operation: str
+    style: str
+    #: ``partial`` (more pages), ``complete``, or ``stopped`` by a server fault
+    #: (a repeated cursor or a cross-origin Link) that resuming would repeat.
+    state: Literal["partial", "complete", "stopped"]
+    #: Pages acknowledged across every run of this export.
+    pages: int
+    #: Epoch milliseconds the token was issued.
+    issued_at: int
+
+
+@dataclass(frozen=True, slots=True)
 class StreamEvent(Generic[_T_co]):
     """One event of a stream."""
 
@@ -835,12 +897,16 @@ __all__ = [
     "BodyEncoding",
     "CallOptions",
     "Category",
+    "CheckpointOptions",
+    "CheckpointPage",
+    "CheckpointStatus",
     "ClientOptions",
     "CompositeScheme",
     "ConfirmationMeta",
     "CookiePart",
     "CursorPagination",
     "Diagnostic",
+    "DownloadOptions",
     "Err",
     "GatedStatus",
     "HeaderPart",

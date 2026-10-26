@@ -42,6 +42,7 @@ pub(crate) fn run(args: &CapabilitiesArgs) -> Report {
         execution_policy: capabilities::execution_policy(),
         init: capabilities::INIT,
         protocols: capabilities::PROTOCOLS.to_vec(),
+        workspace: capabilities::WORKSPACE,
     };
     if args.matrix {
         report.human = match args.format {
