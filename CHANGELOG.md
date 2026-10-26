@@ -236,6 +236,14 @@ changes.
 
 ### Added
 
+- Add `tungsten update notice` to show whether update notices are on, where the
+  setting comes from (default, environment, settings file, opt-out or an
+  invalid value), the settings and cache paths and the cached answer.
+  `--enable [stable|prerelease]`, `--disable` and `--interval-hours N` update
+  the user settings file atomically and keep its other keys; a file that is not
+  a JSON object is never overwritten. It never makes a network request.
+  `--json` output adds the `update notice` command to the CLI output schema.
+
 - `tungsten update check` links the upgrade rehearsal: when a newer release is
   available, `rehearse_command` (new `--json` field) holds the
   `tungsten upgrade rehearse --to <version> --workspace <dir>` invocation, and

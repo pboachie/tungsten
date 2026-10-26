@@ -167,7 +167,12 @@ impl Cli {
                 command: OverlayCommand::Suggest(_),
             } => CommandName::OverlaySuggest,
             Command::SupportBundle(_) => CommandName::SupportBundle,
-            Command::Update { .. } => CommandName::UpdateCheck,
+            Command::Update {
+                command: crate::commands::update::UpdateCommand::Check(_),
+            } => CommandName::UpdateCheck,
+            Command::Update {
+                command: crate::commands::update::UpdateCommand::Notice(_),
+            } => CommandName::UpdateNotice,
             Command::Upgrade {
                 command: UpgradeCommand::Rehearse(_),
             } => CommandName::UpgradeRehearse,
