@@ -119,6 +119,13 @@ pub struct InputKey {
 const MAX_COMPARED_FILE: u64 = 64 * 1024 * 1024;
 
 impl InputKey {
+    /// Every path whose content or absence the key depends on.
+    pub fn paths(&self) -> impl Iterator<Item = &Path> {
+        std::iter::once(self.manifest.as_path())
+            .chain(self.files.iter().map(|(p, _)| p.as_path()))
+            .chain(self.absent.iter().map(PathBuf::as_path))
+    }
+
     /// Whether every input still has the identity it had, with
     /// `overrides` as the text of unsaved buffers. Cancellation counts as
     /// a change.

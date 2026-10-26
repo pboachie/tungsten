@@ -579,7 +579,7 @@ pub const WORKSPACE: WorkspaceCapability = WorkspaceCapability {
         "scenario validate",
         "scenario run",
     ],
-    editor_routing: false,
+    editor_routing: true,
 };
 
 /// How an input format enters a project.

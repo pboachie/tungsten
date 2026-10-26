@@ -1,13 +1,20 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! The message loop: documents, debounced compilation and requests.
 //!
-//! One compilation runs at a time, on its own thread, over the text of the
-//! open buffers. Edits only move a deadline; when it passes and no
-//! compilation is running a new one starts, so a burst of keystrokes costs
-//! one compilation. A result that predates a later edit is not published
-//! and its index is discarded: the superseding compilation
-//! starts right after it. Requests never wait for a compilation: they are
-//! answered from the buffer text and the last index.
+//! The server serves every project of its workspace folders (bounded
+//! discovery, see `tungsten_config::workspace`), or the one `--config`
+//! names. Each project has its own deadline, generation and last analysis;
+//! an edit moves the deadline of the projects that read the edited file
+//! only, so editing one project never dirties another while a shared input
+//! dirties every project that reads it. One compilation runs at a time for
+//! the whole workspace, on its own thread, over the text of the open
+//! buffers; when it ends, the project whose deadline passed first starts
+//! next. A result that predates a later edit of its project is not
+//! published: the superseding compilation starts right after it. The
+//! diagnostics of all projects are merged per file and only files whose
+//! diagnostics changed are published. Requests never wait for a
+//! compilation: they are answered from the buffer text and the last index
+//! of the project that owns the document.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -19,12 +26,14 @@ use lsp_server::{Connection, ErrorCode, Message, Notification, Request, RequestI
 use lsp_types::{
     CodeActionKind, CodeActionOptions, CodeActionParams, CodeActionProviderCapability,
     CompletionOptions, CompletionParams, CompletionResponse, DidChangeTextDocumentParams,
-    DidChangeWatchedFilesRegistrationOptions, DidCloseTextDocumentParams,
-    DidOpenTextDocumentParams, DocumentSymbolParams, DocumentSymbolResponse, FileSystemWatcher,
+    DidChangeWatchedFilesParams, DidChangeWatchedFilesRegistrationOptions,
+    DidChangeWorkspaceFoldersParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
+    DidSaveTextDocumentParams, DocumentSymbolParams, DocumentSymbolResponse, FileSystemWatcher,
     GlobPattern, GotoDefinitionParams, GotoDefinitionResponse, HoverParams,
     HoverProviderCapability, InitializeParams, OneOf, PublishDiagnosticsParams, Registration,
     RegistrationParams, SaveOptions, ServerCapabilities, TextDocumentSyncCapability,
     TextDocumentSyncKind, TextDocumentSyncOptions, TextDocumentSyncSaveOptions, Uri,
+    WorkspaceFoldersServerCapabilities, WorkspaceServerCapabilities,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -85,7 +94,52 @@ enum Checked {
     Unchanged,
 }
 
-type Done = (u64, Checked);
+/// A finished check: the manifest of its project, the project generation
+/// it was started for, and its result.
+type Done = (PathBuf, u64, Checked);
+
+/// One served project, keyed by its normalized manifest path.
+#[derive(Default)]
+struct Project {
+    /// The last published analysis.
+    analysis: Option<Analysis>,
+    /// The generation `analysis` was computed for.
+    analysis_generation: u64,
+    /// The index of the last compilation that built the IR.
+    index: Option<Index>,
+    /// Bumped by every change that can alter this project's result.
+    generation: u64,
+    deadline: Option<Instant>,
+}
+
+impl Project {
+    /// Whether the project's last analysis read `path` or depends on its
+    /// absence.
+    fn reads(&self, manifest: &Path, path: &Path) -> bool {
+        if manifest == path {
+            return true;
+        }
+        let Some(a) = &self.analysis else {
+            return false;
+        };
+        a.agent_file == path
+            || a.inputs.contains(path)
+            || a.overlays.iter().any(|o| o == path)
+            || a.profiles.iter().any(|p| p == path)
+            || a.inputs_key
+                .as_ref()
+                .is_some_and(|k| k.paths().any(|p| p == path))
+    }
+
+    /// Whether the project's next check may depend on files it has not
+    /// read yet: it was never checked, or its last check had errors (a
+    /// missing input appearing must be noticed).
+    fn open_ended(&self) -> bool {
+        self.analysis
+            .as_ref()
+            .is_none_or(|a| a.inputs_key.is_none())
+    }
+}
 
 struct Server<'c> {
     conn: &'c Connection,
@@ -93,24 +147,28 @@ struct Server<'c> {
     manifest_schema: Schema,
     agent_schema: Schema,
     profile_schema: Schema,
-    manifest: Option<PathBuf>,
+    /// The editor's workspace folders, in the order the client gave them.
+    folders: Vec<PathBuf>,
+    /// Manifests served because they (or an agent manifest next to them)
+    /// were opened, outside what discovery found.
+    adopted: BTreeSet<PathBuf>,
+    /// The served projects by manifest; iteration order is the order work
+    /// is scheduled in on ties.
+    projects: BTreeMap<PathBuf, Project>,
+    /// Discovery findings (TG0640-TG0643) by file.
+    discovery: BTreeMap<PathBuf, Vec<lsp_types::Diagnostic>>,
     /// How the client accepts watcher registrations, when it does.
     watch: Option<WatchSupport>,
-    /// Directories of profiles outside the workspace folder that a watcher
-    /// is registered for.
+    /// Directories of profiles outside the workspace folders that a
+    /// watcher is registered for.
     watched_profiles: BTreeSet<PathBuf>,
+    /// Bumped by every registration request, for unique request ids.
+    registrations: u64,
     docs: BTreeMap<PathBuf, Doc>,
-    analysis: Option<Analysis>,
-    /// The generation `analysis` was computed for.
-    analysis_generation: u64,
-    /// The index of the last compilation that built the IR.
-    index: Option<Index>,
-    published: BTreeSet<PathBuf>,
-    /// Bumped by every change that can alter the result.
-    generation: u64,
-    deadline: Option<Instant>,
-    running: bool,
-    cancellation: Option<CancellationToken>,
+    /// The diagnostics last sent per file.
+    published: BTreeMap<PathBuf, Vec<lsp_types::Diagnostic>>,
+    /// The project being checked and how to cancel it.
+    running: Option<(PathBuf, CancellationToken)>,
     done_tx: Sender<Done>,
     shutdown: bool,
     /// What workspace edits the client can apply.
@@ -121,7 +179,7 @@ struct Server<'c> {
 
 impl Drop for Server<'_> {
     fn drop(&mut self) {
-        if let Some(cancellation) = &self.cancellation {
+        if let Some((_, cancellation)) = &self.running {
             cancellation.cancel();
         }
     }
@@ -160,22 +218,20 @@ pub fn serve(connection: &Connection, options: Options) -> Result<i32, String> {
     let (done_tx, done_rx) = crossbeam_channel::unbounded();
     let mut server = Server {
         conn: connection,
-        manifest: None,
         opts: options,
         manifest_schema: Schema::new(tungsten_config::TungstenConfig::json_schema()),
         agent_schema: Schema::new(tungsten_agent::json_schema()),
         profile_schema: Schema::embedding(tungsten_config::profiles::json_schema()),
-        watch: None,
+        folders: folders(&params),
+        adopted: BTreeSet::new(),
+        projects: BTreeMap::new(),
+        discovery: BTreeMap::new(),
+        watch: watch_support(&params),
         watched_profiles: BTreeSet::new(),
+        registrations: 0,
         docs: BTreeMap::new(),
-        analysis: None,
-        analysis_generation: 0,
-        index: None,
-        published: BTreeSet::new(),
-        generation: 0,
-        deadline: None,
-        running: false,
-        cancellation: None,
+        published: BTreeMap::new(),
+        running: None,
         done_tx,
         shutdown: false,
         edits: edit_support(&params),
@@ -187,13 +243,30 @@ pub fn serve(connection: &Connection, options: Options) -> Result<i32, String> {
             .and_then(|c| c.disabled_support)
             .unwrap_or(false),
     };
-    server.manifest = server.discover(&params);
-    server.watch = watch_support(&params);
     server.watch_files()?;
-    if server.manifest.is_some() {
-        server.touch(Duration::ZERO);
-    }
+    server.refresh_projects()?;
     server.run(&done_rx)
+}
+
+/// The workspace folders of the session: every folder, else the root.
+#[allow(deprecated)]
+fn folders(params: &InitializeParams) -> Vec<PathBuf> {
+    let listed: Vec<PathBuf> = params
+        .workspace_folders
+        .iter()
+        .flatten()
+        .filter_map(|f| uri_to_path(&f.uri))
+        .collect();
+    if !listed.is_empty() {
+        return listed;
+    }
+    params
+        .root_uri
+        .as_ref()
+        .and_then(uri_to_path)
+        .or_else(|| params.root_path.as_ref().map(|p| normalize(Path::new(p))))
+        .into_iter()
+        .collect()
 }
 
 fn capabilities() -> ServerCapabilities {
@@ -219,6 +292,13 @@ fn capabilities() -> ServerCapabilities {
             code_action_kinds: Some(vec![CodeActionKind::QUICKFIX]),
             ..CodeActionOptions::default()
         })),
+        workspace: Some(WorkspaceServerCapabilities {
+            workspace_folders: Some(WorkspaceFoldersServerCapabilities {
+                supported: Some(true),
+                change_notifications: Some(OneOf::Left(true)),
+            }),
+            file_operations: None,
+        }),
         ..ServerCapabilities::default()
     }
 }
@@ -268,7 +348,7 @@ fn watch_support(params: &InitializeParams) -> Option<WatchSupport> {
 
 const PROFILE_WATCHERS: &str = "tungsten-profile-watchers";
 
-const MANIFEST_NAMES: [&str; 2] = ["tungsten.yml", "tungsten.yaml"];
+const MANIFEST_NAMES: [&str; 2] = tungsten_config::workspace::MANIFEST_NAMES;
 
 fn manifest_in(dir: &Path) -> Option<PathBuf> {
     MANIFEST_NAMES
@@ -276,6 +356,13 @@ fn manifest_in(dir: &Path) -> Option<PathBuf> {
         .map(|n| dir.join(n))
         .find(|p| p.is_file())
 }
+
+fn is_manifest(path: &Path) -> bool {
+    MANIFEST_NAMES.contains(&file_name(path).as_str())
+}
+
+/// Most projects served at once, across all workspace folders.
+const MAX_PROJECTS: usize = tungsten_config::workspace::DEFAULT_LIMITS.max_projects;
 
 fn is_yaml(path: &Path) -> bool {
     path.extension().is_some_and(|e| e == "yml" || e == "yaml")
@@ -288,32 +375,125 @@ fn file_name(path: &Path) -> String {
 }
 
 impl Server<'_> {
-    /// The manifest of the workspace: `--config`, else the nearest
-    /// `tungsten.yml` at or above the workspace folder.
-    fn discover(&self, params: &InitializeParams) -> Option<PathBuf> {
+    /// The manifests to serve: `--config`; else every project discovery
+    /// finds in the workspace folders (bounded), with the nearest
+    /// `tungsten.yml` above a folder that holds none; plus the manifests
+    /// adopted by opening them. Discovery findings are kept for
+    /// publishing.
+    fn wanted(&mut self) -> BTreeSet<PathBuf> {
+        self.discovery.clear();
         if let Some(config) = &self.opts.config {
             let path = absolute(config);
-            return if path.is_dir() {
-                manifest_in(&path).or(Some(path.join(MANIFEST_NAMES[0])))
+            let manifest = if path.is_dir() {
+                manifest_in(&path).unwrap_or_else(|| path.join(MANIFEST_NAMES[0]))
             } else {
-                Some(path)
+                path
             };
+            return BTreeSet::from([normalize(&manifest)]);
         }
-        #[allow(deprecated)]
-        let root = params
-            .workspace_folders
-            .as_ref()
-            .and_then(|f| f.first())
-            .and_then(|f| uri_to_path(&f.uri))
-            .or_else(|| params.root_uri.as_ref().and_then(uri_to_path))
-            .or_else(|| params.root_path.as_ref().map(|p| normalize(Path::new(p))))?;
-        root.ancestors().find_map(manifest_in)
+        let mut wanted = BTreeSet::new();
+        for folder in self.folders.clone() {
+            let catalog = tungsten_config::workspace::discover(
+                &folder,
+                tungsten_config::workspace::DEFAULT_LIMITS,
+            );
+            for diagnostic in catalog.diagnostics.iter() {
+                self.discovered(&catalog.root, diagnostic);
+            }
+            if catalog.projects.is_empty() {
+                // A folder inside a project: the manifest above it.
+                wanted.extend(
+                    folder
+                        .ancestors()
+                        .skip(1)
+                        .find_map(manifest_in)
+                        .map(|m| normalize(&m)),
+                );
+            }
+            wanted.extend(catalog.projects.iter().map(|p| normalize(&p.manifest_path)));
+        }
+        self.adopted
+            .retain(|m| m.is_file() || self.docs.contains_key(m));
+        wanted.extend(self.adopted.iter().cloned());
+        if wanted.len() > MAX_PROJECTS {
+            self.log(&format!(
+                "serving the first {MAX_PROJECTS} of {} projects; open fewer workspace folders to serve the rest",
+                wanted.len()
+            ));
+            wanted = wanted.into_iter().take(MAX_PROJECTS).collect();
+        }
+        wanted
+    }
+
+    /// Keep a discovery finding as an editor diagnostic at the start of
+    /// the file it names.
+    fn discovered(&mut self, root: &Path, diagnostic: &tungsten_core::Diagnostic) {
+        let Some(label) = diagnostic.labels.first() else {
+            return;
+        };
+        let file = normalize(&root.join(&label.file));
+        let file = if file.is_dir() {
+            file.join(MANIFEST_NAMES[0])
+        } else {
+            file
+        };
+        let severity = match diagnostic.severity {
+            tungsten_core::Severity::Error => lsp_types::DiagnosticSeverity::ERROR,
+            tungsten_core::Severity::Warning => lsp_types::DiagnosticSeverity::WARNING,
+            _ => lsp_types::DiagnosticSeverity::INFORMATION,
+        };
+        let message = match &diagnostic.help {
+            Some(help) => format!("{}\nhelp: {help}", diagnostic.message),
+            None => diagnostic.message.clone(),
+        };
+        self.discovery
+            .entry(file)
+            .or_default()
+            .push(lsp_types::Diagnostic {
+                range: lsp_types::Range::default(),
+                severity: Some(severity),
+                code: Some(lsp_types::NumberOrString::String(diagnostic.code.clone())),
+                source: Some("tungsten".into()),
+                message,
+                ..lsp_types::Diagnostic::default()
+            });
+    }
+
+    /// Bring the served projects in line with [`Server::wanted`]: a
+    /// project no longer wanted has its running check cancelled, its
+    /// results dropped and its diagnostics cleared; a new one is checked.
+    fn refresh_projects(&mut self) -> Result<(), String> {
+        let wanted = self.wanted();
+        let gone: Vec<PathBuf> = self
+            .projects
+            .keys()
+            .filter(|m| !wanted.contains(*m))
+            .cloned()
+            .collect();
+        for manifest in &gone {
+            self.projects.remove(manifest);
+            if let Some((running, cancellation)) = &self.running
+                && running == manifest
+            {
+                cancellation.cancel();
+            }
+            self.log(&format!("stopped serving {}", manifest.display()));
+        }
+        for manifest in wanted {
+            if !self.projects.contains_key(&manifest) {
+                self.projects.insert(manifest.clone(), Project::default());
+                self.touch(&manifest, Duration::ZERO);
+            }
+        }
+        self.publish()?;
+        self.watch_profiles()
     }
 
     fn run(&mut self, done_rx: &Receiver<Done>) -> Result<i32, String> {
         loop {
-            let timer = match self.deadline {
-                Some(at) if !self.running => crossbeam_channel::at(at),
+            let next = self.projects.values().filter_map(|p| p.deadline).min();
+            let timer = match next {
+                Some(at) if self.running.is_none() => crossbeam_channel::at(at),
                 _ => never(),
             };
             select! {
@@ -326,8 +506,8 @@ impl Server<'_> {
                     }
                 }
                 recv(done_rx) -> done => {
-                    if let Ok((generation, checked)) = done {
-                        self.finished(generation, checked)?;
+                    if let Ok((manifest, generation, checked)) = done {
+                        self.finished(&manifest, generation, checked)?;
                     }
                 }
                 recv(timer) -> _ => self.start(),
@@ -337,7 +517,7 @@ impl Server<'_> {
 
     /// Ask the client to tell us when files change on disk (specs and
     /// overlays edited elsewhere), when it can.
-    fn watch_files(&self) -> Result<(), String> {
+    fn watch_files(&mut self) -> Result<(), String> {
         if self.watch.is_none() {
             return Ok(());
         }
@@ -348,7 +528,12 @@ impl Server<'_> {
         self.register_watchers("tungsten-watched-files", watchers)
     }
 
-    fn register_watchers(&self, id: &str, watchers: Vec<FileSystemWatcher>) -> Result<(), String> {
+    fn register_watchers(
+        &mut self,
+        id: &str,
+        watchers: Vec<FileSystemWatcher>,
+    ) -> Result<(), String> {
+        self.registrations += 1;
         let options = DidChangeWatchedFilesRegistrationOptions { watchers };
         let registration = Registration {
             id: id.to_string(),
@@ -356,7 +541,7 @@ impl Server<'_> {
             register_options: serde_json::to_value(options).ok(),
         };
         let request = Request::new(
-            RequestId::from(format!("{id}-register-{}", self.generation)),
+            RequestId::from(format!("{id}-register-{}", self.registrations)),
             "client/registerCapability".to_string(),
             RegistrationParams {
                 registrations: vec![registration],
@@ -368,7 +553,7 @@ impl Server<'_> {
             .map_err(|e| e.to_string())
     }
 
-    /// Profiles may live outside the workspace folder (a shared directory
+    /// Profiles may live outside the workspace folders (a shared directory
     /// next to several projects), where the workspace watcher does not
     /// reach. Watch their directories too, re-registering only when the set
     /// of directories changes.
@@ -376,22 +561,34 @@ impl Server<'_> {
         let Some(support) = self.watch else {
             return Ok(());
         };
-        let Some(analysis) = &self.analysis else {
-            return Ok(());
-        };
-        let workspace = self.manifest.as_deref().and_then(Path::parent);
-        let dirs: BTreeSet<PathBuf> = analysis
-            .profiles
+        let roots: Vec<PathBuf> = self
+            .folders
             .iter()
-            .filter(|p| workspace.is_none_or(|w| !p.starts_with(w)))
+            .cloned()
+            .chain(
+                self.projects
+                    .keys()
+                    .filter_map(|m| m.parent().map(Path::to_path_buf)),
+            )
+            .collect();
+        let dirs: BTreeSet<PathBuf> = self
+            .projects
+            .values()
+            .filter_map(|p| p.analysis.as_ref())
+            .flat_map(|a| a.profiles.iter())
+            .filter(|p| !roots.iter().any(|r| p.starts_with(r)))
             .filter_map(|p| p.parent().map(Path::to_path_buf))
             .collect();
         if dirs == self.watched_profiles {
             return Ok(());
         }
         if !self.watched_profiles.is_empty() {
+            self.registrations += 1;
             let request = Request::new(
-                RequestId::from(format!("{PROFILE_WATCHERS}-unregister-{}", self.generation)),
+                RequestId::from(format!(
+                    "{PROFILE_WATCHERS}-unregister-{}",
+                    self.registrations
+                )),
                 "client/unregisterCapability".to_string(),
                 lsp_types::UnregistrationParams {
                     unregisterations: vec![lsp_types::Unregistration {
@@ -436,31 +633,75 @@ impl Server<'_> {
         }
     }
 
-    /// Ask for a compilation after `delay` of quiet; edits keep pushing it.
-    fn touch(&mut self, delay: Duration) {
-        if let Some(cancellation) = &self.cancellation {
+    /// Ask for a check of the project of `manifest` after `delay` of
+    /// quiet; edits keep pushing it. A running check of it is cancelled.
+    fn touch(&mut self, manifest: &Path, delay: Duration) {
+        if let Some((running, cancellation)) = &self.running
+            && running == manifest
+        {
             cancellation.cancel();
         }
-        self.generation += 1;
-        self.deadline = Some(Instant::now() + delay);
+        if let Some(project) = self.projects.get_mut(manifest) {
+            project.generation += 1;
+            project.deadline = Some(Instant::now() + delay);
+        }
     }
 
+    /// Touch every project a change of `path` can affect: the projects
+    /// that read it, and the projects whose next check may read files they
+    /// have not read yet when no project reads it or when it changed on
+    /// disk (`disk`: opened, closed, saved or watched, as opposed to
+    /// typed). A manifest appearing also changes which projects are served.
+    fn changed(&mut self, path: &Path, delay: Duration, disk: bool) -> Result<(), String> {
+        let readers: BTreeSet<PathBuf> = self
+            .projects
+            .iter()
+            .filter(|(m, p)| p.reads(m, path))
+            .map(|(m, _)| m.clone())
+            .collect();
+        let mut affected = readers.clone();
+        if readers.is_empty() || disk {
+            affected.extend(
+                self.projects
+                    .iter()
+                    .filter(|(_, p)| p.open_ended())
+                    .map(|(m, _)| m.clone()),
+            );
+        }
+        for manifest in affected {
+            self.touch(&manifest, delay);
+        }
+        if is_manifest(path) && !self.projects.contains_key(path) {
+            self.refresh_projects()?;
+        }
+        Ok(())
+    }
+
+    /// Start the check of the project whose deadline passed first.
     fn start(&mut self) {
-        self.deadline = None;
-        let Some(manifest) = self.manifest.clone() else {
+        let now = Instant::now();
+        let due = self
+            .projects
+            .iter()
+            .filter_map(|(m, p)| p.deadline.filter(|d| *d <= now).map(|d| (d, m.clone())))
+            .min();
+        let Some((_, manifest)) = due else {
             return;
         };
+        let Some(project) = self.projects.get_mut(&manifest) else {
+            return;
+        };
+        project.deadline = None;
+        let generation = project.generation;
+        let key = project.analysis.as_ref().and_then(|a| a.inputs_key.clone());
         let overrides: BTreeMap<PathBuf, String> = self
             .docs
             .iter()
             .map(|(p, d)| (p.clone(), d.text.clone()))
             .collect();
-        let generation = self.generation;
         let tx = self.done_tx.clone();
-        self.running = true;
         let cancellation = CancellationToken::default();
-        self.cancellation = Some(cancellation.clone());
-        let key = self.analysis.as_ref().and_then(|a| a.inputs_key.clone());
+        self.running = Some((manifest.clone(), cancellation.clone()));
         std::thread::spawn(move || {
             let result = std::panic::catch_unwind(|| {
                 if key.is_some_and(|k| k.unchanged(&manifest, &overrides, &cancellation)) {
@@ -469,14 +710,25 @@ impl Server<'_> {
                 Checked::Fresh(analyze(&manifest, overrides, cancellation).map(Box::new))
             })
             .unwrap_or(Checked::Fresh(None));
-            let _ = tx.send((generation, result));
+            let _ = tx.send((manifest, generation, result));
         });
     }
 
-    fn finished(&mut self, generation: u64, checked: Checked) -> Result<(), String> {
-        self.running = false;
-        self.cancellation = None;
-        if self.shutdown || generation != self.generation {
+    fn finished(
+        &mut self,
+        manifest: &Path,
+        generation: u64,
+        checked: Checked,
+    ) -> Result<(), String> {
+        self.running = None;
+        if self.shutdown {
+            return Ok(());
+        }
+        let Some(project) = self.projects.get_mut(manifest) else {
+            // The project was removed while it was checked.
+            return Ok(());
+        };
+        if generation != project.generation {
             return Ok(());
         }
         let analysis = match checked {
@@ -484,38 +736,34 @@ impl Server<'_> {
             Checked::Unchanged => {
                 // The published diagnostics and the index still describe
                 // these inputs; the analysis is current again.
-                self.analysis_generation = generation;
-                if let Some(a) = &self.analysis {
-                    self.log(&format!(
-                        "checked {}: inputs unchanged, kept the previous result",
-                        file_name(&a.manifest)
-                    ));
-                }
+                project.analysis_generation = generation;
+                self.log(&format!(
+                    "checked {}: inputs unchanged, kept the previous result",
+                    shown(manifest)
+                ));
                 return Ok(());
             }
         };
         let Some(analysis) = analysis else {
-            self.log("the project check failed unexpectedly; see the server's stderr");
+            self.log(&format!(
+                "the check of {} failed unexpectedly; see the server's stderr",
+                shown(manifest)
+            ));
             return Ok(());
         };
         if let Some(index) = &analysis.index {
-            self.index = Some(index.clone());
+            project.index = Some(index.clone());
         }
-        let current = generation == self.generation;
-        self.analysis = Some(analysis);
-        self.analysis_generation = generation;
-        if current {
-            self.publish()?;
-            self.watch_profiles()?;
-            if let Some(a) = &self.analysis {
-                let total: usize = a.diagnostics.values().map(Vec::len).sum();
-                self.log(&format!(
-                    "checked {}: {total} diagnostics in {} files",
-                    file_name(&a.manifest),
-                    a.diagnostics.len()
-                ));
-            }
-        }
+        let total: usize = analysis.diagnostics.values().map(Vec::len).sum();
+        let files = analysis.diagnostics.len();
+        project.analysis = Some(analysis);
+        project.analysis_generation = generation;
+        self.publish()?;
+        self.watch_profiles()?;
+        self.log(&format!(
+            "checked {}: {total} diagnostics in {files} files",
+            shown(manifest)
+        ));
         Ok(())
     }
 
@@ -535,29 +783,51 @@ impl Server<'_> {
             .map_err(|e| e.to_string())
     }
 
-    /// Send the diagnostics of the latest analysis, and clear the files
-    /// that had some and no longer do.
+    /// Send the diagnostics of every project's latest analysis merged per
+    /// file (a shared file gets each project's findings once), for the
+    /// files whose diagnostics changed, and clear the files that had some
+    /// and no longer do.
     fn publish(&mut self) -> Result<(), String> {
-        let Some(analysis) = &self.analysis else {
-            return Ok(());
-        };
-        let mut now = BTreeSet::new();
-        let mut sends: Vec<(Uri, Vec<lsp_types::Diagnostic>)> = vec![];
-        for (path, list) in &analysis.diagnostics {
-            if let Some(uri) = path_to_uri(path) {
-                now.insert(path.clone());
-                sends.push((uri, list.clone()));
+        let mut now: BTreeMap<PathBuf, Vec<lsp_types::Diagnostic>> = self.discovery.clone();
+        for project in self.projects.values() {
+            let Some(analysis) = &project.analysis else {
+                continue;
+            };
+            for (path, list) in &analysis.diagnostics {
+                now.entry(path.clone())
+                    .or_default()
+                    .extend(list.iter().cloned());
             }
         }
-        for path in self.published.difference(&now) {
-            if let Some(uri) = path_to_uri(path) {
-                sends.push((uri, vec![]));
+        for list in now.values_mut() {
+            // The same finding reported by two projects reading one file
+            // ends up adjacent and is kept once.
+            list.sort_by(|a, b| {
+                (a.range.start, a.range.end, &a.message).cmp(&(
+                    b.range.start,
+                    b.range.end,
+                    &b.message,
+                ))
+            });
+            list.dedup();
+        }
+        let mut sends: Vec<(PathBuf, Vec<lsp_types::Diagnostic>)> = vec![];
+        for (path, list) in &now {
+            if self.published.get(path) != Some(list) {
+                sends.push((path.clone(), list.clone()));
+            }
+        }
+        for path in self.published.keys() {
+            if !now.contains_key(path) {
+                sends.push((path.clone(), vec![]));
             }
         }
         self.published = now;
-        for (uri, diagnostics) in sends {
-            let version =
-                uri_to_path(&uri).and_then(|path| self.docs.get(&path).map(|doc| doc.version));
+        for (path, diagnostics) in sends {
+            let Some(uri) = path_to_uri(&path) else {
+                continue;
+            };
+            let version = self.docs.get(&path).map(|doc| doc.version);
             self.notify(
                 "textDocument/publishDiagnostics",
                 PublishDiagnosticsParams {
@@ -577,24 +847,24 @@ impl Server<'_> {
                 self.request(req)?;
                 Ok(None)
             }
-            Message::Notification(note) => Ok(self.notification(note)),
+            Message::Notification(note) => self.notification(note),
             Message::Response(_) => Ok(None),
         }
     }
 
-    fn notification(&mut self, note: Notification) -> Option<i32> {
+    fn notification(&mut self, note: Notification) -> Result<Option<i32>, String> {
         match note.method.as_str() {
-            "exit" => return Some(if self.shutdown { 0 } else { 1 }),
+            "exit" => return Ok(Some(if self.shutdown { 0 } else { 1 })),
             "textDocument/didOpen" => {
                 if let Some(p) = parse::<DidOpenTextDocumentParams>(note.params)
                     && let Some(path) = uri_to_path(&p.text_document.uri)
                 {
-                    self.adopt(&path);
                     self.docs.insert(
-                        path,
+                        path.clone(),
                         Doc::new(p.text_document.text, p.text_document.version),
                     );
-                    self.touch(Duration::ZERO);
+                    self.adopt(&path)?;
+                    self.changed(&path, Duration::ZERO, true)?;
                 }
             }
             "textDocument/didChange" => {
@@ -602,7 +872,7 @@ impl Server<'_> {
                     && let Some(path) = uri_to_path(&p.text_document.uri)
                     && self.change(&path, p.text_document.version, p.content_changes)
                 {
-                    self.touch(self.opts.debounce);
+                    self.changed(&path, self.opts.debounce, false)?;
                 }
             }
             "textDocument/didClose" => {
@@ -610,30 +880,81 @@ impl Server<'_> {
                     && let Some(path) = uri_to_path(&p.text_document.uri)
                     && self.docs.remove(&path).is_some()
                 {
-                    self.touch(self.opts.debounce);
+                    self.changed(&path, self.opts.debounce, true)?;
                 }
             }
-            "textDocument/didSave" | "workspace/didChangeWatchedFiles" => {
-                self.touch(Duration::ZERO);
+            "textDocument/didSave" => {
+                if let Some(p) = parse::<DidSaveTextDocumentParams>(note.params)
+                    && let Some(path) = uri_to_path(&p.text_document.uri)
+                {
+                    self.changed(&path, Duration::ZERO, true)?;
+                }
+            }
+            "workspace/didChangeWatchedFiles" => {
+                if let Some(p) = parse::<DidChangeWatchedFilesParams>(note.params) {
+                    let paths: BTreeSet<PathBuf> = p
+                        .changes
+                        .iter()
+                        .filter_map(|c| uri_to_path(&c.uri))
+                        .collect();
+                    let manifests = paths.iter().any(|p| is_manifest(p));
+                    for path in &paths {
+                        self.changed(path, Duration::ZERO, true)?;
+                    }
+                    if manifests {
+                        // A manifest created or deleted on disk.
+                        self.refresh_projects()?;
+                    }
+                }
+            }
+            "workspace/didChangeWorkspaceFolders" => {
+                if let Some(p) = parse::<DidChangeWorkspaceFoldersParams>(note.params) {
+                    let removed: Vec<PathBuf> = p
+                        .event
+                        .removed
+                        .iter()
+                        .filter_map(|f| uri_to_path(&f.uri))
+                        .collect();
+                    self.folders.retain(|f| !removed.contains(f));
+                    for folder in p.event.added.iter().filter_map(|f| uri_to_path(&f.uri)) {
+                        if !self.folders.contains(&folder) {
+                            self.folders.push(folder);
+                        }
+                    }
+                    // Adopted manifests go with their folder.
+                    self.adopted
+                        .retain(|m| !removed.iter().any(|r| m.starts_with(r)));
+                    self.refresh_projects()?;
+                }
             }
             _ => {}
         }
-        None
+        Ok(None)
     }
 
-    /// Without a configured manifest, the first manifest (or the manifest
-    /// next to the first agent manifest) that is opened becomes the
-    /// workspace.
-    fn adopt(&mut self, path: &Path) {
-        if self.manifest.is_some() || self.opts.config.is_some() {
-            return;
+    /// Without `--config`, a manifest that is opened (or the manifest next
+    /// to an opened agent manifest) is served even when discovery did not
+    /// find it.
+    fn adopt(&mut self, path: &Path) -> Result<(), String> {
+        if self.opts.config.is_some() {
+            return Ok(());
         }
         let name = file_name(path);
-        if MANIFEST_NAMES.contains(&name.as_str()) {
-            self.manifest = Some(path.to_path_buf());
+        let manifest = if MANIFEST_NAMES.contains(&name.as_str()) {
+            Some(path.to_path_buf())
         } else if name.starts_with("agent") && is_yaml(path) {
-            self.manifest = path.parent().and_then(manifest_in);
+            path.parent().and_then(manifest_in).map(|m| normalize(&m))
+        } else {
+            None
+        };
+        let Some(manifest) = manifest else {
+            return Ok(());
+        };
+        if self.projects.contains_key(&manifest) || self.adopted.contains(&manifest) {
+            return Ok(());
         }
+        self.adopted.insert(manifest);
+        self.refresh_projects()
     }
 
     fn change(
@@ -663,12 +984,29 @@ impl Server<'_> {
         true
     }
 
+    /// The project that answers requests about `path`: the project whose
+    /// manifest it is, else the first project (in manifest order) that
+    /// read it, else the innermost project whose directory holds it.
+    fn owner(&self, path: &Path) -> Option<(&PathBuf, &Project)> {
+        if let Some(found) = self.projects.get_key_value(path) {
+            return Some(found);
+        }
+        self.projects
+            .iter()
+            .find(|(m, p)| p.reads(m, path))
+            .or_else(|| {
+                self.projects
+                    .iter()
+                    .filter(|(m, _)| m.parent().is_some_and(|d| path.starts_with(d)))
+                    .max_by_key(|(m, _)| m.components().count())
+            })
+    }
+
     fn kind_of(&self, path: &Path) -> Option<Kind> {
-        let analysis = self.analysis.as_ref();
-        if self.manifest.as_deref() == Some(path) {
+        if self.projects.contains_key(path) {
             return Some(Kind::Manifest);
         }
-        if let Some(a) = analysis {
+        for a in self.projects.values().filter_map(|p| p.analysis.as_ref()) {
             if a.agent_file == path {
                 return Some(Kind::Agent);
             }
@@ -729,7 +1067,7 @@ impl Server<'_> {
         match req.method.as_str() {
             "shutdown" => {
                 self.shutdown = true;
-                if let Some(cancellation) = &self.cancellation {
+                if let Some((_, cancellation)) = &self.running {
                     cancellation.cancel();
                 }
                 self.reply(id, serde_json::Value::Null)
@@ -794,7 +1132,12 @@ impl Server<'_> {
                             .any(|k| CodeActionKind::QUICKFIX.as_str().starts_with(k.as_str()))
                     });
                     let uri = &p.text_document.uri;
-                    let doc = uri_to_path(uri).and_then(|path| self.docs.get(&path));
+                    let path = uri_to_path(uri);
+                    let doc = path.as_ref().and_then(|path| self.docs.get(path));
+                    let index = path
+                        .as_deref()
+                        .and_then(|path| self.owner(path))
+                        .and_then(|(_, p)| p.index.as_ref());
                     let mut list = match doc {
                         Some(d) if wants_fixes => {
                             let buffer = Buffer {
@@ -804,7 +1147,7 @@ impl Server<'_> {
                                 text: &d.text,
                                 lines: &d.lines,
                             };
-                            actions::actions(&buffer, &p.context.diagnostics, self.index.as_ref())
+                            actions::actions(&buffer, &p.context.diagnostics, index)
                         }
                         _ => vec![],
                     };
@@ -843,14 +1186,18 @@ impl Server<'_> {
         uri: &Uri,
         diagnostics: &[lsp_types::Diagnostic],
     ) -> Vec<lsp_types::CodeActionOrCommand> {
-        let (Some(path), Some(analysis), Some(manifest)) =
-            (uri_to_path(uri), &self.analysis, &self.manifest)
-        else {
+        let Some(path) = uri_to_path(uri) else {
+            return vec![];
+        };
+        let Some((manifest, project)) = self.owner(&path) else {
+            return vec![];
+        };
+        let Some(analysis) = &project.analysis else {
             return vec![];
         };
         // An edit since the analysis may have fixed or moved the
         // diagnostics; the next analysis offers the fixes again.
-        if self.analysis_generation != self.generation {
+        if project.analysis_generation != project.generation {
             return vec![];
         }
         let read = |path: &Path| self.read(path);
@@ -867,18 +1214,25 @@ impl Server<'_> {
     /// Why the overlay fixes of the file at `uri` were not offered.
     fn overlay_unavailable(&self, uri: &Uri) -> String {
         const COMMAND: &str = "run `tungsten overlay suggest --namespace <namespace> --write <file>` and list the file under `overlays` of the input in tungsten.yml";
-        if self.analysis_generation != self.generation || self.running {
+        let path = uri_to_path(uri);
+        let owner = path.as_deref().and_then(|p| self.owner(p));
+        let stale = owner.is_some_and(|(m, p)| {
+            p.analysis_generation != p.generation
+                || self.running.as_ref().is_some_and(|(r, _)| r == m)
+        });
+        if stale {
             return "the project is being checked again; retry when its diagnostics update".into();
         }
         if !self.edits.document_changes {
             return format!("the editor does not take versioned workspace edits; {COMMAND}");
         }
-        let path = uri_to_path(uri);
-        let derived = self.analysis.as_ref().is_some_and(|a| {
-            a.overlay_fixes
-                .iter()
-                .any(|f| f.fixes.iter().any(|(p, _, _)| Some(p) == path.as_ref()))
-        });
+        let derived = owner
+            .and_then(|(_, p)| p.analysis.as_ref())
+            .is_some_and(|a| {
+                a.overlay_fixes
+                    .iter()
+                    .any(|f| f.fixes.iter().any(|(p, _, _)| Some(p) == path.as_ref()))
+            });
         if !derived {
             return "no overlay action derives a fix for this diagnostic from the current check; `tungsten overlay suggest` reports why".into();
         }
@@ -918,7 +1272,7 @@ impl Server<'_> {
             kind: self.kind_of(&path)?,
             text: &doc.text,
             lines: &doc.lines,
-            index: self.index.as_ref(),
+            index: self.owner(&path).and_then(|(_, p)| p.index.as_ref()),
             manifest: &self.manifest_schema,
             agent: &self.agent_schema,
             profile: &self.profile_schema,
@@ -957,4 +1311,16 @@ fn declares_profile(text: &str) -> bool {
 
 fn parse<T: DeserializeOwned>(params: serde_json::Value) -> Option<T> {
     serde_json::from_value(params).ok()
+}
+
+/// A manifest path for log lines: its directory and file name.
+fn shown(manifest: &Path) -> String {
+    let dir = manifest
+        .parent()
+        .and_then(Path::file_name)
+        .map(|n| n.to_string_lossy().into_owned());
+    match dir {
+        Some(dir) => format!("{dir}/{}", file_name(manifest)),
+        None => file_name(manifest),
+    }
 }
