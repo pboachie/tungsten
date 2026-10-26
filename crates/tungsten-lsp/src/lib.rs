@@ -17,7 +17,10 @@
 //!   summary) or a diagnostic code;
 //! - go-to-definition on an operation id opens the operation in its
 //!   OpenAPI document;
-//! - document symbols outline the manifest.
+//! - document symbols outline the manifest;
+//! - quick fixes replace an unknown operation id or manifest value named
+//!   by a diagnostic with the closest known name, as a versioned edit the
+//!   editor previews and can undo.
 //!
 //! The server keeps no compilation: after each run it keeps the mapped
 //! diagnostics and an index with one small entry per operation, so memory
@@ -29,6 +32,7 @@
 //! The README of the repository shows how to start it from Visual Studio Code
 //! and Neovim.
 
+mod actions;
 mod analysis;
 mod complete;
 mod docs;
