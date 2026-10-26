@@ -583,6 +583,9 @@ export interface ClientOptions {
   fetch?: typeof fetch;
   /** Per-attempt timeout. Default 30000. */
   timeoutMs?: number;
+  /** Total deadline of one logical call in milliseconds, see
+   * `CallOptions.deadlineMs`. Default: none (only `timeoutMs` per attempt). */
+  deadlineMs?: number;
   /** Ordinary-response byte cap; default 4 MiB. Null/omitted inherits; a finite call override wins. */
   maxResponseBytes?: number | null;
   /** OAuth code/refresh responses only: 65,536 bytes by default. A positive
@@ -667,6 +670,20 @@ export interface CallOptions {
    * Per-attempt timeout in milliseconds, overriding the client default.
    */
   timeoutMs?: number;
+  /**
+   * Total deadline in milliseconds for this call, overriding the client
+   * default; 0 or omitted means none. Measured on a monotonic clock from
+   * the call, it bounds authentication, idempotency-key reservation, every
+   * attempt (each one's `timeoutMs` is cut to the time left), retry waits,
+   * response bodies and verification; for `pages`, `poll` and `runMacro` it
+   * bounds the whole traversal, poll or macro. No attempt starts after it
+   * expires (`code` `DEADLINE_EXCEEDED`). For `stream()` it bounds
+   * connecting and each reconnect, not an open stream (see
+   * `idleTimeoutMs`). A mutation already sent when it expires reports
+   * `OUTCOME_UNKNOWN`, never a blind replay. Shared token refreshes and
+   * custom `fetch` or store work are not cancelled, only no longer waited for.
+   */
+  deadlineMs?: number;
   /** Override the client response-body cap. Null/omitted inherits. Positive safe integer; checked
    * against actual bytes while reading, including non-SSE responses. */
   maxResponseBytes?: number | null;
