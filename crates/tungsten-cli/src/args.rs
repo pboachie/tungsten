@@ -281,6 +281,16 @@ pub(crate) struct CapabilitiesArgs {
     /// same declarations (JSON output is unchanged).
     #[arg(long)]
     pub matrix: bool,
+    /// Matrix rendering: `human` prints the table, `markdown` wraps it in
+    /// the start/end markers that delimit the README's generated block.
+    #[arg(long, value_enum, default_value_t = MatrixFormat::Human, requires = "matrix")]
+    pub format: MatrixFormat,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub(crate) enum MatrixFormat {
+    Human,
+    Markdown,
 }
 
 #[derive(Debug, Args)]
