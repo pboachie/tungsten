@@ -47,6 +47,7 @@ canonical inputs are never modified.
 | [Assert retries with saved mock scenarios](mock-scenarios/README.md) | Run an explicit integration against saved 429, interrupted-stream, malformed-response and lost-write scenarios, and fail deliberately broken retries. |
 | [Detect stale generated files in CI](ci-drift/README.md) | Generate, change a copied contract, observe the no-diff gate fail, then regenerate and pass. |
 | [Review semver and migration changes](surface-diff/README.md) | Compare a generated baseline with an additive operation using both diff review modes. |
+| [Bulk sync within a quota](bulk-sync/README.md) | Bound concurrent calls, queue the rest and share 429 backoff with a request scheduler in TypeScript, Python and Rust. |
 
 JSON Schema needs explicit HTTP routing: its recipe uses a versioned endpoint
 manifest with declared models, rather than guessing an API from a bare schema.
@@ -63,7 +64,6 @@ Additional examples have their own runners and prerequisites:
 - [Six public APIs](showcase/README.md): pinned specifications and regenerated showcase.
 - [External Markdown emitter](external-emitter-markdown/README.md): implement the emitter protocol.
 - [Typed Python SSE](typed-sse/README.md): declare and consume named streams with explicit cleanup.
-- [Bulk sync within a quota](bulk-sync/README.md): bound concurrent calls, queue the rest and share 429 backoff with a request scheduler.
 - [Response-contract quality](response-contract-audit/README.md): audit weak responses and apply reviewed schema overlays.
 - [GitHub Actions workflow](github-actions/README.md): a copyable workflow that installs a pinned release, validates the contract and fails on stale generated output.
 - [Reuse one configuration profile](profile-reuse/README.md): share reviewed defaults across an app and a multi-target library, with explicit per-project overrides.

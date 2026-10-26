@@ -177,6 +177,77 @@ starting another run; this guide does not promise cross-platform cancellation
 or recovery qualification. No real API, proxy/CA setup or credential flow is
 exercised by the offline import.
 """,
+    "bulk-sync": """
+## Problem: a bulk job turns into a storm of 429s
+
+A sync job that reads many records at once can exceed an API's concurrency
+quota and turn into a burst of `429` responses and retries. The recipe starts a
+loopback record store ([server.py](server.py)) that allows 4 concurrent
+requests and answers `429` with `Retry-After: 1` beyond that, generates
+TypeScript, Python and Rust SDKs for it, and reads 200 records in each
+language through a request scheduler:
+
+- [sync.py](sync.py) reads with 32 threads, first without a scheduler (the
+  server refuses many requests and some reads may fail after their retries),
+  then through one.
+- [sync.mjs](sync.mjs) starts all 200 reads at once with `Promise.all`.
+- [sync.rs](sync.rs) spawns all 200 reads as Tokio tasks.
+
+Expected output:
+
+```text
+unbounded: 199/200 read, server saw peak 5 and refused 52
+scheduled: 200/200 read, server saw peak 4 and refused 0
+bulk sync stayed within the quota
+typescript scheduled: 200/200 read, server saw peak 4 and refused 0
+rust scheduled: 200/200 read, server saw peak 4 and refused 0
+```
+
+The unbounded counts vary from run to run; the scheduled lines do not.
+
+## The configuration
+
+Each language creates one scheduler for the quota and passes it to the client:
+
+```python
+scheduler = RequestScheduler(
+    SchedulerOptions(max_active=4, max_queued=200, max_queue_ms=60_000, retry_ratio=0.1)
+)
+client = RecordsClient(ClientOptions(scheduler=scheduler), base_url=base)
+```
+
+```js
+const scheduler = new RequestScheduler({ maxActive: 4, maxQueued: 200, maxQueueMs: 60_000, retryRatio: 0.1 });
+const client = new RecordsClient({ baseUrl: base, scheduler });
+```
+
+```rust
+let mut limits = SchedulerOptions::new(4);
+limits.max_queued = 200;
+limits.max_queue = Duration::from_secs(60);
+limits.retry_ratio = Some(0.1);
+let scheduler = RequestScheduler::new(limits)?;
+let client = RecordsClient::new(ClientOptions { scheduler: Some(scheduler.clone()), ..Default::default() })?;
+```
+
+- `max_active` bounds ordinary requests in flight per scope (by default the
+  client's `tenant` plus the request origin); event streams have a separate
+  `max_streams` limit, and optional `max_active_total` / `max_streams_total`
+  caps apply across every scope.
+- `max_queued` bounds the requests waiting for capacity. A request beyond it
+  fails at once with `RATE_LIMITED`, code `QUEUE_FULL`, and is never sent; so
+  does one that waited longer than `max_queue_ms` (`QUEUE_TIMEOUT`).
+- After a `429`, the scope pauses for its `Retry-After` and then lets one
+  request probe the quota before resuming, so callers do not retry in a burst.
+- `retry_ratio` caps the retries all callers of the scope make together (here
+  about one per ten calls, after a reserve of ten).
+
+Share one scheduler between clients that use the same quota, and give each
+client a `tenant` when quotas are per tenant or principal. Closing a scheduler
+rejects waiting work at shutdown; `drained` waits for requests in flight.
+Nothing is coordinated across processes: run one scheduler per process and size
+`max_active` for that. See each runtime README's Limits section.
+""",
     "ci-drift": """
 ## Problem: the contract changed but generated output did not
 
@@ -521,6 +592,80 @@ def scenarios(binary: str, work: Path) -> None:
     assert lost["effects"][0]["applied"]["actual"] == 2, lost
 
 
+@contextlib.contextmanager
+def quota_server(example: Path, work: Path):
+    """The bulk-sync record store on a free loopback port; yields its base URL."""
+    with (work / "server.log").open("w+") as log:
+        process = subprocess.Popen([sys.executable, "-I", str(example / "server.py"), "0"],
+                                   cwd=work, stdout=subprocess.PIPE, stderr=log, text=True)
+        try:
+            line = process.stdout.readline() if process.stdout else ""
+            if not line.startswith("listening on "):
+                raise RuntimeError("the bulk-sync server exited before listening")
+            yield line.removeprefix("listening on ").strip()
+        finally:
+            process.terminate()
+            process.wait(timeout=10)
+
+
+def bulk_sync(binary: str, example: Path, work: Path, build_packages: bool) -> None:
+    runtime = REPO / "runtimes"
+    shutil.copyfile(example / "openapi.json", work / "openapi.json")
+    write_json(work / "tungsten.yml", {
+        "tungsten": 1, "api": {"name": "records", "title": "Records"},
+        "inputs": [{"namespace": "api", "spec": "openapi.json"}],
+        "targets": {
+            "python": {"package": "records-sdk", "module": "records_sdk", "out": "sdk"},
+            "typescript": {"package": "@gallery/records", "out": "typescript",
+                           "runtime_path": relative(runtime / "ts", work / "typescript")},
+            "rust": {"out": "rust", "runtime_path": relative(runtime / "rust/runtime", work / "rust/records-sdk"),
+                     "cli": {"kit_path": relative(runtime / "rust/cli-kit", work / "rust/records-cli")}},
+        },
+    })
+    outputs = ("sdk", "typescript", "rust")
+    tungsten(binary, work, "check")
+    tungsten(binary, work, "generate")
+    first = {name: digest_tree(work / name) for name in outputs}
+    assert all(first.values()), "a target produced no files; inspect skipped/refused target diagnostics"
+    tungsten(binary, work, "generate")
+    assert first == {name: digest_tree(work / name) for name in outputs}, "regeneration was not deterministic"
+    tungsten(binary, work, "generate", "--check")
+    if not build_packages:
+        return
+    python = python_environment(work)
+    npm_build(REPO / "runtimes/ts")
+    npm_build(work / "typescript")
+    shutil.copyfile(example / "sync.mjs", work / "typescript/sync.mjs")
+    consumer = work / "consumer"
+    consumer.mkdir()
+    shutil.copyfile(example / "sync.rs", consumer / "sync.rs")
+    (consumer / "Cargo.toml").write_text(f'''[package]
+name = "bulk-sync"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[[bin]]
+name = "bulk-sync"
+path = "sync.rs"
+
+[dependencies]
+records-sdk = {{ path = "../rust/records-sdk" }}
+tungsten-runtime = {{ path = "{relative(runtime / "rust/runtime", consumer)}" }}
+reqwest = {{ version = "0.12", default-features = false, features = ["json"] }}
+serde_json = "1"
+tokio = {{ version = "1", features = ["macros", "rt-multi-thread"] }}
+
+[workspace]
+''')
+    command(["cargo", "build", "--quiet"], consumer)
+    with quota_server(example, work) as base:
+        for argv, cwd in (([str(python), str(example / "sync.py"), base], work),
+                          (["node", "sync.mjs", base], work / "typescript"),
+                          (["cargo", "run", "--quiet", "--", base], consumer)):
+            print(command(argv, cwd).stdout, end="", flush=True)
+
+
 def digest_tree(root: Path) -> dict[str, str]:
     return {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest()
             for p in root.rglob("*") if p.is_file()}
@@ -530,6 +675,9 @@ def execute(entry: dict, binary: str, build_packages: bool) -> None:
     example = HERE / entry["name"]
     work = fresh_work(example)
     mode = entry["mode"]
+    if mode == "bulk-sync":
+        bulk_sync(binary, example, work, build_packages)
+        return
     if mode == "input":
         args = ["init", "--from", str(example / entry["input"]), "--dir", str(work / "project"),
                 "--targets", "docs", "--no-interactive", *entry.get("args", [])]
@@ -664,10 +812,10 @@ Additional examples have their own runners and prerequisites:
 - [Six public APIs](showcase/README.md): pinned specifications and regenerated showcase.
 - [External Markdown emitter](external-emitter-markdown/README.md): implement the emitter protocol.
 - [Typed Python SSE](typed-sse/README.md): declare and consume named streams with explicit cleanup.
-- [Bulk sync within a quota](bulk-sync/README.md): bound concurrent calls, queue the rest and share 429 backoff with a request scheduler.
 - [Response-contract quality](response-contract-audit/README.md): audit weak responses and apply reviewed schema overlays.
 - [GitHub Actions workflow](github-actions/README.md): a copyable workflow that installs a pinned release, validates the contract and fails on stale generated output.
 - [Reuse one configuration profile](profile-reuse/README.md): share reviewed defaults across an app and a multi-target library, with explicit per-project overrides.
+- [Restricted agent integration](restricted-agent/README.md): an MCP server that reads freely, confirms writes and never offers deletion, with transport references from a shared profile.
 '''
 
 
@@ -707,6 +855,8 @@ def main() -> None:
         execute(entry, binary, not args.generate_only)
         if args.generate_only and entry["mode"] == "target" and entry["target"] != "docs":
             print(f"OK: {entry['target']} generation is deterministic and fresh; package build was not run", flush=True)
+        elif args.generate_only and entry["mode"] == "bulk-sync":
+            print("OK: generation is deterministic and fresh; the clients were not run", flush=True)
         else:
             print(f"OK: {entry['outcome']}", flush=True)
 

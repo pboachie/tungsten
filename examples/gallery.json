@@ -214,5 +214,13 @@
     "mode": "diff",
     "prerequisites": "no target-specific toolchain",
     "outcome": "diff --semver reports a minor change and diff --migration supplies an actionable migration"
+  },
+  {
+    "name": "bulk-sync",
+    "title": "Bulk sync within a quota",
+    "description": "Bound concurrent calls, queue the rest and share 429 backoff with a request scheduler in TypeScript, Python and Rust.",
+    "mode": "bulk-sync",
+    "prerequisites": "Python venv and pip, Node 22 or later with npm, and the pinned Rust toolchain and Cargo",
+    "outcome": "the TypeScript, Python and Rust clients each read 200 records through a request scheduler while the loopback server sees at most 4 concurrent requests and refuses none"
   }
 ]

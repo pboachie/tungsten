@@ -304,6 +304,8 @@ changes.
   Optional caps across every scope (`maxActiveTotal`/`max_active_total`,
   `maxStreamsTotal`/`max_streams_total`) bound requests in flight per
   scheduler; scopes waiting for them take turns so none is starved.
+  The bulk-sync example is now a gallery recipe (`python3 examples/run.py
+  --only bulk-sync`) that runs it in TypeScript, Python and Rust.
 
 - Add an opt-in total operation deadline to the TypeScript (`deadlineMs`),
   Python (`deadline_ms`) and Rust (`deadline`) runtimes, on client and call
