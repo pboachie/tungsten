@@ -128,7 +128,7 @@ fn dispatch_with_inputs(
         Command::Capabilities(args) => capabilities::run(args),
         Command::Config(args) => config::run(args, env),
         Command::Workspace(args) => workspace::run(args),
-        Command::Lock(args) => lock::run(args),
+        Command::Lock(args) => lock::run(args, env),
         Command::Bundle {
             command: BundleCommand::Export(args),
         } => bundle::export(args),

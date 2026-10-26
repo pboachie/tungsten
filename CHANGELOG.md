@@ -502,6 +502,17 @@ changes.
   the reviewed source of a converted import is now listed as excluded too.
   Check that upstream terms allow redistributing bundled documents.
 
+- Add `lock --outputs` to record, and with `--check` verify, the identity of
+  the bytes each built-in target generates (file count and a digest over every
+  generated path and content digest), by running the built-in emitters in
+  memory; external emitters are never run and stay unrecorded. When the lock
+  records outputs, `generate --locked` also fails with `TG0129` before writing
+  if a selected built-in target generates different bytes from the same locked
+  identities, which certifies byte-identical reproduction on another machine
+  and surfaces platform-dependent differences explicitly. Plain `lock` and
+  `lock --check` still never run emitters; they leave the recorded outputs of
+  a current lock in place, and `lock --update` without `--outputs` drops them.
+
 - Extend the versioned capability catalog with each built-in target's option
   keys, execution environments and implemented features, plus a registry of
   feature ids. `tungsten capabilities --matrix` prints the support matrix

@@ -356,6 +356,11 @@ pub(crate) struct LockArgs {
     /// Accept changed identities and replace a stale or corrupt lock.
     #[arg(long)]
     pub update: bool,
+    /// Also record (or, with --check, verify) the identity of the bytes each
+    /// built-in target generates, by running the built-in emitters in memory.
+    /// External emitters are never run.
+    #[arg(long)]
+    pub outputs: bool,
     /// Lock one project of the workspace at PATH, by its id from
     /// `tungsten workspace`.
     #[arg(long, value_name = "ID")]
