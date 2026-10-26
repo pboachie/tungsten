@@ -20,6 +20,7 @@ mod init_setup_mcp;
 mod init_setup_python;
 mod init_setup_rust;
 mod ir;
+pub(crate) mod lock;
 pub(crate) mod lsp;
 pub(crate) mod mock;
 pub(crate) mod overlay;
@@ -86,6 +87,7 @@ fn dispatch_with_inputs(
         Command::Doctor(args) => doctor::run(args, env),
         Command::Capabilities(args) => capabilities::run(args),
         Command::Config(args) => config::run(args, env),
+        Command::Lock(args) => lock::run(args),
         Command::Policy {
             command: PolicyCommand::Digest(args),
         } => policy::digest(args),
