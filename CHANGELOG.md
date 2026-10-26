@@ -1019,8 +1019,8 @@ changes.
   TG0149 is retired and no longer reported.
 
 - Discriminator `defaultMapping` is honoured by more SDK targets: Java,
-  Kotlin, Ruby, C#, F# and Dart SDKs decode an object whose tag is absent, not
-  a string or claimed by no variant as the default variant, as TypeScript,
+  Kotlin, Ruby, C#, F#, Dart and Go SDKs decode an object whose tag is absent,
+  not a string or claimed by no variant as the default variant, as TypeScript,
   Python and Rust do. A non-string tag then fails only if the default
   variant's own field type refuses it.
 
