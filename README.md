@@ -742,6 +742,10 @@ Publication needs hard-link support in the destination filesystem, which some
 FAT, exFAT and network volumes lack. Other platforms refuse export before
 collecting data; preview remains available.
 
+Collection, for preview and export alike, stops after 30 seconds with nothing
+written. It only reads, so an abandoned collection has no side effects; in an
+embedding process its worker thread may keep running until it finishes.
+
 Library callers can cooperatively cancel an export before publication with
 `run_with_cancellation`. Successful publication is the commit point: a later
 cancellation does not remove the file. A cleanup failure after publication

@@ -241,7 +241,7 @@ pub(crate) enum Command {
     Lsp(LspArgs),
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Clone, Args)]
 pub(crate) struct SupportBundleArgs {
     /// Local project directory or tungsten manifest.
     #[arg(default_value = ".")]

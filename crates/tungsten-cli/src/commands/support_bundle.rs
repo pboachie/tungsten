@@ -39,6 +39,10 @@ const MAX_DIAGNOSTICS: usize = 50;
 const MAX_TARGETS: usize = 64;
 const MAX_FIELDS_PER_TARGET: usize = 64;
 const MAX_TOOLS: usize = 64;
+/// Longest collection before the command gives up; nothing is written then.
+const COLLECTION_TIME_LIMIT: std::time::Duration = std::time::Duration::from_secs(30);
+/// How often a waiting collection checks for cancellation.
+const COLLECTION_POLL: std::time::Duration = std::time::Duration::from_millis(50);
 
 /// Entry ids in manifest order; `--exclude` accepts exactly these.
 pub(super) const ENTRY_IDS: [&str; 6] = [
@@ -394,7 +398,28 @@ pub(crate) fn run(
     if args.output.is_some() && (cancellation.0)() {
         return export_failed(report, Failure::Cancelled.into());
     }
-    let manifest = build(args, env, cli.offline, cli.no_external);
+    let manifest = match collect(args, env, cli, cancellation) {
+        Ok(manifest) => manifest,
+        Err(Collection::Cancelled) => return export_failed(report, Failure::Cancelled.into()),
+        Err(Collection::TimeLimit) => {
+            return report.failed(
+                exit::REFUSED,
+                CliError::new(
+                    ErrorKind::Refused,
+                    "support bundle collection exceeded its 30 second time limit; nothing was written",
+                ),
+            );
+        }
+        Err(Collection::Failed) => {
+            return report.failed(
+                exit::INTERNAL,
+                CliError::new(
+                    ErrorKind::Internal,
+                    "support bundle collection failed; nothing was written",
+                ),
+            );
+        }
+    };
     let Some(destination) = &args.output else {
         report.human = human(&manifest);
         report.result = Some(CommandResult::SupportBundle(Box::new(manifest)));
@@ -537,6 +562,51 @@ fn export_failed(report: Report, error: ExportError) -> Report {
             .with_help("temporary-file cleanup is unconfirmed; no destination was published")
     };
     report.failed(status, error)
+}
+
+enum Collection {
+    Cancelled,
+    TimeLimit,
+    /// The worker could not start or panicked.
+    Failed,
+}
+
+/// Run [`build`] on a worker thread and stop waiting at the collection time
+/// limit or, for an export, on cancellation. Collection only reads, so an
+/// abandoned worker has no side effects; its result is discarded.
+fn collect(
+    args: &SupportBundleArgs,
+    env: &CliEnv,
+    cli: &crate::args::Cli,
+    cancellation: &tungsten_mock::RunCancellation,
+) -> Result<SupportBundlePreview, Collection> {
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    let (args_owned, env_owned) = (args.clone(), env.clone());
+    let (offline, no_external) = (cli.offline, cli.no_external);
+    std::thread::Builder::new()
+        .name("tungsten-support-bundle".into())
+        .spawn(move || {
+            let _ = sender.send(build(&args_owned, &env_owned, offline, no_external));
+        })
+        .map_err(|_| Collection::Failed)?;
+    let deadline = std::time::Instant::now() + COLLECTION_TIME_LIMIT;
+    loop {
+        if args.output.is_some() && (cancellation.0)() {
+            return Err(Collection::Cancelled);
+        }
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        if remaining.is_zero() {
+            return Err(Collection::TimeLimit);
+        }
+        match receiver.recv_timeout(remaining.min(COLLECTION_POLL)) {
+            Ok(manifest) => return Ok(manifest),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+            // The worker panicked before sending.
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                return Err(Collection::Failed);
+            }
+        }
+    }
 }
 
 fn build(

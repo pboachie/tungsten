@@ -335,6 +335,10 @@ changes.
   `module`, `python_version` and `models` keys. Declarations remain source
   statements: qualification and artifact availability stay `unknown`.
 
+- Support-bundle collection, for preview and export, is limited to 30 seconds
+  and writes nothing when the limit is reached; library cancellation of an
+  export is now honoured while collection runs.
+
 - Generate the README support matrix from the capability catalog.
   `tungsten capabilities --matrix --format markdown` prints the matrix
   between the markers that delimit README's generated block, and CI fails
