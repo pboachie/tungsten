@@ -865,6 +865,7 @@ fn style_rs(s: ParamStyle) -> &'static str {
         ParamStyle::SpaceDelimited => "ParamStyle::SpaceDelimited",
         ParamStyle::PipeDelimited => "ParamStyle::PipeDelimited",
         ParamStyle::DeepObject => "ParamStyle::DeepObject",
+        ParamStyle::Cookie => "ParamStyle::Cookie",
     }
 }
 

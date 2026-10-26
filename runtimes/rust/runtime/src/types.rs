@@ -310,6 +310,8 @@ pub enum ParamStyle {
     SpaceDelimited,
     PipeDelimited,
     DeepObject,
+    /// OpenAPI 3.2 RFC 6265 cookie style: values sent as written.
+    Cookie,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

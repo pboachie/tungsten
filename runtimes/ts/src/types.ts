@@ -184,7 +184,7 @@ export type ParamLocation = "path" | "query" | "header" | "cookie";
 /**
  * Parameter serialization style used with ParamDescriptor.explode.
  */
-export type ParamStyle = "simple" | "form" | "label" | "matrix" | "space_delimited" | "pipe_delimited" | "deep_object";
+export type ParamStyle = "simple" | "form" | "label" | "matrix" | "space_delimited" | "pipe_delimited" | "deep_object" | "cookie";
 
 /**
  * Source of a parameter value: ordinary args, replay key, authentication,

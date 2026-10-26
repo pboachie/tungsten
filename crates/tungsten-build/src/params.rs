@@ -325,16 +325,24 @@ fn param(cx: &mut Ctx<'_>, auth: &AuthTable, scope: &OpScope<'_>, decl: &Declare
             .type_ref(scope.ns, t, &[&scope.hint, &decl.wire, "Param"]),
         None => TypeRef::Inline(Box::new(Shape::Any)),
     };
-    let style = str_of(decl.value, "style")
-        .and_then(parse_style)
-        .filter(|_| decl.location != Location::QueryString)
-        .unwrap_or_else(|| decl.location.default_style());
+    let style = match str_of(decl.value, "style") {
+        // OpenAPI 3.2 RFC 6265 cookie style; the frontend refuses it
+        // elsewhere (TG0144).
+        Some("cookie")
+            if decl.location == Location::Cookie && crate::pathitem::reads_3_2(cx.ws, &decl.at) =>
+        {
+            Some(ParamStyle::Cookie)
+        }
+        other => other.and_then(parse_style),
+    }
+    .filter(|_| decl.location != Location::QueryString)
+    .unwrap_or_else(|| decl.location.default_style());
     let explode = decl.location == Location::QueryString
         || decl
             .value
             .get("explode")
             .and_then(Value::as_bool)
-            .unwrap_or(style == ParamStyle::Form);
+            .unwrap_or(matches!(style, ParamStyle::Form | ParamStyle::Cookie));
     let required = decl.location == Location::Path || flag(decl.value, "required");
     let mut role = role(cx, auth, scope.ns_index, decl, schema.as_ref());
     let mut constant = None;

@@ -314,8 +314,8 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
     ),
     e(
         "TG0144",
-        "A parameter uses `style: cookie`, the OpenAPI 3.2 style that follows Cookie header syntax without percent-encoding. Serializing it as form style would change the bytes sent.",
-        "Use `style: form` for the cookie parameter, or remove the style.",
+        "A parameter that is not `in: cookie` uses `style: cookie`, the OpenAPI 3.2 style that follows Cookie header syntax. tungsten compiles `style: cookie` on cookie parameters (values as written, exploded arrays and objects as `n=v; n2=v2` pairs) but it has no meaning in another location.",
+        "Use `style: cookie` only on `in: cookie` parameters, or the default style of the parameter's location.",
     ),
     e(
         "TG0145",

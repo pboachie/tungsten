@@ -219,8 +219,56 @@ abstract final class _Serialize {
     return scalar(value);
   }
 
-  /// name=value of a cookie parameter.
+  /// Whether [c] is an RFC 6265 cookie-octet.
+  static bool _cookieOctet(int c) =>
+      c == 0x21 ||
+      (c >= 0x23 && c <= 0x2B) ||
+      (c >= 0x2D && c <= 0x3A) ||
+      (c >= 0x3C && c <= 0x5B) ||
+      (c >= 0x5D && c <= 0x7E);
+
+  /// A cookie style value as written; only characters a cookie cannot
+  /// carry are percent-encoded.
+  static String _cookieText(String text) {
+    final out = StringBuffer();
+    for (final c in text.runes) {
+      out.write(_cookieOctet(c)
+          ? String.fromCharCode(c)
+          : encodeComponent(String.fromCharCode(c)));
+    }
+    return out.toString();
+  }
+
+  /// OpenAPI 3.2 cookie style: n=v, n=v1,v2 or exploded n=v1; n=v2 and
+  /// k=v; k2=v2.
+  static String _cookieStyle(ParamDescriptor p, Object? value) {
+    if (value is List) {
+      final items = [
+        for (final v in value)
+          if (v != null) _cookieText(scalar(v)),
+      ];
+      if (p.explode && items.isNotEmpty) {
+        return items.map((i) => '${p.wire}=$i').join('; ');
+      }
+      return '${p.wire}=${items.join(',')}';
+    }
+    if (value is Map) {
+      final pairs = [
+        for (final e in value.entries)
+          if (e.value != null) (_cookieText('${e.key}'), _cookieText(scalar(e.value))),
+      ];
+      if (p.explode && pairs.isNotEmpty) {
+        return pairs.map((kv) => '${kv.$1}=${kv.$2}').join('; ');
+      }
+      return '${p.wire}=${_flat(pairs).join(',')}';
+    }
+    return '${p.wire}=${_cookieText(scalar(value))}';
+  }
+
+  /// name=value of a cookie parameter (form style, values encoded; or
+  /// cookie style).
   static String cookieParam(ParamDescriptor p, Object? value) {
+    if (p.style == 'cookie') return _cookieStyle(p, value);
     if (value is List) return '${p.wire}=${_encodedItems(value).join(',')}';
     if (value is Map)
       return '${p.wire}=${_flat(_encodedPairs(value)).join(',')}';

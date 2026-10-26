@@ -282,8 +282,46 @@ internal static class Serialize
         return Util.Scalar(v);
     }
 
-    /// <summary>name=value for a cookie parameter.</summary>
-    internal static string CookieParam(ParamDescriptor p, JsonNode? v) => v switch
+    /// <summary>Whether <paramref name="c"/> is an RFC 6265 cookie-octet.</summary>
+    private static bool CookieOctet(int c) =>
+        c == 0x21 || (c >= 0x23 && c <= 0x2B) || (c >= 0x2D && c <= 0x3A) || (c >= 0x3C && c <= 0x5B) || (c >= 0x5D && c <= 0x7E);
+
+    /// <summary>A cookie style value as written; only characters a cookie cannot carry are percent-encoded.</summary>
+    private static string CookieText(string text)
+    {
+        var sb = new System.Text.StringBuilder();
+        for (var i = 0; i < text.Length; i += char.IsSurrogatePair(text, i) ? 2 : 1)
+        {
+            var c = char.ConvertToUtf32(text, i);
+            if (CookieOctet(c)) sb.Append((char)c);
+            else sb.Append(Component(char.ConvertFromUtf32(c)));
+        }
+        return sb.ToString();
+    }
+
+    /// <summary>OpenAPI 3.2 cookie style: n=v, n=v1,v2 or exploded n=v1; n=v2 and k=v; k2=v2.</summary>
+    private static string CookieStyle(ParamDescriptor p, JsonNode? v)
+    {
+        switch (v)
+        {
+            case JsonArray a:
+                {
+                    var items = a.Where(x => !Json.IsNull(x)).Select(x => CookieText(Util.Scalar(x))).ToList();
+                    if (p.Explode && items.Count > 0) return string.Join("; ", items.Select(i => p.Wire + "=" + i));
+                    return p.Wire + "=" + string.Join(",", items);
+                }
+            case JsonObject o:
+                {
+                    var pairs = o.Where(kv => !Json.IsNull(kv.Value)).Select(kv => (K: CookieText(kv.Key), V: CookieText(Util.Scalar(kv.Value)))).ToList();
+                    if (p.Explode && pairs.Count > 0) return string.Join("; ", JoinedPairs(pairs));
+                    return p.Wire + "=" + string.Join(",", FlatPairs(pairs));
+                }
+        }
+        return p.Wire + "=" + CookieText(Util.Scalar(v));
+    }
+
+    /// <summary>name=value for a cookie parameter (form style, values encoded; or cookie style).</summary>
+    internal static string CookieParam(ParamDescriptor p, JsonNode? v) => p.Style == "cookie" ? CookieStyle(p, v) : v switch
     {
         JsonArray a => p.Wire + "=" + string.Join(",", EncodedItems(a)),
         JsonObject o => p.Wire + "=" + string.Join(",", FlatPairs(EncodedPairs(o))),

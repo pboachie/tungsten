@@ -141,8 +141,36 @@ module Tungsten
         end
       end
 
-      # name=value of a cookie parameter.
+      # RFC 6265 cookie-octets.
+      COOKIE_OCTET = /\A[\x21\x23-\x2B\x2D-\x3A\x3C-\x5B\x5D-\x7E]\z/
+
+      # A cookie style value as written; only characters a cookie cannot
+      # carry are percent-encoded.
+      def cookie_text(text) = text.to_s.each_char.map { |c| COOKIE_OCTET.match?(c) ? c : encode_component(c) }.join
+
+      # OpenAPI 3.2 cookie style: n=v, n=v1,v2 or exploded n=v1; n=v2 and
+      # k=v; k2=v2.
+      def cookie_style(p, value)
+        case value
+        when Array
+          items = value.reject(&:nil?).map { |v| cookie_text(scalar(v)) }
+          return items.map { |i| "#{p.wire}=#{i}" }.join("; ") if p.explode && !items.empty?
+
+          "#{p.wire}=#{items.join(',')}"
+        when Hash
+          pairs = value.reject { |_, v| v.nil? }.map { |k, v| [cookie_text(k), cookie_text(scalar(v))] }
+          return pairs.map { |k, v| "#{k}=#{v}" }.join("; ") if p.explode && !pairs.empty?
+
+          "#{p.wire}=#{pairs.flatten.join(',')}"
+        else "#{p.wire}=#{cookie_text(scalar(value))}"
+        end
+      end
+
+      # name=value of a cookie parameter (form style, values encoded; or
+      # cookie style).
       def cookie_param(p, value)
+        return cookie_style(p, value) if p.style == "cookie"
+
         case value
         when Array then "#{p.wire}=#{encoded_items(value).join(',')}"
         when Hash then "#{p.wire}=#{encoded_pairs(value).flatten.join(',')}"

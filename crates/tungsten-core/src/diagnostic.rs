@@ -235,7 +235,7 @@ pub mod codes {
         ),
         (
             "TG0144",
-            "OpenAPI 3.2 `cookie` parameter style is not supported",
+            "OpenAPI 3.2 `cookie` parameter style outside a cookie parameter",
         ),
         (
             "TG0145",

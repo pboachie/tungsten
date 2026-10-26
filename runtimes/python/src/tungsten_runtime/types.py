@@ -183,7 +183,9 @@ ergonomics. Branch with ``isinstance(result, Ok)`` or ``result.ok is True``
 # sent as written (unsafe, not idempotent).
 HttpMethod = Literal["GET", "PUT", "POST", "DELETE", "OPTIONS", "HEAD", "PATCH", "TRACE", "QUERY"] | str
 ParamLocation = Literal["path", "query", "header", "cookie"]
-ParamStyle = Literal["simple", "form", "label", "matrix", "space_delimited", "pipe_delimited", "deep_object"]
+ParamStyle = Literal[
+    "simple", "form", "label", "matrix", "space_delimited", "pipe_delimited", "deep_object", "cookie"
+]
 ParamRole = Literal["plain", "idempotency_key", "dry_run", "origin", "auth", "constant"]
 
 

@@ -105,8 +105,34 @@ export function serializeHeaderParam(p: ParamDescriptor, value: unknown): string
   return scalar(value);
 }
 
-/** `name=value` for one cookie parameter (`form` style, values encoded). */
+/** RFC 6265 `cookie-octet`s. */
+const COOKIE_OCTET = /^[\x21\x23-\x2B\x2D-\x3A\x3C-\x5B\x5D-\x7E]$/;
+
+/** A `cookie` style value as written; only characters a cookie cannot carry are percent-encoded. */
+function cookieText(text: string): string {
+  let out = "";
+  for (const ch of text) out += COOKIE_OCTET.test(ch) ? ch : enc(ch);
+  return out;
+}
+
+/** OpenAPI 3.2 `cookie` style: `n=v`, `n=v1,v2` or exploded `n=v1; n=v2` and `k=v; k2=v2`. */
+function serializeCookieStyle(p: ParamDescriptor, value: unknown): string {
+  if (Array.isArray(value)) {
+    const items = value.filter(present).map((v) => cookieText(scalar(v)));
+    if (p.explode && items.length > 0) return items.map((i) => `${p.wire}=${i}`).join("; ");
+    return `${p.wire}=${items.join(",")}`;
+  }
+  if (isRecord(value) && !(value instanceof Date)) {
+    const pairs = entries(value).map(([k, v]) => [cookieText(k), cookieText(scalar(v))] as const);
+    if (p.explode && pairs.length > 0) return pairs.map(([k, v]) => `${k}=${v}`).join("; ");
+    return `${p.wire}=${pairs.flat().join(",")}`;
+  }
+  return `${p.wire}=${cookieText(scalar(value))}`;
+}
+
+/** `name=value` for one cookie parameter (`form` style, values encoded; or `cookie` style). */
 export function serializeCookieParam(p: ParamDescriptor, value: unknown): string {
+  if (p.style === "cookie") return serializeCookieStyle(p, value);
   if (Array.isArray(value)) return `${p.wire}=${value.filter(present).map((v) => enc(scalar(v))).join(",")}`;
   if (isRecord(value) && !(value instanceof Date)) {
     return `${p.wire}=${entries(value)

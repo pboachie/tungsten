@@ -216,6 +216,8 @@ const (
 	StyleSpaceDelimited Style = "space_delimited"
 	StylePipeDelimited  Style = "pipe_delimited"
 	StyleDeepObject     Style = "deep_object"
+	// StyleCookie is the OpenAPI 3.2 RFC 6265 cookie style.
+	StyleCookie Style = "cookie"
 )
 
 // Role is what a parameter is for.
