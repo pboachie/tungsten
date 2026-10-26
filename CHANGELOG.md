@@ -230,6 +230,13 @@ changes.
 
 ### Added
 
+- The runtime telemetry observer now also reports `preview()`, `pages()` and
+  `poll()` in TypeScript, Python and Rust as operations (`entry` `preview`,
+  `pages` or `poll`), each covering every request it made with attempts
+  numbered across it; a page iteration stopped early is `cancelled`. Only a
+  `call` operation's end carries the final `http_status`. Unreleased 0.2.0
+  only.
+
 - The TypeScript and Python runtimes include an optional OpenTelemetry
   adapter for the telemetry observer (`openTelemetryObserver(tracer)`,
   `open_telemetry_observer(tracer)`): one client span per operation named after

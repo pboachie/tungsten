@@ -198,7 +198,12 @@ def sign_webhook(body: bytes | str, secret: str, timestamp: int) -> str:
 
     Intended for local examples and outbound test deliveries.
     """
-    if isinstance(timestamp, bool) or not isinstance(timestamp, int) or timestamp < 0 or timestamp > 2**53 - 1:
+    if (
+        isinstance(timestamp, bool)
+        or not isinstance(timestamp, int)
+        or timestamp < 0
+        or timestamp > 2**53 - 1
+    ):
         raise ValueError("timestamp must be a non-negative integer")
     raw = body.encode("utf-8", "surrogatepass") if isinstance(body, str) else bytes(body)
     t = str(timestamp)
