@@ -4,6 +4,7 @@
 from . import types
 from ._confirm import CONFIRMATION_TTL_MS
 from ._core import RUNTIME_VERSION
+from ._download import AsyncDownload, Download, TransferProgress, disposition_filename
 from ._envelope import DEFAULT_RETRYABLE
 from ._expr import evaluate_predicate
 from ._json import canonical_json
@@ -37,11 +38,13 @@ __all__ = [
     "RUNTIME_VERSION",
     "UNSET",
     "AsyncClientCore",
+    "AsyncDownload",
     "AsyncEventStream",
     "AsyncOAuthFlow",
     "AsyncTokenStore",
     "AuthorizationAttempt",
     "ClientCore",
+    "Download",
     "EventStream",
     "FileIdempotencyStore",
     "IssuerDefense",
@@ -60,9 +63,11 @@ __all__ = [
     "StreamResult",
     "TokenInfo",
     "TokenStore",
+    "TransferProgress",
     "TungstenError",
     "Unset",
     "canonical_json",
+    "disposition_filename",
     "evaluate_predicate",
     "generate_pkce",
     "pkce_challenge",

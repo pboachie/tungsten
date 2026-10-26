@@ -56,6 +56,7 @@ from ._classify import (
     verify_callable,
 )
 from ._confirm import CONFIRMATION_TTL_MS, check_token, issue_token, token_expiry
+from ._download import DownloadFailure, DownloadStart, TransferProgress, declared_length
 from ._effects import (
     Answered,
     AttemptOutcome,
@@ -541,6 +542,17 @@ class Engine:
     ) -> Flow[None]:
         yield from self._stream(op, args, self._call_options(opts), cancelled)
 
+    def download(self, op: OperationDescriptor, args: object, opts: object) -> Flow[Ok[Any] | Err]:
+        """Send ``op`` and hand its 2xx body over unread: ``Ok.value`` is a
+        ``DownloadStart`` the client wraps in a ``Download``."""
+        resolved = self._call_options(opts)
+        answer = yield from _within_deadline(
+            self._download(op, args, resolved),
+            _deadline_of(resolved),
+            lambda sent: Answer(self._deadline_expired(op, sent)),
+        )
+        return answer.result
+
     def poll(
         self,
         op: OperationDescriptor,
@@ -768,8 +780,136 @@ class Engine:
             return replace(answer, result=replace(answer.result, verification=verification))
         return answer
 
+    def _download(self, op: OperationDescriptor, args: object, opts: Mapping[str, object]) -> Flow[Answer]:
+        limit = opts.get("max_bytes")
+        if limit is not None and (
+            isinstance(limit, bool) or not isinstance(limit, int) or not 0 <= limit <= 9007199254740991
+        ):
+            return Answer(
+                _fail(
+                    diagnostic(
+                        safe_id(op),
+                        "VALIDATION_FAILED",
+                        failed_parameter="max_bytes",
+                        received_value=envelope_value(limit, False),
+                        expected="a non-negative safe integer",
+                        remediation=(
+                            "Pass max_bytes as a whole number of bytes, or leave it out for no limit. "
+                            "Nothing was sent."
+                        ),
+                    )
+                )
+            )
+        max_bytes = limit
+        prepared = yield from self._prepare(op, args, opts, "call", None, None)
+        if isinstance(prepared, Err):
+            return Answer(prepared)
+        idle_setting = bounded(cast(object, self.options.idle_timeout_ms), 0, 0)
+        idle_ms = idle_setting if idle_setting > 0 else None
+        answer = yield from self._send(prepared, opts, "bytes", idle_ms)
+        if (
+            prepared.oauth is not None
+            and isinstance(answer.result, Err)
+            and answer.result.error["http_status"] == 401
+        ):
+            answer = yield from self._retry_rejected(prepared, answer, opts, "bytes", idle_ms)
+        result = answer.result
+        if isinstance(result, Err):
+            return answer
+        meta = result.meta
+        mutation = is_mutation(op)
+        timeout_ms = self._timeout(opts)
+        verify_target = str_field(field(op["agent"], "verify"), "operation")
+        hint = f"Call {verify_target} to read the current state." if verify_target is not None else None
+        secrets = prepared.secrets
+
+        def failure(why: DownloadFailure, received: int, detail: str | None) -> Diagnostic:
+            after = f"after {received} {'byte' if received == 1 else 'bytes'}"
+            code = {
+                "idle": "STREAM_IDLE",
+                "deadline": "DEADLINE_EXCEEDED",
+                "oversized": "RESPONSE_TOO_LARGE",
+                "sink": "SINK_FAILED",
+            }.get(why)
+            if why == "idle":
+                cause = f"No bytes arrived within {js_number(idle_ms if idle_ms is not None else timeout_ms)} ms {after}; the download was abandoned."
+            elif why == "deadline":
+                cause = f"The operation deadline (deadline_ms) expired {after}; the download was abandoned."
+            elif why == "aborted":
+                cause = f"The download was cancelled {after}."
+            elif why == "lost":
+                cause = f"The connection failed {after}, before the body ended."
+            elif why == "truncated":
+                declared = declared_length(meta.headers.get("content-length")) or 0
+                cause = f"The body ended {after}, short of its Content-Length of {declared}."
+            elif why == "oversized":
+                cause = f"The body is larger than the limit of {max_bytes or 0} bytes (max_bytes); the download was abandoned {after}."
+            else:
+                cause = f"The sink failed ({detail or 'error'}) {after}; the download was abandoned."
+            if mutation:
+                error = diagnostic(
+                    op["id"],
+                    "UNEXPECTED_RESPONSE",
+                    http_status=meta.status,
+                    code=code,
+                    request_id=meta.request_id,
+                    retryable="never",
+                    next_action=hint,
+                    remediation=f"The server accepted {op['id']} (HTTP {meta.status}). {cause} The call took effect; do not repeat it.",
+                    attempts=meta.attempts,
+                )
+                return scrub_diagnostic(error, secrets)
+            local = why in ("aborted", "sink", "oversized", "deadline")
+            category: Literal["UPSTREAM_UNAVAILABLE", "UNEXPECTED_RESPONSE", "TRANSPORT_FAILED"] = (
+                "UPSTREAM_UNAVAILABLE"
+                if why in ("idle", "deadline")
+                else "UNEXPECTED_RESPONSE"
+                if why == "oversized"
+                else "TRANSPORT_FAILED"
+            )
+            if why == "idle":
+                again = f"call again later or with a larger {'timeout_ms' if idle_ms is None else 'idle_timeout_ms'}"
+            elif why == "deadline":
+                again = "call again with a larger deadline_ms"
+            elif why == "oversized":
+                again = "raise max_bytes if a body this large is expected"
+            else:
+                again = "call again"
+            error = diagnostic(
+                op["id"],
+                category,
+                http_status=meta.status,
+                code=code,
+                request_id=meta.request_id,
+                retryable="never" if local else None,
+                remediation=f"{cause} This read has no side effects; {again}.",
+                attempts=meta.attempts,
+            )
+            return scrub_diagnostic(error, secrets)
+
+        observer = opts.get("on_progress")
+        stream = result.value.stream if isinstance(result.value, Streaming) else None
+        start = DownloadStart(
+            stream,
+            meta,
+            max_bytes,
+            cast(Callable[[TransferProgress], object], observer) if callable(observer) else None,
+            failure,
+        )
+        length = declared_length(meta.headers.get("content-length"))
+        if max_bytes is not None and length is not None and length > max_bytes:
+            if stream is not None:
+                yield from close_stream(stream)
+            return Answer(_fail(failure("oversized", 0, None)))
+        return Answer(Ok(value=start, meta=meta))
+
     def _retry_rejected(
-        self, prepared: Prepared, rejected: Answer, opts: Mapping[str, object]
+        self,
+        prepared: Prepared,
+        rejected: Answer,
+        opts: Mapping[str, object],
+        stream: bool | Literal["bytes"] = False,
+        idle_ms: float | None = None,
     ) -> Flow[Answer]:
         """The answer to a request whose stored OAuth2 token was rejected (401):
         the refreshed token goes on the same request, which is sent once more;
@@ -782,7 +922,7 @@ class Engine:
             return rejected
         prepared.headers.set("Authorization", f"Bearer {token}", True)
         retried = yield from self._send(
-            replace(prepared, secrets=prepared.secrets | {token}, oauth=None), opts
+            replace(prepared, secrets=prepared.secrets | {token}, oauth=None), opts, stream, idle_ms
         )
         return retried
 
@@ -1576,7 +1716,7 @@ class Engine:
         self,
         prepared: Prepared,
         opts: Mapping[str, object],
-        stream: bool = False,
+        stream: bool | Literal["bytes"] = False,
         idle_ms: float | None = None,
     ) -> Flow[Answer]:
         op = prepared.op
@@ -1621,7 +1761,9 @@ class Engine:
                     return previous_mutation_failure or Answer(
                         _deadline_failure(op["id"], "while the request waited for capacity")
                     )
-                return previous_mutation_failure or Answer(_fail(self._rejected(op, admitted, stream)))
+                return previous_mutation_failure or Answer(
+                    _fail(self._rejected(op, admitted, stream is True))
+                )
             if admitted is not None and attempts == 1 and self.scheduler is not None:
                 self.scheduler.record_call(self._scope_key(prepared.url))
             handed_off = False
@@ -1702,7 +1844,7 @@ class Engine:
                         admitted.settle(failure["retry_after_ms"], limited=True)
                     elif isinstance(outcome, Answered | Streaming):
                         admitted.settle(None, limited=False)
-                    # An open event stream keeps its capacity until it is closed.
+                    # An open event stream or download keeps its capacity until it is closed.
                     value = answer.result.value if isinstance(answer.result, Ok) else None
                     if isinstance(value, Streaming) and hasattr(value.stream, "on_close"):
                         value.stream.on_close = admitted.release  # type: ignore[attr-defined]
@@ -1749,7 +1891,7 @@ class Engine:
             yield from sleep(delay)
 
     def _admit(
-        self, op: OperationDescriptor, url: str, stream: bool, deadline: float | None
+        self, op: OperationDescriptor, url: str, stream: bool | Literal["bytes"], deadline: float | None
     ) -> Flow[Permit | Rejection | None]:
         """Wait for scheduler capacity for one attempt: None without a
         scheduler, a ``Rejection`` (nothing is sent) when none was given."""
@@ -1761,7 +1903,8 @@ class Engine:
             (lambda: bounded(source(), 0.5, 0, 1)) if callable(source) else random.random
         )
         key = self._scope_key(url)
-        admitted = yield from acquire(scheduler, key, "stream" if stream else "call", rnd, deadline)
+        # A download holds an ordinary request's capacity until it is closed.
+        admitted = yield from acquire(scheduler, key, "stream" if stream is True else "call", rnd, deadline)
         return cast(Permit | Rejection, admitted)
 
     def _scope_key(self, url: str) -> str:

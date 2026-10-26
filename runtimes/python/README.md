@@ -81,6 +81,21 @@ longer waited for (on `ClientCore` they run on a bounded worker pool, as for
 injected transport that blocks without honouring the request's timeouts can
 delay the result past the deadline on `ClientCore`. Default: no total deadline.
 
+In unreleased 0.2.0, `download(op, args, {"max_bytes": ..., "on_progress": ...})` streams a
+2xx body instead of buffering it: read the returned `Download` (`AsyncDownload` on
+`AsyncClientCore`) with `read()`, iteration, or `write_to(sink)`, which calls the sink (and
+awaits what it returns, on the async core) before the next read. The body is bounded by
+`max_bytes` (default: no limit; a larger `Content-Length` fails before any byte is read,
+`code` `RESPONSE_TOO_LARGE`), by `ClientOptions.idle_timeout_ms` (default `timeout_ms`)
+between chunks (`STREAM_IDLE`) and by `deadline_ms` (`DEADLINE_EXCEEDED`).
+`max_response_bytes` applies only to error bodies of a download. A body shorter than its
+`Content-Length`, a lost connection, `close()` or a sink that raises (`SINK_FAILED`) ends it
+with an `Err`; for a mutation the failure says the call took effect. The connection and its
+scheduler capacity are held until the body ends, fails or is closed (both handles are
+context managers). A download is never retried once its answer arrived and never resumed.
+`Download.filename` is the `Content-Disposition` name reduced to a base name without
+directory parts or control characters; it never chooses a destination.
+
 Stream `collect(max_bytes=..., max_ms=...)` accepts optional byte and time budgets. An
 unset budget defaults to 4 MiB or 60 seconds. The byte count uses UTF-8
 JSON for the event values, excluding SSE framing. A limit closes the stream

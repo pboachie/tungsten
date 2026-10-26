@@ -238,7 +238,7 @@ function extendedValue(value: string): string | null {
 /** The file name a `Content-Disposition` value suggests (`filename*`
  * before `filename`), reduced to a base name that cannot leave a
  * directory: the part after the last `/` or `\`, control characters
- * removed, trimmed, at most 255 characters; null when nothing usable is
+ * removed, spaces trimmed, at most 255 characters; null when nothing usable is
  * left (empty, `.` or `..`). */
 export function dispositionFilename(value: string | undefined): string | null {
   if (value === undefined) return null;
@@ -248,6 +248,7 @@ export function dispositionFilename(value: string | undefined): string | null {
   if (raw === undefined || raw === null) return null;
   const base = raw.split(/[/\\]/).pop() ?? "";
   // eslint-disable-next-line no-control-regex
-  const cleaned = [...base.replace(/[\u0000-\u001f\u007f]/g, "").trim()].slice(0, 255).join("").trim();
+  const spaces = /^ +| +$/g;
+  const cleaned = [...base.replace(/[\u0000-\u001f\u007f]/g, "").replace(spaces, "")].slice(0, 255).join("").replace(spaces, "");
   return cleaned === "" || cleaned === "." || cleaned === ".." ? null : cleaned;
 }
