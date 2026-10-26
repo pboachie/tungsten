@@ -11,6 +11,10 @@ changes.
 
 ### Security
 
+- Fix verified Python packaging bootstrap on Windows and temporary paths with
+  punctuation. Enter pip as a module and install the wheel through a local file
+  URI, preserving hash verification and isolated, offline installation.
+
 - Bootstrap Python package installation with the hash-verified pip 26.2.2 wheel,
   including fresh environments, and reject uv versions older than 0.13.4.
   Require certifi 2026.10.19 or newer in the Python runtime, without changing

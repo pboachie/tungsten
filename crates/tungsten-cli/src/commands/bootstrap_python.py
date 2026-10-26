@@ -127,12 +127,18 @@ def bootstrap(wheel=None, wheel_dir=None):
     with tempfile.TemporaryDirectory(prefix="python-pip-bootstrap-") as directory:
         target = Path(directory) / WHEEL_NAME
         target.write_bytes(verify_wheel(data))
-        # Execute the verified new pip directly from its wheel, including when
-        # the selected venv has no pip. Old pip never makes a network request.
+        # Enter pip as a module from the verified wheel, including without an
+        # installed pip. Windows rejects pip self-updates through a pip-named
+        # script entry; runpy preserves the normal module entry instead. The
+        # archive path stays a separate argument, never executable source.
+        # A file URI keeps path punctuation out of requirement-marker syntax.
         subprocess.run(
-            [sys.executable, "-I", str(target / "pip"), "--isolated",
+            [sys.executable, "-I", "-c",
+             "import runpy,sys; sys.path.insert(0,sys.argv.pop(1)); "
+             "runpy.run_module('pip',run_name='__main__',alter_sys=True)",
+             str(target), "--isolated",
              "--disable-pip-version-check", "install", "--no-index", "--no-deps",
-             "--no-cache-dir", "--force-reinstall", str(target)],
+             "--no-cache-dir", "--force-reinstall", target.as_uri()],
             env=pip_environment(), check=True,
         )
     if not qualified():
