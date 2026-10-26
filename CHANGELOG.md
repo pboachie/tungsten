@@ -950,6 +950,11 @@ changes.
 
 ### Fixed
 
+- Check the MCP Node.js floor (22.13+, or 23.2+ on Node 23) in `init` local
+  setup when the MCP target is selected, matching `doctor`. Previously setup
+  accepted any Node 22 and failed later. `doctor` now also notes when Node is
+  an odd-numbered line or newer than the newest line the package builds check.
+
 - A TypeScript `deadlineMs` longer than about 24.8 days (2^31 - 1 ms) no
   longer fails authentication or idempotency-key reservation at once with
   `DEADLINE_EXCEEDED`; timers over that limit fire immediately in JavaScript.
