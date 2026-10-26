@@ -12,12 +12,16 @@ use serde::Serialize;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TargetOptionSchema {
     TypeScript,
+    Python,
+    Rust,
 }
 
 impl TargetOptionSchema {
     pub fn json_schema(self) -> serde_json::Value {
         match self {
             Self::TypeScript => crate::target_options::typescript_json_schema(),
+            Self::Python => crate::target_options::python_json_schema(),
+            Self::Rust => crate::target_options::rust_json_schema(),
         }
     }
 }
@@ -191,13 +195,13 @@ targets! {
     ("mock", &[], Reserved, None, false, &[]),
     ("python", &["py"], BuiltInEmitter, Some("python"), true, &[ToolRequirement {
         tool: "python3", minimum: Some([3, 12]), maximum_exclusive: None, minimum_option: Some("python_version"), excluded_versions: &[],
-    }]),
+    }], Some(TargetOptionSchema::Python)),
     ("ruby", &["rb"], BuiltInEmitter, Some("ruby"), false, &[
         ToolRequirement::new("ruby", Some([3, 3])), ToolRequirement::new("bundle", None),
     ]),
     ("rust", &["rs"], BuiltInEmitter, Some("rust"), true, &[
         ToolRequirement::new("cargo", Some([1, 88])), ToolRequirement::new("rustc", Some([1, 88])),
-    ]),
+    ], Some(TargetOptionSchema::Rust)),
     ("typescript", &["ts"], BuiltInEmitter, Some("typescript"), true, JS, Some(TargetOptionSchema::TypeScript)),
     ("webmcp", &[], BuiltInEmitter, Some("typescript"), true, JS),
 }
