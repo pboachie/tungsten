@@ -41,8 +41,11 @@ TelemetryOutcome = Literal["ok", "error", "cancelled", "deadline_exceeded", "out
 #: (``full``, ``timeout``, ``paused``, ``closed``), the call's deadline, or
 #: cancellation.
 TelemetryQueueReason = Literal["admitted", "full", "timeout", "paused", "closed", "deadline", "cancelled"]
-#: The public entry point that started the operation.
-TelemetryEntry = Literal["call"]
+#: The public entry point that started the operation. One ``pages`` operation
+#: covers every page it fetched, one ``poll`` operation every read it made,
+#: one ``stream`` operation its connection and every reconnect; their attempts
+#: are numbered across the whole operation.
+TelemetryEntry = Literal["call", "pages", "poll", "preview", "stream"]
 
 
 class TelemetryEvent(TypedDict):
@@ -69,7 +72,8 @@ class TelemetryEvent(TypedDict):
     outcome: TelemetryOutcome | None
     #: The diagnostic category of a failed operation, attempt or phase.
     category: str | None
-    #: The HTTP status of an attempt that received a response.
+    #: The HTTP status of an attempt that received a response, and of a
+    #: ``call`` operation's final answer.
     http_status: int | None
     #: For a ``queue`` phase.
     reason: TelemetryQueueReason | None
@@ -360,6 +364,104 @@ class TelemetrySpan:
         )
 
 
+_OTEL_KIND_CLIENT_NAME = "CLIENT"
+
+
+def open_telemetry_observer(tracer: object, max_open_spans: int = 10000) -> Callable[[TelemetryEvent], None]:
+    """An observer recording each operation as one OpenTelemetry client span
+    named after the operation id, with attempts and phases as span events and
+    the outcome as attributes (``tungsten.outcome``, ``tungsten.category``,
+    ``http.response.status_code``, ``tungsten.attempts``); a failed or
+    cancelled operation sets the span's status to error. ``tracer`` is any
+    object with the ``Tracer.start_span`` shape of ``opentelemetry-api``,
+    which this runtime does not depend on (when it is installed, its
+    ``SpanKind`` and ``Status`` are used); spans start in the tracer's
+    current context. At most ``max_open_spans`` operations are open at once
+    (default 10000); beyond that the oldest is ended and dropped. Attributes
+    hold only the bounded event fields. Thread-safe."""
+    limit = max(1, int(max_open_spans))
+    open_spans: dict[int, object] = {}
+    lock = threading.Lock()
+    kind: object = None
+    error_status: object = None
+    try:
+        from opentelemetry.trace import SpanKind, Status, StatusCode  # pyright: ignore[reportMissingImports]
+
+        kind = SpanKind.CLIENT  # pyright: ignore[reportUnknownMemberType]
+        error_status = Status(StatusCode.ERROR)  # pyright: ignore[reportUnknownMemberType]
+    except Exception:  # the API is optional
+        pass
+
+    def start(name: str, attributes: dict[str, str | int | float | bool]) -> object:
+        start_span = getattr(tracer, "start_span")  # noqa: B009
+        if kind is not None:
+            return start_span(name, kind=kind, attributes=attributes)
+        return start_span(name, attributes=attributes)
+
+    def observe(event: TelemetryEvent) -> None:
+        call_id = event["call_id"]
+        if event["name"] == "operation.start":
+            span = start(
+                event["operation"],
+                {
+                    "tungsten.api": event["api"],
+                    "tungsten.operation": event["operation"],
+                    "tungsten.entry": event["entry"],
+                    "tungsten.mutation": event["mutation"],
+                },
+            )
+            evicted: object = None
+            with lock:
+                if len(open_spans) >= limit:
+                    oldest = next(iter(open_spans))
+                    evicted = open_spans.pop(oldest)
+                open_spans[call_id] = span
+            if evicted is not None:
+                getattr(evicted, "end")()  # noqa: B009
+            return
+        with lock:
+            span = (
+                open_spans.pop(call_id, None) if event["name"] == "operation.end" else open_spans.get(call_id)
+            )
+        if span is None:
+            return
+        attributes = _otel_attributes(event)
+        if event["name"] != "operation.end":
+            name = (
+                f"tungsten.phase.{event['phase']}"
+                if event["name"] == "phase"
+                else f"tungsten.{event['name']}"
+            )
+            getattr(span, "add_event")(name, attributes)  # noqa: B009
+            return
+        set_attribute = getattr(span, "set_attribute")  # noqa: B009
+        for key, value in attributes.items():
+            set_attribute(key, value)
+        if event["outcome"] != "ok" and error_status is not None:
+            getattr(span, "set_status")(error_status)  # noqa: B009
+        getattr(span, "end")()  # noqa: B009
+
+    return observe
+
+
+def _otel_attributes(event: TelemetryEvent) -> dict[str, str | int | float | bool]:
+    attributes: dict[str, str | int | float | bool] = {}
+    fields: tuple[tuple[str, str], ...] = (
+        ("attempt", "tungsten.attempt"),
+        ("duration_ms", "tungsten.duration_ms"),
+        ("outcome", "tungsten.outcome"),
+        ("category", "tungsten.category"),
+        ("http_status", "http.response.status_code"),
+        ("reason", "tungsten.queue.reason"),
+        ("attempts", "tungsten.attempts"),
+    )
+    for field, key in fields:
+        value = event.get(field)
+        if isinstance(value, str | int | float | bool):
+            attributes[key] = value
+    return attributes
+
+
 def now_ms() -> float:
     """The monotonic clock phases are timed with, in milliseconds."""
     return _now()
@@ -376,4 +478,5 @@ __all__ = [
     "TelemetryPhase",
     "TelemetryQueueReason",
     "TelemetrySink",
+    "open_telemetry_observer",
 ]

@@ -246,8 +246,21 @@ and durations: never URLs, headers, bodies, argument values, credentials,
 confirmation tokens, tenant labels or error text. The observer is called
 synchronously and never awaited; one that raises never changes the call.
 `MemoryTelemetryCollector` (thread-safe) keeps the newest events up to a capacity (default 1024, at most
-65536) and counts the ones it dropped. Previews, pages, polls, streams and
-macros do not emit telemetry yet.
+65536) and counts the ones it dropped. `preview()`, `pages()` and `poll()` are reported as
+operations too (`entry` `preview`, `pages`, `poll`): one `pages` or `poll`
+operation covers every request it made, with attempts numbered across it,
+and a page iteration the caller stops before its end is reported as
+`cancelled`. Only a `call` operation's end carries the final `http_status`.
+`stream()` is one `stream` operation covering its connection and every
+reconnect, with attempts numbered across them; it ends with the stream: `ok`
+at its end, `error` with its final failure item, `cancelled` when the caller
+cancels or leaves it early (reported once the iteration is closed or garbage collected). Page exports, downloads and macros do not
+emit telemetry yet.
+`open_telemetry_observer(tracer)` turns the events into one OpenTelemetry
+client span per operation (attempts and phases as span events, outcome
+attributes) for any object shaped like an `opentelemetry-api` `Tracer`; the
+runtime has no OpenTelemetry dependency, and sets error status only when
+`opentelemetry-api` is importable.
 
 No runtime ships a file-backed OAuth token store. Provide an application-owned
 token-store implementation when tokens must survive process restarts; protect

@@ -38,8 +38,11 @@ export type TelemetryOutcome = "ok" | "error" | "cancelled" | "deadline_exceeded
  * `timeout`, `paused`, `closed`), the call's deadline, or cancellation. */
 export type TelemetryQueueReason = "admitted" | "full" | "timeout" | "paused" | "closed" | "deadline" | "cancelled";
 
-/** The public entry point that started the operation. */
-export type TelemetryEntry = "call";
+/** The public entry point that started the operation. One `pages`
+ * operation covers every page it fetched, one `poll` operation every read
+ * it made, one `stream` operation its connection and every reconnect; their
+ * attempts are numbered across the whole operation. */
+export type TelemetryEntry = "call" | "pages" | "poll" | "preview" | "stream";
 
 /** One telemetry event. Fields that do not apply to an event are null. */
 export interface TelemetryEvent {
@@ -64,7 +67,8 @@ export interface TelemetryEvent {
   outcome: TelemetryOutcome | null;
   /** The diagnostic category of a failed operation, attempt or phase. */
   category: Category | null;
-  /** The HTTP status of an attempt that received a response. */
+  /** The HTTP status of an attempt that received a response, and of a
+   * `call` operation's final answer. */
   http_status: number | null;
   /** For a `queue` phase. */
   reason: TelemetryQueueReason | null;
@@ -290,4 +294,77 @@ export class TelemetrySpan {
       attempts: this.#attempts,
     });
   }
+}
+
+/** The part of an OpenTelemetry `Span` the adapter uses. */
+export interface OtelSpanLike {
+  setAttribute(key: string, value: string | number | boolean): unknown;
+  addEvent(name: string, attributes?: Record<string, string | number | boolean>): unknown;
+  setStatus(status: { code: number }): unknown;
+  end(): unknown;
+}
+
+/** The part of an OpenTelemetry `Tracer` the adapter uses (`startSpan`). */
+export interface OtelTracerLike {
+  startSpan(name: string, options?: { attributes?: Record<string, string | number | boolean>; kind?: number }): OtelSpanLike;
+}
+
+/** Options of {@link openTelemetryObserver}. */
+export interface OpenTelemetryObserverOptions {
+  /** Operations whose spans are open at once; when exceeded, the oldest is
+   * ended and dropped. Default 10000. */
+  maxOpenSpans?: number;
+}
+
+const OTEL_STATUS_ERROR = 2;
+const OTEL_KIND_CLIENT = 2;
+
+/** An observer recording each operation as one OpenTelemetry client span
+ * named after the operation id, with attempts and phases as span events
+ * and the outcome as attributes (`tungsten.outcome`, `tungsten.category`,
+ * `http.response.status_code`, `tungsten.attempts`); a failed or cancelled
+ * operation sets the span's status to error. It accepts any object with the
+ * `Tracer.startSpan` shape of `@opentelemetry/api`, which this runtime does
+ * not depend on; spans start in the tracer's active context. Attributes
+ * hold only the bounded event fields. */
+export function openTelemetryObserver(tracer: OtelTracerLike, options: OpenTelemetryObserverOptions = {}): (event: TelemetryEvent) => void {
+  const limit = typeof options.maxOpenSpans === "number" && Number.isFinite(options.maxOpenSpans) ? Math.max(1, Math.floor(options.maxOpenSpans)) : 10000;
+  const open = new Map<number, OtelSpanLike>();
+  return (event: TelemetryEvent): void => {
+    if (event.name === "operation.start") {
+      if (open.size >= limit) {
+        const [oldest, span] = open.entries().next().value as [number, OtelSpanLike];
+        open.delete(oldest);
+        span.end();
+      }
+      open.set(event.call_id, tracer.startSpan(event.operation, {
+        kind: OTEL_KIND_CLIENT,
+        attributes: { "tungsten.api": event.api, "tungsten.operation": event.operation, "tungsten.entry": event.entry, "tungsten.mutation": event.mutation },
+      }));
+      return;
+    }
+    const span = open.get(event.call_id);
+    if (span === undefined) return;
+    const attributes = otelAttributes(event);
+    if (event.name !== "operation.end") {
+      span.addEvent(event.name === "phase" ? `tungsten.phase.${event.phase ?? "unknown"}` : `tungsten.${event.name}`, attributes);
+      return;
+    }
+    open.delete(event.call_id);
+    for (const [key, value] of Object.entries(attributes)) span.setAttribute(key, value);
+    if (event.outcome !== "ok") span.setStatus({ code: OTEL_STATUS_ERROR });
+    span.end();
+  };
+}
+
+function otelAttributes(event: TelemetryEvent): Record<string, string | number | boolean> {
+  const attributes: Record<string, string | number | boolean> = {};
+  if (event.attempt !== null) attributes["tungsten.attempt"] = event.attempt;
+  if (event.duration_ms !== null) attributes["tungsten.duration_ms"] = event.duration_ms;
+  if (event.outcome !== null) attributes["tungsten.outcome"] = event.outcome;
+  if (event.category !== null) attributes["tungsten.category"] = event.category;
+  if (event.http_status !== null) attributes["http.response.status_code"] = event.http_status;
+  if (event.reason !== null) attributes["tungsten.queue.reason"] = event.reason;
+  if (event.attempts !== null) attributes["tungsten.attempts"] = event.attempts;
+  return attributes;
 }

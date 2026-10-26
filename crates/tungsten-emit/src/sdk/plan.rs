@@ -120,10 +120,14 @@ pub enum UnionPlan {
     /// A discriminator property selects the variant: every variant is a
     /// named type and has a tag. `variants` are (variant index, its tag
     /// values: the variant's tag and every further mapping value that
-    /// names the same type), in IR order.
+    /// names the same type), in IR order. `default` is the variant index
+    /// an object selects when its tag is missing, not a string or claimed
+    /// by no variant (OpenAPI 3.2 `defaultMapping`); without it such an
+    /// object is refused.
     Tagged {
         tag: String,
         variants: Vec<(usize, Vec<String>)>,
+        default: Option<usize>,
     },
     /// A value check tells the variants apart (IR `Literal` strategy, or a
     /// constant variant): each variant with what identifies it, in IR
@@ -736,9 +740,15 @@ fn union_plan(ir: &Ir, u: &Union) -> UnionPlan {
                     (i, tags)
                 })
                 .collect();
+            let default = d.default_mapping.as_ref().and_then(|id| {
+                u.variants
+                    .iter()
+                    .position(|v| matches!(&v.ty, TypeRef::Named(t) if t == id))
+            });
             return UnionPlan::Tagged {
                 tag: d.property.clone(),
                 variants,
+                default,
             };
         }
     }

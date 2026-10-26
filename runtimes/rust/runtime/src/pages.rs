@@ -102,6 +102,9 @@ pub struct Pages {
     state: PageState,
     /// The traversal's total deadline, fixed when it was created.
     deadline: Option<std::time::Instant>,
+    /// The traversal's telemetry, started by the first `next`; reports it
+    /// cancelled when the iterator is dropped before its end.
+    telemetry: crate::telemetry::Traversal,
 }
 
 impl std::fmt::Debug for Pages {
@@ -128,16 +131,28 @@ impl Pages {
             opts,
             state: PageState::new(args),
             deadline,
+            telemetry: crate::telemetry::Traversal::default(),
         }
     }
 
     pub async fn next(&mut self) -> Option<Result<Page<Value>>> {
-        crate::verify::with_deadline_at(
-            self.deadline,
-            self.core
-                .page_step(&self.op, &mut self.state, &self.opts, None),
+        let span = self
+            .telemetry
+            .span(&self.core, &self.op, crate::TelemetryEntry::Pages);
+        let item = crate::telemetry::scoped(
+            span,
+            crate::verify::with_deadline_at(
+                self.deadline,
+                self.core
+                    .page_step(&self.op, &mut self.state, &self.opts, None),
+            ),
         )
-        .await
+        .await;
+        if !matches!(item, Some(Ok(_))) || self.state.done {
+            self.telemetry
+                .end(item.as_ref().and_then(|item| item.as_ref().err()));
+        }
+        item
     }
 
     /// Items typed as `T` (an item that does not decode is an

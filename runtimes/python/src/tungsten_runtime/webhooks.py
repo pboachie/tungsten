@@ -8,7 +8,8 @@ request bytes exactly as received, before any JSON parsing.
 
 Checks run in a fixed order, identical in every tungsten runtime, and the
 first failure is reported: body size, secret presence, header presence,
-header syntax, signature, timestamp tolerance, JSON payload, replay claim.
+header syntax, signature, timestamp tolerance, JSON payload, typed decoding
+(``parse``), replay claim.
 Failures carry a stable ``reason`` and a message that never contains the
 secret, the signature or the payload.
 """
@@ -58,7 +59,10 @@ _TIMESTAMP = re.compile(r"[0-9]{1,15}")
 _HEX = re.compile(r"[0-9a-fA-F]{64}")
 # The whitespace JavaScript's String.prototype.trim removes, so header items
 # split the same way in every runtime.
-_JS_WHITESPACE = "\t\n\v\f\r                  　﻿"
+_JS_WHITESPACE = (
+    "\t\n\v\f\r \u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a"
+    "\u2028\u2029\u202f\u205f\u3000\ufeff"
+)
 
 
 @dataclass(frozen=True)
@@ -135,6 +139,7 @@ def verify_webhook(
     max_body_bytes: int | None = None,
     now: int | None = None,
     claim: Callable[[str], bool] | None = None,
+    parse: Callable[[Any], Any] | None = None,
 ) -> WebhookOutcome:
     """Verify a Stripe-compatible signed delivery and parse its JSON payload.
 
@@ -143,7 +148,9 @@ def verify_webhook(
     after the signature and timestamp are verified: return False when the key
     was already accepted and the delivery is rejected as ``duplicate``. The
     key is the event's string ``id`` when present, otherwise
-    ``"<t>.<matched v1 signature>"``.
+    ``"<t>.<matched v1 signature>"``. ``parse`` is typed decoding of the parsed
+    JSON payload, run before ``claim``: return the typed event, or raise to
+    reject the delivery as ``payload_invalid``.
 
     Never raises for a bad delivery; raises ``ValueError`` for invalid options.
     """
@@ -188,6 +195,11 @@ def verify_webhook(
     record = event if isinstance(event, dict) else None
     event_id = record.get("id") if record is not None and isinstance(record.get("id"), str) else None
     event_type = record.get("type") if record is not None and isinstance(record.get("type"), str) else None
+    if parse is not None:
+        try:
+            event = parse(event)
+        except Exception:
+            return RejectedWebhook("payload_invalid", "the payload does not match the event type")
     if claim is not None and not claim(event_id if event_id is not None else f"{t}.{matched.hex()}"):
         return RejectedWebhook("duplicate", "the delivery was already accepted")
     return VerifiedWebhook(event=event, timestamp=timestamp, type=event_type, id=event_id)

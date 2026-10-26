@@ -274,36 +274,55 @@ impl ClientCore {
     /// send with retries, classify the response. `args` is the arguments
     /// object (a JSON object keyed by argument name).
     pub async fn call(&self, op: &OperationDescriptor, args: Value, opts: &CallOptions) -> Outcome {
-        let span = self.start_span(op);
-        let pending = Pending::new(span.as_ref(), PendingKind::Operation);
-        let outcome = crate::telemetry::scoped(
-            span.clone(),
+        self.traced(
+            op,
+            crate::TelemetryEntry::Call,
             crate::verify::with_call_deadline(
                 self,
                 opts,
                 self.call_with(op, &args, opts, None, None),
             ),
         )
-        .await;
+        .await
+    }
+
+    /// Run one public entry point as a telemetry operation (when telemetry
+    /// is on). Only a `call` reports its final HTTP status.
+    async fn traced<T, F: std::future::Future<Output = Result<T>>>(
+        &self,
+        op: &OperationDescriptor,
+        entry: crate::TelemetryEntry,
+        work: F,
+    ) -> Result<T> {
+        let span = self.start_span(op, entry);
+        let pending = Pending::new(span.as_ref(), PendingKind::Operation);
+        let result = crate::telemetry::scoped(span.clone(), work).await;
         pending.done();
         if let Some(span) = span {
-            match &outcome {
-                Ok(response) => span.end(None, false, Some(response.meta.status)),
-                Err(error) => {
-                    span.end(Some(&error.diagnostic), false, error.diagnostic.http_status)
-                }
+            let call = entry == crate::TelemetryEntry::Call;
+            match &result {
+                Ok(response) => span.end(None, false, call.then_some(response.meta.status)),
+                Err(error) => span.end(
+                    Some(&error.diagnostic),
+                    false,
+                    error.diagnostic.http_status.filter(|_| call),
+                ),
             }
         }
-        outcome
+        result
     }
 
     /// Start the telemetry of one operation; `None` when telemetry is off.
-    fn start_span(&self, op: &OperationDescriptor) -> Option<Arc<crate::telemetry::Span>> {
+    pub(crate) fn start_span(
+        &self,
+        op: &OperationDescriptor,
+        entry: crate::TelemetryEntry,
+    ) -> Option<Arc<crate::telemetry::Span>> {
         let telemetry = self.inner.telemetry.as_ref()?;
         Some(telemetry.start(
             &self.inner.api.name,
             &op.id,
-            crate::TelemetryEntry::Call,
+            entry,
             crate::classify::is_mutation(op),
         ))
     }
@@ -325,7 +344,7 @@ impl ClientCore {
         let mut sink = crate::dispatch::TypedSink::<T>::new(op.response.clone());
         // The verification hook may read the response, so it needs the body's JSON form.
         let verifies = opts.verify && op.agent.verify.is_some();
-        let span = self.start_span(op);
+        let span = self.start_span(op, crate::TelemetryEntry::Call);
         let pending = Pending::new(span.as_ref(), PendingKind::Operation);
         let outcome = crate::telemetry::scoped(
             span.clone(),
@@ -376,7 +395,12 @@ impl ClientCore {
         args: Value,
         opts: &CallOptions,
     ) -> Result<PreviewResult> {
-        crate::verify::with_call_deadline(self, opts, self.preview_inner(op, &args, opts)).await
+        self.traced(
+            op,
+            crate::TelemetryEntry::Preview,
+            crate::verify::with_call_deadline(self, opts, self.preview_inner(op, &args, opts)),
+        )
+        .await
     }
 
     /// Iterate pages; the stream ends after the last page or the first error.
@@ -419,8 +443,16 @@ impl ClientCore {
             interval,
             budget,
         };
-        crate::verify::with_call_deadline(self, opts, self.poll_with(op, &args, &spec, opts, None))
-            .await
+        self.traced(
+            op,
+            crate::TelemetryEntry::Poll,
+            crate::verify::with_call_deadline(
+                self,
+                opts,
+                self.poll_with(op, &args, &spec, opts, None),
+            ),
+        )
+        .await
     }
 
     /// Run a compiled macro; returns its output or the first failing step's

@@ -43,6 +43,7 @@ from .telemetry import (
     MemoryTelemetryCollector,
     TelemetryEvent,
     TelemetryObserver,
+    open_telemetry_observer,
 )
 from .types import *  # noqa: F403 (the contract types are the public API)
 from .webhooks import (
@@ -105,6 +106,7 @@ __all__ = [
     "disposition_filename",
     "evaluate_predicate",
     "generate_pkce",
+    "open_telemetry_observer",
     "pkce_challenge",
     "require_import_policy_v1",
     "require_redirect_policy_v1",

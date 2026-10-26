@@ -28,8 +28,9 @@
 //! Application is not a transaction across directories. Before replacing
 //! anything it backs every file up under `.tungsten/refresh-import/` and
 //! writes a journal; an interrupted run leaves that journal behind, every
-//! later run refuses until `--rollback` restores the backups, and the
-//! journal is removed only after the last write succeeded.
+//! later run refuses until `--rollback` restores the backups or `--resume`
+//! completes the staged refresh, and the journal is removed only after the
+//! last write succeeded.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
@@ -108,6 +109,8 @@ pub enum RefreshState {
     Refused,
     /// --rollback restored an interrupted apply.
     RolledBack,
+    /// --resume finished an interrupted apply from its staged content.
+    Resumed,
 }
 
 /// How the refresh affects `tungsten.lock.json`.
@@ -175,6 +178,15 @@ struct Recorded {
 struct Journal {
     version: u32,
     entries: Vec<JournalEntry>,
+    /// Manifest file name in the project, for --resume.
+    #[serde(default)]
+    manifest: Option<String>,
+    /// Remote source to pin from the staged bytes `staged/source`.
+    #[serde(default)]
+    pin: Option<String>,
+    /// Whether the generation lock is recaptured after the writes.
+    #[serde(default)]
+    relock: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -183,6 +195,12 @@ struct JournalEntry {
     path: String,
     /// Backup file under the state directory; null when the file was absent.
     backup: Option<String>,
+    /// New content under the state directory; null removes the file. Unused
+    /// for `derived` entries (pin and lock), which later steps produce.
+    #[serde(default)]
+    staged: Option<String>,
+    #[serde(default)]
+    derived: bool,
 }
 
 fn usage(message: impl Into<String>, help: &str) -> CliError {
@@ -212,17 +230,20 @@ pub(crate) fn run(args: &RefreshImportArgs, env: &CliEnv, no_external: bool) -> 
     let state_dir = root.join(STATE_DIR);
     let journal = state_dir.join(JOURNAL);
     let pending = std::fs::symlink_metadata(&journal).is_ok();
-    if args.rollback {
+    if args.rollback || args.resume {
         if !pending {
             return report.failed(
                 exit::FAILED,
-                CliError::new(ErrorKind::NotFound, "no interrupted refresh to roll back")
-                    .with_help(format!(
-                        "{STATE_DIR}/{JOURNAL} does not exist; the project is not mid-refresh"
-                    )),
+                CliError::new(ErrorKind::NotFound, "no interrupted refresh to recover").with_help(
+                    format!("{STATE_DIR}/{JOURNAL} does not exist; the project is not mid-refresh"),
+                ),
             );
         }
-        return rollback(report, &root, &state_dir);
+        return if args.rollback {
+            rollback(report, &root, &state_dir)
+        } else {
+            resume(report, &root, &state_dir)
+        };
     }
     if pending {
         return report.failed(
@@ -231,7 +252,7 @@ pub(crate) fn run(args: &RefreshImportArgs, env: &CliEnv, no_external: bool) -> 
                 ErrorKind::Refused,
                 format!("an earlier refresh-import --apply was interrupted ({STATE_DIR}/{JOURNAL} exists)"),
             )
-            .with_help("run `tungsten refresh-import --rollback` to restore the backed-up files, then refresh again"),
+            .with_help("run `tungsten refresh-import --resume` to finish the reviewed refresh, or --rollback to restore the backed-up files"),
         );
     }
     match Plan::build(args, &manifest, &root) {
@@ -255,7 +276,7 @@ pub(crate) fn pending_diagnostic(path: &Path) -> Option<tungsten_core::Diagnosti
                 "an interrupted `refresh-import --apply` left the converted input partly refreshed",
             )
             .at(journal, "", None)
-            .with_help("run `tungsten refresh-import --rollback`, then preview and apply the refresh again")
+            .with_help("run `tungsten refresh-import --resume` to finish the reviewed refresh, or --rollback to restore the backed-up files")
         })
 }
 
@@ -680,22 +701,30 @@ impl Plan {
             })?;
             files.push((relative(manifest), Some(updated.into_bytes())));
         }
-        let mut backed_up: Vec<String> = files.iter().map(|(p, _)| p.clone()).collect();
+        let mut derived = vec![];
         if let Some((url, _)) = &self.remote {
-            backed_up.push(
+            derived.push(
                 tungsten_openapi::acquire::pin_file(url)
                     .map_err(|d| io("cannot pin", &d.message))?,
             );
         }
         if relock {
-            backed_up.push(LOCK_FILE.to_string());
+            derived.push(LOCK_FILE.to_string());
         }
 
+        // Stage everything first: backups, new content and the journal. From
+        // here on --rollback restores and --resume completes the refresh.
         let state_dir = root.join(STATE_DIR);
-        std::fs::create_dir_all(state_dir.join("backup"))
-            .map_err(|e| io("cannot create the refresh journal directory", &e))?;
+        for dir in ["backup", "staged"] {
+            std::fs::create_dir_all(state_dir.join(dir))
+                .map_err(|e| io("cannot create the refresh journal directory", &e))?;
+        }
+        let planned = files
+            .iter()
+            .map(|(path, content)| (path, Some(content), false))
+            .chain(derived.iter().map(|path| (path, None, true)));
         let mut entries = vec![];
-        for (index, path) in backed_up.iter().enumerate() {
+        for (index, (path, content, derived)) in planned.enumerate() {
             let backup = match read_bytes(&root.join(path)) {
                 Some(bytes) => {
                     let name = format!("backup/{index}");
@@ -705,96 +734,183 @@ impl Plan {
                 }
                 None => None,
             };
+            let staged = match content.and_then(Option::as_ref) {
+                Some(bytes) => {
+                    let name = format!("staged/{index}");
+                    write_atomic(&state_dir.join(&name), bytes)
+                        .map_err(|e| io("cannot stage a file", &e))?;
+                    Some(name)
+                }
+                None => None,
+            };
             entries.push(JournalEntry {
                 path: path.clone(),
                 backup,
+                staged,
+                derived,
             });
         }
-        let journal = serde_json::to_vec_pretty(&Journal {
+        if let Some((_, bytes)) = &self.remote {
+            write_atomic(&state_dir.join("staged/source"), bytes)
+                .map_err(|e| io("cannot stage the fetched source", &e))?;
+        }
+        let journal = Journal {
             version: 1,
             entries,
-        })
-        .map_err(|e| io("cannot encode the refresh journal", &e))?;
-        write_atomic(&state_dir.join(JOURNAL), &journal)
+            manifest: Some(relative(manifest)),
+            pin: self.remote.as_ref().map(|(url, _)| url.clone()),
+            relock,
+        };
+        let encoded = serde_json::to_vec_pretty(&journal)
+            .map_err(|e| io("cannot encode the refresh journal", &e))?;
+        write_atomic(&state_dir.join(JOURNAL), &encoded)
             .map_err(|e| io("cannot write the refresh journal", &e))?;
+        complete(root, &state_dir, &journal)
+    }
+}
 
-        let mut written = vec![];
-        for (path, content) in &files {
-            let target = root.join(path);
-            match content {
-                Some(bytes) => write_atomic(&target, bytes),
-                None => std::fs::remove_file(&target),
-            }
-            .map_err(|e| io(&format!("cannot replace {path}"), &e))?;
-            written.push(path.clone());
+/// Carry out a staged refresh: replace the files, pin the source, recapture
+/// the lock, then drop the journal. Every step rewrites whole contents, so
+/// running it again after an interruption (--resume) is safe.
+fn complete(
+    root: &Path,
+    state_dir: &Path,
+    journal: &Journal,
+) -> Result<(Vec<String>, bool), CliError> {
+    let io = |what: &str, e: &dyn std::fmt::Display| {
+        CliError::new(ErrorKind::Io, format!("{what}: {e}")).with_help(
+            "fix the cause and run `tungsten refresh-import --resume`, or --rollback to restore the backed-up files",
+        )
+    };
+    let mut written = vec![];
+    for entry in journal.entries.iter().filter(|e| !e.derived) {
+        let target = root.join(&entry.path);
+        match &entry.staged {
+            Some(staged) => match read_bytes(&state_dir.join(staged)) {
+                Some(bytes) => write_atomic(&target, &bytes),
+                None => Err(std::io::Error::other("staged content missing")),
+            },
+            None => match std::fs::remove_file(&target) {
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                other => other,
+            },
         }
-        if let Some((url, bytes)) = &self.remote {
-            tungsten_openapi::acquire::pin(url, root, bytes)
-                .map_err(|d| io("cannot pin the refreshed source", &d.message))?;
-            written.extend(tungsten_openapi::acquire::pin_file(url).ok());
+        .map_err(|e| io(&format!("cannot replace {}", entry.path), &e))?;
+        written.push(entry.path.clone());
+    }
+    if let Some(url) = &journal.pin {
+        let bytes = read_bytes(&state_dir.join("staged/source"))
+            .ok_or_else(|| io("cannot pin the refreshed source", &"staged source missing"))?;
+        tungsten_openapi::acquire::pin(url, root, &bytes)
+            .map_err(|d| io("cannot pin the refreshed source", &d.message))?;
+        written.extend(tungsten_openapi::acquire::pin_file(url).ok());
+    }
+    if journal.relock {
+        let manifest = root.join(journal.manifest.as_deref().unwrap_or("tungsten.yml"));
+        let compiled = lock::compile_offline(&manifest);
+        let recipe = lock::capture(&manifest, &compiled).ok_or_else(|| {
+            CliError::new(
+                ErrorKind::Internal,
+                "the refreshed project no longer compiles offline; the lock was not updated",
+            )
+            .with_help("run `tungsten refresh-import --rollback` to restore the backed-up files")
+        })?;
+        lock::write_lock(&root.join(LOCK_FILE), &recipe)
+            .map_err(|e| io("cannot write the generation lock", &e))?;
+        written.push(LOCK_FILE.to_string());
+    }
+    // Only now is the refresh complete; drop the journal last.
+    std::fs::remove_file(state_dir.join(JOURNAL))
+        .map_err(|e| io("cannot remove the refresh journal", &e))?;
+    let _ = std::fs::remove_dir_all(state_dir);
+    // `.tungsten` itself only when nothing else lives there.
+    let _ = state_dir.parent().map(std::fs::remove_dir);
+    Ok((written, journal.relock))
+}
+
+/// Read a journal written by this command, refusing paths that leave the
+/// project or the state directory.
+fn read_journal(state_dir: &Path) -> Result<Journal, CliError> {
+    let fail = |message: &str| {
+        CliError::new(ErrorKind::Io, message.to_string()).with_help(format!(
+            "restore the project from version control, then delete {STATE_DIR}"
+        ))
+    };
+    let journal: Journal = read_bytes(&state_dir.join(JOURNAL))
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .filter(|j: &Journal| j.version == 1)
+        .ok_or_else(|| fail("the refresh journal is unreadable"))?;
+    let unsafe_path =
+        |p: &str| Path::new(p).is_absolute() || p.split(['/', '\\']).any(|part| part == "..");
+    let paths = journal
+        .entries
+        .iter()
+        .flat_map(|e| [Some(&e.path), e.backup.as_ref(), e.staged.as_ref()])
+        .flatten()
+        .chain(journal.manifest.as_ref());
+    for path in paths {
+        if unsafe_path(path) {
+            return Err(fail("the refresh journal names a path outside the project"));
         }
-        let mut lock_updated = false;
-        if relock {
-            let compiled = lock::compile_offline(manifest);
-            let recipe = lock::capture(manifest, &compiled).ok_or_else(|| {
-                CliError::new(
-                    ErrorKind::Internal,
-                    "the refreshed project no longer compiles offline; the lock was not updated",
-                )
-                .with_help(
-                    "run `tungsten refresh-import --rollback` to restore the backed-up files",
-                )
-            })?;
-            lock::write_lock(&root.join(LOCK_FILE), &recipe)
-                .map_err(|e| io("cannot write the generation lock", &e))?;
-            written.push(LOCK_FILE.to_string());
-            lock_updated = true;
+    }
+    Ok(journal)
+}
+
+/// Finish an interrupted --apply from its staged content.
+fn resume(mut report: Report, root: &Path, state_dir: &Path) -> Report {
+    let journal = match read_journal(state_dir) {
+        Ok(journal) => journal,
+        Err(error) => return report.failed(exit::FAILED, error),
+    };
+    if journal.manifest.is_none() {
+        return report.failed(
+            exit::REFUSED,
+            CliError::new(
+                ErrorKind::Refused,
+                "the interrupted refresh was journaled without staged content and cannot be resumed",
+            )
+            .with_help("run `tungsten refresh-import --rollback`, then refresh again"),
+        );
+    }
+    match complete(root, state_dir, &journal) {
+        Ok((written, relocked)) => {
+            let result = RefreshImportResult {
+                state: RefreshState::Resumed,
+                namespace: String::new(),
+                spec: String::new(),
+                source: None,
+                source_sha256_before: None,
+                source_sha256_after: None,
+                digest: None,
+                operations: vec![],
+                review_required: vec![],
+                spec_patch: None,
+                spec_patch_truncated_lines: 0,
+                targets: vec![],
+                lock: if relocked {
+                    RefreshLock::Updated
+                } else {
+                    RefreshLock::Absent
+                },
+                written,
+            };
+            report.human = human(&result);
+            report.result = Some(CommandResult::RefreshImport(Box::new(result)));
+            report
         }
-        // Only now is the refresh complete; drop the journal last.
-        std::fs::remove_file(state_dir.join(JOURNAL))
-            .map_err(|e| io("cannot remove the refresh journal", &e))?;
-        let _ = std::fs::remove_dir_all(&state_dir);
-        // `.tungsten` itself only when nothing else lives there.
-        let _ = state_dir.parent().map(std::fs::remove_dir);
-        Ok((written, lock_updated))
+        Err(error) => report.failed(exit::INTERNAL, error),
     }
 }
 
 /// Restore every journaled file from its backup (or remove a file that did
 /// not exist before), then drop the journal.
 fn rollback(mut report: Report, root: &Path, state_dir: &Path) -> Report {
-    let journal: Option<Journal> = read_bytes(&state_dir.join(JOURNAL))
-        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-        .filter(|j: &Journal| j.version == 1);
-    let Some(journal) = journal else {
-        return report.failed(
-            exit::FAILED,
-            CliError::new(ErrorKind::Io, "the refresh journal is unreadable").with_help(format!(
-                "restore the project from version control, then delete {STATE_DIR}"
-            )),
-        );
+    let journal = match read_journal(state_dir) {
+        Ok(journal) => journal,
+        Err(error) => return report.failed(exit::FAILED, error),
     };
     let mut restored = vec![];
     for entry in &journal.entries {
-        // Journal paths are written by this command; never leave the project.
-        if Path::new(&entry.path).is_absolute()
-            || entry.path.split(['/', '\\']).any(|part| part == "..")
-            || entry
-                .backup
-                .as_ref()
-                .is_some_and(|b| b.contains("..") || Path::new(b).is_absolute())
-        {
-            return report.failed(
-                exit::FAILED,
-                CliError::new(
-                    ErrorKind::Io,
-                    "the refresh journal names a path outside the project",
-                )
-                .with_help(format!(
-                    "restore the project from version control, then delete {STATE_DIR}"
-                )),
-            );
-        }
         let target = root.join(&entry.path);
         let outcome = match &entry.backup {
             Some(backup) => match read_bytes(&state_dir.join(backup)) {
@@ -1161,6 +1277,15 @@ fn human(r: &RefreshImportResult) -> String {
             for path in &r.written {
                 let _ = writeln!(text, "  {path}");
             }
+            return text;
+        }
+        RefreshState::Resumed => {
+            let _ = writeln!(
+                text,
+                "resumed an interrupted refresh; wrote {}",
+                r.written.join(", ")
+            );
+            let _ = writeln!(text, "run `tungsten generate` to regenerate the outputs");
             return text;
         }
         RefreshState::Unchanged => {
