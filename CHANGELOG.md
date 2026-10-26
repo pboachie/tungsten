@@ -236,6 +236,14 @@ changes.
 
 ### Added
 
+- The experimental `mcp-python` server serves Streamable HTTP: `--http
+  <port> [--host <host>] [--token-env <NAME>]`, with the TypeScript server's
+  rules. Requests are checked in order: a constant-time bearer token (401),
+  then the path (404), then the Host and Origin headers against DNS rebinding
+  (403). The server is loopback by default, has bounded sessions, request
+  bodies and idle time, and keeps one API client per MCP session, so
+  confirmation tokens never cross sessions.
+
 - The experimental `mcp-python` server serves progressive disclosure:
   `search_tools` (BM25 over the manifest's index, optionally within a cluster),
   `describe_tool`, `invoke`, `invoke_read`, `preview` by name and
