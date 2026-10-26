@@ -236,6 +236,11 @@ changes.
 
 ### Added
 
+- The runtime telemetry observer reports `stream()` in TypeScript, Python and
+  Rust as one `stream` operation covering its connection and every reconnect,
+  ending `ok`, `error` (final failure item) or `cancelled` (cancelled or left
+  early). Unreleased 0.2.0 only.
+
 - `tungsten update check` links the upgrade rehearsal: when a newer release is
   available, `rehearse_command` (new `--json` field) holds the
   `tungsten upgrade rehearse --to <version> --workspace <dir>` invocation, and
