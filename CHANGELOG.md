@@ -230,6 +230,13 @@ changes.
 
 ### Added
 
+- The TypeScript and Python runtimes include an optional OpenTelemetry
+  adapter for the telemetry observer (`openTelemetryObserver(tracer)`,
+  `open_telemetry_observer(tracer)`): one client span per operation named after
+  its operation id, attempts and phases as span events, outcome attributes and
+  error status, with at most 10000 spans open. It accepts any tracer of the
+  OpenTelemetry API shape and adds no dependency. Unreleased 0.2.0 only.
+
 - TypeScript, Python and Rust clients can report optional local telemetry to
   an observer (`ClientOptions.telemetry`), off by default and never sent
   anywhere by the runtime. `call()` emits correlated `operation`, `attempt`
