@@ -238,6 +238,16 @@ changes.
   `generate --dry-run`) for migrations and `generate --check` otherwise, and the
   cached update notice says when a migration may be required.
 
+- Add `tungsten_build::ProjectIdentity`, the shared in-process identity of
+  one compilation: its manifest, the content digest of every source it read,
+  the optional files it found absent, and a digest of the compiler version,
+  load limits, acquisition and remote-reference policy and invocation policy.
+  It revalidates against unsaved buffers and disk without modification times,
+  reports which files a project depends on, and is never persisted. The
+  language server uses it for result reuse, and a watched-file change to a
+  file the last check neither read nor looked for no longer cancels or starts
+  a check.
+
 - `tungsten workspace [PATH]` lists the tungsten projects under a directory
   with deterministic ids (the project directory relative to PATH), their
   output directories and declared inputs. Discovery is bounded (8 levels,
@@ -344,6 +354,14 @@ changes.
   scheduler; scopes waiting for them take turns so none is starved.
   The bulk-sync example is now a gallery recipe (`python3 examples/run.py
   --only bulk-sync`) that runs it in TypeScript, Python and Rust.
+  An optional scheduler observer (`onEvent`/`on_event`) receives versioned
+  `admitted`, `rejected`, `released`, `paused` and `retry_denied` events with
+  queue wait, hold and pause durations. Events carry no scope, tenant, URL or
+  payload, are not buffered, and an observer's exception or panic is ignored.
+
+- Add `toolDeadlineMs` to the WebMCP adapter's registration options: each
+  tool call gets that total deadline, passed to the TypeScript runtime as
+  `deadlineMs`, as `ServerOptions.toolDeadlineMs` does for the MCP adapter.
 
 - Add an opt-in total operation deadline to the TypeScript (`deadlineMs`),
   Python (`deadline_ms`) and Rust (`deadline`) runtimes, on client and call
@@ -939,6 +957,11 @@ changes.
   nontransactional across files and directories.
 
 ### Fixed
+
+- A TypeScript `deadlineMs` longer than about 24.8 days (2^31 - 1 ms) no
+  longer fails authentication or idempotency-key reservation at once with
+  `DEADLINE_EXCEEDED`; timers over that limit fire immediately in JavaScript.
+  Retry waits and per-attempt timeouts above it are capped at it instead.
 
 - The Rust runtime runs an OAuth2 token fetch or refresh as its own task: a
   caller whose `deadline` passes, or whose future is dropped, stops waiting
