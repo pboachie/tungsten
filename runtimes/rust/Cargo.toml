@@ -29,6 +29,8 @@ base64 = "0.23"
 regex = "1"
 url = "2"
 getrandom = "0.4"
+bytes = "1"
+http-body = "1"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

@@ -27,7 +27,8 @@ class AttemptRequest:
     url: str
     method: HttpMethod
     headers: Mapping[str, str]
-    body: bytes | None
+    #: The bytes, or the attempt of a streamed upload (``_upload.UploadAttempt``).
+    body: bytes | object | None
     timeout_ms: float
     #: True: hand a ``text/event-stream`` answer with a 2xx status back
     #: unread, as a ``Streaming`` outcome. ``"bytes"``: hand back any 2xx

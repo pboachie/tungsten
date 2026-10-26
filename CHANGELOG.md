@@ -236,6 +236,26 @@ changes.
 
 ### Added
 
+- Add streamed upload sources to the TypeScript, Python and Rust runtimes
+  (`UploadSource`; Rust `ClientCore::call_upload` / `preview_upload`) for a
+  whole binary request body. A source is one-shot (never sent again once
+  read: no retry, redirect or token-refresh resend) or recreatable (opened
+  again for every attempt). A declared length (sent as `Content-Length`) and
+  SHA-256 are checked against the bytes, holding back the last chunk so a
+  mismatching source never completes its request (`UPLOAD_MISMATCH`); a
+  failing source reports `OUTCOME_UNKNOWN` for a mutation
+  (`UPLOAD_SOURCE_FAILED`). Operations whose idempotency key or confirmation
+  depends on the body require a declared SHA-256, which is also the
+  `content_hash` key. Registered as the `streaming_uploads` runtime
+  capability.
+- Add `tungsten update notice` to show whether update notices are on, where the
+  setting comes from (default, environment, settings file, opt-out or an
+  invalid value), the settings and cache paths and the cached answer.
+  `--enable [stable|prerelease]`, `--disable` and `--interval-hours N` update
+  the user settings file atomically and keep its other keys; a file that is not
+  a JSON object is never overwritten. It never makes a network request.
+  `--json` output adds the `update notice` command to the CLI output schema.
+
 - The runtime telemetry observer reports `stream()` in TypeScript, Python and
   Rust as one `stream` operation covering its connection and every reconnect,
   ending `ok`, `error` (final failure item) or `cancelled` (cancelled or left
