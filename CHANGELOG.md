@@ -446,6 +446,18 @@ changes.
   text and JSON redact sensitive values and physical paths without compiling
   inputs, probing tools or executing emitters.
 
+- Select shared local configuration profiles from `tungsten init --profile PATH`
+  (repeatable) and from the guided setup. Selections are composed with the
+  compiler's limits before any file is written. Invalid, missing or remote
+  profiles are refused, and no files are written.
+
+- Apply profile defaults only to targets a project declares. A shared profile
+  no longer adds a TypeScript, Python or Rust output to a project that did not
+  ask for it.
+
+- Add a profile-reuse example: an app and a multi-target library share one
+  profile chain with per-project overrides, checked offline with the compiler.
+
 - Compose Python (`package`, `version`, `runtime`, `models`, `python_version`)
   and Rust (`crate`, `version`, `runtime`) defaults from the same bounded local
   profiles, so one profile serves a multi-target library. Explicit project

@@ -157,7 +157,8 @@ pub fn json_schema() -> Value {
     })
 }
 
-/// Apply captured profile defaults, then explicit project fields. Invalid
+/// Apply captured profile defaults, then explicit project fields, to targets the
+/// project declares; profiles never add an output. Invalid
 /// profiles leave the configuration untouched. Legacy project values remain
 /// raw so their emitter warning/fallback/error behavior is preserved.
 pub fn compose(
@@ -218,29 +219,27 @@ pub fn compose(
             let base = format!("/targets/{target}");
             let mut origin = project.clone();
             origin.pointer = base.clone();
-            if let Some(value) = config.targets.get(target) {
-                if value.is_object() {
-                    loader.apply(target, value, &origin);
-                } else {
-                    let nested = format!("{base}/");
-                    loader.defaults.remove(target);
-                    loader
-                        .provenance
-                        .retain(|path, _| path != &base && !path.starts_with(&nested));
-                    loader.record(base.clone(), origin);
-                }
-            }
-            let Some(defaults) = loader.defaults.get(target).filter(|d| !d.is_empty()) else {
+            let nested = format!("{base}/");
+            // Profiles default declared targets only; they never add an output.
+            let Some(value) = config.targets.get(target) else {
+                loader.defaults.remove(target);
+                loader
+                    .provenance
+                    .retain(|path, _| path != &base && !path.starts_with(&nested));
                 continue;
             };
             // A non-mapping project target keeps its old raw emitter behavior.
-            if config.targets.get(target).is_none_or(Value::is_object) {
-                let mut merged = config
-                    .targets
-                    .get(target)
-                    .and_then(Value::as_object)
-                    .cloned()
-                    .unwrap_or_default();
+            let Some(declared) = value.as_object() else {
+                loader.defaults.remove(target);
+                loader
+                    .provenance
+                    .retain(|path, _| path != &base && !path.starts_with(&nested));
+                loader.record(base.clone(), origin);
+                continue;
+            };
+            let mut merged = declared.clone();
+            loader.apply(target, value, &origin);
+            if let Some(defaults) = loader.defaults.get(target) {
                 merged.extend(defaults.clone());
                 config.targets.insert(target.into(), Value::Object(merged));
             }
