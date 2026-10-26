@@ -105,6 +105,10 @@ struct Open {
     /// The connection is new: events whose id was delivered are skipped until
     /// the first one that is not.
     replaying: bool,
+    /// The request this stream was opened with and its options, resent as is
+    /// (with `Last-Event-ID`) on a reconnect.
+    request: Option<crate::prepare::Detached>,
+    opts: CallOptions,
 }
 
 /// Why a connection ended without finishing the stream.
@@ -714,6 +718,16 @@ impl ClientCore {
         let prepared = self
             .prepare(op, &args, &opts, Purpose::Call, None, None)
             .await?;
+        self.start_stream(op, prepared, opts).await
+    }
+
+    /// Send a prepared stream request and open its event stream.
+    async fn start_stream(
+        &self,
+        op: &OperationDescriptor,
+        prepared: crate::prepare::Prepared<'_>,
+        opts: CallOptions,
+    ) -> std::result::Result<Open, Error> {
         let start = match self
             .send_with(&prepared, &opts, crate::send::Handover::Events, None)
             .await?
@@ -773,6 +787,8 @@ impl ClientCore {
             last_retry: None,
             delivered: HashSet::new(),
             replaying: false,
+            request: Some(prepared.detach()),
+            opts,
         })
     }
 
@@ -804,9 +820,21 @@ impl ClientCore {
         let ceiling = (old.last_retry.unwrap_or(DEFAULT_RECONNECT_MS) as f64).min(cap);
         let wait = ceiling - self.random() * 0.25 * ceiling;
         tokio::time::sleep(crate::util::duration_from_ms(wait)).await;
-        let mut fresh = self
-            .open_stream(op, spec, args, opts, old.last_id.as_deref())
-            .await?;
+        // Resend the request the stream was opened with (auth included), as
+        // the TypeScript and Python runtimes do, rather than preparing it anew.
+        let mut fresh = match old.request.take() {
+            Some(request) => {
+                let mut prepared = request.attach(op);
+                if let Some(id) = old.last_id.as_deref() {
+                    prepared.headers.set("Last-Event-ID", id, false);
+                }
+                self.start_stream(op, prepared, old.opts.clone()).await?
+            }
+            None => {
+                self.open_stream(op, spec, args, opts, old.last_id.as_deref())
+                    .await?
+            }
+        };
         fresh.count = old.count;
         fresh.reconnects = old.reconnects + 1;
         fresh.last_id.clone_from(&old.last_id);

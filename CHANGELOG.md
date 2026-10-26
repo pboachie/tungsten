@@ -1359,6 +1359,10 @@ changes.
 
 ### Fixed
 
+- The Rust runtime reconnects a dropped event stream by resending the request it
+  opened with, as the TypeScript and Python runtimes do, instead of preparing it
+  again: a reconnect no longer re-runs authentication or reports a second `auth`
+  telemetry phase.
 - Webhook verification behaves the same in the TypeScript, Python and Rust
   runtimes:
   - A JSON payload with a `\u` escape that is a lone surrogate, or with a
