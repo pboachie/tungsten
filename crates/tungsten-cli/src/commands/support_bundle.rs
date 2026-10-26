@@ -8,7 +8,7 @@
 //! or builds an IR (a broken project still previews), never starts a program
 //! (no tool-version probes, no emitters, no manifest-provided commands), never
 //! contacts a network. Only explicit `--output` publishes this manifest, using
-//! the separate bounded, no-clobber Unix writer. Entries carry names, states and
+//! the separate bounded, no-clobber file writer. Entries carry names, states and
 //! counts only: no configuration values, digests, project names, environment
 //! values, URLs, paths or free-form diagnostic text. Every entry and the whole
 //! document are size-bounded.
@@ -375,7 +375,7 @@ pub(crate) fn run(
                 "choose a support bundle preview or explicit export",
             )
             .with_help(
-                "use --preview, --output <PATH> to create a new metadata-only file on Linux or macOS, or --inspect <FILE> to review an existing bundle",
+                "use --preview, --output <PATH> to create a new metadata-only file, or --inspect <FILE> to review an existing bundle",
             ),
         );
     }
@@ -497,7 +497,7 @@ fn export_failed(report: Report, error: ExportError) -> Report {
         Failure::Unsupported => (
             exit::REFUSED,
             ErrorKind::Refused,
-            "support bundle export is supported only on Linux and macOS",
+            "support bundle export is supported only on Linux, macOS and Windows",
         ),
         Failure::Cancelled => (
             exit::REFUSED,
@@ -901,6 +901,6 @@ fn human(preview: &SupportBundlePreview) -> String {
     for item in &preview.omitted {
         let _ = writeln!(out, "  {:<28} {}", item.category, item.description);
     }
-    out.push_str("Remove an entry with --exclude <id>. Export to a new file on Linux or macOS with --output <PATH>; review a bundle file with --inspect <FILE>.\n");
+    out.push_str("Remove an entry with --exclude <id>. Export to a new file with --output <PATH>; review a bundle file with --inspect <FILE>.\n");
     out
 }
