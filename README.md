@@ -136,10 +136,10 @@ The support matrix below is generated from the capability catalog (`tungsten cap
 | `kotlin` | `kt` | Kotlin/JVM SDK (blocking functions returning Result; opt-in coroutines) | java >=17.0; gradle installed | jvm | `typed_sdk`, `pagination_helpers`, `coroutines` | enforced | unknown | unknown |
 | `mcp` |  | MCP server over stdio or Streamable HTTP, discrete or progressive | node >=22.13 excluding 23.0.x, 23.1.x; npm installed | node | `mcp_stdio`, `mcp_streamable_http`, `mcp_embedding_search`, `mcp_script_sandbox` | enforced | unknown | unknown |
 | `mock` |  | reserved; no emitter in this version | none |  |  | n/a | unknown | unknown |
-| `python` | `py` | Sync and async Python SDK, Pydantic v2 or dataclass models | python3 >=3.12 (`python_version` selects the minimum) | cpython | `typed_sdk`, `pagination_helpers`, `dataclass_models` | enforced | unknown | unknown |
+| `python` | `py` | Sync and async Python SDK, Pydantic v2 or dataclass models | python3 >=3.12 (`python_version` selects the minimum) | cpython | `typed_sdk`, `pagination_helpers`, `dataclass_models`, `webhook_verification` | enforced | unknown | unknown |
 | `ruby` | `rb` | Ruby SDK | ruby >=3.3; bundle installed | ruby | `typed_sdk`, `pagination_helpers` | enforced | unknown | unknown |
-| `rust` | `rs` | Async Rust SDK (serde, reqwest) and optional generated CLI | cargo >=1.88; rustc >=1.88 | native | `typed_sdk`, `pagination_helpers`, `generated_cli` | enforced | unknown | unknown |
-| `typescript` | `ts` | Typed TypeScript SDK, Result values, Zod validation | node >=22.0; npm installed | node | `typed_sdk`, `pagination_helpers` | enforced | unknown | unknown |
+| `rust` | `rs` | Async Rust SDK (serde, reqwest) and optional generated CLI | cargo >=1.88; rustc >=1.88 | native | `typed_sdk`, `pagination_helpers`, `generated_cli`, `webhook_verification` | enforced | unknown | unknown |
+| `typescript` | `ts` | Typed TypeScript SDK, Result values, Zod validation | node >=22.0; npm installed | node | `typed_sdk`, `pagination_helpers`, `webhook_verification` | enforced | unknown | unknown |
 | `webmcp` |  | Browser ESM package with tool manifest and registration helper | node >=22.0; npm installed | browser | `webmcp_registration` | enforced | unknown | unknown |
 
 | Feature | Domain | Opt-in option | Description |
@@ -154,6 +154,7 @@ The support matrix below is generated from the capability catalog (`tungsten cap
 | `mcp_embedding_search` | target | `search` | optional embedding index for tool search |
 | `mcp_script_sandbox` | runtime | `sandbox` | opt-in run_script sandbox |
 | `webmcp_registration` | protocol |  | browser tool manifest and WebMCP registration helper |
+| `webhook_verification` | runtime |  | framework-free incoming webhook verification: Stripe-compatible `t=,v1=` HMAC-SHA256 signatures compared in constant time, secret rotation, bounded body, timestamp tolerance and an application-owned replay hook |
 | `llms_txt` | target |  | llms.txt, llms-full.txt and tools.json documentation |
 
 | OpenAPI line | Support | Diagnosed constructs |
@@ -334,6 +335,14 @@ pinned installer command for the release installer, `cargo install` for cargo, a
 package-manager guidance for npm. When the installation route cannot be determined,
 the command says so and prints no replacement command.
 
+A newer release is also classified in `upgrade`: `compatible` stays on your compatibility
+line (a patch release before 1.0, a minor or patch release from 1.0) and is followed by
+`tungsten generate --check`; `migration` starts a new line (a minor or major release before
+1.0, a major release from 1.0), is a prerelease, or has a Breaking section in its notes, and
+the guidance asks you to preview with `tungsten diff --migration`, `tungsten lock --preview`
+and `tungsten generate --dry-run` before replacing generated clients. Release notes can only
+make the classification stricter.
+
 | Exit code | Meaning |
 | --- | --- |
 | 0 | Up to date, or this build is newer than the newest release considered |
@@ -342,6 +351,26 @@ the command says so and prints no replacement command.
 
 `--offline` (also a global flag), `--no-update-check` and `TUNGSTEN_NO_UPDATE_CHECK=1`
 make no request and exit 6 with a reason in the `--json` result.
+
+Update notices are off by default. Enable them with `TUNGSTEN_UPDATE_NOTICE=stable` (or
+`prerelease`), or in the user settings file (`$XDG_CONFIG_HOME/tungsten/settings.json`,
+`~/Library/Application Support/tungsten/settings.json` on macOS,
+`%APPDATA%\tungsten\settings.json` on Windows, or `$TUNGSTEN_CONFIG_DIR/settings.json`):
+
+```json
+{ "update_notice": { "channel": "stable", "interval_hours": 24 } }
+```
+
+With notices on, `tungsten update check` saves its verified answer to `update-check.json`
+in the user cache directory (`TUNGSTEN_CACHE_DIR` overrides it). Other commands never make
+a request for notices: after an interactive command, tungsten reads that file and, at most
+once per interval (`TUNGSTEN_UPDATE_NOTICE_INTERVAL_HOURS`, 1 to 720, default 24), prints one
+line on stderr naming a newer release whose archive and `SHA256SUMS` the check confirmed.
+Answers older than 7 days are ignored. No notice is printed with `--json`, `--offline`,
+`--policy`, in CI, when stderr is not a terminal, or for `lsp` and `mock`.
+`TUNGSTEN_NO_UPDATE_CHECK=1` or `TUNGSTEN_UPDATE_NOTICE=off` turns notices off; an invalid
+setting also turns them off. A missing, corrupt or unwritable cache never changes a command's
+output or exit code.
 
 ### Runtime packages
 
@@ -748,7 +777,7 @@ tungsten [--json] <command>
 | `lsp` | Serve diagnostics, quick fixes, completion, hover, go-to-definition and symbols for `tungsten.yml`, `agent.yml` and overlays to an editor over stdio (`--config`) |
 | `doctor` | Report external tools; pass a project path and `--strict` to fail when its required tools are missing or too old |
 | `capabilities` | Query built-in target declarations without running tools or emitters; optionally select a target id or alias, such as `capabilities py --json`; `--matrix` prints the Markdown support matrix derived from the same declarations, and `--matrix --format markdown` wraps it in the markers of the README block CI checks |
-| `lock` | Capture the project generation lock `tungsten.lock.json` offline: content identities of the manifest, profiles, agent manifest, inputs, references and overlays (in order), compiler and built-in emitter identities, effective target option digests and consumer toolchains. `--check` fails when the lock is missing, stale or corrupt, `--preview` writes nothing, `--update` accepts changed identities |
+| `lock` | Capture the project generation lock `tungsten.lock.json` offline: content identities of the manifest, profiles, agent manifest, inputs, references and overlays (in order), compiler and built-in emitter identities, effective target option digests and consumer toolchains. `--check` fails when the lock is missing, stale or corrupt, `--preview` writes nothing, `--update` accepts changed identities; `--outputs` also records or verifies the identity of the bytes each built-in target generates |
 | `bundle export` / `bundle import` | Export the locked input closure and `tungsten.lock.json` into a new plain bundle directory with a digest inventory (`--preview` lists it; `--include-input-cache` carries the verified pins of remote inputs; `--include-consumer-cache DIR` carries a prepared consumer dependency directory with provenance and platform notes; incomplete or credential-named content needs `--allow-incomplete` / `--allow-sensitive`), or validate a bundle completely and copy it into `--dest` without overwriting differing files. Neither runs emitters or grants trust |
 | `support-bundle --preview` | Inspect the exact metadata-only support manifest without writing files; `--exclude <id>` removes an entry. On Linux, macOS and Windows, `--output <PATH>` instead publishes it to a new file in an existing, trusted directory; `--inspect <FILE>` checks and shows an existing bundle |
 
@@ -1241,7 +1270,7 @@ if not configs.tungsten then
   configs.tungsten = {
     default_config = {
       cmd = { 'tungsten', 'lsp' },
-      filetypes = { 'yaml' },
+      filetypes = { 'yaml', 'json' },
       root_dir = util.root_pattern('tungsten.yml', 'tungsten.yaml'),
     },
   }
@@ -1250,7 +1279,9 @@ end
 require('lspconfig').tungsten.setup({})
 ```
 
-Any other client works the same way: start `tungsten lsp` as a stdio server for YAML files.
+Any other client works the same way: start `tungsten lsp` as a stdio server for YAML files, and for JSON files too when the project has JSON specs or overlays, so their unsaved edits are checked (the Neovim example attaches to both).
+
+Quick fixes are ordinary code actions: the light bulb or `Ctrl+.` in Visual Studio Code, `vim.lsp.buf.code_action()` in Neovim. Overlay fixes create a file and edit `tungsten.yml` in one workspace edit, so the client must support `documentChanges` with the `create` resource operation; clients with change-annotation support ask for confirmation and preview every file first (Visual Studio Code opens its refactor preview). Neovim applies the edit directly; undo it per buffer with `u`, and delete the created overlay to revert fully. A client that shows disabled code actions explains why a fix is unavailable, with the equivalent `tungsten overlay suggest` command.
 
 | Exit code | Meaning |
 |---|---|

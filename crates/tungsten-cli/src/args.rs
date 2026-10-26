@@ -20,6 +20,8 @@ Examples:
   tungsten mock --port 4010            Serve a mock of the API from the IR
   tungsten report --html report.html   Write a static coverage and safety report
   tungsten diff --semver               Show how the API surface changed
+  tungsten upgrade rehearse --workspace ../rehearsal
+                                       Preview an upgrade with this compiler
   tungsten overlay suggest --write fixes.overlay.yaml
                                        Suggest an overlay that fixes diagnostics
   tungsten lsp                         Serve diagnostics, completion and hover for
@@ -145,6 +147,7 @@ impl Cli {
             Command::Doctor(_) => CommandName::Doctor,
             Command::Capabilities(_) => CommandName::Capabilities,
             Command::Config(_) => CommandName::Config,
+            Command::Workspace(_) => CommandName::Workspace,
             Command::Lock(_) => CommandName::Lock,
             Command::Bundle {
                 command: BundleCommand::Export(_),
@@ -164,6 +167,12 @@ impl Cli {
             } => CommandName::OverlaySuggest,
             Command::SupportBundle(_) => CommandName::SupportBundle,
             Command::Update { .. } => CommandName::UpdateCheck,
+            Command::Upgrade {
+                command: UpgradeCommand::Rehearse(_),
+            } => CommandName::UpgradeRehearse,
+            Command::Upgrade {
+                command: UpgradeCommand::Apply(_),
+            } => CommandName::UpgradeApply,
             Command::Lsp(_) => return None,
         })
     }
@@ -190,6 +199,10 @@ pub(crate) enum Command {
     Capabilities(CapabilitiesArgs),
     /// Explain supported effective configuration without compiling or running tools.
     Config(ConfigArgs),
+    /// List the tungsten projects under a directory (bounded, never follows
+    /// links) with their ids, outputs and declared inputs, and report output
+    /// directories two projects share. Compiles nothing.
+    Workspace(WorkspaceArgs),
     /// Capture or verify the project's generation lock (tungsten.lock.json)
     /// offline; never fetches inputs or runs emitters.
     Lock(LockArgs),
@@ -233,6 +246,12 @@ pub(crate) enum Command {
     Update {
         #[command(subcommand)]
         command: crate::commands::update::UpdateCommand,
+    },
+    /// Rehearse a compiler/runtime upgrade into a scratch workspace, then
+    /// apply an accepted rehearsal as a separate, explicit step.
+    Upgrade {
+        #[command(subcommand)]
+        command: UpgradeCommand,
     },
     /// Serve a Language Server Protocol server on stdin and stdout for
     /// tungsten.yml, agent.yml and overlays: diagnostics, completion, hover,
@@ -283,6 +302,16 @@ pub(crate) struct LspArgs {
 }
 
 #[derive(Debug, Args)]
+pub(crate) struct WorkspaceArgs {
+    /// The workspace root to search.
+    #[arg(default_value = ".")]
+    pub path: PathBuf,
+    /// Only these projects, by id; repeatable. Unknown ids fail (TG0644).
+    #[arg(long, value_name = "ID")]
+    pub project: Vec<String>,
+}
+
+#[derive(Debug, Args)]
 pub(crate) struct CapabilitiesArgs {
     /// Limit the catalog to one target id or CLI alias.
     pub target: Option<String>,
@@ -327,6 +356,15 @@ pub(crate) struct LockArgs {
     /// Accept changed identities and replace a stale or corrupt lock.
     #[arg(long)]
     pub update: bool,
+    /// Also record (or, with --check, verify) the identity of the bytes each
+    /// built-in target generates, by running the built-in emitters in memory.
+    /// External emitters are never run.
+    #[arg(long)]
+    pub outputs: bool,
+    /// Lock one project of the workspace at PATH, by its id from
+    /// `tungsten workspace`.
+    #[arg(long, value_name = "ID")]
+    pub project: Option<String>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -385,6 +423,56 @@ pub(crate) struct BundleImportArgs {
 }
 
 #[derive(Debug, Subcommand)]
+pub(crate) enum UpgradeCommand {
+    /// Regenerate with this (candidate) compiler from the locked inputs and
+    /// report identity, file, API surface and dependency changes, migration
+    /// actions and conflicts. Never writes the project; with --workspace,
+    /// stages the output for review and `upgrade apply`. Offline; external
+    /// emitters are never started.
+    Rehearse(UpgradeRehearseArgs),
+    /// Apply a staged rehearsal to the project after checking that nothing
+    /// changed since; backs up what it replaces. --restore undoes an
+    /// interrupted or completed apply.
+    Apply(UpgradeApplyArgs),
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct UpgradeRehearseArgs {
+    /// Local project directory or tungsten manifest.
+    #[arg(default_value = ".")]
+    pub path: PathBuf,
+    /// New (or empty) scratch directory, outside every output directory, for
+    /// the staged output, the proposed lock and the rehearsal record.
+    /// Without it the rehearsal only reports.
+    #[arg(long, value_name = "DIR")]
+    pub workspace: Option<PathBuf>,
+    /// Require the lock to record this current compiler version.
+    #[arg(long, value_name = "VERSION")]
+    pub from: Option<String>,
+    /// Require the running compiler to be this candidate version.
+    #[arg(long, value_name = "VERSION")]
+    pub to: Option<String>,
+    /// Only these targets, comma-separated. Default: every target in
+    /// tungsten.yml.
+    #[arg(long, value_name = "TARGETS", value_delimiter = ',')]
+    pub target: Vec<String>,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct UpgradeApplyArgs {
+    /// Local project directory or tungsten manifest.
+    #[arg(default_value = ".")]
+    pub path: PathBuf,
+    /// The workspace of a completed `upgrade rehearse`.
+    #[arg(long, value_name = "DIR")]
+    pub workspace: PathBuf,
+    /// Put back the files recorded before an interrupted or completed apply
+    /// of this workspace, and remove the files it added.
+    #[arg(long)]
+    pub restore: bool,
+}
+
+#[derive(Debug, Subcommand)]
 pub(crate) enum OverlayCommand {
     /// Suggest an Overlay 1.0 document whose actions fix diagnostics
     /// (a missing or repeated operationId) without changing the IR.
@@ -416,6 +504,11 @@ pub(crate) struct InputArgs {
     /// single OpenAPI document (local path, HTTP(S) URL or git+ URL).
     #[arg(default_value = ".")]
     pub path: PathBuf,
+    /// Run on one project of the workspace at PATH: its id from
+    /// `tungsten workspace` (the project directory relative to PATH, `.` for
+    /// PATH itself) or its manifest path.
+    #[arg(long, value_name = "ID")]
+    pub project: Option<String>,
 }
 
 #[derive(Debug, Args)]

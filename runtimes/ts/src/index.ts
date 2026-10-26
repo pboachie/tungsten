@@ -19,7 +19,7 @@ export { CHECKPOINT_PREFIX, MAX_CHECKPOINT_CHARS, type CheckpointState, type Che
 export { ANY_EVENT, EventStream, type CollectOptions, type EventHandler, type StreamEvent, type StreamResult } from "./streams.js";
 export { DEFAULT_MAX_EVENT_BYTES, SseParser, type SseEvent } from "./sse.js";
 export { MemoryIdempotencyStore } from "./idempotency.js";
-export { RequestScheduler, type Permit, type Rejection, type SchedulerOptions, type SchedulerStats } from "./scheduler.js";
+export { RequestScheduler, type Permit, type Rejection, type SchedulerEvent, type SchedulerOptions, type SchedulerStats } from "./scheduler.js";
 export {
   generatePkce,
   MemoryTokenStore,
@@ -43,6 +43,18 @@ export { evaluatePredicate } from "./expr.js";
 export { DEFAULT_RETRYABLE } from "./envelope.js";
 export { CONFIRMATION_TTL_MS } from "./confirm.js";
 export { RUNTIME_VERSION } from "./version.js";
+export {
+  DEFAULT_WEBHOOK_MAX_BODY_BYTES,
+  DEFAULT_WEBHOOK_TOLERANCE_SECONDS,
+  MAX_WEBHOOK_SIGNATURE_HEADER,
+  signWebhook,
+  verifyWebhook,
+  type RejectedWebhook,
+  type VerifiedWebhook,
+  type VerifyWebhookOptions,
+  type WebhookOutcome,
+  type WebhookRejection,
+} from "./webhooks.js";
 export { isBinaryInput, type BinaryInput, type NamedBinary } from "./util.js";
 
 /** Capability handshake used by generated imported descriptors. Older runtimes
