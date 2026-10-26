@@ -296,6 +296,12 @@ changes.
   (`ClientOptions.Deadline`, `CallOptions.Deadline`), applied as a
   `context.Context` deadline on top of the caller's context.
 
+- Add the same total operation deadline to the Java runtime
+  (`ClientOptions.Builder.deadline`, `CallOptions.Builder.deadline`, both a
+  `Duration`). Blocking token or store work the calling thread performs is
+  checked when it returns; a caller waiting on shared token work stops at its
+  deadline without cancelling it.
+
 - Add `tungsten lock`, a versioned single-project generation lock
   (`tungsten.lock.json`). It records the declared input closure (manifest,
   profiles, agent manifest, entry documents, local references and overlays in

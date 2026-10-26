@@ -48,6 +48,7 @@ public final class ClientOptions {
     final Map<String, AuthCredential> auth;
     final TokenStore tokenStore;
     final Duration timeout;
+    final Duration deadline;
     final RetryOptions retries;
     final IdempotencyStore idempotencyStore;
     final List<Middleware> middleware;
@@ -76,6 +77,7 @@ public final class ClientOptions {
         auth = Collections.unmodifiableMap(new LinkedHashMap<>(b.auth));
         tokenStore = b.tokenStore != null ? b.tokenStore : new TokenStore.Memory();
         timeout = positive(b.timeout, DEFAULT_TIMEOUT);
+        deadline = Deadline.positive(b.deadline) ? b.deadline : null;
         retries = b.retries != null ? b.retries : RetryOptions.none();
         idempotencyStore = b.idempotencyStore != null ? b.idempotencyStore : new IdempotencyStore.Memory();
         middleware = Collections.unmodifiableList(new ArrayList<>(b.middleware));
@@ -111,6 +113,7 @@ public final class ClientOptions {
         auth = o.auth;
         tokenStore = o.tokenStore;
         timeout = o.timeout;
+        deadline = o.deadline;
         retries = o.retries;
         idempotencyStore = o.idempotencyStore;
         middleware = o.middleware;
@@ -162,6 +165,7 @@ public final class ClientOptions {
         private final Map<String, AuthCredential> auth = new LinkedHashMap<>();
         private TokenStore tokenStore;
         private Duration timeout;
+        private Duration deadline;
         private RetryOptions retries;
         private IdempotencyStore idempotencyStore;
         private final List<Middleware> middleware = new ArrayList<>();
@@ -222,6 +226,15 @@ public final class ClientOptions {
         /** The per-attempt timeout (30 s by default). */
         public Builder timeout(Duration value) {
             timeout = value;
+            return this;
+        }
+
+        /**
+         * The total deadline of one logical call, see {@link CallOptions.Builder#deadline}. Null,
+         * zero or negative (the default): none, only the per-attempt timeout.
+         */
+        public Builder deadline(Duration value) {
+            deadline = value;
             return this;
         }
 

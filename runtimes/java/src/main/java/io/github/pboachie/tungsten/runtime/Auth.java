@@ -55,7 +55,7 @@ final class Auth {
 
     private final ClientCore core;
     final OAuthSessions sessions;
-    private final Object ccLock = new Object();
+    private final java.util.concurrent.locks.ReentrantLock ccLock = new java.util.concurrent.locks.ReentrantLock();
     private final Map<String, Cached> ccTokens = new HashMap<>();
 
     private record Cached(String token, long expiresAt) {}
@@ -635,7 +635,21 @@ final class Auth {
     /** An OAuth2 client-credentials token, fetched once and cached (single flight). */
     private Token clientCredentialsToken(Satisfier s) {
         if (insecureHttp(s.tokenUrl, core.options.allowInsecureHttp)) return Token.failed(INSECURE_HTTP_AUTH);
-        synchronized (ccLock) {
+        // A caller with a deadline stops waiting for another call's fetch at its deadline; the
+        // fetch itself, shared by every waiter, is never cut short.
+        if (Deadline.current() == null) {
+            ccLock.lock();
+        } else {
+            try {
+                if (!ccLock.tryLock(Math.max(0, Deadline.remainingNanos()), java.util.concurrent.TimeUnit.NANOSECONDS)) {
+                    return Token.failed("The operation deadline expired while another call fetched the OAuth2 token for " + s.name + ".");
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return Token.failed("OAuth2 token acquisition for " + s.name + " was interrupted.");
+            }
+        }
+        try {
             long realNow = System.currentTimeMillis();
             Cached cached = ccTokens.get(s.name);
             if (cached != null && cached.expiresAt() > realNow + 30000) {
@@ -672,6 +686,8 @@ final class Auth {
             }
             ccTokens.put(s.name, new Cached(token, realNow + lifetime));
             return Token.of(token);
+        } finally {
+            ccLock.unlock();
         }
     }
 }
