@@ -78,3 +78,97 @@ jobs:
         env:
           TUNGSTEN: ${{ github.workspace }}/target/debug/tungsten
         run: python3 examples/run.py --check
+
+  # Runs actions/tungsten from this checkout against a small consumer project:
+  # an unchanged contract passes, a changed contract (stale output) and an
+  # invalid manifest fail with the expected `failed` output, and the project
+  # passes again after regeneration. It installs the published release named
+  # below through the checked-out install.sh, with provenance verification.
+  github-action:
+    name: reusable action (${{ matrix.os }})
+    if: github.repository == 'pboachie/tungsten' && github.event.repository.private == false
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    env:
+      TUNGSTEN_RELEASE: "0.1.3"
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Install only
+        id: install
+        uses: ./actions/tungsten
+        with:
+          version: ${{ env.TUNGSTEN_RELEASE }}
+          install-only: "true"
+      - name: Prepare a consumer project
+        env:
+          CONSUMER: ${{ runner.temp }}/consumer
+        run: |
+          set -euo pipefail
+          tungsten --version
+          mkdir -p "$CONSUMER/proj" "$CONSUMER/bad"
+          cp examples/ci-drift/openapi.json "$CONSUMER/proj/openapi.json"
+          cat > "$CONSUMER/proj/tungsten.yml" <<'MANIFEST'
+          {"tungsten": 1, "api": {"name": "petstore", "title": "Gallery Petstore"},
+           "inputs": [{"namespace": "pets", "spec": "openapi.json"}],
+           "servers": {"default": "http://127.0.0.1:4010"},
+           "targets": {"docs": {"out": "sdk"}}}
+          MANIFEST
+          cp "$CONSUMER/proj/openapi.json" "$CONSUMER/bad/openapi.json"
+          printf 'tungsten: 1\ninputs: [\n' > "$CONSUMER/bad/tungsten.yml"
+          (cd "$CONSUMER/proj" && tungsten generate)
+      - name: Unchanged contract passes
+        uses: ./actions/tungsten
+        with:
+          version: ${{ env.TUNGSTEN_RELEASE }}
+          working-directory: ${{ runner.temp }}/consumer
+          projects: proj
+      - name: Change the contract without regenerating
+        env:
+          SPEC: ${{ runner.temp }}/consumer/proj/openapi.json
+        run: |
+          python3 - "$SPEC" <<'PY'
+          import json, sys
+          spec = json.load(open(sys.argv[1]))
+          spec["paths"]["/status"] = {"get": {"operationId": "getStatus", "responses": {"204": {"description": "healthy"}}}}
+          json.dump(spec, open(sys.argv[1], "w"), indent=2)
+          PY
+      - name: Stale output and an invalid manifest fail
+        id: stale
+        continue-on-error: true
+        uses: ./actions/tungsten
+        with:
+          version: ${{ env.TUNGSTEN_RELEASE }}
+          working-directory: ${{ runner.temp }}/consumer
+          projects: |
+            proj
+            bad
+      - name: Check the failure report
+        env:
+          OUTCOME: ${{ steps.stale.outcome }}
+          FAILED: ${{ steps.stale.outputs.failed }}
+          LOG_DIR: ${{ steps.stale.outputs.log-dir }}
+        run: |
+          set -euo pipefail
+          test "$OUTCOME" = failure
+          printf '%s\n' "$FAILED"
+          test "$(printf '%s' "$FAILED")" = "$(printf 'proj: generate --check\nbad: check\nbad: generate --check')"
+          grep -q TG0901 "$LOG_DIR/2-generate-check.log"
+      - name: Regenerate
+        working-directory: ${{ runner.temp }}/consumer/proj
+        run: tungsten generate
+      - name: Regenerated output passes
+        uses: ./actions/tungsten
+        with:
+          version: ${{ env.TUNGSTEN_RELEASE }}
+          working-directory: ${{ runner.temp }}/consumer
+          projects: proj
