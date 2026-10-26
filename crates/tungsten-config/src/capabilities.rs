@@ -637,6 +637,9 @@ pub struct InputFormatCapability {
     pub acquisition: &'static [InputAcquisition],
     /// The saved document a conversion or inference writes.
     pub saved_as: Option<&'static str>,
+    /// Command that refreshes a saved conversion in place from a new source
+    /// revision, with review; null when the input is not refreshed that way.
+    pub refresh_command: Option<&'static str>,
 }
 
 const DOCUMENT: &[InputAcquisition] = &[
@@ -660,6 +663,7 @@ const fn converted(
         review_flags,
         acquisition: DOCUMENT,
         saved_as: Some("imported.openapi.json"),
+        refresh_command: Some("refresh-import"),
     }
 }
 
@@ -674,6 +678,7 @@ pub const INPUT_FORMATS: &[InputFormatCapability] = &[
         review_flags: &[],
         acquisition: DOCUMENT,
         saved_as: None,
+        refresh_command: None,
     },
     converted("swagger", &["2.0"], "`swagger` member", &[]),
     converted("postman", &["2.1"], "`info` and `item` members", &[]),
@@ -705,6 +710,7 @@ pub const INPUT_FORMATS: &[InputFormatCapability] = &[
         review_flags: &[],
         acquisition: &[],
         saved_as: Some("inferred.openapi.json"),
+        refresh_command: None,
     },
 ];
 
