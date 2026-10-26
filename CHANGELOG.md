@@ -230,6 +230,18 @@ changes.
 
 ### Added
 
+- `tungsten workspace [PATH]` lists the tungsten projects under a directory
+  with deterministic ids (the project directory relative to PATH), their
+  output directories and declared inputs. Discovery is bounded (8 levels,
+  4,096 directories, 64 projects, 1 MiB manifests; TG0640), never follows
+  symbolic links (TG0643), refuses directories with two manifests (TG0641)
+  and reports output directories shared or nested across projects (TG0642).
+  `--project ID` on `check`, `generate`, `lock`, `report`, `diff`, `mock`,
+  `ir dump`, `overlay suggest` and `scenario` runs the command on one project
+  of the workspace at PATH (unknown ids are TG0644), and `generate` refuses to
+  write a project whose outputs collide with another's. The capability catalog
+  declares the workspace contract under `workspace`.
+
 - Add the `examples/restricted-agent` customization example: an MCP server
   that reads freely, confirms writes and hides deletion, with transport
   references and SDK defaults from a shared profile and a check that verifies
