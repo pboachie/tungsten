@@ -226,14 +226,34 @@ changes.
 
 ### Added
 
+- The `fsharp` target now enforces imported-operation policy through the
+  .NET runtime it wraps and may be generated for projects converted from
+  Postman, cURL, `.http` or HAR input. Generated F# SDKs require a .NET runtime
+  with `ClientCore.RequireImportPolicyV1()`.
+
+- Declare every input format (OpenAPI, Swagger, Postman, saved cURL, HTTP
+  request files, HAR, endpoint manifests and manual endpoints) in the
+  capability catalog with its versions, route, detection, required review flags,
+  acquisition and whether its operations are imported; `tungsten capabilities`
+  and `--matrix` list them. Targets gain an `evidence` list: qualification,
+  artifact and platform states become `recorded` only when a record names the
+  exact combination and a public reference, and stay `unknown` otherwise.
+  Editors now complete enumerated target option values, such as Python
+  `python_version` and `models`, from the declared option schemas. Imported-operation
+  policy support is declared once per target instead of also as a feature, so
+  enabling it for a target (as for Dart) no longer makes `tungsten
+  capabilities` report conflicting declarations.
+
 - Serve local profile files in `tungsten lsp`: completion and hover for
   profile keys and target defaults from the shared profile schema, and file
   watchers for profile directories outside the workspace folder so editing a
   shared profile rechecks the project.
+
 - `scenario run --timeout-ms` now bounds the whole command, including input
   acquisition and compilation, and SIGINT/SIGTERM cancel a run that is still
   preparing. Such a run reports `timed_out` or `cancelled` before any port is
   bound or integration started.
+
 - The `csharp` target now enforces imported-operation policy and may be
   generated for projects converted from Postman, cURL, `.http` or HAR input.
   The C# runtime reads each operation's `import_policy` (`AgentMeta.ImportPolicy`),
@@ -270,7 +290,8 @@ changes.
 - Add the same total operation deadline to the C# runtime
   (`ClientOptions.Deadline`, `CallOptions.Deadline`), measured on a monotonic
   clock. Authentication and a shared OAuth refresh are waited for only until
-  the deadline, never cancelled for other callers.
+  the deadline, never cancelled for other callers. F# SDKs use the same
+  options through the .NET runtime.
 
 - Add a per-tool-call total deadline to the MCP adapter
   (`ServerOptions.toolDeadlineMs`, `<API>_MCP_DEADLINE_MS` in generated
@@ -278,9 +299,21 @@ changes.
   name `code: DEADLINE_EXCEEDED`, and a mutation already sent still reports
   `OUTCOME_UNKNOWN`.
 
+- Add `--deadline <SECONDS>` to generated Rust CLIs, with the
+  `<PREFIX>_DEADLINE` variable and the profile key `deadline`. It sets the Rust
+  runtime's total deadline for the command (`--timeout` stays per attempt).
+  The flag name is now reserved: an API argument named `deadline` gets the
+  flag `--deadline-arg`.
+
 - Add the same total operation deadline to the Go runtime
   (`ClientOptions.Deadline`, `CallOptions.Deadline`), applied as a
   `context.Context` deadline on top of the caller's context.
+
+- Add the same total operation deadline to the Java runtime
+  (`ClientOptions.Builder.deadline`, `CallOptions.Builder.deadline`, both a
+  `Duration`). Blocking token or store work the calling thread performs is
+  checked when it returns; a caller waiting on shared token work stops at its
+  deadline without cancelling it.
 
 - Add `tungsten lock`, a versioned single-project generation lock
   (`tungsten.lock.json`). It records the declared input closure (manifest,
@@ -317,6 +350,10 @@ changes.
   corrupt; nothing is generated. Locked runs acquire remote inputs offline from
   their pins and cannot be combined with `--refresh-inputs`.
 
+- Add `locked: true` to `tungsten.yml`, making every `generate` and `check`
+  of the project a locked run as with `--locked`. The JSON results of both
+  commands report `locked`.
+
 - Add `bundle export --include-input-cache` to carry the verified
   `.tungsten-inputs` pin records and pinned content of remote HTTP(S) and Git
   inputs, and of the reviewed sources of converted imports, so such projects
@@ -335,6 +372,10 @@ changes.
   `module`, `python_version` and `models` keys. Declarations remain source
   statements: qualification and artifact availability stay `unknown`.
 
+- Support-bundle collection, for preview and export, is limited to 30 seconds
+  and writes nothing when the limit is reached; library cancellation of an
+  export is now honoured while collection runs.
+
 - Generate the README support matrix from the capability catalog.
   `tungsten capabilities --matrix --format markdown` prints the matrix
   between the markers that delimit README's generated block, and CI fails
@@ -352,6 +393,20 @@ changes.
   unknown manifest fields or values (`TG0602`), replacing the value named by
   the diagnostic with the closest known name. Fixes are version-pinned edits
   of the current buffer and are withheld when the buffer no longer matches.
+
+- Offer language-server overlay quick fixes for operations without an
+  `operationId` (`TG0403`) and repeated operation ids (`TG0401`), using the
+  actions `tungsten overlay suggest` derives. One previewed workspace edit adds
+  the action to `<namespace>.suggested-overlay.yaml`, creating that file and
+  listing it under the input's `overlays` in `tungsten.yml` when needed. No fix
+  is offered from an analysis older than the latest edit.
+
+- Explain unavailable language-server overlay fixes: editors that show disabled
+  code actions show why no fix is offered for a `TG0403`/`TG0401` diagnostic (a
+  pending check, no derivable action, an editor without versioned edits or file
+  creation, or a manifest shape the fix does not edit) and the equivalent
+  `tungsten overlay suggest` command. Replacement fixes for `TG0603`/`TG0602`
+  fall back to plain edits for editors without versioned workspace edits.
 
 - The `java` and `kotlin` targets now enforce imported-operation policy and may
   be generated for projects converted from Postman, cURL, `.http` or HAR input.
@@ -372,6 +427,14 @@ changes.
   outside its saved review scope (`VALIDATION_FAILED` on `base_url`, nothing
   sent), and generated clients require `ClientCore.requireImportPolicyV1()`.
 
+- The external Go emitter (`emitters/go`) now declares `import_policy: true` in
+  its `--describe` response, so projects converted from Postman, cURL, `.http`
+  or HAR input can generate Go SDKs. The Go runtime refuses a reviewed imported
+  operation whose target origin is outside its saved review scope
+  (`VALIDATION_FAILED` on `base_url`, nothing sent), and generated descriptors
+  carry `tungsten.ImportPolicy`, so they build only against a runtime that
+  enforces it.
+
 - Add explicit Linux support-bundle export to a new file in an existing,
   trusted user-owned directory. Export preserves the metadata-only preview
   manifest, caps complete artifacts at 128 KiB, refuses replacement and
@@ -383,6 +446,13 @@ changes.
   Linux. Every path component is opened without following symlinks, so the
   macOS `/tmp` and `/var` symlinks are refused; publication needs hard-link
   support in the destination filesystem.
+
+- Extend support-bundle export to Windows with its own no-clobber writer: it
+  holds every traversed directory open without delete sharing, refuses
+  reparse points, network shares, device paths and reserved names, creates
+  the temporary file with `CREATE_NEW` and publishes it with a hard link that
+  never replaces an existing entry. The directory's owner and ACL are not
+  checked.
 
 - A copyable GitHub Actions workflow in `examples/github-actions/` installs a pinned,
   checksum- and provenance-verified release through `install.sh`, runs `tungsten check`
@@ -414,6 +484,14 @@ changes.
   project pins or generated clients, or sends project data. `--json` output adds
   the `update check` command to the CLI output schema.
 
+- OpenAPI 3.2 response `itemSchema` compiles onto the existing streaming
+  support. On a JSON Lines response it is the type of one line. On a
+  `text/event-stream` response whose item is an event object with a JSON `data`
+  string (`contentMediaType` JSON and `contentSchema`), the `contentSchema` is
+  the event type. Other uses, such as request bodies, other media types,
+  non-JSON event `data` or `schema` declared beside it, still report TG0145.
+  `itemSchema` in OpenAPI 3.0 and 3.1 documents is still not read.
+
 - The OpenAPI 3.2 `query` path-item method compiles to an operation sent with
   the HTTP `QUERY` method and its request body in generated clients.
   The IR gains the `QUERY` HTTP method, which is safe (read-only by default; set
@@ -434,7 +512,7 @@ changes.
   construct only 3.2 has is diagnosed at its member instead of being ignored, one
   code per feature. These are errors, because a client built without them would
   differ from the API: `$self` (TG0140), `additionalOperations` (TG0142), `in: querystring` (TG0143), `style: cookie`
-  (TG0144), `itemSchema` (TG0145), `prefixEncoding` and `itemEncoding` (TG0146),
+  (TG0144), other `itemSchema` uses (TG0145), `prefixEncoding` and `itemEncoding` (TG0146),
   nested encodings (TG0147), `components.mediaTypes` and media types given by
   `$ref` (TG0148), discriminator `defaultMapping` (TG0149), the OAuth 2.0 device
   authorization flow (TG0150) and security requirements that name a scheme by URI

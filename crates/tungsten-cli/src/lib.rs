@@ -192,7 +192,7 @@ pub fn run(
     )
 }
 
-/// Embed scenario execution or Linux support-bundle export with cooperative
+/// Embed scenario execution or Linux and macOS support-bundle export with cooperative
 /// cancellation; never changes signal masks. Export commits at publication.
 pub fn run_with_cancellation(
     args: impl IntoIterator<Item = OsString>,
