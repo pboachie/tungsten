@@ -714,6 +714,8 @@ fn walkthrough(args: &mut InitArgs) -> io::Result<bool> {
             "Plan: {} in {}. Generate configured source outputs using the regular compiler. Local setup: {}. Shared TypeScript output is reused for MCP/WebMCP. No live API calls or application integration installation. Advanced settings remain editable in tungsten.yml and agent.yml.",
             if args.resume {
                 "preserve reviewed settings; optionally add outputs with a manifest backup"
+            } else if super::init_preset::writes_profile(args) {
+                "create tungsten.yml, agent.yml and the shared profile profiles/library.yml"
             } else {
                 "create tungsten.yml and agent.yml"
             },
