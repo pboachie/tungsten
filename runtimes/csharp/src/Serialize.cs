@@ -471,6 +471,9 @@ internal static class Serialize
                         bool isArray = kv.Value is JsonArray;
                         var list = kv.Value is JsonArray arr ? arr.Where(x => !Json.IsNull(x)).ToList() : new List<JsonNode?> { kv.Value };
                         var shown = new JsonArray();
+                        string? declared = d is not null && d.PartContentTypes.TryGetValue(kv.Key, out var dt) ? dt : null;
+                        bool declaredJson = declared is not null
+                            && Envelope.IsJsonMedia(declared.Split(';', 2)[0].Trim().ToLowerInvariant());
                         foreach (var x in list)
                         {
                             if (Binary.TryFrom(x, out var bin))
@@ -480,13 +483,19 @@ internal static class Serialize
                                     throw new SerializationError(parameter, "multipart file content types that are valid media types", v);
                                 }
 
-                                shown.Add((JsonNode?)JsonValue.Create(BinaryDisplay(bin.Data.Length, bin.ContentType)));
-                                parts.Add(new MultipartPart(kv.Key, PartKind.File, "", bin.Data, bin.Filename ?? kv.Key, bin.ContentType ?? "application/octet-stream"));
+                                var own = bin.ContentType ?? declared;
+                                shown.Add((JsonNode?)JsonValue.Create(BinaryDisplay(bin.Data.Length, own)));
+                                parts.Add(new MultipartPart(kv.Key, PartKind.File, "", bin.Data, bin.Filename ?? kv.Key, own ?? "application/octet-stream"));
                             }
                             else if (x is JsonObject)
                             {
-                                parts.Add(new MultipartPart(kv.Key, PartKind.Json, Json.Text(x), System.Array.Empty<byte>(), "", ""));
+                                parts.Add(new MultipartPart(kv.Key, PartKind.Json, Json.Text(x), System.Array.Empty<byte>(), "", declaredJson ? declared! : "application/json"));
                                 Json.Add(shown, x);
+                            }
+                            else if (declared is not null)
+                            {
+                                parts.Add(new MultipartPart(kv.Key, PartKind.Json, declaredJson ? Json.Text(x) : Util.Scalar(x), System.Array.Empty<byte>(), "", declared));
+                                shown.Add((JsonNode?)JsonValue.Create(Util.Scalar(x)));
                             }
                             else
                             {

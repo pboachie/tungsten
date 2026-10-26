@@ -367,7 +367,7 @@ abstract final class _Serialize {
           hashed: bytes,
         );
       case 'multipart':
-        return _multipart(value, redact);
+        return _multipart(value, redact, desc?.partContentTypes ?? const {});
       case 'bytes':
         final List<int> data;
         final bin = Binary.tryFrom(value);
@@ -434,6 +434,7 @@ abstract final class _Serialize {
   static Object _multipart(
     Object? value,
     Object? Function(Object? display) redact,
+    Map<String, String> declaredParts,
   ) {
     if (value is! Map) {
       return _SerializationError(
@@ -452,10 +453,14 @@ abstract final class _Serialize {
             ]
           : [item];
       final shown = <Object?>[];
+      final declared = declaredParts[k];
+      final declaredJson = declared != null &&
+          _Classify.jsonMedia(declared.split(';').first.trim().toLowerCase());
       for (final x in list) {
         final bin = Binary.tryFrom(x);
         if (bin != null) {
-          final contentType = bin.contentType ?? 'application/octet-stream';
+          final contentType =
+              bin.contentType ?? declared ?? 'application/octet-stream';
           if (!validHeaderValue(contentType)) {
             return _SerializationError(
               'body',
@@ -463,7 +468,7 @@ abstract final class _Serialize {
               value,
             );
           }
-          shown.add(binaryDisplay(bin.length, bin.contentType));
+          shown.add(binaryDisplay(bin.length, bin.contentType ?? declared));
           parts.add(_Part(
             k,
             _PartKind.file,
@@ -472,8 +477,15 @@ abstract final class _Serialize {
             contentType: contentType,
           ));
         } else if (x is Map) {
-          parts.add(_Part(k, _PartKind.json, text: Json.text(x)));
+          parts.add(_Part(k, _PartKind.json,
+              text: Json.text(x),
+              contentType: declaredJson ? declared : 'application/json'));
           shown.add(x);
+        } else if (declared != null) {
+          parts.add(_Part(k, _PartKind.json,
+              text: declaredJson ? Json.text(x) : scalar(x),
+              contentType: declared));
+          shown.add(scalar(x));
         } else {
           parts.add(_Part(k, _PartKind.text, text: scalar(x)));
           shown.add(scalar(x));
@@ -512,7 +524,7 @@ abstract final class _Serialize {
           out.add(p.data ?? const []);
         case _PartKind.json:
           add('Content-Disposition: form-data; name="${quote(p.name)}"\r\n');
-          add('Content-Type: application/json\r\n\r\n');
+          add('Content-Type: ${p.contentType ?? 'application/json'}\r\n\r\n');
           add(p.text ?? '');
         case _PartKind.text:
           add('Content-Disposition: form-data; name="${quote(p.name)}"\r\n\r\n');
