@@ -31,6 +31,7 @@ mod strict;
 pub mod target_options;
 pub mod transport;
 mod validate;
+pub mod workspace;
 mod yaml;
 
 use std::fmt;

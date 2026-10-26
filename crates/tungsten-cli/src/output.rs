@@ -87,6 +87,8 @@ pub enum CommandName {
     Capabilities,
     #[serde(rename = "config")]
     Config,
+    #[serde(rename = "workspace")]
+    Workspace,
     #[serde(rename = "lock")]
     Lock,
     #[serde(rename = "refresh-import")]
@@ -205,6 +207,7 @@ pub enum CommandResult {
     Doctor(DoctorResult),
     Capabilities(tungsten_config::capabilities::CapabilityCatalog),
     Config(tungsten_config::inspection::ConfigurationInspection),
+    Workspace(crate::commands::workspace::WorkspaceResult),
     Lock(Box<crate::commands::lock::LockResult>),
     RefreshImport(Box<crate::commands::refresh_import::RefreshImportResult>),
     BundleExport(Box<crate::commands::bundle::BundleExportResult>),
@@ -1051,6 +1054,7 @@ const RESULT_DEFS: &[(CommandName, &str)] = &[
     (CommandName::Doctor, "DoctorResult"),
     (CommandName::Capabilities, "CapabilityCatalog"),
     (CommandName::Config, "ConfigurationInspection"),
+    (CommandName::Workspace, "WorkspaceResult"),
     (CommandName::Lock, "LockResult"),
     (CommandName::RefreshImport, "RefreshImportResult"),
     (CommandName::BundleExport, "BundleExportResult"),

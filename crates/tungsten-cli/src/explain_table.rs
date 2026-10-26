@@ -785,6 +785,48 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
          that still has side effects does not also approve removing preview.",
     ),
     e(
+        "TG0640",
+        "Workspace discovery (`tungsten workspace`, `--project`, the language server's \
+         workspace folders) is bounded: it reads at most 4,096 directories and loads at \
+         most 64 projects and manifests of at most 1 MiB, searching 8 levels deep. A tree \
+         that exceeds a bound stops discovery with this error rather than return a partial \
+         list, so a project is never silently missed.",
+        "Run the command in the project's own directory, or move large unrelated trees \
+         (dependencies, fixtures, build output) out of the workspace. Hidden directories, \
+         `node_modules`, `target`, `vendor` and the output directories of discovered \
+         projects are never searched.",
+    ),
+    e(
+        "TG0641",
+        "One directory holds both `tungsten.yml` and `tungsten.yaml`. A project is owned by \
+         exactly one manifest, so discovery loads neither instead of guessing.",
+        "Keep one manifest per directory; move the other project into its own directory.",
+    ),
+    e(
+        "TG0642",
+        "Two projects of one workspace write to the same output directory, or one \
+         project's target directory is inside another project's. Each target removes \
+         files it no longer generates from its own directory, so the projects would \
+         delete each other's output.",
+        "Give every target of every project its own directory that is not inside \
+         another's, for example `out: generated/billing-ts` and `out: generated/identity-ts`.",
+    ),
+    e(
+        "TG0643",
+        "A `tungsten.yml` found by workspace discovery is a symbolic link. Discovery never \
+         follows links, so a project cannot be reached twice or from outside the \
+         workspace; the linked manifest is not a project of this workspace.",
+        "Replace the link with the manifest, or run the command in the directory the link \
+         points to.",
+    ),
+    e(
+        "TG0644",
+        "`--project` named a project that workspace discovery did not find. A project id is \
+         its directory relative to the workspace root, with `/` separators (`.` for the \
+         root); its manifest path is accepted too.",
+        "Run `tungsten workspace` in the same directory to list the project ids.",
+    ),
+    e(
         "TG0701",
         "A generated file could not be written to the target's output directory, for example \
          because the directory is read-only or a path component is a file.",

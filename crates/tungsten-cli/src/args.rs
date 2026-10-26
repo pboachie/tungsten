@@ -145,6 +145,7 @@ impl Cli {
             Command::Doctor(_) => CommandName::Doctor,
             Command::Capabilities(_) => CommandName::Capabilities,
             Command::Config(_) => CommandName::Config,
+            Command::Workspace(_) => CommandName::Workspace,
             Command::Lock(_) => CommandName::Lock,
             Command::RefreshImport(_) => CommandName::RefreshImport,
             Command::Bundle {
@@ -191,6 +192,10 @@ pub(crate) enum Command {
     Capabilities(CapabilitiesArgs),
     /// Explain supported effective configuration without compiling or running tools.
     Config(ConfigArgs),
+    /// List the tungsten projects under a directory (bounded, never follows
+    /// links) with their ids, outputs and declared inputs, and report output
+    /// directories two projects share. Compiles nothing.
+    Workspace(WorkspaceArgs),
     /// Capture or verify the project's generation lock (tungsten.lock.json)
     /// offline; never fetches inputs or runs emitters.
     Lock(LockArgs),
@@ -288,6 +293,16 @@ pub(crate) struct LspArgs {
 }
 
 #[derive(Debug, Args)]
+pub(crate) struct WorkspaceArgs {
+    /// The workspace root to search.
+    #[arg(default_value = ".")]
+    pub path: PathBuf,
+    /// Only these projects, by id; repeatable. Unknown ids fail (TG0644).
+    #[arg(long, value_name = "ID")]
+    pub project: Vec<String>,
+}
+
+#[derive(Debug, Args)]
 pub(crate) struct CapabilitiesArgs {
     /// Limit the catalog to one target id or CLI alias.
     pub target: Option<String>,
@@ -332,6 +347,10 @@ pub(crate) struct LockArgs {
     /// Accept changed identities and replace a stale or corrupt lock.
     #[arg(long)]
     pub update: bool,
+    /// Lock one project of the workspace at PATH, by its id from
+    /// `tungsten workspace`.
+    #[arg(long, value_name = "ID")]
+    pub project: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -474,6 +493,11 @@ pub(crate) struct InputArgs {
     /// single OpenAPI document (local path, HTTP(S) URL or git+ URL).
     #[arg(default_value = ".")]
     pub path: PathBuf,
+    /// Run on one project of the workspace at PATH: its id from
+    /// `tungsten workspace` (the project directory relative to PATH, `.` for
+    /// PATH itself) or its manifest path.
+    #[arg(long, value_name = "ID")]
+    pub project: Option<String>,
 }
 
 #[derive(Debug, Args)]
