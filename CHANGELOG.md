@@ -236,6 +236,19 @@ changes.
 
 ### Added
 
+- Concurrent commands of a generated Rust CLI refresh a stored login session
+  one process at a time: the token is refreshed before the call under a
+  per-session lock file and read again first, so a refresh token is not
+  presented twice to providers that rotate refresh tokens.
+
+- The runtime telemetry observer now also reports `preview()`, `pages()` and
+  `poll()` in TypeScript, Python and Rust as operations (`entry` `preview`,
+  `pages` or `poll`), each covering every request it made with attempts
+  numbered across it; a page iteration stopped early is `cancelled`. Only a
+  `call` operation's end carries the final `http_status`. Unreleased 0.2.0
+  only.
+
+
 - OpenAPI 3.1+ `webhooks` are compiled. Each operation of a `webhooks` entry
   becomes an incoming webhook in the IR (`Namespace.webhooks`, omitted when
   empty: event key, method, operation id, docs and the JSON request body as a
@@ -364,6 +377,9 @@ changes.
   `refresh-import` reuses them for flags that are not given again. `check` and
   `generate` refuse a project with an interrupted `refresh-import --apply`
   (TG0124) until `--rollback` restores it.
+- `refresh-import --apply` stages the reviewed content beside its backups, so
+  `refresh-import --resume` finishes an interrupted apply (writes, pin and
+  lock) as an alternative to `--rollback`.
 - The language server offers a disabled "Refresh the converted import" action
   on TG0122 for a converted input whose remote source changed, naming the
   `refresh-import` preview, `--apply` and `--offline` choices.
@@ -391,6 +407,11 @@ changes.
   log are recorded, it sets `runtime_acceptance` to passed or failed, and a
   failure blocks `upgrade apply`. The command runs with your privileges and
   environment; it is not sandboxed.
+- Add `upgrade rehearse --candidate FILE` to take the release selected by a
+  saved `tungsten update check --json` result as the explicit candidate. It
+  is read offline; the rehearsal is blocked unless the candidate is the
+  running compiler and was discovered by the locked release, and notes when
+  discovery did not confirm the platform archive. Discovery never upgrades.
 - Add `tungsten upgrade apply --workspace DIR` to apply an accepted rehearsal
   as a separate step. It refuses when inputs, the lock, the staged files or
   any output file changed since the rehearsal, backs up what it replaces,
@@ -443,6 +464,15 @@ changes.
   write a project whose outputs collide with another's. The capability catalog
   declares the workspace contract under `workspace`.
 
+- The `actions/tungsten` GitHub Action runs saved mock scenarios after the
+  checks (`scenarios`, `scenario-input`) through `tungsten scenario run`, one
+  line per scenario split on whitespace without a shell; a failed assertion
+  fails the step, and scenarios are refused on `pull_request_target`.
+- The `actions/tungsten` GitHub Action checks the projects of a workspace
+  (`workspace`), narrowed by project id (`workspace-projects`) and by
+  `tungsten workspace --affected` evidence for listed files (`affected-files`)
+  or for the files changed since a base commit (`affected-base`), and reports
+  the number of checked projects in a `projects` output.
 - A reusable composite GitHub Action, `actions/tungsten`, installs a pinned
   tungsten release through `install.sh` from the action's own commit (checksum
   and build provenance verified, provenance cannot be disabled), then runs
@@ -938,6 +968,11 @@ changes.
   tag open. A `defaultMapping` that is not a variant of the union is reported
   as TG0306 and ignored. Other SDK targets still refuse an unmapped tag.
   TG0149 is retired and no longer reported.
+
+- Discriminator `defaultMapping` is honoured by more SDK targets: Java SDKs
+  decode an object whose tag is absent, not a string or claimed by no variant
+  as the default variant, as TypeScript, Python and Rust do. A non-string tag
+  then fails only if the default variant's own field type refuses it.
 
 - OpenAPI 3.2 security requirements that name a scheme by URI compile: a key
   such as `#/components/securitySchemes/apiKey`, or a URI into another input

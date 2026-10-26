@@ -102,6 +102,13 @@ pub struct Pages {
     state: PageState,
     /// The traversal's total deadline, fixed when it was created.
     deadline: Option<std::time::Instant>,
+    /// The traversal's telemetry, started by the first `next`; reports it
+    /// cancelled when the iterator is dropped before its end.
+    telemetry: Option<(
+        Arc<crate::telemetry::Span>,
+        Option<crate::telemetry::Pending>,
+    )>,
+    started: bool,
 }
 
 impl std::fmt::Debug for Pages {
@@ -128,16 +135,48 @@ impl Pages {
             opts,
             state: PageState::new(args),
             deadline,
+            telemetry: None,
+            started: false,
         }
     }
 
     pub async fn next(&mut self) -> Option<Result<Page<Value>>> {
-        crate::verify::with_deadline_at(
-            self.deadline,
-            self.core
-                .page_step(&self.op, &mut self.state, &self.opts, None),
+        if !self.started {
+            self.started = true;
+            self.telemetry = self
+                .core
+                .start_span(&self.op, crate::TelemetryEntry::Pages)
+                .map(|span| {
+                    let pending = crate::telemetry::Pending::new(
+                        Some(&span),
+                        crate::telemetry::PendingKind::Operation,
+                    );
+                    (span, Some(pending))
+                });
+        }
+        let span = self.telemetry.as_ref().map(|(span, _)| span.clone());
+        let item = crate::telemetry::scoped(
+            span,
+            crate::verify::with_deadline_at(
+                self.deadline,
+                self.core
+                    .page_step(&self.op, &mut self.state, &self.opts, None),
+            ),
         )
-        .await
+        .await;
+        if let Some((span, pending)) = &mut self.telemetry
+            && let Some(pending) = pending.take_if(|_| match &item {
+                Some(Ok(_)) => self.state.done,
+                _ => true,
+            })
+        {
+            pending.done();
+            match &item {
+                Some(Err(error)) => span.end(Some(&error.diagnostic), false, None),
+                _ => span.end(None, false, None),
+            }
+        }
+        item
     }
 
     /// Items typed as `T` (an item that does not decode is an
