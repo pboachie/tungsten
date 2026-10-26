@@ -1359,6 +1359,15 @@ changes.
 
 ### Fixed
 
+- Webhook verification in the TypeScript, Python and Rust runtimes applies
+  one documented nesting limit: a payload whose arrays and objects nest more
+  than 100 levels deep (`MAX_WEBHOOK_JSON_DEPTH`) is rejected as
+  `payload_invalid` ("the payload nests deeper than 100 levels") before it is
+  parsed. Previously a correctly signed body nested 100000 levels deep raised
+  `RecursionError` from Python's `verify_webhook`, which is documented never
+  to raise for a bad delivery. Rust rejected anything deeper than 127 levels
+  as "not UTF-8 JSON", and TypeScript had no limit.
+
 - A read whose one-shot upload is answered with a same-origin `307` or `308`
   redirect no longer gets the cross-origin remediation ("leaves the API's
   origin ... check base_url"). The TypeScript, Python and Rust runtimes now

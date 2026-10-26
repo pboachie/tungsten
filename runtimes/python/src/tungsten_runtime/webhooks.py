@@ -28,6 +28,7 @@ from typing import Any, Literal, cast
 __all__ = [
     "DEFAULT_WEBHOOK_MAX_BODY_BYTES",
     "DEFAULT_WEBHOOK_TOLERANCE_SECONDS",
+    "MAX_WEBHOOK_JSON_DEPTH",
     "MAX_WEBHOOK_SIGNATURE_HEADER",
     "RejectedWebhook",
     "VerifiedWebhook",
@@ -43,6 +44,8 @@ DEFAULT_WEBHOOK_TOLERANCE_SECONDS = 300
 """Default allowed distance between the signed timestamp and now: 5 minutes."""
 MAX_WEBHOOK_SIGNATURE_HEADER = 8192
 """Longest accepted signature header, in UTF-16 code units (ASCII bytes)."""
+MAX_WEBHOOK_JSON_DEPTH = 100
+"""Deepest accepted nesting of arrays and objects in the payload (``[]`` is 1)."""
 
 WebhookRejection = Literal[
     "body_too_large",
@@ -127,6 +130,32 @@ def _parse_header(header: str) -> tuple[str, list[bytes]] | str:
     return timestamp, signatures
 
 
+def _too_deep(raw: bytes) -> bool:
+    """Whether arrays and objects outside strings nest deeper than the limit.
+
+    Scans bytes, so it runs before decoding and gives the same answer in
+    every runtime, whatever else is wrong with the body."""
+    depth = 0
+    in_string = escaped = False
+    for byte in raw:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif byte == 0x5C:  # backslash
+                escaped = True
+            elif byte == 0x22:  # quote
+                in_string = False
+        elif byte == 0x22:
+            in_string = True
+        elif byte in (0x5B, 0x7B):  # [ {
+            depth += 1
+            if depth > MAX_WEBHOOK_JSON_DEPTH:
+                return True
+        elif byte in (0x5D, 0x7D):  # ] }
+            depth -= 1
+    return False
+
+
 def _no_constant(name: str) -> Any:
     raise ValueError(name)
 
@@ -151,7 +180,8 @@ def verify_webhook(
     key is the event's string ``id`` when present, otherwise
     ``"<t>.<matched v1 signature>"``. ``parse`` is typed decoding of the parsed
     JSON payload, run before ``claim``: return the typed event, or raise to
-    reject the delivery as ``payload_invalid``.
+    reject the delivery as ``payload_invalid``. A payload whose arrays and
+    objects nest deeper than ``MAX_WEBHOOK_JSON_DEPTH`` is ``payload_invalid``.
 
     Never raises for a bad delivery; raises ``ValueError`` for invalid options.
     """
@@ -186,12 +216,16 @@ def verify_webhook(
             "timestamp_out_of_tolerance",
             f"the signed timestamp is more than {tolerance} seconds from now",
         )
+    if _too_deep(raw):
+        return RejectedWebhook(
+            "payload_invalid", f"the payload nests deeper than {MAX_WEBHOOK_JSON_DEPTH} levels"
+        )
     try:
         text = raw.decode("utf-8")
         if text.startswith("﻿"):
             raise ValueError("BOM")
         event = json.loads(text, parse_constant=_no_constant)
-    except ValueError:
+    except (ValueError, RecursionError):
         return RejectedWebhook("payload_invalid", "the body is not UTF-8 JSON")
     record = cast("dict[str, object]", event) if isinstance(event, dict) else None
     found_id = record.get("id") if record is not None else None
