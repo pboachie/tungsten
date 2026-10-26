@@ -236,6 +236,10 @@ changes.
 
 ### Added
 
+- The runtime telemetry observer reports `download()` (`entry` `download`,
+  ending when the answer is handed over) and page exports (`export_pages`,
+  like `pages`) in TypeScript, Python and Rust. Unreleased 0.2.0 only.
+
 - Add the `examples/telemetry` gallery recipe: TypeScript, Python and Rust
   SDKs collect correlated operation, attempt and phase telemetry in memory for
   a read, a retried read and a missing record, print the same summary and

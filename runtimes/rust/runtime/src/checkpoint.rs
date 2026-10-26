@@ -224,6 +224,8 @@ pub struct ExportPages {
     resuming: bool,
     refusal: Option<Error>,
     finished: bool,
+    /// The export's telemetry, started by the first `next`.
+    telemetry: crate::telemetry::Traversal,
 }
 
 impl std::fmt::Debug for ExportPages {
@@ -269,6 +271,7 @@ impl ExportPages {
             resuming: false,
             refusal: None,
             finished: false,
+            telemetry: crate::telemetry::Traversal::default(),
         };
         if let Err(error) = out.prepare(args, cp) {
             out.refusal = Some(error);
@@ -417,6 +420,18 @@ impl ExportPages {
     }
 
     pub async fn next(&mut self) -> Option<Result<CheckpointPage<Value>>> {
+        let span = self
+            .telemetry
+            .span(&self.core, &self.op, crate::TelemetryEntry::ExportPages);
+        let item = crate::telemetry::scoped(span, self.next_item()).await;
+        if !matches!(item, Some(Ok(_))) || self.finished || self.state.done {
+            self.telemetry
+                .end(item.as_ref().and_then(|item| item.as_ref().err()));
+        }
+        item
+    }
+
+    async fn next_item(&mut self) -> Option<Result<CheckpointPage<Value>>> {
         if let Some(error) = self.refusal.take() {
             self.finished = true;
             return Some(Err(error));

@@ -752,15 +752,24 @@ class Engine:
     def export_pages(
         self, op: OperationDescriptor, args: object, checkpoint: object, opts: object
     ) -> Flow[None]:
-        resolved = self._call_options(opts)
-        expired: list[Err] = []
-        yield from _within_deadline(
-            self._export_pages(op, args, checkpoint, resolved),
-            _deadline_of(resolved),
-            lambda sent: expired.append(self._deadline_expired(op, sent)),
-        )
-        if expired:
-            yield from emit(expired[0])
+        # The export's last item.
+        last: list[object] = []
+
+        def run(resolved: dict[str, object]) -> Flow[None]:
+            expired: list[Err] = []
+            yield from _watch_items(
+                _within_deadline(
+                    self._export_pages(op, args, checkpoint, resolved),
+                    _deadline_of(resolved),
+                    lambda sent: expired.append(self._deadline_expired(op, sent)),
+                ),
+                last,
+            )
+            if expired:
+                last[:] = [expired[0]]
+                yield from emit(expired[0])
+
+        yield from self._traced(op, "export_pages", opts, run, lambda _: last[0] if last else None)
 
     def stream(
         self, op: OperationDescriptor, args: object, opts: object, cancelled: Callable[[], bool] | None = None
@@ -785,12 +794,19 @@ class Engine:
 
     def download(self, op: OperationDescriptor, args: object, opts: object) -> Flow[Ok[Any] | Err]:
         """Send ``op`` and hand its 2xx body over unread: ``Ok.value`` is a
-        ``DownloadStart`` the client wraps in a ``Download``."""
-        resolved = self._call_options(opts)
-        answer = yield from _within_deadline(
-            self._download(op, args, resolved),
-            _deadline_of(resolved),
-            lambda sent: Answer(self._deadline_expired(op, sent)),
+        ``DownloadStart`` the client wraps in a ``Download``. The telemetry
+        operation ends when the answer is handed over; reading the body is not
+        part of it."""
+        answer = yield from self._traced(
+            op,
+            "download",
+            opts,
+            lambda resolved: _within_deadline(
+                self._download(op, args, resolved),
+                _deadline_of(resolved),
+                lambda sent: Answer(self._deadline_expired(op, sent)),
+            ),
+            lambda answer: answer.result,
         )
         return answer.result
 
