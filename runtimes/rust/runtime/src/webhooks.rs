@@ -110,7 +110,8 @@ pub struct VerifyWebhookOptions<'a> {
     pub secrets: &'a [&'a str],
     /// Allowed |now - t| in seconds; default 300. Must be positive.
     pub tolerance_seconds: Option<u64>,
-    /// Largest accepted body in bytes; default 1 MiB. Must be positive.
+    /// Largest accepted body in bytes; default 1 MiB. Must be a positive
+    /// safe integer (at most 2^53 - 1), as in the other runtimes.
     pub max_body_bytes: Option<usize>,
     /// Current Unix time in seconds; defaults to the system clock.
     pub now: Option<u64>,
@@ -254,7 +255,9 @@ fn mac(secret: &str, timestamp: &str, body: &[u8]) -> Hmac<Sha256> {
 /// Verify a Stripe-compatible signed delivery and parse its JSON payload as
 /// `T` (use [`Value`] for an untyped event). A payload that is not JSON or
 /// does not match `T` is rejected as `payload_invalid`, as is one whose arrays
-/// and objects nest deeper than [`MAX_WEBHOOK_JSON_DEPTH`].
+/// and objects nest deeper than [`MAX_WEBHOOK_JSON_DEPTH`], one with a `\u`
+/// escape that is a lone surrogate, or one with a number outside the `f64`
+/// range (the TypeScript and Python runtimes reject the same payloads).
 ///
 /// The outer `Err` is only for invalid options; a bad delivery is the inner
 /// `Err`.
@@ -290,7 +293,7 @@ pub fn verify_webhook_with<T>(
     };
     let max_body = match options.max_body_bytes {
         None => DEFAULT_WEBHOOK_MAX_BODY_BYTES,
-        Some(m) if m > 0 => m,
+        Some(m) if m > 0 && m as u64 <= MAX_SAFE_INTEGER => m,
         Some(_) => {
             return Err(WebhookOptionsError(
                 "max_body_bytes must be a positive integer",
