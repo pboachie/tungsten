@@ -689,6 +689,10 @@ const PROFILE: Table = &[
         "A relative path to another local profile under the same include root. URLs and absolute paths are refused.",
     ),
     (
+        "transport",
+        "Proxy, private CA, mTLS and account references shared by projects: `{env: NAME}`, `{file: path}` or `{store: store:item}`, never the material itself. Explicit project fields win.",
+    ),
+    (
         "targets",
         "Reusable target defaults. Explicit project fields in `tungsten.yml` win; `tungsten config` shows each value's winning and shadowed source.",
     ),

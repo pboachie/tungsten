@@ -75,9 +75,29 @@ fn human(configuration: &ConfigurationInspection) -> String {
             origin.source, origin.pointer, origin.digest, origin.value
         );
     }
-    for target in &configuration.targets {
-        let _ = writeln!(text, "  {}: {:?}", target.target, target.status);
-        for field in &target.fields {
+    let transport = configuration
+        .transport
+        .iter()
+        .filter(|field| field.winner.is_some());
+    let sections = configuration
+        .targets
+        .iter()
+        .map(|target| {
+            (
+                format!("{}: {:?}", target.target, target.status),
+                target.fields.iter().collect::<Vec<_>>(),
+            )
+        })
+        .chain(std::iter::once((
+            "transport references (names only; targets are never read)".to_string(),
+            transport.collect(),
+        )));
+    for (heading, fields) in sections {
+        if fields.is_empty() && heading.starts_with("transport") {
+            continue;
+        }
+        let _ = writeln!(text, "  {heading}");
+        for field in fields {
             let value = match field.state {
                 InspectionValueState::Redacted => "[redacted]".into(),
                 _ => field.value.as_ref().map_or_else(

@@ -230,6 +230,12 @@ changes.
 
 ### Added
 
+- Declare proxy, `NO_PROXY`, private CA, mTLS and account/provider references
+  under `transport` in profiles and `tungsten.yml`. Values are references
+  (`{env: NAME}`, `{file: path}`, `{store: store:item}`) or non-secret names;
+  inline material and settings that would disable certificate verification are
+  refused. `tungsten config` explains each reference's source; tungsten never
+  reads what they point to.
 - `scenario run` now works on macOS and Windows as well as Linux. macOS owns
   the integration through a process group and non-reaping `waitid`, Windows
   through a Job Object; the binary cancels on Ctrl-C/SIGTERM on both.
