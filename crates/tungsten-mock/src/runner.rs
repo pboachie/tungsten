@@ -9,7 +9,7 @@ use serde::Serialize;
 use tungsten_ir::Ir;
 
 use crate::ScenarioReport;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_vendor = "apple", windows))]
 use crate::{MockOptions, MockServer};
 
 #[derive(Debug, Clone, Copy)]
@@ -88,27 +88,31 @@ pub struct RunReport {
     pub scenario: Option<ScenarioReport>,
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_vendor = "apple", windows)))]
 pub fn run_scenario(_ir: Ir, _scenario: &[u8], _options: RunOptions) -> std::io::Result<RunReport> {
     Err(std::io::Error::new(
         std::io::ErrorKind::Unsupported,
-        "scenario run is currently available on Linux only; scenario validate is portable",
+        "scenario run is available on Linux, macOS and Windows only; scenario validate is portable",
     ))
 }
 
-/// Execute with exclusive child ownership. Embeddings must not auto-reap children,
-/// concurrently wait for this child, or change SIGCHLD disposition during the run.
-/// Process groups are not a sandbox and do not own descendants that leave them.
-#[cfg(target_os = "linux")]
+/// Execute with exclusive child ownership. Unix embeddings must not auto-reap
+/// children, concurrently wait for this child, or change SIGCHLD disposition
+/// during the run. Process groups (Unix) and Job Objects (Windows) are not a
+/// sandbox and do not own descendants that deliberately leave them.
+#[cfg(any(target_os = "linux", target_vendor = "apple", windows))]
 pub fn run_scenario(ir: Ir, scenario: &[u8], options: RunOptions) -> std::io::Result<RunReport> {
-    linux::run(ir, scenario, options)
+    owned::run(ir, scenario, options)
 }
 
-#[cfg(target_os = "linux")]
-mod linux {
+#[cfg(any(target_os = "linux", target_vendor = "apple", windows))]
+mod owned {
     use super::*;
+    #[cfg(unix)]
     use nix::errno::Errno;
-    use nix::sys::wait::{Id, WaitPidFlag, WaitStatus, waitid, waitpid};
+    #[cfg(unix)]
+    use nix::sys::wait::{WaitPidFlag, WaitStatus, waitpid};
+    #[cfg(unix)]
     use nix::unistd::Pid;
     use process_wrap::std::{ChildWrapper, CommandWrap};
     use std::io;
@@ -122,7 +126,9 @@ mod linux {
     }
 
     impl OwnedChild {
+        #[cfg(target_os = "linux")]
         fn observe(&mut self) -> io::Result<Option<Option<i32>>> {
+            use nix::sys::wait::{Id, waitid};
             let pid = i32::try_from(self.child.id())
                 .map_err(|_| io::Error::other("invalid child identity"))?;
             // WNOWAIT retains the leader's PID until group cleanup. Reaping first
@@ -142,6 +148,42 @@ mod linux {
             }
         }
 
+        #[cfg(target_vendor = "apple")]
+        fn observe(&mut self) -> io::Result<Option<Option<i32>>> {
+            use rustix::io::Errno;
+            use rustix::process::{Pid, WaitId, WaitIdOptions, waitid};
+            let raw = i32::try_from(self.child.id())
+                .map_err(|_| io::Error::other("invalid child identity"))?;
+            let pid =
+                Pid::from_raw(raw).ok_or_else(|| io::Error::other("invalid child identity"))?;
+            // nix's safe waitid is unavailable on Apple; rustix keeps the same
+            // non-reaping WNOWAIT contract as Linux.
+            match waitid(
+                WaitId::Pid(pid),
+                WaitIdOptions::EXITED | WaitIdOptions::NOHANG | WaitIdOptions::NOWAIT,
+            ) {
+                Ok(Some(status)) if status.exited() => Ok(Some(status.exit_status())),
+                Ok(Some(status)) if status.killed() || status.dumped() => Ok(Some(None)),
+                Ok(_) | Err(Errno::INTR) => Ok(None),
+                Err(Errno::CHILD) => {
+                    self.owned = false;
+                    Err(io::Error::other("child ownership lost"))
+                }
+                Err(e) => Err(e.into()),
+            }
+        }
+
+        #[cfg(windows)]
+        fn observe(&mut self) -> io::Result<Option<Option<i32>>> {
+            // The process handle and Job Object keep their identities after the
+            // leader exits, so observing the leader cannot retarget a kill.
+            self.child
+                .inner_mut()
+                .try_wait()
+                .map(|status| status.map(|status| status.code()))
+        }
+
+        #[cfg(unix)]
         fn cleanup(&mut self, deadline: Instant) -> bool {
             if !self.owned {
                 return false;
@@ -165,6 +207,30 @@ mod linux {
                     Err(Errno::EINTR) => {}
                     Err(_) => return false,
                     Ok(_) => {}
+                }
+                if Instant::now() >= deadline {
+                    return false;
+                }
+                std::thread::sleep(Duration::from_millis(2));
+            }
+        }
+
+        #[cfg(windows)]
+        fn cleanup(&mut self, deadline: Instant) -> bool {
+            if !self.owned {
+                return false;
+            }
+            // Terminating the Job Object covers the leader and descendants
+            // that stayed in the job.
+            self.signalled = self.child.start_kill().is_ok();
+            loop {
+                match self.child.inner_mut().try_wait() {
+                    Ok(Some(_)) => {
+                        self.owned = false;
+                        return true;
+                    }
+                    Ok(None) => {}
+                    Err(_) => return false,
                 }
                 if Instant::now() >= deadline {
                     return false;
@@ -233,8 +299,18 @@ mod linux {
                 .stdout(Stdio::null())
                 .stderr(Stdio::null());
             let mut command = CommandWrap::from(command);
-            command.wrap(process_wrap::std::ProcessGroup::leader());
-            command.wrap(process_wrap::std::ResetSigmask);
+            #[cfg(unix)]
+            {
+                command.wrap(process_wrap::std::ProcessGroup::leader());
+                command.wrap(process_wrap::std::ResetSigmask);
+            }
+            #[cfg(windows)]
+            {
+                command.wrap(process_wrap::std::CreationFlags(
+                    windows::Win32::System::Threading::CREATE_NO_WINDOW,
+                ));
+                command.wrap(process_wrap::std::JobObject);
+            }
             match command.spawn() {
                 Err(_) => report.reason = RunReason::SpawnFailed,
                 Ok(child) => {
@@ -328,5 +404,8 @@ mod linux {
     }
 }
 
-#[cfg(all(feature = "testing", target_os = "linux"))]
-pub(crate) use linux::finish;
+#[cfg(all(
+    feature = "testing",
+    any(target_os = "linux", target_vendor = "apple", windows)
+))]
+pub(crate) use owned::finish;

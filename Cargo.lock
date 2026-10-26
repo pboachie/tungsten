@@ -1447,11 +1447,13 @@ dependencies = [
  "hyper-util",
  "nix",
  "process-wrap",
+ "rustix",
  "schemars",
  "serde",
  "serde_json",
  "tokio",
  "tungsten-ir",
+ "windows",
 ]
 
 [[package]]
