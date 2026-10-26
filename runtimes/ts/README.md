@@ -274,6 +274,10 @@ synchronously and never awaited; one that throws or rejects never changes the ca
 `MemoryTelemetryCollector` keeps the newest events up to a capacity (default 1024, at most
 65536) and counts the ones it dropped. Previews, pages, polls, streams and
 macros do not emit telemetry yet.
+`openTelemetryObserver(tracer)` turns the events into one OpenTelemetry client
+span per operation (attempts and phases as span events, outcome attributes,
+error status on failure) for any object shaped like an `@opentelemetry/api`
+`Tracer`; the runtime has no OpenTelemetry dependency.
 
 The core package is browser-safe; the separate `/node` adapter requires Node.js. No file-backed OAuth token store is provided.
 
