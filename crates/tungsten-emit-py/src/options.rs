@@ -21,8 +21,9 @@ use crate::py::{is_identifier, is_keyword};
 /// Default `tungsten-runtime` version specifier.
 pub const DEFAULT_RUNTIME_SPEC: &str = ">=0.1.3,<0.2.0";
 /// Pydantic range of generated packages: PEP 695 `type` aliases are
-/// supported since 2.10.
-pub const PYDANTIC_RANGE: &str = ">=2.10,<3";
+/// supported since 2.10. Generated models fail to import on 2.10.0 (an
+/// unresolved model-serializer annotation); 2.10.1 fixes it.
+pub const PYDANTIC_RANGE: &str = ">=2.10.1,<3";
 /// httpx range of generated packages (the runtime's transport).
 pub const HTTPX_RANGE: &str = ">=0.27,<1";
 
