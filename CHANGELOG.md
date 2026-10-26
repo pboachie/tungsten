@@ -226,6 +226,13 @@ changes.
 
 ### Added
 
+- Add explicit Linux support-bundle export to a new file in an existing,
+  trusted user-owned directory. Export preserves the metadata-only preview
+  manifest, caps complete artifacts at 128 KiB, refuses replacement and
+  reports publication and temporary-file cleanup separately. Other platforms
+  retain preview and refuse export before collection. Cooperative library
+  cancellation ends at publication; abrupt-termination cleanup is not promised.
+
 - A copyable GitHub Actions workflow in `examples/github-actions/` installs a pinned,
   checksum- and provenance-verified release through `install.sh`, runs `tungsten check`
   and fails on stale generated output with `tungsten generate --check`. It uses

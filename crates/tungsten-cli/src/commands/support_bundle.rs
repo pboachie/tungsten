@@ -7,7 +7,8 @@
 //! provenance and declared project prerequisites. It never compiles the project
 //! or builds an IR (a broken project still previews), never starts a program
 //! (no tool-version probes, no emitters, no manifest-provided commands), never
-//! contacts a network and never writes a file. Entries carry names, states and
+//! contacts a network. Only explicit `--output` publishes this manifest, using
+//! the separate bounded, no-clobber Linux writer. Entries carry names, states and
 //! counts only: no configuration values, digests, project names, environment
 //! values, URLs, paths or free-form diagnostic text. Every entry and the whole
 //! document are size-bounded.
@@ -25,6 +26,8 @@ use tungsten_emit::external::find_executable;
 use crate::args::SupportBundleArgs;
 use crate::output::{CliError, CommandName, CommandResult, ErrorKind, json_diagnostic};
 use crate::{CliEnv, Report, exit, input};
+
+use super::support_bundle_file::{self as export, ExportError, Failure};
 
 /// Version of the preview/bundle manifest schema.
 pub(crate) const BUNDLE_SCHEMA_VERSION: u32 = 1;
@@ -86,7 +89,8 @@ pub struct SupportBundlePreview {
     /// Manifest schema version; a reader must reject versions it does not know.
     pub bundle_schema_version: u32,
     pub mode: BundlePreviewMode,
-    /// True only if running the command wrote any file; always false here.
+    /// Whether the inspection phase wrote files; always false. An export
+    /// receipt separately records publication of this unchanged manifest.
     pub wrote_files: bool,
     /// True only if running the command started a program or extension.
     pub executed_programs: bool,
@@ -106,6 +110,27 @@ pub struct SupportBundlePreview {
 #[serde(rename_all = "snake_case")]
 pub enum BundlePreviewMode {
     Preview,
+}
+
+/// An explicit export's command result. The file contains exactly `manifest`
+/// serialized as compact JSON plus one newline, not this receipt. Manifest
+/// mode and side-effect flags describe inspection, before publication.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct SupportBundleExportReceipt {
+    pub manifest: SupportBundlePreview,
+    /// Complete serialized file size, including the final newline (at most
+    /// 131072 bytes); distinct from the manifest's sum of entry payload sizes.
+    pub artifact_bytes: usize,
+    pub published: bool,
+    pub temporary_cleanup: BundleTemporaryCleanup,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum BundleTemporaryCleanup {
+    Complete,
+    Unconfirmed,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
@@ -332,19 +357,27 @@ pub struct ReproductionRecipe {
     pub no_external: bool,
 }
 
-pub(crate) fn run(args: &SupportBundleArgs, env: &CliEnv, cli: &crate::args::Cli) -> Report {
+pub(crate) fn run(
+    args: &SupportBundleArgs,
+    env: &CliEnv,
+    cli: &crate::args::Cli,
+    cancellation: &tungsten_mock::RunCancellation,
+) -> Report {
     let mut report = Report::new(CommandName::SupportBundle);
-    if !args.preview {
+    if !args.preview && args.output.is_none() {
         return report.failed(
             exit::USAGE,
             CliError::new(
                 ErrorKind::Usage,
-                "writing a support bundle is not available yet",
+                "choose a support bundle preview or explicit export",
             )
             .with_help(
-                "run `tungsten support-bundle --preview` to inspect what a bundle would contain",
+                "use --preview, or --output <PATH> to create a new metadata-only file on Linux",
             ),
         );
+    }
+    if args.output.is_some() && !export::supported() {
+        return export_failed(report, Failure::Unsupported.into());
     }
     for id in &args.exclude {
         if !ENTRY_IDS.contains(&id.as_str()) {
@@ -355,10 +388,97 @@ pub(crate) fn run(args: &SupportBundleArgs, env: &CliEnv, cli: &crate::args::Cli
             );
         }
     }
-    let preview = build(args, env, cli.offline, cli.no_external);
-    report.human = human(&preview);
-    report.result = Some(CommandResult::SupportBundle(Box::new(preview)));
+    if args.output.is_some() && (cancellation.0)() {
+        return export_failed(report, Failure::Cancelled.into());
+    }
+    let manifest = build(args, env, cli.offline, cli.no_external);
+    let Some(destination) = &args.output else {
+        report.human = human(&manifest);
+        report.result = Some(CommandResult::SupportBundle(Box::new(manifest)));
+        return report;
+    };
+    let cancelled = || (cancellation.0)();
+    let bytes = match export::serialize(&manifest, &cancelled) {
+        Ok(bytes) => bytes,
+        Err(error) => return export_failed(report, error),
+    };
+    let publication = match export::publish(destination, &bytes, &cancelled) {
+        Ok(publication) => publication,
+        Err(error) => return export_failed(report, error),
+    };
+    report.human = format!(
+        "Published a metadata-only support bundle ({} bytes). Nothing was uploaded or executed.\n",
+        bytes.len()
+    );
+    report.result = Some(CommandResult::SupportBundleExport(Box::new(
+        SupportBundleExportReceipt {
+            manifest,
+            artifact_bytes: bytes.len(),
+            published: true,
+            temporary_cleanup: if publication.temporary_cleanup {
+                BundleTemporaryCleanup::Complete
+            } else {
+                BundleTemporaryCleanup::Unconfirmed
+            },
+        },
+    )));
+    if !publication.temporary_cleanup {
+        // Report::failed would discard the published receipt. A cleanup error
+        // must preserve the commit-point outcome, with a nonzero status.
+        report.exit = exit::INTERNAL;
+        report.error = Some(CliError::new(
+            ErrorKind::Io,
+            "support bundle was published but temporary-file cleanup is unconfirmed",
+        ));
+    }
     report
+}
+
+fn export_failed(report: Report, error: ExportError) -> Report {
+    let (status, kind, message) = match error.kind {
+        Failure::Unsupported => (
+            exit::REFUSED,
+            ErrorKind::Refused,
+            "support bundle export is supported only on Linux",
+        ),
+        Failure::Cancelled => (
+            exit::REFUSED,
+            ErrorKind::Refused,
+            "support bundle export was cancelled before publication",
+        ),
+        Failure::SizeLimit => (
+            exit::REFUSED,
+            ErrorKind::Refused,
+            "support bundle exceeds the complete 128 KiB artifact limit",
+        ),
+        Failure::UnsafeDestination => (
+            exit::REFUSED,
+            ErrorKind::Refused,
+            "support bundle destination requires trusted, nonsymlink directories and a private directory owned by the effective user",
+        ),
+        Failure::AlreadyExists => (
+            exit::REFUSED,
+            ErrorKind::Refused,
+            "support bundle destination already exists; no entry was replaced",
+        ),
+        Failure::Io => (
+            exit::INTERNAL,
+            ErrorKind::Io,
+            "support bundle export failed before publication",
+        ),
+        Failure::Serialization => (
+            exit::INTERNAL,
+            ErrorKind::Internal,
+            "support bundle serialization failed before publication",
+        ),
+    };
+    let error = if error.temporary_cleanup {
+        CliError::new(kind, message)
+    } else {
+        CliError::new(kind, message)
+            .with_help("temporary-file cleanup is unconfirmed; no destination was published")
+    };
+    report.failed(status, error)
 }
 
 fn build(
@@ -723,6 +843,6 @@ fn human(preview: &SupportBundlePreview) -> String {
     for item in &preview.omitted {
         let _ = writeln!(out, "  {:<28} {}", item.category, item.description);
     }
-    out.push_str("Remove an entry with --exclude <id>. Writing a bundle is not available yet.\n");
+    out.push_str("Remove an entry with --exclude <id>. Export to a new file on Linux with --output <PATH>.\n");
     out
 }
