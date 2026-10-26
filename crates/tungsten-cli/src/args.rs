@@ -420,6 +420,10 @@ pub(crate) struct CheckArgs {
     /// `--json` always lists every diagnostic.
     #[arg(long)]
     pub all_warnings: bool,
+    /// Fail (TG0128) unless the project matches its tungsten.lock.json
+    /// exactly. Implies offline input acquisition.
+    #[arg(long)]
+    pub locked: bool,
 }
 
 #[derive(Debug, Args)]
@@ -445,6 +449,10 @@ pub(crate) struct GenerateArgs {
     /// is written when there are any, in any target.
     #[arg(long)]
     pub strict: bool,
+    /// Refuse (TG0128) unless the project matches its tungsten.lock.json
+    /// exactly; nothing is written. Implies offline input acquisition.
+    #[arg(long)]
+    pub locked: bool,
 }
 
 #[derive(Debug, Args)]
