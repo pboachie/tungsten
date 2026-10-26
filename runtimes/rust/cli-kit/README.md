@@ -216,6 +216,18 @@ signal. A failure after output starts leaves an incomplete array and writes the
 diagnostic to standard error with a nonzero exit. Only consume the captured array
 after checking both successful exit and the intended page-limit policy.
 
+In unreleased 0.2.0, a read-only paginated command also accepts
+`--checkpoint-file PATH` with `--all` for a resumable export. Set
+`<PREFIX>_CHECKPOINT_KEY` to a secret of at least 32 bytes that stays the same
+across runs. After each page is written to standard output, a sealed
+checkpoint replaces PATH (owner-only, renamed into place); rerunning the same
+command with the same PATH prints a new array of only the pages after it, and
+a finished export prints `[]` with a note. A crash between writing a page and
+saving its checkpoint replays that page on the next run, so the consumer must
+deduplicate items. A checkpoint for other arguments, base URL, profile,
+`<PREFIX>_ACCOUNT` or key is refused before any request; delete PATH to start
+over. PATH holds the provider's next-page cursor: keep it private.
+
 ## Limits
 
 In unreleased 0.2.0, ordinary API responses inherit the Rust runtime's 4 MiB default. Set the global
