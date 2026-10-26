@@ -18,7 +18,7 @@ export { ClientCore } from "./client.js";
 export { ANY_EVENT, EventStream, type CollectOptions, type EventHandler, type StreamEvent, type StreamResult } from "./streams.js";
 export { DEFAULT_MAX_EVENT_BYTES, SseParser, type SseEvent } from "./sse.js";
 export { MemoryIdempotencyStore } from "./idempotency.js";
-export { RequestScheduler, type Permit, type Rejection, type SchedulerOptions, type SchedulerStats } from "./scheduler.js";
+export { RequestScheduler, type Permit, type Rejection, type SchedulerEvent, type SchedulerOptions, type SchedulerStats } from "./scheduler.js";
 export {
   generatePkce,
   MemoryTokenStore,

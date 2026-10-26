@@ -201,6 +201,15 @@ Optionally, `maxActiveTotal` and `maxStreamsTotal` cap ordinary requests and eve
 flight across every scope, on top of each scope's `maxActive` and `maxStreams` (default:
 no cap across scopes). Scopes waiting for that shared capacity take turns, one
 request each, in scope order, so one busy tenant or origin cannot starve another.
+For queue telemetry, the optional scheduler observer `onEvent` is called
+synchronously (in Python and Rust outside the scheduler's lock) with version-1
+events: `admitted` and `rejected` (with `wait_ms`, and `reason` and `pause_ms`
+for a rejection), `released` (`held_ms`), `paused` (`pause_ms`) and
+`retry_denied`. Every `admitted` is followed by one `released`; a request
+granted just as its wait was abandoned may be reported `rejected` (`aborted`) and
+`released`. Events carry no scope key, tenant, URL or payload, so they hold no
+secret and few distinct values; nothing is buffered, and an observer's
+exception or panic is ignored. Read `stats()` for current counts.
 See the [bulk-sync example](https://github.com/pboachie/tungsten/tree/main/examples/bulk-sync).
 
 The core package is browser-safe; the separate `/node` adapter requires Node.js. No file-backed OAuth token store is provided.
