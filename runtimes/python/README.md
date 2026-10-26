@@ -122,6 +122,29 @@ Default idempotency and OAuth token state are in memory. A
 `FileIdempotencyStore` is available for durable idempotency keys; it does not
 store OAuth tokens. Applications own persistence, permissions and lifecycle.
 
+In unreleased 0.2.0, a client can bound its outbound requests with an opt-in
+request scheduler (`ClientOptions.scheduler`, a `RequestScheduler` or `SchedulerOptions`). Without one, every call is sent at
+once, as before. With one, each scope (the client's `tenant` plus the request
+origin, or the tenant alone with scope `"scheduler"`) allows at most `max_active`
+ordinary attempts and `max_streams` event streams in flight (default: `max_active`),
+and at most `max_queued` more of each waiting in first-in-first-out order (default
+100) for at most `max_queue_ms` (default 30 seconds; the call's own deadline and
+cancellation also end the wait). A request that cannot be admitted is never
+sent and fails with `RATE_LIMITED`, code `QUEUE_FULL`, `QUEUE_TIMEOUT` or
+`RATE_LIMIT_PAUSED`, or with `TRANSPORT_FAILED`, code `SCHEDULER_CLOSED`, after
+the scheduler was closed; the retry loop does not retry these. A permit covers
+one attempt with its redirects and body read, is released before a retry
+delay, and an event stream holds its permit until the stream is closed.
+Authentication token requests are not scheduled. A `RATE_LIMITED` answer
+pauses its scope for its `Retry-After` (one second when it names none) plus up
+to 10 % (at most one second) of random spread; afterwards one request per kind
+probes the quota until an answer that is not rate limited arrives. One
+scheduler can be shared by several clients; scopes never share capacity,
+queues or pauses, and nothing is coordinated across processes. Closing a
+scheduler rejects waiting and later requests; requests in flight keep their
+capacity until they finish, which `drained()` / `drained_async()` wait for. Custom transports remain
+owned by the application and are not closed by the scheduler.
+
 No runtime ships a file-backed OAuth token store. Provide an application-owned
 token-store implementation when tokens must survive process restarts; protect
 stored credentials and avoid logging them. Registry publication and package

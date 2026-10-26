@@ -96,6 +96,8 @@ pub(crate) struct Inner {
     pub http: reqwest::Client,
     pub now: Option<Arc<dyn Fn() -> u64 + Send + Sync>>,
     pub random: Option<Arc<dyn Fn() -> f64 + Send + Sync>>,
+    pub scheduler: Option<crate::RequestScheduler>,
+    pub tenant: Option<String>,
     pub registry: Mutex<BTreeMap<String, Arc<OperationDescriptor>>>,
     /// Makes "find or create the key of a logical call" atomic, so concurrent
     /// identical calls share one key.
@@ -222,6 +224,8 @@ impl ClientCore {
                 http,
                 now: options.now,
                 random: options.random,
+                scheduler: options.scheduler,
+                tenant: options.tenant,
                 registry: Mutex::new(BTreeMap::new()),
                 used_tokens: Mutex::new(HashMap::new()),
                 oauth_tokens: tokio::sync::Mutex::new(HashMap::new()),

@@ -226,6 +226,15 @@ changes.
 
 ### Added
 
+- Add an opt-in request scheduler to the TypeScript, Python and Rust runtimes
+  (`ClientOptions.scheduler`, `ClientOptions.tenant`). It bounds ordinary
+  attempts and event streams in flight per tenant and origin, queues a bounded
+  number of further requests first in, first out, rejects the rest without
+  sending them (`RATE_LIMITED` codes `QUEUE_FULL`, `QUEUE_TIMEOUT`,
+  `RATE_LIMIT_PAUSED`; `TRANSPORT_FAILED` code `SCHEDULER_CLOSED`), and shares
+  `Retry-After` pauses between callers of one scope, resuming with a single
+  probe. A scheduler can be shared by several clients, closed and drained.
+
 - Add an opt-in total operation deadline to the TypeScript (`deadlineMs`),
   Python (`deadline_ms`) and Rust (`deadline`) runtimes, on client and call
   options. Unlike the per-attempt timeout, it bounds one logical call across

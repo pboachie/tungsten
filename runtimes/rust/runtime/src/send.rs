@@ -21,6 +21,7 @@ use crate::expr::{describe_predicate, evaluate_expr, resolve_ref};
 use crate::helpers::{sent_arguments, with_arguments, with_wire_names};
 use crate::idempotency::has_replay_protection;
 use crate::prepare::{Prepared, Step, fail, with_auth_query};
+use crate::scheduler::{Kind, Rejection};
 use crate::serialize::Payload;
 use crate::serialize::encode_component;
 use crate::stream::{Sent, StreamStart};
@@ -164,6 +165,15 @@ impl ClientCore {
                 m.on_request(&ctx);
             }
             self.check_send_deadline(prepared, attempts, check.as_ref())?;
+            let mut permit = match self.admit(prepared, stream).await {
+                Ok(permit) => permit,
+                Err(rejected) => {
+                    // A wait ended by the call's deadline reports that.
+                    self.check_send_deadline(prepared, attempts, check.as_ref())?;
+                    return Err(rejected);
+                }
+            };
+            self.check_send_deadline(prepared, attempts, check.as_ref())?;
             // Redirects are never followed by the HTTP client: it would
             // forward custom credential headers (API keys, CSRF headers) to
             // another origin. A read follows same-origin redirects here; a
@@ -251,6 +261,10 @@ impl ClientCore {
                 attempts,
                 check: check.as_ref(),
             };
+            let responded = matches!(
+                outcome,
+                AttemptOutcome::Response { .. } | AttemptOutcome::Streaming { .. }
+            );
             let error = match self.classify_response(
                 &call_ctx,
                 prepared,
@@ -260,6 +274,13 @@ impl ClientCore {
                 sink.as_deref_mut(),
             ) {
                 Ok(mut sent) => {
+                    if let Some(mut permit) = permit.take() {
+                        permit.settle(None);
+                        // An open event stream keeps its capacity until it is dropped.
+                        if let Sent::Stream(ref mut start) = sent {
+                            start.body.hold(permit);
+                        }
+                    }
                     if let Sent::Response(_, ref mut effective) = sent {
                         *effective = url;
                     }
@@ -267,6 +288,13 @@ impl ClientCore {
                 }
                 Err(error) => error,
             };
+            if let Some(mut permit) = permit.take() {
+                if error.diagnostic.category == Category::RateLimited {
+                    permit.settle(Some(error.diagnostic.retry_after_ms));
+                } else if responded {
+                    permit.settle(None);
+                }
+            }
             let Error {
                 diagnostic,
                 partial,
@@ -316,6 +344,29 @@ impl ClientCore {
                 return Err(done(diagnostic, partial));
             }
             tokio::time::sleep(delay).await;
+        }
+    }
+
+    /// Wait for scheduler capacity for one attempt: `None` without a
+    /// scheduler; an error (nothing is sent) when no capacity was given.
+    async fn admit(
+        &self,
+        prepared: &Prepared<'_>,
+        stream: bool,
+    ) -> Step<Option<crate::scheduler::Permit>> {
+        let Some(scheduler) = &self.inner.scheduler else {
+            return Ok(None);
+        };
+        let key = scheduler.scope_key(&prepared.url, self.inner.tenant.as_deref());
+        let core = self.clone();
+        let random = std::sync::Arc::new(move || core.random());
+        let kind = if stream { Kind::Stream } else { Kind::Call };
+        match scheduler
+            .acquire(&key, kind, crate::verify::effective_deadline(), random)
+            .await
+        {
+            Ok(permit) => Ok(Some(permit)),
+            Err(rejection) => Err(fail(rejected(&prepared.op.id, rejection, stream))),
         }
     }
 
@@ -1009,5 +1060,32 @@ fn resolve_lost(
                 .collect(),
         ),
         other => other.clone(),
+    }
+}
+
+/// The envelope of a request the scheduler did not admit; nothing was sent.
+fn rejected(operation: &str, rejection: Rejection, stream: bool) -> Diagnostic {
+    let what = if stream { "event streams" } else { "requests" };
+    let limit = if stream { "max_streams" } else { "max_active" };
+    let diag = |category| Diag::new(operation.to_owned(), category);
+    match rejection {
+        Rejection::Full => diag(Category::RateLimited)
+            .code(Some("QUEUE_FULL".to_owned()))
+            .remediation(format!("The client's queue of {what} waiting for capacity is full (SchedulerOptions::max_queued); nothing was sent. Retry after calls in flight finish, or raise max_queued or {limit}."))
+            .build(),
+        Rejection::Timeout => diag(Category::RateLimited)
+            .code(Some("QUEUE_TIMEOUT".to_owned()))
+            .remediation(format!("No capacity for {what} became free within the queue wait (SchedulerOptions::max_queue) or the call's deadline; nothing was sent. Retry later, or raise max_queue or {limit}."))
+            .build(),
+        Rejection::Paused(ms) => diag(Category::RateLimited)
+            .code(Some("RATE_LIMIT_PAUSED".to_owned()))
+            .retry_after_ms(Some(ms))
+            .remediation("An earlier call sharing this quota was rate limited, and the pause outlasts this call's queue wait or deadline; nothing was sent. Wait retry_after_ms before calling again.")
+            .build(),
+        Rejection::Closed => diag(Category::TransportFailed)
+            .code(Some("SCHEDULER_CLOSED".to_owned()))
+            .retryable(Retryable::Never)
+            .remediation("The request scheduler was closed (shutdown); nothing was sent. Use a client with an open scheduler.")
+            .build(),
     }
 }

@@ -904,6 +904,13 @@ pub struct ClientOptions {
     pub now: Option<Arc<dyn Fn() -> u64 + Send + Sync>>,
     /// Random number in [0, 1) for retry jitter.
     pub random: Option<Arc<dyn Fn() -> f64 + Send + Sync>>,
+    /// Bounds the requests this client has in flight and waiting, and shares
+    /// rate-limit pauses between them. Clone one scheduler into several
+    /// clients that share a quota. Default: none, every call is sent at once.
+    pub scheduler: Option<crate::RequestScheduler>,
+    /// The tenant or principal this client calls for. Clients sharing a
+    /// scheduler keep separate capacity, queues and pauses per tenant.
+    pub tenant: Option<String>,
 }
 
 impl Default for ClientOptions {
@@ -935,6 +942,8 @@ impl Default for ClientOptions {
             http_client: None,
             now: None,
             random: None,
+            scheduler: None,
+            tenant: None,
         }
     }
 }

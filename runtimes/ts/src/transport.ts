@@ -49,6 +49,7 @@ export class StreamBody {
   readonly #cancelRead = (): void => { void this.#reader.cancel().catch(() => undefined); };
   #timedOut = false;
   #closed = false;
+  #onClose: (() => void) | null = null;
 
   constructor(reader: ReadableStreamDefaultReader<Uint8Array>, controller: AbortController, signal: AbortSignal | undefined, onAbort: () => void, idleMs: number) {
     this.#reader = reader;
@@ -89,6 +90,15 @@ export class StreamBody {
     this.#signal?.removeEventListener("abort", this.#cancelRead);
     this.#reader.cancel().catch(() => undefined);
     this.#controller.abort();
+    const onClose = this.#onClose;
+    this.#onClose = null;
+    onClose?.();
+  }
+
+  /** Run `fn` once the connection is released (now, if it already is). */
+  whenClosed(fn: () => void): void {
+    if (this.#closed) fn();
+    else this.#onClose = fn;
   }
 }
 

@@ -50,6 +50,7 @@ import {
 import { DEFAULT_MAX_EVENT_BYTES, SseParser, type SseEvent } from "./sse.js";
 import { EventStream } from "./streams.js";
 import { attempt, type AttemptOutcome, nextLink, parseRetryAfter, StreamBody } from "./transport.js";
+import { type Permit, type Rejection, RequestScheduler } from "./scheduler.js";
 import type {
   ApiDescriptor,
   CallOptions,
@@ -479,6 +480,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
   readonly #usedTokens = new Map<string, { bind: string | null; expiry: number }>();
 
   readonly #redirectsDisabled: boolean;
+  readonly #scheduler: RequestScheduler | null = null;
   readonly #redirectPolicyInvalid: boolean;
 
   /**
@@ -516,6 +518,16 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     } catch {
       throw new TypeError("confirmationKey must be a Uint8Array containing at least 32 bytes; omit it to generate a random key");
     }
+    const scheduler = this.options.scheduler;
+    if (scheduler instanceof RequestScheduler) this.#scheduler = scheduler;
+    else if (scheduler !== undefined && scheduler !== null) {
+      try {
+        this.#scheduler = new RequestScheduler(scheduler);
+      } catch (error) {
+        throw new TypeError(`scheduler: ${describeError(error)}`);
+      }
+    }
+    if (this.options.tenant !== undefined && typeof this.options.tenant !== "string") throw new TypeError("tenant must be a string");
     try {
       const candidate = this.options.idempotencyStore;
       if (isRecord(candidate) && typeof candidate.get === "function" && typeof candidate.put === "function") store = candidate;
@@ -1488,39 +1500,20 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
       }
       const interrupted = this.#beforeDispatch(op, opts);
       if (interrupted) return previousMutationFailure ?? interrupted;
-      // Redirects are never followed by fetch: it would forward custom
-      // credential headers (API keys, CSRF headers) to another origin. A
-      // read follows same-origin redirects here; a mutation follows none.
-      let outcome = await attempt(this.#fetch(), {
-        url: prepared.url,
-        method: prepared.method,
-        headers,
-        body: prepared.body,
-        redirect: "manual",
-        timeoutMs,
-        signal: opts.signal,
-        stream,
-        idleMs,
-        maxResponseBytes: this.#responseLimit(opts),
-        deadlineMs: this.#deadline(opts),
-      });
+      const permit = await this.#admit(op, prepared.url, opts, stream);
+      if (permit !== null && "ok" in permit) return previousMutationFailure ?? permit;
+      let result: Result<T>;
       let current = { url: prepared.url, method: prepared.method, body: prepared.body };
-      for (let hops = 0; !this.#redirectsDisabled && !mutation && hops < MAX_REDIRECTS && outcome.kind === "response" && outcome.bodyFailure !== "oversized" && REDIRECT_STATUSES.has(outcome.status); hops += 1) {
-        const next = this.#redirectTarget(prepared, current.url, outcome.headers.location);
-        if (next === null) break;
-        const rewrite = outcome.status !== 307 && outcome.status !== 308 && current.method !== "GET" && current.method !== "HEAD";
-        current = { url: next.url, method: rewrite ? "GET" : current.method, body: rewrite ? null : current.body };
-        ctx.url = next.display;
-        ctx.method = current.method;
-        const hopHeaders = { ...headers };
-        if (rewrite) for (const name of Object.keys(hopHeaders)) if (name.toLowerCase() === "content-type") delete hopHeaders[name];
-        const beforeRedirect = this.#beforeDispatch(op, opts);
-        if (beforeRedirect) return beforeRedirect;
-        outcome = await attempt(this.#fetch(), {
-          url: current.url,
-          method: current.method,
-          headers: hopHeaders,
-          body: current.body,
+      let handedOff = false;
+      try {
+        // Redirects are never followed by fetch: it would forward custom
+        // credential headers (API keys, CSRF headers) to another origin. A
+        // read follows same-origin redirects here; a mutation follows none.
+        let outcome = await attempt(this.#fetch(), {
+          url: prepared.url,
+          method: prepared.method,
+          headers,
+          body: prepared.body,
           redirect: "manual",
           timeoutMs,
           signal: opts.signal,
@@ -1529,9 +1522,45 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
           maxResponseBytes: this.#responseLimit(opts),
           deadlineMs: this.#deadline(opts),
         });
+        for (let hops = 0; !this.#redirectsDisabled && !mutation && hops < MAX_REDIRECTS && outcome.kind === "response" && outcome.bodyFailure !== "oversized" && REDIRECT_STATUSES.has(outcome.status); hops += 1) {
+          const next = this.#redirectTarget(prepared, current.url, outcome.headers.location);
+          if (next === null) break;
+          const rewrite = outcome.status !== 307 && outcome.status !== 308 && current.method !== "GET" && current.method !== "HEAD";
+          current = { url: next.url, method: rewrite ? "GET" : current.method, body: rewrite ? null : current.body };
+          ctx.url = next.display;
+          ctx.method = current.method;
+          const hopHeaders = { ...headers };
+          if (rewrite) for (const name of Object.keys(hopHeaders)) if (name.toLowerCase() === "content-type") delete hopHeaders[name];
+          const beforeRedirect = this.#beforeDispatch(op, opts);
+          if (beforeRedirect) return beforeRedirect;
+          outcome = await attempt(this.#fetch(), {
+            url: current.url,
+            method: current.method,
+            headers: hopHeaders,
+            body: current.body,
+            redirect: "manual",
+            timeoutMs,
+            signal: opts.signal,
+            stream,
+            idleMs,
+            maxResponseBytes: this.#responseLimit(opts),
+            deadlineMs: this.#deadline(opts),
+          });
+        }
+        const callCtx: CallContext = { api: this.api, op, key: prepared.key, keyHeader: prepared.keyHeader, attempts, check };
+        result = await this.#classify<T>(callCtx, prepared, outcome, ctx, timeoutMs);
+        if (permit !== null) {
+          if (!result.ok && result.error.category === "RATE_LIMITED") permit.settle(result.error.retry_after_ms);
+          else if (outcome.kind === "response") permit.settle(undefined);
+          // An open event stream keeps its capacity until it is closed.
+          if (result.ok && result.value instanceof StreamBody) {
+            result.value.whenClosed(() => permit.release());
+            handedOff = true;
+          }
+        }
+      } finally {
+        if (!handedOff) permit?.release();
       }
-      const callCtx: CallContext = { api: this.api, op, key: prepared.key, keyHeader: prepared.keyHeader, attempts, check };
-      const result = await this.#classify<T>(callCtx, prepared, outcome, ctx, timeoutMs);
       if (result.ok) { pageRequestUrls.set(result.meta, current.url); return result; }
       const error = scrubDiagnostic(result.error, prepared.secrets);
       const done = (): Failure => (result.partial === undefined ? fail(error) : { ok: false, error, partial: result.partial });
@@ -1566,6 +1595,61 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
       const deadline = (opts as StepOptions)[CALL_DEADLINE];
       if (deadline !== undefined && performance.now() + delay >= deadline) return previousMutationFailure ?? done();
       if (!(await sleep(delay, opts.signal))) return previousMutationFailure ?? done();
+    }
+  }
+
+  /** Wait for scheduler capacity for one attempt. Null without a
+   * scheduler; a failure (nothing sent) when no capacity was given. */
+  async #admit(op: OperationDescriptor, url: string, opts: CallOptions, stream: boolean): Promise<Permit | Failure | null> {
+    const scheduler = this.#scheduler;
+    if (scheduler === null) return null;
+    const random = typeof this.options.random === "function" ? () => bounded(this.options.random?.(), 0.5, 0, 1) : Math.random;
+    const key = scheduler.scopeKey(url, this.options.tenant);
+    const admitted = await scheduler.acquire(key, stream ? "stream" : "call", opts.signal, this.#deadline(opts), random);
+    if ("release" in admitted) {
+      // Cancelled or expired while it waited: the request is never sent.
+      const late = this.#beforeDispatch(op, opts);
+      if (late) {
+        admitted.release();
+        return late;
+      }
+      return admitted;
+    }
+    // A wait ended by the caller's signal or deadline reports that.
+    return this.#beforeDispatch(op, opts) ?? this.#rejected(op, admitted, stream);
+  }
+
+  #rejected(op: OperationDescriptor, rejection: Rejection, stream: boolean): Failure {
+    const what = stream ? "event streams" : "requests";
+    const limit = stream ? "maxStreams" : "maxActive";
+    switch (rejection.reason) {
+      case "full":
+        return fail(diagnostic(op.id, "RATE_LIMITED", {
+          code: "QUEUE_FULL",
+          remediation: `The client's queue of ${what} waiting for capacity is full (SchedulerOptions.maxQueued); nothing was sent. Retry after calls in flight finish, or raise maxQueued or ${limit}.`,
+        }));
+      case "timeout":
+        return fail(diagnostic(op.id, "RATE_LIMITED", {
+          code: "QUEUE_TIMEOUT",
+          remediation: `No capacity for ${what} became free within the queue wait (SchedulerOptions.maxQueueMs) or the call's deadline; nothing was sent. Retry later, or raise maxQueueMs or ${limit}.`,
+        }));
+      case "paused":
+        return fail(diagnostic(op.id, "RATE_LIMITED", {
+          code: "RATE_LIMIT_PAUSED",
+          retry_after_ms: rejection.retryAfterMs,
+          remediation: `An earlier call sharing this quota was rate limited, and the pause outlasts this call's queue wait or deadline; nothing was sent. Wait retry_after_ms before calling again.`,
+        }));
+      case "closed":
+        return fail(diagnostic(op.id, "TRANSPORT_FAILED", {
+          code: "SCHEDULER_CLOSED",
+          retryable: "never",
+          remediation: "The request scheduler was closed (shutdown); nothing was sent. Use a client with an open scheduler.",
+        }));
+      default:
+        return fail(diagnostic(op.id, "TRANSPORT_FAILED", {
+          retryable: "never",
+          remediation: "The caller cancelled the call while it waited for capacity; nothing was sent.",
+        }));
     }
   }
 

@@ -160,6 +160,29 @@ more. Custom transports must stream nonempty bodies and honor cancellation;
 their own buffering, decoding and settlement behavior need separate qualification.
 A custom fetch must honor the Response contract: a null body means empty; nonempty bodies need a readable stream.
 
+In unreleased 0.2.0, a client can bound its outbound requests with an opt-in
+request scheduler (`ClientOptions.scheduler`, a `RequestScheduler` or its options). Without one, every call is sent at
+once, as before. With one, each scope (the client's `tenant` plus the request
+origin, or the tenant alone with scope `"scheduler"`) allows at most `maxActive`
+ordinary attempts and `maxStreams` event streams in flight (default: `maxActive`),
+and at most `maxQueued` more of each waiting in first-in-first-out order (default
+100) for at most `maxQueueMs` (default 30 seconds; the call's own deadline and
+cancellation also end the wait). A request that cannot be admitted is never
+sent and fails with `RATE_LIMITED`, code `QUEUE_FULL`, `QUEUE_TIMEOUT` or
+`RATE_LIMIT_PAUSED`, or with `TRANSPORT_FAILED`, code `SCHEDULER_CLOSED`, after
+the scheduler was closed; the retry loop does not retry these. A permit covers
+one attempt with its redirects and body read, is released before a retry
+delay, and an event stream holds its permit until the stream is closed.
+Authentication token requests are not scheduled. A `RATE_LIMITED` answer
+pauses its scope for its `Retry-After` (one second when it names none) plus up
+to 10 % (at most one second) of random spread; afterwards one request per kind
+probes the quota until an answer that is not rate limited arrives. One
+scheduler can be shared by several clients; scopes never share capacity,
+queues or pauses, and nothing is coordinated across processes. Closing a
+scheduler rejects waiting and later requests; requests in flight keep their
+capacity until they finish, which `drained` waits for. Custom transports remain
+owned by the application and are not closed by the scheduler.
+
 The core package is browser-safe; the separate `/node` adapter requires Node.js. No file-backed OAuth token store is provided.
 
 ## Related packages and documentation
