@@ -236,6 +236,14 @@ changes.
 
 ### Added
 
+- Save streamed downloads to a caller-chosen file: `saveDownload` in the
+  TypeScript runtime's `/node` entry point, `Download.save_to` /
+  `AsyncDownload.save_to` in Python and `Download::save_to` in Rust. Bytes go
+  to an exclusively created `<name>.<random>.part` file next to the
+  destination, which replaces it only after the whole body arrived; on any
+  failure the partial file is removed and the destination is untouched. An
+  existing destination is refused (`DESTINATION_EXISTS`) unless overwrite is
+  set. Server-suggested file names never choose the destination.
 - Add streamed upload sources to the TypeScript, Python and Rust runtimes
   (`UploadSource`; Rust `ClientCore::call_upload` / `preview_upload`) for a
   whole binary request body. A source is one-shot (never sent again once
