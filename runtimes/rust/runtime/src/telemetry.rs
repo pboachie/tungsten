@@ -92,6 +92,8 @@ pub enum TelemetryEntry {
     Poll,
     Preview,
     Stream,
+    Download,
+    ExportPages,
 }
 
 /// One telemetry event. Fields that do not apply to an event are `None`
