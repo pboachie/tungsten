@@ -25,7 +25,10 @@
 //!   `--timeout`, `--deadline`, `--max-response-bytes`, `--no-color`;
 //! - `schema <command>` (the compact JSON Schema of the arguments),
 //!   `operations` (every command with its tier), `auth status` (which
-//!   credentials are present, never their values), `macros <name>` for the
+//!   credentials and login sessions are present, never their values),
+//!   `auth login`, `auth switch` and `auth logout` (browser sign-in to an
+//!   OAuth2 `authorizationCode` scheme with sessions kept in the OS keychain;
+//!   see the `login` and `session` modules), `macros <name>` for the
 //!   table's macros, and `explain-error <CODE|-|@file>` (an error category,
 //!   an API error code from the manifest's remediation tables, or a whole
 //!   envelope read from standard input or a file: its category,
@@ -66,6 +69,8 @@
 //!   API shows once, verification results, warnings, and the partial result
 //!   of a failed call.
 //! - The kit never prompts: it behaves the same with or without a terminal.
+//!   The one interactive command, `auth login`, refuses to run without a
+//!   terminal or when `CI` is set.
 //!
 //! # Safety
 //!

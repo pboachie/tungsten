@@ -433,7 +433,7 @@ fn prepare(
         .ok_or_else(|| "the ephemeral session store keeps no login".to_string())?;
     session::probe(vault.as_ref()).map_err(|e| {
         let advice = if ss.store.0 == StoreKind::Keychain {
-            "; unlock the keychain and retry, or choose the owner-only file store explicitly with `--store file` (or session_store = \"file\" in the profile)"
+            "; unlock the keychain (on Linux, run a Secret Service such as GNOME Keyring and install secret-tool) and retry, or choose the owner-only file store explicitly with `--store file` (or session_store = \"file\" in the profile)"
         } else {
             ""
         };
