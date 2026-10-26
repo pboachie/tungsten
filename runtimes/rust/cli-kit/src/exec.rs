@@ -617,6 +617,8 @@ struct Connected<D> {
     client: D,
     settings: Settings,
     found: Vec<Found>,
+    /// The stored login sessions the client authenticates with.
+    sessions: Option<std::sync::Arc<crate::session::SessionStore>>,
 }
 
 /// The settings of the command line and the client options they give,
@@ -673,18 +675,20 @@ where
     for w in warnings {
         ctx.err(&w);
     }
+    let mut sessions = None;
     let client = if auth.is_empty() {
         probe
     } else {
         options.auth = auth;
         let api = probe.core().api().clone();
-        login::attach(ctx, &settings, account, &api, &mut options)?;
+        sessions = login::attach(ctx, &settings, account, &api, &mut options)?;
         make(options).map_err(|e| Fail::Usage(e.message))?
     };
     Ok(Connected {
         client,
         settings,
         found,
+        sessions,
     })
 }
 
@@ -744,6 +748,9 @@ where
     let spec = ctx.spec;
     let conn = connect(ctx, m, None, make)?;
     let client = &conn.client;
+    if let Some(store) = &conn.sessions {
+        login::refresh_due(client, store).await;
+    }
     let plan = match *leaf {
         Leaf::Op(i) => {
             let op = &spec.ops[i];

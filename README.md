@@ -138,17 +138,19 @@ The support matrix below is generated from the capability catalog (`tungsten cap
 | `kotlin` | `kt` | Kotlin/JVM SDK (blocking functions returning Result; opt-in coroutines) | java >=17.0; gradle installed | jvm | `typed_sdk`, `pagination_helpers`, `coroutines` | enforced | unknown | unknown |
 | `mcp` |  | MCP server over stdio or Streamable HTTP, discrete or progressive | node >=22.13 excluding 23.0.x, 23.1.x; npm installed | node | `mcp_stdio`, `mcp_streamable_http`, `mcp_embedding_search`, `mcp_script_sandbox` | enforced | unknown | unknown |
 | `mock` |  | reserved; no emitter in this version | none |  |  | n/a | unknown | unknown |
-| `python` | `py` | Sync and async Python SDK, Pydantic v2 or dataclass models | python3 >=3.12 (`python_version` selects the minimum) | cpython | `typed_sdk`, `pagination_helpers`, `dataclass_models`, `webhook_verification` | enforced | unknown | unknown |
+| `python` | `py` | Sync and async Python SDK, Pydantic v2 or dataclass models | python3 >=3.12 (`python_version` selects the minimum) | cpython | `typed_sdk`, `pagination_helpers`, `pagination_checkpoints`, `dataclass_models`, `webhook_verification`, `typed_webhooks`, `streaming_downloads`, `telemetry_hooks` | enforced | unknown | unknown |
 | `ruby` | `rb` | Ruby SDK | ruby >=3.3; bundle installed | ruby | `typed_sdk`, `pagination_helpers` | enforced | unknown | unknown |
-| `rust` | `rs` | Async Rust SDK (serde, reqwest) and optional generated CLI | cargo >=1.88; rustc >=1.88 | native | `typed_sdk`, `pagination_helpers`, `generated_cli`, `webhook_verification` | enforced | unknown | unknown |
-| `typescript` | `ts` | Typed TypeScript SDK, Result values, Zod validation | node >=22.0; npm installed | node | `typed_sdk`, `pagination_helpers`, `webhook_verification` | enforced | unknown | unknown |
+| `rust` | `rs` | Async Rust SDK (serde, reqwest) and optional generated CLI | cargo >=1.88; rustc >=1.88 | native | `typed_sdk`, `pagination_helpers`, `pagination_checkpoints`, `generated_cli`, `webhook_verification`, `typed_webhooks`, `cli_login_sessions`, `streaming_downloads`, `telemetry_hooks` | enforced | unknown | unknown |
+| `typescript` | `ts` | Typed TypeScript SDK, Result values, Zod validation | node >=22.0; npm installed | node | `typed_sdk`, `pagination_helpers`, `pagination_checkpoints`, `webhook_verification`, `typed_webhooks`, `streaming_downloads`, `telemetry_hooks` | enforced | unknown | unknown |
 | `webmcp` |  | Browser ESM package with tool manifest and registration helper | node >=22.0; npm installed | browser | `webmcp_registration` | enforced | unknown | unknown |
 
 | Feature | Domain | Opt-in option | Description |
 |---|---|---|---|
 | `typed_sdk` | target |  | typed models and operation methods for every compiled operation |
 | `pagination_helpers` | target |  | page iteration helpers for operations with declared pagination |
+| `pagination_checkpoints` | runtime |  | sealed, caller-owned checkpoints that resume read-only page exports after a restart |
 | `generated_cli` | target | `cli` | a command-line client crate next to the SDK |
+| `cli_login_sessions` | target | `cli` | generated-CLI browser login, account switching and logout for OAuth2 authorizationCode schemes, with sessions in the macOS keychain, Secret Service or Windows Credential Locker, or an explicit owner-only file |
 | `dataclass_models` | target | `models` | stdlib dataclass models without a Pydantic dependency |
 | `coroutines` | target | `coroutines` | suspend functions and cold Flows next to the blocking surface |
 | `mcp_stdio` | protocol |  | Model Context Protocol server over stdio |
@@ -156,7 +158,10 @@ The support matrix below is generated from the capability catalog (`tungsten cap
 | `mcp_embedding_search` | target | `search` | optional embedding index for tool search |
 | `mcp_script_sandbox` | runtime | `sandbox` | opt-in run_script sandbox |
 | `webmcp_registration` | protocol |  | browser tool manifest and WebMCP registration helper |
+| `telemetry_hooks` | runtime |  | opt-in local telemetry observer with bounded, redacted operation, attempt and phase events |
+| `streaming_downloads` | runtime |  | explicit streamed response bodies with byte limits, progress, idle timeout and deadline |
 | `webhook_verification` | runtime |  | framework-free incoming webhook verification: Stripe-compatible `t=,v1=` HMAC-SHA256 signatures compared in constant time, secret rotation, bounded body, timestamp tolerance and an application-owned replay hook |
+| `typed_webhooks` | target |  | typed payloads of OpenAPI `webhooks` and a parse helper that verifies a delivery and validates its payload before the replay claim |
 | `llms_txt` | target |  | llms.txt, llms-full.txt and tools.json documentation |
 
 | OpenAPI line | Support | Diagnosed constructs |
@@ -341,9 +346,11 @@ A newer release is also classified in `upgrade`: `compatible` stays on your comp
 line (a patch release before 1.0, a minor or patch release from 1.0) and is followed by
 `tungsten generate --check`; `migration` starts a new line (a minor or major release before
 1.0, a major release from 1.0), is a prerelease, or has a Breaking section in its notes, and
-the guidance asks you to preview with `tungsten diff --migration`, `tungsten lock --preview`
-and `tungsten generate --dry-run` before replacing generated clients. Release notes can only
-make the classification stricter.
+the guidance asks you to rehearse before replacing generated clients. Release notes can only
+make the classification stricter. When a newer release is available, `rehearse_command` holds
+the `tungsten upgrade rehearse --to <version> --workspace <dir>` invocation to run with the new
+binary in each project; `tungsten upgrade apply` is the separate step that applies a reviewed
+rehearsal.
 
 | Exit code | Meaning |
 | --- | --- |

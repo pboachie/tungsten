@@ -130,6 +130,10 @@ pub struct UpdateCheckResult {
     /// How disruptive moving to `latest_version` is expected to be; null
     /// unless a newer release was found.
     pub upgrade: Option<UpgradeKind>,
+    /// The `tungsten upgrade rehearse` invocation that previews this release
+    /// in a project, pinned to `latest_version`; run it with the new binary
+    /// from the project directory. Null unless a newer release is available.
+    pub rehearse_command: Option<String>,
     /// Upgrade guidance. Commands appear only for a detected installation
     /// route; they are printed, never run.
     pub advice: Vec<String>,
@@ -778,6 +782,7 @@ pub fn check(source: &dyn UpdateSource, ctx: &Context) -> UpdateCheckResult {
         artifacts_available: None,
         install,
         upgrade: None,
+        rehearse_command: None,
         advice: vec![],
     };
     let unable = |mut result: UpdateCheckResult, reason| {
@@ -844,8 +849,10 @@ pub fn check(source: &dyn UpdateSource, ctx: &Context) -> UpdateCheckResult {
     }
     result.advice = match result.status {
         UpdateStatus::UpdateAvailable => {
+            let rehearse = rehearse_command(&latest.version.text);
             let mut lines = advice(result.install.route, &latest.tag, ctx.install.windows);
-            lines.extend(project_advice(result.upgrade));
+            lines.extend(project_advice(result.upgrade, &rehearse));
+            result.rehearse_command = Some(rehearse);
             lines
         }
         UpdateStatus::ArtifactsUnavailable if result.expected_archive.is_none() => vec![
@@ -877,18 +884,26 @@ fn upgrade_kind(current: &Version, latest: &Release) -> UpgradeKind {
     }
 }
 
-/// Project-side steps after replacing the binary; printed, never run.
-fn project_advice(kind: Option<UpgradeKind>) -> Vec<String> {
+/// `version` is a validated SemVer string, so it needs no quoting.
+fn rehearse_command(version: &str) -> String {
+    format!("tungsten upgrade rehearse --to {version} --workspace <new-scratch-dir>")
+}
+
+/// Project-side steps with the new binary; printed, never run.
+fn project_advice(kind: Option<UpgradeKind>, rehearse: &str) -> Vec<String> {
     match kind {
         Some(UpgradeKind::Compatible) => vec![
-            "This release stays on your compatibility line. After upgrading, confirm generated clients are current:".into(),
+            "This release stays on your compatibility line. With the new binary, confirm generated clients are current:".into(),
             "  tungsten generate --check".into(),
+            "To review regenerated clients before they replace yours, rehearse in each project:".into(),
+            format!("  {rehearse}"),
         ],
         Some(UpgradeKind::Migration) => vec![
-            "This release starts a new compatibility line and may need project changes. Before replacing generated clients:".into(),
-            "  read the release notes' Breaking and Changed sections;".into(),
-            "  with the new version, preview without writing: tungsten diff --migration, tungsten lock --preview, tungsten generate --dry-run".into(),
-            "  keep the current binary available until the preview is reviewed.".into(),
+            "This release starts a new compatibility line and may need project changes.".into(),
+            "Read the release notes' Breaking and Changed sections, keep the current binary available, and with the new binary rehearse in each project (nothing in the project is written):".into(),
+            format!("  {rehearse}"),
+            "Review the report and staged output, then apply it explicitly (it backs up what it replaces):".into(),
+            "  tungsten upgrade apply --workspace <new-scratch-dir>".into(),
         ],
         None => vec![],
     }

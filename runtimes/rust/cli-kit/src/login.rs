@@ -139,31 +139,31 @@ pub(crate) fn attach(
     account_flag: Option<&str>,
     api: &tungsten_runtime::ApiDescriptor,
     options: &mut ClientOptions,
-) -> Result<(), Fail> {
+) -> Result<Option<Arc<SessionStore>>, Fail> {
     let schemes = session::code_schemes(&api.auth);
     if schemes.is_empty() {
-        return Ok(());
+        return Ok(None);
     }
     let ss = session::session_settings(ctx.spec, &ctx.env, settings, account_flag, None)
         .map_err(Fail::Usage)?;
     if ss.store.0 == StoreKind::Ephemeral {
-        return Ok(());
+        return Ok(None);
     }
     let Some(dir) = session::state_dir(ctx.spec, &ctx.env) else {
-        return Ok(());
+        return Ok(None);
     };
     let index = match Index::load(&dir) {
         Ok(i) => i,
         Err(e) => {
             ctx.err(&format!("warning: stored sessions are not used: {e}"));
-            return Ok(());
+            return Ok(None);
         }
     };
     if index.entries.is_empty() {
-        return Ok(());
+        return Ok(None);
     }
     let Some(origin) = base_origin(settings, &api.servers) else {
-        return Ok(());
+        return Ok(None);
     };
     let store = Arc::new(SessionStore::new(Some(dir.clone())));
     let mut any = false;
@@ -216,10 +216,44 @@ pub(crate) fn attach(
             )),
         }
     }
-    if any {
-        options.token_store = Some(store);
+    if !any {
+        return Ok(None);
     }
-    Ok(())
+    options.token_store = Some(Arc::clone(&store) as Arc<dyn tungsten_runtime::TokenStore>);
+    Ok(Some(store))
+}
+
+/// Tokens expiring within this many milliseconds are refreshed before the
+/// call, as the runtime counts them expired (its `EXPIRY_SKEW_MS`).
+const REFRESH_SKEW_MS: u64 = 30_000;
+
+/// Refresh the due sessions of `store` before a command's call, one process
+/// at a time per session: under the session's refresh lock the token is
+/// read again, and refreshed only if no other process already did. This
+/// keeps concurrent commands from presenting the same refresh token twice,
+/// which providers that rotate refresh tokens treat as reuse. When the lock
+/// is not obtained in time the call proceeds and the runtime refreshes as
+/// usual; a failed refresh is reported by the call itself.
+pub(crate) async fn refresh_due<D: Dispatch>(client: &D, store: &SessionStore) {
+    let Some(dir) = store.index_dir().map(std::path::Path::to_path_buf) else {
+        return;
+    };
+    for (scheme, id) in store.due(session::now_ms(), REFRESH_SKEW_MS) {
+        let Some(_claim) = session::RefreshLock::acquire(&dir, &id, Duration::from_secs(10)).await
+        else {
+            continue;
+        };
+        if store.reload(&scheme).is_err() {
+            continue;
+        }
+        if store
+            .due(session::now_ms(), REFRESH_SKEW_MS)
+            .iter()
+            .any(|(s, _)| *s == scheme)
+        {
+            let _ = client.core().oauth(&scheme).refresh().await;
+        }
+    }
 }
 
 /// Why login refuses to run here, if it does.

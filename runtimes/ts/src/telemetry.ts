@@ -38,8 +38,10 @@ export type TelemetryOutcome = "ok" | "error" | "cancelled" | "deadline_exceeded
  * `timeout`, `paused`, `closed`), the call's deadline, or cancellation. */
 export type TelemetryQueueReason = "admitted" | "full" | "timeout" | "paused" | "closed" | "deadline" | "cancelled";
 
-/** The public entry point that started the operation. */
-export type TelemetryEntry = "call";
+/** The public entry point that started the operation. One `pages`
+ * operation covers every page it fetched, one `poll` operation every read
+ * it made; their attempts are numbered across the whole operation. */
+export type TelemetryEntry = "call" | "pages" | "poll" | "preview";
 
 /** One telemetry event. Fields that do not apply to an event are null. */
 export interface TelemetryEvent {
@@ -64,7 +66,8 @@ export interface TelemetryEvent {
   outcome: TelemetryOutcome | null;
   /** The diagnostic category of a failed operation, attempt or phase. */
   category: Category | null;
-  /** The HTTP status of an attempt that received a response. */
+  /** The HTTP status of an attempt that received a response, and of a
+   * `call` operation's final answer. */
   http_status: number | null;
   /** For a `queue` phase. */
   reason: TelemetryQueueReason | null;

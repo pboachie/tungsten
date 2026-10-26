@@ -1080,6 +1080,7 @@ impl Ctx<'_> {
             UnionPlan::Tagged {
                 tag,
                 variants: tagged,
+                ..
             } => {
                 w.line("var o = d.Object(node);");
                 w.line(format!("var tag = d.Tag(o, {});", lit(tag)));
