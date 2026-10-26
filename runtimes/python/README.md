@@ -73,7 +73,12 @@ lone surrogate counts as one. A schema `pattern` that Python's `re` cannot compi
 enforced: the value is accepted and the client reports a `PATTERN_UNCHECKED` diagnostic
 (`failed_parameter`, the pattern and the reason, never the value) through
 `on_diagnostic`, once per call, path and pattern. A string longer than the match limit (`MAX_PATTERN_SUBJECT`, 65,536 characters) is not matched and is reported the same way. Calling a validator directly, without
-a client, stays silent. The server still validates the pattern.
+a client, emits no managed diagnostic; an oversized pattern subject can still
+raise a `RuntimeWarning`. The server still validates the pattern.
+
+Untagged unions keep unchecked-pattern notes from the first variant that
+accepts the value, including nested paths. Rejected variants do not contribute
+speculative notes, including when every variant rejects the value.
 
 In unreleased 0.2.0, ordinary buffered responses default to **4 MiB (4,194,304 bytes) per response**.
 Set `ClientOptions.max_response_bytes` to choose a finite client cap; the call option with the same

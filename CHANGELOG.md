@@ -415,6 +415,11 @@ changes.
 
 ### Fixed
 
+- Discard speculative Python unchecked-pattern diagnostics from rejected
+  untagged-union variants, retaining notes and nested paths only from the
+  first accepting variant. Direct validation keeps its existing warning
+  behavior when no diagnostic collector is active.
+
 - MCP preserves special JSON member names in request identities and generated
   examples, so distinct requests do not accidentally share repeated-result
   redaction.
