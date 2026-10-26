@@ -38,8 +38,10 @@ Compatibility helpers retain application-owned custom-scheme policy.
 
 Multipart bodies: a field whose OpenAPI `encoding` entry declares a
 `contentType` is sent with that media type (the first entry without
-wildcards); a file part's own media type wins. Encoding `headers`, and
-positional or nested multipart encoding, are not sent. Unreleased 0.2.0 only.
+wildcards); a file part's own media type wins. The entry's `headers` are not
+sent (the TypeScript, Python and Rust runtimes send those with a fixed
+value), and neither is positional or nested multipart encoding. Unreleased
+0.2.0 only.
 
 The OAuth 2.0 device authorization flow (OpenAPI 3.2 `deviceAuthorization`) is
 not run by the client: configure the scheme with an access token obtained

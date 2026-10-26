@@ -842,6 +842,15 @@ pub(crate) fn descriptor_py(plan: &Plan<'_>, info: &OpInfo<'_>, shape: &OpShape<
                 if let Some(content_type) = &part.content_type {
                     entry.push(("content_type", Py::str(content_type)));
                 }
+                if !part.headers.is_empty() {
+                    let headers = part.headers.iter().map(|h| {
+                        Py::dict(vec![
+                            ("name", Py::str(&h.name)),
+                            ("value", Py::str(&h.value)),
+                        ])
+                    });
+                    entry.push(("headers", Py::List(headers.collect())));
+                }
                 Py::dict(entry)
             });
             members.push(("parts", Py::List(parts.collect())));

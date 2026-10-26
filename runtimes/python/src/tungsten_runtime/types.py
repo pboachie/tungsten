@@ -227,6 +227,13 @@ class ArgBodyShape(TypedDict):
     arg: str
 
 
+class PartHeader(TypedDict):
+    """A header with a fixed value on a multipart part."""
+
+    name: str
+    value: str
+
+
 class PartDescriptor(TypedDict):
     """The declared encoding of one multipart field. ``content_type`` is the
     media type each part of the field is sent with, unless a file part
@@ -234,6 +241,7 @@ class PartDescriptor(TypedDict):
 
     name: str
     content_type: NotRequired[str]
+    headers: NotRequired[list[PartHeader]]
 
 
 class BodyDescriptor(TypedDict):
@@ -964,6 +972,7 @@ __all__ = [
     "ParamRole",
     "ParamStyle",
     "PartDescriptor",
+    "PartHeader",
     "Predicate",
     "PreviewEndpoint",
     "PreviewHeader",

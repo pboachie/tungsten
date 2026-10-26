@@ -323,6 +323,9 @@ pub enum PartContent {
 pub struct MultipartPart {
     pub name: String,
     pub content: PartContent,
+    /// Further part headers (name, value), from the field's declared
+    /// encoding.
+    pub headers: Vec<(String, String)>,
 }
 
 /// What goes on the wire.
@@ -499,9 +502,16 @@ pub fn encode_body(
             let mut parts = Vec::new();
             let mut display = Map::new();
             for (k, v) in entries(map) {
-                let declared = descriptor
-                    .and_then(|d| d.parts.iter().find(|p| p.name == *k))
-                    .and_then(|p| p.content_type.as_deref());
+                let declared_part = descriptor.and_then(|d| d.parts.iter().find(|p| p.name == *k));
+                let declared = declared_part.and_then(|p| p.content_type.as_deref());
+                let headers: Vec<(String, String)> = declared_part
+                    .map(|p| {
+                        p.headers
+                            .iter()
+                            .map(|h| (h.name.clone(), h.value.clone()))
+                            .collect()
+                    })
+                    .unwrap_or_default();
                 let declared_json = declared.is_some_and(|ct| {
                     is_json_media(&ct.split(';').next().unwrap_or("").trim().to_lowercase())
                 });
@@ -529,6 +539,7 @@ pub fn encode_body(
                         )));
                         parts.push(MultipartPart {
                             name: k.clone(),
+                            headers: headers.clone(),
                             content: PartContent::File {
                                 filename: binary.filename.clone().unwrap_or_else(|| k.clone()),
                                 content_type: binary
@@ -549,6 +560,7 @@ pub fn encode_body(
                         };
                         parts.push(MultipartPart {
                             name: k.clone(),
+                            headers: headers.clone(),
                             content,
                         });
                         shown.push(item.clone());
@@ -566,6 +578,7 @@ pub fn encode_body(
                         };
                         parts.push(MultipartPart {
                             name: k.clone(),
+                            headers: headers.clone(),
                             content,
                         });
                         shown.push(Value::String(scalar(item)));

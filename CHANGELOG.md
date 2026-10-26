@@ -236,6 +236,16 @@ changes.
 
 ### Added
 
+- TypeScript, Python and Rust SDKs send the headers of a multipart field's
+  OpenAPI Encoding Object whose schema fixes one value (`const` or a one-value
+  `enum`) on every part of the field. `Content-Type` and `Content-Disposition`
+  entries are skipped, and other declared headers are not sent. IR
+  `PartEncoding.headers` (`PartHeader`) and the SDK descriptor document's
+  `parts[].headers` are additive; the feature is listed as
+  `multipart_part_headers`. The TypeScript runtime writes the multipart body
+  itself when a part has such headers, because `FormData` cannot carry them.
+  The other SDK targets do not send part headers.
+
 - Gallery recipe `android-jni`: call a generated Rust SDK from Java through a
   minimal JNI bridge (`examples/android-jni`), with one Tokio runtime per
   native handle, the total deadline and response-size bound, diagnostic
