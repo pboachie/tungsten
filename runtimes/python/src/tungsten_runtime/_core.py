@@ -1078,6 +1078,7 @@ class Engine:
                 "deadline": "DEADLINE_EXCEEDED",
                 "oversized": "RESPONSE_TOO_LARGE",
                 "sink": "SINK_FAILED",
+                "exists": "DESTINATION_EXISTS",
             }.get(why)
             if why == "idle":
                 cause = f"No bytes arrived within {js_number(idle_ms if idle_ms is not None else timeout_ms)} ms {after}; the download was abandoned."
@@ -1092,6 +1093,8 @@ class Engine:
                 cause = f"The body ended {after}, short of its Content-Length of {declared}."
             elif why == "oversized":
                 cause = f"The body is larger than the limit of {max_bytes or 0} bytes (max_bytes); the download was abandoned {after}."
+            elif why == "exists":
+                cause = f"The destination file exists and overwrite is off; nothing was written and the download was abandoned {after}."
             else:
                 cause = f"The sink failed ({detail or 'error'}) {after}; the download was abandoned."
             if mutation:
@@ -1107,12 +1110,16 @@ class Engine:
                     attempts=meta.attempts,
                 )
                 return scrub_diagnostic(error, secrets)
-            local = why in ("aborted", "sink", "oversized", "deadline")
-            category: Literal["UPSTREAM_UNAVAILABLE", "UNEXPECTED_RESPONSE", "TRANSPORT_FAILED"] = (
+            local = why in ("aborted", "sink", "oversized", "deadline", "exists")
+            category: Literal[
+                "UPSTREAM_UNAVAILABLE", "UNEXPECTED_RESPONSE", "TRANSPORT_FAILED", "VALIDATION_FAILED"
+            ] = (
                 "UPSTREAM_UNAVAILABLE"
                 if why in ("idle", "deadline")
                 else "UNEXPECTED_RESPONSE"
                 if why == "oversized"
+                else "VALIDATION_FAILED"
+                if why == "exists"
                 else "TRANSPORT_FAILED"
             )
             if why == "idle":
@@ -1121,6 +1128,8 @@ class Engine:
                 again = "call again with a larger deadline_ms"
             elif why == "oversized":
                 again = "raise max_bytes if a body this large is expected"
+            elif why == "exists":
+                again = "pass overwrite=True to replace the file, or choose another path, and call again"
             else:
                 again = "call again"
             error = diagnostic(

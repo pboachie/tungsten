@@ -129,7 +129,8 @@ export class Download {
         try {
           await sink(item.value);
         } catch (error) {
-          return this.#end("sink", error instanceof Error ? error.name : "error") as { ok: false; error: Diagnostic };
+          const code = (error as { code?: unknown } | null)?.code;
+          return this.#end("sink", typeof code === "string" ? code : error instanceof Error ? error.name : "error") as { ok: false; error: Diagnostic };
         }
       }
     } finally {
