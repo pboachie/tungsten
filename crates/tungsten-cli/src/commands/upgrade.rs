@@ -564,7 +564,14 @@ pub(crate) fn rehearse(args: &UpgradeRehearseArgs, env: &CliEnv) -> Report {
         commands.push(format!("tungsten upgrade apply {path} --workspace {shown}"));
         result.commands = commands;
         match stage(workspace, plan, &recipe, ir, staged, &mut result) {
-            Ok(()) => result.staged = true,
+            Ok(()) => {
+                result.staged = true;
+                if result.verdict == RehearsalVerdict::Blocked {
+                    result.commands.push(format!(
+                        "tungsten support-bundle {path} --preview --rehearsal {shown}"
+                    ));
+                }
+            }
             Err(error) => {
                 result
                     .findings

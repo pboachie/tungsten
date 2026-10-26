@@ -29,6 +29,7 @@ use crate::{CliEnv, Report, exit, input};
 
 use super::support_bundle_attach::{self as attach, AttachmentKind, AttachmentPayload};
 use super::support_bundle_file::{self as export, ExportError, Failure};
+use super::support_bundle_rehearsal as rehearsal;
 
 /// Version of the metadata-only manifest schema, written when nothing user
 /// supplied is attached.
@@ -36,9 +37,16 @@ pub(crate) const BUNDLE_SCHEMA_VERSION: u32 = 1;
 /// Version written when the user attached material; it adds labelled
 /// `user.attachment[N]` entries after the observed ones.
 pub(crate) const BUNDLE_SCHEMA_VERSION_ATTACHMENTS: u32 = 2;
+/// Version written with `--rehearsal`: it adds the observed
+/// `upgrade.rehearsal` entry after the six entries of version 1 and before
+/// any `user.attachment[N]` entries.
+pub(crate) const BUNDLE_SCHEMA_VERSION_REHEARSAL: u32 = 3;
 /// Every version `--inspect` reads.
-pub(crate) const SUPPORTED_SCHEMA_VERSIONS: [u32; 2] =
-    [BUNDLE_SCHEMA_VERSION, BUNDLE_SCHEMA_VERSION_ATTACHMENTS];
+pub(crate) const SUPPORTED_SCHEMA_VERSIONS: [u32; 3] = [
+    BUNDLE_SCHEMA_VERSION,
+    BUNDLE_SCHEMA_VERSION_ATTACHMENTS,
+    BUNDLE_SCHEMA_VERSION_REHEARSAL,
+];
 /// Largest serialized payload of one entry; a larger one is withheld.
 pub(super) const MAX_ENTRY_BYTES: usize = 16 * 1024;
 /// Largest total of all entry payloads; later entries are withheld past it.
@@ -229,6 +237,7 @@ pub enum BundlePayload {
     Diagnostics(DiagnosticSummary),
     Prerequisites(PrerequisiteSummary),
     Reproduction(ReproductionRecipe),
+    Rehearsal(super::support_bundle_rehearsal::RehearsalSummary),
     Attachment(AttachmentPayload),
 }
 
@@ -420,8 +429,12 @@ pub(crate) fn run(
     }
     let attachment_ids: Vec<String> = (0..attachments).map(attach::entry_id).collect();
     for id in &args.exclude {
-        if !ENTRY_IDS.contains(&id.as_str()) && !attachment_ids.contains(id) {
+        let rehearsal = args.rehearsal.is_some() && id == rehearsal::ENTRY_ID;
+        if !ENTRY_IDS.contains(&id.as_str()) && !attachment_ids.contains(id) && !rehearsal {
             let mut valid: Vec<String> = ENTRY_IDS.map(String::from).to_vec();
+            if args.rehearsal.is_some() {
+                valid.push(rehearsal::ENTRY_ID.to_string());
+            }
             valid.extend(attachment_ids);
             return report.failed(
                 exit::USAGE,
@@ -483,14 +496,14 @@ pub(crate) fn run(
     };
     report.human = format!(
         "Published a {} support bundle ({} bytes). Nothing was uploaded or executed.\n",
-        if manifest.bundle_schema_version == BUNDLE_SCHEMA_VERSION {
-            "metadata-only"
+        if user_supplied(&manifest) {
+            format!("schema {}", manifest.bundle_schema_version)
         } else {
-            "schema 2"
+            "metadata-only".to_string()
         },
         bytes.len()
     );
-    if manifest.bundle_schema_version != BUNDLE_SCHEMA_VERSION {
+    if user_supplied(&manifest) {
         report.human.push_str(USER_SUPPLIED_WARNING);
     }
     report.result = Some(CommandResult::SupportBundleExport(Box::new(
@@ -558,7 +571,7 @@ fn inspect_file(mut report: Report, file: &Path) -> Report {
                 format!("unsupported support bundle schema version {version}"),
             )
             .with_help(format!(
-                "this tungsten reads schema versions {BUNDLE_SCHEMA_VERSION} and {BUNDLE_SCHEMA_VERSION_ATTACHMENTS}; use the tungsten release that wrote the bundle"
+                "this tungsten reads schema versions {BUNDLE_SCHEMA_VERSION}, {BUNDLE_SCHEMA_VERSION_ATTACHMENTS} and {BUNDLE_SCHEMA_VERSION_REHEARSAL}; use the tungsten release that wrote the bundle"
             )),
         ),
         InspectError::Invalid(problem) => (
@@ -733,14 +746,26 @@ fn build(
         }),
     ];
     let mut total = 0usize;
-    let observed = ENTRY_IDS.iter().zip(payloads).map(|(id, payload)| {
+    let rehearsal = args.rehearsal.as_deref().map(|dir| {
         (
-            (*id).to_string(),
-            BundleEntryOrigin::Observed,
-            BundleSensitivity::Metadata,
-            payload,
+            rehearsal::ENTRY_ID,
+            BundlePayload::Rehearsal(rehearsal::summarize(dir)),
         )
     });
+    let has_rehearsal = rehearsal.is_some();
+    let observed = ENTRY_IDS
+        .iter()
+        .copied()
+        .zip(payloads)
+        .chain(rehearsal)
+        .map(|(id, payload)| {
+            (
+                id.to_string(),
+                BundleEntryOrigin::Observed,
+                BundleSensitivity::Metadata,
+                payload,
+            )
+        });
     let user_supplied = attached.into_iter().enumerate().map(|(index, payload)| {
         (
             attach::entry_id(index),
@@ -749,10 +774,13 @@ fn build(
             BundlePayload::Attachment(payload),
         )
     });
-    let version = if user_supplied.len() == 0 {
-        BUNDLE_SCHEMA_VERSION
-    } else {
+    let attached = user_supplied.len() != 0;
+    let version = if has_rehearsal {
+        BUNDLE_SCHEMA_VERSION_REHEARSAL
+    } else if attached {
         BUNDLE_SCHEMA_VERSION_ATTACHMENTS
+    } else {
+        BUNDLE_SCHEMA_VERSION
     };
     let entries: Vec<BundleEntry> = observed
         .chain(user_supplied)
@@ -778,7 +806,7 @@ fn build(
             }
         })
         .collect();
-    let privacy = if version == BUNDLE_SCHEMA_VERSION {
+    let privacy = if !attached {
         BundlePrivacyDefaults {
             level: "metadata_only".into(),
             redaction: "names, states, counts and versions only; no values, digests, paths, URLs or text from the project".into(),
@@ -1043,13 +1071,21 @@ fn prerequisites(path: &Path, loaded: bool, search_path: &std::ffi::OsStr) -> Pr
     }
 }
 
+/// Whether a bundle holds user-supplied attachments.
+fn user_supplied(preview: &SupportBundlePreview) -> bool {
+    preview
+        .entries
+        .iter()
+        .any(|e| e.origin == BundleEntryOrigin::UserSupplied)
+}
+
 fn human(preview: &SupportBundlePreview) -> String {
     let mut out = format!(
         "tungsten {} · support-bundle preview (schema {})\n",
         tungsten_build::TUNGSTEN_VERSION,
         preview.bundle_schema_version
     );
-    if preview.bundle_schema_version == BUNDLE_SCHEMA_VERSION {
+    if !user_supplied(preview) {
         out.push_str(
             "metadata only; nothing is written, uploaded or executed. These are the exact entries a bundle would hold.\n",
         );
