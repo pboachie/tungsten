@@ -3,7 +3,8 @@
 //! configuration file, then the default.
 //!
 //! Environment: `<PREFIX>_BASE_URL`, `<PREFIX>_PROFILE`, `<PREFIX>_CONFIG`,
-//! `<PREFIX>_TIMEOUT` (seconds), and one variable per credential,
+//! `<PREFIX>_TIMEOUT` (seconds per attempt), `<PREFIX>_DEADLINE` (seconds for
+//! the whole command), and one variable per credential,
 //! `<PREFIX>_<SCHEME>` for a token or key and `<PREFIX>_<SCHEME>_<PART>` for
 //! each part of a composite profile (a cookie by its name, a header by the
 //! cookie it equals or the configuration key it takes). The same names,
@@ -18,6 +19,7 @@
 //! [profile.work]
 //! base_url = "https://api.example.test"
 //! timeout = 20
+//! deadline = 60
 //! bearer_auth = "token"
 //! ```
 
@@ -57,6 +59,7 @@ pub(crate) struct Flags<'a> {
     pub profile: Option<&'a str>,
     pub config: Option<&'a str>,
     pub timeout: Option<&'a str>,
+    pub deadline: Option<&'a str>,
 }
 
 #[derive(Debug)]
@@ -65,6 +68,8 @@ pub(crate) struct Settings {
     pub config_path: Option<PathBuf>,
     pub base_url: Option<(String, Source)>,
     pub timeout: Option<(Duration, Source)>,
+    /// Total deadline of the command's logical call (`ClientOptions::deadline`).
+    pub deadline: Option<(Duration, Source)>,
     doc: Option<Doc>,
 }
 
@@ -72,11 +77,11 @@ fn nonempty<'a>(env: &'a BTreeMap<String, String>, name: &str) -> Option<&'a str
     env.get(name).map(String::as_str).filter(|v| !v.is_empty())
 }
 
-fn parse_seconds(text: &str, from: &str) -> Result<Duration, String> {
+fn parse_seconds(text: &str, from: &str, what: &str) -> Result<Duration, String> {
     match text.trim().parse::<f64>() {
         Ok(s) if s.is_finite() && s > 0.0 && s < 1.0e9 => Ok(Duration::from_secs_f64(s)),
         _ => Err(format!(
-            "{from}: the timeout must be a positive number of seconds"
+            "{from}: the {what} must be a positive number of seconds"
         )),
     }
 }
@@ -158,27 +163,39 @@ pub(crate) fn resolve(
             .filter(|v| !v.is_empty())
             .map(|v| (v.to_string(), Source::Profile))
     };
-    let timeout = if let Some(v) = flags.timeout {
-        Some((parse_seconds(v, "--timeout")?, Source::Flag))
-    } else if let Some(v) = nonempty(env, &var("TIMEOUT")) {
-        Some((parse_seconds(v, &var("TIMEOUT"))?, Source::Env))
-    } else {
-        match from_profile("timeout") {
+    // `--timeout`/`TIMEOUT`/`timeout` and `--deadline`/`DEADLINE`/`deadline`.
+    let seconds = |flag: Option<&str>, name: &str| -> Result<Option<(Duration, Source)>, String> {
+        let upper = name.to_ascii_uppercase();
+        if let Some(v) = flag {
+            return Ok(Some((
+                parse_seconds(v, &format!("--{name}"), name)?,
+                Source::Flag,
+            )));
+        }
+        if let Some(v) = nonempty(env, &var(&upper)) {
+            return Ok(Some((parse_seconds(v, &var(&upper), name)?, Source::Env)));
+        }
+        match from_profile(name) {
             Some(v) => {
-                let secs = v.as_seconds().ok_or("profile timeout must be a number")?;
-                Some((
-                    parse_seconds(&secs.to_string(), "profile timeout")?,
+                let secs = v
+                    .as_seconds()
+                    .ok_or_else(|| format!("profile {name} must be a number"))?;
+                Ok(Some((
+                    parse_seconds(&secs.to_string(), &format!("profile {name}"), name)?,
                     Source::Profile,
-                ))
+                )))
             }
-            None => None,
+            None => Ok(None),
         }
     };
+    let timeout = seconds(flags.timeout, "timeout")?;
+    let deadline = seconds(flags.deadline, "deadline")?;
     Ok(Settings {
         profile,
         config_path: path.filter(|_| doc.is_some()),
         base_url,
         timeout,
+        deadline,
         doc,
     })
 }
@@ -199,7 +216,9 @@ impl Settings {
         let Some(doc) = &self.doc else { return vec![] };
         doc.keys(&["profile", &self.profile])
             .into_iter()
-            .filter(|k| !matches!(*k, "base_url" | "timeout") && !known.iter().any(|n| n == k))
+            .filter(|k| {
+                !matches!(*k, "base_url" | "timeout" | "deadline") && !known.iter().any(|n| n == k)
+            })
             .map(str::to_string)
             .collect()
     }

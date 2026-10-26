@@ -108,7 +108,7 @@ fn flag_notes(c: Category, bin: &str, env_prefix: &str) -> Vec<String> {
             format!("on a mutation pass the same {key}"),
         ],
         Category::TransportFailed => vec![
-            "--base-url and --timeout: check the address and how long a request attempt may take".into(),
+            "--base-url, --timeout and --deadline: check the address, how long a request attempt may take and how long the whole command may take".into(),
             "nothing reached the server, so the same command can be run again".into(),
         ],
         Category::OutcomeUnknown => vec![
