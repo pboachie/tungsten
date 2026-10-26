@@ -34,6 +34,9 @@ pub(crate) enum Kind {
 pub(crate) struct Node<'v> {
     pub pointer: String,
     pub kind: Kind,
+    /// The kind of the object holding this node; `None` where the walk
+    /// started.
+    pub parent: Option<Kind>,
     pub value: &'v serde_json::Map<String, Value>,
 }
 
@@ -116,8 +119,9 @@ pub(crate) fn walk_cancellable<'v>(
     cancellation: &crate::CancellationToken,
     mut visit: impl FnMut(&Node<'v>) -> bool,
 ) {
-    let mut stack: Vec<(String, Kind, &'v Value)> = vec![(pointer.to_string(), kind, value)];
-    while let Some((pointer, kind, value)) = stack.pop() {
+    let mut stack: Vec<(String, Kind, Option<Kind>, &'v Value)> =
+        vec![(pointer.to_string(), kind, None, value)];
+    while let Some((pointer, kind, parent, value)) = stack.pop() {
         if cancellation.is_cancelled() {
             return;
         }
@@ -127,6 +131,7 @@ pub(crate) fn walk_cancellable<'v>(
         let node = Node {
             pointer,
             kind,
+            parent,
             value: map,
         };
         if !visit(&node) {
@@ -141,7 +146,12 @@ pub(crate) fn walk_cancellable<'v>(
         }
         let mut children = vec![];
         children_of(&node, &mut children);
-        stack.extend(children.into_iter().rev());
+        stack.extend(
+            children
+                .into_iter()
+                .rev()
+                .map(|(pointer, child, value)| (pointer, child, Some(kind), value)),
+        );
     }
 }
 
@@ -219,6 +229,7 @@ fn children_of<'v>(node: &Node<'v>, out: &mut Vec<(String, Kind, &'v Value)>) {
         }
         Kind::MediaType => {
             one(out, "schema", Kind::Schema);
+            one(out, "itemSchema", Kind::Schema);
             each(out, "examples", Kind::Example, false);
             each(out, "encoding", Kind::Encoding, false);
         }

@@ -9,8 +9,9 @@
 //!   (and its kind becomes `success`) when the operation has no other
 //!   success response: it is then the only thing a 2xx can be.
 //! - The event type is the media type's schema, usually a union tagged by
-//!   `type`. A media type without a schema gives events of any JSON type
-//!   (TG0530).
+//!   `type`, or in OpenAPI 3.2 the `contentSchema` of the `data` field of
+//!   its `itemSchema`. A media type without either gives events of any JSON
+//!   type (TG0530).
 //! - `x-tungsten-stream-done` on the media type object, else on the
 //!   operation, names a `data` value that ends the stream (`[DONE]`).
 //! - A boolean `stream` member of the JSON request body is the flag that
@@ -92,7 +93,13 @@ pub(crate) fn apply(cx: &mut Ctx<'_>, op: &mut Operation, at: &RefTarget) {
         child(&child(&t, "content"), &content.media_type)
     });
     let media = cx.get(&media_at);
-    let typed = media.is_some_and(|m| m.get("schema").is_some());
+    // A 3.2 `itemSchema` whose event `data` is JSON types the events too.
+    let item_typed = crate::pathitem::reads_3_2(cx.ws, &media_at)
+        && media
+            .and_then(Value::as_object)
+            .and_then(|m| tungsten_openapi::response_item_schema(&content.media_type, m))
+            .is_some();
+    let typed = item_typed || media.is_some_and(|m| m.get("schema").is_some());
     if !typed {
         cx.report(
             Diagnostic::warning(
@@ -102,7 +109,7 @@ pub(crate) fn apply(cx: &mut Ctx<'_>, op: &mut Operation, at: &RefTarget) {
                     op.id.0
                 ),
             )
-            .with_help("declare the schema of one event under the text/event-stream media type"),
+            .with_help("declare the schema of one event under the text/event-stream media type, or in OpenAPI 3.2 an `itemSchema` whose `data` has a JSON `contentSchema`"),
             &media_at,
         );
     }

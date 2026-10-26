@@ -42,6 +42,91 @@ impl Finding {
     }
 }
 
+/// JSON Lines media types: one JSON value per line.
+const JSON_LINES: &[&str] = &[
+    "application/jsonl",
+    "application/x-jsonl",
+    "application/ndjson",
+    "application/x-ndjson",
+];
+
+/// The fields of one server-sent event (`data`, `event`, `id`, `retry`).
+const EVENT_FIELDS: &[&str] = &["data", "event", "id", "retry"];
+
+/// Keywords an event `itemSchema` may use besides `properties`.
+const EVENT_KEYWORDS: &[&str] = &[
+    "type",
+    "properties",
+    "required",
+    "title",
+    "description",
+    "$comment",
+];
+
+fn essence(media_type: &str) -> String {
+    media_type
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase()
+}
+
+fn is_json(media_type: &str) -> bool {
+    let essence = essence(media_type);
+    essence == "application/json" || essence.ends_with("+json")
+}
+
+/// Where a response media type's OpenAPI 3.2 `itemSchema` keeps the type of
+/// one item, relative to the Media Type Object, when the compiler supports
+/// it:
+///
+/// - JSON Lines (`application/jsonl` and its aliases): `/itemSchema` is the
+///   type of one line, as `schema` is for these media types in 3.1.
+/// - `text/event-stream` whose item is an event object with a `data` string
+///   of JSON (`contentMediaType` JSON plus `contentSchema`):
+///   `/itemSchema/properties/data/contentSchema` is the event type. The
+///   other event fields (`event`, `id`, `retry`) carry no type.
+///
+/// `None` for every other use, including a media type that declares
+/// `schema` too; TG0145 reports those.
+pub fn response_item_schema(media_type: &str, media: &Map<String, Value>) -> Option<&'static str> {
+    let item = media.get("itemSchema")?;
+    if media.get("schema").is_some() || !item.is_object() {
+        return None;
+    }
+    let essence = essence(media_type);
+    if JSON_LINES.contains(&essence.as_str()) {
+        return Some("/itemSchema");
+    }
+    if essence != "text/event-stream" {
+        return None;
+    }
+    let item = item.as_object()?;
+    let shaped = item.keys().all(|k| EVENT_KEYWORDS.contains(&k.as_str()))
+        && item
+            .get("type")
+            .is_none_or(|t| t.as_str() == Some("object"));
+    let properties = item.get("properties")?.as_object()?;
+    if !shaped
+        || !properties
+            .keys()
+            .all(|k| EVENT_FIELDS.contains(&k.as_str()))
+    {
+        return None;
+    }
+    let data = properties.get("data")?.as_object()?;
+    let json = data
+        .get("contentMediaType")
+        .and_then(Value::as_str)
+        .is_some_and(is_json);
+    let string = data
+        .get("type")
+        .is_none_or(|t| t.as_str() == Some("string"));
+    (json && string && data.contains_key("contentSchema"))
+        .then_some("/itemSchema/properties/data/contentSchema")
+}
+
 const REMOVE: &str = "use only OpenAPI 3.1 constructs, or declare the document as OpenAPI 3.1";
 const IGNORED: &str = "the compiler does not use it; remove it to silence this warning";
 
@@ -251,12 +336,17 @@ fn node_findings(node: &Node<'_>, schemes: &BTreeSet<String>, out: &mut Vec<Find
             }
         }
         Kind::MediaType => {
-            if map.contains_key("itemSchema") {
+            let supported = node.parent == Some(Kind::Response)
+                && node.pointer.rsplit_once('/').is_some_and(|(_, key)| {
+                    let media_type = key.replace("~1", "/").replace("~0", "~");
+                    response_item_schema(&media_type, map).is_some()
+                });
+            if map.contains_key("itemSchema") && !supported {
                 out.push(error(
                     "TG0145",
                     at("itemSchema"),
-                    "OpenAPI 3.2 `itemSchema` (sequential and streaming media types) is not supported",
-                    "describe the whole payload with `schema`, or remove the media type",
+                    "this use of OpenAPI 3.2 `itemSchema` (sequential and streaming media types) is not supported",
+                    "only response JSON Lines items and server-sent events whose `data` has a JSON `contentSchema` are compiled; otherwise describe the whole payload with `schema`",
                 ));
             }
             for key in ["prefixEncoding", "itemEncoding"] {
