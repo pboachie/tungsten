@@ -42,7 +42,7 @@ export type TelemetryQueueReason = "admitted" | "full" | "timeout" | "paused" | 
  * operation covers every page it fetched, one `poll` operation every read
  * it made, one `stream` operation its connection and every reconnect; their
  * attempts are numbered across the whole operation. */
-export type TelemetryEntry = "call" | "pages" | "poll" | "preview" | "stream";
+export type TelemetryEntry = "call" | "pages" | "poll" | "preview" | "stream" | "download" | "export_pages";
 
 /** One telemetry event. Fields that do not apply to an event are null. */
 export interface TelemetryEvent {

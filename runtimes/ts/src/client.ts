@@ -695,19 +695,25 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
   /** Iterate pages (cursor, offset, page number or `Link` header); stops
    * after the last page or after yielding the first error. */
   async *pages<T>(op: OperationDescriptor, args: Record<string, unknown>, opts?: CallOptions): AsyncIterable<Result<Page<T>>> {
-    const span = this.#startSpan(op, "pages");
+    yield* this.#tracedPages(op, "pages", opts, (resolved) => this.#pages<T>(op, args, resolved), "paginating");
+  }
+
+  /** Run a page iteration as one telemetry operation (when telemetry is
+   * on); one the caller stops before its end is reported as cancelled. */
+  async *#tracedPages<R extends Result<unknown>>(op: OperationDescriptor, entry: TelemetryEntry, opts: CallOptions | undefined, run: (resolved: CallOptions) => AsyncIterable<R>, during: string): AsyncGenerator<R> {
+    const span = this.#startSpan(op, entry);
     // The iteration's last item, and whether it ended (not stopped early by the caller).
     let last: Result<unknown> | null = null;
     let finished = false;
     try {
       const resolved = this.#callOptions(opts);
-      for await (const page of this.#pages<T>(op, args, span === null ? resolved : ({ ...resolved, [TELEMETRY_SPAN]: span } as StepOptions))) {
+      for await (const page of run(span === null ? resolved : ({ ...resolved, [TELEMETRY_SPAN]: span } as StepOptions))) {
         last = page;
         yield page;
       }
       finished = true;
     } catch (error) {
-      const failed = fail(this.#internal(op, error, "paginating"));
+      const failed = fail(this.#internal(op, error, during)) as R;
       last = failed;
       finished = true;
       yield failed;
@@ -731,11 +737,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
    * budgets, cycle detection, deadlines and cancellation apply per run.
    */
   async *exportPages<T>(op: OperationDescriptor, args: Record<string, unknown>, checkpoint: CheckpointOptions, opts?: CallOptions): AsyncIterable<Result<CheckpointPage<T>>> {
-    try {
-      yield* this.#exportPages<T>(op, args, checkpoint, this.#callOptions(opts));
-    } catch (error) {
-      yield fail(this.#internal(op, error, "exporting pages"));
-    }
+    yield* this.#tracedPages(op, "export_pages", opts, (resolved) => this.#exportPages<T>(op, args, checkpoint, resolved), "exporting pages");
   }
 
   /** The secret-free status of a checkpoint token (operation, style,
@@ -793,11 +795,8 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
    * connection and its scheduler capacity are held until the download
    * ends or is closed. Never throws. */
   async download(op: OperationDescriptor, args: Record<string, unknown>, opts?: DownloadOptions): Promise<Result<Download>> {
-    try {
-      return await this.#download(op, args, this.#callOptions(opts));
-    } catch (error) {
-      return fail(this.#internal(op, error, "downloading"));
-    }
+    // The operation ends when the answer is handed over; reading the body is not part of it.
+    return this.#traced(op, "download", opts, (resolved) => this.#download(op, args, resolved as DownloadOptions), "downloading");
   }
 
   /** Call a read operation until `until` holds on its body or the budget
