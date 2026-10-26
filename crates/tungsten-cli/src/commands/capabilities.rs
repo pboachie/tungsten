@@ -138,7 +138,7 @@ fn matrix(catalog: &CapabilityCatalog) -> String {
         let environments = target
             .execution_environments
             .iter()
-            .map(|environment| snake(environment))
+            .map(snake)
             .collect::<Vec<_>>()
             .join(", ");
         let features = target
