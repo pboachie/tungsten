@@ -230,6 +230,21 @@ changes.
 
 ### Added
 
+- Add `tungsten refresh-import` to refresh a converted import (Postman, HAR,
+  saved cURL, HTTP file, Swagger or endpoint manifest) in place instead of
+  re-importing into a fresh project. It converts the new source revision
+  (`--from`, or the recorded `source_url`) and previews the converted-document
+  diff, added, removed and changed operations with the facts that changed, the
+  approved imported operations that need renewed review, the regenerated
+  output and API surface changes, and the generation lock outcome. `--apply`
+  writes only after every changed approval is confirmed with `--accept-review`
+  and an optional `--expect` digest still matches, then updates the
+  conversion, import report, `source_sha256`, the remote pin and a current
+  `tungsten.lock.json` together. Overlays, agent.yml and generated outputs are
+  not modified. An interrupted apply is detected from its journal and restored
+  with `--rollback`. The capability catalog lists the command for each
+  converted input format as `refresh_command`.
+
 - Add the `examples/restricted-agent` customization example: an MCP server
   that reads freely, confirms writes and hides deletion, with transport
   references and SDK defaults from a shared profile and a check that verifies

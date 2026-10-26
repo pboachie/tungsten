@@ -88,7 +88,7 @@ pub(crate) struct Cli {
     #[arg(long, global = true, conflicts_with = "refresh_inputs")]
     pub offline: bool,
     /// Refresh an HTTP content pin or resolve a Git ref again after review.
-    /// Converted imports require init into a fresh project to change sources.
+    /// Converted imports are refreshed with `tungsten refresh-import` instead.
     #[arg(long, global = true)]
     pub refresh_inputs: bool,
     /// Header for a URL typed on the command line; for manifest URLs use
@@ -146,6 +146,7 @@ impl Cli {
             Command::Capabilities(_) => CommandName::Capabilities,
             Command::Config(_) => CommandName::Config,
             Command::Lock(_) => CommandName::Lock,
+            Command::RefreshImport(_) => CommandName::RefreshImport,
             Command::Bundle {
                 command: BundleCommand::Export(_),
             } => CommandName::BundleExport,
@@ -193,6 +194,10 @@ pub(crate) enum Command {
     /// Capture or verify the project's generation lock (tungsten.lock.json)
     /// offline; never fetches inputs or runs emitters.
     Lock(LockArgs),
+    /// Re-convert a converted import (Postman, HAR, cURL, HTTP file,
+    /// Swagger, endpoint manifest) in place. Previews the converted spec,
+    /// operation and generated-output changes; writes only with --apply.
+    RefreshImport(Box<RefreshImportArgs>),
     /// Export or import a portable project bundle: the locked input closure
     /// as a plain directory with a digest inventory. Runs nothing.
     Bundle {
@@ -327,6 +332,59 @@ pub(crate) struct LockArgs {
     /// Accept changed identities and replace a stale or corrupt lock.
     #[arg(long)]
     pub update: bool,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct RefreshImportArgs {
+    /// Local project directory or tungsten manifest.
+    #[arg(default_value = ".")]
+    pub path: PathBuf,
+    /// Namespace of the converted input; needed when several inputs are converted.
+    #[arg(long, value_name = "NAME")]
+    pub namespace: Option<String>,
+    /// New revision of the original source (file or HTTP(S) URL). Defaults to
+    /// the input's recorded `source_url`.
+    #[arg(long, value_name = "PATH|URL")]
+    pub from: Option<PathBuf>,
+    /// Write the refreshed conversion, its provenance and the generation lock.
+    /// Without it the command only previews and never writes.
+    #[arg(long, conflicts_with = "rollback")]
+    pub apply: bool,
+    /// Refresh digest printed by the preview; --apply refuses when the project,
+    /// source or conversion no longer match it.
+    #[arg(long, value_name = "DIGEST", requires = "apply")]
+    pub expect: Option<String>,
+    /// Confirm renewed review of an approved imported operation (exact
+    /// namespace.operation id) whose facts changed; repeatable.
+    #[arg(long, value_name = "ID", requires = "apply")]
+    pub accept_review: Vec<String>,
+    /// Restore the files of an interrupted --apply from its backups.
+    #[arg(long)]
+    pub rollback: bool,
+    /// Advanced input detection override for saved requests.
+    #[arg(long, default_value = "auto", value_parser = ["auto", "curl", "http"])]
+    pub input_format: String,
+    /// Trusted path template for each saved request or HAR path; repeatable.
+    #[arg(long)]
+    pub route: Vec<String>,
+    /// Shell quoting syntax of a saved cURL command; never executes a shell.
+    #[arg(long, default_value = "posix", value_parser = ["posix", "cmd", "powershell"])]
+    pub shell_dialect: String,
+    /// Exact HTTP(S) origin to select from a multi-origin HAR.
+    #[arg(long)]
+    pub har_origin: Option<String>,
+    /// Reviewed HAR paths: JSON object mapping captured URL paths to templates.
+    #[arg(long, value_name = "JSON")]
+    pub har_paths: Option<PathBuf>,
+    /// HAR path prefixes to include; repeatable.
+    #[arg(long)]
+    pub include_prefix: Vec<String>,
+    /// HAR path prefixes to exclude; repeatable.
+    #[arg(long)]
+    pub exclude_prefix: Vec<String>,
+    /// Additional HAR property names to redact.
+    #[arg(long)]
+    pub redact_property: Vec<String>,
 }
 
 #[derive(Debug, Subcommand)]

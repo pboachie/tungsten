@@ -44,8 +44,10 @@ The first fetch records the source URL and SHA256 under
 `.tungsten-inputs/<url-sha256>/source.lock.json`, beside immutable downloaded
 content. Retain the complete source cache directory for offline use. Online commands verify upstream
 bytes against the pin and refuse changed content. `--refresh-inputs` explicitly
-accepts a new OpenAPI pin; converted imports instead require re-import into a
-fresh project and another operation review. Their `source_url` and
+accepts a new OpenAPI pin; converted imports are instead refreshed with
+`tungsten refresh-import`, which previews the converted diff, operation and
+output changes and requires renewed review of changed approvals before
+`--apply` writes the conversion, pin and lock. Their `source_url` and
 `source_sha256` manifest fields preserve that provenance on every compilation.
 
 For authentication, repeat `--input-header 'Authorization: Bearer ...'`, or set
