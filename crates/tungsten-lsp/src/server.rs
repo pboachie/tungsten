@@ -35,6 +35,7 @@ use crate::analysis::{Analysis, Index, analyze};
 use crate::complete::{Inputs, complete};
 use crate::docs::Kind;
 use crate::hover;
+use crate::overlay_actions::{self, EditSupport};
 use crate::position::LineIndex;
 use crate::schema::Schema;
 use crate::symbols::symbols;
@@ -84,9 +85,17 @@ struct Server<'c> {
     opts: Options,
     manifest_schema: Schema,
     agent_schema: Schema,
+    profile_schema: Schema,
     manifest: Option<PathBuf>,
+    /// How the client accepts watcher registrations, when it does.
+    watch: Option<WatchSupport>,
+    /// Directories of profiles outside the workspace folder that a watcher
+    /// is registered for.
+    watched_profiles: BTreeSet<PathBuf>,
     docs: BTreeMap<PathBuf, Doc>,
     analysis: Option<Analysis>,
+    /// The generation `analysis` was computed for.
+    analysis_generation: u64,
     /// The index of the last compilation that built the IR.
     index: Option<Index>,
     published: BTreeSet<PathBuf>,
@@ -97,6 +106,10 @@ struct Server<'c> {
     cancellation: Option<CancellationToken>,
     done_tx: Sender<Done>,
     shutdown: bool,
+    /// What workspace edits the client can apply.
+    edits: EditSupport,
+    /// Whether the client shows disabled code actions with their reason.
+    disabled_actions: bool,
 }
 
 impl Drop for Server<'_> {
@@ -144,8 +157,12 @@ pub fn serve(connection: &Connection, options: Options) -> Result<i32, String> {
         opts: options,
         manifest_schema: Schema::new(tungsten_config::TungstenConfig::json_schema()),
         agent_schema: Schema::new(tungsten_agent::json_schema()),
+        profile_schema: Schema::embedding(tungsten_config::profiles::json_schema()),
+        watch: None,
+        watched_profiles: BTreeSet::new(),
         docs: BTreeMap::new(),
         analysis: None,
+        analysis_generation: 0,
         index: None,
         published: BTreeSet::new(),
         generation: 0,
@@ -154,9 +171,18 @@ pub fn serve(connection: &Connection, options: Options) -> Result<i32, String> {
         cancellation: None,
         done_tx,
         shutdown: false,
+        edits: edit_support(&params),
+        disabled_actions: params
+            .capabilities
+            .text_document
+            .as_ref()
+            .and_then(|t| t.code_action.as_ref())
+            .and_then(|c| c.disabled_support)
+            .unwrap_or(false),
     };
     server.manifest = server.discover(&params);
-    server.watch_files(&params)?;
+    server.watch = watch_support(&params);
+    server.watch_files()?;
     if server.manifest.is_some() {
         server.touch(Duration::ZERO);
     }
@@ -189,6 +215,51 @@ fn capabilities() -> ServerCapabilities {
         ..ServerCapabilities::default()
     }
 }
+
+/// Largest file read from disk to compute an edit of it.
+const MAX_EDITED_FILE: u64 = 4 * 1024 * 1024;
+
+fn edit_support(params: &InitializeParams) -> EditSupport {
+    let edit = params
+        .capabilities
+        .workspace
+        .as_ref()
+        .and_then(|w| w.workspace_edit.as_ref());
+    let Some(edit) = edit else {
+        return EditSupport::default();
+    };
+    EditSupport {
+        document_changes: edit.document_changes.unwrap_or(false),
+        create_files: edit
+            .resource_operations
+            .as_ref()
+            .is_some_and(|ops| ops.contains(&lsp_types::ResourceOperationKind::Create)),
+        annotations: edit.change_annotation_support.is_some(),
+    }
+}
+
+/// Watcher registration the client supports.
+#[derive(Debug, Clone, Copy)]
+struct WatchSupport {
+    /// Patterns relative to a base folder (LSP 3.17), so directories
+    /// outside the workspace folder can be watched.
+    relative: bool,
+}
+
+fn watch_support(params: &InitializeParams) -> Option<WatchSupport> {
+    let caps = params
+        .capabilities
+        .workspace
+        .as_ref()
+        .and_then(|w| w.did_change_watched_files.as_ref())?;
+    caps.dynamic_registration
+        .unwrap_or(false)
+        .then_some(WatchSupport {
+            relative: caps.relative_pattern_support.unwrap_or(false),
+        })
+}
+
+const PROFILE_WATCHERS: &str = "tungsten-profile-watchers";
 
 const MANIFEST_NAMES: [&str; 2] = ["tungsten.yml", "tungsten.yaml"];
 
@@ -259,30 +330,26 @@ impl Server<'_> {
 
     /// Ask the client to tell us when files change on disk (specs and
     /// overlays edited elsewhere), when it can.
-    fn watch_files(&self, params: &InitializeParams) -> Result<(), String> {
-        let dynamic = params
-            .capabilities
-            .workspace
-            .as_ref()
-            .and_then(|w| w.did_change_watched_files.as_ref())
-            .and_then(|c| c.dynamic_registration)
-            .unwrap_or(false);
-        if !dynamic {
+    fn watch_files(&self) -> Result<(), String> {
+        if self.watch.is_none() {
             return Ok(());
         }
-        let options = DidChangeWatchedFilesRegistrationOptions {
-            watchers: vec![FileSystemWatcher {
-                glob_pattern: GlobPattern::String("**/*.{yml,yaml,json}".to_string()),
-                kind: None,
-            }],
-        };
+        let watchers = vec![FileSystemWatcher {
+            glob_pattern: GlobPattern::String("**/*.{yml,yaml,json}".to_string()),
+            kind: None,
+        }];
+        self.register_watchers("tungsten-watched-files", watchers)
+    }
+
+    fn register_watchers(&self, id: &str, watchers: Vec<FileSystemWatcher>) -> Result<(), String> {
+        let options = DidChangeWatchedFilesRegistrationOptions { watchers };
         let registration = Registration {
-            id: "tungsten-watched-files".to_string(),
+            id: id.to_string(),
             method: "workspace/didChangeWatchedFiles".to_string(),
             register_options: serde_json::to_value(options).ok(),
         };
         let request = Request::new(
-            RequestId::from("tungsten-register-watchers".to_string()),
+            RequestId::from(format!("{id}-register-{}", self.generation)),
             "client/registerCapability".to_string(),
             RegistrationParams {
                 registrations: vec![registration],
@@ -292,6 +359,54 @@ impl Server<'_> {
             .sender
             .send(Message::Request(request))
             .map_err(|e| e.to_string())
+    }
+
+    /// Profiles may live outside the workspace folder (a shared directory
+    /// next to several projects), where the workspace watcher does not
+    /// reach. Watch their directories too, re-registering only when the set
+    /// of directories changes.
+    fn watch_profiles(&mut self) -> Result<(), String> {
+        let Some(support) = self.watch else {
+            return Ok(());
+        };
+        let Some(analysis) = &self.analysis else {
+            return Ok(());
+        };
+        let workspace = self.manifest.as_deref().and_then(Path::parent);
+        let dirs: BTreeSet<PathBuf> = analysis
+            .profiles
+            .iter()
+            .filter(|p| workspace.is_none_or(|w| !p.starts_with(w)))
+            .filter_map(|p| p.parent().map(Path::to_path_buf))
+            .collect();
+        if dirs == self.watched_profiles {
+            return Ok(());
+        }
+        if !self.watched_profiles.is_empty() {
+            let request = Request::new(
+                RequestId::from(format!("{PROFILE_WATCHERS}-unregister-{}", self.generation)),
+                "client/unregisterCapability".to_string(),
+                lsp_types::UnregistrationParams {
+                    unregisterations: vec![lsp_types::Unregistration {
+                        id: PROFILE_WATCHERS.to_string(),
+                        method: "workspace/didChangeWatchedFiles".to_string(),
+                    }],
+                },
+            );
+            self.conn
+                .sender
+                .send(Message::Request(request))
+                .map_err(|e| e.to_string())?;
+        }
+        let watchers: Vec<FileSystemWatcher> = dirs
+            .iter()
+            .filter_map(|dir| profile_watcher(dir, support))
+            .collect();
+        self.watched_profiles = dirs;
+        if watchers.is_empty() {
+            return Ok(());
+        }
+        self.register_watchers(PROFILE_WATCHERS, watchers)
     }
 
     /// [`Server::message`], with a panic in a handler turned into a log line
@@ -361,8 +476,10 @@ impl Server<'_> {
         }
         let current = generation == self.generation;
         self.analysis = Some(analysis);
+        self.analysis_generation = generation;
         if current {
             self.publish()?;
+            self.watch_profiles()?;
             if let Some(a) = &self.analysis {
                 let total: usize = a.diagnostics.values().map(Vec::len).sum();
                 self.log(&format!(
@@ -531,6 +648,18 @@ impl Server<'_> {
             if a.overlays.iter().any(|o| o == path) {
                 return Some(Kind::Overlay);
             }
+            if a.profiles.iter().any(|p| p == path) {
+                return Some(Kind::Profile);
+            }
+        }
+        // A profile not yet selected by the manifest, or not yet compiled.
+        if is_yaml(path)
+            && self
+                .docs
+                .get(path)
+                .is_some_and(|doc| declares_profile(&doc.text))
+        {
+            return Some(Kind::Profile);
         }
         let name = file_name(path);
         if !is_yaml(path) {
@@ -639,11 +768,12 @@ impl Server<'_> {
                     });
                     let uri = &p.text_document.uri;
                     let doc = uri_to_path(uri).and_then(|path| self.docs.get(&path));
-                    let list = match doc {
+                    let mut list = match doc {
                         Some(d) if wants_fixes => {
                             let buffer = Buffer {
                                 uri,
                                 version: d.version,
+                                document_changes: self.edits.document_changes,
                                 text: &d.text,
                                 lines: &d.lines,
                             };
@@ -651,6 +781,22 @@ impl Server<'_> {
                         }
                         _ => vec![],
                     };
+                    if wants_fixes {
+                        let overlays = self.overlay_fixes(uri, &p.context.diagnostics);
+                        if self.disabled_actions
+                            && let Some(why) = actions::unavailable_overlay(
+                                &p.context.diagnostics,
+                                &overlays,
+                                || self.overlay_unavailable(uri),
+                            )
+                        {
+                            list.push(why);
+                        }
+                        list.extend(overlays);
+                        if self.disabled_actions {
+                            list.extend(actions::unsupported_inputs(&p.context.diagnostics));
+                        }
+                    }
                     self.reply(id, list)
                 }
                 None => self.fail(
@@ -661,6 +807,75 @@ impl Server<'_> {
             },
             _ => self.fail(id, ErrorCode::MethodNotFound, "method not supported"),
         }
+    }
+
+    /// The overlay quick fixes for diagnostics of the file at `uri`, from
+    /// the latest analysis that is still current.
+    fn overlay_fixes(
+        &self,
+        uri: &Uri,
+        diagnostics: &[lsp_types::Diagnostic],
+    ) -> Vec<lsp_types::CodeActionOrCommand> {
+        let (Some(path), Some(analysis), Some(manifest)) =
+            (uri_to_path(uri), &self.analysis, &self.manifest)
+        else {
+            return vec![];
+        };
+        // An edit since the analysis may have fixed or moved the
+        // diagnostics; the next analysis offers the fixes again.
+        if self.analysis_generation != self.generation {
+            return vec![];
+        }
+        let read = |path: &Path| self.read(path);
+        overlay_actions::actions(
+            &path,
+            diagnostics,
+            &analysis.overlay_fixes,
+            manifest,
+            self.edits,
+            &read,
+        )
+    }
+
+    /// Why the overlay fixes of the file at `uri` were not offered.
+    fn overlay_unavailable(&self, uri: &Uri) -> String {
+        const COMMAND: &str = "run `tungsten overlay suggest --namespace <namespace> --write <file>` and list the file under `overlays` of the input in tungsten.yml";
+        if self.analysis_generation != self.generation || self.running {
+            return "the project is being checked again; retry when its diagnostics update".into();
+        }
+        if !self.edits.document_changes {
+            return format!("the editor does not take versioned workspace edits; {COMMAND}");
+        }
+        let path = uri_to_path(uri);
+        let derived = self.analysis.as_ref().is_some_and(|a| {
+            a.overlay_fixes
+                .iter()
+                .any(|f| f.fixes.iter().any(|(p, _, _)| Some(p) == path.as_ref()))
+        });
+        if !derived {
+            return "no overlay action derives a fix for this diagnostic from the current check; `tungsten overlay suggest` reports why".into();
+        }
+        if !self.edits.create_files {
+            return format!(
+                "the fix may need a new overlay file and the editor cannot create files from a quick fix; {COMMAND}"
+            );
+        }
+        format!(
+            "tungsten.yml or the suggested overlay does not have the shape a quick fix edits (for example a flow-style input or an unreadable file); {COMMAND}"
+        )
+    }
+
+    /// The text of `path` as the editor has it: the open buffer and its
+    /// version, else the file on disk (bounded).
+    fn read(&self, path: &Path) -> Option<(String, Option<i32>)> {
+        if let Some(doc) = self.docs.get(path) {
+            return Some((doc.text.clone(), Some(doc.version)));
+        }
+        let meta = std::fs::metadata(path).ok()?;
+        if !meta.is_file() || meta.len() > MAX_EDITED_FILE {
+            return None;
+        }
+        std::fs::read_to_string(path).ok().map(|t| (t, None))
     }
 
     /// Run `f` on the open document at `uri` with the cursor offset.
@@ -679,10 +894,38 @@ impl Server<'_> {
             index: self.index.as_ref(),
             manifest: &self.manifest_schema,
             agent: &self.agent_schema,
+            profile: &self.profile_schema,
         };
         let offset = doc.lines.offset(position, &doc.text);
         Some(f(&inputs, offset))
     }
+}
+
+/// A watcher for the YAML files of one profile directory.
+fn profile_watcher(dir: &Path, support: WatchSupport) -> Option<FileSystemWatcher> {
+    let pattern = "*.{yml,yaml}".to_string();
+    let glob_pattern = if support.relative {
+        GlobPattern::Relative(lsp_types::RelativePattern {
+            base_uri: OneOf::Right(path_to_uri(dir)?),
+            pattern,
+        })
+    } else {
+        let dir = dir.to_str()?.replace('\\', "/");
+        GlobPattern::String(format!("{}/{pattern}", dir.trim_end_matches('/')))
+    };
+    Some(FileSystemWatcher {
+        glob_pattern,
+        kind: None,
+    })
+}
+
+/// Whether `text` has a top-level `tungsten_profile` key, as every profile
+/// must.
+fn declares_profile(text: &str) -> bool {
+    text.lines().any(|line| {
+        line.strip_prefix("tungsten_profile")
+            .is_some_and(|rest| rest.trim_start().starts_with(':'))
+    })
 }
 
 fn parse<T: DeserializeOwned>(params: serde_json::Value) -> Option<T> {

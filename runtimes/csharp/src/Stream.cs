@@ -521,7 +521,7 @@ public sealed partial class ClientCore
 
     /// <summary>The typed stream of an operation; <paramref name="decode"/> turns an event into the SDK's type.</summary>
     public EventStream<T> StreamTyped<T>(OperationDescriptor op, JsonNode? args, Func<JsonNode?, T> decode, CallOptions? options = null) =>
-        new(new StreamCore(this, op, op.Stream ?? new StreamDescriptor(), args, options ?? new CallOptions()), (ev, index) => Typed.DecodeEvent(op.Id, index, ev, decode));
+        new(new StreamCore(this, op, op.Stream ?? new StreamDescriptor(), args, WithCallDeadline(options ?? new CallOptions())), (ev, index) => Typed.DecodeEvent(op.Id, index, ev, decode));
 
     /// <summary>Sets the stream's request flag to true, in a merged body field or inside an object body argument.</summary>
     private static JsonNode? WithStreamFlag(OperationDescriptor op, StreamDescriptor spec, JsonNode? args)

@@ -128,6 +128,11 @@ public sealed partial class ClientCore
             {
                 return new Result<Polled>.Ok(new Polled { Body = response.Value, HasBody = response.HasValue, TimedOut = outOfTime }) { Meta = response.Meta };
             }
+            // The next poll could not be sent before the call's deadline, so it is not waited for.
+            if (Remaining(opts) is TimeSpan left && left <= interval)
+            {
+                throw DeadlineExpired(op, "before the next poll");
+            }
             try
             {
                 await Task.Delay(interval, ct).ConfigureAwait(false);

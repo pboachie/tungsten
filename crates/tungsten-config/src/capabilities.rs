@@ -5,6 +5,8 @@
 //! executed to build this catalog.
 
 use schemars::JsonSchema;
+
+use crate::option_fields;
 use serde::Serialize;
 
 /// Component-owned schema declaration. An absent declaration is unknown,
@@ -14,6 +16,9 @@ pub enum TargetOptionSchema {
     TypeScript,
     Python,
     Rust,
+    /// Field declarations mirroring the emitter's options module; see
+    /// [`crate::option_fields`]. Configuration inspection does not cover them.
+    Declared(&'static crate::option_fields::DeclaredOptions),
 }
 
 impl TargetOptionSchema {
@@ -22,6 +27,7 @@ impl TargetOptionSchema {
             Self::TypeScript => crate::target_options::typescript_json_schema(),
             Self::Python => crate::target_options::python_json_schema(),
             Self::Rust => crate::target_options::rust_json_schema(),
+            Self::Declared(options) => options.json_schema(),
         }
     }
 }
@@ -40,6 +46,45 @@ pub const VERSION: u32 = 1;
 #[serde(rename_all = "snake_case")]
 pub enum EvidenceState {
     Unknown,
+    /// At least one [`EvidenceRecord`] of this scope is listed. The state is
+    /// derived from the records and can never be declared without them.
+    Recorded,
+}
+
+/// What an [`EvidenceRecord`] supports.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum EvidenceScope {
+    /// A clean consumer built and exercised generated output.
+    Qualification,
+    /// A runtime artifact is published for the combination.
+    Artifact,
+    /// The combination ran on the named platform.
+    Platform,
+}
+
+/// Evidence for one exact supported combination, linked to where it can be
+/// checked. Records are added by the owner of the qualification, never inferred.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct EvidenceRecord {
+    pub scope: EvidenceScope,
+    /// The exact combination, such as `python 3.10 / linux-x86_64 / runtime 0.1.3`.
+    pub combination: &'static str,
+    /// A public, stable reference to the evidence (workflow, release or report URL).
+    pub reference: &'static str,
+}
+
+/// [`EvidenceState::Recorded`] exactly when a record of `scope` exists.
+pub const fn evidence_state(records: &[EvidenceRecord], scope: EvidenceScope) -> EvidenceState {
+    let mut i = 0;
+    while i < records.len() {
+        if records[i].scope as u8 == scope as u8 {
+            return EvidenceState::Recorded;
+        }
+        i += 1;
+    }
+    EvidenceState::Unknown
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
@@ -152,6 +197,9 @@ pub struct TargetCapability {
     pub execution_environments: &'static [ExecutionEnvironment],
     /// Features from [`FEATURES`] the target implements in source.
     pub features: &'static [&'static str],
+    /// Evidence behind `qualification`, `artifact_availability` and
+    /// `platform_qualification`; each is `recorded` only with a record here.
+    pub evidence: &'static [EvidenceRecord],
 }
 
 /// Environment generated output is designed to run in.
@@ -218,12 +266,6 @@ const fn def(
 
 /// Registered features. Ids are stable; descriptions may be refined.
 pub const FEATURES: &[FeatureDefinition] = &[
-    def(
-        "imported_operation_policy",
-        FeatureDomain::Runtime,
-        "enforces imported-operation policy (Postman, cURL, .http, HAR inputs) at run time",
-        None,
-    ),
     def(
         "typed_sdk",
         FeatureDomain::Target,
@@ -316,16 +358,12 @@ const DOTNET: &[ToolRequirement] = &[ToolRequirement::new("dotnet", Some([10, 0]
 
 /// Typed SDK features shared by every built-in SDK target.
 const SDK: &[&str] = &["typed_sdk", "pagination_helpers"];
-const SDK_POLICY: &[&str] = &[
-    "typed_sdk",
-    "pagination_helpers",
-    "imported_operation_policy",
-];
 
 macro_rules! targets {
     ($({
         id: $id:literal, aliases: $aliases:expr, source: $source:ident, family: $family:expr,
         policy: $policy:literal, tools: $tools:expr, $(schema: $schema:expr,)?
+        $(evidence: $evidence:expr,)?
         summary: $summary:literal, options: $options:expr, environments: [$($env:ident),*],
         features: $features:expr $(,)?
     }),* $(,)?) => {
@@ -334,10 +372,12 @@ macro_rules! targets {
         pub const TARGETS: &[TargetCapability] = &[$(TargetCapability {
             id: $id, aliases: $aliases, source_support: SourceSupport::$source,
             runtime_family: $family, imported_operation_policy: $policy,
-            prerequisites: $tools, qualification: EvidenceState::Unknown,
+            prerequisites: $tools,
+            qualification: evidence_state(targets!(@evidence $($evidence)?), EvidenceScope::Qualification),
             options_schema: targets!(@schema $($schema)?),
-            artifact_availability: EvidenceState::Unknown,
-            platform_qualification: EvidenceState::Unknown,
+            artifact_availability: evidence_state(targets!(@evidence $($evidence)?), EvidenceScope::Artifact),
+            platform_qualification: evidence_state(targets!(@evidence $($evidence)?), EvidenceScope::Platform),
+            evidence: targets!(@evidence $($evidence)?),
             summary: $summary, option_keys: $options,
             execution_environments: &[$(ExecutionEnvironment::$env),*],
             features: $features,
@@ -345,32 +385,38 @@ macro_rules! targets {
     };
     (@schema $schema:expr) => { $schema };
     (@schema) => { None };
+    (@evidence $evidence:expr) => { $evidence };
+    (@evidence) => { &[] };
 }
 
 targets! {
     {
         id: "csharp", aliases: &["cs"], source: BuiltInEmitter, family: Some("dotnet"),
-        policy: false, tools: DOTNET, summary: "C# SDK",
+        policy: true, tools: DOTNET,
+        schema: Some(TargetOptionSchema::Declared(&option_fields::CSHARP)), summary: "C# SDK",
         options: &["package_id", "namespace", "version", "runtime", "runtime_path", "out"],
         environments: [Dotnet], features: SDK,
     },
     {
-        id: "dart", aliases: &[], source: BuiltInEmitter, family: Some("dart"), policy: false,
+        id: "dart", aliases: &[], source: BuiltInEmitter, family: Some("dart"), policy: true,
         tools: &[ToolRequirement {
             tool: "dart", minimum: Some([3, 6]), maximum_exclusive: Some([4, 0]), minimum_option: None, excluded_versions: &[],
         }],
+        schema: Some(TargetOptionSchema::Declared(&option_fields::DART)),
         summary: "Dart SDK (sealed unions, Future methods returning Result, Stream pages)",
         options: &["package", "version", "runtime", "runtime_path", "out"],
         environments: [DartIo], features: SDK,
     },
     {
         id: "docs", aliases: &[], source: BuiltInEmitter, family: None, policy: true, tools: &[],
+        schema: Some(TargetOptionSchema::Declared(&option_fields::DOCS)),
         summary: "llms.txt, llms-full.txt, tools.json and README", options: &["out"],
-        environments: [Static], features: &["llms_txt", "imported_operation_policy"],
+        environments: [Static], features: &["llms_txt"],
     },
     {
         id: "fsharp", aliases: &["fs"], source: BuiltInEmitter, family: Some("dotnet"),
-        policy: false, tools: DOTNET,
+        policy: true, tools: DOTNET,
+        schema: Some(TargetOptionSchema::Declared(&option_fields::FSHARP)),
         summary: "F# SDK (records, discriminated unions, Task of Result)",
         options: &["package_id", "namespace", "version", "runtime", "runtime_path", "csharp_runtime_path", "out"],
         environments: [Dotnet], features: SDK,
@@ -378,23 +424,26 @@ targets! {
     {
         id: "java", aliases: &[], source: BuiltInEmitter, family: Some("jvm"), policy: true,
         tools: &[ToolRequirement::new("java", Some([17, 0])), ToolRequirement::new("mvn", None)],
+        schema: Some(TargetOptionSchema::Declared(&option_fields::JAVA)),
         summary: "Java SDK",
         options: &["group_id", "artifact_id", "package", "version", "runtime", "runtime_path", "out"],
-        environments: [Jvm], features: SDK_POLICY,
+        environments: [Jvm], features: SDK,
     },
     {
         id: "kotlin", aliases: &["kt"], source: BuiltInEmitter, family: Some("jvm"), policy: true,
         tools: &[ToolRequirement::new("java", Some([17, 0])), ToolRequirement::new("gradle", None)],
+        schema: Some(TargetOptionSchema::Declared(&option_fields::KOTLIN)),
         summary: "Kotlin/JVM SDK (blocking functions returning Result; opt-in coroutines)",
         options: &[
             "group", "artifact", "package", "version", "runtime", "runtime_path",
             "java_runtime_path", "coroutines", "coroutines_runtime_path", "out",
         ],
-        environments: [Jvm], features: &["typed_sdk", "pagination_helpers", "imported_operation_policy", "coroutines"],
+        environments: [Jvm], features: &["typed_sdk", "pagination_helpers", "coroutines"],
     },
     {
         id: "mcp", aliases: &[], source: BuiltInEmitter, family: Some("typescript"), policy: true,
         tools: MCP,
+        schema: Some(TargetOptionSchema::Declared(&option_fields::MCP)),
         summary: "MCP server over stdio or Streamable HTTP, discrete or progressive",
         options: &[
             "package", "version", "sdk", "sdk_path", "runtime", "runtime_path", "sdk_runtime",
@@ -403,7 +452,6 @@ targets! {
         environments: [Node],
         features: &[
             "mcp_stdio", "mcp_streamable_http", "mcp_embedding_search", "mcp_script_sandbox",
-            "imported_operation_policy",
         ],
     },
     {
@@ -419,14 +467,15 @@ targets! {
         summary: "Sync and async Python SDK, Pydantic v2 or dataclass models",
         options: &["package", "module", "version", "runtime", "runtime_path", "python_version", "models", "out"],
         environments: [Cpython],
-        features: &["typed_sdk", "pagination_helpers", "imported_operation_policy", "dataclass_models"],
+        features: &["typed_sdk", "pagination_helpers", "dataclass_models"],
     },
     {
         id: "ruby", aliases: &["rb"], source: BuiltInEmitter, family: Some("ruby"), policy: true,
         tools: &[ToolRequirement::new("ruby", Some([3, 3])), ToolRequirement::new("bundle", None)],
+        schema: Some(TargetOptionSchema::Declared(&option_fields::RUBY)),
         summary: "Ruby SDK",
         options: &["gem", "module", "version", "runtime", "runtime_path", "out"],
-        environments: [Ruby], features: SDK_POLICY,
+        environments: [Ruby], features: SDK,
     },
     {
         id: "rust", aliases: &["rs"], source: BuiltInEmitter, family: Some("rust"), policy: true,
@@ -435,25 +484,26 @@ targets! {
         summary: "Async Rust SDK (serde, reqwest) and optional generated CLI",
         options: &["crate", "version", "runtime", "runtime_path", "cli", "out"],
         environments: [Native],
-        features: &["typed_sdk", "pagination_helpers", "imported_operation_policy", "generated_cli"],
+        features: &["typed_sdk", "pagination_helpers", "generated_cli"],
     },
     {
         id: "typescript", aliases: &["ts"], source: BuiltInEmitter, family: Some("typescript"),
         policy: true, tools: JS, schema: Some(TargetOptionSchema::TypeScript),
         summary: "Typed TypeScript SDK, Result values, Zod validation",
         options: &["package", "version", "runtime", "runtime_path", "dependencies", "out"],
-        environments: [Node], features: SDK_POLICY,
+        environments: [Node], features: SDK,
     },
     {
         id: "webmcp", aliases: &[], source: BuiltInEmitter, family: Some("typescript"), policy: true,
         tools: JS,
+        schema: Some(TargetOptionSchema::Declared(&option_fields::WEBMCP)),
         summary: "Browser ESM package with tool manifest and registration helper",
         options: &[
             "package", "version", "runtime", "runtime_path", "sdk", "sdk_path", "sdk_runtime",
             "sdk_runtime_path", "out",
         ],
         environments: [Browser],
-        features: &["webmcp_registration", "imported_operation_policy"],
+        features: &["webmcp_registration"],
     },
 }
 
@@ -472,8 +522,121 @@ pub struct CapabilityCatalog {
     /// Registered feature ids that target `features` lists refer to.
     pub features: Vec<FeatureDefinition>,
     pub openapi_inputs: Vec<OpenApiVersionCapability>,
+    /// Every input format, native or converted; `openapi_inputs` details the
+    /// native OpenAPI lines.
+    pub input_formats: Vec<InputFormatCapability>,
     pub execution_policy: ExecutionPolicyCapability,
 }
+
+/// How an input format enters a project.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum InputRoute {
+    /// Read by the compiler on every run (`inputs[].spec`, compiler paths).
+    Compiler,
+    /// Converted once by `tungsten init` into a saved OpenAPI document.
+    InitConversion,
+    /// Inferred by `tungsten init` from flags and examples, without a document.
+    InitInference,
+}
+
+/// Where `tungsten init --from` can acquire the document.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum InputAcquisition {
+    Local,
+    Https,
+    Git,
+}
+
+/// Source declaration for one input format.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct InputFormatCapability {
+    pub id: &'static str,
+    /// Document versions read; empty when the format is unversioned.
+    pub versions: &'static [&'static str],
+    pub route: InputRoute,
+    /// How the format is recognized.
+    pub detection: &'static str,
+    /// Operations are marked imported, so only targets declaring
+    /// `imported_operation_policy` may be generated from them.
+    pub imported_operations: bool,
+    /// CLI flags whose reviewed values the conversion requires.
+    pub review_flags: &'static [&'static str],
+    pub acquisition: &'static [InputAcquisition],
+    /// The saved document a conversion or inference writes.
+    pub saved_as: Option<&'static str>,
+}
+
+const DOCUMENT: &[InputAcquisition] = &[
+    InputAcquisition::Local,
+    InputAcquisition::Https,
+    InputAcquisition::Git,
+];
+
+const fn converted(
+    id: &'static str,
+    versions: &'static [&'static str],
+    detection: &'static str,
+    review_flags: &'static [&'static str],
+) -> InputFormatCapability {
+    InputFormatCapability {
+        id,
+        versions,
+        route: InputRoute::InitConversion,
+        detection,
+        imported_operations: true,
+        review_flags,
+        acquisition: DOCUMENT,
+        saved_as: Some("imported.openapi.json"),
+    }
+}
+
+/// Input formats `tungsten init` and the compiler accept, one input per project.
+pub const INPUT_FORMATS: &[InputFormatCapability] = &[
+    InputFormatCapability {
+        id: "openapi",
+        versions: &["3.0", "3.1", "3.2"],
+        route: InputRoute::Compiler,
+        detection: "`openapi` member",
+        imported_operations: false,
+        review_flags: &[],
+        acquisition: DOCUMENT,
+        saved_as: None,
+    },
+    converted("swagger", &["2.0"], "`swagger` member", &[]),
+    converted("postman", &["2.1"], "`info` and `item` members", &[]),
+    converted(
+        "curl",
+        &[],
+        "a leading `curl`, a `.curl` extension or `--input-format curl`",
+        &["--route"],
+    ),
+    converted(
+        "http",
+        &[],
+        "a `.http` or `.rest` extension or `--input-format http`",
+        &["--route"],
+    ),
+    converted("har", &["1.2"], "`log` member", &["--har-paths"]),
+    converted(
+        "endpoint_manifest",
+        &["1"],
+        "`endpoint_manifest` member",
+        &[],
+    ),
+    InputFormatCapability {
+        id: "manual_endpoint",
+        versions: &[],
+        route: InputRoute::InitInference,
+        detection: "`--method` and `--endpoint`, without `--from`",
+        imported_operations: true,
+        review_flags: &[],
+        acquisition: &[],
+        saved_as: Some("inferred.openapi.json"),
+    },
+];
 
 /// Source contract only; this is neither a policy selection nor approval.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
@@ -601,6 +764,21 @@ pub const OPENAPI_32_SUPPORTED: &[SupportedInputFeature] = &[
         member: "additionalOperations",
         behavior: "each entry is an operation sent with its method token exactly as written; unsafe and not idempotent by default. Tokens that cannot be sent (not an RFC 9110 token, a fixed method, CONNECT or TRACK) are refused with TG0142",
     },
+    SupportedInputFeature {
+        id: "reusable_media_types",
+        member: "components.mediaTypes, $ref media type",
+        behavior: "a media type object given by $ref is read as if written in place",
+    },
+    SupportedInputFeature {
+        id: "item_schema_json_lines",
+        member: "itemSchema (JSON Lines response)",
+        behavior: "the type of one line of an application/jsonl or application/x-ndjson response",
+    },
+    SupportedInputFeature {
+        id: "item_schema_event_stream",
+        member: "itemSchema (text/event-stream response, JSON `data`)",
+        behavior: "the event type of a server-sent event stream: the `contentSchema` of the event's `data`",
+    },
 ];
 
 /// OpenAPI 3.2 constructs without a 3.1 equivalent that are diagnosed. A 3.2
@@ -615,7 +793,7 @@ pub const OPENAPI_32_FEATURES: &[UnsupportedInputFeature] = &[
         Rejected,
     ),
     feature("cookie_style", "style: cookie", "TG0144", Rejected),
-    feature("item_schema", "itemSchema", "TG0145", Rejected),
+    feature("item_schema", "itemSchema (other uses)", "TG0145", Rejected),
     feature(
         "positional_multipart_encoding",
         "prefixEncoding, itemEncoding",
@@ -626,12 +804,6 @@ pub const OPENAPI_32_FEATURES: &[UnsupportedInputFeature] = &[
         "nested_encoding",
         "encoding, prefixEncoding, itemEncoding (Encoding Object)",
         "TG0147",
-        Rejected,
-    ),
-    feature(
-        "reusable_media_types",
-        "components.mediaTypes, $ref media type",
-        "TG0148",
         Rejected,
     ),
     feature(
@@ -701,7 +873,46 @@ pub const OPENAPI_INPUTS: &[OpenApiVersionCapability] = &[
 /// references the target does not declare. Returns one message per conflict;
 /// an empty list means the catalog is consistent.
 pub fn validate() -> Vec<String> {
-    validate_parts(TARGETS, FEATURES, OPENAPI_INPUTS)
+    let mut errors = validate_parts(TARGETS, FEATURES, OPENAPI_INPUTS);
+    errors.extend(validate_inputs(INPUT_FORMATS, OPENAPI_INPUTS));
+    errors
+}
+
+/// Input-format conflicts: duplicate ids, and native OpenAPI lines that
+/// disagree with the per-line declarations.
+pub fn validate_inputs(
+    formats: &[InputFormatCapability],
+    openapi: &[OpenApiVersionCapability],
+) -> Vec<String> {
+    let mut errors = vec![];
+    let mut ids = std::collections::BTreeSet::new();
+    for format in formats {
+        if !ids.insert(format.id) {
+            errors.push(format!("input format `{}` is declared twice", format.id));
+        }
+        if format.route == InputRoute::Compiler && format.imported_operations {
+            errors.push(format!(
+                "input format `{}` is compiled natively but marks operations imported",
+                format.id
+            ));
+        }
+        if format.route != InputRoute::Compiler && !format.imported_operations {
+            errors.push(format!(
+                "input format `{}` is converted but does not mark operations imported",
+                format.id
+            ));
+        }
+    }
+    if let Some(native) = formats.iter().find(|format| format.id == "openapi") {
+        let lines: Vec<&str> = openapi.iter().map(|input| input.line).collect();
+        if native.versions != lines.as_slice() {
+            errors.push(
+                "input format `openapi` versions disagree with the OpenAPI line declarations"
+                    .into(),
+            );
+        }
+    }
+    errors
 }
 
 /// [`validate`] over explicit declarations, so a component can check a
@@ -754,13 +965,6 @@ pub fn validate_parts(
                 Some(_) => {}
             }
         }
-        if target.features.contains(&"imported_operation_policy")
-            != target.imported_operation_policy
-        {
-            errors.push(format!(
-                "target `{id}`: `imported_operation_policy` disagrees with its feature list"
-            ));
-        }
         if target.source_support == SourceSupport::Reserved
             && (!target.prerequisites.is_empty()
                 || !target.features.is_empty()
@@ -782,6 +986,34 @@ pub fn validate_parts(
                         "target `{id}`: option schema property `{property}` is not a declared option key"
                     ));
                 }
+            }
+            // Field declarations are complete: every key but `out` is typed.
+            if let Some(TargetOptionSchema::Declared(options)) = target.options_schema {
+                for key in target.option_keys {
+                    if *key != "out" && !options.fields.iter().any(|field| field.key == *key) {
+                        errors.push(format!(
+                            "target `{id}`: option key `{key}` has no declared field"
+                        ));
+                    }
+                }
+            }
+        }
+        for record in target.evidence {
+            if record.combination.trim().is_empty() || record.reference.trim().is_empty() {
+                errors.push(format!(
+                    "target `{id}` lists evidence without a combination or reference"
+                ));
+            }
+        }
+        for (state, scope) in [
+            (target.qualification, EvidenceScope::Qualification),
+            (target.artifact_availability, EvidenceScope::Artifact),
+            (target.platform_qualification, EvidenceScope::Platform),
+        ] {
+            if state != evidence_state(target.evidence, scope) {
+                errors.push(format!(
+                    "target `{id}` declares {scope:?} evidence state {state:?} without matching records"
+                ));
             }
         }
         for requirement in target.prerequisites {

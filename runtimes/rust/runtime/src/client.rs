@@ -488,7 +488,20 @@ impl ClientCore {
         else {
             return Err(rejected);
         };
-        let refreshed = self.refresh_after_rejection(&scheme, &current).await;
+        let refreshed = match crate::verify::call_deadline() {
+            None => self.refresh_after_rejection(&scheme, &current).await,
+            Some(deadline) => {
+                let core = self.clone();
+                let rejected_token = current.clone();
+                let scheme = scheme.clone();
+                crate::send::until_deadline(deadline, async move {
+                    Ok(core.refresh_after_rejection(&scheme, &rejected_token).await)
+                })
+                .await
+                .ok()
+                .flatten()
+            }
+        };
         self.check_send_deadline(prepared, rejected.diagnostic.trace.attempts, None)?;
         let Some(token) = refreshed else {
             return Err(rejected);

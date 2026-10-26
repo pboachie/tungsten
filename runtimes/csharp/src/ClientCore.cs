@@ -34,6 +34,7 @@ public sealed partial class ClientCore
     private readonly IReadOnlyDictionary<string, string> headers;
     private readonly string baseUrl;
     private readonly TimeSpan timeout;
+    private readonly TimeSpan? deadline;
     private readonly int maxEventBytes;
     private readonly long? maxResponseBytes;
     private readonly int maxCollectBytes;
@@ -53,6 +54,9 @@ public sealed partial class ClientCore
 
     /// <summary>Generated clients require this capability when redirects are forbidden.</summary>
     public static void RequireRedirectPolicyV1() { }
+
+    /// <summary>Generated clients require this capability when an operation carries an imported-operation policy.</summary>
+    public static void RequireImportPolicyV1() { }
 
     private static bool RedirectsNone(string? value)
     {
@@ -104,6 +108,7 @@ public sealed partial class ClientCore
         auth = options.Auth ?? new Dictionary<string, Credential>();
         headers = options.Headers ?? new Dictionary<string, string>();
         timeout = options.Timeout is TimeSpan t && t > TimeSpan.Zero ? t : ClientOptions.DefaultTimeout;
+        deadline = options.Deadline is TimeSpan dl && dl > TimeSpan.Zero ? dl : null;
         maxEventBytes = options.MaxEventBytes is int m && m > 0 ? m : ClientOptions.DefaultMaxEventBytes;
         maxResponseBytes = options.MaxResponseBytes ?? 4 * 1024 * 1024;
         maxCollectBytes = options.MaxCollectBytes is int c && c > 0 ? c : ClientOptions.DefaultMaxCollectBytes;
@@ -187,7 +192,7 @@ public sealed partial class ClientCore
     {
         try
         {
-            var outcome = await CallWithAsync(op, args, options ?? new CallOptions(), null, null, cancellationToken).ConfigureAwait(false);
+            var outcome = await CallWithAsync(op, args, WithCallDeadline(options ?? new CallOptions()), null, null, cancellationToken).ConfigureAwait(false);
             return outcome;
         }
         catch (Failure f)
@@ -205,7 +210,7 @@ public sealed partial class ClientCore
     {
         try
         {
-            return await PreviewInnerAsync(op, args, options ?? new CallOptions(), cancellationToken).ConfigureAwait(false);
+            return await PreviewInnerAsync(op, args, WithCallDeadline(options ?? new CallOptions()), cancellationToken).ConfigureAwait(false);
         }
         catch (Failure f)
         {
@@ -217,7 +222,7 @@ public sealed partial class ClientCore
     public async IAsyncEnumerable<Result<Page<JsonNode?>>> PagesAsync(OperationDescriptor op, JsonNode? args, CallOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         var state = new PageState(args);
-        var opts = options ?? new CallOptions();
+        var opts = WithCallDeadline(options ?? new CallOptions());
         while (true)
         {
             Result<Page<JsonNode?>>? item;
@@ -247,7 +252,7 @@ public sealed partial class ClientCore
     {
         try
         {
-            return await PollWithAsync(op, args, until, interval, budget, options ?? new CallOptions(), null, cancellationToken).ConfigureAwait(false);
+            return await PollWithAsync(op, args, until, interval, budget, WithCallDeadline(options ?? new CallOptions()), null, cancellationToken).ConfigureAwait(false);
         }
         catch (Failure f)
         {
@@ -263,7 +268,7 @@ public sealed partial class ClientCore
     {
         try
         {
-            return await RunMacroInnerAsync(macro, input, options ?? new CallOptions(), cancellationToken).ConfigureAwait(false);
+            return await RunMacroInnerAsync(macro, input, WithCallDeadline(options ?? new CallOptions()), cancellationToken).ConfigureAwait(false);
         }
         catch (Failure f)
         {
@@ -276,7 +281,7 @@ public sealed partial class ClientCore
     {
         try
         {
-            return await PreviewMacroInnerAsync(macro, input, options ?? new CallOptions(), cancellationToken).ConfigureAwait(false);
+            return await PreviewMacroInnerAsync(macro, input, WithCallDeadline(options ?? new CallOptions()), cancellationToken).ConfigureAwait(false);
         }
         catch (Failure f)
         {
@@ -339,8 +344,8 @@ public sealed partial class ClientCore
         {
             throw rejected;
         }
-        var token = await RefreshAfterRejectionAsync(scheme, current["Bearer ".Length..], ct).ConfigureAwait(false);
-        if (token is null)
+        var (refreshed, token) = await UntilDeadlineAsync(RefreshAfterRejectionAsync(scheme, current["Bearer ".Length..], ct), opts).ConfigureAwait(false);
+        if (!refreshed || token is null)
         {
             throw rejected;
         }

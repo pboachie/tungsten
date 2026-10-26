@@ -23,6 +23,7 @@
 pub mod capabilities;
 pub mod execution_policy;
 pub mod inspection;
+pub mod option_fields;
 pub mod pointer;
 pub mod profiles;
 mod source;
@@ -90,6 +91,11 @@ pub struct TungstenConfig {
     /// `agent.yml` next to this file is used if it exists.
     #[serde(default)]
     pub agent: Option<String>,
+    /// Require a current `tungsten.lock.json` for `generate` and `check`, as
+    /// `--locked` does: inputs are read offline and generation is refused when
+    /// the lock is missing, stale or corrupt.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub locked: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -417,6 +423,7 @@ impl TungstenConfig {
             profiles: vec![],
             output: None,
             agent: None,
+            locked: false,
         }
     }
 }

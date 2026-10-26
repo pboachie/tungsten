@@ -1,0 +1,20 @@
+# An ordinary app: one SDK, organization defaults, one explicit override.
+tungsten: 1
+
+api:
+  name: storefront
+  title: Storefront
+
+inputs:
+  - namespace: pets
+    spec: ../openapi.json
+
+profiles:
+  - path: ../profiles/org.yml
+    root: ../profiles
+
+targets:
+  typescript:
+    out: generated/typescript
+    # Explicit project settings win over every profile default.
+    version: 2.3.0

@@ -144,6 +144,14 @@ impl Ctx<'_> {
         if self.ir.agent.redirects == tungsten_ir::RedirectPolicy::None {
             w.line("do ClientCore.RequireRedirectPolicyV1()");
         }
+        if self
+            .plan
+            .operations
+            .iter()
+            .any(|p| p.op.agent.import_policy.is_some())
+        {
+            w.line("do ClientCore.RequireImportPolicyV1()");
+        }
         w.line("let core = Identity.core Ops.Document options");
         let mut dispatch_args = vec!["core".to_string()];
         for (k, (_, class)) in members.iter().enumerate() {

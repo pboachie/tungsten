@@ -102,6 +102,42 @@ pub(crate) async fn with_deadline_at<F: std::future::Future>(
     }
 }
 
+/// Why [`detached`] returned without its work's result.
+pub(crate) enum Abandoned {
+    /// The call's deadline (or polling budget) passed first.
+    Expired,
+    /// The task ended without a result (it panicked, or the runtime stopped).
+    Stopped,
+}
+
+/// Run `work` as its own task and wait for it only until the current
+/// deadline. The task inherits no call deadline, and neither that deadline
+/// nor dropping the waiting future cancels it: a token refresh shared with
+/// other callers runs on, bounded by its own timeout. Without a Tokio
+/// runtime it runs inline.
+pub(crate) async fn detached<T, F>(work: F) -> std::result::Result<T, Abandoned>
+where
+    F: std::future::Future<Output = T> + Send + 'static,
+    T: Send + 'static,
+{
+    let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+        return Ok(work.await);
+    };
+    let deadline = effective_deadline();
+    if deadline.is_some_and(|at| Instant::now() >= at) {
+        return Err(Abandoned::Expired);
+    }
+    let task = runtime.spawn(work);
+    let joined = match deadline {
+        Some(at) => match tokio::time::timeout_at(at.into(), task).await {
+            Ok(joined) => joined,
+            Err(_) => return Err(Abandoned::Expired),
+        },
+        None => task.await,
+    };
+    joined.map_err(|_| Abandoned::Stopped)
+}
+
 pub(crate) fn check_poll_deadline(operation: &str) -> crate::prepare::Step<()> {
     if call_deadline_expired() {
         return Err(deadline_exceeded(

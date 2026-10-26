@@ -166,7 +166,15 @@ impl ClientCore {
             }
             self.check_send_deadline(prepared, attempts, check.as_ref())?;
             let mut permit = match self.admit(prepared, stream).await {
-                Ok(permit) => permit,
+                Ok(permit) => {
+                    if permit.is_some()
+                        && attempts == 1
+                        && let Some(scheduler) = &self.inner.scheduler
+                    {
+                        scheduler.record_call(&self.scope_key(prepared));
+                    }
+                    permit
+                }
                 Err(rejected) => {
                     // A wait ended by the call's deadline reports that.
                     self.check_send_deadline(prepared, attempts, check.as_ref())?;
@@ -332,6 +340,12 @@ impl ClientCore {
                     }
                 }
             };
+            // Callers sharing a quota share one retry budget.
+            if let Some(scheduler) = &self.inner.scheduler
+                && !scheduler.allow_retry(&self.scope_key(prepared))
+            {
+                return Err(done(diagnostic, partial));
+            }
             for m in &self.inner.middleware {
                 m.on_retry(&ctx, &diagnostic);
             }
@@ -347,6 +361,14 @@ impl ClientCore {
         }
     }
 
+    fn scope_key(&self, prepared: &Prepared<'_>) -> String {
+        self.inner
+            .scheduler
+            .as_ref()
+            .map(|s| s.scope_key(&prepared.url, self.inner.tenant.as_deref()))
+            .unwrap_or_default()
+    }
+
     /// Wait for scheduler capacity for one attempt: `None` without a
     /// scheduler; an error (nothing is sent) when no capacity was given.
     async fn admit(
@@ -357,7 +379,7 @@ impl ClientCore {
         let Some(scheduler) = &self.inner.scheduler else {
             return Ok(None);
         };
-        let key = scheduler.scope_key(&prepared.url, self.inner.tenant.as_deref());
+        let key = self.scope_key(prepared);
         let core = self.clone();
         let random = std::sync::Arc::new(move || core.random());
         let kind = if stream { Kind::Stream } else { Kind::Call };
@@ -909,17 +931,52 @@ impl ClientCore {
         None
     }
 
-    /// Fetch (and cache) an OAuth2 client-credentials token.
+    /// Fetch (and cache) an OAuth2 client-credentials token. The fetch is
+    /// its own task: a caller whose deadline passes, or whose future is
+    /// dropped, stops waiting without cancelling a fetch others share.
     async fn oauth_token(&self, client: OAuthClient<'_>) -> std::result::Result<String, String> {
         if crate::auth::insecure_http(client.token_url, self.inner.allow_insecure_http) {
             return Err(crate::auth::INSECURE_HTTP_AUTH.to_owned());
         }
+        let core = self.clone();
+        let name = client.name.to_owned();
+        let token_url = client.token_url.to_owned();
+        let scopes = client.scopes.to_vec();
+        let client_id = client.client_id.to_owned();
+        let client_secret = client.client_secret.to_owned();
+        let fetch = async move {
+            core.fetch_client_token(OAuthClient {
+                name: &name,
+                token_url: &token_url,
+                scopes: &scopes,
+                client_id: &client_id,
+                client_secret: &client_secret,
+            })
+            .await
+        };
+        match crate::verify::detached(fetch).await {
+            Ok(result) => result,
+            Err(crate::verify::Abandoned::Expired) => Err(format!(
+                "The operation deadline expired while fetching the OAuth2 token for {}.",
+                client.name
+            )),
+            Err(crate::verify::Abandoned::Stopped) => Err(format!(
+                "The OAuth2 token fetch for {} stopped before it finished; call again.",
+                client.name
+            )),
+        }
+    }
+
+    async fn fetch_client_token(
+        &self,
+        client: OAuthClient<'_>,
+    ) -> std::result::Result<String, String> {
         // Short map locks; only refreshes of this scheme wait for each other.
         let gate = {
             let mut gates = self.inner.oauth_refreshes.lock().await;
             gates.entry(client.name.to_owned()).or_default().clone()
         };
-        // Dropping a cancelled owner releases this gate; another waiter can retry.
+        // Fetches run as detached tasks, so a caller dropping out never holds this gate.
         let _refresh = gate.lock().await;
         let cache = self.inner.oauth_tokens.lock().await;
         let real_now = std::time::SystemTime::now()
@@ -1012,14 +1069,58 @@ impl TokenSource for ClientCore {
         &'a self,
         scheme: &'a str,
     ) -> BoxFuture<'a, std::result::Result<String, String>> {
-        Box::pin(self.stored_token(scheme, false))
+        let Some(deadline) = crate::verify::call_deadline() else {
+            return Box::pin(self.stored_token(scheme, false));
+        };
+        let core = self.clone();
+        let scheme = scheme.to_owned();
+        Box::pin(until_deadline(deadline, async move {
+            core.stored_token(&scheme, false).await
+        }))
     }
 
     fn token<'a>(
         &'a self,
         client: OAuthClient<'a>,
     ) -> BoxFuture<'a, std::result::Result<String, String>> {
-        Box::pin(self.oauth_token(client))
+        let Some(deadline) = crate::verify::call_deadline() else {
+            return Box::pin(self.oauth_token(client));
+        };
+        let core = self.clone();
+        let (name, token_url, scopes, client_id, client_secret) = (
+            client.name.to_owned(),
+            client.token_url.to_owned(),
+            client.scopes.to_vec(),
+            client.client_id.to_owned(),
+            client.client_secret.to_owned(),
+        );
+        Box::pin(until_deadline(deadline, async move {
+            core.oauth_token(OAuthClient {
+                name: &name,
+                token_url: &token_url,
+                scopes: &scopes,
+                client_id: &client_id,
+                client_secret: &client_secret,
+            })
+            .await
+        }))
+    }
+}
+
+/// Run token work as its own task and wait for it only until the call's
+/// deadline. The task is not cancelled then: a refresh it leads still
+/// serves the callers waiting on the same scheme, bounded by its own timeout.
+pub(crate) async fn until_deadline<T: Send + 'static>(
+    deadline: std::time::Instant,
+    work: impl std::future::Future<Output = std::result::Result<T, String>> + Send + 'static,
+) -> std::result::Result<T, String> {
+    let task = tokio::spawn(work);
+    match tokio::time::timeout_at(deadline.into(), task).await {
+        Ok(Ok(result)) => result,
+        Ok(Err(_)) => Err("The OAuth2 token request failed unexpectedly.".to_owned()),
+        Err(_) => {
+            Err("The operation deadline expired while an OAuth2 token was obtained.".to_owned())
+        }
     }
 }
 

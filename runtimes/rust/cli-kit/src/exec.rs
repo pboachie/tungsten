@@ -451,6 +451,7 @@ where
             profile: text(m, "profile"),
             config: text(m, "config"),
             timeout: text(m, "timeout"),
+            deadline: text(m, "deadline"),
         },
     )
     .map_err(Fail::Usage)?;
@@ -460,6 +461,9 @@ where
     };
     if let Some((t, _)) = &settings.timeout {
         options.timeout = *t;
+    }
+    if let Some((d, _)) = &settings.deadline {
+        options.deadline = Some(*d);
     }
     // The credentials the client needs are named by its own auth schemes,
     // so the first client only tells which they are.
