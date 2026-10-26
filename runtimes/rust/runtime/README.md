@@ -192,6 +192,11 @@ queues or pauses, and nothing is coordinated across processes. Closing a
 scheduler rejects waiting and later requests; requests in flight keep their
 capacity until they finish, which `drained().await` waits for. Custom transports remain
 owned by the application and are not closed by the scheduler.
+Retries are not budgeted unless `retry_ratio` (0 to 1) is set: then each scope
+keeps a retry budget that starts at `retry_reserve` (default 10), gains `retry_ratio`
+per call (up to `retry_reserve` + 100 × `retry_ratio`) and loses one per retry. A retry
+the budget cannot pay for is not made; the call returns its last failure.
+See the [bulk-sync example](https://github.com/pboachie/tungsten/tree/main/examples/bulk-sync).
 
 No runtime ships a file-backed OAuth token store. Provide an application-owned
 token-store implementation when tokens must survive process restarts; protect

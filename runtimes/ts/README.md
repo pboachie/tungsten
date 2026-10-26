@@ -182,6 +182,11 @@ queues or pauses, and nothing is coordinated across processes. Closing a
 scheduler rejects waiting and later requests; requests in flight keep their
 capacity until they finish, which `drained` waits for. Custom transports remain
 owned by the application and are not closed by the scheduler.
+Retries are not budgeted unless `retryRatio` (0 to 1) is set: then each scope
+keeps a retry budget that starts at `retryReserve` (default 10), gains `retryRatio`
+per call (up to `retryReserve` + 100 × `retryRatio`) and loses one per retry. A retry
+the budget cannot pay for is not made; the call returns its last failure.
+See the [bulk-sync example](https://github.com/pboachie/tungsten/tree/main/examples/bulk-sync).
 
 The core package is browser-safe; the separate `/node` adapter requires Node.js. No file-backed OAuth token store is provided.
 

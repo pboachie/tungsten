@@ -175,6 +175,21 @@ each supported platform, including Windows and WSL.
 
 ## Limits
 
+In unreleased 0.2.0, `Deadline` (on `ClientOptions` or `CallOptions`, a `TimeSpan`) sets a total
+deadline for one logical call, separate from the per-attempt `Timeout`. It is measured on a
+monotonic clock (`Stopwatch`) and covers authentication, idempotency-key reservation, every attempt
+(each one's `Timeout` is cut to the time left), retry waits, response bodies and verification; for
+`PagesAsync`, `PollAsync` and `RunMacroAsync` it covers the whole traversal, poll or macro, and
+nested work cannot restart it. No attempt starts after it expires: the call fails with `Code`
+`DEADLINE_EXCEEDED`, and a mutation that was already sent reports `OUTCOME_UNKNOWN`, never a blind
+replay. A retry wait or poll interval that would end after the deadline is not waited for. For
+`Stream` it bounds connecting and each reconnect, never an open stream (use `IdleTimeout`). A
+shared OAuth token refresh is not cancelled at the deadline, only no longer waited for, so other
+callers still get its result; it stays bounded by its own timeout. A custom `IIdempotencyStore`
+runs synchronously and is not interrupted, and a custom `HttpClient` handler that ignores
+cancellation can keep running after the deadline. The caller's `CancellationToken` is unchanged
+and still cancels at once. Default: no total deadline.
+
 In unreleased 0.2.0, ordinary buffered responses default to **4 MiB (4,194,304 bytes) per response**.
 Set `ClientOptions.MaxResponseBytes` to choose a finite client cap; the call option with the same
 native name overrides it. Omitted/null values inherit the default or client cap,
