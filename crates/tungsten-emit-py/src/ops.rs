@@ -830,12 +830,23 @@ pub(crate) fn descriptor_py(plan: &Plan<'_>, info: &OpInfo<'_>, shape: &OpShape<
             ]),
             BodyShape::Arg(arg) => Py::dict(vec![("kind", Py::str("arg")), ("arg", Py::str(arg))]),
         };
-        Py::dict(vec![
+        let mut members = vec![
             ("media_type", Py::str(&b.content.media_type)),
             ("encoding", Py::str(encoding_str(b.content.encoding))),
             ("required", Py::bool(b.required)),
             ("shape", shape_py),
-        ])
+        ];
+        if !b.content.parts.is_empty() {
+            let parts = b.content.parts.iter().map(|part| {
+                let mut entry = vec![("name", Py::str(&part.name))];
+                if let Some(content_type) = &part.content_type {
+                    entry.push(("content_type", Py::str(content_type)));
+                }
+                Py::dict(entry)
+            });
+            members.push(("parts", Py::List(parts.collect())));
+        }
+        Py::dict(members)
     });
     let responses = Py::List(
         op.responses

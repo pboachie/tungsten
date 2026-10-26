@@ -1346,6 +1346,27 @@ pub(crate) fn descriptor_rx(
                 ("encoding", Rx::atom(encoding_rs(b.content.encoding))),
                 ("required", Rx::boolean(b.required)),
                 ("shape", shape_rs),
+                (
+                    "parts",
+                    Rx::list(
+                        b.content
+                            .parts
+                            .iter()
+                            .map(|part| {
+                                Rx::record(
+                                    "PartDescriptor",
+                                    vec![
+                                        ("name", Rx::string(&part.name)),
+                                        (
+                                            "content_type",
+                                            Rx::opt_string(part.content_type.as_deref()),
+                                        ),
+                                    ],
+                                )
+                            })
+                            .collect(),
+                    ),
+                ),
             ],
         ))
     });

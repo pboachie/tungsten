@@ -503,6 +503,24 @@ ir_struct! {
         pub media_type: String,
         pub ty: TypeRef,
         pub encoding: BodyEncoding,
+        /// The per-part encoding of a [`BodyEncoding::Multipart`] request
+        /// body: one entry per property named in the media type's
+        /// `encoding` map that declares something the compiler models, in
+        /// spec order.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        pub parts: Vec<PartEncoding>,
+    }
+}
+
+ir_struct! {
+    /// One entry of a multipart body's `encoding` map.
+    pub struct PartEncoding {
+        /// The wire name of the property the part carries.
+        pub name: String,
+        /// The part's media type: the first concrete (wildcard-free) entry of
+        /// the Encoding Object's `contentType` list.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub content_type: Option<String>,
     }
 }
 

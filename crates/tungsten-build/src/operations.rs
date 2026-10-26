@@ -417,6 +417,7 @@ fn rpc_op(
                 media_type: variant.media_type.clone(),
                 ty: cx.tb.type_ref(ns, params, &hint),
                 encoding: BodyEncoding::Json,
+                parts: vec![],
             }],
             required,
             doc: None,

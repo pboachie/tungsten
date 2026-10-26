@@ -225,6 +225,14 @@ export type BodyEncoding = "json" | "form" | "multipart" | "bytes" | "text";
  * How an operation takes its body from the generated argument object
  * and encodes it on the wire.
  */
+/** The declared encoding of one multipart field. `contentType` is the media
+ * type each part of the field is sent with, unless a file part carries its
+ * own. */
+export interface PartDescriptor {
+  name: string;
+  contentType?: string;
+}
+
 export interface BodyDescriptor {
   mediaType: string;
   encoding: BodyEncoding;
@@ -234,6 +242,9 @@ export interface BodyDescriptor {
    * names). `arg`: the whole body is `args[arg]` (bytes, text, unions,
    * arrays, or field names that collide with a parameter). */
   shape: { kind: "merged"; fields: string[] } | { kind: "arg"; arg: string };
+  /** Per-part encoding of a multipart body (OpenAPI `encoding`), by wire
+   * field name. Absent when no field declares one. */
+  parts?: PartDescriptor[];
 }
 
 /**
