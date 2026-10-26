@@ -21,6 +21,7 @@ pub struct Inputs<'a> {
     pub index: Option<&'a Index>,
     pub manifest: &'a Schema,
     pub agent: &'a Schema,
+    pub profile: &'a Schema,
 }
 
 impl Inputs<'_> {
@@ -28,6 +29,7 @@ impl Inputs<'_> {
         match self.kind {
             Kind::Manifest => Some(self.manifest),
             Kind::Agent => Some(self.agent),
+            Kind::Profile => Some(self.profile),
             Kind::Overlay => None,
         }
     }
