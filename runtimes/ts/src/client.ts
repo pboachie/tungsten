@@ -2830,7 +2830,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     const hint = op.agent.verify ? `Call ${op.agent.verify.operation} to read the current state.` : null;
     const failure = (why: DownloadFailure, bytes: number, detail?: string): Diagnostic => {
       const after = `after ${bytes} ${bytes === 1 ? "byte" : "bytes"}`;
-      const code = why === "idle" ? "STREAM_IDLE" : why === "deadline" ? "DEADLINE_EXCEEDED" : why === "oversized" ? "RESPONSE_TOO_LARGE" : why === "sink" ? "SINK_FAILED" : null;
+      const code = why === "idle" ? "STREAM_IDLE" : why === "deadline" ? "DEADLINE_EXCEEDED" : why === "oversized" ? "RESPONSE_TOO_LARGE" : why === "sink" ? "SINK_FAILED" : why === "exists" ? "DESTINATION_EXISTS" : null;
       const cause =
         why === "idle" ? `No bytes arrived within ${idleMs ?? timeoutMs} ms ${after}; the download was abandoned.`
         : why === "deadline" ? `The operation deadline (deadlineMs) expired ${after}; the download was abandoned.`
@@ -2838,6 +2838,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
         : why === "lost" ? `The connection failed ${after}, before the body ended.`
         : why === "truncated" ? `The body ended ${after}, short of its Content-Length of ${declaredLength(meta.headers["content-length"]) ?? 0}.`
         : why === "oversized" ? `The body is larger than the limit of ${maxBytes ?? 0} bytes (maxBytes); the download was abandoned ${after}.`
+        : why === "exists" ? `The destination file exists and overwrite is off; nothing was written and the download was abandoned ${after}.`
         : `The sink failed (${detail ?? "error"}) ${after}; the download was abandoned.`;
       const common = { http_status: meta.status, request_id: meta.requestId, code, trace: { attempts: meta.attempts } };
       if (mutation) {
@@ -2848,12 +2849,13 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
           remediation: `The server accepted ${op.id} (HTTP ${meta.status}). ${cause} The call took effect; do not repeat it.`,
         }), prep.secrets);
       }
-      const local = why === "aborted" || why === "sink" || why === "oversized" || why === "deadline";
-      const category = why === "idle" || why === "deadline" ? "UPSTREAM_UNAVAILABLE" : why === "oversized" ? "UNEXPECTED_RESPONSE" : "TRANSPORT_FAILED";
+      const local = why === "aborted" || why === "sink" || why === "oversized" || why === "deadline" || why === "exists";
+      const category = why === "idle" || why === "deadline" ? "UPSTREAM_UNAVAILABLE" : why === "oversized" ? "UNEXPECTED_RESPONSE" : why === "exists" ? "VALIDATION_FAILED" : "TRANSPORT_FAILED";
       const again =
         why === "idle" ? `call again later or with a larger ${idleMs === undefined ? "timeoutMs" : "idleTimeoutMs"}`
         : why === "deadline" ? "call again with a larger deadlineMs"
         : why === "oversized" ? "raise maxBytes if a body this large is expected"
+        : why === "exists" ? "pass overwrite: true to replace the file, or choose another path, and call again"
         : "call again";
       return scrubDiagnostic(diagnostic(op.id, category, {
         ...common,
