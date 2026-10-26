@@ -94,6 +94,8 @@ pub enum TelemetryEntry {
     Stream,
     Download,
     ExportPages,
+    Macro,
+    MacroPreview,
 }
 
 /// One telemetry event. Fields that do not apply to an event are `None`
