@@ -303,6 +303,9 @@ changes.
   `refresh-import` reuses them for flags that are not given again. `check` and
   `generate` refuse a project with an interrupted `refresh-import --apply`
   (TG0124) until `--rollback` restores it.
+- The language server offers a disabled "Refresh the converted import" action
+  on TG0122 for a converted input whose remote source changed, naming the
+  `refresh-import` preview, `--apply` and `--offline` choices.
 
 - Add `tungsten upgrade rehearse`, run with a candidate release's binary: it
   regenerates the project from its locked inputs, offline and without

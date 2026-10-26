@@ -1161,6 +1161,7 @@ impl Server<'_> {
                         list.extend(overlays);
                         if self.disabled_actions {
                             list.extend(actions::unsupported_inputs(&p.context.diagnostics));
+                            list.extend(actions::converted_refresh(&p.context.diagnostics));
                         }
                     }
                     self.reply(id, list)
