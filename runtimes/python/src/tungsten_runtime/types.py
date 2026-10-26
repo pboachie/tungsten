@@ -28,6 +28,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Generic, Literal, Protocol, TypedDict, TypeVar
 
+from ._upload import UploadSource
 from .scheduler import RequestScheduler, SchedulerOptions
 from .telemetry import TelemetryObserver
 
@@ -390,10 +391,16 @@ BinaryContent = bytes | bytearray | memoryview | SupportsRead
 """The content of a binary request value: bytes, or a binary file object the
 runtime reads."""
 
-BinaryInput = BinaryContent | tuple[str | None, BinaryContent] | tuple[str | None, BinaryContent, str | None]
+BinaryInput = (
+    BinaryContent
+    | tuple[str | None, BinaryContent]
+    | tuple[str | None, BinaryContent, str | None]
+    | UploadSource
+)
 """A binary request value (a whole binary body, or a file of a multipart
 body): bytes, a binary file object, or a ``(filename, content[,
-content_type])`` tuple. The runtime reads files into memory before sending."""
+content_type])`` tuple. The runtime reads files into memory before sending.
+A whole binary body also takes an ``UploadSource``, streamed instead."""
 
 
 class RpcBinding(TypedDict):

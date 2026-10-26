@@ -54,6 +54,7 @@ else:
 
 from typing_extensions import TypeAliasType as BackportTypeAliasType
 
+from ._upload import UploadSource
 from .sentinels import UNSET
 from .types import Invalid, Issue, Valid
 
@@ -474,7 +475,7 @@ class _BytesNode(_Node):
 
 class _BinaryNode(_Node):
     def check(self, value: object, path: Path, mode: Mode, issues: list[Issue]) -> Any:
-        if _is_file(value) or isinstance(value, bytes):
+        if _is_file(value) or isinstance(value, bytes | UploadSource):
             return value
         return _fail(issues, path, "Input should be a valid bytes", "bytes_type")
 
