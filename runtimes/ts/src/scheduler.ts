@@ -58,6 +58,7 @@ type Kind = "call" | "stream";
 
 interface Waiter {
   kind: Kind;
+  random: () => number;
   grant: (permit: Permit) => void;
   reject: (rejection: Rejection) => void;
 }
@@ -156,14 +157,15 @@ export class RequestScheduler {
       };
       const waiter: Waiter = {
         kind,
+        random,
         grant: (permit) => { finish(); resolve(permit); },
-        reject: (rejection) => { finish(); resolve(rejection); this.#forget(key, pool); this.#pump(key, pool, random); },
+        reject: (rejection) => { finish(); resolve(rejection); this.#forget(key, pool); this.#pump(key, pool); },
       };
       const onAbort = (): void => waiter.reject({ reason: "aborted" });
       if (Number.isFinite(budget)) timer = setTimeout(() => waiter.reject({ reason: "timeout" }), budget);
       signal?.addEventListener("abort", onAbort, { once: true });
       pool.queue[kind].push(waiter);
-      this.#pump(key, pool, random);
+      this.#pump(key, pool);
     });
   }
 
@@ -230,25 +232,26 @@ export class RequestScheduler {
         const spread = Math.min(1000, wait * 0.1) * (Number.isFinite(r) ? Math.min(1, Math.max(0, r)) : 0.5);
         pool.pausedUntil = Math.max(pool.pausedUntil, performance.now() + wait + spread);
         pool.probing = true;
+        this.#pump(key, pool);
       },
       release: () => {
         if (released) return;
         released = true;
         pool.active[kind] -= 1;
-        this.#pump(key, pool, random);
+        this.#pump(key, pool);
         this.#forget(key, pool);
       },
     };
   }
 
   /** Admit waiting requests in order while capacity allows. */
-  #pump(key: string, pool: Pool, random: () => number): void {
+  #pump(key: string, pool: Pool): void {
     const wait = pool.pausedUntil - performance.now();
     if (wait > 0) {
       if (pool.timer === null && (pool.queue.call.length > 0 || pool.queue.stream.length > 0)) {
         pool.timer = setTimeout(() => {
           pool.timer = null;
-          this.#pump(key, pool, random);
+          this.#pump(key, pool);
         }, wait);
       }
       return;
@@ -257,7 +260,7 @@ export class RequestScheduler {
       const queue = pool.queue[kind];
       while (queue.length > 0 && pool.active[kind] < this.#limit(pool, kind)) {
         const waiter = queue[0] as Waiter;
-        waiter.grant(this.#grant(key, pool, kind, random));
+        waiter.grant(this.#grant(key, pool, kind, waiter.random));
       }
     }
   }

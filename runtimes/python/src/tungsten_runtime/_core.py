@@ -69,6 +69,7 @@ from ._effects import (
     StreamFailed,
     Streaming,
     TimedOut,
+    acquire,
     close_stream,
     emit,
     observe,
@@ -169,6 +170,7 @@ from ._util import (
     without_unset,
 )
 from .idempotency import MemoryIdempotencyStore
+from .scheduler import Permit, Rejection, RequestScheduler, SchedulerOptions
 from .schema import PatternNote, collect_pattern_notes
 from .sentinels import UNSET
 from .types import (
@@ -384,6 +386,16 @@ class Engine:
                 "confirmation_key must contain at least 32 bytes; omit it to generate a random key"
             )
         self.confirmation_key: bytes = copied_key if copied_key is not None else random_bytes(32)
+        configured: object = self.options.scheduler
+        self.scheduler: RequestScheduler | None = None
+        if isinstance(configured, RequestScheduler):
+            self.scheduler = configured
+        elif isinstance(configured, SchedulerOptions):
+            self.scheduler = RequestScheduler(configured)
+        elif configured is not None:
+            raise TypeError("scheduler must be a RequestScheduler or SchedulerOptions")
+        if not isinstance(cast(object, self.options.tenant), str | None):
+            raise TypeError("tenant must be a string")
         operations: object = self.options.operations
         if is_array(operations):
             self.register(*cast(Sequence[OperationDescriptor], operations))
@@ -1458,72 +1470,91 @@ class Engine:
                 return previous_mutation_failure or Answer(
                     _fail(diagnostic(op["id"], "AUTH_FAILED", remediation=INSECURE_HTTP_AUTH))
                 )
-            # Redirects are never followed by the HTTP client: it would forward
-            # credential headers to another origin. A read follows same-origin
-            # redirects here; a mutation follows none.
-            outcome = yield from send(
-                AttemptRequest(
-                    prepared.url,
-                    prepared.method,
-                    headers,
-                    prepared.body,
-                    timeout_ms,
-                    stream,
-                    idle_ms,
-                    max_response_bytes=self._max_response_bytes(opts),
-                )
-            )
-            current_url, current_method, current_body = prepared.url, prepared.method, prepared.body
-            hops = 0
-            while (
-                not self._redirects_disabled
-                and not mutation
-                and hops < _MAX_REDIRECTS
-                and isinstance(outcome, Answered)
-                and outcome.body_failure != "oversized"
-                and outcome.status in _REDIRECT_STATUSES
-            ):
-                target = self._redirect_target(prepared, current_url, outcome.headers.get("location"))
-                if target is None:
-                    break
-                rewrite = outcome.status not in (307, 308) and current_method not in ("GET", "HEAD")
-                current_url = target[0]
-                current_method = "GET" if rewrite else current_method
-                current_body = None if rewrite else current_body
-                ctx.url = target[1]
-                ctx.method = current_method
-                hop_headers = {
-                    k: v for k, v in headers.items() if not (rewrite and k.lower() == "content-type")
-                }
+            admitted = yield from self._admit(op, prepared.url, stream)
+            if isinstance(admitted, Rejection):
+                return previous_mutation_failure or Answer(_fail(self._rejected(op, admitted, stream)))
+            handed_off = False
+            try:
+                # Redirects are never followed by the HTTP client: it would forward
+                # credential headers to another origin. A read follows same-origin
+                # redirects here; a mutation follows none.
                 outcome = yield from send(
                     AttemptRequest(
-                        current_url,
-                        current_method,
-                        hop_headers,
-                        current_body,
+                        prepared.url,
+                        prepared.method,
+                        headers,
+                        prepared.body,
                         timeout_ms,
                         stream,
                         idle_ms,
                         max_response_bytes=self._max_response_bytes(opts),
                     )
                 )
-                hops += 1
-            # The read that shows whether an unprotected mutation took effect
-            # is only needed to explain an unknown outcome or a failure, so
-            # it is looked up (over the whole registry) only then.
-            check = (
-                self._outcome_check(op, prepared.args)
-                if mutation
-                and not protected
-                and not (
-                    isinstance(outcome, Answered)
-                    and outcome.body is not None
-                    and 200 <= outcome.status <= 299
+                current_url, current_method, current_body = prepared.url, prepared.method, prepared.body
+                hops = 0
+                while (
+                    not self._redirects_disabled
+                    and not mutation
+                    and hops < _MAX_REDIRECTS
+                    and isinstance(outcome, Answered)
+                    and outcome.body_failure != "oversized"
+                    and outcome.status in _REDIRECT_STATUSES
+                ):
+                    target = self._redirect_target(prepared, current_url, outcome.headers.get("location"))
+                    if target is None:
+                        break
+                    rewrite = outcome.status not in (307, 308) and current_method not in ("GET", "HEAD")
+                    current_url = target[0]
+                    current_method = "GET" if rewrite else current_method
+                    current_body = None if rewrite else current_body
+                    ctx.url = target[1]
+                    ctx.method = current_method
+                    hop_headers = {
+                        k: v for k, v in headers.items() if not (rewrite and k.lower() == "content-type")
+                    }
+                    outcome = yield from send(
+                        AttemptRequest(
+                            current_url,
+                            current_method,
+                            hop_headers,
+                            current_body,
+                            timeout_ms,
+                            stream,
+                            idle_ms,
+                            max_response_bytes=self._max_response_bytes(opts),
+                        )
+                    )
+                    hops += 1
+                # The read that shows whether an unprotected mutation took effect
+                # is only needed to explain an unknown outcome or a failure, so
+                # it is looked up (over the whole registry) only then.
+                check = (
+                    self._outcome_check(op, prepared.args)
+                    if mutation
+                    and not protected
+                    and not (
+                        isinstance(outcome, Answered)
+                        and outcome.body is not None
+                        and 200 <= outcome.status <= 299
+                    )
+                    else None
                 )
-                else None
-            )
-            call_ctx = CallContext(self.api, op, prepared.key, prepared.key_header, attempts, check)
-            answer = yield from self._classify(call_ctx, prepared, outcome, ctx, timeout_ms)
+                call_ctx = CallContext(self.api, op, prepared.key, prepared.key_header, attempts, check)
+                answer = yield from self._classify(call_ctx, prepared, outcome, ctx, timeout_ms)
+                if admitted is not None:
+                    failure = answer.result.error if isinstance(answer.result, Err) else None
+                    if failure is not None and failure["category"] == "RATE_LIMITED":
+                        admitted.settle(failure["retry_after_ms"], limited=True)
+                    elif isinstance(outcome, Answered | Streaming):
+                        admitted.settle(None, limited=False)
+                    # An open event stream keeps its capacity until it is closed.
+                    value = answer.result.value if isinstance(answer.result, Ok) else None
+                    if isinstance(value, Streaming) and hasattr(value.stream, "on_close"):
+                        value.stream.on_close = admitted.release  # type: ignore[attr-defined]
+                        handed_off = True
+            finally:
+                if admitted is not None and not handed_off:
+                    admitted.release()
             result = answer.result
             if isinstance(result, Ok):
                 return replace(answer, request_url=current_url)
@@ -1555,6 +1586,61 @@ class Engine:
             if mutation:
                 previous_mutation_failure = done
             yield from sleep(delay)
+
+    def _admit(self, op: OperationDescriptor, url: str, stream: bool) -> Flow[Permit | Rejection | None]:
+        """Wait for scheduler capacity for one attempt: None without a
+        scheduler, a ``Rejection`` (nothing is sent) when none was given."""
+        scheduler = self.scheduler
+        if scheduler is None:
+            return None
+        source = self.options.random
+        rnd: Callable[[], float] = (
+            (lambda: bounded(source(), 0.5, 0, 1)) if callable(source) else random.random
+        )
+        key = scheduler.scope_key(url, self.options.tenant)
+        admitted = yield from acquire(scheduler, key, "stream" if stream else "call", rnd)
+        return cast(Permit | Rejection, admitted)
+
+    @staticmethod
+    def _rejected(op: OperationDescriptor, rejection: Rejection, stream: bool) -> Diagnostic:
+        what = "event streams" if stream else "requests"
+        limit = "max_streams" if stream else "max_active"
+        if rejection.reason == "full":
+            return diagnostic(
+                op["id"],
+                "RATE_LIMITED",
+                code="QUEUE_FULL",
+                remediation=f"The client's queue of {what} waiting for capacity is full (SchedulerOptions.max_queued); nothing was sent. Retry after calls in flight finish, or raise max_queued or {limit}.",
+            )
+        if rejection.reason == "timeout":
+            return diagnostic(
+                op["id"],
+                "RATE_LIMITED",
+                code="QUEUE_TIMEOUT",
+                remediation=f"No capacity for {what} became free within the queue wait (SchedulerOptions.max_queue_ms) or the call's deadline; nothing was sent. Retry later, or raise max_queue_ms or {limit}.",
+            )
+        if rejection.reason == "paused":
+            return diagnostic(
+                op["id"],
+                "RATE_LIMITED",
+                code="RATE_LIMIT_PAUSED",
+                retry_after_ms=rejection.retry_after_ms,
+                remediation="An earlier call sharing this quota was rate limited, and the pause outlasts this call's queue wait or deadline; nothing was sent. Wait retry_after_ms before calling again.",
+            )
+        if rejection.reason == "closed":
+            return diagnostic(
+                op["id"],
+                "TRANSPORT_FAILED",
+                code="SCHEDULER_CLOSED",
+                retryable="never",
+                remediation="The request scheduler was closed (shutdown); nothing was sent. Use a client with an open scheduler.",
+            )
+        return diagnostic(
+            op["id"],
+            "TRANSPORT_FAILED",
+            retryable="never",
+            remediation="The caller cancelled the call while it waited for capacity; nothing was sent.",
+        )
 
     def _outcome_check(self, op: OperationDescriptor, args: Mapping[str, object]) -> OutcomeCheck | None:
         """How to find out whether ``op`` (a mutation without replay

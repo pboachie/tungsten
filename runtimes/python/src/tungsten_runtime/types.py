@@ -28,6 +28,8 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Generic, Literal, Protocol, TypedDict, TypeVar
 
+from .scheduler import RequestScheduler, SchedulerOptions
+
 if sys.version_info >= (3, 11):
     from typing import NotRequired
 else:
@@ -669,6 +671,14 @@ class ClientOptions:
     now: Callable[[], float] | None = None
     #: Random number in [0, 1) for retry jitter.
     random: Callable[[], float] | None = None
+    #: Bounds the requests this client has in flight and waiting, and shares
+    #: rate-limit pauses between them. ``SchedulerOptions`` makes a scheduler
+    #: of this client alone; pass one ``RequestScheduler`` to several clients
+    #: that share a quota. None (default): every call is sent at once.
+    scheduler: RequestScheduler | SchedulerOptions | None = None
+    #: The tenant or principal this client calls for. Clients sharing a
+    #: scheduler keep separate capacity, queues and pauses per tenant.
+    tenant: str | None = None
     #: Largest server-sent event ``stream()`` accepts, in UTF-8 bytes (the
     #: field lines of one event plus the line being read). A larger one ends
     #: the stream with an ``UNEXPECTED_RESPONSE`` failure. Default 1 MiB.

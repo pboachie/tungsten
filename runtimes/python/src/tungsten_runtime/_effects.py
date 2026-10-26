@@ -193,13 +193,26 @@ class PollExpired(Exception):
 
 
 @dataclass(frozen=True, slots=True)
+class Acquire:
+    """Wait for capacity of a ``RequestScheduler``; the result is a
+    ``Permit`` or a ``Rejection``. Inside ``Bounded`` the deadline also ends
+    the wait."""
+
+    scheduler: object
+    key: str
+    kind: Literal["call", "stream"]
+    random: Callable[[], float]
+
+
+@dataclass(frozen=True, slots=True)
 class Bounded:
     effect: object
     deadline_ms: float
 
 
 Effect = (
-    Bounded
+    Acquire
+    | Bounded
     | Send
     | Sleep
     | StoreGet
@@ -229,6 +242,12 @@ def read_chunk(stream: object) -> Flow[ReadOutcome]:
 
 def close_stream(stream: object) -> Flow[None]:
     yield CloseStream(stream)
+
+
+def acquire(
+    scheduler: object, key: str, kind: Literal["call", "stream"], random: Callable[[], float]
+) -> Flow[object]:
+    return (yield Acquire(scheduler, key, kind, random))
 
 
 def sleep(ms: float) -> Flow[None]:
