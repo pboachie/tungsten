@@ -27,6 +27,8 @@ pub const DEFAULT_WEBHOOK_MAX_BODY_BYTES: usize = 1_048_576;
 pub const DEFAULT_WEBHOOK_TOLERANCE_SECONDS: u64 = 300;
 /// Longest accepted signature header, in UTF-16 code units (ASCII bytes).
 pub const MAX_WEBHOOK_SIGNATURE_HEADER: usize = 8192;
+/// Deepest accepted nesting of arrays and objects in the payload (`[]` is 1).
+pub const MAX_WEBHOOK_JSON_DEPTH: usize = 100;
 
 /// Why a delivery was rejected. Stable across runtimes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -211,6 +213,36 @@ fn parse_header(header: &str) -> Result<(&str, Vec<[u8; 32]>), &'static str> {
     Ok((timestamp, signatures))
 }
 
+/// Whether arrays and objects outside strings nest deeper than the limit.
+/// Scans bytes, so it runs before decoding and gives the same answer in every
+/// runtime, whatever else is wrong with the body.
+fn too_deep(body: &[u8]) -> bool {
+    // Signed like the other runtimes' counters, so a stray closer counts the same.
+    let mut depth = 0isize;
+    let (mut in_string, mut escaped) = (false, false);
+    for &byte in body {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == b'"' {
+                in_string = false;
+            }
+        } else if byte == b'"' {
+            in_string = true;
+        } else if byte == b'[' || byte == b'{' {
+            depth += 1;
+            if depth > MAX_WEBHOOK_JSON_DEPTH as isize {
+                return true;
+            }
+        } else if byte == b']' || byte == b'}' {
+            depth -= 1;
+        }
+    }
+    false
+}
+
 fn mac(secret: &str, timestamp: &str, body: &[u8]) -> Hmac<Sha256> {
     let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).expect("HMAC accepts any key");
     mac.update(timestamp.as_bytes());
@@ -221,7 +253,8 @@ fn mac(secret: &str, timestamp: &str, body: &[u8]) -> Hmac<Sha256> {
 
 /// Verify a Stripe-compatible signed delivery and parse its JSON payload as
 /// `T` (use [`Value`] for an untyped event). A payload that is not JSON or
-/// does not match `T` is rejected as `payload_invalid`.
+/// does not match `T` is rejected as `payload_invalid`, as is one whose arrays
+/// and objects nest deeper than [`MAX_WEBHOOK_JSON_DEPTH`].
 ///
 /// The outer `Err` is only for invalid options; a bad delivery is the inner
 /// `Err`.
@@ -322,6 +355,12 @@ pub fn verify_webhook_with<T>(
         return reject(
             WebhookRejection::TimestampOutOfTolerance,
             format!("the signed timestamp is more than {tolerance} seconds from now"),
+        );
+    }
+    if too_deep(body) {
+        return reject(
+            WebhookRejection::PayloadInvalid,
+            format!("the payload nests deeper than {MAX_WEBHOOK_JSON_DEPTH} levels"),
         );
     }
     let Ok(value) = serde_json::from_slice::<Value>(body) else {
