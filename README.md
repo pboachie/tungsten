@@ -1241,7 +1241,7 @@ if not configs.tungsten then
   configs.tungsten = {
     default_config = {
       cmd = { 'tungsten', 'lsp' },
-      filetypes = { 'yaml' },
+      filetypes = { 'yaml', 'json' },
       root_dir = util.root_pattern('tungsten.yml', 'tungsten.yaml'),
     },
   }
@@ -1250,7 +1250,9 @@ end
 require('lspconfig').tungsten.setup({})
 ```
 
-Any other client works the same way: start `tungsten lsp` as a stdio server for YAML files.
+Any other client works the same way: start `tungsten lsp` as a stdio server for YAML files, and for JSON files too when the project has JSON specs or overlays, so their unsaved edits are checked (the Neovim example attaches to both).
+
+Quick fixes are ordinary code actions: the light bulb or `Ctrl+.` in Visual Studio Code, `vim.lsp.buf.code_action()` in Neovim. Overlay fixes create a file and edit `tungsten.yml` in one workspace edit, so the client must support `documentChanges` with the `create` resource operation; clients with change-annotation support ask for confirmation and preview every file first (Visual Studio Code opens its refactor preview). Neovim applies the edit directly; undo it per buffer with `u`, and delete the created overlay to revert fully. A client that shows disabled code actions explains why a fix is unavailable, with the equivalent `tungsten overlay suggest` command.
 
 | Exit code | Meaning |
 |---|---|
