@@ -226,6 +226,9 @@ changes.
 
 ### Added
 
+- Generated Python `pyproject.toml` files list a
+  `Programming Language :: Python :: 3.x` classifier for every minor from the
+  `python_version` floor up to 3.15, matching the runtime package.
 - Add an opt-in request scheduler to the TypeScript, Python and Rust runtimes
   (`ClientOptions.scheduler`, `ClientOptions.tenant`). It bounds ordinary
   attempts and event streams in flight per tenant and origin, queues a bounded
