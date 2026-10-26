@@ -151,6 +151,25 @@ pub enum OperationChangeKind {
     Changed,
 }
 
+/// `given` unless it is empty, then `saved`.
+fn pick<'a>(given: &'a [String], saved: &'a [String]) -> &'a [String] {
+    if given.is_empty() { saved } else { given }
+}
+
+/// Importer settings saved under `settings` in import-report.json.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct Recorded {
+    input_format: Option<String>,
+    route: Vec<String>,
+    shell_dialect: Option<String>,
+    har_origin: Option<String>,
+    har_paths: Option<BTreeMap<String, String>>,
+    include_prefix: Vec<String>,
+    exclude_prefix: Vec<String>,
+    redact_property: Vec<String>,
+}
+
 /// Written before the first replacement and removed after the last.
 #[derive(Debug, Serialize, Deserialize)]
 struct Journal {
@@ -219,6 +238,25 @@ pub(crate) fn run(args: &RefreshImportArgs, env: &CliEnv, no_external: bool) -> 
         Ok(plan) => plan.finish(report, args, env, no_external, &manifest, &root),
         Err(error) => report.failed(exit::FAILED, error),
     }
+}
+
+/// TG0124 when `path` names a project with an interrupted --apply.
+pub(crate) fn pending_diagnostic(path: &Path) -> Option<tungsten_core::Diagnostic> {
+    let Ok(input::Input::Project(manifest)) = input::resolve(path) else {
+        return None;
+    };
+    let base = manifest.parent().map(Path::to_path_buf).unwrap_or_default();
+    let journal = format!("{STATE_DIR}/{JOURNAL}");
+    std::fs::symlink_metadata(input::join(&base, &journal))
+        .is_ok()
+        .then(|| {
+            tungsten_core::Diagnostic::error(
+                "TG0124",
+                "an interrupted `refresh-import --apply` left the converted input partly refreshed",
+            )
+            .at(journal, "", None)
+            .with_help("run `tungsten refresh-import --rollback`, then preview and apply the refresh again")
+        })
 }
 
 /// Everything read and converted before any comparison.
@@ -298,15 +336,32 @@ impl Plan {
                     "pass the new revision of the original Postman, HAR, cURL, HTTP, Swagger or endpoint manifest file with --from",
                 )
             })?;
+        // Command-line settings win; anything left at its default falls back
+        // to the reviewed settings the previous conversion recorded.
+        let recorded: Recorded = old_report
+            .as_deref()
+            .and_then(|bytes| serde_json::from_slice::<Value>(bytes).ok())
+            .and_then(|report| serde_json::from_value(report.get("settings")?.clone()).ok())
+            .unwrap_or_default();
         let options = ConvertOptions {
-            input_format: &args.input_format,
-            route: &args.route,
-            shell_dialect: &args.shell_dialect,
-            har_origin: args.har_origin.as_deref(),
+            input_format: match (args.input_format.as_str(), &recorded.input_format) {
+                ("auto", Some(saved)) => saved,
+                (given, _) => given,
+            },
+            route: pick(&args.route, &recorded.route),
+            shell_dialect: match (args.shell_dialect.as_str(), &recorded.shell_dialect) {
+                ("posix", Some(saved)) => saved,
+                (given, _) => given,
+            },
+            har_origin: args
+                .har_origin
+                .as_deref()
+                .or(recorded.har_origin.as_deref()),
             har_paths: args.har_paths.as_deref(),
-            include_prefix: &args.include_prefix,
-            exclude_prefix: &args.exclude_prefix,
-            redact_property: &args.redact_property,
+            har_path_map: recorded.har_paths.as_ref(),
+            include_prefix: pick(&args.include_prefix, &recorded.include_prefix),
+            exclude_prefix: pick(&args.exclude_prefix, &recorded.exclude_prefix),
+            redact_property: pick(&args.redact_property, &recorded.redact_property),
         };
         let (prepared, remote, source) = if tungsten_openapi::acquire::is_remote(&from) {
             let bytes = tungsten_openapi::acquire::fetch(

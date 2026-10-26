@@ -334,6 +334,25 @@ impl ClientCore {
         Pages::new(self.clone(), op, args, opts)
     }
 
+    /// Iterate the pages of a read-only operation like [`ClientCore::pages`],
+    /// each with a sealed checkpoint token to persist once the page is
+    /// committed to the sink; pass a saved token as
+    /// [`CheckpointOptions::resume`] after a restart to continue with the
+    /// page after it. A token that is malformed, altered, sealed under
+    /// another key, older than `max_age_ms`, stopped, or issued for other
+    /// arguments, origin, tenant, scope or contract is refused
+    /// (`VALIDATION_FAILED`) before any request. Page budgets, cycle
+    /// detection, deadlines and cancellation apply per run.
+    pub fn export_pages(
+        &self,
+        op: Arc<OperationDescriptor>,
+        args: Value,
+        checkpoint: crate::checkpoint::CheckpointOptions,
+        opts: CallOptions,
+    ) -> crate::checkpoint::ExportPages {
+        crate::checkpoint::ExportPages::new(self.clone(), op, args, checkpoint, opts)
+    }
+
     /// Call a read operation until `until` holds or the budget runs out. On
     /// a timeout the last body is returned with `timed_out` true.
     pub async fn poll(

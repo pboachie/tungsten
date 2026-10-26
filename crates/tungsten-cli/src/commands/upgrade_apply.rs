@@ -38,7 +38,7 @@ use crate::output::{CliError, CommandName, CommandResult, ErrorKind};
 use crate::{Report, exit, input, targets};
 
 /// The apply journal at the workspace root.
-const JOURNAL_FILE: &str = "tungsten-apply.json";
+pub(crate) const JOURNAL_FILE: &str = "tungsten-apply.json";
 /// Backups of the files apply replaces, by planned target index.
 const BACKUP_DIR: &str = "backup";
 const JOURNAL_VERSION: u32 = 1;

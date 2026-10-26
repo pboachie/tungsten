@@ -288,12 +288,18 @@ pub(crate) struct SupportBundleArgs {
     /// as user supplied (bundle schema version 2); repeatable.
     #[arg(long, value_name = "FILE")]
     pub attach_config: Vec<PathBuf>,
+    /// Opt in to an allowlisted summary of an `upgrade rehearse` workspace
+    /// (bundle schema version 3): versions, verdict, check states, target
+    /// ids with change and conflict counts, finding kinds and the apply
+    /// state. No paths, digests, file names or finding text.
+    #[arg(long, value_name = "DIR")]
+    pub rehearsal: Option<PathBuf>,
     /// Read an existing bundle file, check it against its schema version and
     /// show its entries; reads only this file and writes or runs nothing.
     #[arg(
         long,
         value_name = "FILE",
-        conflicts_with_all = ["preview", "output", "exclude", "attach_log", "attach_config"]
+        conflicts_with_all = ["preview", "output", "exclude", "attach_log", "attach_config", "rehearsal"]
     )]
     pub inspect: Option<PathBuf>,
 }

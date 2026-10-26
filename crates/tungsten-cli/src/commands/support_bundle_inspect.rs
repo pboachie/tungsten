@@ -20,8 +20,8 @@ use serde::Serialize;
 use serde_json::{Map, Value};
 
 use super::support_bundle::{
-    BUNDLE_SCHEMA_VERSION, BundleEntryOrigin, BundleEntryStatus, BundleSensitivity, ENTRY_IDS,
-    MAX_ENTRY_BYTES, MAX_TOTAL_BYTES, SUPPORTED_SCHEMA_VERSIONS,
+    BUNDLE_SCHEMA_VERSION, BUNDLE_SCHEMA_VERSION_REHEARSAL, BundleEntryOrigin, BundleEntryStatus,
+    BundleSensitivity, ENTRY_IDS, MAX_ENTRY_BYTES, MAX_TOTAL_BYTES, SUPPORTED_SCHEMA_VERSIONS,
 };
 use super::support_bundle_attach::{MAX_ATTACHMENT_TEXT_BYTES, MAX_ATTACHMENTS, entry_id};
 use super::support_bundle_file::MAX_ARTIFACT_BYTES;
@@ -104,6 +104,7 @@ pub(super) fn inspect(path: &Path) -> Result<SupportBundleInspection, InspectErr
         return Err(InspectError::UnsupportedVersion(version));
     };
     check_document(&document, version)?;
+    let observed_ids = observed_ids(version);
     let mut entries = vec![];
     let mut total = 0usize;
     let mut producer_version = None;
@@ -111,13 +112,14 @@ pub(super) fn inspect(path: &Path) -> Result<SupportBundleInspection, InspectErr
     for (index, entry) in listed.enumerate() {
         let at = format!("/entries/{index}");
         let id = entry["id"].as_str().unwrap_or_default();
-        let expected = ENTRY_IDS
-            .get(index)
-            .map_or_else(|| entry_id(index - ENTRY_IDS.len()), |id| (*id).to_string());
+        let expected = observed_ids.get(index).map_or_else(
+            || entry_id(index - observed_ids.len()),
+            |id| (*id).to_string(),
+        );
         if id != expected {
             return Err(invalid(&format!("{at}/id"), "is not the expected entry id"));
         }
-        let observed = index < ENTRY_IDS.len();
+        let observed = index < observed_ids.len();
         let status = match entry["status"].as_str() {
             Some("included") => BundleEntryStatus::Included,
             Some("excluded_by_request") => BundleEntryStatus::ExcludedByRequest,
@@ -179,10 +181,10 @@ pub(super) fn inspect(path: &Path) -> Result<SupportBundleInspection, InspectErr
             payload,
         });
     }
-    if entries.len() < ENTRY_IDS.len() {
+    if entries.len() < observed_ids.len() {
         return Err(invalid("/entries", "does not list every entry"));
     }
-    let attachments = entries.len() - ENTRY_IDS.len();
+    let attachments = entries.len() - observed_ids.len();
     if (version == BUNDLE_SCHEMA_VERSION && attachments > 0) || attachments > MAX_ATTACHMENTS {
         return Err(invalid("/entries", "has too many entries"));
     }
@@ -327,10 +329,14 @@ fn check_document(document: &Map<String, Value>, version: u32) -> Result<(), Ins
     if document["mode"] != "preview" {
         return Err(invalid("/mode", "is not a known mode"));
     }
-    let level = if version == BUNDLE_SCHEMA_VERSION {
-        "metadata_only"
-    } else {
-        "metadata_and_user_supplied"
+    let observed_ids = observed_ids(version);
+    let attached = document["entries"]
+        .as_array()
+        .is_some_and(|entries| entries.len() > observed_ids.len());
+    let level = match version {
+        BUNDLE_SCHEMA_VERSION => "metadata_only",
+        BUNDLE_SCHEMA_VERSION_REHEARSAL if !attached => "metadata_only",
+        _ => "metadata_and_user_supplied",
     };
     if document["privacy"]["level"] != level {
         return Err(invalid(
@@ -344,7 +350,7 @@ fn check_document(document: &Map<String, Value>, version: u32) -> Result<(), Ins
         .flatten()
         .enumerate()
     {
-        if index >= ENTRY_IDS.len() && version != BUNDLE_SCHEMA_VERSION {
+        if index >= observed_ids.len() && version != BUNDLE_SCHEMA_VERSION {
             if entry["origin"] != "user_supplied" {
                 return Err(invalid(
                     &format!("/entries/{index}/origin"),
@@ -375,8 +381,46 @@ fn check_document(document: &Map<String, Value>, version: u32) -> Result<(), Ins
     Ok(())
 }
 
+/// Observed entry ids in order for a schema version.
+fn observed_ids(version: u32) -> Vec<&'static str> {
+    let mut ids = ENTRY_IDS.to_vec();
+    if version == BUNDLE_SCHEMA_VERSION_REHEARSAL {
+        ids.push(super::support_bundle_rehearsal::ENTRY_ID);
+    }
+    ids
+}
+
 fn payload_shape(id: &str) -> Shape {
     match id {
+        "upgrade.rehearsal" => obj(vec![
+            ("state", Shape::Token),
+            ("from_version", opt(Shape::Text)),
+            ("to_version", opt(Shape::Text)),
+            ("verdict", opt(Shape::Token)),
+            ("generated_source", opt(Shape::Token)),
+            ("package_availability", opt(Shape::Token)),
+            ("runtime_acceptance", opt(Shape::Token)),
+            ("apply_state", Shape::Token),
+            (
+                "targets",
+                list(obj(vec![
+                    ("target", Shape::Text),
+                    ("status", Shape::Token),
+                    ("added", Shape::Int),
+                    ("changed", Shape::Int),
+                    ("removed", Shape::Int),
+                    ("conflicts", Shape::Int),
+                    ("semver", opt(Shape::Token)),
+                ])),
+            ),
+            ("targets_omitted", Shape::Int),
+            ("identity_changes", list(Shape::Token)),
+            (
+                "findings",
+                list(obj(vec![("kind", Shape::Token), ("blocking", Shape::Bool)])),
+            ),
+            ("findings_omitted", Shape::Int),
+        ]),
         "tool.versions" => obj(vec![
             ("tungsten_version", Shape::Text),
             ("cli_output_schema", Shape::Text),
