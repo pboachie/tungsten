@@ -226,11 +226,21 @@ class ArgBodyShape(TypedDict):
     arg: str
 
 
+class PartDescriptor(TypedDict):
+    """The declared encoding of one multipart field. ``content_type`` is the
+    media type each part of the field is sent with, unless a file part
+    carries its own."""
+
+    name: str
+    content_type: NotRequired[str]
+
+
 class BodyDescriptor(TypedDict):
     media_type: str
     encoding: BodyEncoding
     required: bool
     shape: MergedBodyShape | ArgBodyShape
+    parts: NotRequired[list[PartDescriptor]]
 
 
 StatusMatch = int | Literal["1XX", "2XX", "3XX", "4XX", "5XX", "default"]
@@ -946,6 +956,7 @@ __all__ = [
     "ParamLocation",
     "ParamRole",
     "ParamStyle",
+    "PartDescriptor",
     "Predicate",
     "PreviewEndpoint",
     "PreviewHeader",

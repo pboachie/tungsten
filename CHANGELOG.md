@@ -230,6 +230,16 @@ changes.
 
 ### Added
 
+- Multipart request bodies honour the OpenAPI `encoding` map: a field whose
+  Encoding Object declares a `contentType` is sent with that media type (the
+  first entry of the list without wildcards) in TypeScript, Python and Rust
+  SDKs. A file part without its own media type takes the declared one; an
+  object part keeps JSON and uses the declared type when it is a JSON media
+  type; a scalar part is sent as a typed part, JSON-encoded for a JSON media
+  type. IR `BodyContent.parts` (`PartEncoding`) is additive and the feature is
+  listed as `multipart_part_encoding`. Per-part `headers`, and positional or
+  nested multipart encoding (TG0146/TG0147), are not supported.
+
 - Concurrent commands of a generated Rust CLI refresh a stored login session
   one process at a time: the token is refreshed before the call under a
   per-session lock file and read again first, so a refresh token is not

@@ -5,6 +5,7 @@
  */
 import type { BodyDescriptor, OperationDescriptor, ParamDescriptor } from "./types.js";
 import { binarySize, canonicalJson, isBinary, isBlob, isNamedBinary, isRecord, REDACTED, utf8 } from "./util.js";
+import { isJsonMedia } from "./classify.js";
 
 /** Problem found while serializing an argument; becomes VALIDATION_FAILED. */
 export class SerializationError extends Error {
@@ -265,19 +266,25 @@ export async function encodeBody(
       for (const [k, v] of entries(value)) {
         const items = Array.isArray(v) ? v.filter(present) : [v];
         const shown: unknown[] = [];
+        const declared = descriptor?.parts?.find((part) => part.name === k)?.contentType;
+        const declaredJson = declared !== undefined && isJsonMedia(declared.split(";")[0]!.trim().toLowerCase());
         for (const item of items) {
           if (isBinary(item) || isNamedBinary(item)) {
             const { data, filename, contentType } = isNamedBinary(item) ? item : { data: item, filename: undefined, contentType: undefined };
             if (contentType !== undefined && contentType !== "" && !validMediaType(contentType)) {
               throw new SerializationError(`${parameter}.${k}`, "a media type such as type/subtype or type/subtype; charset=utf-8", "<invalid media type>");
             }
-            const blob = toBlob(data, contentType ?? "");
+            const own = contentType !== undefined && contentType !== "" ? contentType : isBlob(data) && data.type !== "" ? data.type : undefined;
+            const blob = toBlob(data, own ?? declared ?? "");
             const name = filename ?? (typeof File !== "undefined" && data instanceof File ? data.name : k);
             form.append(k, blob, name);
             shown.push(binaryDisplay(data, blob.type));
           } else if (isRecord(item) && !(item instanceof Date)) {
-            form.append(k, new Blob([JSON.stringify(item)], { type: "application/json" }));
+            form.append(k, new Blob([JSON.stringify(item)], { type: declaredJson ? declared : "application/json" }));
             shown.push(item);
+          } else if (declared !== undefined) {
+            form.append(k, new Blob([declaredJson ? JSON.stringify(item) : scalar(item)], { type: declared }));
+            shown.push(scalar(item));
           } else {
             form.append(k, scalar(item));
             shown.push(scalar(item));

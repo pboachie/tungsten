@@ -209,6 +209,11 @@ fn multipart_form(parts: &[MultipartPart]) -> reqwest::multipart::Form {
             PartContent::Json(text) => reqwest::multipart::Part::text(text.clone())
                 .mime_str("application/json")
                 .unwrap_or_else(|_| reqwest::multipart::Part::text(text.clone())),
+            PartContent::Typed { text, content_type } => {
+                reqwest::multipart::Part::text(text.clone())
+                    .mime_str(content_type)
+                    .unwrap_or_else(|_| reqwest::multipart::Part::text(text.clone()))
+            }
             PartContent::File {
                 data,
                 filename,

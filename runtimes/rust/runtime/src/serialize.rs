@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 
 use serde_json::{Map, Value};
 
+use crate::classify::is_json_media;
 use crate::types::{
     BodyDescriptor, BodyEncoding, BodyShape, OperationDescriptor, ParamDescriptor, ParamStyle,
 };
@@ -306,6 +307,11 @@ pub fn serialize_cookie_param(p: &ParamDescriptor, value: &Value) -> String {
 pub enum PartContent {
     Text(String),
     Json(String),
+    /// Text sent with the media type the field's `encoding` declares.
+    Typed {
+        text: String,
+        content_type: String,
+    },
     File {
         data: Vec<u8>,
         filename: String,
@@ -491,6 +497,12 @@ pub fn encode_body(
             let mut parts = Vec::new();
             let mut display = Map::new();
             for (k, v) in entries(map) {
+                let declared = descriptor
+                    .and_then(|d| d.parts.iter().find(|p| p.name == *k))
+                    .and_then(|p| p.content_type.as_deref());
+                let declared_json = declared.is_some_and(|ct| {
+                    is_json_media(&ct.split(';').next().unwrap_or("").trim().to_lowercase())
+                });
                 let list: Vec<&Value> = match v {
                     Value::Array(items) => items.iter().filter(|i| !i.is_null()).collect(),
                     other => vec![other],
@@ -511,7 +523,7 @@ pub fn encode_body(
                         }
                         shown.push(Value::String(binary_display(
                             binary.data.len(),
-                            binary.content_type.as_deref().unwrap_or(""),
+                            binary.content_type.as_deref().or(declared).unwrap_or(""),
                         )));
                         parts.push(MultipartPart {
                             name: k.clone(),
@@ -520,20 +532,39 @@ pub fn encode_body(
                                 content_type: binary
                                     .content_type
                                     .clone()
+                                    .or_else(|| declared.map(str::to_owned))
                                     .unwrap_or_else(|| "application/octet-stream".to_owned()),
                                 data: binary.data,
                             },
                         });
                     } else if item.is_object() {
+                        let content = match declared {
+                            Some(ct) if declared_json => PartContent::Typed {
+                                text: json_text(item),
+                                content_type: ct.to_owned(),
+                            },
+                            _ => PartContent::Json(json_text(item)),
+                        };
                         parts.push(MultipartPart {
                             name: k.clone(),
-                            content: PartContent::Json(json_text(item)),
+                            content,
                         });
                         shown.push(item.clone());
                     } else {
+                        let content = match declared {
+                            Some(ct) => PartContent::Typed {
+                                text: if declared_json {
+                                    json_text(item)
+                                } else {
+                                    scalar(item)
+                                },
+                                content_type: ct.to_owned(),
+                            },
+                            None => PartContent::Text(scalar(item)),
+                        };
                         parts.push(MultipartPart {
                             name: k.clone(),
-                            content: PartContent::Text(scalar(item)),
+                            content,
                         });
                         shown.push(Value::String(scalar(item)));
                     }
