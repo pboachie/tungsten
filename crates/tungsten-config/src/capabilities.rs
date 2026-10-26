@@ -22,7 +22,8 @@ pub enum TargetOptionSchema {
     Python,
     Rust,
     /// Field declarations mirroring the emitter's options module; see
-    /// [`crate::option_fields`]. Configuration inspection does not cover them.
+    /// [`crate::option_fields`]. Configuration inspection checks their JSON
+    /// types and fixed defaults; the emitter validates values.
     Declared(&'static crate::option_fields::DeclaredOptions),
 }
 

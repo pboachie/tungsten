@@ -49,6 +49,9 @@ pub enum InspectionTargetStatus {
     ExternalUnverified,
     /// Legacy non-mapping target values use emitter defaults.
     NonMappingDefaults,
+    /// Declared field types and fixed defaults are inspected; the emitter
+    /// alone validates values when it runs.
+    DeclaredFields,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
@@ -108,11 +111,7 @@ pub fn inspect(
     let mut targets = Vec::new();
     for (index, (name, raw)) in config.targets.iter().enumerate() {
         let external = crate::external_target(raw).ok().flatten().is_some();
-        // Declared field schemas carry no shared parser, so their targets
-        // stay uninspected.
-        let declaration = capabilities::target(name)
-            .and_then(|target| target.options_schema)
-            .filter(|schema| !matches!(schema, capabilities::TargetOptionSchema::Declared(_)));
+        let declaration = capabilities::target(name).and_then(|target| target.options_schema);
         let mut target = InspectedTarget {
             target: capabilities::target(name).map_or_else(
                 || format!("external[{index}]"),
@@ -125,7 +124,53 @@ pub fn inspect(
             },
             fields: vec![],
         };
-        if !external && let Some(declaration) = declaration {
+        if !external && let Some(capabilities::TargetOptionSchema::Declared(options)) = declaration
+        {
+            target.status = if raw.is_object() {
+                InspectionTargetStatus::DeclaredFields
+            } else {
+                InspectionTargetStatus::NonMappingDefaults
+            };
+            let base = format!("/targets/{}", target.target);
+            for field in options.fields {
+                let path = pointer::child(&base, field.key);
+                let origin = effective
+                    .provenance
+                    .get(&path)
+                    .or_else(|| effective.provenance.get(&base));
+                let schema = declared_field_schema(field, options.diagnostic);
+                let value = raw.get(field.key);
+                let invalid = value.is_some_and(|value| !field.accepts(value));
+                if invalid && let Some(code) = options.diagnostic {
+                    let mut diagnostic = tungsten_core::Diagnostic::warning(
+                        code,
+                        format!(
+                            "invalid `{}` declaration; {}",
+                            field.key, schema["x-tungsten-inspection"]["invalid_policy"]
+                                .as_str()
+                                .unwrap_or("unsupported value")
+                        ),
+                    )
+                    .with_help(format!(
+                        "use a supported value from `tungsten capabilities {} --json`; authored values and source excerpts are omitted",
+                        target.target
+                    ));
+                    if let Some(origin) = origin {
+                        diagnostic =
+                            diagnostic.at(&origin.winner.file, &origin.winner.pointer, None);
+                    }
+                    diagnostics.push(diagnostic);
+                }
+                target.fields.push(inspect_field(
+                    &path,
+                    value.filter(|_| !invalid),
+                    &schema,
+                    origin,
+                    invalid,
+                    effective,
+                ));
+            }
+        } else if !external && let Some(declaration) = declaration {
             let (id, typed, parse): (&str, Value, fn(&Value) -> Diagnostics) = match declaration {
                 capabilities::TargetOptionSchema::TypeScript => (
                     "typescript",
@@ -145,7 +190,7 @@ pub fn inspect(
                     |value| RustOptions::parse(value).1,
                 ),
                 capabilities::TargetOptionSchema::Declared(_) => {
-                    unreachable!("declared field schemas are filtered above")
+                    unreachable!("declared field schemas are inspected above")
                 }
             };
             let base = format!("/targets/{id}");
@@ -251,6 +296,47 @@ pub fn inspect(
         },
         diagnostics,
     )
+}
+
+/// Identity fields that are safe to export; every other declared value
+/// (paths, runtime sources, provider objects) is redacted.
+const EXPORTABLE_DECLARED_FIELDS: &[&str] = &[
+    "package",
+    "package_id",
+    "namespace",
+    "version",
+    "group",
+    "group_id",
+    "artifact",
+    "artifact_id",
+    "gem",
+    "module",
+    "coroutines",
+];
+
+/// The inspection metadata of one declared field.
+fn declared_field_schema(
+    field: &crate::option_fields::OptionField,
+    diagnostic: Option<&str>,
+) -> Value {
+    let mut schema = serde_json::json!({
+        "x-tungsten-inspection": {
+            "default_policy": if field.default.is_some() {
+                format!("fixed default; {}", field.description)
+            } else {
+                format!("emitter default; {}", field.description)
+            },
+            "invalid_policy": diagnostic.map_or_else(
+                || "warning and emitter default".to_string(),
+                |code| format!("{code} warning and emitter default"),
+            ),
+            "redact": !EXPORTABLE_DECLARED_FIELDS.contains(&field.key),
+        }
+    });
+    if let Some(default) = field.default_value() {
+        schema["default"] = default;
+    }
+    schema
 }
 
 fn inspect_field(
