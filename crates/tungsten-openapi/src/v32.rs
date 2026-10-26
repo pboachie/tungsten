@@ -2,15 +2,19 @@
 //! OpenAPI 3.2 constructs that have no 3.1 equivalent.
 //!
 //! A 3.2 document that uses only 3.1 constructs goes through the unchanged
-//! 3.1 path. The `query` method (as `QUERY`) and `additionalOperations`
-//! (custom methods, sent as written) are compiled by the build, and
-//! reusable media types (`components.mediaTypes`, `$ref` in a `content` map)
-//! are followed like any other reference. Every other construct 3.2 added is
-//! either refused with an error (when ignoring it would produce a client that
-//! behaves differently from the API) or reported as a warning (when it only
-//! adds metadata the compiler has no use for). Nothing is dropped silently. Codes `TG0140`-`TG0156` form one
-//! family, one code per feature, each located at the member that introduces
-//! it.
+//! 3.1 path. The build compiles the `query` method (as `QUERY`), reusable
+//! media types (`components.mediaTypes`, `$ref` in a `content` map, followed
+//! like any other reference), response `itemSchema` where
+//! [`response_item_schema`] places it, and a discriminator's
+//! `defaultMapping`. Every other construct 3.2 added is either refused with an
+//! error (when ignoring it would produce a client that behaves differently
+//! from the API) or reported as a warning (when it only adds metadata the
+//! compiler has no use for). Nothing is dropped silently. Codes
+//! `TG0140`-`TG0156` form one family, one code per feature, each located at
+//! the member that introduces it.
+//!
+//! `additionalOperations` entries are compiled too, as custom methods sent
+//! as written; only tokens that cannot be sent are refused (TG0142).
 
 use std::collections::{BTreeSet, HashSet};
 
@@ -129,7 +133,6 @@ pub fn response_item_schema(media_type: &str, media: &Map<String, Value>) -> Opt
         .then_some("/itemSchema/properties/data/contentSchema")
 }
 
-const REMOVE: &str = "use only OpenAPI 3.1 constructs, or declare the document as OpenAPI 3.1";
 const IGNORED: &str = "the compiler does not use it; remove it to silence this warning";
 
 fn error(code: &'static str, pointer: String, message: &str, help: &'static str) -> Finding {
@@ -411,16 +414,6 @@ fn node_findings(node: &Node<'_>, schemes: &BTreeSet<String>, out: &mut Vec<Find
             }
         }
         Kind::Schema => {
-            if let Some(Value::Object(discriminator)) = map.get("discriminator")
-                && discriminator.contains_key("defaultMapping")
-            {
-                out.push(error(
-                    "TG0149",
-                    join_pointer(&at("discriminator"), "defaultMapping"),
-                    "the OpenAPI 3.2 discriminator `defaultMapping` is not supported",
-                    REMOVE,
-                ));
-            }
             if let Some(Value::Object(xml)) = map.get("xml")
                 && xml.contains_key("nodeType")
             {

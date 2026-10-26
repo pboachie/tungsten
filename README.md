@@ -160,7 +160,7 @@ The support matrix below is generated from the capability catalog (`tungsten cap
 |---|---|---|
 | 3.0 | supported | 0 |
 | 3.1 | supported | 0 |
-| 3.2 | subset | 14 |
+| 3.2 | subset | 13 |
 
 | Input format | Versions | Route | Detection | Operations | Review flags | Acquisition |
 |---|---|---|---|---|---|---|
@@ -936,7 +936,7 @@ Validate without binding a server or launching a process on any platform:
 tungsten scenario validate . --scenario retry.json
 ```
 
-On Linux (including WSL), run your integration explicitly:
+On Linux (including WSL), macOS or Windows, run your integration explicitly:
 
 ```sh
 tungsten --json scenario run . --scenario retry.json --timeout-ms 30000 --expect-exit 0 -- python3 integration.py
@@ -945,9 +945,10 @@ tungsten --json scenario run . --scenario retry.json --timeout-ms 30000 --expect
 The integration reads its URL from `TUNGSTEN_MOCK_BASE_URL`. Arguments after
 `--` are passed directly to the named executable. There is no implicit shell;
 commands cannot be supplied by the saved file. An interpreter such as `python3`
-runs only when explicitly named by the caller. Other platforms reject `run`
-before input acquisition, port binding or process creation; `validate` remains
-portable.
+runs only when explicitly named by the caller. On Windows, a bare name resolves
+only to an `.exe` (for example `python`); name a script shim in full, such as
+`npm.cmd`. Other platforms reject `run` before input acquisition, port
+binding or process creation; `validate` remains portable.
 
 `--timeout-ms` bounds the whole command. It starts before input acquisition
 and compilation, and covers scenario validation, server startup, process
@@ -958,19 +959,23 @@ and compilation. A run stopped there reports `timed_out` or `cancelled` with
 still being acquired are abandoned, not interrupted: a remote fetch continues
 in the background only until the process exits or its own acquisition limit
 expires. Library callers' `RunOptions.timeout` remains the run-phase budget.
-The runner owns a fresh loopback port and process group, stops
+The runner owns a fresh loopback port and a process group (a Job Object on
+Windows), stops
 its server before reading final counts, and fails on cancellation, timeout,
 cleanup failure, unfinished admitted requests, unexpected exit or unmet counts.
 Request completion tracks server-side handler and response-body generation,
 independently of when a call was counted; it does not prove transport delivery.
-The binary handles SIGINT/SIGTERM for this run; library callers supply explicit
-cancellation instead of installing signal handlers. The Linux binary refuses an
+The binary handles SIGINT/SIGTERM for this run (Ctrl-C, Ctrl-Break and console
+close on Windows); library callers supply explicit cancellation instead of
+installing signal handlers. Linux uses a scoped signal mask; macOS and Windows
+install one Ctrl-C handler in the binary on first use. The Linux binary refuses an
 unreadable or malformed `/proc/self/status` and observable ignored/caught SIGCHLD
 dispositions before acquiring inputs or creating a server or child. Embeddings
 must exclusively reap their runner children, avoid auto-reap dispositions and
 keep SIGCHLD disposition stable; the binary preflight does not establish these
 conditions for a concurrent embedding or inspect every `SA_NOCLDWAIT` setting.
-Process groups cover ordinary
+macOS has no equivalent preflight; the same embedding requirements apply.
+Windows terminates the Job Object on cleanup. Process groups and Job Objects cover ordinary
 descendants, not processes that deliberately leave the group. Signal delivery
 and leader reaping do not prove that every descendant has settled, and this is
 not a sandbox.
@@ -1065,9 +1070,35 @@ The compiler driver returns typed declarations and winning/shadowed authored
 origins in memory; emitter defaults still depend on the compiled API. Profile
 source/digest names are portable (`profile[0]/base.yml`), while physical identity
 stays in provenance for confinement. A name collision with another compilation
-input is an error. This result is not a replayable approval document. Dedicated
-profile navigation and setup presets remain follow-up work. Hosts can select the
-external-emitter restrictions described above; executable approval remains separate.
+input is an error. This result is not a replayable approval document. Hosts can
+select the external-emitter restrictions described above; executable approval
+remains separate.
+
+`tungsten lsp` serves profile files too: completion and hover from the profile
+schema, diagnostics in the profile that caused them, and watchers for profile
+directories outside the workspace folder.
+
+#### Init presets
+
+`tungsten init --preset NAME` starts from a named set of outputs; the same names
+are accepted at the guided setup's outputs prompt. Explicit `--targets` and
+`--strict` win, and a preset never selects inputs, reviews operations or changes
+`agent.yml` safety defaults.
+
+| Preset | Outputs | Also |
+| --- | --- | --- |
+| `app` | TypeScript SDK, docs | |
+| `library` | TypeScript, Python and Rust SDKs, docs | writes `profiles/library.yml` (shared package versions) and selects it, so other projects can reuse it |
+| `agent` | MCP server on the TypeScript SDK | generates with `--strict` |
+
+```sh
+tungsten init --no-interactive --preset library --from openapi.json --dir my-sdk
+tungsten init --no-interactive --preset app --from openapi.json --generate --local-example
+```
+
+Exit codes are those of `init`: 0 on success, 1 when the input has errors, 2 for
+an unknown preset, 4 when an existing manifest or profile would be overwritten
+without `--force` (nothing is written). `--no-interactive` never prompts.
 
 Inspect the supported effective configuration without compiling API inputs:
 
@@ -1200,8 +1231,11 @@ Public CI builds the runtime sdist and wheel on the latest patch of CPython
 3.10, 3.11, 3.12, 3.13, 3.14 and 3.15 (macOS and Windows on 3.14), and
 installs them with freshly generated SDKs into clean environments: both model
 modes, `"3.10"` output on every minor and default output on 3.12 and newer,
-with compile, import, strict Pyright and sync/async mock-request checks. The
-3.10 lane also runs the lowest declared dependency versions. Python 3.10 is
+with compile, import, strict Pyright and sync/async requests covering
+confirmation, auth, pagination, safe retries, validation, deadlines,
+cancellation, unknown outcomes and server-sent events. The 3.10 lane also runs
+the lowest declared dependency versions. Generated packages list classifiers
+for these minors from their `python_version` upward. Python 3.10 is
 end-of-life upstream: it remains a compatibility lane, not a
 security-maintained runtime. Prerelease interpreters are not claimed, and
 `requires-python` sets only a floor.

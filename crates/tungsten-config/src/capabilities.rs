@@ -779,6 +779,11 @@ pub const OPENAPI_32_SUPPORTED: &[SupportedInputFeature] = &[
         member: "itemSchema (text/event-stream response, JSON `data`)",
         behavior: "the event type of a server-sent event stream: the `contentSchema` of the event's `data`",
     },
+    SupportedInputFeature {
+        id: "discriminator_default_mapping",
+        member: "discriminator.defaultMapping",
+        behavior: "a tagged union decodes a missing or unmapped tag as the default variant",
+    },
 ];
 
 /// OpenAPI 3.2 constructs without a 3.1 equivalent that are diagnosed. A 3.2
@@ -804,12 +809,6 @@ pub const OPENAPI_32_FEATURES: &[UnsupportedInputFeature] = &[
         "nested_encoding",
         "encoding, prefixEncoding, itemEncoding (Encoding Object)",
         "TG0147",
-        Rejected,
-    ),
-    feature(
-        "discriminator_default_mapping",
-        "discriminator.defaultMapping",
-        "TG0149",
         Rejected,
     ),
     feature(

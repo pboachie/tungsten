@@ -230,6 +230,15 @@ changes.
 
 ### Added
 
+- `scenario run` now works on macOS and Windows as well as Linux. macOS owns
+  the integration through a process group and non-reaping `waitid`, Windows
+  through a Job Object; the binary cancels on Ctrl-C/SIGTERM on both.
+- Add `tungsten init --preset app|library|agent`, also accepted at the guided
+  setup's outputs prompt. `library` writes and selects a local profile
+  (`profiles/library.yml`) with shared SDK versions; `agent` configures an MCP
+  server and generates with `--strict`. Explicit `--targets` and `--strict`
+  win; presets never select inputs or change agent safety defaults.
+
 - The `fsharp` target now enforces imported-operation policy through the
   .NET runtime it wraps and may be generated for projects converted from
   Postman, cURL, `.http` or HAR input. Generated F# SDKs require a .NET runtime
@@ -286,10 +295,6 @@ changes.
   `maxStreamsTotal`/`max_streams_total`) bound requests in flight per
   scheduler; scopes waiting for them take turns so none is starved.
 
-- Under a total operation deadline, the Rust runtime now stops waiting for an
-  OAuth token request or 401 refresh at the deadline without cancelling a
-  refresh other callers share, and reports `DEADLINE_EXCEEDED`.
-
 - Add an opt-in total operation deadline to the TypeScript (`deadlineMs`),
   Python (`deadline_ms`) and Rust (`deadline`) runtimes, on client and call
   options. Unlike the per-attempt timeout, it bounds one logical call across
@@ -306,6 +311,9 @@ changes.
 
 - Add the same total operation deadline to the Ruby runtime (`deadline_ms` on
   client and call options); generated Ruby SDKs document it.
+
+- Add the same total operation deadline to the Dart runtime (`deadline` on
+  `ClientOptions` and `CallOptions`); generated Dart SDKs document it.
 
 - Add a per-tool-call total deadline to the MCP adapter
   (`ServerOptions.toolDeadlineMs`, `<API>_MCP_DEADLINE_MS` in generated
@@ -328,6 +336,10 @@ changes.
   `Duration`). Blocking token or store work the calling thread performs is
   checked when it returns; a caller waiting on shared token work stops at its
   deadline without cancelling it.
+
+- Kotlin: add `deadline(kotlin.time.Duration)` extensions on the client and
+  call option builders, and describe the total deadline in the generated Java
+  and Kotlin SDK READMEs.
 
 - Add `tungsten lock`, a versioned single-project generation lock
   (`tungsten.lock.json`). It records the declared input closure (manifest,
@@ -557,6 +569,15 @@ changes.
   `tungsten capabilities` lists reusable media types as a compiled 3.2
   construct.
 
+- OpenAPI 3.2 discriminator `defaultMapping` compiles: the IR `Discriminator`
+  gains an optional `default_mapping` (additive), and TypeScript, Python and
+  Rust SDKs and the mock decode a value whose tag is absent, not a string or
+  mapped to no variant as that default variant instead of refusing it. Tool
+  JSON schemas list such a union with `anyOf` and leave the default variant's
+  tag open. A `defaultMapping` that is not a variant of the union is reported
+  as TG0306 and ignored. Other SDK targets still refuse an unmapped tag.
+  TG0149 is retired and no longer reported.
+
 - OpenAPI 3.2.x documents are read: a document that uses only constructs OpenAPI
   3.1 has takes the 3.1 path and compiles to the same IR as its 3.1 twin. Each
   construct only 3.2 has is diagnosed at its member instead of being ignored, one
@@ -723,6 +744,11 @@ changes.
   through `AtomicIdempotencyStore`; get/put-only custom stores keep working.
 
 ### Changed
+
+- The Python clean-consumer CI lane now also calls a second generated SDK sync and async,
+  covering bearer auth, cursor pagination, nullable and union models, a safe
+  retry, client-side validation, an operation deadline, async cancellation, an
+  unknown mutation outcome that is not replayed, and server-sent events.
 
 - Check the Python runtime archives on every CPython minor from 3.10 to 3.15
   (latest patches) in public CI, with macOS and Windows archive smoke, and add

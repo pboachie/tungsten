@@ -363,8 +363,15 @@ impl<'a> Validator<'a> {
             let Some(object) = v.as_object() else {
                 return Self::fail(ptr, "expected an object");
             };
+            let fallback = discriminator
+                .default_mapping
+                .as_ref()
+                .map(|id| TypeRef::Named(id.clone()));
             let tag = match object.get(&discriminator.property) {
                 Some(Value::Null) | None => {
+                    if let Some(fallback) = &fallback {
+                        return self.ty(fallback, v, ptr, depth + 1, relaxed);
+                    }
                     return Self::fail(
                         ptr,
                         format!("missing discriminator `{}`", discriminator.property),
@@ -381,6 +388,9 @@ impl<'a> Validator<'a> {
             }
             if let Some((_, id)) = discriminator.mapping.iter().find(|(k, _)| *k == tag) {
                 return self.ty(&TypeRef::Named(id.clone()), v, ptr, depth + 1, relaxed);
+            }
+            if let Some(fallback) = &fallback {
+                return self.ty(fallback, v, ptr, depth + 1, relaxed);
             }
             return Self::fail(
                 ptr,
