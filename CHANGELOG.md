@@ -236,6 +236,14 @@ changes.
 
 ### Added
 
+- Gallery recipe `first-mcp-python` (`python3 examples/run.py --only
+  first-mcp-python`): generate the Python SDK and the experimental
+  `mcp-python` server, install them without Node, and drive the server over
+  stdio with the official MCP Python client against a loopback mock: tool
+  listing, a typed read, a refused unconfirmed delete, a preview token that
+  does not confirm other arguments, and a confirmed delete (exactly one
+  DELETE reaches the mock).
+
 - Experimental `mcp-python` target and `tungsten-mcp` Python runtime
   (`runtimes/mcp-python`): a native Python MCP server, generated from the same
   tool manifest as the `mcp` target, that serves discrete tools over stdio on
