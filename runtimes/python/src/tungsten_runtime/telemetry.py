@@ -41,8 +41,10 @@ TelemetryOutcome = Literal["ok", "error", "cancelled", "deadline_exceeded", "out
 #: (``full``, ``timeout``, ``paused``, ``closed``), the call's deadline, or
 #: cancellation.
 TelemetryQueueReason = Literal["admitted", "full", "timeout", "paused", "closed", "deadline", "cancelled"]
-#: The public entry point that started the operation.
-TelemetryEntry = Literal["call"]
+#: The public entry point that started the operation. One ``pages`` operation
+#: covers every page it fetched, one ``poll`` operation every read it made;
+#: their attempts are numbered across the whole operation.
+TelemetryEntry = Literal["call", "pages", "poll", "preview"]
 
 
 class TelemetryEvent(TypedDict):
@@ -69,7 +71,8 @@ class TelemetryEvent(TypedDict):
     outcome: TelemetryOutcome | None
     #: The diagnostic category of a failed operation, attempt or phase.
     category: str | None
-    #: The HTTP status of an attempt that received a response.
+    #: The HTTP status of an attempt that received a response, and of a
+    #: ``call`` operation's final answer.
     http_status: int | None
     #: For a ``queue`` phase.
     reason: TelemetryQueueReason | None
