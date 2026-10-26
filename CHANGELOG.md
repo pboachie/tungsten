@@ -288,6 +288,13 @@ changes.
   limits the retries all callers of one scope make together; a retry it
   cannot pay for is not made. A runnable bulk-sync example shows a job staying
   within a local API's concurrency quota.
+  Optional caps across every scope (`maxActiveTotal`/`max_active_total`,
+  `maxStreamsTotal`/`max_streams_total`) bound requests in flight per
+  scheduler; scopes waiting for them take turns so none is starved.
+
+- Under a total operation deadline, the Rust runtime now stops waiting for an
+  OAuth token request or 401 refresh at the deadline without cancelling a
+  refresh other callers share, and reports `DEADLINE_EXCEEDED`.
 
 - Add an opt-in total operation deadline to the TypeScript (`deadlineMs`),
   Python (`deadline_ms`) and Rust (`deadline`) runtimes, on client and call
@@ -302,6 +309,9 @@ changes.
   clock. Authentication and a shared OAuth refresh are waited for only until
   the deadline, never cancelled for other callers. F# SDKs use the same
   options through the .NET runtime.
+
+- Add the same total operation deadline to the Ruby runtime (`deadline_ms` on
+  client and call options); generated Ruby SDKs document it.
 
 - Add a per-tool-call total deadline to the MCP adapter
   (`ServerOptions.toolDeadlineMs`, `<API>_MCP_DEADLINE_MS` in generated
@@ -386,6 +396,13 @@ changes.
   and writes nothing when the limit is reached; library cancellation of an
   export is now honoured while collection runs.
 
+- Declare a typed `options_schema` for every built-in target in
+  `tungsten capabilities`: C#, F#, Dart, Java, Kotlin, Ruby, MCP, WebMCP and
+  docs now list each option's JSON type, fixed default, description and the
+  warning code an invalid value produces. The emitters read their fixed
+  defaults from the same declarations, the catalog check rejects an option
+  key without a declared field, and editor hover shows the descriptions.
+
 - On Linux, the `tungsten` binary turns SIGINT and SIGTERM during
   `support-bundle --output` into cooperative cancellation: the interrupted
   export removes its temporary file and exits with status 4 without
@@ -415,6 +432,19 @@ changes.
   the action to `<namespace>.suggested-overlay.yaml`, creating that file and
   listing it under the input's `overlays` in `tungsten.yml` when needed. No fix
   is offered from an analysis older than the latest edit.
+
+- Link language-server diagnostics to the configuration that is responsible
+  for them. A diagnostic in a profile points to the `profiles` entry of
+  `tungsten.yml` that selected it, or to the `profiles` list for an included
+  profile. A diagnostic at a composed target option names the declaration that
+  sets the effective value and the declarations it shadows. Locations come
+  from the compiled text, so unsaved buffers are reflected.
+
+- Explain in the language server why an OpenAPI construct the capability
+  catalog declares as not compiled (for example OpenAPI 3.2 `$self`, `TG0140`)
+  has no fix. Editors that show disabled code actions get one per diagnostic
+  code, with the construct, its refused or ignored policy and the
+  `tungsten capabilities` and `tungsten explain` pointers.
 
 - Explain unavailable language-server overlay fixes: editors that show disabled
   code actions show why no fix is offered for a `TG0403`/`TG0401` diagnostic (a
@@ -719,6 +749,12 @@ changes.
   nontransactional across files and directories.
 
 ### Fixed
+
+- Record profile files in `tungsten.lock.json` by their manifest-relative
+  path below the selected profile root, instead of the logical
+  `profile[N]/...` name. `bundle export` failed for any project that selected
+  a profile. Locks written before this change report the profile file as
+  drift; accept it with `tungsten lock --update`.
 
 - Require Pydantic 2.10.1 or newer in generated Python packages and in
   guided `init` package setup: generated models failed to import with

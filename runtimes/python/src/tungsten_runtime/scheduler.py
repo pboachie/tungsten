@@ -39,7 +39,8 @@ _MAX_BUDGETS = 1024
 
 @dataclass(frozen=True, slots=True)
 class SchedulerOptions:
-    """Limits of a :class:`RequestScheduler`. Every limit applies per scope."""
+    """Limits of a :class:`RequestScheduler`. Every limit applies per scope,
+    except the optional ``max_active_total`` and ``max_streams_total``."""
 
     #: Ordinary requests in flight at once. A positive integer (at most 10000).
     max_active: int
@@ -63,6 +64,14 @@ class SchedulerOptions:
     #: Retries a scope's budget holds before any call added to it, and the base
     #: of its cap (``retry_reserve + 100 * retry_ratio``).
     retry_reserve: int = 10
+    #: Ordinary requests in flight at once across every scope, on top of each
+    #: scope's ``max_active``. Scopes waiting for this capacity take turns, one
+    #: request each, so a busy scope cannot starve a quiet one. None (default):
+    #: no cap across scopes. A positive integer (at most 1000000).
+    max_active_total: int | None = None
+    #: Event streams open at once across every scope, on top of each scope's
+    #: ``max_streams``. None (default): no cap across scopes.
+    max_streams_total: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,6 +181,19 @@ class RequestScheduler:
         self.retry_ratio: float | None = None if ratio is None else float(ratio)
         self.retry_reserve = _integer(options.retry_reserve, 10, 0, 10_000, "retry_reserve")
         self._budgets: dict[str, float] = {}
+        self.max_active_total: int | None = (
+            None
+            if options.max_active_total is None
+            else _integer(options.max_active_total, None, 1, 1_000_000, "max_active_total")
+        )
+        self.max_streams_total: int | None = (
+            None
+            if options.max_streams_total is None
+            else _integer(options.max_streams_total, None, 1, 1_000_000, "max_streams_total")
+        )
+        self._total: dict[Kind, int] = {"call": 0, "stream": 0}
+        #: The scope served last under a cap across scopes, per kind.
+        self._served: dict[Kind, str | None] = {"call": None, "stream": None}
         self._lock = threading.Lock()
         self._pools: dict[str, _Pool] = {}
         self._idle = threading.Condition(self._lock)
@@ -234,7 +256,12 @@ class RequestScheduler:
         if pool is None:
             pool = self._pools[key] = _Pool()
         paused = max(0.0, pool.paused_until - _now())
-        if paused == 0 and not pool.queue[kind] and pool.active[kind] < self._limit(pool, kind):
+        if (
+            paused == 0
+            and not pool.queue[kind]
+            and pool.active[kind] < self._limit(pool, kind)
+            and self._room(kind)
+        ):
             return self._grant(key, pool, kind, random)
         if paused > budget_ms:
             self._forget(key, pool)
@@ -404,8 +431,16 @@ class RequestScheduler:
             return 1
         return self.max_active if kind == "call" else self.max_streams
 
+    def _room(self, kind: Kind) -> bool:
+        """Under the lock: whether the cap across scopes, if any, leaves room
+        for one more."""
+        cap = self.max_active_total if kind == "call" else self.max_streams_total
+        return cap is None or self._total[kind] < cap
+
     def _grant(self, key: str, pool: _Pool, kind: Kind, random: Callable[[], float]) -> Permit:
         pool.active[kind] += 1
+        self._total[kind] += 1
+        self._served[kind] = key
 
         def settle(rate_limited_ms: float | None, limited: bool) -> None:
             with self._lock:
@@ -433,6 +468,7 @@ class RequestScheduler:
         def release() -> None:
             with self._lock:
                 pool.active[kind] -= 1
+                self._total[kind] -= 1
                 self._pump(key, pool)
                 self._forget(key, pool)
 
@@ -440,6 +476,9 @@ class RequestScheduler:
 
     def _pump(self, key: str, pool: _Pool) -> None:
         """Under the lock: admit waiting requests in order while capacity allows."""
+        if self.max_active_total is not None or self.max_streams_total is not None:
+            self._pump_all()
+            return
         if pool.paused_until > _now():
             return
         for kind in _KINDS:
@@ -448,6 +487,35 @@ class RequestScheduler:
                 waiter = queue.pop(0)
                 waiter.permit = self._grant(key, pool, kind, waiter.random)
                 waiter.wake()
+
+    def _pump_all(self) -> None:
+        """Under the lock, with a cap across scopes: admit waiting requests
+        while capacity allows, one per scope in turn (scopes in key order,
+        starting after the one served last), each scope's own queue first in,
+        first out."""
+        now = _now()
+        for kind in _KINDS:
+            keys = sorted(
+                key for key, pool in self._pools.items() if pool.queue[kind] and pool.paused_until <= now
+            )
+            if not keys:
+                continue
+            last = self._served[kind]
+            start = 0 if last is None else next((i for i, key in enumerate(keys) if key > last), 0)
+            order = keys[start:] + keys[:start]
+            progress = True
+            while progress and self._room(kind):
+                progress = False
+                for key in order:
+                    if not self._room(kind):
+                        break
+                    pool = self._pools.get(key)
+                    if pool is None or not pool.queue[kind] or pool.active[kind] >= self._limit(pool, kind):
+                        continue
+                    waiter = pool.queue[kind].pop(0)
+                    waiter.permit = self._grant(key, pool, kind, waiter.random)
+                    waiter.wake()
+                    progress = True
 
     def _forget(self, key: str, pool: _Pool) -> None:
         """Under the lock: drop an idle scope once its pause has passed."""
