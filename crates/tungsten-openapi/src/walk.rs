@@ -60,6 +60,8 @@ const COMPONENTS: &[(&str, Kind)] = &[
     ("links", Kind::Link),
     ("callbacks", Kind::Callback),
     ("pathItems", Kind::PathItem),
+    // OpenAPI 3.2 reusable media types.
+    ("mediaTypes", Kind::MediaType),
 ];
 
 /// Schema keywords holding one subschema (or, for `items`, an array of them

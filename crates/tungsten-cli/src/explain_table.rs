@@ -329,8 +329,8 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
     ),
     e(
         "TG0148",
-        "The document defines `components.mediaTypes` or gives a media type object by `$ref`, both OpenAPI 3.2 features. tungsten reads media types only where they are written.",
-        "Inline the media type object under each `content` map.",
+        "Retired. Earlier releases refused OpenAPI 3.2 `components.mediaTypes` and media type objects given by `$ref`. tungsten now follows the reference and reads the media type as if written in place, and no longer reports this code.",
+        "Nothing to do; regenerate to pick up the referenced media types.",
     ),
     e(
         "TG0149",
