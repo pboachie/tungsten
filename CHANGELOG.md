@@ -77,6 +77,7 @@ changes.
   longer over-counted; a value that fit only because of the old count can now be
   rejected.
 
+
 - Java and Ruby string `min_length`/`max_length` now count Unicode code points,
   as JSON Schema does, instead of UTF-16 code units: an emoji is one character
   (a surrogate pair is one, a lone surrogate is one). Strings with characters
@@ -361,6 +362,7 @@ changes.
   `call` operation's end carries the final `http_status`. Unreleased 0.2.0
   only.
 
+
 - OpenAPI 3.1+ `webhooks` are compiled. Each operation of a `webhooks` entry
   becomes an incoming webhook in the IR (`Namespace.webhooks`, omitted when
   empty: event key, method, operation id, docs and the JSON request body as a
@@ -392,6 +394,7 @@ changes.
   `MemoryTelemetryCollector` keeps recent events and counts dropped ones. The
   capability catalog declares the `telemetry_hooks` feature for these targets.
   Unreleased 0.2.0 only.
+
 
 
 - `tungsten workspace --run check|generate|lock [-- ARGS]` runs the command on
@@ -1150,6 +1153,7 @@ changes.
   platform thread per request in flight), no deadline spans a whole pagination,
   and a mutation cancelled after it was sent has an unknown outcome; reuse its
   idempotency key to repeat it.
+
 
 - Go, Java and Ruby (and Kotlin, which delegates to Java) report a schema
   `pattern` they cannot check. The value is still accepted, as before, but the
