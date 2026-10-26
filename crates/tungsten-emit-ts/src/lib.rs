@@ -11,6 +11,7 @@
 //! - `src/resources/...`: classes whose operation properties are callable,
 //!   with `.preview()`, `.pages()`, `.descriptor` and `.safety` attached;
 //! - `src/client.ts`, `src/macros.ts`, `src/index.ts`, `src/internal.ts`;
+//! - `src/webhooks.ts` when the API declares incoming webhooks;
 //! - `package.json`, `tsconfig.json`, `README.md`, and the hand-editable
 //!   `src/custom/index.ts`, which output writing never overwrites.
 //!
@@ -30,6 +31,7 @@ mod package;
 mod plan;
 mod resources;
 mod ts;
+mod webhooks;
 
 use tungsten_core::{Diagnostic, Diagnostics};
 use tungsten_emit::{CommentStyle, Emitter, FileSet, TargetConfig, header};
@@ -104,6 +106,12 @@ pub fn generate(ir: &Ir, opts: &Options) -> Vec<(String, String)> {
         files.push((
             "src/macros.ts".into(),
             macros::macros_file(&plan, &shapes, &macro_plans, &header),
+        ));
+    }
+    if tungsten_emit::webhooks::has_webhooks(ir) {
+        files.push((
+            "src/webhooks.ts".into(),
+            webhooks::webhooks_file(&plan, &header),
         ));
     }
     files.push(("src/internal.ts".into(), package::internal_file(&header)));
