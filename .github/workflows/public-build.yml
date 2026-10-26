@@ -62,18 +62,29 @@ jobs:
       # cross-workflow artifact consumption or private-source checkout.
 
   python:
-    name: public Python package build (Python ${{ matrix.python-version }})
+    name: public Python package build (Python ${{ matrix.python-version }}, ${{ matrix.os }})
     if: github.repository == 'pboachie/tungsten' && github.event.repository.private == false
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     permissions:
       contents: read
+    defaults:
+      run:
+        shell: bash
     strategy:
       fail-fast: false
       matrix:
-        # EOL 3.10 is a compatibility-only lane, not a secure runtime claim.
-        # Exact patches avoid selecting an older cached interpreter.
-        python-version: ["3.10.22", "3.14.9"]
+        # Every supported minor on its latest patch. EOL 3.10 is a
+        # compatibility-only lane, not a secure runtime claim. Exact patches
+        # avoid selecting an older cached interpreter.
+        os: [ubuntu-24.04]
+        python-version: ["3.10.22", "3.11.18", "3.12.16", "3.13.17", "3.14.9", "3.15.1"]
+        # OS-sensitive archive smoke without multiplying the whole matrix.
+        include:
+          - os: macos-15
+            python-version: "3.14.9"
+          - os: windows-2025
+            python-version: "3.14.9"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -86,8 +97,11 @@ jobs:
       # setup-python's archive installer upgrades pip before returning; force
       # that bootstrap to use only the PSF hash-verified local wheel.
       - name: Stage verified pip for interpreter setup
-        shell: bash
-        run: python -I crates/tungsten-cli/src/commands/bootstrap_python.py --fetch-only --wheel-dir "$RUNNER_TEMP/tungsten-pip-bootstrap"
+        run: |
+          # macOS images provide only python3 before setup-python.
+          runner_python=python
+          command -v python >/dev/null || runner_python=python3
+          "$runner_python" -I crates/tungsten-cli/src/commands/bootstrap_python.py --fetch-only --wheel-dir "$RUNNER_TEMP/tungsten-pip-bootstrap"
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         env:
           PIP_CONFIG_FILE: ${{ runner.os == 'Windows' && 'nul' || '/dev/null' }}
@@ -102,18 +116,23 @@ jobs:
         run: |
           python -I ../../crates/tungsten-cli/src/commands/bootstrap_python.py
           python -m pip install --disable-pip-version-check build==1.6.1 twine==7.0.0 hatchling==1.32.4 "certifi>=2026.10.19"
-          python -m build --no-isolation --outdir "$RUNNER_TEMP/python-dist"
-          python -m twine check "$RUNNER_TEMP/python-dist/"*
+          # Git Bash on Windows globs POSIX paths, not RUNNER_TEMP's native form.
+          temp="$(cygpath -u "$RUNNER_TEMP" 2>/dev/null || printf '%s' "$RUNNER_TEMP")"
+          python -m build --no-isolation --outdir "$temp/python-dist"
+          python -m twine check "$temp/python-dist/"*
       - name: Install each archive into a clean environment and import it
         run: |
-          for archive in "$RUNNER_TEMP"/python-dist/*.whl "$RUNNER_TEMP"/python-dist/*.tar.gz; do
-            venv="$RUNNER_TEMP/consumer-$(basename "$archive")"
+          temp="$(cygpath -u "$RUNNER_TEMP" 2>/dev/null || printf '%s' "$RUNNER_TEMP")"
+          for archive in "$temp"/python-dist/*.whl "$temp"/python-dist/*.tar.gz; do
+            venv="$temp/consumer-$(basename "$archive")"
             python -m venv "$venv"
-            "$venv/bin/python" -I crates/tungsten-cli/src/commands/bootstrap_python.py
-            "$venv/bin/python" -m pip install --disable-pip-version-check "$archive"
-            "$venv/bin/python" -m pip freeze
+            py="$venv/bin/python"
+            if [ -x "$venv/Scripts/python.exe" ]; then py="$venv/Scripts/python.exe"; fi
+            "$py" -I crates/tungsten-cli/src/commands/bootstrap_python.py
+            "$py" -m pip install --disable-pip-version-check "$archive"
+            "$py" -m pip freeze --all
             # Outside the checkout and isolated: the import must resolve to the installed package.
-            (cd "$RUNNER_TEMP" && "$venv/bin/python" -I -c '
+            (cd "$temp" && "$py" -I -c '
           import sys
           import tungsten_runtime
           from tungsten_runtime import AsyncClientCore, ClientCore
@@ -122,6 +141,68 @@ jobs:
           print(tungsten_runtime.__file__)
           ')
           done
+
+  python-consumer:
+    name: public Python clean consumers (runtime archives + generated SDKs)
+    if: github.repository == 'pboachie/tungsten' && github.event.repository.private == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify source identity
+        env:
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+      - name: Stage verified pip for interpreter setup
+        run: python -I crates/tungsten-cli/src/commands/bootstrap_python.py --fetch-only --wheel-dir "$RUNNER_TEMP/tungsten-pip-bootstrap"
+      # The same minors and patches as the package build matrix; the last
+      # listed interpreter builds the archives.
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        env:
+          PIP_CONFIG_FILE: /dev/null
+          PIP_NO_INDEX: "1"
+          PIP_FIND_LINKS: ${{ runner.temp }}/tungsten-pip-bootstrap/pip-26.2.2-py3-none-any.whl
+          PIP_DISABLE_PIP_VERSION_CHECK: "1"
+        with:
+          python-version: |
+            3.10.22
+            3.11.18
+            3.12.16
+            3.13.17
+            3.14.9
+            3.15.1
+          check-latest: true
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22.23.4"
+          package-manager-cache: false
+      - name: Install the pinned toolchain (rust-toolchain.toml)
+        run: |
+          rustup toolchain install
+          rustc --version
+      - name: Build the compiler
+        run: cargo build --locked -p tungsten-cli
+      - name: Install build tools and Pyright
+        run: |
+          python3.15 -I crates/tungsten-cli/src/commands/bootstrap_python.py
+          python3.15 -m pip install --disable-pip-version-check build==1.6.1
+          npm install --prefix "$RUNNER_TEMP/pyright" --ignore-scripts --no-audit --no-fund pyright@1.1.414
+          "$RUNNER_TEMP/pyright/node_modules/.bin/pyright" --version
+      # Wheel on every minor; sdist and lowest declared dependency versions on
+      # the floor. Both model modes; 3.10 output everywhere, default output on 3.12+.
+      - name: Install, type-check and call clean consumers
+        run: |
+          python3 .github/scripts/check-python-consumers.py \
+            --tungsten "$PWD/target/debug/tungsten" \
+            --pyright "$RUNNER_TEMP/pyright/node_modules/.bin/pyright" \
+            --work "$RUNNER_TEMP/python-consumers" \
+            --minimum-deps python3.10 \
+            python3.10 python3.11 python3.12 python3.13 python3.14 python3.15
 
   ruby:
     name: public Ruby package notices

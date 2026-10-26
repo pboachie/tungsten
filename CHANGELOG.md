@@ -502,6 +502,16 @@ changes.
 
 ### Changed
 
+- Check the Python runtime archives on every CPython minor from 3.10 to 3.15
+  (latest patches) in public CI, with macOS and Windows archive smoke, and add
+  a clean-consumer check that installs the runtime wheel/sdist and freshly
+  generated SDKs (Pydantic and dataclasses, 3.10 and default output) into
+  isolated environments, then compiles, imports, strictly type-checks and
+  calls a local mock synchronously and asynchronously. The floor interpreter
+  also runs the lowest declared dependency versions. The runtime classifiers
+  now list 3.14 and 3.15; `requires-python` keeps its `>=3.10` floor without
+  an upper cap.
+
 - Check the npm runtime packages on Node 26 (Current) as well as Node 22 and 24,
   and add an advisory Node 20 canary that does not imply support. The README
   now has one Node.js support table: supported lines, the declared floor for
@@ -522,6 +532,10 @@ changes.
   nontransactional across files and directories.
 
 ### Fixed
+
+- Require Pydantic 2.10.1 or newer in generated Python packages and in
+  guided `init` package setup: generated models failed to import with
+  Pydantic 2.10.0, which the previous `>=2.10` range allowed.
 
 - Discard speculative Python unchecked-pattern diagnostics from rejected
   untagged-union variants, retaining notes and nested paths only from the
