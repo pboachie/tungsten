@@ -315,7 +315,6 @@ const MCP: &[ToolRequirement] = &[
 const DOTNET: &[ToolRequirement] = &[ToolRequirement::new("dotnet", Some([10, 0]))];
 
 /// Typed SDK features shared by every built-in SDK target.
-const SDK: &[&str] = &["typed_sdk", "pagination_helpers"];
 const SDK_POLICY: &[&str] = &[
     "typed_sdk",
     "pagination_helpers",
@@ -361,7 +360,7 @@ targets! {
         }],
         summary: "Dart SDK (sealed unions, Future methods returning Result, Stream pages)",
         options: &["package", "version", "runtime", "runtime_path", "out"],
-        environments: [DartIo], features: SDK,
+        environments: [DartIo], features: SDK_POLICY,
     },
     {
         id: "docs", aliases: &[], source: BuiltInEmitter, family: None, policy: true, tools: &[],

@@ -129,9 +129,9 @@ The support matrix below is generated from the capability catalog (`tungsten cap
 | Target | Aliases | Emits | Consumer toolchain | Runs on | Features | Imported-operation policy | Qualification | Artifacts |
 |---|---|---|---|---|---|---|---|---|
 | `csharp` | `cs` | C# SDK | dotnet >=10.0 | dotnet | `typed_sdk`, `pagination_helpers`, `imported_operation_policy` | enforced | unknown | unknown |
-| `dart` |  | Dart SDK (sealed unions, Future methods returning Result, Stream pages) | dart >=3.6 <4.0 | dart_io | `typed_sdk`, `pagination_helpers` | refused (TG0705) | unknown | unknown |
+| `dart` |  | Dart SDK (sealed unions, Future methods returning Result, Stream pages) | dart >=3.6 <4.0 | dart_io | `typed_sdk`, `pagination_helpers`, `imported_operation_policy` | enforced | unknown | unknown |
 | `docs` |  | llms.txt, llms-full.txt, tools.json and README | none | static | `llms_txt`, `imported_operation_policy` | enforced | unknown | unknown |
-| `fsharp` | `fs` | F# SDK (records, discriminated unions, Task of Result) | dotnet >=10.0 | dotnet | `typed_sdk`, `pagination_helpers` | refused (TG0705) | unknown | unknown |
+| `fsharp` | `fs` | F# SDK (records, discriminated unions, Task of Result) | dotnet >=10.0 | dotnet | `typed_sdk`, `pagination_helpers`, `imported_operation_policy` | enforced | unknown | unknown |
 | `java` |  | Java SDK | java >=17.0; mvn installed | jvm | `typed_sdk`, `pagination_helpers`, `imported_operation_policy` | enforced | unknown | unknown |
 | `kotlin` | `kt` | Kotlin/JVM SDK (blocking functions returning Result; opt-in coroutines) | java >=17.0; gradle installed | jvm | `typed_sdk`, `pagination_helpers`, `imported_operation_policy`, `coroutines` | enforced | unknown | unknown |
 | `mcp` |  | MCP server over stdio or Streamable HTTP, discrete or progressive | node >=22.13 excluding 23.0.x, 23.1.x; npm installed | node | `mcp_stdio`, `mcp_streamable_http`, `mcp_embedding_search`, `mcp_script_sandbox`, `imported_operation_policy` | enforced | unknown | unknown |
