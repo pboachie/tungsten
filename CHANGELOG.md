@@ -226,6 +226,10 @@ changes.
 
 ### Added
 
+- `scenario run --timeout-ms` now bounds the whole command, including input
+  acquisition and compilation, and SIGINT/SIGTERM cancel a run that is still
+  preparing. Such a run reports `timed_out` or `cancelled` before any port is
+  bound or integration started.
 - The `csharp` target now enforces imported-operation policy and may be
   generated for projects converted from Postman, cURL, `.http` or HAR input.
   The C# runtime reads each operation's `import_policy` (`AgentMeta.ImportPolicy`),
