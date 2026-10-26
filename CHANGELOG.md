@@ -226,6 +226,14 @@ changes.
 
 ### Added
 
+- The `csharp` target now enforces imported-operation policy and may be
+  generated for projects converted from Postman, cURL, `.http` or HAR input.
+  The C# runtime reads each operation's `import_policy` (`AgentMeta.ImportPolicy`),
+  refuses a reviewed imported operation whose target origin is outside its saved
+  review scope (`VALIDATION_FAILED` on `BaseUrl`, nothing sent), and applies the
+  effective safety tier of unreviewed operations. Generated SDKs require a
+  runtime with `ClientCore.RequireImportPolicyV1()`.
+
 - Add an opt-in request scheduler to the TypeScript, Python and Rust runtimes
   (`ClientOptions.scheduler`, `ClientOptions.tenant`). It bounds ordinary
   attempts and event streams in flight per tenant and origin, queues a bounded
