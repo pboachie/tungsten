@@ -434,6 +434,12 @@ changes.
   sets the effective value and the declarations it shadows. Locations come
   from the compiled text, so unsaved buffers are reflected.
 
+- Explain in the language server why an OpenAPI construct the capability
+  catalog declares as not compiled (for example OpenAPI 3.2 `$self`, `TG0140`)
+  has no fix. Editors that show disabled code actions get one per diagnostic
+  code, with the construct, its refused or ignored policy and the
+  `tungsten capabilities` and `tungsten explain` pointers.
+
 - Explain unavailable language-server overlay fixes: editors that show disabled
   code actions show why no fix is offered for a `TG0403`/`TG0401` diagnostic (a
   pending check, no derivable action, an editor without versioned edits or file
