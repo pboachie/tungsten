@@ -399,6 +399,23 @@ pub mod codes {
             "TG0616",
             "spec removes preview from an operation with side effects without a tools override",
         ),
+        (
+            "TG0640",
+            "workspace discovery reached a limit; projects were not searched",
+        ),
+        (
+            "TG0641",
+            "a directory holds more than one tungsten manifest",
+        ),
+        (
+            "TG0642",
+            "two projects share or nest their output directories",
+        ),
+        (
+            "TG0643",
+            "a manifest is a symbolic link; workspace discovery does not follow it",
+        ),
+        ("TG0644", "no workspace project has the selected id"),
         ("TG0701", "generated output could not be written"),
         ("TG0702", "target has no emitter in this version; skipped"),
         (

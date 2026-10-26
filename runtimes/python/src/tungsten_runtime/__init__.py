@@ -26,9 +26,27 @@ from ._streams import ANY_EVENT, AsyncEventStream, EventStream, StreamResult
 from .client import AsyncClientCore, ClientCore
 from .errors import TungstenError, unwrap
 from .idempotency import FileIdempotencyStore, MemoryIdempotencyStore
-from .scheduler import Permit, Rejection, RequestScheduler, SchedulerOptions, SchedulerStats
+from .scheduler import (
+    Permit,
+    Rejection,
+    RequestScheduler,
+    SchedulerEvent,
+    SchedulerOptions,
+    SchedulerStats,
+)
 from .sentinels import UNSET, Unset
 from .types import *  # noqa: F403 (the contract types are the public API)
+from .webhooks import (
+    DEFAULT_WEBHOOK_MAX_BODY_BYTES,
+    DEFAULT_WEBHOOK_TOLERANCE_SECONDS,
+    MAX_WEBHOOK_SIGNATURE_HEADER,
+    RejectedWebhook,
+    VerifiedWebhook,
+    WebhookOutcome,
+    WebhookRejection,
+    sign_webhook,
+    verify_webhook,
+)
 
 __all__ = [
     "ANY_EVENT",
@@ -54,6 +72,7 @@ __all__ = [
     "Pkce",
     "Rejection",
     "RequestScheduler",
+    "SchedulerEvent",
     "SchedulerOptions",
     "SchedulerStats",
     "StoredToken",
@@ -71,6 +90,17 @@ __all__ = [
     "unwrap",
 ]
 __all__ += types.__all__
+__all__ += [
+    "DEFAULT_WEBHOOK_MAX_BODY_BYTES",
+    "DEFAULT_WEBHOOK_TOLERANCE_SECONDS",
+    "MAX_WEBHOOK_SIGNATURE_HEADER",
+    "RejectedWebhook",
+    "VerifiedWebhook",
+    "WebhookOutcome",
+    "WebhookRejection",
+    "sign_webhook",
+    "verify_webhook",
+]
 
 
 def require_import_policy_v1() -> None:

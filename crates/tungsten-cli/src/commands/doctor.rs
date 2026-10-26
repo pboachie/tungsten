@@ -268,6 +268,15 @@ pub(crate) fn run(args: &DoctorArgs, env: &CliEnv) -> Report {
             );
         }
     }
+    if let Some(note) = tools
+        .iter()
+        .find(|tool| tool.name == "node")
+        .and_then(|tool| tool.version.as_deref())
+        .and_then(version_pair)
+        .and_then(|(major, _)| node_advisory(major))
+    {
+        let _ = writeln!(report.human, "note: {note}");
+    }
     let openapi_inputs = tungsten_config::capabilities::OPENAPI_INPUTS.to_vec();
     report.human.push_str(&openapi_summary(&openapi_inputs));
     report.result = Some(CommandResult::Doctor(DoctorResult {
@@ -402,6 +411,23 @@ fn human(tools: &[ToolReport]) -> String {
     }
     out.push_str("all tools are optional; a missing tool only disables what it is listed for\n");
     out
+}
+
+/// Lifecycle guidance for a Node major the declared floors accept but the
+/// support policy does not cover. Informational only; never a failure.
+fn node_advisory(major: u32) -> Option<String> {
+    let newest = tungsten_config::capabilities::NODE_NEWEST_CHECKED_MAJOR;
+    if major > newest {
+        Some(format!(
+            "Node {major} is newer than the newest checked line ({newest}) and is not yet qualified"
+        ))
+    } else if major >= 22 && major % 2 == 1 {
+        Some(format!(
+            "Node {major} is an odd-numbered line; use an even-numbered LTS line in production"
+        ))
+    } else {
+        None
+    }
 }
 
 /// The argument that makes a tool print its version (`go` has no flag).

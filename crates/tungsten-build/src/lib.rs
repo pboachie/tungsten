@@ -20,6 +20,7 @@
 
 pub mod contracts;
 pub mod driver;
+pub mod identity;
 pub mod inspection;
 pub mod suggest;
 pub mod types;
@@ -51,6 +52,7 @@ use tungsten_openapi::{DocId, Workspace};
 use crate::ctx::{Ctx, pointer, str_of};
 
 pub use driver::{CompileOptions, Compiled, compile_config, compile_project, compile_spec};
+pub use identity::ProjectIdentity;
 
 /// The tungsten version stamped into the IR.
 pub const TUNGSTEN_VERSION: &str = env!("CARGO_PKG_VERSION");
