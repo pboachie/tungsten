@@ -35,6 +35,7 @@ pub(crate) mod support_bundle;
 pub(crate) mod support_bundle_attach;
 mod support_bundle_file;
 pub(crate) mod support_bundle_inspect;
+mod support_bundle_rehearsal;
 pub(crate) mod update;
 pub(crate) mod update_notice;
 pub(crate) mod upgrade;

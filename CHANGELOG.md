@@ -290,6 +290,12 @@ changes.
   stages the output, proposed lock and rehearsal record for review;
   `--from`/`--to` check the explicit identities. External emitters are never
   started.
+- Add `support-bundle --rehearsal DIR` to include an allowlisted summary of an
+  upgrade rehearsal workspace as the observed `upgrade.rehearsal` entry
+  (bundle schema version 3): versions, verdict, check states, built-in
+  target ids with change and conflict counts, finding kinds and the apply
+  state, never paths, digests, file names or finding text. `--inspect`
+  reads schema versions 1 to 3.
 - Add `tungsten upgrade apply --workspace DIR` to apply an accepted rehearsal
   as a separate step. It refuses when inputs, the lock, the staged files or
   any output file changed since the rehearsal, backs up what it replaces,
