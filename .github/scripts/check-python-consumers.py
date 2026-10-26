@@ -205,7 +205,7 @@ def consume(binary: str, pyright: str, python: str, version: tuple[int, int], ru
     deletes = [call for call in calls if call["method"] == "DELETE"]
     assert len(deletes) == 1, f"expected exactly the confirmed DELETE, saw {len(deletes)}"
     with behaviour.serve() as (base, recorder):
-        run([py, "-I", str(behaviour_consumer), base], scratch)
+        run([py, "-I", str(behaviour_consumer), base, behaviour.TOKEN], scratch)
     behaviour.check(recorder)
 
 

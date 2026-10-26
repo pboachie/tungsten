@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Receive signed order webhooks with the generated TypeScript SDK.
+import { randomBytes } from "node:crypto";
 import { signWebhook } from "@elysra/tungsten-runtime";
 import { webhooks } from "./dist/index.js";
 
-// Example values only: a real endpoint reads its secrets from configuration.
-const SECRET = "whsec_gallery_current";
-const PREVIOUS = "whsec_gallery_previous";
+// Fresh example secrets per run: a real endpoint reads its secrets from configuration.
+const SECRET = randomBytes(16).toString("hex");
+const PREVIOUS = randomBytes(16).toString("hex");
 const NOW = 1_700_000_000;
 
 const SHIPPED = '{"id":"evt_1001","type":"order.shipped","data":{"order_id":"ord_42","carrier":"parcelpost"}}';

@@ -3,12 +3,14 @@
 
 from __future__ import annotations
 
+import secrets
+
 from orders_sdk import webhooks
 from tungsten_runtime import sign_webhook
 
-# Example values only: a real endpoint reads its secrets from configuration.
-SECRET = "whsec_gallery_current"
-PREVIOUS = "whsec_gallery_previous"
+# Fresh example secrets per run: a real endpoint reads its secrets from configuration.
+SECRET = secrets.token_hex(16)
+PREVIOUS = secrets.token_hex(16)
 NOW = 1_700_000_000
 
 SHIPPED = b'{"id":"evt_1001","type":"order.shipped","data":{"order_id":"ord_42","carrier":"parcelpost"}}'
