@@ -243,6 +243,17 @@ changes.
   Unreleased 0.2.0 only.
 
 
+
+- `tungsten workspace --run check|generate|lock [-- ARGS]` runs the command on
+  each selected project, one at a time in discovery order, and reports every
+  project's exit code and diagnostics (`runs` in the JSON result); the
+  workspace exits with the highest code. `--affected FILE` (repeatable)
+  selects the projects that depend on a file: its manifest, a declared input,
+  or a file the project's offline compilation read or looked for; a project
+  that does not compile is always selected. A writing `generate` is refused
+  before any project runs when selected projects share output directories
+  (TG0642). The capability catalog lists the commands under
+  `workspace.runs`.
 - Add explicit streamed downloads to the TypeScript, Python and Rust
   runtimes: `download()` sends an operation by the rules of `call` and hands a
   2xx body over unread, to read chunk by chunk or write to a caller-owned sink
