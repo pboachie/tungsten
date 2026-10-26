@@ -1401,6 +1401,7 @@ dependencies = [
  "tungsten-config",
  "tungsten-core",
  "tungsten-emit",
+ "tungsten-emit-py",
  "tungsten-emit-ts",
  "tungsten-ir",
  "tungsten-tokens",

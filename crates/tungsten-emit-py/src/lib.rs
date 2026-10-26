@@ -175,6 +175,12 @@ fn inline_record_notes(ir: &Ir) -> Diagnostics {
     diags
 }
 
+/// The asynchronous client class the generated package exports, for
+/// adapters built on the SDK (the `mcp-python` server).
+pub fn async_client_class(ir: &Ir) -> String {
+    plan::Plan::new(ir).async_client_class
+}
+
 /// Every file of the package: (path relative to the target directory,
 /// contents), in a deterministic order.
 pub fn generate(ir: &Ir, opts: &Options) -> Vec<(String, String)> {

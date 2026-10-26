@@ -476,6 +476,11 @@ pub mod codes {
             "TG0727",
             "MCP tool output schema over the output token budget even without the types it references",
         ),
+        ("TG0728", "invalid mcp-python target option; default used"),
+        (
+            "TG0729",
+            "the experimental mcp-python server does not serve part of this API",
+        ),
         (
             "TG0730",
             "macro not emitted by the Python SDK (not in the canonical form)",
