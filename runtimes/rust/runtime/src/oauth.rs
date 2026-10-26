@@ -330,6 +330,12 @@ pub(crate) struct Gate {
     lock: tokio::sync::Mutex<()>,
 }
 
+fn missing_token(scheme: &str) -> TokenFailure {
+    TokenFailure::new(format!(
+        "No OAuth2 token is stored for {scheme}; begin a managed authorization_url() attempt, then call exchange_code() with its handle, the full callback URL and the owning session binding."
+    ))
+}
+
 fn text(value: Option<&String>) -> Option<String> {
     value.filter(|v| !v.is_empty()).cloned()
 }
@@ -462,11 +468,7 @@ impl ClientCore {
 
     async fn stored_token_inner(&self, scheme: &str, force: bool) -> Result<String, TokenFailure> {
         let (authorization_generation, token_epoch) = self.authorization_version(scheme);
-        let missing = || {
-            TokenFailure::new(format!(
-                "No OAuth2 token is stored for {scheme}; begin a managed authorization_url() attempt, then call exchange_code() with its handle, the full callback URL and the owning session binding."
-            ))
-        };
+        let missing = || missing_token(scheme);
         let stored = self.read_token(scheme).ok_or_else(missing)?;
         if !self.authorization_epoch_current(scheme, authorization_generation, token_epoch) {
             return Err(TokenFailure::new("OAuth session changed; authorize again."));
@@ -477,6 +479,36 @@ impl ClientCore {
         if fresh && !force {
             return Ok(stored.access_token);
         }
+        // The refresh is its own task: a caller whose deadline passes, or
+        // whose future is dropped, stops waiting without cancelling a
+        // refresh other callers share.
+        let core = self.clone();
+        let owned = scheme.to_owned();
+        let refresh = async move {
+            core.refresh_flight(&owned, force, authorization_generation, token_epoch)
+                .await
+        };
+        match crate::verify::detached(refresh).await {
+            Ok(result) => result,
+            Err(crate::verify::Abandoned::Expired) => Err(TokenFailure::new(format!(
+                "The operation deadline expired while refreshing the OAuth2 token for {scheme}."
+            ))),
+            Err(crate::verify::Abandoned::Stopped) => Err(TokenFailure::new(format!(
+                "The OAuth2 token refresh for {scheme} stopped before it finished; call again."
+            ))),
+        }
+    }
+
+    /// One caller's turn at the single flight of `scheme`: wait for the
+    /// gate, then use a token another caller refreshed meanwhile or refresh.
+    async fn refresh_flight(
+        &self,
+        scheme: &str,
+        force: bool,
+        authorization_generation: u64,
+        token_epoch: u64,
+    ) -> Result<String, TokenFailure> {
+        let missing = || missing_token(scheme);
         let gate = self.gate(scheme, authorization_generation, token_epoch)?;
         let seen = gate.generation.load(Ordering::SeqCst);
         let _held = gate.lock.lock().await;

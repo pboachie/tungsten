@@ -136,6 +136,9 @@ type StepOptions = CallOptions & { [POLL_DEADLINE]?: number | undefined; [CALL_D
 /** `#untilDeadline` gave up waiting. */
 const DEADLINE_EXPIRED: unique symbol = Symbol("tungsten.deadlineExpired");
 
+/** `#untilDeadline` gave up waiting because the caller's signal aborted. */
+const CALLER_CANCELLED: unique symbol = Symbol("tungsten.callerCancelled");
+
 const SAFETY_RANK: Readonly<Record<string, number>> = { read_only: 0, mutating: 1, destructive: 2, irreversible: 3 };
 
 /** Stands in for a verification reference that did not resolve; equal to nothing. */
@@ -678,23 +681,36 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     }));
   }
 
-  /** Wait for `work` only until the call's deadline. The work is not
-   * cancelled: a shared token refresh or store write keeps running for its
-   * other waiters, bounded by its own timeout. */
-  async #untilDeadline<R>(work: Promise<R>, opts: CallOptions): Promise<R | typeof DEADLINE_EXPIRED> {
+  #callerCancelled(op: OperationDescriptor): Failure {
+    return fail(diagnostic(op.id, "TRANSPORT_FAILED", {
+      retryable: "never", remediation: "The caller cancelled the call before it was sent.",
+    }));
+  }
+
+  /** Wait for `work` only until the call's deadline or the caller's signal
+   * aborts. The work is not cancelled: a shared token refresh or store write
+   * keeps running for its other waiters, bounded by its own timeout. */
+  async #untilDeadline<R>(work: Promise<R>, opts: CallOptions): Promise<R | typeof DEADLINE_EXPIRED | typeof CALLER_CANCELLED> {
     const deadline = (opts as StepOptions)[CALL_DEADLINE];
-    if (deadline === undefined) return work;
-    const remaining = deadline - performance.now();
-    if (remaining <= 0) {
+    const signal = opts.signal;
+    if (deadline === undefined && signal == null) return work;
+    const remaining = deadline === undefined ? Infinity : deadline - performance.now();
+    if (signal?.aborted || remaining <= 0) {
       work.catch(() => undefined);
-      return DEADLINE_EXPIRED;
+      return signal?.aborted ? CALLER_CANCELLED : DEADLINE_EXPIRED;
     }
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const expired = new Promise<typeof DEADLINE_EXPIRED>((resolve) => { timer = setTimeout(() => resolve(DEADLINE_EXPIRED), remaining); });
+    let onAbort: (() => void) | undefined;
+    const stopped = new Promise<typeof DEADLINE_EXPIRED | typeof CALLER_CANCELLED>((resolve) => {
+      if (remaining !== Infinity) timer = setTimeout(() => resolve(DEADLINE_EXPIRED), remaining);
+      onAbort = () => resolve(CALLER_CANCELLED);
+      signal?.addEventListener("abort", onAbort, { once: true });
+    });
     try {
-      return await Promise.race([work, expired]);
+      return await Promise.race([work, stopped]);
     } finally {
       clearTimeout(timer);
+      if (onAbort) signal?.removeEventListener("abort", onAbort);
     }
   }
 
@@ -756,9 +772,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
   /** Timers cannot interrupt synchronous preflight or a chain of microtasks.
    * Check the same absolute deadline at each boundary before effects. */
   #beforeDispatch(op: OperationDescriptor, opts: CallOptions): Failure | null {
-    if (opts.signal?.aborted) return fail(diagnostic(op.id, "TRANSPORT_FAILED", {
-      retryable: "never", remediation: "The caller cancelled the call before it was sent.",
-    }));
+    if (opts.signal?.aborted) return this.#callerCancelled(op);
     const deadline = (opts as StepOptions)[CALL_DEADLINE];
     if (deadline !== undefined && performance.now() >= deadline) return this.#deadlineExpired(op, "before the request could be sent");
     const pollDeadline = (opts as StepOptions)[POLL_DEADLINE];
@@ -844,6 +858,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     const current = prepared.headers.get("Authorization");
     if (scheme === null || current === undefined || !current.startsWith("Bearer ")) return rejected;
     const token = await this.#untilDeadline(this.#oauth.refreshAfterRejection(scheme, current.slice("Bearer ".length)), opts);
+    if (token === CALLER_CANCELLED) return this.#callerCancelled(prepared.op);
     if (token === DEADLINE_EXPIRED || token === null) return rejected;
     prepared.headers.set("Authorization", `Bearer ${token}`, true);
     prepared.secrets.add(token);
@@ -1085,6 +1100,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     const auth = await this.#untilDeadline(resolveAuth(this.api, op, isRecord(this.options.auth) ? this.options.auth : {}, method, this.#tokenSource,
       insecureHttp(authTarget, this.options.allowInsecureHttp) ? INSECURE_HTTP_AUTH : null), opts);
     if (auth === DEADLINE_EXPIRED) return this.#deadlineExpired(op, "while authenticating");
+    if (auth === CALLER_CANCELLED) return this.#callerCancelled(op);
     if (!auth.ok) return fail(diagnostic(op.id, "AUTH_FAILED", { remediation: auth.remediation }));
     const secrets = new Set(auth.secrets.filter((s) => s !== ""));
     for (const p of op.params) {
@@ -1412,6 +1428,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
         try {
           const key = await this.#untilDeadline(reserveKey(this.#store, op.id, logicalId, crypto.randomUUID()), opts);
           if (key === DEADLINE_EXPIRED) return this.#deadlineExpired(op, "while reserving an idempotency key");
+          if (key === CALLER_CANCELLED) return this.#callerCancelled(op);
           if (typeof key !== "string" || key === "") throw new Error("store returned an invalid key");
           return { ok: true, value: key };
         } catch (error) {
