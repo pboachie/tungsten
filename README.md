@@ -128,7 +128,7 @@ The support matrix below is generated from the capability catalog (`tungsten cap
 
 | Target | Aliases | Emits | Consumer toolchain | Runs on | Features | Imported-operation policy | Qualification | Artifacts |
 |---|---|---|---|---|---|---|---|---|
-| `csharp` | `cs` | C# SDK | dotnet >=10.0 | dotnet | `typed_sdk`, `pagination_helpers` | refused (TG0705) | unknown | unknown |
+| `csharp` | `cs` | C# SDK | dotnet >=10.0 | dotnet | `typed_sdk`, `pagination_helpers`, `imported_operation_policy` | enforced | unknown | unknown |
 | `dart` |  | Dart SDK (sealed unions, Future methods returning Result, Stream pages) | dart >=3.6 <4.0 | dart_io | `typed_sdk`, `pagination_helpers` | refused (TG0705) | unknown | unknown |
 | `docs` |  | llms.txt, llms-full.txt, tools.json and README | none | static | `llms_txt`, `imported_operation_policy` | enforced | unknown | unknown |
 | `fsharp` | `fs` | F# SDK (records, discriminated unions, Task of Result) | dotnet >=10.0 | dotnet | `typed_sdk`, `pagination_helpers` | refused (TG0705) | unknown | unknown |
@@ -161,7 +161,7 @@ The support matrix below is generated from the capability catalog (`tungsten cap
 |---|---|---|
 | 3.0 | supported | 0 |
 | 3.1 | supported | 0 |
-| 3.2 | subset | 16 |
+| 3.2 | subset | 15 |
 
 Source declarations only: a declared feature or environment is not qualification, and `unknown` evidence never becomes a compatibility claim.
 <!-- tungsten-capabilities-matrix:end -->
