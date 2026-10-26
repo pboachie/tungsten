@@ -201,6 +201,40 @@ pub fn unsupported_inputs(diagnostics: &[Diagnostic]) -> Vec<CodeActionOrCommand
     out
 }
 
+/// A disabled action explaining how a converted import whose remote source
+/// changed (TG0122 on a conversion) is refreshed. The fix reviews a new
+/// conversion and possibly renewed approvals, so it is a CLI step, never an
+/// editor edit.
+pub fn converted_refresh(diagnostics: &[Diagnostic]) -> Option<CodeActionOrCommand> {
+    let list: Vec<Diagnostic> = diagnostics
+        .iter()
+        .filter(|d| d.source.as_deref() == Some("tungsten"))
+        .filter(|d| {
+            matches!(&d.code, Some(NumberOrString::String(code)) if code == "TG0122")
+                && d.message.contains("used for this conversion")
+        })
+        .take(MAX_DIAGNOSTICS)
+        .cloned()
+        .collect();
+    if list.is_empty() {
+        return None;
+    }
+    Some(CodeActionOrCommand::CodeAction(CodeAction {
+        title: "Refresh the converted import (TG0122)".to_string(),
+        kind: Some(CodeActionKind::QUICKFIX),
+        diagnostics: Some(list),
+        disabled: Some(CodeActionDisabled {
+            reason: "The remote source changed since it was converted. Run `tungsten \
+                     refresh-import` to preview the new conversion: the converted diff, changed \
+                     operations, approvals that need renewed review and the generated-output \
+                     changes; nothing is written. Apply it with `tungsten refresh-import --apply` \
+                     after review, or keep the current pinned conversion with `--offline`"
+                .to_string(),
+        }),
+        ..CodeAction::default()
+    }))
+}
+
 /// The wrong value a diagnostic names and the names that could replace it.
 fn wanted(d: &Diagnostic, index: Option<&Index>) -> Option<(String, Vec<String>)> {
     let Some(NumberOrString::String(code)) = &d.code else {
