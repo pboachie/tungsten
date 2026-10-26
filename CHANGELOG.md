@@ -298,6 +298,13 @@ changes.
   `module`, `python_version` and `models` keys. Declarations remain source
   statements: qualification and artifact availability stay `unknown`.
 
+- Generate the README support matrix from the capability catalog.
+  `tungsten capabilities --matrix --format markdown` prints the matrix
+  between the markers that delimit README's generated block, and CI fails
+  when the README differs (`.github/scripts/check-support-matrix.py --write`
+  refreshes it). The README Targets table now reports the catalog's
+  imported-operation policy, which had drifted for Java, Kotlin and Ruby.
+
 - Add `tungsten support-bundle --inspect <FILE>` to review an existing support
   bundle locally on any platform. It reads one bounded regular file, refuses
   unsupported `bundle_schema_version` values by number, requires exactly the
