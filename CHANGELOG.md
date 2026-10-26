@@ -309,6 +309,9 @@ changes.
 - Add the same total operation deadline to the Ruby runtime (`deadline_ms` on
   client and call options); generated Ruby SDKs document it.
 
+- Add the same total operation deadline to the Dart runtime (`deadline` on
+  `ClientOptions` and `CallOptions`); generated Dart SDKs document it.
+
 - Add a per-tool-call total deadline to the MCP adapter
   (`ServerOptions.toolDeadlineMs`, `<API>_MCP_DEADLINE_MS` in generated
   servers). It maps to the TypeScript runtime's `deadlineMs`; tool results
@@ -330,6 +333,10 @@ changes.
   `Duration`). Blocking token or store work the calling thread performs is
   checked when it returns; a caller waiting on shared token work stops at its
   deadline without cancelling it.
+
+- Kotlin: add `deadline(kotlin.time.Duration)` extensions on the client and
+  call option builders, and describe the total deadline in the generated Java
+  and Kotlin SDK READMEs.
 
 - Add `tungsten lock`, a versioned single-project generation lock
   (`tungsten.lock.json`). It records the declared input closure (manifest,
@@ -723,6 +730,11 @@ changes.
   through `AtomicIdempotencyStore`; get/put-only custom stores keep working.
 
 ### Changed
+
+- The Python clean-consumer CI lane now also calls a second generated SDK sync and async,
+  covering bearer auth, cursor pagination, nullable and union models, a safe
+  retry, client-side validation, an operation deadline, async cancellation, an
+  unknown mutation outcome that is not replayed, and server-sent events.
 
 - Check the Python runtime archives on every CPython minor from 3.10 to 3.15
   (latest patches) in public CI, with macOS and Windows archive smoke, and add

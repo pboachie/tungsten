@@ -7,6 +7,10 @@ call a local mock. Nothing is published; no editable or checkout imports.
 Usage: check-python-consumers.py --tungsten BIN --pyright BIN --work DIR
        [--minimum-deps PYTHON] PYTHON...
 
+Two SDKs are generated per variant: the preview-confirmation example, called
+through `tungsten mock`, and the behaviour scenario in
+python_consumer_behaviour.py, called through its loopback server.
+
 Each PYTHON is an interpreter path. Every interpreter checks the 3.10
 compatibility output; interpreters at 3.12 or newer also check the default
 output. `--minimum-deps` names the interpreter that additionally installs the
@@ -24,6 +28,8 @@ import sys
 import time
 import urllib.request
 from pathlib import Path
+
+import python_consumer_behaviour as behaviour
 
 REPO = Path(__file__).resolve().parents[2]
 EXAMPLE = REPO / "examples" / "preview-confirmation"
@@ -101,16 +107,21 @@ def venv_python(venv: Path) -> Path:
     return venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
 
 
-def generate(binary: str, work: Path, models: str, python_version: str) -> Path:
-    project = work / f"project-{models}-{python_version}"
+def generate(binary: str, work: Path, scenario: str, models: str, python_version: str) -> Path:
+    project = work / f"project-{scenario}-{models}-{python_version}"
     project.mkdir(parents=True)
-    shutil.copyfile(EXAMPLE / "openapi.json", project / "openapi.json")
-    shutil.copyfile(EXAMPLE / "agent.yml", project / "agent.yml")
     options = {"out": "sdk", "python_version": python_version}
     if models != "pydantic":
         options["models"] = models
-    manifest = {"tungsten": 1, "api": {"name": "petstore", "title": "Gallery Petstore"},
-                "inputs": [{"namespace": "pets", "spec": "openapi.json"}],
+    if scenario == "petstore":
+        shutil.copyfile(EXAMPLE / "openapi.json", project / "openapi.json")
+        shutil.copyfile(EXAMPLE / "agent.yml", project / "agent.yml")
+        api, namespace = {"name": "petstore", "title": "Gallery Petstore"}, "pets"
+    else:
+        (project / "openapi.json").write_text(json.dumps(behaviour.SPEC, indent=2) + "\n")
+        api, namespace = {"name": "qualification", "title": "Qualification API"}, "items"
+    manifest = {"tungsten": 1, "api": api,
+                "inputs": [{"namespace": namespace, "spec": "openapi.json"}],
                 "servers": {"default": "http://127.0.0.1:4010", "allow_override": True},
                 "targets": {"python": options}}
     (project / "tungsten.yml").write_text(json.dumps(manifest, indent=2) + "\n")
@@ -154,7 +165,8 @@ def mock(binary: str, project: Path):
 
 
 def consume(binary: str, pyright: str, python: str, version: tuple[int, int], runtime: Path,
-            project: Path, sdk_wheel: Path, scratch: Path, models: str, minimum: bool) -> None:
+            sdks: dict[str, tuple[Path, Path]], scratch: Path, models: str, minimum: bool) -> None:
+    project = sdks["petstore"][0]
     venv = scratch / "venv"
     run([python, "-m", "venv", str(venv)], scratch)
     py = str(venv_python(venv))
@@ -165,22 +177,24 @@ def consume(binary: str, pyright: str, python: str, version: tuple[int, int], ru
         skip = {"typing_extensions"} if models == "pydantic" else {"pydantic"}
         constraints.write_text("".join(f"{name}=={pin}\n" for name, pin in MINIMUM.items() if name not in skip))
         install += ["--constraint", str(constraints)]
-    run([*install, str(runtime), str(sdk_wheel)], scratch)
+    run([*install, str(runtime), *(str(wheel) for _, wheel in sdks.values())], scratch)
     run([py, "-m", "pip", "freeze", "--all"], scratch)
     # Outside the checkout and isolated: imports must resolve to site-packages.
     site = run([py, "-I", "-c", (
-        "import sys, pathlib, tungsten_runtime, petstore_sdk\n"
-        "for m in (tungsten_runtime, petstore_sdk):\n"
+        f"import sys, pathlib, tungsten_runtime, petstore_sdk, {behaviour.MODULE}\n"
+        f"for m in (tungsten_runtime, petstore_sdk, {behaviour.MODULE}):\n"
         "    assert 'site-packages' in m.__file__, m.__file__\n"
         "print(sys.version, file=sys.stderr)\n"
         "print(pathlib.Path(petstore_sdk.__file__).parents[1])"
     )], scratch, capture_output=True).stdout.strip()
-    run([py, "-I", "-m", "compileall", "-q", str(Path(site) / "tungsten_runtime"), str(Path(site) / MODULE)],
-        scratch)
+    run([py, "-I", "-m", "compileall", "-q",
+         *(str(Path(site) / name) for name in ("tungsten_runtime", MODULE, behaviour.MODULE))], scratch)
     consumer = scratch / "consumer.py"
     consumer.write_text(CONSUMER)
+    behaviour_consumer = scratch / "behaviour_consumer.py"
+    behaviour_consumer.write_text(behaviour.CONSUMER)
     (scratch / "pyrightconfig.json").write_text(json.dumps({
-        "include": ["consumer.py"], "typeCheckingMode": "strict",
+        "include": ["consumer.py", "behaviour_consumer.py"], "typeCheckingMode": "strict",
         "pythonVersion": f"{version[0]}.{version[1]}",
     }) + "\n")
     run([pyright, "--pythonpath", py, "-p", str(scratch / "pyrightconfig.json")], scratch)
@@ -190,6 +204,9 @@ def consume(binary: str, pyright: str, python: str, version: tuple[int, int], ru
             calls = json.load(response)
     deletes = [call for call in calls if call["method"] == "DELETE"]
     assert len(deletes) == 1, f"expected exactly the confirmed DELETE, saw {len(deletes)}"
+    with behaviour.serve() as (base, recorder):
+        run([py, "-I", str(behaviour_consumer), base], scratch)
+    behaviour.check(recorder)
 
 
 def main() -> None:
@@ -206,16 +223,18 @@ def main() -> None:
     work.mkdir(parents=True)
     builder = args.pythons[-1]
     runtime = build_archives(builder, REPO / "runtimes" / "python", work / "runtime-dist", sdist=True)
-    projects: dict[tuple[str, str], tuple[Path, Path]] = {}
+    projects: dict[tuple[str, str], dict[str, tuple[Path, Path]]] = {}
     for models in ("pydantic", "dataclasses"):
         for python_version in ("3.10", "3.12"):
-            project = generate(args.tungsten, work, models, python_version)
-            wheel = build_archives(builder, project / "sdk", project / "dist", sdist=False)[0]
-            projects[models, python_version] = project, wheel
+            sdks = projects.setdefault((models, python_version), {})
+            for scenario in ("petstore", "behaviour"):
+                project = generate(args.tungsten, work, scenario, models, python_version)
+                wheel = build_archives(builder, project / "sdk", project / "dist", sdist=False)[0]
+                sdks[scenario] = project, wheel
     failures: list[str] = []
     for python in args.pythons:
         version = interpreter_version(python)
-        for (models, python_version), (project, wheel) in projects.items():
+        for (models, python_version), sdks in projects.items():
             if python_version == "3.12" and version < (3, 12):
                 continue
             # The wheel on every lane; the sdist and minimum dependencies on the floor lane.
@@ -230,7 +249,7 @@ def main() -> None:
                     scratch = work / "consumers" / f"{len(failures)}-{time.monotonic_ns()}"
                     scratch.mkdir(parents=True)
                     try:
-                        consume(args.tungsten, args.pyright, python, version, archive, project, wheel,
+                        consume(args.tungsten, args.pyright, python, version, archive, sdks,
                                 scratch, models, minimum)
                     except (subprocess.CalledProcessError, AssertionError, RuntimeError) as error:
                         print(f"FAILED {label}: {error}", flush=True)
