@@ -75,9 +75,13 @@ func (c *ClientCore) sendWith(ctx context.Context, p *prepared, opts CallOptions
 		check = c.outcomeCheck(op, p.args)
 	}
 	timeout := c.attemptTimeout(opts)
+	deadline, _ := callDeadline(ctx)
 	attempts := 0
 	for {
 		attempts++
+		if attempts == 1 && deadlineExpired(ctx) {
+			return nil, deadlineFailure(op.ID, "before the request could be sent")
+		}
 		rctx := &RequestContext{
 			Operation: op.ID,
 			Attempt:   attempts,
@@ -98,7 +102,7 @@ func (c *ClientCore) sendWith(ctx context.Context, p *prepared, opts CallOptions
 		method := p.method
 		body := &p.payload
 		headers := append([]headerEntry(nil), p.headers.entries...)
-		outcome := attempt(ctx, c.http, attemptRequest{url: target, method: method, headers: headers, body: body, timeout: timeout, stream: stream, idle: c.streamIdle(stream), maxResponseBytes: c.responseLimit(opts)})
+		outcome := attempt(ctx, c.http, attemptRequest{url: target, method: method, headers: headers, body: body, timeout: timeout, deadline: deadline, stream: stream, idle: c.streamIdle(stream), maxResponseBytes: c.responseLimit(opts)})
 		for hops := 0; !c.redirectsDisabled && !mutation && hops < maxRedirects; hops++ {
 			if outcome.kind != outcomeResponse || outcome.bodyFailure == "oversized" || !isRedirect(outcome.status) {
 				break
@@ -122,7 +126,7 @@ func (c *ClientCore) sendWith(ctx context.Context, p *prepared, opts CallOptions
 			}
 			rctx.URL = shown
 			rctx.Method = method
-			outcome = attempt(ctx, c.http, attemptRequest{url: target, method: method, headers: headers, body: body, timeout: timeout, stream: stream, idle: c.streamIdle(stream), maxResponseBytes: c.responseLimit(opts)})
+			outcome = attempt(ctx, c.http, attemptRequest{url: target, method: method, headers: headers, body: body, timeout: timeout, deadline: deadline, stream: stream, idle: c.streamIdle(stream), maxResponseBytes: c.responseLimit(opts)})
 		}
 		cctx := &callContext{api: c.api, op: op, key: p.key, hasKey: p.hasKey, keyHeader: p.keyHeader, attempts: attempts, check: check}
 		result, err := c.classifyResponse(cctx, p, outcome, rctx, timeout)
@@ -165,7 +169,7 @@ func (c *ClientCore) sendWith(ctx context.Context, p *prepared, opts CallOptions
 			m.OnRetry(rctx, d)
 		}
 		// A retry that could not start before the deadline is not waited for.
-		if deadline, ok := ctx.Deadline(); ok && !time.Now().Add(durationMs(delayMs)).Before(deadline) {
+		if !deadline.IsZero() && !time.Now().Add(durationMs(delayMs)).Before(deadline) {
 			return nil, done
 		}
 		timer := time.NewTimer(durationMs(delayMs))
@@ -228,8 +232,22 @@ func (c *ClientCore) classifyResponse(cctx *callContext, p *prepared, outcome at
 	op := p.op
 	mutation := isMutation(op)
 	attempts := cctx.attempts
+	if outcome.deadline && (outcome.kind == outcomeAborted || outcome.kind == outcomeTimeout) {
+		if !outcome.sent && outcome.kind == outcomeAborted {
+			return nil, deadlineFailure(op.ID, "before the request could be sent")
+		}
+		const cause = "The operation deadline expired before a response arrived."
+		if mutation {
+			return nil, newError(outcomeUnknown(cctx, cause, unknownFields{}))
+		}
+		return nil, newDiag(op.ID, UpstreamUnavailable).code(strPtr("DEADLINE_EXCEEDED")).retry(RetryNever).
+			remedy(cause + " This read has no side effects; call again with a larger Deadline.").attempts(attempts).err()
+	}
 	switch outcome.kind {
 	case outcomeNotSent:
+		if outcome.deadline {
+			return nil, deadlineFailure(op.ID, "before the request could be sent")
+		}
 		return nil, newDiag(op.ID, TransportFailed).
 			remedy(fmt.Sprintf("The request could not be delivered (%s), so the server did not receive it. Check BaseURL and network access, then call again.", outcome.detail)).
 			attempts(attempts).err()
@@ -240,18 +258,6 @@ func (c *ClientCore) classifyResponse(cctx *callContext, p *prepared, outcome at
 		}
 		return nil, newDiag(op.ID, TransportFailed).remedy(cause + " This read has no side effects; call again.").attempts(attempts).err()
 	case outcomeAborted:
-		if outcome.deadline {
-			if mutation && outcome.sent {
-				return nil, newError(outcomeUnknown(cctx, "The operation deadline expired after the call was sent.", unknownFields{}))
-			}
-			if !outcome.sent {
-				return nil, deadlineExceeded(op.ID, "before the request could be sent")
-			}
-			code := "DEADLINE_EXCEEDED"
-			return nil, newDiag(op.ID, UpstreamUnavailable).code(&code).retry(RetryNever).
-				remedy("The operation deadline expired before a response arrived. This read has no side effects; call again with a larger Deadline.").
-				attempts(attempts).err()
-		}
 		if mutation && outcome.sent {
 			return nil, newError(outcomeUnknown(cctx, "The caller's context cancelled the call after it was sent.", unknownFields{}))
 		}
@@ -306,8 +312,13 @@ func (c *ClientCore) classifyResponse(cctx *callContext, p *prepared, outcome at
 	}
 	if success && !outcome.bodyOK {
 		failure := "broken"
-		if outcome.bodyFailure == "timeout" {
-			failure = "timeout"
+		if outcome.bodyFailure == "timeout" || outcome.bodyFailure == "deadline" {
+			failure = outcome.bodyFailure
+		}
+		if !mutation && failure == "deadline" {
+			return nil, newDiag(op.ID, UpstreamUnavailable).code(strPtr("DEADLINE_EXCEEDED")).status(status).requestID(requestID).retry(RetryNever).
+				remedy("The operation deadline expired while the response body was read. This read has no side effects; call again with a larger Deadline.").
+				attempts(attempts).err()
 		}
 		if !mutation {
 			return nil, newDiag(op.ID, UpstreamUnavailable).status(status).requestID(requestID).retry(RetryAfterDelay).

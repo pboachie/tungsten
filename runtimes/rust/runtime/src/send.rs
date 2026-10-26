@@ -166,7 +166,15 @@ impl ClientCore {
             }
             self.check_send_deadline(prepared, attempts, check.as_ref())?;
             let mut permit = match self.admit(prepared, stream).await {
-                Ok(permit) => permit,
+                Ok(permit) => {
+                    if permit.is_some()
+                        && attempts == 1
+                        && let Some(scheduler) = &self.inner.scheduler
+                    {
+                        scheduler.record_call(&self.scope_key(prepared));
+                    }
+                    permit
+                }
                 Err(rejected) => {
                     // A wait ended by the call's deadline reports that.
                     self.check_send_deadline(prepared, attempts, check.as_ref())?;
@@ -332,6 +340,12 @@ impl ClientCore {
                     }
                 }
             };
+            // Callers sharing a quota share one retry budget.
+            if let Some(scheduler) = &self.inner.scheduler
+                && !scheduler.allow_retry(&self.scope_key(prepared))
+            {
+                return Err(done(diagnostic, partial));
+            }
             for m in &self.inner.middleware {
                 m.on_retry(&ctx, &diagnostic);
             }
@@ -347,6 +361,14 @@ impl ClientCore {
         }
     }
 
+    fn scope_key(&self, prepared: &Prepared<'_>) -> String {
+        self.inner
+            .scheduler
+            .as_ref()
+            .map(|s| s.scope_key(&prepared.url, self.inner.tenant.as_deref()))
+            .unwrap_or_default()
+    }
+
     /// Wait for scheduler capacity for one attempt: `None` without a
     /// scheduler; an error (nothing is sent) when no capacity was given.
     async fn admit(
@@ -357,7 +379,7 @@ impl ClientCore {
         let Some(scheduler) = &self.inner.scheduler else {
             return Ok(None);
         };
-        let key = scheduler.scope_key(&prepared.url, self.inner.tenant.as_deref());
+        let key = self.scope_key(prepared);
         let core = self.clone();
         let random = std::sync::Arc::new(move || core.random());
         let kind = if stream { Kind::Stream } else { Kind::Call };

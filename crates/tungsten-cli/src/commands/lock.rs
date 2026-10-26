@@ -97,6 +97,9 @@ pub enum FileRole {
     RemoteInput,
     Reference,
     Overlay,
+    /// Bundle inventories only: a verified `.tungsten-inputs` pin record or
+    /// pinned content file of a remote input. Never part of a lock's files.
+    InputCache,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -362,6 +365,63 @@ pub(crate) fn compile_offline(manifest: &Path) -> Compiled {
     opts.load.acquisition.offline = true;
     opts.load.acquisition.refresh = false;
     compile_project(manifest, &opts)
+}
+
+/// Whether a `generate` or `check` of `path` runs locked: `--locked` was
+/// given, or the project's manifest sets `locked: true`. A manifest that
+/// does not parse is not locked here; compiling it reports its errors.
+pub(crate) fn required(path: &Path, flag: bool) -> bool {
+    flag || matches!(
+        input::resolve(path),
+        Ok(input::Input::Project(manifest))
+            if tungsten_config::load(&manifest).0.is_some_and(|config| config.locked)
+    )
+}
+
+/// `--locked`: verify an already compiled project against its lock. Using the
+/// same compilation means no input can change between verification and use.
+/// `None` when the project matches, or when it did not compile (its own
+/// diagnostics already fail the command).
+pub(crate) fn locked_diagnostic(
+    path: &Path,
+    compiled: &Compiled,
+) -> Option<tungsten_core::Diagnostic> {
+    let refuse = |message: String| {
+        Some(
+            tungsten_core::Diagnostic::error("TG0128", message)
+                .at(LOCK_FILE, "", None)
+                .with_help("review the changes, then run `tungsten lock --update` explicitly before a locked run; `tungsten lock --check` lists the drift"),
+        )
+    };
+    let Ok(input::Input::Project(manifest)) = input::resolve(path) else {
+        return refuse("--locked requires a project with a tungsten.yml manifest".into());
+    };
+    let recipe = capture(&manifest, compiled)?;
+    let base = manifest.parent().map(Path::to_path_buf).unwrap_or_default();
+    match read_lock(&input::join(&base, LOCK_FILE)) {
+        Existing::Missing => refuse(format!("{LOCK_FILE} is missing")),
+        Existing::Corrupt => refuse(format!(
+            "{LOCK_FILE} is corrupt (unreadable, unknown version or digest mismatch)"
+        )),
+        Existing::Valid(locked) => {
+            let drift = compare(&locked, &recipe);
+            if drift.is_empty() {
+                return None;
+            }
+            let mut listed: Vec<String> = drift
+                .iter()
+                .take(8)
+                .map(|d| format!("{:?} {} {:?}", d.kind, d.subject, d.change).to_lowercase())
+                .collect();
+            if drift.len() > 8 {
+                listed.push(format!("and {} more", drift.len() - 8));
+            }
+            refuse(format!(
+                "the project does not match {LOCK_FILE}: {}",
+                listed.join(", ")
+            ))
+        }
+    }
 }
 
 /// Build the recipe of a compiled project; `None` when it did not compile.

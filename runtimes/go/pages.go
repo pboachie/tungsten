@@ -48,7 +48,7 @@ type Pages struct {
 	state *pageState
 	page  *Response[Page[any]]
 	err   *Error
-	// deadline is the traversal's total deadline, fixed when it was created.
+	// deadline bounds the whole traversal; zero means none.
 	deadline time.Time
 }
 
@@ -58,11 +58,8 @@ func (p *Pages) Next(ctx context.Context) bool {
 	if p.err != nil {
 		return false
 	}
-	if !p.deadline.IsZero() {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithDeadline(ctx, p.deadline)
-		defer cancel()
-	}
+	ctx, cancel := boundBy(ctx, p.deadline)
+	defer cancel()
 	page, err, more := p.core.pageStep(ctx, p.op, p.state, p.opts, nil)
 	if err != nil {
 		p.err = err

@@ -712,8 +712,8 @@ type ClientOptions struct {
 	TokenStore TokenStore
 	// Timeout is the per-attempt timeout (default 30 s).
 	Timeout time.Duration
-	// Deadline is the total deadline of one logical call (see
-	// CallOptions.Deadline). Zero or negative: none, only Timeout per attempt.
+	// Deadline is the total deadline of one logical call, see
+	// CallOptions.Deadline. Zero: none (only Timeout per attempt).
 	Deadline time.Duration
 	// Retries overrides the API's per-tier retry defaults, for every tier.
 	Retries          PartialRetry
@@ -814,16 +814,18 @@ type CallOptions struct {
 	RefuseConfirmYes bool
 	// Timeout is the per-attempt timeout; zero uses the client's.
 	Timeout time.Duration
-	// Deadline is the total deadline of this call; zero uses the client's,
-	// negative means none. It derives a context deadline at the call, so it
-	// bounds authentication, idempotency-key reservation, every attempt,
-	// retry waits, response bodies and verification; for Pages, Poll and
-	// RunMacro the whole traversal, poll or macro. A caller's own context
-	// deadline behaves the same way. No attempt starts after it expires
-	// (code DEADLINE_EXCEEDED); a mutation already sent reports
-	// OUTCOME_UNKNOWN. For Stream it is checked before connecting and before
-	// each reconnect, never on an open stream. Shared OAuth refreshes are
-	// not cancelled with it.
+	// Deadline is the total deadline of this call, overriding the client's;
+	// zero uses the client's (none by default). Measured on the monotonic
+	// clock from the call, it bounds authentication, idempotency-key
+	// reservation, every attempt (each one's Timeout is cut to the time
+	// left), retry waits, response bodies and verification; for Pages, Poll
+	// and RunMacro it bounds the whole traversal, poll or macro, and nested
+	// work cannot restart it. No attempt starts after it expires (code
+	// DEADLINE_EXCEEDED); a mutation already sent reports OUTCOME_UNKNOWN,
+	// never a blind replay. For Stream it bounds connecting and each
+	// reconnect, not an open stream (see ClientOptions.IdleTimeout). A
+	// shared OAuth token refresh or idempotency-store write is not
+	// cancelled, only no longer waited for. The caller's ctx still applies.
 	Deadline time.Duration
 	// Verify runs the operation's verification hook after success.
 	Verify  bool
@@ -840,8 +842,8 @@ func (o CallOptions) String() string {
 	if o.IdempotencyKey != "" {
 		key = Redacted
 	}
-	return fmt.Sprintf("CallOptions{IdempotencyKey: %q, Confirm: %s, Timeout: %s, Verify: %t, Headers: [%s]}",
-		key, o.Confirm, o.Timeout, o.Verify, strings.Join(names, " "))
+	return fmt.Sprintf("CallOptions{IdempotencyKey: %q, Confirm: %s, Timeout: %s, Deadline: %s, Verify: %t, Headers: [%s]}",
+		key, o.Confirm, o.Timeout, o.Deadline, o.Verify, strings.Join(names, " "))
 }
 
 // --------------------------------------------------------------- results

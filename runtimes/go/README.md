@@ -203,19 +203,22 @@ each supported platform, including Windows and WSL.
 
 ## Limits
 
-In unreleased 0.2.0, `Deadline` (on `ClientOptions` or `CallOptions`; zero
-inherits, negative means none) sets a total deadline for one logical call,
-separate from the per-attempt `Timeout`. It derives a context deadline at the
-call, so it covers authentication, idempotency-key reservation, every attempt,
-retry waits, response bodies and verification; for `Pages`, `Poll` and
-`RunMacro` it covers the whole traversal, poll or macro. A caller's own context
-deadline is reported the same way. No attempt starts after it expires: the call
-fails with code `DEADLINE_EXCEEDED`, and a mutation that was already sent
-reports `OUTCOME_UNKNOWN`, never a blind replay. A retry wait that would end
-after the deadline returns the last failure at once. For `Stream` it is checked
-before connecting and before each reconnect, never on an open stream; the
-connection attempt itself stays bounded by `Timeout`. Shared OAuth refreshes run
-detached from the caller's context and are not cancelled with it.
+In unreleased 0.2.0, `Deadline` (on `ClientOptions` or `CallOptions`) sets a total
+deadline for one logical call, separate from the per-attempt `Timeout`. It is
+measured on the monotonic clock and covers authentication, idempotency-key
+reservation, every attempt (each one's `Timeout` is cut to the time left), retry
+waits, response bodies and verification; for `Pages`, `Poll` and `RunMacro` it
+covers the whole traversal, poll or macro, and nested work cannot restart it. It
+is applied as a `context.Context` deadline on top of the caller's `ctx`, which
+still applies. No attempt starts after it expires: the call fails with code
+`DEADLINE_EXCEEDED`, and a mutation that was already sent reports
+`OUTCOME_UNKNOWN`, never a blind replay. A retry wait that would end after the
+deadline returns the last failure at once. For `Stream` it bounds connecting and
+each reconnect, never an open stream (use `IdleTimeout`). A shared OAuth token
+refresh or idempotency-store write is not cancelled at the deadline, only no
+longer waited for, so other callers still get its result; it stays bounded by its
+own timeout. A custom `HTTPClient` transport that ignores request cancellation
+can keep running after the deadline. Default: no total deadline.
 
 The ordinary response cap was opt-in in 0.1.3; the 4 MiB default
 described here is the 0.2.0 development behavior.

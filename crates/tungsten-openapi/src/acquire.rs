@@ -341,6 +341,48 @@ pub(crate) fn write_atomic(
     })
 }
 
+/// Preserve only recognized format suffixes, never arbitrary remote filenames.
+fn content_extension(url: &Url) -> &str {
+    let extension = url.path().rsplit('.').next().unwrap_or("");
+    match extension {
+        "json" | "yaml" | "yml" | "http" | "rest" | "curl" | "har" => extension,
+        _ => "input",
+    }
+}
+
+/// Project-relative paths (`/`-separated) of the verified offline pin of a
+/// remote source: its pin record and exactly the pinned content files, so a
+/// copy of them reproduces the input offline. Verifies through offline
+/// acquisition first; never fetches, refreshes or writes content.
+pub fn pinned_files(source: &str, project: &Path) -> Result<Vec<String>, Diagnostic> {
+    let offline = Options {
+        offline: true,
+        ..Options::default()
+    };
+    acquire(source, project, &offline)?;
+    if crate::git_input::is_source(source) {
+        return crate::git_input::pinned_files(source, project);
+    }
+    let url = Url::parse(source).map_err(|_| cache_error())?;
+    let key = hash(url.as_str().as_bytes());
+    let pin: Pin = serde_json::from_slice(&read(
+        &project
+            .join(".tungsten-inputs")
+            .join(&key)
+            .join("source.lock.json"),
+        LOCK_LIMIT,
+    )?)
+    .map_err(|_| cache_error())?;
+    Ok(vec![
+        format!(".tungsten-inputs/{key}/source.lock.json"),
+        format!(
+            ".tungsten-inputs/{key}/{}.{}",
+            pin.sha256,
+            content_extension(&url)
+        ),
+    ])
+}
+
 /// Fetch or reuse a pinned input. The per-source lock and immutable content live
 /// in `project/.tungsten-inputs/<sha256-of-url>/`. Retain this directory securely
 /// when offline reproducibility is required. Ordinary online loads verify
@@ -453,12 +495,7 @@ pub fn acquire(source: &str, project: &Path, options: &Options) -> Result<PathBu
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
         Err(_) => return Err(cache_error()),
     };
-    // Preserve only recognized format suffixes, never arbitrary remote filenames.
-    let extension = url.path().rsplit('.').next().unwrap_or("");
-    let extension = match extension {
-        "json" | "yaml" | "yml" | "http" | "rest" | "curl" | "har" => extension,
-        _ => "input",
-    };
+    let extension = content_extension(&url);
     let content_path = |digest: &str| dir.join(format!("{digest}.{extension}"));
     if options.offline {
         let pin = pin.ok_or_else(|| diagnostic("TG0123", "remote input has no offline pin", "run once online to fetch and pin the source, then retain .tungsten-inputs with the project"))?;

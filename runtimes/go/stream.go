@@ -81,15 +81,16 @@ type EventStream struct {
 	opts  CallOptions
 	open  *openStream
 	state int // 0 idle, 1 open, 2 done
-	// deadline bounds connecting and each reconnect, not an open stream.
-	deadline time.Time
-	event    *StreamEvent
-	err      *Error
+	event *StreamEvent
+	err   *Error
 	// cancelled is set by Cancel, from any goroutine; mu guards body, the
 	// connection Cancel closes.
 	cancelled atomic.Bool
 	mu        sync.Mutex
 	body      *eventBody
+	// deadline bounds connecting and each reconnect, never an open
+	// stream; zero means none.
+	deadline time.Time
 }
 
 // setOpen makes o the current connection (nil: none).
@@ -168,10 +169,7 @@ func (s *EventStream) Next(ctx context.Context) bool {
 				s.state = 2
 				return false
 			}
-			if !s.deadline.IsZero() && !time.Now().Before(s.deadline) {
-				return s.fail(deadlineExceeded(s.op.ID, "before the stream could connect"))
-			}
-			open, err := s.core.openStream(ctx, s.op, s.spec, s.args, s.opts, nil)
+			open, err := s.core.openStream(withConnectDeadline(ctx, s.deadline), s.op, s.spec, s.args, s.opts, nil)
 			if err != nil {
 				return s.fail(err)
 			}
@@ -247,10 +245,7 @@ func (s *EventStream) Next(ctx context.Context) bool {
 			}
 			return s.fail(s.core.interrupted(s.op, o, why))
 		}
-		if !s.deadline.IsZero() && !time.Now().Before(s.deadline) {
-			return s.fail(deadlineExceeded(s.op.ID, "before the stream could reconnect"))
-		}
-		fresh, err := s.core.reconnect(ctx, s.op, s.spec, s.args, s.opts, o)
+		fresh, err := s.core.reconnect(withConnectDeadline(ctx, s.deadline), s.op, s.spec, s.args, s.opts, o)
 		if s.cancelled.Load() {
 			if fresh != nil {
 				fresh.body.close()
@@ -466,8 +461,13 @@ func (c *ClientCore) reconnect(ctx context.Context, op *OperationDescriptor, spe
 		ceiling = float64(*old.lastRetry)
 	}
 	ceiling = min(ceiling, float64(c.reconnectMax.Milliseconds()))
-	wait := ceiling - c.random()*0.25*ceiling
-	timer := time.NewTimer(time.Duration(wait * float64(time.Millisecond)))
+	wait := time.Duration((ceiling - c.random()*0.25*ceiling) * float64(time.Millisecond))
+	// A reconnect wait never outlasts the deadline; the reconnect then
+	// fails before it is sent.
+	if at, ok := callDeadline(ctx); ok {
+		wait = max(0, min(wait, time.Until(at)))
+	}
+	timer := time.NewTimer(wait)
 	select {
 	case <-timer.C:
 	case <-ctx.Done():

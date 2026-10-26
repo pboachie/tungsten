@@ -138,8 +138,22 @@ pub(crate) fn content(
     };
     let several = map.len() > 1;
     let mut out = vec![];
+    let reads_3_2 = !request && crate::pathitem::reads_3_2(cx.ws, &map_at);
     for media_type in map.keys() {
-        let schema = child(&child(&map_at, media_type), "schema");
+        let media_at = media_at(cx, &map_at, media_type);
+        // A 3.2 response `itemSchema` the compiler supports stands in for
+        // `schema`: the type of one JSON line or of one event's data.
+        let item = reads_3_2
+            .then(|| cx.get(&media_at).and_then(Value::as_object))
+            .flatten()
+            .and_then(|m| tungsten_openapi::response_item_schema(media_type, m));
+        let schema = match item {
+            Some(suffix) => RefTarget {
+                doc: media_at.doc,
+                pointer: format!("{}{suffix}", media_at.pointer),
+            },
+            None => child(&media_at, "schema"),
+        };
         let declared = cx.get(&schema).map(|_| &schema);
         let mut encoding = content_encoding(cx, media_type, declared);
         let lines_as_bytes = request && encoding == BodyEncoding::Jsonl;
@@ -171,11 +185,18 @@ pub(crate) fn content(
 pub(crate) fn json_schema(cx: &Ctx<'_>, owner: &RefTarget) -> Option<(String, RefTarget)> {
     let map_at = child(owner, "content");
     let map = cx.get(&map_at)?.as_object()?;
-    map.iter()
-        .filter(|(_, entry)| entry.get("schema").is_some())
-        .map(|(media, _)| (media, child(&child(&map_at, media), "schema")))
+    map.keys()
+        .map(|media| (media, child(&media_at(cx, &map_at, media), "schema")))
+        .filter(|(_, schema)| cx.get(schema).is_some())
         .find(|(media, schema)| content_encoding(cx, media, Some(schema)) == BodyEncoding::Json)
         .map(|(media, schema)| (media.clone(), schema))
+}
+
+/// The Media Type Object of `media` in the `content` map at `map_at`,
+/// following an OpenAPI 3.2 `$ref` to a reusable media type.
+pub(crate) fn media_at(cx: &Ctx<'_>, map_at: &RefTarget, media: &str) -> RefTarget {
+    let at = child(map_at, media);
+    cx.deref(&at).unwrap_or(at)
 }
 
 fn encoding_word(encoding: BodyEncoding) -> &'static str {

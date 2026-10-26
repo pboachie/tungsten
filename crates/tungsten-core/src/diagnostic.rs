@@ -239,7 +239,7 @@ pub mod codes {
         ),
         (
             "TG0145",
-            "OpenAPI 3.2 `itemSchema` for sequential and streaming media types is not supported",
+            "This use of OpenAPI 3.2 `itemSchema` for sequential and streaming media types is not supported",
         ),
         (
             "TG0146",
@@ -248,7 +248,7 @@ pub mod codes {
         ("TG0147", "OpenAPI 3.2 nested encoding is not supported"),
         (
             "TG0148",
-            "OpenAPI 3.2 reusable media types are not supported",
+            "OpenAPI 3.2 reusable media types (retired: now compiled)",
         ),
         (
             "TG0149",
