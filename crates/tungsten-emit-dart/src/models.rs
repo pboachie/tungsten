@@ -1044,29 +1044,21 @@ impl ModelFile<'_, '_, '_> {
             )
         };
         match plan {
-            UnionPlan::Tagged { tag, variants, .. } => {
-                w.line("final o = Wire.object(json, path);");
-                w.line(format!("switch (o[{}]) {{", str_lit(tag)));
-                w.indent();
-                let mut all: Vec<String> = vec![];
-                for (index, tags) in variants {
-                    if tags.is_empty() {
-                        continue;
-                    }
-                    for t in tags {
-                        w.line(format!("case {}:", str_lit(t)));
-                        all.push(format!("\"{t}\""));
-                    }
-                    w.indent();
+            UnionPlan::Tagged {
+                tag,
+                variants,
+                default,
+            } => {
+                let checked = variants
+                    .iter()
+                    .any(|(index, tags)| !tags.is_empty() && *default != Some(*index));
+                if let (Some(index), false) = (default, checked) {
+                    // Only the default variant is left: any object is it.
+                    w.line("Wire.object(json, path);");
                     w.expr("return ", &construct(*index), ";");
-                    w.dedent();
+                } else {
+                    tagged_switch(w, tag, variants, *default, &construct);
                 }
-                w.dedent();
-                w.line("}");
-                failure(
-                    w,
-                    &format!("member \"{tag}\" must be one of {}", all.join(", ")),
-                );
             }
             UnionPlan::LiteralTagged { variants } => {
                 let mut open = true;
@@ -1571,3 +1563,40 @@ abstract final class Wire {
   }
 }
 "#;
+
+/// The `switch` over a tagged union's discriminator member, then the
+/// default variant (OpenAPI 3.2 `defaultMapping`: an object whose tag is
+/// missing, not a string or claimed by no other variant) or a failure.
+fn tagged_switch(
+    w: &mut Code,
+    tag: &str,
+    variants: &[(usize, Vec<String>)],
+    default: Option<usize>,
+    construct: &dyn Fn(usize) -> Expr,
+) {
+    w.line("final o = Wire.object(json, path);");
+    w.line(format!("switch (o[{}]) {{", str_lit(tag)));
+    w.indent();
+    let mut all: Vec<String> = vec![];
+    for (index, tags) in variants {
+        if tags.is_empty() || default == Some(*index) {
+            continue;
+        }
+        for t in tags {
+            w.line(format!("case {}:", str_lit(t)));
+            all.push(format!("\"{t}\""));
+        }
+        w.indent();
+        w.expr("return ", &construct(*index), ";");
+        w.dedent();
+    }
+    w.dedent();
+    w.line("}");
+    match default {
+        Some(index) => w.expr("return ", &construct(index), ";"),
+        None => failure(
+            w,
+            &format!("member \"{tag}\" must be one of {}", all.join(", ")),
+        ),
+    }
+}
