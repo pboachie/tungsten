@@ -345,6 +345,12 @@ pub const FEATURES: &[FeatureDefinition] = &[
         None,
     ),
     def(
+        "webmcp_python_dispatch",
+        FeatureDomain::Protocol,
+        "experimental Python dispatch app backing browser WebMCP tools registered with registerRemoteWebMcp",
+        Some("webmcp"),
+    ),
+    def(
         "telemetry_hooks",
         FeatureDomain::Runtime,
         "opt-in local telemetry observer with bounded, redacted operation, attempt and phase events",
@@ -528,10 +534,10 @@ targets! {
         summary: "Experimental: native Python MCP server over stdio or Streamable HTTP, discrete or progressive, on the Python SDK",
         options: &[
             "package", "module", "version", "sdk", "sdk_module", "sdk_version", "sdk_path",
-            "runtime", "runtime_path", "sdk_runtime_path", "out",
+            "runtime", "runtime_path", "sdk_runtime_path", "webmcp", "out",
         ],
         environments: [Cpython],
-        features: &["mcp_stdio", "mcp_streamable_http"],
+        features: &["mcp_stdio", "mcp_streamable_http", "webmcp_python_dispatch"],
     },
     {
         id: "mock", aliases: &[], source: Reserved, family: None, policy: false, tools: &[],

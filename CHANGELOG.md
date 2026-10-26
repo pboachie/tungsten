@@ -236,6 +236,29 @@ changes.
 
 ### Added
 
+- Gallery recipe `webmcp-python` (`python3 examples/run.py --only
+  webmcp-python`): a Python web app mounts the generated `webmcp.py` dispatch
+  with its own sign-in, and a page registers its tools with
+  `registerRemoteWebMcp` against a stub WebMCP backend. The recipe shows
+  server-chosen tools, a typed read, a refused unconfirmed delete and
+  cross-user token, a confirmed delete (exactly one DELETE reaches the mock),
+  a refused signed-out listing, and cleanup on dispose.
+
+- Experimental Python dispatch for browser WebMCP tools: `webmcp: true` on the
+  `mcp-python` target generates `<module>/webmcp.py`, an ASGI app
+  (`tungsten_mcp.webmcp_app`) that lists the tools a signed-in principal may
+  use and runs each call through the generated Python SDK and its runtime
+  policy. Every request needs the application's principal, the
+  `X-Tungsten-WebMCP: 1` header and a same-origin `Origin` (on `POST`); no CORS
+  headers are sent. Each principal has its own client and confirmation tokens.
+  Exposure is read-only by default, with a server-enforced allowlist and an
+  optional per-user `authorize`. Secret-bearing, streamed and binary results
+  are refused, and request and result bytes are bounded. The capability
+  catalog lists it as `webmcp_python_dispatch`. In the page,
+  `registerRemoteWebMcp({ endpoint })` of `@elysra/tungsten-webmcp` registers
+  those tools on the page's own origin, with the same owned registration and
+  cleanup as `registerTungstenWebMcp`.
+
 - The experimental `mcp-python` server collects streamed (server-sent event)
   results, as the TypeScript server does: at most 1,000 events (then
   `truncated: true`), `max_stream_bytes` of JSON (4 MiB) and `max_stream_ms`
@@ -1367,18 +1390,20 @@ changes.
   ends at the deadline itself in TypeScript and Python, as it does in Rust.
   A wait bounded by `maxQueueMs` still reports `QUEUE_TIMEOUT`.
 
+- The Rust runtime reconnects a dropped event stream by resending the request it
+  opened with, as the TypeScript and Python runtimes do, instead of preparing it
+  again: a reconnect no longer re-runs authentication or reports a second `auth`
+  telemetry phase.
 - A Java call that starts an OAuth2 token refresh now stops waiting at its
   own deadline and reports `DEADLINE_EXCEEDED`, as the Rust and TypeScript
   runtimes do. Previously the call that owned the refresh ran it inline and
   returned only when the token request finished, so a call with a 300 ms
   deadline could take the full token timeout. The refresh still completes
   within its own bounds for other waiting calls.
-
 - Java and C# no longer retry a keyed mutation once its deadline has passed.
   An attempt cut by the deadline could end a fraction of a millisecond early
   and send the request again after the deadline; it now reports the earlier
   `OUTCOME_UNKNOWN` without resending, as TypeScript, Python and Rust do.
-
 - Webhook verification behaves the same in the TypeScript, Python and Rust
   runtimes:
   - A JSON payload with a `\u` escape that is a lone surrogate, or with a
