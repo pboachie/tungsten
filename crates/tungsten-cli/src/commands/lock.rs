@@ -356,7 +356,7 @@ pub(crate) fn run(args: &LockArgs) -> Report {
 
 /// Compile with acquisition forced offline: pinned remote inputs are reused
 /// from the project's input cache and nothing is fetched or refreshed.
-fn compile_offline(manifest: &Path) -> Compiled {
+pub(crate) fn compile_offline(manifest: &Path) -> Compiled {
     let mut opts = CompileOptions::default();
     opts.load.acquisition = tungsten_openapi::acquire::current_options();
     opts.load.acquisition.offline = true;
@@ -587,14 +587,14 @@ fn canonical(value: &Value) -> Value {
     }
 }
 
-fn digest_of(recipe: &GenerationRecipe) -> String {
+pub(crate) fn digest_of(recipe: &GenerationRecipe) -> String {
     let mut unsigned = recipe.clone();
     unsigned.recipe_digest = String::new();
     let value = serde_json::to_value(&unsigned).unwrap_or(Value::Null);
     Digest::of(canonical(&value).to_string().as_bytes()).0
 }
 
-enum Existing {
+pub(crate) enum Existing {
     Missing,
     Corrupt,
     Valid(Box<GenerationRecipe>),
@@ -602,7 +602,7 @@ enum Existing {
 
 /// Read a lock back: a bounded regular file (never a link) whose version and
 /// digest check out. Anything else is corrupt and cannot certify anything.
-fn read_lock(path: &Path) -> Existing {
+pub(crate) fn read_lock(path: &Path) -> Existing {
     let meta = match std::fs::symlink_metadata(path) {
         Ok(meta) => meta,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Existing::Missing,
@@ -650,7 +650,7 @@ fn write_lock(path: &Path, recipe: &GenerationRecipe) -> std::io::Result<()> {
 }
 
 /// Differences between a valid lock and the current recipe, sorted.
-fn compare(locked: &GenerationRecipe, current: &GenerationRecipe) -> Vec<LockDrift> {
+pub(crate) fn compare(locked: &GenerationRecipe, current: &GenerationRecipe) -> Vec<LockDrift> {
     let mut drift = vec![];
     if locked.compiler != current.compiler {
         drift.push(LockDrift {

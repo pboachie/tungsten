@@ -89,6 +89,10 @@ pub enum CommandName {
     Config,
     #[serde(rename = "lock")]
     Lock,
+    #[serde(rename = "bundle export")]
+    BundleExport,
+    #[serde(rename = "bundle import")]
+    BundleImport,
     #[serde(rename = "policy digest")]
     PolicyDigest,
     #[serde(rename = "emitters")]
@@ -200,6 +204,8 @@ pub enum CommandResult {
     Capabilities(tungsten_config::capabilities::CapabilityCatalog),
     Config(tungsten_config::inspection::ConfigurationInspection),
     Lock(Box<crate::commands::lock::LockResult>),
+    BundleExport(Box<crate::commands::bundle::BundleExportResult>),
+    BundleImport(Box<crate::commands::bundle::BundleImportResult>),
     PolicyDigest(tungsten_core::policy::PolicyDigestResult),
     Emitters(EmittersResult),
     Generate(GenerateResult),
@@ -1037,6 +1043,8 @@ const RESULT_DEFS: &[(CommandName, &str)] = &[
     (CommandName::Capabilities, "CapabilityCatalog"),
     (CommandName::Config, "ConfigurationInspection"),
     (CommandName::Lock, "LockResult"),
+    (CommandName::BundleExport, "BundleExportResult"),
+    (CommandName::BundleImport, "BundleImportResult"),
     (CommandName::PolicyDigest, "PolicyDigestResult"),
     (CommandName::Emitters, "EmittersResult"),
     (CommandName::Generate, "GenerateResult"),
