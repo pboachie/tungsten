@@ -671,6 +671,12 @@ changes.
 
 ### Fixed
 
+- Record profile files in `tungsten.lock.json` by their manifest-relative
+  path below the selected profile root, instead of the logical
+  `profile[N]/...` name. `bundle export` failed for any project that selected
+  a profile. Locks written before this change report the profile file as
+  drift; accept it with `tungsten lock --update`.
+
 - Require Pydantic 2.10.1 or newer in generated Python packages and in
   guided `init` package setup: generated models failed to import with
   Pydantic 2.10.0, which the previous `>=2.10` range allowed.
