@@ -18,7 +18,7 @@ fn har_paths(
     args: &ConvertOptions<'_>,
 ) -> Result<std::collections::BTreeMap<String, String>, String> {
     let Some(path) = args.har_paths else {
-        return Ok(Default::default());
+        return Ok(args.har_path_map.cloned().unwrap_or_default());
     };
     if !std::fs::metadata(path).is_ok_and(|metadata| metadata.is_file()) {
         return Err("HAR path mapping must be a regular JSON file".into());
@@ -218,6 +218,9 @@ pub(super) struct ConvertOptions<'a> {
     pub shell_dialect: &'a str,
     pub har_origin: Option<&'a str>,
     pub har_paths: Option<&'a Path>,
+    /// Reviewed HAR path templates recorded by an earlier conversion; used
+    /// when `har_paths` names no file.
+    pub har_path_map: Option<&'a std::collections::BTreeMap<String, String>>,
     pub include_prefix: &'a [String],
     pub exclude_prefix: &'a [String],
     pub redact_property: &'a [String],
@@ -258,6 +261,7 @@ pub(super) fn import(args: &InitArgs) -> Result<Option<PreparedImport>, String> 
             shell_dialect: &args.shell_dialect,
             har_origin: args.har_origin.as_deref(),
             har_paths: args.har_paths.as_deref(),
+            har_path_map: None,
             include_prefix: &args.include_prefix,
             exclude_prefix: &args.exclude_prefix,
             redact_property: &args.redact_property,
@@ -295,6 +299,9 @@ pub(super) fn convert(
                 .extension()
                 .is_some_and(|ext| matches!(ext.to_str(), Some("http" | "rest"))));
     let mut import_report = None;
+    // Reviewed importer settings, saved in the report so `refresh-import`
+    // converts a new revision of the source the same way.
+    let mut settings = serde_json::Map::new();
     let mut converted = if is_curl || is_http {
         let limits = Limits::default();
         let evidence = if is_curl {
@@ -322,12 +329,37 @@ pub(super) fn convert(
         let output = tungsten_contract::infer(&evidence, &ReviewedOverrides::default(), &limits)
             .map_err(|error| hinted(&error))?;
         import_report = Some(serde_json::json!({"contract": output.report}));
+        settings.insert(
+            "input_format".into(),
+            (if is_curl { "curl" } else { "http" }).into(),
+        );
+        settings.insert("route".into(), args.route.into());
+        if is_curl {
+            settings.insert("shell_dialect".into(), args.shell_dialect.into());
+        }
         output.openapi
     } else if root.get("log").is_some() {
         let limits = Limits::default();
+        let path_templates = har_paths(args)?;
+        for (key, value) in [
+            ("route", args.route),
+            ("include_prefix", args.include_prefix),
+            ("exclude_prefix", args.exclude_prefix),
+            ("redact_property", args.redact_property),
+        ] {
+            if !value.is_empty() {
+                settings.insert(key.into(), value.into());
+            }
+        }
+        if let Some(origin) = args.har_origin {
+            settings.insert("har_origin".into(), origin.into());
+        }
+        if !path_templates.is_empty() {
+            settings.insert("har_paths".into(), serde_json::json!(path_templates));
+        }
         let options = tungsten_contract::har::HarOptions {
             origin: args.har_origin.map(str::to_owned),
-            path_templates: har_paths(args)?,
+            path_templates,
             include_prefixes: args.include_prefix.to_vec(),
             exclude_prefixes: args.exclude_prefix.to_vec(),
             redact_properties: args.redact_property.iter().cloned().collect(),
@@ -422,6 +454,9 @@ pub(super) fn convert(
                 }
             }
         }
+    }
+    if let Some(report) = import_report.as_mut().filter(|_| !settings.is_empty()) {
+        report["settings"] = serde_json::Value::Object(settings);
     }
     Ok(Some(PreparedImport {
         document: converted,
