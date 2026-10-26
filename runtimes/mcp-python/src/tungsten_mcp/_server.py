@@ -16,12 +16,9 @@ import mcp_types as types
 from mcp.server.lowlevel import Server
 from mcp.server.stdio import stdio_server
 
-from ._catalog import Catalog, ManifestError, build_catalog, list_tools
+from ._catalog import MODES, Catalog, ManifestError, build_catalog, list_tools
 from ._options import ServerOptions
 from ._session import Session
-
-#: The disclosure modes; this runtime serves ``discrete`` only.
-MODES = ("discrete", "progressive")
 
 _USAGE = "usage: <server> [--stdio]  (the default; Streamable HTTP is not served by this runtime yet)"
 
@@ -39,26 +36,20 @@ def load_manifest(package: str, name: str = "manifest.json") -> dict[str, Any]:
     return manifest
 
 
-def check_mode(manifest: Mapping[str, Any], override: str | None, variable: str) -> None:
-    """Refuse a disclosure mode this runtime does not serve. ``override`` is
-    the mode forced by the environment variable ``variable``, if any."""
+def check_mode(manifest: Mapping[str, Any], override: str | None, variable: str) -> str | None:
+    """The disclosure mode forced by the environment variable ``variable``
+    (``override``), if any; ``ServeError`` for any other value."""
+    del manifest  # every mode of the manifest is served
     if override is not None and override not in MODES:
         raise ServeError(f'{variable} must be "discrete" or "progressive", not {override!r}')
-    mode = override or manifest.get("mode") or "discrete"
-    if mode != "discrete":
-        source = variable if override else "the manifest (agent.yml disclosure.mode, or auto for a large API)"
-        raise ServeError(
-            f"progressive disclosure is selected by {source}, and this experimental Python MCP runtime serves "
-            f"discrete mode only. Set {variable}=discrete to list every tool, or use the TypeScript MCP server "
-            "(the `mcp` target) for progressive disclosure."
-        )
+    return override
 
 
 def create_server(options: ServerOptions) -> tuple[Server[Any], Session]:
     """The MCP server of ``options`` and its session (one per process over
     stdio). Raises ``ServeError`` for a manifest this runtime cannot serve."""
     try:
-        catalog: Catalog = build_catalog(options.manifest)
+        catalog: Catalog = build_catalog(options.manifest, options.mode)
     except ManifestError as error:
         raise ServeError(f"invalid manifest: {error}") from error
     session = Session(catalog, options)
