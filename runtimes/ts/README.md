@@ -163,6 +163,22 @@ no longer waited for, so other callers still get its result; it stays bounded by
 its own `timeoutMs`. A custom `fetch` that ignores its `AbortSignal` can keep
 running after the deadline. Default: no total deadline.
 
+In unreleased 0.2.0, `download(op, args, { maxBytes, onProgress })` streams a 2xx
+body instead of buffering it: read the returned `Download` with `read()`, `for
+await`, or `writeTo(sink)`, which awaits the sink before the next read. The body
+is bounded by `maxBytes` (default: no limit; a larger `Content-Length` fails
+before any byte is read, `code` `RESPONSE_TOO_LARGE`), by
+`ClientOptions.idleTimeoutMs` (default `timeoutMs`) between chunks
+(`STREAM_IDLE`) and by `deadlineMs` (`DEADLINE_EXCEEDED`). `maxResponseBytes`
+applies only to error bodies of a download. A body shorter than its
+`Content-Length`, a lost connection, an abort or a sink that throws
+(`SINK_FAILED`) ends it with a failure; for a mutation the failure says the call
+took effect. The connection and its scheduler capacity are held until the body
+ends, fails or `close()` is called. A download is never retried once its answer
+arrived and never resumed. `Download.filename` is the `Content-Disposition`
+name reduced to a base name without directory parts or control characters; it
+never chooses a destination.
+
 Stream `collect({ maxBytes, maxMs })` accepts optional byte and time budgets. An
 unset budget defaults to 4 MiB or 60 seconds. The byte count uses UTF-8
 JSON for the event values, excluding SSE framing. A limit closes the stream

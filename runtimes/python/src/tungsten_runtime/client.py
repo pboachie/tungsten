@@ -26,6 +26,7 @@ else:
     from typing_extensions import Self
 
 from ._core import Engine
+from ._download import AsyncDownload, Download, DownloadStart
 from ._drivers import AsyncDriver, SyncDriver, SyncStream, async_http, sync_http
 from ._helpers import safe_id, safe_name
 from ._oauth import AsyncOAuthFlow, OAuthFlow
@@ -38,6 +39,7 @@ from .types import (
     CheckpointPage,
     ClientOptions,
     Diagnostic,
+    DownloadOptions,
     Err,
     MacroDescriptor,
     Ok,
@@ -177,6 +179,26 @@ class ClientCore:
         return EventStream(
             items(), close, stop, safe_id(op), field(field(op, "agent"), "safety") != "read_only"
         )
+
+    def download(
+        self, op: OperationDescriptor, args: Mapping[str, Any], opts: DownloadOptions | None = None
+    ) -> Result[Download]:
+        """Send the operation and hand its 2xx body over unread, as a
+        ``Download`` to read chunk by chunk or write to a sink: the body is
+        never held in memory whole. Everything before the answer
+        (validation, auth, idempotency, confirmation, retries, the scheduler,
+        ``deadline_ms``) follows the rules of ``call``; an error status is read
+        and classified as for ``call``. The body's reads are bounded by
+        ``ClientOptions.idle_timeout_ms`` (default ``timeout_ms``), by
+        ``deadline_ms`` and by ``max_bytes``; the connection and its scheduler
+        capacity are held until the download ends or is closed."""
+        try:
+            result = self._driver.run(self._engine.download(op, args, opts))
+        except Exception as error:
+            return self._engine.internal(safe_id(op), error, "downloading")
+        if isinstance(result, Ok):
+            return Ok(value=Download(cast(DownloadStart, result.value)), meta=result.meta)
+        return result
 
     def poll(
         self,
@@ -330,6 +352,18 @@ class AsyncClientCore:
         return AsyncEventStream(
             items(), stop, safe_id(op), field(field(op, "agent"), "safety") != "read_only"
         )
+
+    async def download(
+        self, op: OperationDescriptor, args: Mapping[str, Any], opts: DownloadOptions | None = None
+    ) -> Result[AsyncDownload]:
+        """See ``ClientCore.download``; the result is an ``AsyncDownload``."""
+        try:
+            result = await self._driver.run(self._engine.download(op, args, opts))
+        except Exception as error:
+            return self._engine.internal(safe_id(op), error, "downloading")
+        if isinstance(result, Ok):
+            return Ok(value=AsyncDownload(cast(DownloadStart, result.value)), meta=result.meta)
+        return result
 
     async def poll(
         self,

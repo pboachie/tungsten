@@ -242,6 +242,18 @@ changes.
   capability catalog declares the `telemetry_hooks` feature for these targets.
   Unreleased 0.2.0 only.
 
+
+- Add explicit streamed downloads to the TypeScript, Python and Rust
+  runtimes: `download()` sends an operation by the rules of `call` and hands a
+  2xx body over unread, to read chunk by chunk or write to a caller-owned sink
+  with backpressure. A download has a total-byte limit (`maxBytes`, checked
+  against `Content-Length` before the first byte and against the bytes read),
+  progress reports, the idle timeout and the call deadline; a short body,
+  a lost connection, cancellation and a failing sink end it with a diagnostic,
+  and the connection and its scheduler capacity are released however it
+  ends. The `Content-Disposition` file name is reduced to a plain base name.
+  Buffered calls, `maxResponseBytes` and event streams are unchanged.
+  Registered as the `streaming_downloads` runtime capability.
 - Generated Rust CLIs keep login sessions in the Windows Credential Locker
   (through Windows PowerShell) by default on Windows. A session the locker
   refuses, for example one above its secret size limit, fails with advice to
@@ -315,6 +327,9 @@ changes.
   `refresh-import` reuses them for flags that are not given again. `check` and
   `generate` refuse a project with an interrupted `refresh-import --apply`
   (TG0124) until `--rollback` restores it.
+- The language server offers a disabled "Refresh the converted import" action
+  on TG0122 for a converted input whose remote source changed, naming the
+  `refresh-import` preview, `--apply` and `--offline` choices.
 
 - Add `tungsten upgrade rehearse`, run with a candidate release's binary: it
   regenerates the project from its locked inputs, offline and without
@@ -333,6 +348,12 @@ changes.
   target ids with change and conflict counts, finding kinds and the apply
   state, never paths, digests, file names or finding text. `--inspect`
   reads schema versions 1 to 3.
+- Add `upgrade rehearse --consumer-target TARGET -- COMMAND` to run one
+  explicit clean-consumer command (no shell) in a target's staged output
+  after staging, with `--consumer-timeout-secs`. Its outcome, exit code and
+  log are recorded, it sets `runtime_acceptance` to passed or failed, and a
+  failure blocks `upgrade apply`. The command runs with your privileges and
+  environment; it is not sandboxed.
 - Add `tungsten upgrade apply --workspace DIR` to apply an accepted rehearsal
   as a separate step. It refuses when inputs, the lock, the staged files or
   any output file changed since the rehearsal, backs up what it replaces,

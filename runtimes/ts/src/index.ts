@@ -15,6 +15,7 @@
 
 export * from "./types.js";
 export { ClientCore } from "./client.js";
+export { Download, dispositionFilename, type DownloadFailure, type DownloadRead, type DownloadResult, type TransferProgress } from "./download.js";
 export { CHECKPOINT_PREFIX, MAX_CHECKPOINT_CHARS, type CheckpointState, type CheckpointStatus } from "./checkpoint.js";
 export { ANY_EVENT, EventStream, type CollectOptions, type EventHandler, type StreamEvent, type StreamResult } from "./streams.js";
 export { DEFAULT_MAX_EVENT_BYTES, SseParser, type SseEvent } from "./sse.js";

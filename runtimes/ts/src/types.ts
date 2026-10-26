@@ -14,6 +14,7 @@
  */
 import type { TelemetryEvent, TelemetryObserver } from "./telemetry.js";
 import type { TokenStore } from "./oauth.js";
+import type { Download, TransferProgress } from "./download.js";
 import type { EventStream } from "./streams.js";
 import type { RequestScheduler, SchedulerOptions } from "./scheduler.js";
 
@@ -712,6 +713,19 @@ export interface CallOptions {
   headers?: Record<string, string>;
 }
 
+/** Options of `ClientCore.download`: those of a call, plus the transfer's own. */
+export interface DownloadOptions extends CallOptions {
+  /** Most body bytes the download may deliver. A larger declared
+   * `Content-Length` fails before any byte is read; a body that grows past
+   * it ends the download (`UNEXPECTED_RESPONSE`, `code`
+   * `RESPONSE_TOO_LARGE`). `maxResponseBytes` does not apply to a streamed
+   * body, only to an error body. Default: no limit. */
+  maxBytes?: number | null;
+  /** Called after every chunk with the bytes received so far. It must not
+   * throw; what it throws is ignored. */
+  onProgress?: (progress: TransferProgress) => void;
+}
+
 // --------------------------------------------------------------- results
 
 /**
@@ -948,6 +962,9 @@ export interface ClientCoreApi {
    * the event type. The result is an async iterable with helpers
    * (`on`, `collect`, `reduce`, `first`, `cancel`). */
   stream<T>(op: OperationDescriptor, args: Record<string, unknown>, opts?: CallOptions): EventStream<T>;
+  /** Send the operation and hand its 2xx body over unread, as a
+   * `Download` read chunk by chunk (see `ClientCore.download`). */
+  download(op: OperationDescriptor, args: Record<string, unknown>, opts?: DownloadOptions): Promise<Result<Download>>;
   /** Iterate pages; stops after the last page or the first error result. */
   pages<T>(op: OperationDescriptor, args: Record<string, unknown>, opts?: CallOptions): AsyncIterable<Result<Page<T>>>;
   /** Call a read operation until `until` holds or the budget runs out. */

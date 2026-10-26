@@ -100,7 +100,7 @@ class MemoryTelemetryCollector:
     event is dropped and counted in ``dropped``. Thread-safe."""
 
     def __init__(self, capacity: int = _DEFAULT_CAPACITY) -> None:
-        value: object = capacity
+        value = cast(object, capacity)
         if isinstance(value, int | float) and not isinstance(value, bool) and math.isfinite(value):
             self.capacity = min(_MAX_CAPACITY, max(1, int(value)))
         else:

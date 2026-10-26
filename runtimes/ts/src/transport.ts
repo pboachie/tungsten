@@ -17,9 +17,11 @@ export interface AttemptRequest {
   /** Absolute monotonic deadline (operation or polling), independent of timer callbacks. */
   deadlineMs?: number | undefined;
   signal: AbortSignal | undefined;
-  /** Hand a `text/event-stream` answer with a 2xx status back unread, as a
-   * {@link StreamBody}; any other answer is read as usual. */
-  stream?: boolean;
+  /** `true`: hand a `text/event-stream` answer with a 2xx status back
+   * unread, as a {@link StreamBody}. `"bytes"`: hand back any 2xx answer
+   * that has a body (a download), and keep `deadlineMs` bounding its reads.
+   * Any other answer is read as usual. */
+  stream?: boolean | "bytes";
   /** With `stream`: the silence, in milliseconds, after which a read of the
    * body reports a timeout. Default `timeoutMs`. */
   idleMs?: number | undefined;
@@ -32,26 +34,30 @@ export type StreamRead =
   | { kind: "end" }
   /** No bytes arrived within the attempt timeout. */
   | { kind: "timeout" }
+  /** The absolute deadline the body was opened with ran out. */
+  | { kind: "deadline" }
   /** The caller's signal aborted. */
   | { kind: "aborted" }
   /** The connection failed or was closed before the stream ended. */
   | { kind: "lost" };
 
-/** The unread body of an event stream: chunks of bytes with an idle
- * timeout (the attempt timeout, restarted by every read) and the caller's
- * signal. */
+/** The unread body of an event stream or a download: chunks of bytes with
+ * an idle timeout (the attempt timeout, restarted by every read), an
+ * optional absolute deadline and the caller's signal. */
 export class StreamBody {
   readonly #reader: ReadableStreamDefaultReader<Uint8Array>;
   readonly #controller: AbortController;
   readonly #signal: AbortSignal | undefined;
   readonly #onAbort: () => void;
   readonly #idleMs: number;
+  readonly #deadlineMs: number | undefined;
   readonly #cancelRead = (): void => { void this.#reader.cancel().catch(() => undefined); };
-  #timedOut = false;
+  #timedOut: "idle" | "deadline" | null = null;
   #closed = false;
   #onClose: (() => void) | null = null;
 
-  constructor(reader: ReadableStreamDefaultReader<Uint8Array>, controller: AbortController, signal: AbortSignal | undefined, onAbort: () => void, idleMs: number) {
+  constructor(reader: ReadableStreamDefaultReader<Uint8Array>, controller: AbortController, signal: AbortSignal | undefined, onAbort: () => void, idleMs: number, deadlineMs?: number) {
+    this.#deadlineMs = deadlineMs;
     this.#reader = reader;
     this.#controller = controller;
     this.#signal = signal;
@@ -63,19 +69,23 @@ export class StreamBody {
 
   async read(): Promise<StreamRead> {
     if (this.#closed) return { kind: "end" };
+    if (this.#timedOut !== null) return { kind: this.#timedOut === "idle" ? "timeout" : "deadline" };
+    const left = this.#deadlineMs === undefined ? Infinity : this.#deadlineMs - performance.now();
+    if (left <= 0) return { kind: "deadline" };
+    const byDeadline = left < this.#idleMs;
     const timer = setTimeout(() => {
-      this.#timedOut = true;
+      this.#timedOut = byDeadline ? "deadline" : "idle";
       this.#controller.abort();
       this.#cancelRead();
-    }, this.#idleMs);
+    }, byDeadline ? Math.max(1, left) : this.#idleMs);
     try {
       const chunk = await this.#reader.read();
-      if (this.#timedOut) return { kind: "timeout" };
+      if (this.#timedOut !== null) return { kind: this.#timedOut === "idle" ? "timeout" : "deadline" };
       if (this.#signal?.aborted) return { kind: "aborted" };
       if (chunk.done) return { kind: "end" };
       return { kind: "chunk", bytes: chunk.value };
     } catch {
-      if (this.#timedOut) return { kind: "timeout" };
+      if (this.#timedOut !== null) return { kind: this.#timedOut === "idle" ? "timeout" : "deadline" };
       return this.#signal?.aborted === true ? { kind: "aborted" } : { kind: "lost" };
     } finally {
       clearTimeout(timer);
@@ -112,7 +122,7 @@ export type AttemptOutcome =
       body: Uint8Array | null;
       /** Why the body could not be read: deadline, caller abort or a broken connection. */
       bodyFailure: "timeout" | "aborted" | "broken" | "oversized" | null;
-      /** The unread body of an event stream (`AttemptRequest.stream`); `body` is then null. */
+      /** The unread body of an event stream or download (`AttemptRequest.stream`); `body` is then null. */
       stream?: StreamBody;
     }
   /** The request cannot have reached the server (DNS, refused, TLS). */
@@ -215,10 +225,13 @@ export async function attempt(fetchImpl: typeof fetch, req: AttemptRequest): Pro
     response.headers.forEach((value, name) => {
       headers[name.toLowerCase()] = value;
     });
-    if (req.stream === true && response.status >= 200 && response.status <= 299 && response.body !== null && isEventStream(headers["content-type"])) {
+    const handOver = req.stream === "bytes"
+      ? req.method !== "HEAD" && ![204, 205, 304].includes(response.status)
+      : req.stream === true && isEventStream(headers["content-type"]);
+    if (handOver && response.status >= 200 && response.status <= 299 && response.body !== null) {
       handedOver = true;
       clearTimeout(timer);
-      const stream = new StreamBody(response.body.getReader(), controller, req.signal, onAbort, req.idleMs ?? req.timeoutMs);
+      const stream = new StreamBody(response.body.getReader(), controller, req.signal, onAbort, req.idleMs ?? req.timeoutMs, req.stream === "bytes" ? req.deadlineMs : undefined);
       return { kind: "response", response, status: response.status, headers, body: null, bodyFailure: null, stream };
     }
     let body: Uint8Array | null = null;

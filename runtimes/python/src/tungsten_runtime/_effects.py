@@ -29,9 +29,11 @@ class AttemptRequest:
     headers: Mapping[str, str]
     body: bytes | None
     timeout_ms: float
-    #: Hand a ``text/event-stream`` answer with a 2xx status back unread, as
-    #: a ``Streaming`` outcome; any other answer is read as usual.
-    stream: bool = False
+    #: True: hand a ``text/event-stream`` answer with a 2xx status back
+    #: unread, as a ``Streaming`` outcome. ``"bytes"``: hand back any 2xx
+    #: answer that has a body (a download), its reads still bounded by
+    #: ``deadline_ms``. Any other answer is read as usual.
+    stream: bool | Literal["bytes"] = False
     #: With ``stream``: the silence, in milliseconds, after which a read of
     #: the body times out. Default ``timeout_ms``.
     idle_ms: float | None = None
@@ -52,7 +54,7 @@ class Answered:
 
 @dataclass(frozen=True, slots=True)
 class Streaming:
-    """A 2xx ``text/event-stream`` answer whose body has not been read.
+    """A 2xx ``text/event-stream`` answer (or download) whose body has not been read.
     ``stream`` is the driver's handle: read it with ``read_chunk`` (the
     driver closes it when the iteration ends)."""
 
@@ -179,10 +181,11 @@ class StreamEnded:
 
 @dataclass(frozen=True, slots=True)
 class StreamFailed:
-    """The body could not be read: no bytes within the attempt timeout, or the
-    connection failed before the stream ended."""
+    """The body could not be read: no bytes within the attempt timeout, the
+    deadline of a download ran out, or the connection failed before the
+    stream ended."""
 
-    kind: Literal["timeout", "lost"]
+    kind: Literal["timeout", "deadline", "lost"]
 
 
 ReadOutcome = Chunk | StreamEnded | StreamFailed

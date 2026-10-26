@@ -49,6 +49,7 @@ import {
   validHeaderValue,
 } from "./serialize.js";
 import { DEFAULT_MAX_EVENT_BYTES, SseParser, type SseEvent } from "./sse.js";
+import { declaredLength, Download, type DownloadFailure } from "./download.js";
 import { EventStream } from "./streams.js";
 import { attempt, type AttemptOutcome, nextLink, parseRetryAfter, StreamBody } from "./transport.js";
 import { type Permit, type Rejection, RequestScheduler } from "./scheduler.js";
@@ -62,6 +63,7 @@ import type {
   ClientCoreExtensions,
   ClientOptions,
   Diagnostic,
+  DownloadOptions,
   HttpMethod,
   IdempotencyStore,
   MacroDescriptor,
@@ -708,6 +710,23 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     return new EventStream<T>(items(this), () => controller.abort(), safeId(op), !(isRecord(op) && isRecord(op.agent) && op.agent.safety === "read_only"));
   }
 
+  /** Send the operation and hand its 2xx body over unread, as a
+   * {@link Download} to read chunk by chunk or write to a sink: the body is
+   * never held in memory whole. Everything before the answer (validation,
+   * auth, idempotency, confirmation, retries, the scheduler, `deadlineMs`)
+   * follows the rules of `call`; an error status is read and classified as
+   * for `call`. The body's reads are bounded by `ClientOptions.idleTimeoutMs`
+   * (default `timeoutMs`), by `deadlineMs` and by `maxBytes`; the
+   * connection and its scheduler capacity are held until the download
+   * ends or is closed. Never throws. */
+  async download(op: OperationDescriptor, args: Record<string, unknown>, opts?: DownloadOptions): Promise<Result<Download>> {
+    try {
+      return await this.#download(op, args, this.#callOptions(opts));
+    } catch (error) {
+      return fail(this.#internal(op, error, "downloading"));
+    }
+  }
+
   /** Call a read operation until `until` holds on its body or the budget
    * runs out (`timedOut: true` with the last result). */
   async poll<T>(
@@ -956,7 +975,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
   /** The answer to a request whose stored OAuth2 token was rejected (401):
    * the refreshed token is put on the same request, which is sent once more;
    * `rejected` stands when nothing could be refreshed. */
-  async #retryRejected<T>(prepared: Prepared, rejected: Failure, opts: CallOptions): Promise<Result<T>> {
+  async #retryRejected<T>(prepared: Prepared, rejected: Failure, opts: CallOptions, stream: boolean | "bytes" = false, idleMs?: number): Promise<Result<T>> {
     const interrupted = this.#beforeDispatch(prepared.op, opts);
     if (interrupted) return interrupted;
     const scheme = prepared.oauth;
@@ -967,7 +986,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     if (token === DEADLINE_EXPIRED || token === null) return rejected;
     prepared.headers.set("Authorization", `Bearer ${token}`, true);
     prepared.secrets.add(token);
-    return this.#send<T>({ ...prepared, oauth: null }, opts);
+    return this.#send<T>({ ...prepared, oauth: null }, opts, stream, idleMs);
   }
 
   /** The OAuth2 authorization-code helpers of the scheme `scheme`: PKCE, the
@@ -1609,7 +1628,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
 
   // -------------------------------------------------------------- sending
 
-  async #send<T>(prepared: Prepared, opts: CallOptions, stream = false, idleMs?: number): Promise<Result<T>> {
+  async #send<T>(prepared: Prepared, opts: CallOptions, stream: boolean | "bytes" = false, idleMs?: number): Promise<Result<T>> {
     const { op } = prepared;
     const mutation = isMutation(op);
     const protectedReplay = hasReplayProtection(op, prepared.key);
@@ -1698,7 +1717,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
         if (permit !== null) {
           if (!result.ok && result.error.category === "RATE_LIMITED") permit.settle(result.error.retry_after_ms);
           else if (outcome.kind === "response") permit.settle(undefined);
-          // An open event stream keeps its capacity until it is closed.
+          // An open event stream or download keeps its capacity until it is closed.
           if (result.ok && result.value instanceof StreamBody) {
             result.value.whenClosed(() => permit.release());
             handedOff = true;
@@ -1755,12 +1774,13 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
 
   /** Wait for scheduler capacity for one attempt. Null without a
    * scheduler; a failure (nothing sent) when no capacity was given. */
-  async #admit(op: OperationDescriptor, url: string, opts: CallOptions, stream: boolean): Promise<Permit | Failure | null> {
+  async #admit(op: OperationDescriptor, url: string, opts: CallOptions, stream: boolean | "bytes"): Promise<Permit | Failure | null> {
     const scheduler = this.#scheduler;
     if (scheduler === null) return null;
     const random = typeof this.options.random === "function" ? () => bounded(this.options.random?.(), 0.5, 0, 1) : Math.random;
     const key = this.#scopeKey(url);
-    const admitted = await scheduler.acquire(key, stream ? "stream" : "call", opts.signal, this.#deadline(opts), random);
+    // A download holds an ordinary request's capacity until it is closed.
+    const admitted = await scheduler.acquire(key, stream === true ? "stream" : "call", opts.signal, this.#deadline(opts), random);
     if ("release" in admitted) {
       // Cancelled or expired while it waited: the request is never sent.
       const late = this.#beforeDispatch(op, opts);
@@ -1771,7 +1791,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
       return admitted;
     }
     // A wait ended by the caller's signal or deadline reports that.
-    return this.#beforeDispatch(op, opts) ?? this.#rejected(op, admitted, stream);
+    return this.#beforeDispatch(op, opts) ?? this.#rejected(op, admitted, stream === true);
   }
 
   #scopeKey(url: string): string {
@@ -2686,6 +2706,72 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     } finally {
       body.close();
     }
+  }
+
+  async #download(op: OperationDescriptor, args: Record<string, unknown>, opts: DownloadOptions): Promise<Result<Download>> {
+    const maxBytes = opts.maxBytes === undefined || opts.maxBytes === null ? undefined : opts.maxBytes;
+    if (maxBytes !== undefined && !(Number.isSafeInteger(maxBytes) && maxBytes >= 0)) {
+      return fail(diagnostic(safeId(op), "VALIDATION_FAILED", {
+        failed_parameter: "maxBytes",
+        received_value: envelopeValue(maxBytes, false),
+        expected: "a non-negative safe integer",
+        remediation: "Pass maxBytes as a whole number of bytes, or leave it out for no limit. Nothing was sent.",
+      }));
+    }
+    const prepared = await this.#prepare(op, args, opts, "call", null);
+    if (!prepared.ok) return prepared;
+    const prep = prepared.value;
+    const idleSetting = bounded(this.options.idleTimeoutMs, 0, 0);
+    const idleMs = idleSetting > 0 ? idleSetting : undefined;
+    let sent = await this.#send<unknown>(prep, opts, "bytes", idleMs);
+    if (!sent.ok && sent.error.http_status === 401 && prep.oauth !== null) {
+      sent = await this.#retryRejected<unknown>(prep, sent, opts, "bytes", idleMs);
+    }
+    if (!sent.ok) return sent;
+    const { meta } = sent;
+    const mutation = isMutation(op);
+    const timeoutMs = this.#timeout(opts);
+    const hint = op.agent.verify ? `Call ${op.agent.verify.operation} to read the current state.` : null;
+    const failure = (why: DownloadFailure, bytes: number, detail?: string): Diagnostic => {
+      const after = `after ${bytes} ${bytes === 1 ? "byte" : "bytes"}`;
+      const code = why === "idle" ? "STREAM_IDLE" : why === "deadline" ? "DEADLINE_EXCEEDED" : why === "oversized" ? "RESPONSE_TOO_LARGE" : why === "sink" ? "SINK_FAILED" : null;
+      const cause =
+        why === "idle" ? `No bytes arrived within ${idleMs ?? timeoutMs} ms ${after}; the download was abandoned.`
+        : why === "deadline" ? `The operation deadline (deadlineMs) expired ${after}; the download was abandoned.`
+        : why === "aborted" ? `The download was cancelled ${after}.`
+        : why === "lost" ? `The connection failed ${after}, before the body ended.`
+        : why === "truncated" ? `The body ended ${after}, short of its Content-Length of ${declaredLength(meta.headers["content-length"]) ?? 0}.`
+        : why === "oversized" ? `The body is larger than the limit of ${maxBytes ?? 0} bytes (maxBytes); the download was abandoned ${after}.`
+        : `The sink failed (${detail ?? "error"}) ${after}; the download was abandoned.`;
+      const common = { http_status: meta.status, request_id: meta.requestId, code, trace: { attempts: meta.attempts } };
+      if (mutation) {
+        return scrubDiagnostic(diagnostic(op.id, "UNEXPECTED_RESPONSE", {
+          ...common,
+          retryable: "never",
+          next_action: hint,
+          remediation: `The server accepted ${op.id} (HTTP ${meta.status}). ${cause} The call took effect; do not repeat it.`,
+        }), prep.secrets);
+      }
+      const local = why === "aborted" || why === "sink" || why === "oversized" || why === "deadline";
+      const category = why === "idle" || why === "deadline" ? "UPSTREAM_UNAVAILABLE" : why === "oversized" ? "UNEXPECTED_RESPONSE" : "TRANSPORT_FAILED";
+      const again =
+        why === "idle" ? `call again later or with a larger ${idleMs === undefined ? "timeoutMs" : "idleTimeoutMs"}`
+        : why === "deadline" ? "call again with a larger deadlineMs"
+        : why === "oversized" ? "raise maxBytes if a body this large is expected"
+        : "call again";
+      return scrubDiagnostic(diagnostic(op.id, category, {
+        ...common,
+        ...(local ? { retryable: "never" as const } : {}),
+        remediation: `${cause} This read has no side effects; ${again}.`,
+      }), prep.secrets);
+    };
+    const body = sent.value instanceof StreamBody ? sent.value : null;
+    const download = new Download(body, meta, maxBytes, typeof opts.onProgress === "function" ? opts.onProgress : undefined, failure);
+    if (maxBytes !== undefined && download.contentLength !== null && download.contentLength > maxBytes) {
+      download.close();
+      return fail(failure("oversized", 0));
+    }
+    return { ok: true, value: download, meta };
   }
 
   async #poll<T>(
