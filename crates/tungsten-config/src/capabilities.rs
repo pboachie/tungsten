@@ -804,6 +804,11 @@ pub const OPENAPI_32_SUPPORTED: &[SupportedInputFeature] = &[
         behavior: "the event type of a server-sent event stream: the `contentSchema` of the event's `data`",
     },
     SupportedInputFeature {
+        id: "item_schema_text_event_stream",
+        member: "itemSchema (text/event-stream response, text `data`)",
+        behavior: "a server-sent event stream of strings: each event's `data` delivered as written, not decoded as JSON",
+    },
+    SupportedInputFeature {
         id: "discriminator_default_mapping",
         member: "discriminator.defaultMapping",
         behavior: "a tagged union decodes a missing or unmapped tag as the default variant",

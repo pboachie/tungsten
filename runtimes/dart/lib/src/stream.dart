@@ -733,7 +733,7 @@ extension _Streams on ClientCore {
             o.secrets,
           ),
         );
-    final value = Json.tryParse(ev.data);
+    final value = op.stream!.text ? ev.data : Json.tryParse(ev.data);
     if (identical(value, unset)) {
       return failure(
         _diag(op.id, 'UNEXPECTED_RESPONSE')
