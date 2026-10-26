@@ -17,7 +17,7 @@ export interface TransferProgress {
 }
 
 /** Why a download ended without its whole body. */
-export type DownloadFailure = "idle" | "deadline" | "aborted" | "lost" | "truncated" | "oversized" | "sink";
+export type DownloadFailure = "idle" | "deadline" | "aborted" | "lost" | "truncated" | "oversized" | "sink" | "exists";
 
 /** One read of a download: a chunk, `null` at the end of the body, or the
  * failure that ended it. */
@@ -135,6 +135,14 @@ export class Download {
     } finally {
       this.close();
     }
+  }
+
+  /** End the download for a reason found outside it (a destination
+   * helper: `sink` or `exists`) and release the connection; the failure
+   * that every later read returns. */
+  abandon(why: DownloadFailure, detail?: string): { ok: false; error: Diagnostic } {
+    if (this.#final !== null && !this.#final.ok) return this.#final;
+    return this.#end(why, detail) as { ok: false; error: Diagnostic };
   }
 
   /** Abandon the download and release the connection. Safe to call more
