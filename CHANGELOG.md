@@ -234,6 +234,12 @@ changes.
   safety tier of unreviewed operations. Generated SDKs require a runtime with
   `ClientCore.requireImportPolicyV1()`.
 
+- The `ruby` target now enforces imported-operation policy the same way: the
+  Ruby runtime refuses a reviewed imported operation whose target origin is
+  outside its saved review scope (`VALIDATION_FAILED` on `base_url`, nothing
+  sent), and generated gems require
+  `Tungsten::Runtime::ClientCore.require_import_policy_v1`.
+
 - Add explicit Linux support-bundle export to a new file in an existing,
   trusted user-owned directory. Export preserves the metadata-only preview
   manifest, caps complete artifacts at 128 KiB, refuses replacement and

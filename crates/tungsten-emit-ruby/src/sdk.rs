@@ -78,6 +78,14 @@ fn entry(g: &Gen<'_, '_>) -> String {
         if g.plan.ir.agent.redirects == tungsten_ir::RedirectPolicy::None {
             w.line("::Tungsten::Runtime::ClientCore.require_redirect_policy_v1");
         }
+        if g
+            .plan
+            .operations
+            .iter()
+            .any(|p| p.op.agent.import_policy.is_some())
+        {
+            w.line("::Tungsten::Runtime::ClientCore.require_import_policy_v1");
+        }
         w.line(format!(
             "DESCRIPTORS = ::Tungsten::Runtime::Descriptors.load(File.join(__dir__, {}, \"tungsten-descriptors.json\"))",
             str_lit(&lib)
