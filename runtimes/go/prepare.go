@@ -559,8 +559,21 @@ func (c *ClientCore) prepare(ctx context.Context, op *OperationDescriptor, rawAr
 	if insecureHTTP(target, c.allowInsecureHTTP) {
 		credentialError = insecureHTTPAuth
 	}
+	// A stream's connect deadline is recorded without ending its ctx;
+	// authentication and key reservation are bounded by it here.
+	if at, ok := callDeadline(ctx); ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithDeadlineCause(ctx, at, errCallDeadline)
+		defer cancel()
+	}
+	if deadlineExpired(ctx) {
+		return nil, deadlineFailure(op.ID, "before the request could be sent")
+	}
 	auth := c.resolveAuth(ctx, op, method, credentialError)
 	if auth.failed != "" {
+		if deadlineExpired(ctx) {
+			return nil, deadlineFailure(op.ID, "while authenticating")
+		}
 		return nil, newDiag(op.ID, AuthFailed).remedy(auth.failed).err()
 	}
 	var secrets secretSet
@@ -1007,6 +1020,9 @@ func (c *ClientCore) idempotencyKey(ctx context.Context, op *OperationDescriptor
 		}
 		key, err := reserveKeyContext(ctx, c.store, op.ID, logical, candidate)
 		if err != nil {
+			if deadlineExpired(ctx) {
+				return "", false, deadlineFailure(op.ID, "while reserving an idempotency key")
+			}
 			return "", false, refuse(err.Error())
 		}
 		if key == "" {
