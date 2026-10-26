@@ -61,6 +61,7 @@ module Tungsten
         @auth = (o.auth || {}).to_h.transform_keys(&:to_s)
         @headers = (o.headers || {}).to_h.transform_keys(&:to_s)
         @timeout_ms = positive(o.timeout_ms) || DEFAULT_TIMEOUT_MS
+        @deadline_ms = positive(o.deadline_ms)
         @max_event_bytes = positive(o.max_event_bytes) || DEFAULT_MAX_EVENT_BYTES
         @max_response_bytes = o.max_response_bytes.nil? ? 4 * 1024 * 1024 : o.max_response_bytes
         @max_oauth_token_response_bytes = o.max_oauth_token_response_bytes.nil? ? 64 * 1024 : o.max_oauth_token_response_bytes
@@ -160,7 +161,32 @@ module Tungsten
           return Runtime.diag(d.id, "VALIDATION_FAILED").param("opts").expected("call options")
                         .remedy("Pass the call options as a Hash of idempotency_key, confirm, timeout_ms, verify and headers (#{e.message}).").err
         end
-        yield d, o
+        yield d, with_deadline(o)
+      end
+
+      # The options with the call's absolute deadline resolved from
+      # `deadline_ms` (else the client's), never later than an inherited one.
+      def with_deadline(o)
+        ms = positive(o.deadline_ms) || @deadline_ms
+        return o unless ms
+
+        at = Transport.monotonic_ms + ms
+        at = [at, o.deadline_at].min if o.deadline_at.is_a?(Numeric)
+        o.with(deadline_at: at)
+      end
+
+      def deadline_expired?(o) = o.deadline_at.is_a?(Numeric) && Transport.monotonic_ms >= o.deadline_at
+
+      def deadline_err(operation, during)
+        Runtime.diag(operation, "TRANSPORT_FAILED").code("DEADLINE_EXCEEDED").retrying("never")
+               .remedy("The operation deadline expired #{during}, so the request was not sent. Call again with a larger deadline_ms.").err
+      end
+
+      # The attempt timeout cut to the time left before the call's deadline.
+      def within_deadline(timeout, o)
+        return timeout unless o.deadline_at.is_a?(Numeric)
+
+        [[(o.deadline_at - Transport.monotonic_ms).ceil, 1].max, timeout].min
       end
 
       def random
@@ -862,7 +888,10 @@ module Tungsten
         check = mutation && !protected_ ? outcome_check(op, p.args) : nil
         timeout = attempt_timeout(opts)
         attempts = 0
+        previous_mutation_failure = nil
         loop do
+          return previous_mutation_failure || deadline_err(op.id, "before the request could be sent") if deadline_expired?(opts)
+
           attempts += 1
           rctx = request_context(p, attempts)
           hook(:on_request, rctx)
@@ -871,7 +900,8 @@ module Tungsten
           body = p.body
           headers = p.headers.entries.map { |e| [e.name, e.value] }
           send_once = lambda do
-            Transport.attempt(url: target, method: method, headers: headers, body: body, timeout_ms: timeout, stream: stream,
+            Transport.attempt(url: target, method: method, headers: headers, body: body,
+                              timeout_ms: stream ? timeout : within_deadline(timeout, opts), stream: stream,
                               idle_ms: stream ? @idle_timeout_ms : nil, max_response_bytes: cap)
           end
           outcome = send_once.call
@@ -894,6 +924,13 @@ module Tungsten
           end
           p.final_url = target
           ctx = Classify::CallContext.new(api: @api, op: op, key: p.key, key_header: p.key_header, attempts: attempts, check: check)
+          if outcome.kind == :timeout && opts.deadline_at.is_a?(Numeric) && Transport.monotonic_ms >= opts.deadline_at - 1
+            cause = "The operation deadline expired before a response arrived."
+            return Err.new(error: Classify.outcome_unknown(ctx, cause)) if mutation
+
+            return Runtime.diag(op.id, "UPSTREAM_UNAVAILABLE").code("DEADLINE_EXCEEDED").retrying("never")
+                          .remedy("#{cause} This read has no side effects; call again with a larger deadline_ms.").attempts(attempts).err
+          end
           result = classify_response(ctx, p, outcome, rctx, timeout)
           return result unless result.is_a?(Err)
 
@@ -917,6 +954,10 @@ module Tungsten
               end
           end
           hook(:on_retry, rctx, d)
+          previous_mutation_failure = done if mutation
+          # A retry that could not start before the deadline is not waited for.
+          return done if opts.deadline_at.is_a?(Numeric) && Transport.monotonic_ms + delay >= opts.deadline_at
+
           sleep([delay, 0].max / 1000.0)
         end
       end

@@ -58,7 +58,7 @@ module Tungsten
           return Runtime.diag(m.name, "VALIDATION_FAILED").param("opts").expected("call options")
                         .remedy("Pass the call options as a Hash of idempotency_key, confirm, timeout_ms, verify and headers (#{e.message}).").err
         end
-        yield m, o
+        yield m, with_deadline(o)
       end
 
       def uses_key?(op) = %w[caller_owned auto].include?(op.agent["idempotency"]["policy"])
