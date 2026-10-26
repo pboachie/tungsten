@@ -320,6 +320,40 @@ pub(crate) struct WorkspaceArgs {
     /// Only these projects, by id; repeatable. Unknown ids fail (TG0644).
     #[arg(long, value_name = "ID")]
     pub project: Vec<String>,
+    /// Only the projects that depend on FILE: its manifest, a declared
+    /// input, or a file the project's offline compilation read or looked
+    /// for. A project that does not compile counts as depending on every
+    /// file. Repeatable; combined with --project, both must hold.
+    #[arg(long, value_name = "FILE")]
+    pub affected: Vec<PathBuf>,
+    /// Run this command on each selected project, one at a time in
+    /// discovery order, and report every project's outcome. Arguments
+    /// after `--` are passed to each run; the project's manifest is
+    /// appended as PATH.
+    #[arg(long, value_enum, value_name = "COMMAND")]
+    pub run: Option<WorkspaceRun>,
+    /// Arguments for each run (after `--`), for example `-- --strict`.
+    #[arg(last = true, requires = "run", value_name = "ARGS")]
+    pub args: Vec<String>,
+}
+
+/// Commands `tungsten workspace --run` runs per project.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum WorkspaceRun {
+    Check,
+    Generate,
+    Lock,
+}
+
+impl WorkspaceRun {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Check => "check",
+            Self::Generate => "generate",
+            Self::Lock => "lock",
+        }
+    }
 }
 
 #[derive(Debug, Args)]

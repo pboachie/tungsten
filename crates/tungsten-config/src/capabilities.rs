@@ -588,6 +588,10 @@ pub struct WorkspaceCapability {
     /// Whether the language server routes documents to their owning
     /// project across several workspace folders and projects.
     pub editor_routing: bool,
+    /// Commands `tungsten workspace --run` runs on each selected project,
+    /// serially in discovery order (selection by `--project` and by
+    /// dependency evidence with `--affected`).
+    pub runs: &'static [&'static str],
 }
 
 /// The workspace declaration.
@@ -609,6 +613,7 @@ pub const WORKSPACE: WorkspaceCapability = WorkspaceCapability {
         "scenario run",
     ],
     editor_routing: true,
+    runs: &["check", "generate", "lock"],
 };
 
 /// How an input format enters a project.
