@@ -1000,8 +1000,13 @@ unknown major contract versions before interpreting them.
 
 The TypeScript declaration also includes `options_schema`, a JSON Schema for
 supported raw `package`, `version`, `runtime`, `runtime_path` and `dependencies`
-values. The `ts` alias returns the same declaration. Other targets report null
-until their option schemas are declared. This does not change generation policy:
+values. The `ts` alias returns the same declaration. Python and Rust declare
+their typed options the same way. Every other built-in target declares a field
+schema with the JSON type, fixed default and description of each option it
+reads (besides `out`), plus the warning code an invalid value produces; the
+emitter keeps the semantic validators, and `config` inspection covers only the
+TypeScript, Python and Rust schemas. The reserved `mock` target reports null.
+This does not change generation policy:
 invalid TypeScript scalars still produce TG0711 warnings and use defaults;
 invalid custom dependencies produce errors. Unknown keys remain ignored, and
 defaults that depend on the compiled API remain in the emitter. This is an
@@ -1060,9 +1065,35 @@ The compiler driver returns typed declarations and winning/shadowed authored
 origins in memory; emitter defaults still depend on the compiled API. Profile
 source/digest names are portable (`profile[0]/base.yml`), while physical identity
 stays in provenance for confinement. A name collision with another compilation
-input is an error. This result is not a replayable approval document. Dedicated
-profile navigation and setup presets remain follow-up work. Hosts can select the
-external-emitter restrictions described above; executable approval remains separate.
+input is an error. This result is not a replayable approval document. Hosts can
+select the external-emitter restrictions described above; executable approval
+remains separate.
+
+`tungsten lsp` serves profile files too: completion and hover from the profile
+schema, diagnostics in the profile that caused them, and watchers for profile
+directories outside the workspace folder.
+
+#### Init presets
+
+`tungsten init --preset NAME` starts from a named set of outputs; the same names
+are accepted at the guided setup's outputs prompt. Explicit `--targets` and
+`--strict` win, and a preset never selects inputs, reviews operations or changes
+`agent.yml` safety defaults.
+
+| Preset | Outputs | Also |
+| --- | --- | --- |
+| `app` | TypeScript SDK, docs | |
+| `library` | TypeScript, Python and Rust SDKs, docs | writes `profiles/library.yml` (shared package versions) and selects it, so other projects can reuse it |
+| `agent` | MCP server on the TypeScript SDK | generates with `--strict` |
+
+```sh
+tungsten init --no-interactive --preset library --from openapi.json --dir my-sdk
+tungsten init --no-interactive --preset app --from openapi.json --generate --local-example
+```
+
+Exit codes are those of `init`: 0 on success, 1 when the input has errors, 2 for
+an unknown preset, 4 when an existing manifest or profile would be overwritten
+without `--force` (nothing is written). `--no-interactive` never prompts.
 
 Inspect the supported effective configuration without compiling API inputs:
 
