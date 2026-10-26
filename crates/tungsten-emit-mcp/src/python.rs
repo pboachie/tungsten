@@ -2,7 +2,7 @@
 //! The experimental `mcp-python` target: a native Python MCP server package
 //! that serves the same manifest as the `mcp` target through the
 //! `tungsten-mcp` Python runtime (`runtimes/mcp-python`) on top of the
-//! generated Python SDK, over stdio, in discrete mode.
+//! generated Python SDK, over stdio, in discrete or progressive mode.
 //!
 //! Files: `pyproject.toml`, `README.md`, `.env.example` and the package
 //! `<module>/` (`__init__.py`, `__main__.py`, `server.py`,
@@ -32,7 +32,7 @@ use tungsten_emit::{CommentStyle, Emitter, FileSet, TargetConfig, header};
 use tungsten_ir::Ir;
 
 use crate::env::{self, Credentials};
-use crate::manifest::{self, McpManifest, Mode, ToolKind};
+use crate::manifest::{self, McpManifest, ToolKind};
 
 /// Default version specifier of the `tungsten-mcp` runtime.
 pub const DEFAULT_RUNTIME: &str = ">=0.1.3,<0.2.0";
@@ -69,20 +69,6 @@ impl Emitter for McpPythonEmitter {
 /// What the Python runtime does not serve for this API (TG0729).
 fn gaps(ir: &Ir, manifest: &McpManifest) -> Diagnostics {
     let mut diags = Diagnostics::new();
-    if manifest.mode == Mode::Progressive {
-        diags.push(
-            Diagnostic::warning(
-                "TG0729",
-                "mcp-python serves discrete tools only, and this API's disclosure mode is progressive; the \
-                 server refuses to start unless its mode variable is `discrete`",
-            )
-            .with_help(format!(
-                "set {}=discrete to list every tool, set `disclosure.mode: discrete` in agent.yml, or use \
-                 the `mcp` target for progressive disclosure",
-                env::mode(ir)
-            )),
-        );
-    }
     let streamed: Vec<&str> = ir
         .operations()
         .into_iter()
@@ -434,7 +420,7 @@ fn server_py(ir: &Ir, opts: &PythonOptions) -> String {
          \x20   \"\"\"Serve over stdio; the exit status.\"\"\"\n\
          \x20   manifest = load_manifest(__package__ or {module})\n\
          \x20   try:\n\
-         \x20       check_mode(manifest, _env(MODE_ENV), MODE_ENV)\n\
+         \x20       mode = check_mode(manifest, _env(MODE_ENV), MODE_ENV)\n\
          \x20       deadline = deadline_ms()\n\
          \x20   except ServeError as error:\n\
          \x20       print(f\"error: {{error}}\", file=sys.stderr)\n\
@@ -446,6 +432,7 @@ fn server_py(ir: &Ir, opts: &PythonOptions) -> String {
          \x20       name={name},\n\
          \x20       version={version},\n\
          \x20       tool_deadline_ms=deadline,\n\
+         \x20       mode=mode,\n\
          \x20   )\n\
          \x20   return run(customize(options), argv)\n",
         title = tungsten_ir::title_stem(&ir.api.title),
@@ -461,24 +448,9 @@ fn server_py(ir: &Ir, opts: &PythonOptions) -> String {
     out
 }
 
-/// The variables of `.env.example` and the README: the `mcp` target's, with
-/// the mode restricted to what this runtime serves.
+/// The variables of `.env.example` and the README: the `mcp` target's.
 fn variables(ir: &Ir) -> Vec<(String, String)> {
-    let mode = env::mode(ir);
     crate::package::variables(ir)
-        .into_iter()
-        .map(|(name, what)| {
-            if name == mode {
-                (
-                    name,
-                    "`discrete` (the only mode this server serves); `progressive` is refused at startup."
-                        .into(),
-                )
-            } else {
-                (name, what)
-            }
-        })
-        .collect()
 }
 
 fn env_example(ir: &Ir) -> String {
@@ -551,7 +523,6 @@ fn readme(ir: &Ir, opts: &PythonOptions, manifest: &McpManifest) -> String {
          - Sensitive response fields and shown-once results are returned once per session.\n\n\
          ## Limits\n\n\
          - stdio only: no Streamable HTTP, so no MCP-client authentication or Host/Origin checks.\n\
-         - Discrete tools only: a progressive manifest is refused unless the mode variable is `discrete`.\n\
          - Streamed (server-sent event) results are not collected; such calls return an envelope and \
          send nothing.\n\
          - No `run_script`, embedding search, resources or prompts.\n\
