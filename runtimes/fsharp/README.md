@@ -36,6 +36,15 @@ Compatibility helpers retain application-owned custom-scheme policy.
 
 ## Limits
 
+In unreleased 0.2.0, the total operation deadline is the .NET runtime's: set `Deadline` (a
+`TimeSpan`) on `ClientOptions` or per call with `CallOptions(Deadline = TimeSpan.FromSeconds 5.0)`.
+Unlike the per-attempt `Timeout`, it bounds one logical call across authentication, idempotency-key
+reservation, retries and backoff, response bodies and verification, and a whole traversal, poll or
+macro, on a monotonic clock. No attempt starts after it expires (`Code` `DEADLINE_EXCEEDED`); a
+mutation already sent reports `OUTCOME_UNKNOWN`. It is independent of the `?cancellationToken` of a
+generated method (and of the token an `Async` workflow carries), which still cancels at once. The
+limits listed in the C# runtime's README apply. Default: no total deadline.
+
 OAuth helpers returned by generated F# clients are the C# runtime's `OAuthFlow`.
 In unreleased 0.2.0, `AuthorizationUrl` returns a managed attempt; complete it with
 its handle, full callback URL and owning session/listener binding. Explicitly

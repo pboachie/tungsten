@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use lsp_types::{
     Diagnostic, DiagnosticRelatedInformation, DiagnosticSeverity, Location, NumberOrString, Range,
 };
+use tungsten_build::suggest::{Action, SUGGESTED_CODES, suggest};
 use tungsten_build::{CompileOptions, Compiled, compile_project};
 use tungsten_core::{Diagnostic as Tg, Severity, SourceId};
 use tungsten_ir::{Ir, OperationStatus};
@@ -24,6 +25,8 @@ use crate::uri::{normalize, path_to_uri};
 /// Most diagnostics published for one file; the rest are dropped so a spec
 /// with thousands of findings cannot flood the client.
 const MAX_PER_FILE: usize = 500;
+/// Most overlay fixes kept from one compilation.
+const MAX_OVERLAY_FIXES: usize = 1000;
 
 /// What the server knows about one operation.
 #[derive(Debug, Clone)]
@@ -63,6 +66,22 @@ impl Index {
     }
 }
 
+/// One overlay action `tungsten overlay suggest` would write, with the
+/// diagnostics it fixes as the editor shows them.
+#[derive(Debug, Clone)]
+pub struct OverlayFix {
+    /// The input's position in `inputs` of the manifest.
+    pub input: usize,
+    pub namespace: String,
+    /// The `spec` of the input, as written in the manifest.
+    pub spec: String,
+    /// The `overlays` of the input, as written in the manifest.
+    pub overlays: Vec<String>,
+    pub action: Action,
+    /// Where the fixed diagnostics are shown: file, range and code.
+    pub fixes: Vec<(PathBuf, Range, String)>,
+}
+
 /// The result of one compilation.
 #[derive(Debug, Default)]
 pub struct Analysis {
@@ -77,6 +96,8 @@ pub struct Analysis {
     pub diagnostics: BTreeMap<PathBuf, Vec<Diagnostic>>,
     /// Present only when the project compiled far enough to build the IR.
     pub index: Option<Index>,
+    /// Overlay actions that fix TG0401/TG0403 diagnostics, bounded.
+    pub overlay_fixes: Vec<OverlayFix>,
 }
 
 /// Compile the project whose manifest is `manifest`, with `overrides` as
@@ -135,7 +156,73 @@ pub fn analyze(
         .ir
         .as_ref()
         .map(|ir| index(ir, &compiled.workspace, &base));
+    if cancellation.is_cancelled() {
+        return None;
+    }
+    out.overlay_fixes = overlay_fixes(&compiled, &base, &manifest_name, &out.manifest);
     (!cancellation.is_cancelled()).then_some(out)
+}
+
+/// The overlay actions of [`suggest`], each with the editor placement of
+/// the diagnostics it fixes.
+fn overlay_fixes(
+    compiled: &Compiled,
+    base: &Path,
+    manifest_name: &str,
+    manifest: &Path,
+) -> Vec<OverlayFix> {
+    let Some(config) = &compiled.config else {
+        return vec![];
+    };
+    let ws = &compiled.workspace;
+    let mut lines = Lines::new(ws);
+    let mut out = vec![];
+    for found in suggest(compiled, &[]).inputs {
+        let Some(input) = config
+            .inputs
+            .iter()
+            .position(|i| i.namespace == found.namespace && i.spec == found.spec)
+        else {
+            continue;
+        };
+        let doc = ws
+            .entry_docs
+            .get(input)
+            .copied()
+            .flatten()
+            .and_then(|d| ws.documents.get(d));
+        let Some(doc) = doc else { continue };
+        for action in found.actions {
+            if out.len() >= MAX_OVERLAY_FIXES {
+                return out;
+            }
+            let fixes = compiled
+                .diagnostics
+                .iter()
+                .filter(|d| SUGGESTED_CODES.contains(&d.code.as_str()))
+                .filter(|d| action.codes.contains(&d.code))
+                .filter(|d| {
+                    d.labels
+                        .first()
+                        .is_some_and(|l| l.file == doc.name && l.pointer == action.pointer)
+                })
+                .map(|d| {
+                    let (path, range) =
+                        place(d, &mut lines, compiled, base, manifest_name, manifest);
+                    (path, range, d.code.clone())
+                })
+                .collect();
+            out.push(OverlayFix {
+                input,
+                namespace: found.namespace.clone(),
+                spec: found.spec.clone(),
+                overlays: config.inputs[input].overlays.clone(),
+                action,
+                fixes,
+            });
+        }
+    }
+    out
 }
 
 fn severity(s: Severity) -> DiagnosticSeverity {
