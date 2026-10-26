@@ -1727,7 +1727,7 @@ def main() -> None:
         execute(entry, binary, not args.generate_only)
         if args.generate_only and entry["mode"] == "target" and entry["target"] != "docs":
             print(f"OK: {entry['target']} generation is deterministic and fresh; package build was not run", flush=True)
-        elif args.generate_only and entry["mode"] in ("bulk-sync", "file-transfer", "webhooks", "telemetry", "android-jni"):
+        elif args.generate_only and entry["mode"] in ("bulk-sync", "file-transfer", "webhooks", "telemetry", "android-jni", "mcp-python"):
             print("OK: generation is deterministic and fresh; the clients were not run", flush=True)
         else:
             print(f"OK: {entry['outcome']}", flush=True)
