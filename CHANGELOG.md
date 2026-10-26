@@ -230,6 +230,22 @@ changes.
 
 ### Added
 
+- Add `tungsten upgrade rehearse`, run with a candidate release's binary: it
+  regenerates the project from its locked inputs, offline and without
+  touching the project, and reports compiler, emitter, consumer toolchain,
+  runtime family and option identity changes against `tungsten.lock.json`,
+  input drift, file and API surface changes with `diff --migration` actions,
+  and conflicts with edited generated files or files tungsten does not own.
+  Generated-source compatibility is reported apart from package availability
+  and runtime acceptance, which it does not check. With `--workspace` it
+  stages the output, proposed lock and rehearsal record for review;
+  `--from`/`--to` check the explicit identities. External emitters are never
+  started.
+- Add `tungsten upgrade apply --workspace DIR` to apply an accepted rehearsal
+  as a separate step. It refuses when inputs, the lock, the staged files or
+  any output file changed since the rehearsal, backs up what it replaces,
+  keeps custom files, and records a journal; `--restore` undoes an
+  interrupted or completed apply.
 - `tungsten update check` classifies a newer release as `compatible` or
   `migration` (new `upgrade` field in `--json`). Before 1.0 a minor release, from
   1.0 a major release, any prerelease, or notes with a Breaking section count as
@@ -485,6 +501,17 @@ changes.
   copied; import accepts them only below `.tungsten-inputs`. Without the flag,
   the reviewed source of a converted import is now listed as excluded too.
   Check that upstream terms allow redistributing bundled documents.
+
+- Add `lock --outputs` to record, and with `--check` verify, the identity of
+  the bytes each built-in target generates (file count and a digest over every
+  generated path and content digest), by running the built-in emitters in
+  memory; external emitters are never run and stay unrecorded. When the lock
+  records outputs, `generate --locked` also fails with `TG0129` before writing
+  if a selected built-in target generates different bytes from the same locked
+  identities, which certifies byte-identical reproduction on another machine
+  and surfaces platform-dependent differences explicitly. Plain `lock` and
+  `lock --check` still never run emitters; they leave the recorded outputs of
+  a current lock in place, and `lock --update` without `--outputs` drops them.
 
 - Extend the versioned capability catalog with each built-in target's option
   keys, execution environments and implemented features, plus a registry of

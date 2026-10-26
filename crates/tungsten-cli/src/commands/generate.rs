@@ -618,6 +618,15 @@ pub(crate) fn run(args: &GenerateArgs, env: &CliEnv, no_external: bool) -> Repor
         Ok(names) => names,
         Err(error) => return report.failed(exit::FAILED, error),
     };
+    if locked {
+        let mismatched =
+            super::lock::locked_output_diagnostics(&args.input.path, &compiled, env, &names);
+        if !mismatched.is_empty() {
+            report.diagnostics.extend(mismatched);
+            report.exit = exit::FAILED;
+            return report;
+        }
+    }
     let mode = if args.check {
         Mode::Check
     } else {
