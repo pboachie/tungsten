@@ -254,6 +254,15 @@ fn run_inner(
         }
     };
     let env = &selected_env;
+    let mut cli = cli;
+    if let Err(report) = commands::workspace::select(&mut cli) {
+        return if cli.json {
+            emit_json(*report, stdout)
+        } else {
+            emit_human(*report, color, stdout, stderr)
+        };
+    }
+    let cli = cli;
     #[cfg(any(target_os = "linux", target_vendor = "apple", windows))]
     let signals = if cfg!(target_os = "linux")
         && binary
