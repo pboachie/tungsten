@@ -622,7 +622,7 @@ tools/list: pets_pets_delete, pets_pets_list, preview
 pets_pets_list: typed pets as structuredContent
 pets_pets_delete without a token: CONFIRMATION_REQUIRED, nothing sent
 the preview token for pet-1 does not confirm pet-2
-pets_pets_delete with the preview token: deleted
+pets_pets_delete confirmed with the preview token deletes pet-1
 ```
 
 The server serves the same manifest as the `mcp` target, but only discrete
@@ -1508,7 +1508,7 @@ async def main(command: str, base: str) -> None:
         print("the preview token for pet-1 does not confirm pet-2")
         done = await session.call_tool("pets_pets_delete", {"pet_id": "pet-1", "confirmation_token": token})
         assert not done.is_error, done
-        print("pets_pets_delete with the preview token: deleted")
+        print("pets_pets_delete confirmed with the preview token deletes pet-1")
 
 
 anyio.run(main, sys.argv[1], sys.argv[2])
