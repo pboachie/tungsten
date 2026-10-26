@@ -450,6 +450,11 @@ changes.
   write a project whose outputs collide with another's. The capability catalog
   declares the workspace contract under `workspace`.
 
+- The `actions/tungsten` GitHub Action checks the projects of a workspace
+  (`workspace`), narrowed by project id (`workspace-projects`) and by
+  `tungsten workspace --affected` evidence for listed files (`affected-files`)
+  or for the files changed since a base commit (`affected-base`), and reports
+  the number of checked projects in a `projects` output.
 - A reusable composite GitHub Action, `actions/tungsten`, installs a pinned
   tungsten release through `install.sh` from the action's own commit (checksum
   and build provenance verified, provenance cannot be disabled), then runs
