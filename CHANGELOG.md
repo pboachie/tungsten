@@ -1374,18 +1374,20 @@ changes.
 
 ### Fixed
 
+- The Rust runtime reconnects a dropped event stream by resending the request it
+  opened with, as the TypeScript and Python runtimes do, instead of preparing it
+  again: a reconnect no longer re-runs authentication or reports a second `auth`
+  telemetry phase.
 - A Java call that starts an OAuth2 token refresh now stops waiting at its
   own deadline and reports `DEADLINE_EXCEEDED`, as the Rust and TypeScript
   runtimes do. Previously the call that owned the refresh ran it inline and
   returned only when the token request finished, so a call with a 300 ms
   deadline could take the full token timeout. The refresh still completes
   within its own bounds for other waiting calls.
-
 - Java and C# no longer retry a keyed mutation once its deadline has passed.
   An attempt cut by the deadline could end a fraction of a millisecond early
   and send the request again after the deadline; it now reports the earlier
   `OUTCOME_UNKNOWN` without resending, as TypeScript, Python and Rust do.
-
 - Webhook verification behaves the same in the TypeScript, Python and Rust
   runtimes:
   - A JSON payload with a `\u` escape that is a lone surrogate, or with a
