@@ -401,6 +401,14 @@ changes.
   outside its saved review scope (`VALIDATION_FAILED` on `base_url`, nothing
   sent), and generated clients require `ClientCore.requireImportPolicyV1()`.
 
+- The external Go emitter (`emitters/go`) now declares `import_policy: true` in
+  its `--describe` response, so projects converted from Postman, cURL, `.http`
+  or HAR input can generate Go SDKs. The Go runtime refuses a reviewed imported
+  operation whose target origin is outside its saved review scope
+  (`VALIDATION_FAILED` on `base_url`, nothing sent), and generated descriptors
+  carry `tungsten.ImportPolicy`, so they build only against a runtime that
+  enforces it.
+
 - Add explicit Linux support-bundle export to a new file in an existing,
   trusted user-owned directory. Export preserves the metadata-only preview
   manifest, caps complete artifacts at 128 KiB, refuses replacement and
