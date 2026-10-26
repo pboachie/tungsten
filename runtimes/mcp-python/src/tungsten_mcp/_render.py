@@ -212,3 +212,37 @@ def truncate(value: Any, cap: int) -> tuple[Any, str | None]:
         "Narrow the request (filters, a smaller page size) to see the rest.]"
     )
     return current, note
+
+
+def skeleton(schema: Any, depth: int = 0) -> Any:
+    """Placeholder value for a JSON Schema in an example call skeleton."""
+    if not isinstance(schema, dict) or depth > 6:
+        return "<value>"
+    if "const" in schema:
+        return schema["const"]
+    if isinstance(schema.get("enum"), list) and schema["enum"]:
+        return schema["enum"][0]
+    if "default" in schema:
+        return schema["default"]
+    for key in ("anyOf", "oneOf"):
+        options = schema.get(key)
+        if isinstance(options, list):
+            first = next((o for o in options if not (isinstance(o, dict) and o.get("type") == "null")), None)
+            if first is not None:
+                return skeleton(first, depth + 1)
+    types = [t for t in schema["type"] if t != "null"] if isinstance(schema.get("type"), list) else [schema.get("type")]
+    kind = types[0] if types else None
+    if kind == "string":
+        return f"<{schema['format']}>" if isinstance(schema.get("format"), str) else "<string>"
+    if kind in ("integer", "number"):
+        minimum = schema.get("minimum")
+        return minimum if isinstance(minimum, (int, float)) and not isinstance(minimum, bool) else 0
+    if kind == "boolean":
+        return False
+    if kind == "array":
+        return []
+    if kind == "object":
+        properties = schema.get("properties") if isinstance(schema.get("properties"), dict) else {}
+        required = [r for r in schema.get("required") or [] if isinstance(r, str)]
+        return {name: skeleton(properties.get(name), depth + 1) for name in required}
+    return "<value>"

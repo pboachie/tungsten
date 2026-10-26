@@ -525,7 +525,7 @@ targets! {
             tool: "python3", minimum: Some([3, 12]), maximum_exclusive: None, minimum_option: None, excluded_versions: &[],
         }],
         schema: Some(TargetOptionSchema::Declared(&option_fields::MCP_PYTHON)),
-        summary: "Experimental: native Python MCP server over stdio, discrete tools, on the Python SDK",
+        summary: "Experimental: native Python MCP server over stdio, discrete or progressive, on the Python SDK",
         options: &[
             "package", "module", "version", "sdk", "sdk_module", "sdk_version", "sdk_path",
             "runtime", "runtime_path", "sdk_runtime_path", "out",

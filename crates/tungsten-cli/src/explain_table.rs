@@ -1015,15 +1015,13 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
     e(
         "TG0729",
         "The experimental `mcp-python` server (the `tungsten-mcp` Python runtime) serves \
-         discrete tools over stdio only. This API uses something it does not serve: a \
-         progressive disclosure mode (the server refuses to start unless its mode variable \
-         is `discrete`), operations answering an event stream (their streamed calls return \
-         an envelope and send nothing), or macros the Python SDK does not emit (their tools \
+         tools over stdio, discrete or progressive. This API uses something it does not \
+         serve: operations answering an event stream (their streamed calls return an \
+         envelope and send nothing), or macros the Python SDK does not emit (their tools \
          answer a misconfiguration envelope). Nothing is weakened silently: each case is \
-         refused or answered with an envelope, and no request is sent.",
-        "Use the `mcp` target (the TypeScript server) for these features, set \
-         `disclosure.mode: discrete` in agent.yml, or fix the macros the python target \
-         reports with TG0730.",
+         answered with an envelope, and no request is sent.",
+        "Use the `mcp` target (the TypeScript server) for these features, or fix the macros \
+         the python target reports with TG0730.",
     ),
     e(
         "TG0730",

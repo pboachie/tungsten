@@ -236,6 +236,15 @@ changes.
 
 ### Added
 
+- The experimental `mcp-python` server serves progressive disclosure:
+  `search_tools` (BM25 over the manifest's index, optionally within a cluster),
+  `describe_tool`, `invoke`, `invoke_read`, `preview` by name and
+  `list_clusters`, with the tool's tier and hints in `_meta`, matching the
+  TypeScript server. The mode is the manifest's unless `<API>_MCP_MODE`
+  overrides it; a progressive manifest is no longer refused, and TG0729 no
+  longer reports it. Tool annotations are never less cautious than the safety
+  tier, and unknown names get "did you mean" suggestions.
+
 - Gallery recipe `first-mcp-python` (`python3 examples/run.py --only
   first-mcp-python`): generate the Python SDK and the experimental
   `mcp-python` server, install them without Node, and drive the server over

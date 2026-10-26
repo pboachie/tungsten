@@ -6,8 +6,8 @@ manifest over stdio on top of the generated Python SDK, so a server needs neithe
 nor a generated TypeScript SDK.
 
 **Experimental, unreleased 0.2.0.** The package is not published. Its scope is the first
-slice of [#154](https://github.com/pboachie/tungsten/issues/154): discrete tools over
-stdio. The TypeScript runtime (`@elysra/tungsten-mcp`, the `mcp` target) remains the
+slices of [#154](https://github.com/pboachie/tungsten/issues/154): discrete and progressive
+tools over stdio. The TypeScript runtime (`@elysra/tungsten-mcp`, the `mcp` target) remains the
 supported MCP server. See [Limits](#limits) before you use it.
 
 ## Generate and run a server
@@ -34,10 +34,18 @@ standard input and output and writes its own errors to standard error.
 
 ## What it serves
 
-- **Tools.** The manifest's tools, one per operation and macro, with the same names,
-  input schemas, annotations and output schemas as the TypeScript server. The output
-  schemas are widened for the verification result, the redaction marker and the error
-  envelope.
+- **Discrete mode.** The manifest's tools, one per operation and macro, with the same
+  names, input schemas, annotations and output schemas as the TypeScript server. The
+  output schemas are widened for the verification result, the redaction marker and the
+  error envelope.
+- **Progressive mode.** `search_tools` (BM25 over the manifest's index, optionally within
+  one cluster), `describe_tool` (the schemas, tier, reserved fields, remediation table and
+  an example call), `invoke`, `invoke_read` (read-only tools only), `preview` by name and
+  `list_clusters`. Each result of `invoke`, `invoke_read` and `preview` names the tool it
+  ran, its tier and its hints in `_meta["tungsten/tool"]`. The mode is the manifest's
+  (`agent.yml` `disclosure.mode`, or `auto`), unless `<API>_MCP_MODE` overrides it.
+- **Hints.** A tool's MCP annotations are never less cautious than its safety tier,
+  whatever the manifest says.
 - **Previews and confirmation.** When any tool is not read-only, `preview` renders the
   request and its effects without sending it. For a destructive or irreversible tool,
   `preview` also returns a `confirmation_token` bound to those exact arguments, in this
@@ -68,10 +76,8 @@ standard input and output and writes its own errors to standard error.
   MCP-client authentication, Host/Origin validation or session management. One process
   serves one client; its confirmation tokens and shown-once state live as long as the
   process.
-- **Discrete disclosure only.** A manifest whose mode is `progressive` (from `agent.yml`,
-  or `auto` for a large API) is refused at startup, unless `<API>_MCP_MODE=discrete` is
-  set. Then every tool is listed. `search_tools`, `describe_tool`, `invoke` and clusters are
-  not served.
+- **Search is keyword only.** The embedding (hybrid) search of the TypeScript server is not
+  served; `search_tools` ranks with BM25 alone.
 - **No streamed results.** A tool whose operation answers an event stream returns a
   `VALIDATION_FAILED` envelope, and nothing is sent.
 - **No `run_script`.** Unrestricted Python evaluation is never offered.
