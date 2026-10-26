@@ -103,6 +103,11 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+      # The macos-15 image ships a GitHub CLI older than the 2.102.0 that
+      # provenance verification needs; the action refuses it and says so.
+      - name: Update the GitHub CLI (macOS)
+        if: runner.os == 'macOS'
+        run: brew upgrade gh || brew install gh
       - name: Install only
         id: install
         uses: ./actions/tungsten
