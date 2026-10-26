@@ -19,12 +19,15 @@ public final class Pages implements Iterable<Result<Page<Object>>>, Iterator<Res
     private final CallOptions opts;
     private final State state;
     private Result<Page<Object>> ahead;
+    /** The deadline of the whole traversal, or null. */
+    private final Long deadline;
 
     Pages(ClientCore core, OperationDescriptor op, Object args, CallOptions opts) {
         this.core = core;
         this.op = op;
         this.opts = opts;
         this.state = new State(args);
+        this.deadline = Deadline.resolve(core.deadline, opts);
     }
 
     /** The paginated operation. */
@@ -40,7 +43,7 @@ public final class Pages implements Iterable<Result<Page<Object>>>, Iterator<Res
     @Override
     public boolean hasNext() {
         if (ahead == null) {
-            ahead = step(core, op, state, opts, null);
+            ahead = Deadline.within(deadline, () -> step(core, op, state, opts, null));
         }
         return ahead != null;
     }
