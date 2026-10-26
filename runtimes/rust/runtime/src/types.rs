@@ -236,6 +236,7 @@ pub enum HttpMethod {
     Head,
     Patch,
     Trace,
+    Query,
 }
 
 impl HttpMethod {
@@ -249,6 +250,7 @@ impl HttpMethod {
             HttpMethod::Head => "HEAD",
             HttpMethod::Patch => "PATCH",
             HttpMethod::Trace => "TRACE",
+            HttpMethod::Query => "QUERY",
         }
     }
 }

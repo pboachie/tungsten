@@ -33,7 +33,7 @@ from ._util import (
 from .sentinels import UNSET
 from .types import OperationDescriptor, ParamDescriptor
 
-METHODS = frozenset({"GET", "PUT", "POST", "DELETE", "OPTIONS", "HEAD", "PATCH", "TRACE"})
+METHODS = frozenset({"GET", "PUT", "POST", "DELETE", "OPTIONS", "HEAD", "PATCH", "TRACE", "QUERY"})
 SAFETIES = frozenset({"read_only", "mutating", "destructive", "irreversible"})
 POLICIES = frozenset({"none", "auto", "caller_owned", "content_hash", "content_identity"})
 ENCODINGS = frozenset({"json", "form", "multipart", "bytes", "text"})

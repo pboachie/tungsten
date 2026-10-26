@@ -98,7 +98,7 @@ import { RUNTIME_VERSION } from "./version.js";
 type Failure = { ok: false; error: Diagnostic; partial?: unknown };
 type Step<T> = { ok: true; value: T } | Failure;
 
-const METHODS: ReadonlySet<string> = new Set(["GET", "PUT", "POST", "DELETE", "OPTIONS", "HEAD", "PATCH", "TRACE"]);
+const METHODS: ReadonlySet<string> = new Set(["GET", "PUT", "POST", "DELETE", "OPTIONS", "HEAD", "PATCH", "TRACE", "QUERY"]);
 const SAFETIES: ReadonlySet<string> = new Set(["read_only", "mutating", "destructive", "irreversible"]);
 const POLICIES: ReadonlySet<string> = new Set(["none", "auto", "caller_owned", "content_hash", "content_identity"]);
 const RETRY_CATEGORIES: ReadonlySet<string> = new Set(["RATE_LIMITED", "UPSTREAM_UNAVAILABLE", "TRANSPORT_FAILED", "OUTCOME_UNKNOWN"]);
@@ -1100,7 +1100,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
 
     let encoded;
     try {
-      const value = isSafeMethod(method) && method !== "OPTIONS" ? undefined : bodyValue(op, args, new Set(params.map((p) => p.name)));
+      const value = isSafeMethod(method) && method !== "OPTIONS" && method !== "QUERY" ? undefined : bodyValue(op, args, new Set(params.map((p) => p.name)));
       encoded = await encodeBody(op.body ?? null, value, (display) => {
         const bodyPaths = sensitiveBodyPaths(op);
         return redactSensitiveKeys(bodyPaths.includes("") ? REDACTED : redactPaths(display, bodyPaths.filter((p) => p !== "")));

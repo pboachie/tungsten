@@ -482,7 +482,7 @@ module Tungsten
         param_names = op.argument_params.map(&:name)
         body_paths = Helpers.sensitive_body_paths(op)
         value = UNSET
-        value = Serialize.body_value(op, args, param_names) if !safe_method?(method) || method == "OPTIONS"
+        value = Serialize.body_value(op, args, param_names) if !safe_method?(method) || %w[OPTIONS QUERY].include?(method)
         redact = lambda do |display|
           next REDACTED if body_paths.include?("")
 

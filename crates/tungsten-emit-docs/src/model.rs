@@ -222,6 +222,7 @@ pub(crate) fn method(m: HttpMethod) -> &'static str {
         HttpMethod::Head => "HEAD",
         HttpMethod::Patch => "PATCH",
         HttpMethod::Trace => "TRACE",
+        HttpMethod::Query => "QUERY",
     }
 }
 

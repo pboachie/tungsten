@@ -201,13 +201,19 @@ pub enum HttpMethod {
     Head,
     Patch,
     Trace,
+    /// OpenAPI 3.2 `query`: a safe, idempotent request that carries a body.
+    Query,
 }
 
 impl HttpMethod {
     pub fn is_safe(self) -> bool {
         matches!(
             self,
-            HttpMethod::Get | HttpMethod::Head | HttpMethod::Options | HttpMethod::Trace
+            HttpMethod::Get
+                | HttpMethod::Head
+                | HttpMethod::Options
+                | HttpMethod::Trace
+                | HttpMethod::Query
         )
     }
 }

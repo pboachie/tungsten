@@ -85,7 +85,11 @@ impl Walk<'_> {
             };
             // Match the compiler's PathItem semantics: a local operation beside
             // `$ref` wins, otherwise retain the referenced operation's location.
+            let query = crate::pathitem::reads_3_2(self.ws, &local);
             for (method, _) in METHODS {
+                if method == "query" && !query {
+                    continue;
+                }
                 let own = child(&local, method);
                 let target = if self.ws.get(&own).is_some() {
                     own

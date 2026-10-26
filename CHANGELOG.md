@@ -335,12 +335,19 @@ changes.
   project pins or generated clients, or sends project data. `--json` output adds
   the `update check` command to the CLI output schema.
 
+- The OpenAPI 3.2 `query` path-item method compiles to an operation sent with
+  the HTTP `QUERY` method and its request body in generated clients.
+  The IR gains the `QUERY` HTTP method, which is safe (read-only by default; set
+  `defaults.safety.query` in `agent.yml` to override), and all runtimes accept
+  it. `query` members of OpenAPI 3.0 and 3.1 documents are still not
+  operations. TG0141 is retired and no longer reported; `tungsten capabilities`
+  lists `query` as a compiled 3.2 construct.
+
 - OpenAPI 3.2.x documents are read: a document that uses only constructs OpenAPI
   3.1 has takes the 3.1 path and compiles to the same IR as its 3.1 twin. Each
   construct only 3.2 has is diagnosed at its member instead of being ignored, one
   code per feature. These are errors, because a client built without them would
-  differ from the API: `$self` (TG0140), the `query` method (TG0141),
-  `additionalOperations` (TG0142), `in: querystring` (TG0143), `style: cookie`
+  differ from the API: `$self` (TG0140), `additionalOperations` (TG0142), `in: querystring` (TG0143), `style: cookie`
   (TG0144), `itemSchema` (TG0145), `prefixEncoding` and `itemEncoding` (TG0146),
   nested encodings (TG0147), `components.mediaTypes` and media types given by
   `$ref` (TG0148), discriminator `defaultMapping` (TG0149), the OAuth 2.0 device

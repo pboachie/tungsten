@@ -90,7 +90,7 @@ type satisfier struct {
 
 func isSafeMethod(method string) bool {
 	switch method {
-	case "GET", "HEAD", "OPTIONS", "TRACE":
+	case "GET", "HEAD", "OPTIONS", "TRACE", "QUERY":
 		return true
 	}
 	return false

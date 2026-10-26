@@ -113,6 +113,7 @@ final class Auth {
             case "HEAD":
             case "OPTIONS":
             case "TRACE":
+            case "QUERY":
                 return true;
             default:
                 return false;

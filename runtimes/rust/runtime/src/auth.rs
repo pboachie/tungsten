@@ -109,7 +109,11 @@ pub trait TokenSource: Sync {
 pub fn is_safe_method(method: HttpMethod) -> bool {
     matches!(
         method,
-        HttpMethod::Get | HttpMethod::Head | HttpMethod::Options | HttpMethod::Trace
+        HttpMethod::Get
+            | HttpMethod::Head
+            | HttpMethod::Options
+            | HttpMethod::Trace
+            | HttpMethod::Query
     )
 }
 

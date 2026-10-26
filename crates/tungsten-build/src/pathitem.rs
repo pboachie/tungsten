@@ -13,7 +13,7 @@
 
 use serde_json::Value;
 use tungsten_core::Diagnostic;
-use tungsten_openapi::RefTarget;
+use tungsten_openapi::{RefTarget, SpecVersion, Workspace};
 
 use crate::ctx::{Ctx, child, str_of};
 use crate::operations::METHODS;
@@ -28,6 +28,22 @@ pub(crate) struct PathItem<'a> {
     pub item: &'a Value,
     /// The item that holds the `$ref` when fields are written beside it.
     pub local: Option<(RefTarget, &'a Value)>,
+    /// Whether `query` is an operation (OpenAPI 3.2) rather than an unknown
+    /// field of an older document.
+    query: bool,
+}
+
+/// Whether the Path Item written at `at` is read as OpenAPI 3.2. A fragment
+/// reached by reference is read as 3.2 when any loaded entry document is.
+pub(crate) fn reads_3_2(ws: &Workspace, at: &RefTarget) -> bool {
+    match ws.documents.get(at.doc).map(|d| &d.version) {
+        Some(SpecVersion::V32(_)) => true,
+        Some(SpecVersion::Fragment) => ws
+            .documents
+            .iter()
+            .any(|d| matches!(d.version, SpecVersion::V32(_))),
+        _ => false,
+    }
 }
 
 impl<'a> PathItem<'a> {
@@ -44,6 +60,7 @@ impl<'a> PathItem<'a> {
             })
             .map(|v| (at.clone(), v));
         Some(Self {
+            query: reads_3_2(cx.ws, at),
             at: resolved,
             item,
             local,
@@ -53,6 +70,9 @@ impl<'a> PathItem<'a> {
     /// The operation `word` and where it is written: beside the `$ref` when
     /// the sibling defines it, else in the referenced item.
     pub fn operation(&self, word: &str) -> Option<(RefTarget, &'a Value)> {
+        if word == "query" && !self.query {
+            return None;
+        }
         if let Some((at, local)) = &self.local
             && let Some(op) = local.get(word)
         {

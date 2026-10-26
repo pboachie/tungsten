@@ -285,8 +285,16 @@ fn openapi_summary(inputs: &[tungsten_config::capabilities::OpenApiVersionCapabi
             0 => writeln!(out, "  {}.x supported", input.line),
             n => writeln!(
                 out,
-                "  {}.x {:?}: constructs equivalent to 3.1 are read; {n} 3.2-only constructs get diagnostics TG0140-TG0156",
-                input.line, input.support
+                "  {}.x {:?}: constructs equivalent to 3.1 are read, plus {} 3.2-only constructs ({}); {n} other 3.2-only constructs get diagnostics TG0140-TG0156",
+                input.line,
+                input.support,
+                input.supported_features.len(),
+                input
+                    .supported_features
+                    .iter()
+                    .map(|f| f.member)
+                    .collect::<Vec<_>>()
+                    .join(", ")
             ),
         };
     }

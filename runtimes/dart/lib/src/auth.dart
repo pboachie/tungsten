@@ -199,7 +199,7 @@ typedef _Try = (String?, _Satisfier?, List<String>);
 /// configured.
 extension _Auth on ClientCore {
   static bool safeMethod(String method) =>
-      const ['GET', 'HEAD', 'OPTIONS', 'TRACE'].contains(method);
+      const ['GET', 'HEAD', 'OPTIONS', 'TRACE', 'QUERY'].contains(method);
 
   static String _compositeKey(Map<String, Object?> part) =>
       switch (part['kind']) {

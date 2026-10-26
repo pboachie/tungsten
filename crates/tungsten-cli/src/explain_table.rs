@@ -294,8 +294,8 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
     ),
     e(
         "TG0141",
-        "A Path Item uses the OpenAPI 3.2 `query` operation (the HTTP QUERY method). tungsten does not compile the QUERY method and would leave the operation out of the client.",
-        "Describe the call with a supported method such as `post`, or remove the operation.",
+        "Retired. Earlier releases refused the OpenAPI 3.2 `query` operation (the HTTP QUERY method). tungsten now compiles it as a safe operation that sends its request body, and no longer reports this code.",
+        "Nothing to do; regenerate to pick up QUERY operations.",
     ),
     e(
         "TG0142",
