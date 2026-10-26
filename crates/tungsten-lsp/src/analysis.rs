@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use lsp_types::{
     Diagnostic, DiagnosticRelatedInformation, DiagnosticSeverity, Location, NumberOrString, Range,
 };
+use tungsten_build::suggest::{Action, SUGGESTED_CODES, suggest};
 use tungsten_build::{CompileOptions, Compiled, compile_project};
 use tungsten_core::{Diagnostic as Tg, Severity, SourceId};
 use tungsten_ir::{Ir, OperationStatus};
@@ -24,6 +25,8 @@ use crate::uri::{normalize, path_to_uri};
 /// Most diagnostics published for one file; the rest are dropped so a spec
 /// with thousands of findings cannot flood the client.
 const MAX_PER_FILE: usize = 500;
+/// Most overlay fixes kept from one compilation.
+const MAX_OVERLAY_FIXES: usize = 1000;
 
 /// What the server knows about one operation.
 #[derive(Debug, Clone)]
@@ -63,18 +66,38 @@ impl Index {
     }
 }
 
+/// One overlay action `tungsten overlay suggest` would write, with the
+/// diagnostics it fixes as the editor shows them.
+#[derive(Debug, Clone)]
+pub struct OverlayFix {
+    /// The input's position in `inputs` of the manifest.
+    pub input: usize,
+    pub namespace: String,
+    /// The `spec` of the input, as written in the manifest.
+    pub spec: String,
+    /// The `overlays` of the input, as written in the manifest.
+    pub overlays: Vec<String>,
+    pub action: Action,
+    /// Where the fixed diagnostics are shown: file, range and code.
+    pub fixes: Vec<(PathBuf, Range, String)>,
+}
+
 /// The result of one compilation.
 #[derive(Debug, Default)]
 pub struct Analysis {
     pub manifest: PathBuf,
     pub agent_file: PathBuf,
     pub overlays: Vec<PathBuf>,
+    /// Local profile files the manifest selected or included, as editor paths.
+    pub profiles: Vec<PathBuf>,
     /// OpenAPI documents the project read.
     pub inputs: BTreeSet<PathBuf>,
     /// Diagnostics by file, sorted by position.
     pub diagnostics: BTreeMap<PathBuf, Vec<Diagnostic>>,
     /// Present only when the project compiled far enough to build the IR.
     pub index: Option<Index>,
+    /// Overlay actions that fix TG0401/TG0403 diagnostics, bounded.
+    pub overlay_fixes: Vec<OverlayFix>,
 }
 
 /// Compile the project whose manifest is `manifest`, with `overrides` as
@@ -115,6 +138,13 @@ pub fn analyze(
             .chain(config.inputs.iter().flat_map(|i| i.overlays.iter()));
         out.overlays = overlays.map(|o| normalize(&base.join(o))).collect();
     }
+    out.profiles = compiled
+        .profile_sources
+        .values()
+        .map(|path| profile_editor_path(path))
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
     out.inputs = compiled
         .workspace
         .documents
@@ -126,7 +156,73 @@ pub fn analyze(
         .ir
         .as_ref()
         .map(|ir| index(ir, &compiled.workspace, &base));
+    if cancellation.is_cancelled() {
+        return None;
+    }
+    out.overlay_fixes = overlay_fixes(&compiled, &base, &manifest_name, &out.manifest);
     (!cancellation.is_cancelled()).then_some(out)
+}
+
+/// The overlay actions of [`suggest`], each with the editor placement of
+/// the diagnostics it fixes.
+fn overlay_fixes(
+    compiled: &Compiled,
+    base: &Path,
+    manifest_name: &str,
+    manifest: &Path,
+) -> Vec<OverlayFix> {
+    let Some(config) = &compiled.config else {
+        return vec![];
+    };
+    let ws = &compiled.workspace;
+    let mut lines = Lines::new(ws);
+    let mut out = vec![];
+    for found in suggest(compiled, &[]).inputs {
+        let Some(input) = config
+            .inputs
+            .iter()
+            .position(|i| i.namespace == found.namespace && i.spec == found.spec)
+        else {
+            continue;
+        };
+        let doc = ws
+            .entry_docs
+            .get(input)
+            .copied()
+            .flatten()
+            .and_then(|d| ws.documents.get(d));
+        let Some(doc) = doc else { continue };
+        for action in found.actions {
+            if out.len() >= MAX_OVERLAY_FIXES {
+                return out;
+            }
+            let fixes = compiled
+                .diagnostics
+                .iter()
+                .filter(|d| SUGGESTED_CODES.contains(&d.code.as_str()))
+                .filter(|d| action.codes.contains(&d.code))
+                .filter(|d| {
+                    d.labels
+                        .first()
+                        .is_some_and(|l| l.file == doc.name && l.pointer == action.pointer)
+                })
+                .map(|d| {
+                    let (path, range) =
+                        place(d, &mut lines, compiled, base, manifest_name, manifest);
+                    (path, range, d.code.clone())
+                })
+                .collect();
+            out.push(OverlayFix {
+                input,
+                namespace: found.namespace.clone(),
+                spec: found.spec.clone(),
+                overlays: config.inputs[input].overlays.clone(),
+                action,
+                fixes,
+            });
+        }
+    }
+    out
 }
 
 fn severity(s: Severity) -> DiagnosticSeverity {
@@ -178,12 +274,13 @@ pub(crate) fn map_diagnostics(
 ) -> BTreeMap<PathBuf, Vec<Diagnostic>> {
     let ws = &compiled.workspace;
     let mut lines = Lines::new(ws);
+    let mut nodes = Nodes::default();
     let mut out: BTreeMap<PathBuf, Vec<Diagnostic>> = BTreeMap::new();
     for d in &compiled.diagnostics.0 {
         let (path, range) = place(d, &mut lines, compiled, base, manifest_name, manifest);
         let list = out.entry(path).or_default();
         if list.len() < MAX_PER_FILE {
-            list.push(convert(
+            let mut converted = convert(
                 d,
                 range,
                 &mut lines,
@@ -191,13 +288,213 @@ pub(crate) fn map_diagnostics(
                 base,
                 manifest_name,
                 manifest,
-            ));
+            );
+            let sources = effective_sources(
+                d,
+                &mut lines,
+                &mut nodes,
+                compiled,
+                base,
+                manifest_name,
+                manifest,
+            );
+            if !sources.is_empty() {
+                converted
+                    .related_information
+                    .get_or_insert_with(Vec::new)
+                    .extend(sources);
+            }
+            list.push(converted);
         }
     }
     for list in out.values_mut() {
         list.sort_by_key(|d| (d.range.start.line, d.range.start.character));
     }
     out
+}
+
+/// Most effective-source locations added to one diagnostic.
+const MAX_EFFECTIVE_SOURCES: usize = 8;
+
+/// YAML node offsets of manifest and profile sources, parsed on first use.
+#[derive(Default)]
+struct Nodes {
+    cache: BTreeMap<SourceId, tungsten_config::ManifestSource>,
+}
+
+/// Where the configuration value a diagnostic points at comes from: when
+/// its first label is at (or under) a declaration of a composed target
+/// option, in the manifest or a profile, or at the option's effective path
+/// in the manifest, the other declarations of that option. The winner is
+/// the effective value; the others are shadowed by it. Spans come from the
+/// compiled source text, so unsaved buffers are reflected.
+fn effective_sources(
+    d: &Tg,
+    lines: &mut Lines<'_>,
+    nodes: &mut Nodes,
+    compiled: &Compiled,
+    base: &Path,
+    manifest_name: &str,
+    manifest: &Path,
+) -> Vec<DiagnosticRelatedInformation> {
+    let Some(label) = d.labels.first() else {
+        return vec![];
+    };
+    let mut out = selected_by(d, lines, nodes, compiled, base, manifest_name, manifest);
+    let Some(effective) = &compiled.effective else {
+        return out;
+    };
+    let under = |pointer: &str, at: &str| {
+        pointer == at
+            || pointer
+                .strip_prefix(at)
+                .is_some_and(|rest| rest.starts_with('/'))
+    };
+    for (path, field) in &effective.provenance {
+        let all = std::iter::once(&field.winner).chain(field.shadowed.iter());
+        let own = all
+            .clone()
+            .position(|decl| decl.file == label.file && under(&label.pointer, &decl.pointer));
+        let at_effective_path = label.file == manifest_name && under(&label.pointer, path);
+        if own.is_none() && !at_effective_path {
+            continue;
+        }
+        for (i, decl) in all.enumerate() {
+            if Some(i) == own || out.len() >= MAX_EFFECTIVE_SOURCES {
+                continue;
+            }
+            let Some(location) =
+                declaration_location(decl, lines, nodes, compiled, base, manifest_name, manifest)
+            else {
+                continue;
+            };
+            let message = if i == 0 {
+                format!("effective value of `{path}` is set here ({})", decl.file)
+            } else {
+                format!(
+                    "`{path}` is also set here ({}), shadowed by the effective value",
+                    decl.file
+                )
+            };
+            out.push(DiagnosticRelatedInformation { location, message });
+        }
+    }
+    out
+}
+
+/// For a diagnostic in a profile, the manifest's `profiles` entry that
+/// selected it, or the whole `profiles` list when the profile was reached
+/// through an include.
+fn selected_by(
+    d: &Tg,
+    lines: &mut Lines<'_>,
+    nodes: &mut Nodes,
+    compiled: &Compiled,
+    base: &Path,
+    manifest_name: &str,
+    manifest: &Path,
+) -> Vec<DiagnosticRelatedInformation> {
+    let ws = lines.ws;
+    let Some(config) = &compiled.config else {
+        return vec![];
+    };
+    let in_profile = d
+        .labels
+        .first()
+        .and_then(|l| {
+            l.span.map(|s| s.source).or_else(|| {
+                ws.sources
+                    .files()
+                    .iter()
+                    .find(|f| f.name == l.file)
+                    .map(|f| f.id)
+            })
+        })
+        .and_then(|id| compiled.profile_sources.get(&id));
+    let Some(identity) = in_profile else {
+        return vec![];
+    };
+    let selected = config.profiles.iter().position(|selection| {
+        let path = base.join(&selection.path);
+        std::fs::canonicalize(&path).ok().as_ref() == Some(identity)
+            || normalize(&path) == normalize(identity)
+    });
+    let (pointer, message) = match selected {
+        Some(i) => (
+            format!("/profiles/{i}"),
+            "the profile is selected here".to_string(),
+        ),
+        None => (
+            "/profiles".to_string(),
+            "the profile is included by a profile selected here".to_string(),
+        ),
+    };
+    let declaration = tungsten_config::profiles::Declaration {
+        kind: tungsten_config::profiles::SourceKind::Project,
+        identity: manifest.to_path_buf(),
+        file: manifest_name.to_string(),
+        pointer,
+        digest: None,
+    };
+    declaration_location(
+        &declaration,
+        lines,
+        nodes,
+        compiled,
+        base,
+        manifest_name,
+        manifest,
+    )
+    .map(|location| vec![DiagnosticRelatedInformation { location, message }])
+    .unwrap_or_default()
+}
+
+/// The editor location of a declaration: its source in the compilation
+/// (a profile by its physical identity, else by name) and the node at its
+/// pointer, to the end of that line.
+fn declaration_location(
+    decl: &tungsten_config::profiles::Declaration,
+    lines: &mut Lines<'_>,
+    nodes: &mut Nodes,
+    compiled: &Compiled,
+    base: &Path,
+    manifest_name: &str,
+    manifest: &Path,
+) -> Option<Location> {
+    let ws = lines.ws;
+    let id = compiled
+        .profile_sources
+        .iter()
+        .find(|(_, path)| **path == decl.identity)
+        .map(|(id, _)| *id)
+        .or_else(|| {
+            ws.sources
+                .files()
+                .iter()
+                .find(|f| f.name == decl.file)
+                .map(|f| f.id)
+        })?;
+    let file = ws.sources.get(id);
+    let source = nodes
+        .cache
+        .entry(id)
+        .or_insert_with(|| tungsten_config::parse_with_source(&file.name, &file.text).source);
+    let start = source.offset(&decl.pointer)?;
+    let end = file
+        .text
+        .get(start as usize..)
+        .and_then(|t| t.find('\n'))
+        .map_or(file.text.len(), |i| start as usize + i) as u32;
+    let path = file_path(
+        &file.name,
+        Some(id),
+        compiled,
+        base,
+        manifest_name,
+        manifest,
+    );
+    let uri = path_to_uri(&path)?;
+    Some(Location::new(uri, lines.range(id, start, end)))
 }
 
 /// The file and range a diagnostic is shown at: its first label with a

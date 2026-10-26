@@ -1,0 +1,46 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Records",
+    "version": "1.0.0",
+    "description": "A local, rate-limited record store for the bulk-sync example."
+  },
+  "servers": [{ "url": "http://127.0.0.1:8099" }],
+  "paths": {
+    "/records/{record_id}": {
+      "get": {
+        "operationId": "getRecord",
+        "summary": "Read one record.",
+        "parameters": [
+          { "name": "record_id", "in": "path", "required": true, "schema": { "type": "integer", "minimum": 0 } }
+        ],
+        "responses": {
+          "200": {
+            "description": "The record.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Record" } } }
+          },
+          "429": {
+            "description": "Too many concurrent requests; wait for Retry-After.",
+            "headers": { "Retry-After": { "schema": { "type": "integer" } } },
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Problem" } } }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Record": {
+        "type": "object",
+        "required": ["id", "value"],
+        "additionalProperties": false,
+        "properties": { "id": { "type": "integer" }, "value": { "type": "string" } }
+      },
+      "Problem": {
+        "type": "object",
+        "required": ["error"],
+        "properties": { "error": { "type": "string" } }
+      }
+    }
+  }
+}

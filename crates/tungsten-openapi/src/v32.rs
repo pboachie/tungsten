@@ -2,15 +2,16 @@
 //! OpenAPI 3.2 constructs that have no 3.1 equivalent.
 //!
 //! A 3.2 document that uses only 3.1 constructs goes through the unchanged
-//! 3.1 path. The `query` method is compiled by the build (as `QUERY`), and
-//! reusable media types (`components.mediaTypes`, `$ref` in a `content` map)
-//! are followed like any other reference, and a discriminator's
-//! `defaultMapping` is compiled with its union. Every other construct 3.2 added is
-//! either refused with an error (when ignoring it would produce a client that
-//! behaves differently from the API) or reported as a warning (when it only
-//! adds metadata the compiler has no use for). Nothing is dropped silently. Codes `TG0140`-`TG0156` form one
-//! family, one code per feature, each located at the member that introduces
-//! it.
+//! 3.1 path. The build compiles the `query` method (as `QUERY`), reusable
+//! media types (`components.mediaTypes`, `$ref` in a `content` map, followed
+//! like any other reference), response `itemSchema` where
+//! [`response_item_schema`] places it, and a discriminator's
+//! `defaultMapping`. Every other construct 3.2 added is either refused with an
+//! error (when ignoring it would produce a client that behaves differently
+//! from the API) or reported as a warning (when it only adds metadata the
+//! compiler has no use for). Nothing is dropped silently. Codes
+//! `TG0140`-`TG0156` form one family, one code per feature, each located at
+//! the member that introduces it.
 
 use std::collections::{BTreeSet, HashSet};
 
@@ -42,6 +43,91 @@ impl Finding {
             .with_help(self.help)
             .at(file, &self.pointer, spans.nearest(&self.pointer))
     }
+}
+
+/// JSON Lines media types: one JSON value per line.
+const JSON_LINES: &[&str] = &[
+    "application/jsonl",
+    "application/x-jsonl",
+    "application/ndjson",
+    "application/x-ndjson",
+];
+
+/// The fields of one server-sent event (`data`, `event`, `id`, `retry`).
+const EVENT_FIELDS: &[&str] = &["data", "event", "id", "retry"];
+
+/// Keywords an event `itemSchema` may use besides `properties`.
+const EVENT_KEYWORDS: &[&str] = &[
+    "type",
+    "properties",
+    "required",
+    "title",
+    "description",
+    "$comment",
+];
+
+fn essence(media_type: &str) -> String {
+    media_type
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase()
+}
+
+fn is_json(media_type: &str) -> bool {
+    let essence = essence(media_type);
+    essence == "application/json" || essence.ends_with("+json")
+}
+
+/// Where a response media type's OpenAPI 3.2 `itemSchema` keeps the type of
+/// one item, relative to the Media Type Object, when the compiler supports
+/// it:
+///
+/// - JSON Lines (`application/jsonl` and its aliases): `/itemSchema` is the
+///   type of one line, as `schema` is for these media types in 3.1.
+/// - `text/event-stream` whose item is an event object with a `data` string
+///   of JSON (`contentMediaType` JSON plus `contentSchema`):
+///   `/itemSchema/properties/data/contentSchema` is the event type. The
+///   other event fields (`event`, `id`, `retry`) carry no type.
+///
+/// `None` for every other use, including a media type that declares
+/// `schema` too; TG0145 reports those.
+pub fn response_item_schema(media_type: &str, media: &Map<String, Value>) -> Option<&'static str> {
+    let item = media.get("itemSchema")?;
+    if media.get("schema").is_some() || !item.is_object() {
+        return None;
+    }
+    let essence = essence(media_type);
+    if JSON_LINES.contains(&essence.as_str()) {
+        return Some("/itemSchema");
+    }
+    if essence != "text/event-stream" {
+        return None;
+    }
+    let item = item.as_object()?;
+    let shaped = item.keys().all(|k| EVENT_KEYWORDS.contains(&k.as_str()))
+        && item
+            .get("type")
+            .is_none_or(|t| t.as_str() == Some("object"));
+    let properties = item.get("properties")?.as_object()?;
+    if !shaped
+        || !properties
+            .keys()
+            .all(|k| EVENT_FIELDS.contains(&k.as_str()))
+    {
+        return None;
+    }
+    let data = properties.get("data")?.as_object()?;
+    let json = data
+        .get("contentMediaType")
+        .and_then(Value::as_str)
+        .is_some_and(is_json);
+    let string = data
+        .get("type")
+        .is_none_or(|t| t.as_str() == Some("string"));
+    (json && string && data.contains_key("contentSchema"))
+        .then_some("/itemSchema/properties/data/contentSchema")
 }
 
 const IGNORED: &str = "the compiler does not use it; remove it to silence this warning";
@@ -242,12 +328,17 @@ fn node_findings(node: &Node<'_>, schemes: &BTreeSet<String>, out: &mut Vec<Find
             }
         }
         Kind::MediaType => {
-            if map.contains_key("itemSchema") {
+            let supported = node.parent == Some(Kind::Response)
+                && node.pointer.rsplit_once('/').is_some_and(|(_, key)| {
+                    let media_type = key.replace("~1", "/").replace("~0", "~");
+                    response_item_schema(&media_type, map).is_some()
+                });
+            if map.contains_key("itemSchema") && !supported {
                 out.push(error(
                     "TG0145",
                     at("itemSchema"),
-                    "OpenAPI 3.2 `itemSchema` (sequential and streaming media types) is not supported",
-                    "describe the whole payload with `schema`, or remove the media type",
+                    "this use of OpenAPI 3.2 `itemSchema` (sequential and streaming media types) is not supported",
+                    "only response JSON Lines items and server-sent events whose `data` has a JSON `contentSchema`, written in the response's `content` map, are compiled; otherwise describe the whole payload with `schema`",
                 ));
             }
             for key in ["prefixEncoding", "itemEncoding"] {

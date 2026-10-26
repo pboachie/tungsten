@@ -1622,6 +1622,8 @@ class Engine:
                         _deadline_failure(op["id"], "while the request waited for capacity")
                     )
                 return previous_mutation_failure or Answer(_fail(self._rejected(op, admitted, stream)))
+            if admitted is not None and attempts == 1 and self.scheduler is not None:
+                self.scheduler.record_call(self._scope_key(prepared.url))
             handed_off = False
             try:
                 # Redirects are never followed by the HTTP client: it would forward
@@ -1734,6 +1736,9 @@ class Engine:
                     delay = ceiling / 2 + rnd * ceiling / 2
                 else:
                     delay = rnd * ceiling
+            # Callers sharing a quota share one retry budget.
+            if self.scheduler is not None and not self.scheduler.allow_retry(self._scope_key(prepared.url)):
+                return previous_mutation_failure or done
             for m in self._middleware():
                 yield from observe(_hook(m, "on_retry"), ctx, error)
             if mutation:
@@ -1755,9 +1760,12 @@ class Engine:
         rnd: Callable[[], float] = (
             (lambda: bounded(source(), 0.5, 0, 1)) if callable(source) else random.random
         )
-        key = scheduler.scope_key(url, self.options.tenant)
+        key = self._scope_key(url)
         admitted = yield from acquire(scheduler, key, "stream" if stream else "call", rnd, deadline)
         return cast(Permit | Rejection, admitted)
+
+    def _scope_key(self, url: str) -> str:
+        return "" if self.scheduler is None else self.scheduler.scope_key(url, self.options.tenant)
 
     @staticmethod
     def _rejected(op: OperationDescriptor, rejection: Rejection, stream: bool) -> Diagnostic:

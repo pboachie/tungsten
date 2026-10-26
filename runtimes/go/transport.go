@@ -50,6 +50,9 @@ type attemptRequest struct {
 	// idle (with stream) is the silence after which a read of the body
 	// times out; zero means timeout.
 	idle time.Duration
+	// deadline is the call's absolute deadline, zero for none: the attempt
+	// is not sent after it, and timeout is cut to the time left.
+	deadline time.Time
 }
 
 type outcomeKind int
@@ -77,6 +80,9 @@ type attemptOutcome struct {
 	stream      *eventBody
 	detail      string
 	sent        bool
+	// deadline: the call's deadline, not the per-attempt timeout or the
+	// caller, ended the attempt.
+	deadline bool
 }
 
 // eventBody is the unread body of an event stream; each read waits at most
@@ -293,6 +299,17 @@ func attempt(ctx context.Context, client *http.Client, req attemptRequest) attem
 	default:
 		body = bytes.NewReader(req.body.bytes)
 	}
+	limit := req.timeout
+	byDeadline := false
+	if !req.deadline.IsZero() {
+		left := time.Until(req.deadline)
+		if left <= 0 {
+			return attemptOutcome{kind: outcomeNotSent, detail: "deadline expired before send", deadline: true}
+		}
+		if left < limit {
+			limit, byDeadline = left, true
+		}
+	}
 	attemptCtx, cancel := context.WithCancel(ctx)
 	var wrote sync.Once
 	written := false
@@ -337,7 +354,7 @@ func attempt(ctx context.Context, client *http.Client, req attemptRequest) attem
 	}
 	var mu sync.Mutex
 	timedOut := false
-	timer := time.AfterFunc(req.timeout, func() {
+	timer := time.AfterFunc(limit, func() {
 		mu.Lock()
 		timedOut = true
 		mu.Unlock()
@@ -354,9 +371,9 @@ func attempt(ctx context.Context, client *http.Client, req attemptRequest) attem
 		cancel()
 		switch {
 		case expired():
-			return attemptOutcome{kind: outcomeTimeout}
+			return attemptOutcome{kind: outcomeTimeout, deadline: byDeadline}
 		case ctx.Err() != nil:
-			return attemptOutcome{kind: outcomeAborted, sent: wasWritten()}
+			return attemptOutcome{kind: outcomeAborted, sent: wasWritten(), deadline: deadlineExpired(ctx)}
 		case notSentError(err):
 			return attemptOutcome{kind: outcomeNotSent, detail: failureDetail(err, false)}
 		}
@@ -383,7 +400,7 @@ func attempt(ctx context.Context, client *http.Client, req attemptRequest) attem
 		if expired() {
 			_ = resp.Body.Close()
 			cancel()
-			return attemptOutcome{kind: outcomeTimeout}
+			return attemptOutcome{kind: outcomeTimeout, deadline: byDeadline}
 		}
 		return attemptOutcome{kind: outcomeStreaming, status: status, headers: headers,
 			stream: &eventBody{response: resp, cancel: cancel, idle: streamIdle(req)}}
@@ -413,6 +430,8 @@ func attempt(ctx context.Context, client *http.Client, req attemptRequest) attem
 		out.bodyFailure = "oversized"
 	case readErr == nil:
 		out.body, out.bodyOK = data, true
+	case expired() && byDeadline, !expired() && ctx.Err() != nil && deadlineExpired(ctx):
+		out.bodyFailure = "deadline"
 	case expired():
 		out.bodyFailure = "timeout"
 	default:

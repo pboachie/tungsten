@@ -239,7 +239,7 @@ pub mod codes {
         ),
         (
             "TG0145",
-            "OpenAPI 3.2 `itemSchema` for sequential and streaming media types is not supported",
+            "This use of OpenAPI 3.2 `itemSchema` for sequential and streaming media types is not supported",
         ),
         (
             "TG0146",

@@ -4,7 +4,7 @@
 use std::fmt::Write as _;
 use tungsten_config::capabilities::{self, CapabilityCatalog};
 
-use crate::args::CapabilitiesArgs;
+use crate::args::{CapabilitiesArgs, MatrixFormat};
 use crate::output::{CliError, CommandName, CommandResult, ErrorKind};
 use crate::{Report, exit};
 
@@ -37,10 +37,14 @@ pub(crate) fn run(args: &CapabilitiesArgs) -> Report {
         targets,
         features: capabilities::FEATURES.to_vec(),
         openapi_inputs: capabilities::OPENAPI_INPUTS.to_vec(),
+        input_formats: capabilities::INPUT_FORMATS.to_vec(),
         execution_policy: capabilities::execution_policy(),
     };
     if args.matrix {
-        report.human = matrix(&result);
+        report.human = match args.format {
+            MatrixFormat::Human => matrix(&result),
+            MatrixFormat::Markdown => format!("{MATRIX_START}\n{}{MATRIX_END}\n", matrix(&result)),
+        };
         report.result = Some(CommandResult::Capabilities(result));
         return report;
     }
@@ -65,11 +69,34 @@ pub(crate) fn run(args: &CapabilitiesArgs) -> Report {
                 requirement.description()
             );
         }
+        for record in target.evidence {
+            let _ = writeln!(
+                report.human,
+                "    evidence ({}): {} <{}>",
+                snake(&record.scope),
+                record.combination,
+                record.reference
+            );
+        }
     }
     report
         .human
         .push_str(&openapi_human(&result.openapi_inputs));
-    report.human.push_str("Source declarations only; platform qualification and artifact availability are unknown. Use doctor for local prerequisites.\n");
+    report.human.push_str("Input formats\n");
+    for format in &result.input_formats {
+        let _ = writeln!(
+            report.human,
+            "  {:<18} {}{}",
+            format.id,
+            snake(&format.route),
+            if format.imported_operations {
+                "; operations imported"
+            } else {
+                ""
+            }
+        );
+    }
+    report.human.push_str("Source declarations only; qualification, platform and artifact evidence are unknown unless a record is listed. Use doctor for local prerequisites.\n");
     report.result = Some(CommandResult::Capabilities(result));
     report
 }
@@ -105,6 +132,11 @@ pub(crate) fn openapi_human(inputs: &[capabilities::OpenApiVersionCapability]) -
     }
     out
 }
+
+/// Markers delimiting the generated block in README.md; the
+/// `check-support-matrix.py` CI script compares the block with this output.
+pub(crate) const MATRIX_START: &str = "<!-- tungsten-capabilities-matrix:start -->";
+pub(crate) const MATRIX_END: &str = "<!-- tungsten-capabilities-matrix:end -->";
 
 /// The public support matrix: one row per target, every cell derived from
 /// the catalog so documentation cannot drift from the declarations.
@@ -193,6 +225,34 @@ fn matrix(catalog: &CapabilityCatalog) -> String {
             input.line,
             snake(&input.support),
             input.unsupported_features.len()
+        );
+    }
+    out.push_str("\n| Input format | Versions | Route | Detection | Operations | Review flags | Acquisition |\n|---|---|---|---|---|---|---|\n");
+    for format in &catalog.input_formats {
+        let _ = writeln!(
+            out,
+            "| `{}` | {} | {} | {} | {} | {} | {} |",
+            format.id,
+            format.versions.join(", "),
+            snake(&format.route),
+            format.detection,
+            if format.imported_operations {
+                "imported"
+            } else {
+                "native"
+            },
+            format
+                .review_flags
+                .iter()
+                .map(|flag| format!("`{flag}`"))
+                .collect::<Vec<_>>()
+                .join(", "),
+            format
+                .acquisition
+                .iter()
+                .map(snake)
+                .collect::<Vec<_>>()
+                .join(", "),
         );
     }
     out.push_str(
