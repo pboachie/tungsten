@@ -129,7 +129,12 @@ impl Walk<'_> {
             else {
                 continue;
             };
-            for (media, entry) in content {
+            for media in content.keys() {
+                let at = child(&child(&response, "content"), media);
+                let at = self.ws.deref(&at).unwrap_or(at);
+                let Some(entry) = self.ws.get(&at) else {
+                    continue;
+                };
                 if !is_json_media(media) || reviewed(entry) {
                     continue;
                 }
@@ -139,7 +144,6 @@ impl Walk<'_> {
                     status: status.clone(),
                     media: media.clone(),
                 };
-                let at = child(&child(&response, "content"), media);
                 if entry.get("schema").is_none() {
                     if self.visited.insert((at.doc, at.pointer.clone())) {
                         self.finding("TG0930", "declares JSON content without a schema; the generated response accepts any JSON value", &at, &site);

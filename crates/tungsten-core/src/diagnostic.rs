@@ -248,7 +248,7 @@ pub mod codes {
         ("TG0147", "OpenAPI 3.2 nested encoding is not supported"),
         (
             "TG0148",
-            "OpenAPI 3.2 reusable media types are not supported",
+            "OpenAPI 3.2 reusable media types (retired: now compiled)",
         ),
         (
             "TG0149",
