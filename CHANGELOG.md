@@ -43,6 +43,10 @@ changes.
 
 ### Documentation
 
+- Add a migration note contrasting the new opt-in total operation deadline
+  with the existing per-attempt `timeoutMs` and its equivalents, across the
+  runtimes, the generated Rust CLI and the MCP server.
+
 - Expand the Postman import and generation-freshness guides with contract
   review, source-checkout prerequisites and links to the existing example
   workflows.
