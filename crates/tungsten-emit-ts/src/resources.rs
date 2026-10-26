@@ -204,6 +204,46 @@ fn stream_assignment(
     ]
 }
 
+/// The declared type of the download property of an operation.
+fn download_property_type(info: &OpInfo<'_>, shape: &OpShape<'_>) -> Vec<String> {
+    let args = format!(
+        "args{}: ops.{}",
+        if shape.all_optional { "?" } else { "" },
+        info.args_type
+    );
+    vec![
+        format!("(({args}, opts?: DownloadOptions) => Promise<Result<Download>>) & {{"),
+        "  readonly downloadOf: OperationDescriptor;".into(),
+        "}".into(),
+    ]
+}
+
+/// The constructor assignment of a download property.
+fn download_assignment(member: &str, info: &OpInfo<'_>, shape: &OpShape<'_>) -> Vec<String> {
+    let param = if shape.all_optional {
+        format!("args: ops.{} = {{}}", info.args_type)
+    } else {
+        format!("args: ops.{}", info.args_type)
+    };
+    let d = format!("ops.{}", info.key);
+    vec![
+        format!("this.{member} = Object.assign("),
+        format!("  ({param}, opts?: DownloadOptions) => core.download({d}, args, opts),"),
+        format!("  {{ downloadOf: {d} }},"),
+        ");".into(),
+    ]
+}
+
+/// The TSDoc of the download property of an operation.
+fn download_doc(info: &OpInfo<'_>) -> String {
+    let op = info.op;
+    paragraphs(vec![format!(
+        "`{}` (`{}`) with its binary success body streamed instead of buffered: a `Download` to read chunk by chunk, hand to a sink with `writeTo`, or save with `saveDownload` from `@elysra/tungsten-runtime/node`. Everything before the answer follows the rules of the buffered method; `opts.maxBytes` bounds the body and `opts.onProgress` reports it. The connection is held until the body ends or `close()` is called.",
+        op.id.0,
+        op.wire_method()
+    )])
+}
+
 /// The TSDoc of the stream property of an operation.
 fn stream_doc(info: &OpInfo<'_>) -> String {
     let op = info.op;
@@ -311,6 +351,17 @@ pub(crate) fn resource_file(
                 }
                 namespaces.extend(shapes[o].result_namespaces.iter().cloned());
             }
+            MemberKind::Download(_) => {
+                has_ops = true;
+                for t in [
+                    "Download",
+                    "DownloadOptions",
+                    "OperationDescriptor",
+                    "Result",
+                ] {
+                    imports.add_type("@elysra/tungsten-runtime", t);
+                }
+            }
             MemberKind::Child(c) => {
                 let child = &plan.resources[c];
                 imports.add(&rel_import(&r.file, &child.file), &child.class);
@@ -368,6 +419,16 @@ pub(crate) fn resource_file(
                 }
                 w.line("};");
             }
+            MemberKind::Download(o) => {
+                let info = &plan.ops[o];
+                w.doc(CommentStyle::JsDoc, &download_doc(info));
+                let lines = download_property_type(info, &shapes[o]);
+                w.line(format!("readonly {}: {}", m.name, lines[0]));
+                for l in &lines[1..lines.len() - 1] {
+                    w.line(l);
+                }
+                w.line("};");
+            }
         }
     }
     w.blank();
@@ -389,6 +450,11 @@ pub(crate) fn resource_file(
             MemberKind::Stream(o) => {
                 let event = event_type(&shapes[o]);
                 for l in stream_assignment(&m.name, &plan.ops[o], &shapes[o], &event) {
+                    w.line(l);
+                }
+            }
+            MemberKind::Download(o) => {
+                for l in download_assignment(&m.name, &plan.ops[o], &shapes[o]) {
                     w.line(l);
                 }
             }

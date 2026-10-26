@@ -106,6 +106,9 @@ pub(crate) enum MemberKind {
     /// The event stream of the operation at this index into [`Plan::ops`]
     /// (`createStream`).
     Stream(usize),
+    /// The streamed download of the binary success body of the operation at
+    /// this index into [`Plan::ops`] (`getFileDownload`).
+    Download(usize),
 }
 
 #[derive(Debug, Clone)]
@@ -337,12 +340,23 @@ impl<'a> Plan<'a> {
                     .iter()
                     .map(|&o| with_word(&self.ops[o].op.name.words, "stream")),
             );
+            let downloads: Vec<usize> = op_indices
+                .iter()
+                .copied()
+                .filter(|&o| self.ops[o].op.binary_success())
+                .collect();
+            words.extend(
+                downloads
+                    .iter()
+                    .map(|&o| with_word(&self.ops[o].op.name.words, "download")),
+            );
             let names = unique(&[], &words, Role::Method);
             let kinds = op_indices
                 .iter()
                 .map(|&o| MemberKind::Op(o))
                 .chain(children_of[i].iter().map(|&c| MemberKind::Child(c)))
-                .chain(streams.iter().map(|&o| MemberKind::Stream(o)));
+                .chain(streams.iter().map(|&o| MemberKind::Stream(o)))
+                .chain(downloads.iter().map(|&o| MemberKind::Download(o)));
             let members = names
                 .into_iter()
                 .zip(kinds)

@@ -211,7 +211,16 @@ pub(crate) fn op_shape<'a>(plan: &Plan<'a>, info: &OpInfo<'a>) -> OpShape<'a> {
             None => {
                 let name = key.unwrap_or_else(|| "body".to_string());
                 let (ts, zod, ty) = match content.encoding {
-                    BodyEncoding::Bytes | BodyEncoding::Jsonl => (
+                    BodyEncoding::Bytes => {
+                        uses.upload = true;
+                        (
+                            "Uint8Array | UploadSource".to_string(),
+                            "z.union([z.instanceof(Uint8Array), z.custom<UploadSource>((value) => value instanceof UploadSource)])"
+                                .to_string(),
+                            None,
+                        )
+                    }
+                    BodyEncoding::Jsonl => (
                         "Uint8Array".to_string(),
                         "z.instanceof(Uint8Array)".to_string(),
                         None,
@@ -1191,6 +1200,7 @@ pub(crate) fn descriptors_file(
         uses.pattern |= shape.uses.pattern;
         uses.length |= shape.uses.length;
         uses.binary |= shape.uses.binary;
+        uses.upload |= shape.uses.upload;
         uses.namespaces
             .extend(shape.uses.namespaces.iter().cloned());
         body.blank();
@@ -1246,6 +1256,9 @@ pub(crate) fn descriptors_file(
     if uses.binary {
         imports.add("./internal.js", "binary");
         imports.add_type("./internal.js", "BinaryInput");
+    }
+    if uses.upload {
+        imports.add("@elysra/tungsten-runtime", "UploadSource");
     }
     let mut w = Writer::new("  ");
     w.line(header);

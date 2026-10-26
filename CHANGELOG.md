@@ -246,6 +246,13 @@ changes.
   itself when a part has such headers, because `FormData` cannot carry them.
   The other SDK targets do not send part headers.
 
+- Generate streamed transfer methods in TypeScript, Python and Rust SDKs. An
+  operation whose 2xx response is a binary body gets a `<method>Download` /
+  `<method>_download` method returning the runtime's `Download` (Rust: async
+  client only, with `DownloadOptions`). A whole binary request body accepts an
+  `UploadSource` (TypeScript `Uint8Array | UploadSource`, Python
+  `BinaryInput`), and Rust SDKs add `<method>_upload(request, source, opts)`.
+  Regenerated SDKs for such operations change; other operations are unchanged.
 - Gallery recipe `android-jni`: call a generated Rust SDK from Java through a
   minimal JNI bridge (`examples/android-jni`), with one Tokio runtime per
   native handle, the total deadline and response-size bound, diagnostic
