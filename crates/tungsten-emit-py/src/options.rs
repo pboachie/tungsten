@@ -19,7 +19,7 @@ use tungsten_ir::naming::{self, Case};
 use crate::py::{is_identifier, is_keyword};
 
 /// Default `tungsten-runtime` version specifier.
-pub const DEFAULT_RUNTIME_SPEC: &str = ">=0.1.3,<0.2.0";
+pub const DEFAULT_RUNTIME_SPEC: &str = ">=0.1.4,<0.2.0";
 /// Pydantic range of generated packages: PEP 695 `type` aliases are
 /// supported since 2.10.
 pub const PYDANTIC_RANGE: &str = ">=2.10,<3";
@@ -136,7 +136,7 @@ impl Options {
             None => RuntimeDep::Spec(match runtime_spec {
                 Some(spec) if python_version != "3.12" => format!("{spec},>=0.1.3"),
                 Some(spec) => spec,
-                None if python_version != "3.12" => ">=0.1.3,<0.2.0".to_string(),
+                None if python_version != "3.12" => ">=0.1.4,<0.2.0".to_string(),
                 None => DEFAULT_RUNTIME_SPEC.to_string(),
             }),
         };

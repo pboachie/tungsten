@@ -68,7 +68,7 @@ func describe() any {
 // tags. Publish and verify the runtime module before adopting its version here.
 // runtime_version remains an explicit override; runtime_path selects a local
 // replacement for source development.
-const defaultRuntimeVersion = "v0.1.3"
+const defaultRuntimeVersion = "v0.1.4"
 
 var (
 	semver      = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$`)

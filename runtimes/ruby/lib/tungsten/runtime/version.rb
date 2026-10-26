@@ -4,6 +4,6 @@
 module Tungsten
   module Runtime
     # The runtime's version, sent as X-Tungsten-Runtime: tungsten-rb/<version>.
-    VERSION = "0.1.3"
+    VERSION = "0.1.4"
   end
 end

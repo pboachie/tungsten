@@ -9,6 +9,43 @@ changes.
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-10-26
+
+Security-only patch release on top of 0.1.3. It contains no feature or
+behaviour changes beyond the items below.
+
+### Security
+
+- Refresh the locked TLS verification and CA bundles: `rustls-webpki` 0.103.16
+  and `webpki-roots` 1.0.10 reject distrusted emSign certificate paths
+  (RUSTSEC-2026-0382 and RUSTSEC-2026-0381). Update `tokio` to 1.53.3
+  (RUSTSEC-2026-0386) and, in the Rust runtime, `ctutils` to 0.4.4
+  (RUSTSEC-2026-0385).
+- Refresh the locked MCP runtime HTTP-body, query-string, URI and address
+  parsers and schema validator (`body-parser` 2.4.0, `qs` 6.16.1, `fast-uri`
+  3.1.9, `ip-address` 10.7.4 and `zod` 4.6.7) to address request-body denial
+  of service, URI normalization confusion and oversized-collection validation
+  advisories.
+- Require certifi 2026.10.19 or newer in the Python runtime, without changing
+  its Python compatibility floor, and lock the packaging toolchain to the same
+  certifi release.
+- Bootstrap new Python environments created by `tungsten init` setup from the
+  hash-verified pip 26.2.2 wheel before any network package operation, and
+  reject uv versions older than 0.13.4. These packaging mitigations do not
+  claim the still-unreleased CPython intermediate-certificate denylist fix.
+- Build and publish the release with the October Node.js security releases
+  (22.23.4 and 24.22.1), the PyPI publishing action 1.14.3 (bundled
+  certificate-trust fix), and patched Temurin 21.0.13, .NET SDK 10.0.402,
+  Ruby 3.3.13 and Python 3.12.15 toolchains. Runtime compatibility floors are
+  unchanged.
+
+### Changed
+
+- Generated SDKs, MCP servers and WebMCP packages now default to the patched
+  0.1.4 runtimes (`^0.1.4`, `>=0.1.4,<0.2.0`, `~> 0.1.4` or exactly `0.1.4`,
+  following each target's existing style), so new output picks up the
+  security fixes above. An explicit `runtime` setting is unchanged.
+
 ## [0.1.3] - 2026-10-17
 
 ### Added
@@ -774,7 +811,9 @@ runtime (`@elysra/tungsten-mcp`) and the installers ship together at 0.1.0.
 - The compiler warns when a `gates` entry in `agent.yml` matches no
   operation.
 
-[Unreleased]: https://github.com/pboachie/tungsten/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/pboachie/tungsten/compare/v0.1.4...HEAD
+[0.1.4]: https://github.com/pboachie/tungsten/compare/v0.1.3...v0.1.4
+[0.1.3]: https://github.com/pboachie/tungsten/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/pboachie/tungsten/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/pboachie/tungsten/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/pboachie/tungsten/releases/tag/v0.1.0
