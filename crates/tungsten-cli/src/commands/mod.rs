@@ -110,7 +110,7 @@ fn dispatch_with_inputs(
         Command::Doctor(args) => doctor::run(args, env),
         Command::Capabilities(args) => capabilities::run(args),
         Command::Config(args) => config::run(args, env),
-        Command::Lock(args) => lock::run(args),
+        Command::Lock(args) => lock::run(args, env),
         Command::Bundle {
             command: BundleCommand::Export(args),
         } => bundle::export(args),
