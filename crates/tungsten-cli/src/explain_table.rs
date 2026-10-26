@@ -268,6 +268,11 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
         "Review the change and accept it explicitly with `tungsten lock --update`; `tungsten lock --check` lists every difference. Locked runs never fetch or refresh inputs.",
     ),
     e(
+        "TG0129",
+        "A locked run (`generate --locked`) over a lock that records generated outputs found that a built-in target no longer generates the recorded bytes, although every locked input, option, compiler and emitter identity matches. This usually means a platform-dependent difference. Nothing is generated.",
+        "Compare the platform and toolchain with the environment that recorded the lock. After reviewing the new output, record it explicitly with `tungsten lock --outputs --update`.",
+    ),
+    e(
         "TG0130",
         "The Git input reference has an unsupported transport, URL credentials, query, invalid ref or unsafe subpath. Git authentication stays in the credential helper or environment.",
         "Use git+https://host/owner/repository@ref#path. Local hermetic inputs may use git+file:///absolute/repository@ref#path. Do not put secrets in the reference.",
