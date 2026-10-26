@@ -260,6 +260,13 @@ impl<'a> SchemaBuilder<'a> {
             .map(|v| {
                 let schema = self.type_ref(&v.ty);
                 match (&union.discriminator, &v.tag, union.strategy) {
+                    // The OpenAPI 3.2 `defaultMapping` variant takes any tag.
+                    (Some(d), _, _)
+                        if d.default_mapping.is_some()
+                            && matches!(&v.ty, TypeRef::Named(id) if d.default_mapping.as_ref() == Some(id)) =>
+                    {
+                        schema
+                    }
                     (Some(d), Some(tag), UnionStrategy::Tagged) => {
                         pin_tag(schema, &d.property, tag)
                     }
@@ -278,7 +285,12 @@ impl<'a> SchemaBuilder<'a> {
             (UnionStrategy::Literal, Some(values)) if !values.is_empty() => {
                 json!({ "enum": values })
             }
-            (UnionStrategy::Tagged, _) if union.discriminator.is_some() => {
+            (UnionStrategy::Tagged, _)
+                if union
+                    .discriminator
+                    .as_ref()
+                    .is_some_and(|d| d.default_mapping.is_none()) =>
+            {
                 json!({ "oneOf": variants })
             }
             _ => json!({ "anyOf": variants }),

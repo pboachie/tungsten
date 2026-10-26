@@ -334,8 +334,8 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
     ),
     e(
         "TG0149",
-        "A discriminator uses OpenAPI 3.2 `defaultMapping`, the schema chosen when the discriminating value matches no mapping. A client without it would reject payloads the API accepts.",
-        "Remove `defaultMapping`, or model the fallback as an explicit union member.",
+        "Retired. Earlier releases refused the OpenAPI 3.2 discriminator `defaultMapping`. tungsten now decodes a value whose tag is missing or maps to no variant as the default variant (TypeScript, Python and Rust SDKs and the mock), and no longer reports this code. A `defaultMapping` that is not a variant of the union is reported as TG0306 and ignored.",
+        "Nothing to do; regenerate to pick up the default variant.",
     ),
     e(
         "TG0150",

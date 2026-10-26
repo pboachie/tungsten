@@ -252,7 +252,7 @@ pub mod codes {
         ),
         (
             "TG0149",
-            "OpenAPI 3.2 discriminator `defaultMapping` is not supported",
+            "OpenAPI 3.2 discriminator `defaultMapping` (retired: now compiled)",
         ),
         (
             "TG0150",

@@ -529,13 +529,21 @@ def all_of(members: Callable[[], Sequence[Any]]) -> AfterValidator:
     return AfterValidator(check)
 
 
-def tag(wire: str, aliases: Mapping[str, str] | None = None) -> Discriminator:
+def tag(
+    wire: str,
+    aliases: Mapping[str, str] | None = None,
+    default: str | None = None,
+    known: Sequence[str] = (),
+) -> Discriminator:
     """The discriminator of a tagged union whose variants do not all fix the
     tag as a literal field: the value of the ``wire`` property of a mapping,
     or of the field with that wire name of a model. ``aliases`` maps the
     other tag values of the discriminator mapping to their variant's tag
-    (``{"puppy": "dog"}`` when both select ``Dog``)."""
+    (``{"puppy": "dog"}`` when both select ``Dog``). With ``default`` (an
+    OpenAPI 3.2 ``defaultMapping``), a missing tag or one that is not in
+    ``known`` selects the variant tagged ``default``."""
     others = dict(aliases or {})
+    tags = frozenset(known)
 
     def read(value: Any) -> Any:
         found: object = None
@@ -548,7 +556,10 @@ def tag(wire: str, aliases: Mapping[str, str] | None = None) -> Discriminator:
                     break
             else:
                 found = (value.model_extra or {}).get(wire)
-        return others.get(found, found) if isinstance(found, str) else found
+        found = others.get(found, found) if isinstance(found, str) else found
+        if default is not None and (not isinstance(found, str) or found not in tags):
+            return default
+        return found
 
     return Discriminator(read)
 
