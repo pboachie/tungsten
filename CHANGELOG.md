@@ -236,6 +236,11 @@ changes.
 
 ### Added
 
+- Add the `examples/telemetry` gallery recipe: TypeScript, Python and Rust
+  SDKs collect correlated operation, attempt and phase telemetry in memory for
+  a read, a retried read and a missing record, print the same summary and
+  check that no event holds a URL or payload.
+
 - The runtime telemetry observer reports `stream()` in TypeScript, Python and
   Rust as one `stream` operation covering its connection and every reconnect,
   ending `ok`, `error` (final failure item) or `cancelled` (cancelled or left

@@ -224,6 +224,14 @@
     "outcome": "the TypeScript, Python and Rust clients each read 200 records through a request scheduler while the loopback server sees at most 4 concurrent requests and refuses none"
   },
   {
+    "name": "telemetry",
+    "title": "Trace calls with local telemetry",
+    "description": "Collect correlated operation, attempt and phase telemetry in memory from the TypeScript, Python and Rust SDKs, with nothing sent anywhere.",
+    "mode": "telemetry",
+    "prerequisites": "Python venv and pip, Node 22 or later with npm, and the pinned Rust toolchain and Cargo",
+    "outcome": "the TypeScript, Python and Rust clients print the same correlated operation, attempt and phase events for a read, a retried read and a missing record, with no URL or payload in any event"
+  },
+  {
     "name": "webhook-receiver",
     "title": "Receive signed webhooks",
     "description": "Verify signed order.shipped deliveries and decode typed payloads with the TypeScript, Python and Rust SDKs, without a web framework.",
