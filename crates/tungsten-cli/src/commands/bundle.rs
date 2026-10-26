@@ -177,7 +177,7 @@ pub(crate) fn export(args: &BundleExportArgs) -> Report {
             .with_help("review the project, run `tungsten lock` (or `tungsten lock --update`), then export again; a bundle carries only reviewed, locked identities"),
         );
     }
-    let inventory = match inventory(&base, &recipe, &lock_path) {
+    let inventory = match inventory(&base, &recipe, &lock_path, args.include_input_cache) {
         Ok(inventory) => inventory,
         Err(message) => {
             return report.failed(
@@ -234,15 +234,56 @@ fn inventory(
     base: &Path,
     recipe: &GenerationRecipe,
     lock_path: &Path,
+    include_input_cache: bool,
 ) -> Result<BundleInventory, String> {
     let mut files = vec![];
     let mut excluded = vec![];
     let mut total = 0u64;
+    let mut cached = BTreeSet::new();
+    if include_input_cache {
+        // Remote entry documents and the reviewed sources of converted imports
+        // reproduce offline from exactly their verified pins.
+        let sources = recipe.inputs.iter().flat_map(|input| {
+            input
+                .remote
+                .then_some(input.spec.as_str())
+                .into_iter()
+                .chain(input.source_url.as_deref())
+        });
+        for source in sources {
+            let pinned =
+                tungsten_openapi::acquire::pinned_files(source, base).map_err(|error| {
+                    format!(
+                        "cannot include the pinned cache of {source}: {}",
+                        error.message
+                    )
+                })?;
+            cached.insert(source.to_string());
+            for path in pinned {
+                if files.iter().any(|f: &BundleFile| f.path == path) {
+                    continue;
+                }
+                let bytes = read_regular(&base.join(&path), base)
+                    .map_err(|reason| format!("cannot export {path}: {reason}"))?;
+                total += bytes.len() as u64;
+                files.push(BundleFile {
+                    path,
+                    role: Some(FileRole::InputCache),
+                    bytes: bytes.len() as u64,
+                    digest: Digest::of(&bytes).0,
+                    sensitive: false,
+                });
+            }
+        }
+    }
     for file in &recipe.files {
+        if file.role == FileRole::RemoteInput && cached.contains(&file.path) {
+            continue;
+        }
         if file.role == FileRole::RemoteInput {
             excluded.push(ExcludedFile {
                 path: file.path.clone(),
-                reason: "remote input; its pinned cache in .tungsten-inputs is not bundled".into(),
+                reason: "remote input; its pinned cache in .tungsten-inputs is not bundled (see --include-input-cache)".into(),
             });
             continue;
         }
@@ -266,6 +307,16 @@ fn inventory(
             digest: file.digest.clone(),
             sensitive: sensitive(&file.path),
         });
+    }
+    for input in &recipe.inputs {
+        if let Some(source) = &input.source_url
+            && !cached.contains(source)
+        {
+            excluded.push(ExcludedFile {
+                path: source.clone(),
+                reason: "reviewed source of a converted import; its pin is verified offline but not bundled (see --include-input-cache)".into(),
+            });
+        }
     }
     let lock_bytes = read_regular(lock_path, base)
         .map_err(|reason| format!("cannot export {}: {reason}", lock::LOCK_FILE))?;
@@ -519,7 +570,19 @@ fn validate(bundle: &Path) -> Result<(BundleInventory, Vec<Vec<u8>>), String> {
             None => return Err(format!("locked input {} is missing", locked.path)),
         }
     }
-    for file in inventory.files.iter().filter(|f| f.role.is_some()) {
+    for file in &inventory.files {
+        if file.role == Some(FileRole::InputCache) && !file.path.starts_with(".tungsten-inputs/") {
+            return Err(format!(
+                "input cache entry {} lies outside .tungsten-inputs",
+                file.path
+            ));
+        }
+    }
+    for file in inventory
+        .files
+        .iter()
+        .filter(|f| f.role.is_some_and(|role| role != FileRole::InputCache))
+    {
         if !recipe.files.iter().any(|l| l.path == file.path) {
             return Err(format!(
                 "{} is not part of the locked input closure",
@@ -692,6 +755,13 @@ fn export_human(inventory: &BundleInventory, bundle_dir: Option<&str>) -> String
             "no (see excluded inputs and external emitters)"
         }
     );
+    if inventory
+        .files
+        .iter()
+        .any(|f| f.role == Some(FileRole::InputCache))
+    {
+        text.push_str("  includes pinned remote input documents from .tungsten-inputs; check that their terms allow redistribution\n");
+    }
     let _ = writeln!(text, "{}", inventory.notice);
     text
 }

@@ -84,7 +84,13 @@ struct Server<'c> {
     opts: Options,
     manifest_schema: Schema,
     agent_schema: Schema,
+    profile_schema: Schema,
     manifest: Option<PathBuf>,
+    /// How the client accepts watcher registrations, when it does.
+    watch: Option<WatchSupport>,
+    /// Directories of profiles outside the workspace folder that a watcher
+    /// is registered for.
+    watched_profiles: BTreeSet<PathBuf>,
     docs: BTreeMap<PathBuf, Doc>,
     analysis: Option<Analysis>,
     /// The index of the last compilation that built the IR.
@@ -144,6 +150,9 @@ pub fn serve(connection: &Connection, options: Options) -> Result<i32, String> {
         opts: options,
         manifest_schema: Schema::new(tungsten_config::TungstenConfig::json_schema()),
         agent_schema: Schema::new(tungsten_agent::json_schema()),
+        profile_schema: Schema::embedding(tungsten_config::profiles::json_schema()),
+        watch: None,
+        watched_profiles: BTreeSet::new(),
         docs: BTreeMap::new(),
         analysis: None,
         index: None,
@@ -156,7 +165,8 @@ pub fn serve(connection: &Connection, options: Options) -> Result<i32, String> {
         shutdown: false,
     };
     server.manifest = server.discover(&params);
-    server.watch_files(&params)?;
+    server.watch = watch_support(&params);
+    server.watch_files()?;
     if server.manifest.is_some() {
         server.touch(Duration::ZERO);
     }
@@ -189,6 +199,29 @@ fn capabilities() -> ServerCapabilities {
         ..ServerCapabilities::default()
     }
 }
+
+/// Watcher registration the client supports.
+#[derive(Debug, Clone, Copy)]
+struct WatchSupport {
+    /// Patterns relative to a base folder (LSP 3.17), so directories
+    /// outside the workspace folder can be watched.
+    relative: bool,
+}
+
+fn watch_support(params: &InitializeParams) -> Option<WatchSupport> {
+    let caps = params
+        .capabilities
+        .workspace
+        .as_ref()
+        .and_then(|w| w.did_change_watched_files.as_ref())?;
+    caps.dynamic_registration
+        .unwrap_or(false)
+        .then_some(WatchSupport {
+            relative: caps.relative_pattern_support.unwrap_or(false),
+        })
+}
+
+const PROFILE_WATCHERS: &str = "tungsten-profile-watchers";
 
 const MANIFEST_NAMES: [&str; 2] = ["tungsten.yml", "tungsten.yaml"];
 
@@ -259,30 +292,26 @@ impl Server<'_> {
 
     /// Ask the client to tell us when files change on disk (specs and
     /// overlays edited elsewhere), when it can.
-    fn watch_files(&self, params: &InitializeParams) -> Result<(), String> {
-        let dynamic = params
-            .capabilities
-            .workspace
-            .as_ref()
-            .and_then(|w| w.did_change_watched_files.as_ref())
-            .and_then(|c| c.dynamic_registration)
-            .unwrap_or(false);
-        if !dynamic {
+    fn watch_files(&self) -> Result<(), String> {
+        if self.watch.is_none() {
             return Ok(());
         }
-        let options = DidChangeWatchedFilesRegistrationOptions {
-            watchers: vec![FileSystemWatcher {
-                glob_pattern: GlobPattern::String("**/*.{yml,yaml,json}".to_string()),
-                kind: None,
-            }],
-        };
+        let watchers = vec![FileSystemWatcher {
+            glob_pattern: GlobPattern::String("**/*.{yml,yaml,json}".to_string()),
+            kind: None,
+        }];
+        self.register_watchers("tungsten-watched-files", watchers)
+    }
+
+    fn register_watchers(&self, id: &str, watchers: Vec<FileSystemWatcher>) -> Result<(), String> {
+        let options = DidChangeWatchedFilesRegistrationOptions { watchers };
         let registration = Registration {
-            id: "tungsten-watched-files".to_string(),
+            id: id.to_string(),
             method: "workspace/didChangeWatchedFiles".to_string(),
             register_options: serde_json::to_value(options).ok(),
         };
         let request = Request::new(
-            RequestId::from("tungsten-register-watchers".to_string()),
+            RequestId::from(format!("{id}-register-{}", self.generation)),
             "client/registerCapability".to_string(),
             RegistrationParams {
                 registrations: vec![registration],
@@ -292,6 +321,54 @@ impl Server<'_> {
             .sender
             .send(Message::Request(request))
             .map_err(|e| e.to_string())
+    }
+
+    /// Profiles may live outside the workspace folder (a shared directory
+    /// next to several projects), where the workspace watcher does not
+    /// reach. Watch their directories too, re-registering only when the set
+    /// of directories changes.
+    fn watch_profiles(&mut self) -> Result<(), String> {
+        let Some(support) = self.watch else {
+            return Ok(());
+        };
+        let Some(analysis) = &self.analysis else {
+            return Ok(());
+        };
+        let workspace = self.manifest.as_deref().and_then(Path::parent);
+        let dirs: BTreeSet<PathBuf> = analysis
+            .profiles
+            .iter()
+            .filter(|p| workspace.is_none_or(|w| !p.starts_with(w)))
+            .filter_map(|p| p.parent().map(Path::to_path_buf))
+            .collect();
+        if dirs == self.watched_profiles {
+            return Ok(());
+        }
+        if !self.watched_profiles.is_empty() {
+            let request = Request::new(
+                RequestId::from(format!("{PROFILE_WATCHERS}-unregister-{}", self.generation)),
+                "client/unregisterCapability".to_string(),
+                lsp_types::UnregistrationParams {
+                    unregisterations: vec![lsp_types::Unregistration {
+                        id: PROFILE_WATCHERS.to_string(),
+                        method: "workspace/didChangeWatchedFiles".to_string(),
+                    }],
+                },
+            );
+            self.conn
+                .sender
+                .send(Message::Request(request))
+                .map_err(|e| e.to_string())?;
+        }
+        let watchers: Vec<FileSystemWatcher> = dirs
+            .iter()
+            .filter_map(|dir| profile_watcher(dir, support))
+            .collect();
+        self.watched_profiles = dirs;
+        if watchers.is_empty() {
+            return Ok(());
+        }
+        self.register_watchers(PROFILE_WATCHERS, watchers)
     }
 
     /// [`Server::message`], with a panic in a handler turned into a log line
@@ -363,6 +440,7 @@ impl Server<'_> {
         self.analysis = Some(analysis);
         if current {
             self.publish()?;
+            self.watch_profiles()?;
             if let Some(a) = &self.analysis {
                 let total: usize = a.diagnostics.values().map(Vec::len).sum();
                 self.log(&format!(
@@ -531,6 +609,18 @@ impl Server<'_> {
             if a.overlays.iter().any(|o| o == path) {
                 return Some(Kind::Overlay);
             }
+            if a.profiles.iter().any(|p| p == path) {
+                return Some(Kind::Profile);
+            }
+        }
+        // A profile not yet selected by the manifest, or not yet compiled.
+        if is_yaml(path)
+            && self
+                .docs
+                .get(path)
+                .is_some_and(|doc| declares_profile(&doc.text))
+        {
+            return Some(Kind::Profile);
         }
         let name = file_name(path);
         if !is_yaml(path) {
@@ -679,10 +769,38 @@ impl Server<'_> {
             index: self.index.as_ref(),
             manifest: &self.manifest_schema,
             agent: &self.agent_schema,
+            profile: &self.profile_schema,
         };
         let offset = doc.lines.offset(position, &doc.text);
         Some(f(&inputs, offset))
     }
+}
+
+/// A watcher for the YAML files of one profile directory.
+fn profile_watcher(dir: &Path, support: WatchSupport) -> Option<FileSystemWatcher> {
+    let pattern = "*.{yml,yaml}".to_string();
+    let glob_pattern = if support.relative {
+        GlobPattern::Relative(lsp_types::RelativePattern {
+            base_uri: OneOf::Right(path_to_uri(dir)?),
+            pattern,
+        })
+    } else {
+        let dir = dir.to_str()?.replace('\\', "/");
+        GlobPattern::String(format!("{}/{pattern}", dir.trim_end_matches('/')))
+    };
+    Some(FileSystemWatcher {
+        glob_pattern,
+        kind: None,
+    })
+}
+
+/// Whether `text` has a top-level `tungsten_profile` key, as every profile
+/// must.
+fn declares_profile(text: &str) -> bool {
+    text.lines().any(|line| {
+        line.strip_prefix("tungsten_profile")
+            .is_some_and(|rest| rest.trim_start().starts_with(':'))
+    })
 }
 
 fn parse<T: DeserializeOwned>(params: serde_json::Value) -> Option<T> {
