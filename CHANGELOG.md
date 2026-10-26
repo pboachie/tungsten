@@ -236,6 +236,12 @@ changes.
 
 ### Added
 
+- `tungsten update check` links the upgrade rehearsal: when a newer release is
+  available, `rehearse_command` (new `--json` field) holds the
+  `tungsten upgrade rehearse --to <version> --workspace <dir>` invocation, and
+  the guidance for migrations names `upgrade rehearse` and `upgrade apply`
+  instead of the separate preview commands.
+
 - Concurrent commands of a generated Rust CLI refresh a stored login session
   one process at a time: the token is refreshed before the call under a
   per-session lock file and read again first, so a refresh token is not
