@@ -279,6 +279,28 @@ activated virtual environment.
 For current source builds, MCP servers require Node 22.13+ (Node 23 requires
 23.2+); TypeScript SDKs and WebMCP build tooling retain their Node 22 prerequisite.
 
+#### Node.js support
+
+Upstream lifecycle as of October 2026: 22 and 24 are LTS, 26 is Current, and
+20 is end-of-life. Odd-numbered branches, Node 18 and older, and unreleased
+majors are not supported. A new major is promoted only after it passes the
+package build lanes; a line is retired when upstream support ends.
+
+| Artifact | Supported lines | Declared floor | Lanes checked in public CI |
+|---|---|---|---|
+| `@elysra/tungsten-runtime` and generated TypeScript SDKs (run) | 22, 24, 26 | `>=22` | 22.23.4, 24.22.1, 26.12.1 |
+| `@elysra/tungsten-mcp` and generated MCP servers (run) | 22.13+, 24, 26 | `^22.13.0 \|\| >=23.2.0` | 22.23.4, 24.22.1, 26.12.1 |
+| `@elysra/tungsten-webmcp` and generated WebMCP packages (build) | 22, 24, 26 | `>=22` | 22.23.4, 24.22.1, 26.12.1 |
+| Node 20 (legacy) | Not supported | — | 20.20.2, advisory only |
+
+The WebMCP floor covers its npm build tooling only. Generated WebMCP bundles run
+in a browser that provides the WebMCP API. Passing an npm build does not make a
+browser compatible. The core runtime entry point uses Web APIs only; its `/node`
+export and the MCP runtime need Node. The Node 20 canary builds the packages and
+imports the SDK and WebMCP runtimes for information only. The MCP runtime cannot
+load on Node 20 because it needs `module.stripTypeScriptTypes` (Node 22.13 or
+23.2). The tungsten compiler and generated Rust CLIs never need Node.
+
 | Output | Runtime package | Install the published runtime |
 |---|---|---|
 | TypeScript SDK | [`@elysra/tungsten-runtime`](https://www.npmjs.com/package/@elysra/tungsten-runtime) | `npm install --save-exact @elysra/tungsten-runtime@0.1.3` |
