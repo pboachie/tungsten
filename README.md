@@ -767,6 +767,7 @@ tungsten [--json] <command>
 | Command | Purpose |
 |---|---|
 | `init` | Write project manifests from any supported input ([Supported inputs](#supported-inputs)): `--from`, `--dir`, `--name`, `--targets`, `--force`; `--targets webmcp` includes a linked TypeScript SDK |
+| `workspace` | List the projects under a directory (bounded discovery, never following links) with their ids, outputs and inputs, and report outputs two projects share (TG0642); `--project ID` and `--affected FILE` select projects, `--run check\|generate\|lock -- ARGS` runs a command on each, one at a time. `--project ID` on `check`, `generate`, `lock` and the other project commands runs on one project of the workspace at PATH |
 | `check` | Validate the manifests and specs and report diagnostics (`--ci`, `--strict`); opt into response quality with `--audit-contracts` or audit-only enforcement with `--require-contracts`; `--ci` runs the emitters in memory, external ones included (`--no-external` skips them) |
 | `generate` | Generate every configured target (`--target`, `--dry-run`, `--check`, `--force`, `--strict`); `--locked` refuses (TG0128) unless the project matches `tungsten.lock.json` and acquires inputs offline |
 | `ir dump` | Write the IR as JSON (`--out`, `--compact`) |

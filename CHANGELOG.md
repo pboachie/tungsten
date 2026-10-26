@@ -230,6 +230,17 @@ changes.
 
 ### Added
 
+- `tungsten workspace --run check|generate|lock [-- ARGS]` runs the command on
+  each selected project, one at a time in discovery order, and reports every
+  project's exit code and diagnostics (`runs` in the JSON result); the
+  workspace exits with the highest code. `--affected FILE` (repeatable)
+  selects the projects that depend on a file: its manifest, a declared input,
+  or a file the project's offline compilation read or looked for; a project
+  that does not compile is always selected. A writing `generate` is refused
+  before any project runs when selected projects share output directories
+  (TG0642). The capability catalog lists the commands under
+  `workspace.runs`.
+
 - `tungsten lsp` serves every project in the editor's workspace folders, found
   as `tungsten workspace` finds them, plus any `tungsten.yml` that is opened.
   Edits, saves and watched changes re-check only the projects that read the
