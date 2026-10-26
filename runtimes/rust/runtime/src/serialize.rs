@@ -228,8 +228,64 @@ pub fn serialize_header_param(p: &ParamDescriptor, value: &Value) -> String {
     }
 }
 
-/// `name=value` for one cookie parameter (`form` style, values encoded).
+/// Whether `c` is an RFC 6265 `cookie-octet`.
+fn cookie_octet(c: char) -> bool {
+    matches!(c, '\x21' | '\x23'..='\x2B' | '\x2D'..='\x3A' | '\x3C'..='\x5B' | '\x5D'..='\x7E')
+}
+
+/// A `cookie` style value as written; only characters a cookie cannot
+/// carry are percent-encoded.
+fn cookie_text(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut buf = [0u8; 4];
+    for c in text.chars() {
+        if cookie_octet(c) {
+            out.push(c);
+        } else {
+            out.push_str(&encode_component(c.encode_utf8(&mut buf)));
+        }
+    }
+    out
+}
+
+/// OpenAPI 3.2 `cookie` style: `n=v`, `n=v1,v2` or exploded `n=v1; n=v2`
+/// and `k=v; k2=v2`.
+fn serialize_cookie_style(p: &ParamDescriptor, value: &Value) -> String {
+    match value {
+        Value::Array(list) => {
+            let items: Vec<String> = list
+                .iter()
+                .filter(|v| !v.is_null())
+                .map(|v| cookie_text(&scalar(v)))
+                .collect();
+            if p.explode && !items.is_empty() {
+                let pairs: Vec<String> = items.iter().map(|i| format!("{}={i}", p.wire)).collect();
+                return pairs.join("; ");
+            }
+            format!("{}={}", p.wire, items.join(","))
+        }
+        Value::Object(map) => {
+            let pairs: Vec<(String, String)> = entries(map)
+                .into_iter()
+                .map(|(k, v)| (cookie_text(k), cookie_text(&scalar(v))))
+                .collect();
+            if p.explode && !pairs.is_empty() {
+                let pairs: Vec<String> = pairs.iter().map(|(k, v)| format!("{k}={v}")).collect();
+                return pairs.join("; ");
+            }
+            let flat: Vec<String> = pairs.into_iter().flat_map(|(k, v)| [k, v]).collect();
+            format!("{}={}", p.wire, flat.join(","))
+        }
+        other => format!("{}={}", p.wire, cookie_text(&scalar(other))),
+    }
+}
+
+/// `name=value` for one cookie parameter (`form` style, values encoded; or
+/// `cookie` style).
 pub fn serialize_cookie_param(p: &ParamDescriptor, value: &Value) -> String {
+    if p.style == ParamStyle::Cookie {
+        return serialize_cookie_style(p, value);
+    }
     match value {
         Value::Array(list) => format!("{}={}", p.wire, encoded_items(list).join(",")),
         Value::Object(map) => {

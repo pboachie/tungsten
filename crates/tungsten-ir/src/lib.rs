@@ -386,6 +386,9 @@ pub enum ParamStyle {
     SpaceDelimited,
     PipeDelimited,
     DeepObject,
+    /// OpenAPI 3.2 `cookie`: RFC 6265 pairs (`n=v; n2=v2`), values sent as
+    /// written.
+    Cookie,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

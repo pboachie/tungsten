@@ -147,8 +147,34 @@ def serialize_header_param(p: ParamDescriptor, value: object) -> str:
     return scalar(value)
 
 
+# RFC 6265 ``cookie-octet``s.
+_COOKIE_OCTET = re.compile(r"[\x21\x23-\x2B\x2D-\x3A\x3C-\x5B\x5D-\x7E]")
+
+
+def _cookie_text(text: str) -> str:
+    """A ``cookie`` style value as written; only characters a cookie cannot carry are percent-encoded."""
+    return "".join(ch if _COOKIE_OCTET.fullmatch(ch) else enc(ch) for ch in text)
+
+
+def _serialize_cookie_style(p: ParamDescriptor, value: object) -> str:
+    """OpenAPI 3.2 ``cookie`` style: ``n=v``, ``n=v1,v2`` or exploded ``n=v1; n=v2`` and ``k=v; k2=v2``."""
+    if is_array(value):
+        items = [_cookie_text(scalar(v)) for v in value if _present(v)]
+        if p["explode"] is True and items:
+            return "; ".join(f"{p['wire']}={i}" for i in items)
+        return f"{p['wire']}={','.join(items)}"
+    if is_record(value):
+        pairs = [(_cookie_text(k), _cookie_text(scalar(v))) for k, v in _entries(value)]
+        if p["explode"] is True and pairs:
+            return "; ".join(f"{k}={v}" for k, v in pairs)
+        return f"{p['wire']}={','.join(part for pair in pairs for part in pair)}"
+    return f"{p['wire']}={_cookie_text(scalar(value))}"
+
+
 def serialize_cookie_param(p: ParamDescriptor, value: object) -> str:
-    """``name=value`` for one cookie parameter (``form`` style, values encoded)."""
+    """``name=value`` for one cookie parameter (``form`` style, values encoded; or ``cookie`` style)."""
+    if p["style"] == "cookie":
+        return _serialize_cookie_style(p, value)
     if is_array(value):
         return f"{p['wire']}={','.join(enc(scalar(v)) for v in value if _present(v))}"
     if is_record(value):

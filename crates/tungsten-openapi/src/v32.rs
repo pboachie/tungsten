@@ -298,12 +298,14 @@ fn node_findings(node: &Node<'_>, out: &mut Vec<Finding>) {
             if map.get("in").and_then(Value::as_str) == Some("querystring") {
                 querystring_findings(&node.pointer, map, out);
             }
-            if map.get("style").and_then(Value::as_str) == Some("cookie") {
+            if map.get("style").and_then(Value::as_str) == Some("cookie")
+                && map.get("in").and_then(Value::as_str) != Some("cookie")
+            {
                 out.push(error(
                     "TG0144",
                     at("style"),
-                    "the OpenAPI 3.2 `cookie` parameter style is not supported",
-                    "use `style: form`, which 3.1 defines for cookie parameters",
+                    "the OpenAPI 3.2 `cookie` parameter style applies only to `in: cookie` parameters",
+                    "use `style: cookie` on a cookie parameter, or the default style of this location",
                 ));
             }
         }
