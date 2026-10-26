@@ -193,7 +193,10 @@ pub const KOTLIN: DeclaredOptions = DeclaredOptions {
     diagnostic: Some("TG1030"),
     fields: &[
         d("group", "Gradle group (Maven groupId)", "com.example"),
-        s("artifact", "artifact name (`rootProject.name`); default `<api>-sdk`"),
+        s(
+            "artifact",
+            "artifact name (`rootProject.name`); default `<api>-sdk`",
+        ),
         s("package", "Kotlin package; default `com.example.<api>`"),
         VERSION,
         d(
@@ -249,7 +252,10 @@ pub const RUBY: DeclaredOptions = DeclaredOptions {
 pub const MCP: DeclaredOptions = DeclaredOptions {
     diagnostic: Some("TG0720"),
     fields: &[
-        s("package", "npm package name of the server; default `<api>-mcp`"),
+        s(
+            "package",
+            "npm package name of the server; default `<api>-mcp`",
+        ),
         VERSION,
         s(
             "sdk",
@@ -299,7 +305,10 @@ pub const WEBMCP: DeclaredOptions = DeclaredOptions {
             "`@elysra/tungsten-webmcp` version range",
             NPM_RUNTIME_RANGE,
         ),
-        s("runtime_path", "depend on `@elysra/tungsten-webmcp` by path"),
+        s(
+            "runtime_path",
+            "depend on `@elysra/tungsten-webmcp` by path",
+        ),
         s(
             "sdk",
             "the generated TypeScript SDK, `<package>` or `<package>@<range>`; default from the `typescript` target",

@@ -978,6 +978,16 @@ pub fn validate_parts(
                     ));
                 }
             }
+            // Field declarations are complete: every key but `out` is typed.
+            if let Some(TargetOptionSchema::Declared(options)) = target.options_schema {
+                for key in target.option_keys {
+                    if *key != "out" && !options.fields.iter().any(|field| field.key == *key) {
+                        errors.push(format!(
+                            "target `{id}`: option key `{key}` has no declared field"
+                        ));
+                    }
+                }
+            }
         }
         for record in target.evidence {
             if record.combination.trim().is_empty() || record.reference.trim().is_empty() {

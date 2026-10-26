@@ -128,23 +128,22 @@ The support matrix below is generated from the capability catalog (`tungsten cap
 
 | Target | Aliases | Emits | Consumer toolchain | Runs on | Features | Imported-operation policy | Qualification | Artifacts |
 |---|---|---|---|---|---|---|---|---|
-| `csharp` | `cs` | C# SDK | dotnet >=10.0 | dotnet | `typed_sdk`, `pagination_helpers`, `imported_operation_policy` | enforced | unknown | unknown |
-| `dart` |  | Dart SDK (sealed unions, Future methods returning Result, Stream pages) | dart >=3.6 <4.0 | dart_io | `typed_sdk`, `pagination_helpers` | refused (TG0705) | unknown | unknown |
-| `docs` |  | llms.txt, llms-full.txt, tools.json and README | none | static | `llms_txt`, `imported_operation_policy` | enforced | unknown | unknown |
+| `csharp` | `cs` | C# SDK | dotnet >=10.0 | dotnet | `typed_sdk`, `pagination_helpers` | enforced | unknown | unknown |
+| `dart` |  | Dart SDK (sealed unions, Future methods returning Result, Stream pages) | dart >=3.6 <4.0 | dart_io | `typed_sdk`, `pagination_helpers` | enforced | unknown | unknown |
+| `docs` |  | llms.txt, llms-full.txt, tools.json and README | none | static | `llms_txt` | enforced | unknown | unknown |
 | `fsharp` | `fs` | F# SDK (records, discriminated unions, Task of Result) | dotnet >=10.0 | dotnet | `typed_sdk`, `pagination_helpers` | refused (TG0705) | unknown | unknown |
-| `java` |  | Java SDK | java >=17.0; mvn installed | jvm | `typed_sdk`, `pagination_helpers`, `imported_operation_policy` | enforced | unknown | unknown |
-| `kotlin` | `kt` | Kotlin/JVM SDK (blocking functions returning Result; opt-in coroutines) | java >=17.0; gradle installed | jvm | `typed_sdk`, `pagination_helpers`, `imported_operation_policy`, `coroutines` | enforced | unknown | unknown |
-| `mcp` |  | MCP server over stdio or Streamable HTTP, discrete or progressive | node >=22.13 excluding 23.0.x, 23.1.x; npm installed | node | `mcp_stdio`, `mcp_streamable_http`, `mcp_embedding_search`, `mcp_script_sandbox`, `imported_operation_policy` | enforced | unknown | unknown |
+| `java` |  | Java SDK | java >=17.0; mvn installed | jvm | `typed_sdk`, `pagination_helpers` | enforced | unknown | unknown |
+| `kotlin` | `kt` | Kotlin/JVM SDK (blocking functions returning Result; opt-in coroutines) | java >=17.0; gradle installed | jvm | `typed_sdk`, `pagination_helpers`, `coroutines` | enforced | unknown | unknown |
+| `mcp` |  | MCP server over stdio or Streamable HTTP, discrete or progressive | node >=22.13 excluding 23.0.x, 23.1.x; npm installed | node | `mcp_stdio`, `mcp_streamable_http`, `mcp_embedding_search`, `mcp_script_sandbox` | enforced | unknown | unknown |
 | `mock` |  | reserved; no emitter in this version | none |  |  | n/a | unknown | unknown |
-| `python` | `py` | Sync and async Python SDK, Pydantic v2 or dataclass models | python3 >=3.12 (`python_version` selects the minimum) | cpython | `typed_sdk`, `pagination_helpers`, `imported_operation_policy`, `dataclass_models` | enforced | unknown | unknown |
-| `ruby` | `rb` | Ruby SDK | ruby >=3.3; bundle installed | ruby | `typed_sdk`, `pagination_helpers`, `imported_operation_policy` | enforced | unknown | unknown |
-| `rust` | `rs` | Async Rust SDK (serde, reqwest) and optional generated CLI | cargo >=1.88; rustc >=1.88 | native | `typed_sdk`, `pagination_helpers`, `imported_operation_policy`, `generated_cli` | enforced | unknown | unknown |
-| `typescript` | `ts` | Typed TypeScript SDK, Result values, Zod validation | node >=22.0; npm installed | node | `typed_sdk`, `pagination_helpers`, `imported_operation_policy` | enforced | unknown | unknown |
-| `webmcp` |  | Browser ESM package with tool manifest and registration helper | node >=22.0; npm installed | browser | `webmcp_registration`, `imported_operation_policy` | enforced | unknown | unknown |
+| `python` | `py` | Sync and async Python SDK, Pydantic v2 or dataclass models | python3 >=3.12 (`python_version` selects the minimum) | cpython | `typed_sdk`, `pagination_helpers`, `dataclass_models` | enforced | unknown | unknown |
+| `ruby` | `rb` | Ruby SDK | ruby >=3.3; bundle installed | ruby | `typed_sdk`, `pagination_helpers` | enforced | unknown | unknown |
+| `rust` | `rs` | Async Rust SDK (serde, reqwest) and optional generated CLI | cargo >=1.88; rustc >=1.88 | native | `typed_sdk`, `pagination_helpers`, `generated_cli` | enforced | unknown | unknown |
+| `typescript` | `ts` | Typed TypeScript SDK, Result values, Zod validation | node >=22.0; npm installed | node | `typed_sdk`, `pagination_helpers` | enforced | unknown | unknown |
+| `webmcp` |  | Browser ESM package with tool manifest and registration helper | node >=22.0; npm installed | browser | `webmcp_registration` | enforced | unknown | unknown |
 
 | Feature | Domain | Opt-in option | Description |
 |---|---|---|---|
-| `imported_operation_policy` | runtime |  | enforces imported-operation policy (Postman, cURL, .http, HAR inputs) at run time |
 | `typed_sdk` | target |  | typed models and operation methods for every compiled operation |
 | `pagination_helpers` | target |  | page iteration helpers for operations with declared pagination |
 | `generated_cli` | target | `cli` | a command-line client crate next to the SDK |
@@ -162,6 +161,17 @@ The support matrix below is generated from the capability catalog (`tungsten cap
 | 3.0 | supported | 0 |
 | 3.1 | supported | 0 |
 | 3.2 | subset | 15 |
+
+| Input format | Versions | Route | Detection | Operations | Review flags | Acquisition |
+|---|---|---|---|---|---|---|
+| `openapi` | 3.0, 3.1, 3.2 | compiler | `openapi` member | native |  | local, https, git |
+| `swagger` | 2.0 | init_conversion | `swagger` member | imported |  | local, https, git |
+| `postman` | 2.1 | init_conversion | `info` and `item` members | imported |  | local, https, git |
+| `curl` |  | init_conversion | a leading `curl`, a `.curl` extension or `--input-format curl` | imported | `--route` | local, https, git |
+| `http` |  | init_conversion | a `.http` or `.rest` extension or `--input-format http` | imported | `--route` | local, https, git |
+| `har` | 1.2 | init_conversion | `log` member | imported | `--har-paths` | local, https, git |
+| `endpoint_manifest` | 1 | init_conversion | `endpoint_manifest` member | imported |  | local, https, git |
+| `manual_endpoint` |  | init_inference | `--method` and `--endpoint`, without `--from` | imported |  |  |
 
 Source declarations only: a declared feature or environment is not qualification, and `unknown` evidence never becomes a compatibility claim.
 <!-- tungsten-capabilities-matrix:end -->
@@ -966,8 +976,13 @@ unknown major contract versions before interpreting them.
 
 The TypeScript declaration also includes `options_schema`, a JSON Schema for
 supported raw `package`, `version`, `runtime`, `runtime_path` and `dependencies`
-values. The `ts` alias returns the same declaration. Other targets report null
-until their option schemas are declared. This does not change generation policy:
+values. The `ts` alias returns the same declaration. Python and Rust declare
+their typed options the same way. Every other built-in target declares a field
+schema with the JSON type, fixed default and description of each option it
+reads (besides `out`), plus the warning code an invalid value produces; the
+emitter keeps the semantic validators, and `config` inspection covers only the
+TypeScript, Python and Rust schemas. The reserved `mock` target reports null.
+This does not change generation policy:
 invalid TypeScript scalars still produce TG0711 warnings and use defaults;
 invalid custom dependencies produce errors. Unknown keys remain ignored, and
 defaults that depend on the compiled API remain in the emitter. This is an

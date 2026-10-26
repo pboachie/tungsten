@@ -17,7 +17,7 @@ use tungsten_ir::Ir;
 use tungsten_ir::naming::{self, Role, Target};
 
 /// The runtime version generated SDKs depend on.
-pub const DEFAULT_RUNTIME: &str = "0.1.3";
+pub const DEFAULT_RUNTIME: &str = tungsten_config::option_fields::CSHARP_RUNTIME;
 
 /// Resolved target options.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -76,7 +76,7 @@ impl Options {
             }
         });
         let version = read("version", &is_version, "a version such as 1.2.3")
-            .unwrap_or_else(|| "0.1.0".to_string());
+            .unwrap_or_else(|| tungsten_config::option_fields::PACKAGE_VERSION.to_string());
         let runtime = read("runtime", &is_version, "a runtime version such as 0.1.0")
             .unwrap_or_else(|| DEFAULT_RUNTIME.to_string());
         let runtime_path = read(

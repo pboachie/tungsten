@@ -357,6 +357,13 @@ changes.
   and writes nothing when the limit is reached; library cancellation of an
   export is now honoured while collection runs.
 
+- Declare a typed `options_schema` for every built-in target in
+  `tungsten capabilities`: C#, F#, Dart, Java, Kotlin, Ruby, MCP, WebMCP and
+  docs now list each option's JSON type, fixed default, description and the
+  warning code an invalid value produces. The emitters read their fixed
+  defaults from the same declarations, the catalog check rejects an option
+  key without a declared field, and editor hover shows the descriptions.
+
 - Generate the README support matrix from the capability catalog.
   `tungsten capabilities --matrix --format markdown` prints the matrix
   between the markers that delimit README's generated block, and CI fails
