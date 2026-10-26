@@ -80,6 +80,12 @@ profile, then the SDK default. The generated API prefix supplies variables such
 as `PETSTORE_BASE_URL`, `PETSTORE_TIMEOUT`, `PETSTORE_PROFILE` and `PETSTORE_CONFIG`.
 An explicitly selected profile must exist. `--timeout` is a positive number of
 seconds per request attempt, not an overall retry or pagination deadline.
+In unreleased 0.2.0, `--deadline` (`<PREFIX>_DEADLINE`, profile key `deadline`) is
+a positive number of seconds for the whole command: authentication, every
+attempt, retry waits, all pages of `--all` and `--verify`. No request is sent
+after it expires; the command then fails with `code` `DEADLINE_EXCEEDED`, and a
+mutation that was already sent reports `OUTCOME_UNKNOWN`. Unset means no total
+deadline. An operation flag named `deadline` is generated as `--deadline-arg`.
 
 Use the credential names reported by `auth status`; an API can override their
 default environment names. Credentials come from the environment or profile,

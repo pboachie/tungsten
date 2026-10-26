@@ -359,6 +359,20 @@ pub(crate) fn build(spec: &CliSpec, relaxed: &BTreeSet<String>) -> Tree {
                     .ok_or_else(|| format!("`{s}` is not a positive number of seconds"))
             })),
         )
+        .arg(
+            global(
+                "deadline",
+                Some("SECONDS"),
+                "Total deadline of the call: attempts, retries, pages and verification",
+            )
+            .value_parser(ValueParser::new(|s: &str| {
+                s.parse::<f64>()
+                    .ok()
+                    .filter(|v| v.is_finite() && *v > 0.0)
+                    .map(|_| s.to_string())
+                    .ok_or_else(|| format!("`{s}` is not a positive number of seconds"))
+            })),
+        )
         .arg(global("no-color", None, "Never color the output"));
     let mut path = Vec::new();
     let env = Build {
