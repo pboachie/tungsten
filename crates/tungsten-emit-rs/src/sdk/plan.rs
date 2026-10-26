@@ -149,6 +149,11 @@ pub(crate) enum MemberKind {
     Pages(usize),
     /// `<op>_stream`.
     Stream(usize),
+    /// `<op>_download`: the binary success body streamed (async client only).
+    Download(usize),
+    /// `<op>_upload`: the binary request body streamed from an
+    /// `UploadSource` (async client only).
+    Upload(usize),
     /// Index into [`Plan::resources`].
     Child(usize),
 }
@@ -418,6 +423,14 @@ impl<'a> Plan<'a> {
                 if self.ops[o].op.stream.is_some() {
                     words.push(with_word(&base, "stream"));
                     kinds.push(MemberKind::Stream(o));
+                }
+                if self.ops[o].op.binary_success() {
+                    words.push(with_word(&base, "download"));
+                    kinds.push(MemberKind::Download(o));
+                }
+                if self.ops[o].op.binary_body() {
+                    words.push(with_word(&base, "upload"));
+                    kinds.push(MemberKind::Upload(o));
                 }
             }
             let names = unique(&[], &words, Role::Method);

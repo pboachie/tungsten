@@ -354,6 +354,31 @@ impl Operation {
             (method, _) => method.as_str(),
         }
     }
+
+    /// Whether the operation's request body is a whole binary body
+    /// (`BodyEncoding::Bytes`), which SDKs can also stream from an upload
+    /// source.
+    pub fn binary_body(&self) -> bool {
+        self.body
+            .as_ref()
+            .and_then(|b| b.content.first())
+            .is_some_and(|c| c.encoding == BodyEncoding::Bytes)
+    }
+
+    /// Whether a 2xx success response of the operation carries a binary
+    /// body (`BodyEncoding::Bytes`), which SDKs can also hand over streamed,
+    /// as a download. An operation with an event stream never does.
+    pub fn binary_success(&self) -> bool {
+        self.stream.is_none()
+            && self.responses.iter().any(|r| {
+                r.kind == ResponseKind::Success
+                    && matches!(
+                        r.status,
+                        StatusMatch::Exact(200..=299) | StatusMatch::Range(2)
+                    )
+                    && r.content.iter().any(|c| c.encoding == BodyEncoding::Bytes)
+            })
+    }
 }
 
 ir_struct! {
