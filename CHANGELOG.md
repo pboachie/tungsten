@@ -226,6 +226,16 @@ changes.
 
 ### Added
 
+- Declare every input format (OpenAPI, Swagger, Postman, saved cURL, HTTP
+  request files, HAR, endpoint manifests and manual endpoints) in the
+  capability catalog with its versions, route, detection, required review flags,
+  acquisition and whether its operations are imported; `tungsten capabilities`
+  and `--matrix` list them. Targets gain an `evidence` list: qualification,
+  artifact and platform states become `recorded` only when a record names the
+  exact combination and a public reference, and stay `unknown` otherwise.
+  Editors now complete enumerated target option values, such as Python
+  `python_version` and `models`, from the declared option schemas.
+
 - Add an opt-in request scheduler to the TypeScript, Python and Rust runtimes
   (`ClientOptions.scheduler`, `ClientOptions.tenant`). It bounds ordinary
   attempts and event streams in flight per tenant and origin, queues a bounded

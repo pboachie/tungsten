@@ -40,6 +40,45 @@ pub const VERSION: u32 = 1;
 #[serde(rename_all = "snake_case")]
 pub enum EvidenceState {
     Unknown,
+    /// At least one [`EvidenceRecord`] of this scope is listed. The state is
+    /// derived from the records and can never be declared without them.
+    Recorded,
+}
+
+/// What an [`EvidenceRecord`] supports.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum EvidenceScope {
+    /// A clean consumer built and exercised generated output.
+    Qualification,
+    /// A runtime artifact is published for the combination.
+    Artifact,
+    /// The combination ran on the named platform.
+    Platform,
+}
+
+/// Evidence for one exact supported combination, linked to where it can be
+/// checked. Records are added by the owner of the qualification, never inferred.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct EvidenceRecord {
+    pub scope: EvidenceScope,
+    /// The exact combination, such as `python 3.10 / linux-x86_64 / runtime 0.1.3`.
+    pub combination: &'static str,
+    /// A public, stable reference to the evidence (workflow, release or report URL).
+    pub reference: &'static str,
+}
+
+/// [`EvidenceState::Recorded`] exactly when a record of `scope` exists.
+pub const fn evidence_state(records: &[EvidenceRecord], scope: EvidenceScope) -> EvidenceState {
+    let mut i = 0;
+    while i < records.len() {
+        if records[i].scope as u8 == scope as u8 {
+            return EvidenceState::Recorded;
+        }
+        i += 1;
+    }
+    EvidenceState::Unknown
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
@@ -152,6 +191,9 @@ pub struct TargetCapability {
     pub execution_environments: &'static [ExecutionEnvironment],
     /// Features from [`FEATURES`] the target implements in source.
     pub features: &'static [&'static str],
+    /// Evidence behind `qualification`, `artifact_availability` and
+    /// `platform_qualification`; each is `recorded` only with a record here.
+    pub evidence: &'static [EvidenceRecord],
 }
 
 /// Environment generated output is designed to run in.
@@ -326,6 +368,7 @@ macro_rules! targets {
     ($({
         id: $id:literal, aliases: $aliases:expr, source: $source:ident, family: $family:expr,
         policy: $policy:literal, tools: $tools:expr, $(schema: $schema:expr,)?
+        $(evidence: $evidence:expr,)?
         summary: $summary:literal, options: $options:expr, environments: [$($env:ident),*],
         features: $features:expr $(,)?
     }),* $(,)?) => {
@@ -334,10 +377,12 @@ macro_rules! targets {
         pub const TARGETS: &[TargetCapability] = &[$(TargetCapability {
             id: $id, aliases: $aliases, source_support: SourceSupport::$source,
             runtime_family: $family, imported_operation_policy: $policy,
-            prerequisites: $tools, qualification: EvidenceState::Unknown,
+            prerequisites: $tools,
+            qualification: evidence_state(targets!(@evidence $($evidence)?), EvidenceScope::Qualification),
             options_schema: targets!(@schema $($schema)?),
-            artifact_availability: EvidenceState::Unknown,
-            platform_qualification: EvidenceState::Unknown,
+            artifact_availability: evidence_state(targets!(@evidence $($evidence)?), EvidenceScope::Artifact),
+            platform_qualification: evidence_state(targets!(@evidence $($evidence)?), EvidenceScope::Platform),
+            evidence: targets!(@evidence $($evidence)?),
             summary: $summary, option_keys: $options,
             execution_environments: &[$(ExecutionEnvironment::$env),*],
             features: $features,
@@ -345,6 +390,8 @@ macro_rules! targets {
     };
     (@schema $schema:expr) => { $schema };
     (@schema) => { None };
+    (@evidence $evidence:expr) => { $evidence };
+    (@evidence) => { &[] };
 }
 
 targets! {
@@ -472,8 +519,121 @@ pub struct CapabilityCatalog {
     /// Registered feature ids that target `features` lists refer to.
     pub features: Vec<FeatureDefinition>,
     pub openapi_inputs: Vec<OpenApiVersionCapability>,
+    /// Every input format, native or converted; `openapi_inputs` details the
+    /// native OpenAPI lines.
+    pub input_formats: Vec<InputFormatCapability>,
     pub execution_policy: ExecutionPolicyCapability,
 }
+
+/// How an input format enters a project.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum InputRoute {
+    /// Read by the compiler on every run (`inputs[].spec`, compiler paths).
+    Compiler,
+    /// Converted once by `tungsten init` into a saved OpenAPI document.
+    InitConversion,
+    /// Inferred by `tungsten init` from flags and examples, without a document.
+    InitInference,
+}
+
+/// Where `tungsten init --from` can acquire the document.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum InputAcquisition {
+    Local,
+    Https,
+    Git,
+}
+
+/// Source declaration for one input format.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct InputFormatCapability {
+    pub id: &'static str,
+    /// Document versions read; empty when the format is unversioned.
+    pub versions: &'static [&'static str],
+    pub route: InputRoute,
+    /// How the format is recognized.
+    pub detection: &'static str,
+    /// Operations are marked imported, so only targets declaring
+    /// `imported_operation_policy` may be generated from them.
+    pub imported_operations: bool,
+    /// CLI flags whose reviewed values the conversion requires.
+    pub review_flags: &'static [&'static str],
+    pub acquisition: &'static [InputAcquisition],
+    /// The saved document a conversion or inference writes.
+    pub saved_as: Option<&'static str>,
+}
+
+const DOCUMENT: &[InputAcquisition] = &[
+    InputAcquisition::Local,
+    InputAcquisition::Https,
+    InputAcquisition::Git,
+];
+
+const fn converted(
+    id: &'static str,
+    versions: &'static [&'static str],
+    detection: &'static str,
+    review_flags: &'static [&'static str],
+) -> InputFormatCapability {
+    InputFormatCapability {
+        id,
+        versions,
+        route: InputRoute::InitConversion,
+        detection,
+        imported_operations: true,
+        review_flags,
+        acquisition: DOCUMENT,
+        saved_as: Some("imported.openapi.json"),
+    }
+}
+
+/// Input formats `tungsten init` and the compiler accept, one input per project.
+pub const INPUT_FORMATS: &[InputFormatCapability] = &[
+    InputFormatCapability {
+        id: "openapi",
+        versions: &["3.0", "3.1", "3.2"],
+        route: InputRoute::Compiler,
+        detection: "`openapi` member",
+        imported_operations: false,
+        review_flags: &[],
+        acquisition: DOCUMENT,
+        saved_as: None,
+    },
+    converted("swagger", &["2.0"], "`swagger` member", &[]),
+    converted("postman", &["2.1"], "`info` and `item` members", &[]),
+    converted(
+        "curl",
+        &[],
+        "a leading `curl`, a `.curl` extension or `--input-format curl`",
+        &["--route"],
+    ),
+    converted(
+        "http",
+        &[],
+        "a `.http` or `.rest` extension or `--input-format http`",
+        &["--route"],
+    ),
+    converted("har", &["1.2"], "`log` member", &["--har-paths"]),
+    converted(
+        "endpoint_manifest",
+        &["1"],
+        "`endpoint_manifest` member",
+        &[],
+    ),
+    InputFormatCapability {
+        id: "manual_endpoint",
+        versions: &[],
+        route: InputRoute::InitInference,
+        detection: "`--method` and `--endpoint`, without `--from`",
+        imported_operations: true,
+        review_flags: &[],
+        acquisition: &[],
+        saved_as: Some("inferred.openapi.json"),
+    },
+];
 
 /// Source contract only; this is neither a policy selection nor approval.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
@@ -700,7 +860,46 @@ pub const OPENAPI_INPUTS: &[OpenApiVersionCapability] = &[
 /// references the target does not declare. Returns one message per conflict;
 /// an empty list means the catalog is consistent.
 pub fn validate() -> Vec<String> {
-    validate_parts(TARGETS, FEATURES, OPENAPI_INPUTS)
+    let mut errors = validate_parts(TARGETS, FEATURES, OPENAPI_INPUTS);
+    errors.extend(validate_inputs(INPUT_FORMATS, OPENAPI_INPUTS));
+    errors
+}
+
+/// Input-format conflicts: duplicate ids, and native OpenAPI lines that
+/// disagree with the per-line declarations.
+pub fn validate_inputs(
+    formats: &[InputFormatCapability],
+    openapi: &[OpenApiVersionCapability],
+) -> Vec<String> {
+    let mut errors = vec![];
+    let mut ids = std::collections::BTreeSet::new();
+    for format in formats {
+        if !ids.insert(format.id) {
+            errors.push(format!("input format `{}` is declared twice", format.id));
+        }
+        if format.route == InputRoute::Compiler && format.imported_operations {
+            errors.push(format!(
+                "input format `{}` is compiled natively but marks operations imported",
+                format.id
+            ));
+        }
+        if format.route != InputRoute::Compiler && !format.imported_operations {
+            errors.push(format!(
+                "input format `{}` is converted but does not mark operations imported",
+                format.id
+            ));
+        }
+    }
+    if let Some(native) = formats.iter().find(|format| format.id == "openapi") {
+        let lines: Vec<&str> = openapi.iter().map(|input| input.line).collect();
+        if native.versions != lines.as_slice() {
+            errors.push(
+                "input format `openapi` versions disagree with the OpenAPI line declarations"
+                    .into(),
+            );
+        }
+    }
+    errors
 }
 
 /// [`validate`] over explicit declarations, so a component can check a
@@ -781,6 +980,24 @@ pub fn validate_parts(
                         "target `{id}`: option schema property `{property}` is not a declared option key"
                     ));
                 }
+            }
+        }
+        for record in target.evidence {
+            if record.combination.trim().is_empty() || record.reference.trim().is_empty() {
+                errors.push(format!(
+                    "target `{id}` lists evidence without a combination or reference"
+                ));
+            }
+        }
+        for (state, scope) in [
+            (target.qualification, EvidenceScope::Qualification),
+            (target.artifact_availability, EvidenceScope::Artifact),
+            (target.platform_qualification, EvidenceScope::Platform),
+        ] {
+            if state != evidence_state(target.evidence, scope) {
+                errors.push(format!(
+                    "target `{id}` declares {scope:?} evidence state {state:?} without matching records"
+                ));
             }
         }
         for requirement in target.prerequisites {
