@@ -1359,6 +1359,13 @@ changes.
 
 ### Fixed
 
+- A Java call that starts an OAuth2 token refresh now stops waiting at its
+  own deadline and reports `DEADLINE_EXCEEDED`, as the Rust and TypeScript
+  runtimes do. Previously the call that owned the refresh ran it inline and
+  returned only when the token request finished, so a call with a 300 ms
+  deadline could take the full token timeout. The refresh still completes
+  within its own bounds for other waiting calls.
+
 - Java and C# no longer retry a keyed mutation once its deadline has passed.
   An attempt cut by the deadline could end a fraction of a millisecond early
   and send the request again after the deadline; it now reports the earlier

@@ -69,9 +69,14 @@ final class OAuthSessions {
             }
         }
 
+        private boolean handedOff;
+
         boolean timely() { return System.nanoTime() - started < timeout && !Thread.currentThread().isInterrupted(); }
         long remaining() { return Math.max(1, timeout - (System.nanoTime() - started)); }
-        @Override public void close() { synchronized (lock) { tokenJobs--; } }
+        /** The admission now ends when the work handed off settles, not when the caller returns. */
+        void handOff() { handedOff = true; }
+        void release() { synchronized (lock) { tokenJobs--; } }
+        @Override public void close() { if (!handedOff) release(); }
     }
 
     private static final class Attempt {
@@ -548,18 +553,35 @@ final class OAuthSessions {
             }
         }
         if (owner) {
-            RefreshResult result;
-            try { result = refreshStored(scheme, seen, stored, force, job); }
-            catch (RuntimeException failure) { result = new RefreshResult(Auth.Token.failed("OAuth token storage or refresh did not complete; authorize again."), null); }
-            catch (Error failure) {
-                flight.completeExceptionally(failure);
+            // The refresh runs beside its owner, bounded by its own timeout, so the owner waits for
+            // it like any other caller and stops at its own deadline.
+            CompletableFuture<RefreshResult> shared = flight;
+            Thread worker = new Thread(() -> {
+                try {
+                    RefreshResult result;
+                    try { result = refreshStored(scheme, seen, stored, force, job); }
+                    catch (RuntimeException failure) { result = new RefreshResult(Auth.Token.failed("OAuth token storage or refresh did not complete; authorize again."), null); }
+                    catch (Error failure) {
+                        synchronized (lock) { refreshes.remove(key, shared); }
+                        shared.completeExceptionally(failure);
+                        throw failure;
+                    }
+                    synchronized (lock) { refreshes.remove(key, shared); }
+                    // CompletableFuture dependents can execute inline; never complete under manager lock.
+                    shared.complete(result);
+                } finally {
+                    job.release();
+                }
+            }, "tungsten-oauth-refresh");
+            worker.setDaemon(true);
+            job.handOff();
+            try { worker.start(); }
+            catch (RuntimeException | Error failure) {
+                job.handedOff = false;
+                synchronized (lock) { refreshes.remove(key, flight); }
+                flight.complete(new RefreshResult(Auth.Token.failed("OAuth token storage or refresh did not complete; authorize again."), null));
                 throw failure;
             }
-            finally {
-                synchronized (lock) { refreshes.remove(key, flight); }
-            }
-            // CompletableFuture dependents can execute inline; never complete under manager lock.
-            flight.complete(result);
         }
         try {
             // A caller's deadline stops its own wait, never the shared refresh.
