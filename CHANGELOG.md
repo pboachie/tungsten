@@ -296,6 +296,12 @@ changes.
   target ids with change and conflict counts, finding kinds and the apply
   state, never paths, digests, file names or finding text. `--inspect`
   reads schema versions 1 to 3.
+- Add `upgrade rehearse --consumer-target TARGET -- COMMAND` to run one
+  explicit clean-consumer command (no shell) in a target's staged output
+  after staging, with `--consumer-timeout-secs`. Its outcome, exit code and
+  log are recorded, it sets `runtime_acceptance` to passed or failed, and a
+  failure blocks `upgrade apply`. The command runs with your privileges and
+  environment; it is not sandboxed.
 - Add `tungsten upgrade apply --workspace DIR` to apply an accepted rehearsal
   as a separate step. It refuses when inputs, the lock, the staged files or
   any output file changed since the rehearsal, backs up what it replaces,

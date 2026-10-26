@@ -71,6 +71,8 @@ pub struct RehearsalResult {
     /// Blocking problems and unsupported combinations, in discovery order.
     pub findings: Vec<RehearsalFinding>,
     pub checks: RehearsalChecks,
+    /// The clean-consumer command run in a staged target, when requested.
+    pub consumer_check: Option<ConsumerCheck>,
     /// Commands that reproduce or continue this rehearsal.
     pub commands: Vec<String>,
 }
@@ -190,6 +192,8 @@ pub enum FindingKind {
     BreakingChange,
     /// The workspace could not be written.
     Staging,
+    /// The clean-consumer command did not pass.
+    ConsumerCheckFailed,
 }
 
 /// What this rehearsal established, kept apart so that a compatible
@@ -222,7 +226,45 @@ pub enum SourceCompatibility {
 #[serde(rename_all = "snake_case")]
 pub enum CheckState {
     NotChecked,
+    /// The supplied clean-consumer command succeeded.
+    Passed,
+    /// The supplied clean-consumer command failed, timed out or could not
+    /// start.
+    Failed,
 }
+
+/// `--consumer-target` with a command after `--`: run explicitly by the
+/// user, with the user's privileges and environment, in the staged output
+/// directory of one target. Not a sandbox.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ConsumerCheck {
+    pub target: String,
+    pub outcome: ConsumerOutcome,
+    pub exit_code: Option<i32>,
+    pub duration_ms: u64,
+    /// Combined standard output and error, relative to the workspace.
+    pub log: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ConsumerOutcome {
+    Passed,
+    Failed,
+    TimedOut,
+    NotStarted,
+}
+
+/// What `--consumer-target` asked for.
+pub(crate) struct ConsumerRequest {
+    pub target: String,
+    pub command: Vec<std::ffi::OsString>,
+    pub timeout: std::time::Duration,
+}
+
+/// The consumer command's log at the workspace root.
+const CONSUMER_LOG: &str = "consumer-check.log";
 
 /// The part of the rehearsal record `upgrade apply` acts on.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -335,6 +377,26 @@ pub(crate) fn rehearse(args: &UpgradeRehearseArgs, env: &CliEnv) -> Report {
         Ok(names) => names,
         Err(error) => return report.failed(exit::FAILED, error),
     };
+    let consumer = match &args.consumer_target {
+        None => None,
+        Some(wanted) => match select(&compiled, std::slice::from_ref(wanted)) {
+            Ok(found) if found.len() == 1 && names.contains(&found[0]) => Some(ConsumerRequest {
+                target: found[0].clone(),
+                command: args.consumer_command.clone(),
+                timeout: std::time::Duration::from_secs(args.consumer_timeout_secs),
+            }),
+            Ok(_) => {
+                return report.failed(
+                    exit::FAILED,
+                    CliError::new(
+                        ErrorKind::Usage,
+                        format!("--consumer-target {wanted} is not one of the rehearsed targets"),
+                    ),
+                );
+            }
+            Err(error) => return report.failed(exit::FAILED, error),
+        },
+    };
 
     let mut findings = vec![];
     let existing = lock::read_lock(&input::join(&base, LOCK_FILE));
@@ -413,6 +475,7 @@ pub(crate) fn rehearse(args: &UpgradeRehearseArgs, env: &CliEnv) -> Report {
     };
     let mut targets = vec![];
     let mut staged = vec![];
+    let mut changed = false;
     for name in &names {
         let emitted = emit_target(&compiled, &prepared, &project, name, false);
         report
@@ -497,7 +560,11 @@ pub(crate) fn rehearse(args: &UpgradeRehearseArgs, env: &CliEnv) -> Report {
                 blocking: false,
             });
         }
-        if entry.status != RehearsedStatus::Unchanged {
+        changed |= entry.status != RehearsedStatus::Unchanged;
+        // The consumer check needs its target staged even when unchanged.
+        if entry.status != RehearsedStatus::Unchanged
+            || consumer.as_ref().is_some_and(|c| &c.target == name)
+        {
             staged.push((
                 targets.len(),
                 files,
@@ -537,7 +604,7 @@ pub(crate) fn rehearse(args: &UpgradeRehearseArgs, env: &CliEnv) -> Report {
         to,
         verdict: if !applicable {
             RehearsalVerdict::Blocked
-        } else if staged.is_empty() {
+        } else if !changed {
             RehearsalVerdict::NoChanges
         } else {
             RehearsalVerdict::Ready
@@ -547,6 +614,7 @@ pub(crate) fn rehearse(args: &UpgradeRehearseArgs, env: &CliEnv) -> Report {
         targets,
         findings,
         checks,
+        consumer_check: None,
         commands: vec![],
     };
 
@@ -563,7 +631,15 @@ pub(crate) fn rehearse(args: &UpgradeRehearseArgs, env: &CliEnv) -> Report {
         let shown = workspace.display().to_string();
         commands.push(format!("tungsten upgrade apply {path} --workspace {shown}"));
         result.commands = commands;
-        match stage(workspace, plan, &recipe, ir, staged, &mut result) {
+        match stage(
+            workspace,
+            plan,
+            &recipe,
+            ir,
+            staged,
+            consumer.as_ref(),
+            &mut result,
+        ) {
             Ok(()) => {
                 result.staged = true;
                 if result.verdict == RehearsalVerdict::Blocked {
@@ -782,7 +858,7 @@ fn checks(targets: &[RehearsedTarget]) -> RehearsalChecks {
         runtime_acceptance: CheckState::NotChecked,
         notes: vec![
             "Generated-source compatibility compares API surface snapshots only; it does not show that the candidate runtime packages are published or that the generated consumers build and run.".into(),
-            "Build the staged output under the workspace's targets/ directory with your consumer toolchain (for example a clean install and your test suite) before `upgrade apply`.".into(),
+            "Build the staged output under the workspace's targets/ directory with your consumer toolchain (for example a clean install and your test suite) before `upgrade apply`, or pass --consumer-target TARGET -- COMMAND to run one command there; it runs with your privileges and is not sandboxed.".into(),
         ],
     }
 }
@@ -797,6 +873,7 @@ fn stage(
     recipe: &GenerationRecipe,
     ir: &tungsten_ir::Ir,
     staged: Vec<Staged>,
+    consumer: Option<&ConsumerRequest>,
     result: &mut RehearsalResult,
 ) -> Result<(), CliError> {
     let shown = workspace.display().to_string();
@@ -864,6 +941,18 @@ fn stage(
     }
     lock::write_lock(&workspace.join(LOCK_FILE), recipe)
         .map_err(|e| io("write the proposed lock", e))?;
+    if let Some(request) = consumer {
+        let dir = result
+            .targets
+            .iter()
+            .position(|t| t.target == request.target)
+            .map(|index| format!("{STAGED_DIR}/{index}"))
+            .filter(|rel| plan.targets.iter().any(|t| &t.staged == rel))
+            .map(|rel| workspace.join(rel));
+        let check = run_consumer(dir.as_deref(), request, &workspace.join(CONSUMER_LOG));
+        record_consumer(result, check);
+        plan.applicable = !result.findings.iter().any(|f| f.blocking);
+    }
     result.staged = true;
     let record = RehearsalRecord {
         tungsten_rehearsal: REHEARSAL_VERSION,
@@ -877,6 +966,82 @@ fn stage(
     text.push('\n');
     write_atomic(&workspace.join(REHEARSAL_FILE), text.as_bytes())
         .map_err(|e| io("write the rehearsal record", e))
+}
+
+/// Run the clean-consumer command in `dir`, logging to `log`, and stop it at
+/// its timeout. The command is the user's; tungsten only starts and waits.
+fn run_consumer(dir: Option<&Path>, request: &ConsumerRequest, log: &Path) -> ConsumerCheck {
+    let mut check = ConsumerCheck {
+        target: request.target.clone(),
+        outcome: ConsumerOutcome::NotStarted,
+        exit_code: None,
+        duration_ms: 0,
+        log: CONSUMER_LOG.to_string(),
+    };
+    let (Some(dir), Some((program, rest))) = (dir, request.command.split_first()) else {
+        return check;
+    };
+    let Ok(out) = std::fs::File::create(log) else {
+        return check;
+    };
+    let Ok(err) = out.try_clone() else {
+        return check;
+    };
+    let started = std::time::Instant::now();
+    let child = std::process::Command::new(program)
+        .args(rest)
+        .current_dir(dir)
+        .stdin(std::process::Stdio::null())
+        .stdout(out)
+        .stderr(err)
+        .spawn();
+    let Ok(mut child) = child else {
+        return check;
+    };
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Some(status),
+            Ok(None) if started.elapsed() >= request.timeout => {
+                let _ = child.kill();
+                let _ = child.wait();
+                break None;
+            }
+            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(50)),
+            Err(_) => break None,
+        }
+    };
+    check.duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+    check.exit_code = status.and_then(|s| s.code());
+    check.outcome = match status {
+        Some(status) if status.success() => ConsumerOutcome::Passed,
+        Some(_) => ConsumerOutcome::Failed,
+        None => ConsumerOutcome::TimedOut,
+    };
+    check
+}
+
+/// Fold a consumer check into the report.
+fn record_consumer(result: &mut RehearsalResult, check: ConsumerCheck) {
+    if check.outcome == ConsumerOutcome::Passed {
+        result.checks.runtime_acceptance = CheckState::Passed;
+    } else {
+        result.checks.runtime_acceptance = CheckState::Failed;
+        result.findings.push(blocking(
+            FindingKind::ConsumerCheckFailed,
+            &check.target,
+            &match check.outcome {
+                ConsumerOutcome::NotStarted => "the clean-consumer command could not be started in the staged output".to_string(),
+                ConsumerOutcome::TimedOut => "the clean-consumer command did not finish before --consumer-timeout-secs and was stopped".to_string(),
+                _ => format!(
+                    "the clean-consumer command exited with {}; see {} in the workspace",
+                    check.exit_code.map_or_else(|| "a signal".to_string(), |c| c.to_string()),
+                    check.log
+                ),
+            },
+        ));
+        result.verdict = RehearsalVerdict::Blocked;
+    }
+    result.consumer_check = Some(check);
 }
 
 /// Create the workspace: a new directory (or an existing empty one) that is
@@ -1008,14 +1173,30 @@ fn human(r: &RehearsalResult) -> String {
             finding.detail
         );
     }
+    if let Some(check) = &r.consumer_check {
+        let _ = writeln!(
+            out,
+            "  clean consumer ({}): {:?}{}",
+            check.target,
+            check.outcome,
+            check
+                .exit_code
+                .map_or_else(String::new, |c| format!(" (exit {c})"))
+        );
+    }
     let _ = writeln!(
         out,
-        "  generated source: {}; package availability and runtime acceptance: not checked",
+        "  generated source: {}; package availability: not checked; runtime acceptance: {}",
         match r.checks.generated_source {
             SourceCompatibility::Unchanged => "unchanged",
             SourceCompatibility::Compatible => "compatible",
             SourceCompatibility::Breaking => "breaking",
             SourceCompatibility::Unclassified => "unclassified",
+        },
+        match r.checks.runtime_acceptance {
+            CheckState::NotChecked => "not checked",
+            CheckState::Passed => "passed (supplied command)",
+            CheckState::Failed => "failed (supplied command)",
         }
     );
     let verdict = match r.verdict {
