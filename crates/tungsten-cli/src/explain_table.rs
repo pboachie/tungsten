@@ -329,8 +329,8 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
     ),
     e(
         "TG0148",
-        "The document defines `components.mediaTypes` or gives a media type object by `$ref`, both OpenAPI 3.2 features. tungsten reads media types only where they are written.",
-        "Inline the media type object under each `content` map.",
+        "Retired. Earlier releases refused OpenAPI 3.2 `components.mediaTypes` and media type objects given by `$ref`. tungsten now follows the reference and reads the media type as if written in place, and no longer reports this code.",
+        "Nothing to do; regenerate to pick up the referenced media types.",
     ),
     e(
         "TG0149",
@@ -815,7 +815,8 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
         "The project was imported from a Postman collection or another source whose operations \
          carry an enforced import policy (the runtime must apply it to every call), and a \
          configured target cannot apply it. Only the typescript, python, rust, java, kotlin, ruby, \
-         mcp, webmcp and docs targets declare that support, and an external emitter declares it with \
+         csharp, dart, mcp, webmcp and docs targets declare that support, and an external emitter \
+         declares it with \
          `import_policy` in its `--describe` response; generating any other target would \
          discard the policy. During input conversion, init refuses unsupported built-in \
          targets before saving the converted input or project manifests. During generation \
@@ -1182,8 +1183,8 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
          The emitter is not run and no files are written for that target. Other supported \
          targets are still processed. Built-in targets without this capability use TG0705.",
         "Use an emitter that declares `import_policy: true` and enforces the imported \
-         metadata, or select a supported TypeScript, Python, Rust, Java, Kotlin, Ruby, MCP, WebMCP or docs \
-         target. Do not remove policy metadata merely to bypass this check. Protocol-1 \
+         metadata, or select a supported TypeScript, Python, Rust, Java, Kotlin, Ruby, C#, Dart, MCP, \
+         WebMCP or docs target. Do not remove policy metadata merely to bypass this check. Protocol-1 \
          emitters remain compatible with projects that have no imported-operation policy.",
     ),
     e(
