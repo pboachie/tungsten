@@ -1171,7 +1171,10 @@ winning and shadowed source. Inline values (a proxy URL, a PEM block, a token) a
 refused, as is any key that would disable certificate verification; trust a
 private CA with `ca_bundle` instead. References are names only: tungsten never
 reads the variables, files or store items they point to, and generated SDKs do not
-consume them yet. Wire them into a native or custom transport that keeps TLS
+consume them yet. `tungsten doctor <project>` reports whether each referenced
+environment variable is set and each referenced project file exists, without reading
+either; `--strict` fails on a missing file, while variables may be supplied where
+the client runs and store items are left to the runtime's adapter. Wire them into a native or custom transport that keeps TLS
 verification, redirect/auth rules, deadlines and admission in place.
 
 `tungsten lsp` serves profile files too: completion and hover from the profile
