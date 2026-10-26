@@ -123,8 +123,11 @@ A session belongs to a scheme, account, token endpoint, client id, base-URL
 origin and scope set; another account, client or `--base-url` never uses it.
 Commands pick the account from `<PREFIX>_ACCOUNT` or the profile key
 `account`, then the one chosen with `auth switch`, then the only stored one.
-Tokens are refreshed as needed and written back; a refresh that loses to
-another process or to a logout is not kept.
+Tokens are refreshed as needed and written back. A token about to expire is
+refreshed before the call by one process at a time, so concurrent commands do
+not present the same refresh token twice (which providers that rotate refresh
+tokens treat as reuse); a refresh that loses to another process or to a logout
+is not kept.
 
 Tokens are kept by the session store: `keychain` (default; macOS keychain,
 the Secret Service through `secret-tool`, or the Windows Credential Locker), `file` (`sessions/` next to the
@@ -232,8 +235,10 @@ sessions in the macOS keychain, the Secret Service (`secret-tool`) or the
 Windows Credential Locker (through Windows PowerShell; sessions larger than its
 secret size limit are refused, so use the explicit file store for them). Other
 platforms have no keychain adapter and need the explicit owner-only file store. Device authorization and remote token revocation are not
-supported. Concurrent CLI processes coordinate refreshes through the store's
-current content, not an exclusive lock. Registry publication and package
+supported. Concurrent CLI processes refresh a session one at a time through a
+lock file under `locks/` (taken over after 60 seconds); a refresh the runtime
+starts during a call, after the API rejects a token, is fenced by the store's
+current content only. Registry publication and package
 availability are separate from building this source checkout.
 
 ## License

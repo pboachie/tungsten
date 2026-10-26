@@ -265,7 +265,7 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
     e(
         "TG0124",
         "`tungsten refresh-import --apply` was interrupted: its journal under .tungsten/refresh-import/ remains, so the converted input, import report, source_sha256, pin and lock may be partly refreshed. `check` and `generate` refuse the project until it is recovered.",
-        "Run `tungsten refresh-import --rollback` to restore the backed-up files, then preview and apply the refresh again.",
+        "Run `tungsten refresh-import --resume` to finish the reviewed refresh from its staged content, or `tungsten refresh-import --rollback` to restore the backed-up files and refresh again.",
     ),
     e(
         "TG0128",

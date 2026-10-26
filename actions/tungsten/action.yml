@@ -25,6 +25,34 @@ inputs:
       order given.
     required: false
     default: "."
+  workspace:
+    description: >-
+      Instead of `projects`: a workspace root, relative to `working-directory`.
+      The projects are those `tungsten workspace` discovers there, narrowed by
+      `workspace-projects` and the affected files, checked in discovery order.
+      Needs a tungsten release with `tungsten workspace`.
+    required: false
+    default: ""
+  workspace-projects:
+    description: With `workspace`, only these project ids, one per line (`tungsten workspace --project`).
+    required: false
+    default: ""
+  affected-files:
+    description: >-
+      With `workspace`, only the projects that depend on one of these files,
+      one per line, relative to `working-directory` (`tungsten workspace
+      --affected`). Combined with `affected-base`.
+    required: false
+    default: ""
+  affected-base:
+    description: >-
+      With `workspace`, add the files changed between this commit and HEAD
+      (`git diff <base>...HEAD`, both sides of renames) to the affected files,
+      for example `github.event.pull_request.base.sha`. Needs that history in
+      the checkout (`fetch-depth: 0`). When affected files are requested and
+      none changed, no project is checked.
+    required: false
+    default: ""
   working-directory:
     description: Directory the project paths are relative to.
     required: false
@@ -58,6 +86,19 @@ inputs:
       `pull_request_target` events.
     required: false
     default: "false"
+  scenarios:
+    description: >-
+      Saved mock scenarios to run after the checks, one per line:
+      `<scenario.json> [--expect-exit N] [--timeout-ms N] [--max-calls N] --
+      <command> [args...]`. Split on whitespace, never through a shell. Each
+      runs `tungsten scenario run <scenario-input> --scenario <file> ... --
+      <command>`. Refused on `pull_request_target`.
+    required: false
+    default: ""
+  scenario-input:
+    description: The project, manifest or OpenAPI document the scenarios run against, relative to `working-directory`.
+    required: false
+    default: "."
   install-only:
     description: "Only install tungsten and add it to PATH; run no checks."
     required: false
@@ -80,6 +121,9 @@ outputs:
   log-dir:
     description: Directory with one log file per check (`<n>-<step>.log`), for upload as an artifact.
     value: ${{ steps.checks.outputs.log-dir }}
+  projects:
+    description: The number of projects checked (0 when a workspace selection matched none).
+    value: ${{ steps.checks.outputs.projects }}
   failed:
     description: "The failed checks, one `<project>: <step>` per line; empty when everything passed."
     value: ${{ steps.checks.outputs.failed }}
@@ -128,6 +172,12 @@ runs:
       working-directory: ${{ inputs.working-directory }}
       env:
         INPUT_PROJECTS: ${{ inputs.projects }}
+        INPUT_WORKSPACE: ${{ inputs.workspace }}
+        INPUT_WORKSPACE_PROJECTS: ${{ inputs.workspace-projects }}
+        INPUT_AFFECTED_FILES: ${{ inputs.affected-files }}
+        INPUT_AFFECTED_BASE: ${{ inputs.affected-base }}
+        INPUT_SCENARIOS: ${{ inputs.scenarios }}
+        INPUT_SCENARIO_INPUT: ${{ inputs.scenario-input }}
         INPUT_CHECK: ${{ inputs.check }}
         INPUT_GENERATE_CHECK: ${{ inputs.generate-check }}
         INPUT_LOCK_CHECK: ${{ inputs.lock-check }}
@@ -191,7 +241,7 @@ runs:
           shift 2
           n=$((n + 1))
           log="${name// --/-}"
-          log="$log_dir/$n-${log// /-}.log"
+          log="$log_dir/$n-${log//[^A-Za-z0-9.-]/-}.log"
           echo "::group::tungsten $name ($project)"
           set +e
           "$@" 2>&1 | tee "$log"
@@ -207,38 +257,169 @@ runs:
           fi
         }
 
-        projects=()
-        while IFS= read -r line || [ -n "$line" ]; do
-          line="${line#"${line%%[![:space:]]*}"}"
-          line="${line%"${line##*[![:space:]]}"}"
-          [ -n "$line" ] && projects+=("$line")
-        done <<< "$INPUT_PROJECTS"
-        [ "${#projects[@]}" -gt 0 ] || { echo "::error title=tungsten::input 'projects' is empty"; exit 1; }
-
-        for project in "${projects[@]}"; do
-          case "$project" in
+        lines() { # lines TEXT: print the nonblank lines of TEXT, trimmed
+          local line
+          while IFS= read -r line || [ -n "$line" ]; do
+            line="${line#"${line%%[![:space:]]*}"}"
+            line="${line%"${line##*[![:space:]]}"}"
+            [ -n "$line" ] && printf '%s\n' "$line"
+          done <<< "$1"
+          return 0
+        }
+        inside() { # inside INPUT PATH: refuse a path outside the working directory
+          case "$2" in
             -* | /* | .. | ../* | */.. | */../*)
-              echo "::error title=tungsten::project '$project' must be a relative path inside the working directory"
+              echo "::error title=tungsten::$1 '$2' must be a relative path inside the working directory"
               exit 1 ;;
           esac
-          [ -e "$project" ] || { echo "::error title=tungsten::project '$project' does not exist"; exit 1; }
-        done
+        }
 
-        for project in "${projects[@]}"; do
+        # names[i] is how project i is reported, paths[i] what tungsten gets.
+        names=()
+        paths=()
+        selection="projects"
+        if [ -n "$INPUT_WORKSPACE" ]; then
+          if [ "$INPUT_PROJECTS" != "." ]; then
+            echo "::error title=tungsten::set either 'projects' or 'workspace', not both"
+            exit 1
+          fi
+          inside workspace "$INPUT_WORKSPACE"
+          [ -d "$INPUT_WORKSPACE" ] || { echo "::error title=tungsten::workspace '$INPUT_WORKSPACE' is not a directory"; exit 1; }
+          ws_args=()
+          while IFS= read -r id; do
+            case "$id" in -*) echo "::error title=tungsten::project id '$id' must not start with '-'"; exit 1 ;; esac
+            ws_args+=(--project "$id")
+          done < <(lines "$INPUT_WORKSPACE_PROJECTS")
+          affected=()
+          while IFS= read -r file; do
+            inside "affected file" "$file"
+            affected+=("$file")
+          done < <(lines "$INPUT_AFFECTED_FILES")
+          if printf '%s' "$INPUT_AFFECTED_BASE" | grep -Eq '^0+$'; then
+            # github.event.before of a new branch: no base, check every project.
+            echo "::notice title=tungsten::affected-base is all zeros (a new branch); checking every selected project"
+            INPUT_AFFECTED_BASE=
+          fi
+          if [ -n "$INPUT_AFFECTED_BASE" ]; then
+            if ! printf '%s' "$INPUT_AFFECTED_BASE" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._/-]*$'; then
+              echo "::error title=tungsten::input 'affected-base' must be a commit SHA or a ref name"
+              exit 1
+            fi
+            if ! git rev-parse --verify --quiet "$INPUT_AFFECTED_BASE^{commit}" > /dev/null; then
+              echo "::error title=tungsten::affected-base '$INPUT_AFFECTED_BASE' is not in the checkout; check out with fetch-depth: 0"
+              exit 1
+            fi
+            top=$(git rev-parse --show-toplevel)
+            while IFS= read -r -d '' file; do
+              affected+=("$top/$file")
+            done < <(git diff --name-only --no-renames -z "$INPUT_AFFECTED_BASE...HEAD" --)
+          fi
+          selection="workspace \`$INPUT_WORKSPACE\`"
+          if [ -n "$INPUT_AFFECTED_FILES$INPUT_AFFECTED_BASE" ]; then
+            selection="$selection, ${#affected[@]} affected file(s)"
+            for file in ${affected[@]+"${affected[@]}"}; do
+              ws_args+=(--affected "$file")
+            done
+          fi
+          ws_json="$log_dir/workspace.json"
+          if [ -n "$INPUT_AFFECTED_FILES$INPUT_AFFECTED_BASE" ] && [ "${#affected[@]}" -eq 0 ]; then
+            echo "No file changed: no project is affected."
+          elif ! "$TUNGSTEN" workspace "$INPUT_WORKSPACE" ${ws_args[@]+"${ws_args[@]}"} --json > "$ws_json"; then
+            "$TUNGSTEN" workspace "$INPUT_WORKSPACE" ${ws_args[@]+"${ws_args[@]}"} || true
+            echo "::error title=tungsten workspace failed::project discovery or selection failed; see the log above"
+            exit 1
+          else
+            "$TUNGSTEN" workspace "$INPUT_WORKSPACE" ${ws_args[@]+"${ws_args[@]}"}
+            while IFS= read -r -d '' id && IFS= read -r -d '' manifest; do
+              names+=("$id")
+              paths+=("$INPUT_WORKSPACE/$manifest")
+            done < <(python3 -I -c '
+        import json, sys
+        for p in json.load(open(sys.argv[1]))["result"]["projects"]:
+            sys.stdout.write(p["id"] + "\0" + p["manifest"] + "\0")
+        ' "$ws_json")
+          fi
+        else
+          while IFS= read -r project; do
+            inside project "$project"
+            [ -e "$project" ] || { echo "::error title=tungsten::project '$project' does not exist"; exit 1; }
+            names+=("$project")
+            paths+=("$project")
+          done < <(lines "$INPUT_PROJECTS")
+          [ "${#paths[@]}" -gt 0 ] || { echo "::error title=tungsten::input 'projects' is empty"; exit 1; }
+        fi
+        echo "projects=${#paths[@]}" >> "$GITHUB_OUTPUT"
+
+        # Scenario lines are validated before any check runs. Each becomes
+        # the argv of one `tungsten scenario run`, one word per line in
+        # $scenario_dir/<index> (words never contain a newline).
+        scenario_names=()
+        scenario_dir="$log_dir/scenarios"
+        mkdir -p "$scenario_dir"
+        if [ -n "$(lines "$INPUT_SCENARIOS")" ]; then
+          if [ "$EVENT_NAME" = pull_request_target ]; then
+            echo "::error title=tungsten::scenarios run commands and are refused on pull_request_target"
+            exit 1
+          fi
+          inside scenario-input "$INPUT_SCENARIO_INPUT"
+          [ -e "$INPUT_SCENARIO_INPUT" ] || { echo "::error title=tungsten::scenario-input '$INPUT_SCENARIO_INPUT' does not exist"; exit 1; }
+          while IFS= read -r line; do
+            read -r -a words <<< "$line"
+            file=${words[0]}
+            inside scenario "$file"
+            [ -f "$file" ] || { echo "::error title=tungsten::scenario '$file' does not exist"; exit 1; }
+            argv=(scenario run "$INPUT_SCENARIO_INPUT" --scenario "$file")
+            i=1
+            while [ "$i" -lt "${#words[@]}" ] && [ "${words[$i]}" != "--" ]; do
+              option=${words[$i]}
+              value=${words[$((i + 1))]:-}
+              case "$option" in
+                --expect-exit | --timeout-ms | --max-calls) ;;
+                *) echo "::error title=tungsten::scenario '$file': unknown option '$option' (expected --expect-exit, --timeout-ms, --max-calls or --)"; exit 1 ;;
+              esac
+              case "$value" in
+                '' | *[!0-9]*) echo "::error title=tungsten::scenario '$file': $option needs a number"; exit 1 ;;
+              esac
+              argv+=("$option" "$value")
+              i=$((i + 2))
+            done
+            if [ "$i" -ge "${#words[@]}" ] || [ $((i + 1)) -ge "${#words[@]}" ]; then
+              echo "::error title=tungsten::scenario '$file': give the command after --"
+              exit 1
+            fi
+            argv+=("${words[@]:$i}")
+            printf '%s\n' "${argv[@]}" > "$scenario_dir/${#scenario_names[@]}"
+            scenario_names+=("$file")
+          done < <(lines "$INPUT_SCENARIOS")
+        fi
+
+        for i in ${paths[@]+"${!paths[@]}"}; do
+          name=${names[$i]}
+          project=${paths[$i]}
           if [ -d "$project" ]; then root=$project; else root=$(dirname -- "$project"); fi
 
-          [ "$run_check" = true ] && step "$project" check "$TUNGSTEN" check ${flags[@]+"${flags[@]}"} "$project"
-          [ "$run_generate" = true ] && step "$project" "generate --check" "$TUNGSTEN" generate --check ${flags[@]+"${flags[@]}"} "$project"
+          [ "$run_check" = true ] && step "$name" check "$TUNGSTEN" check ${flags[@]+"${flags[@]}"} "$project"
+          [ "$run_generate" = true ] && step "$name" "generate --check" "$TUNGSTEN" generate --check ${flags[@]+"${flags[@]}"} "$project"
           case "$INPUT_LOCK_CHECK" in
-            true) step "$project" "lock --check" "$TUNGSTEN" lock --check "$project" ;;
-            auto) [ -f "$root/tungsten.lock.json" ] && step "$project" "lock --check" "$TUNGSTEN" lock --check "$project" ;;
+            true) step "$name" "lock --check" "$TUNGSTEN" lock --check "$project" ;;
+            auto) [ -f "$root/tungsten.lock.json" ] && step "$name" "lock --check" "$TUNGSTEN" lock --check "$project" ;;
           esac
+        done
+
+        for index in ${scenario_names[@]+"${!scenario_names[@]}"}; do
+          argv=()
+          while IFS= read -r word; do
+            argv+=("$word")
+          done < "$scenario_dir/$index"
+          step "$INPUT_SCENARIO_INPUT" "scenario ${scenario_names[$index]}" "$TUNGSTEN" "${argv[@]}"
         done
 
         {
           echo "### tungsten"
           echo
           echo "$("$TUNGSTEN" --version); external targets: $([ "$allow_external" = true ] && echo run || echo skipped)"
+          echo
+          echo "Selection: $selection; ${#paths[@]} project(s) checked."
           echo
           echo "| Project | Check | Result |"
           echo "|---|---|---|"

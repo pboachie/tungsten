@@ -936,6 +936,7 @@ impl Ctx<'_> {
             UnionPlan::Tagged {
                 tag,
                 variants: tagged,
+                ..
             } => {
                 w.line("let o = Codec.object d node");
                 w.line(format!("match Codec.tag d o {} with", lit(tag)));

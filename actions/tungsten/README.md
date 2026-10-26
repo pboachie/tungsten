@@ -40,6 +40,10 @@ the expected `failed` output, and the regenerated project passes.
 |---|---|---|
 | `version` | required | Release to install, for example `0.1.3`. There is no "latest". |
 | `projects` | `.` | Projects to check, one per line: a directory with `tungsten.yml` or a `tungsten*.yml` manifest. Checked in the order given; every listed project is checked even after a failure. |
+| `workspace` | empty | Instead of `projects`: a workspace root (relative to `working-directory`). The projects `tungsten workspace` discovers there are checked in its discovery order. Setting both `workspace` and a non-default `projects` fails. |
+| `workspace-projects` | empty | With `workspace`: only these project ids, one per line (`--project`; an unknown id fails with `TG0644`). |
+| `affected-files` | empty | With `workspace`: only the projects that depend on one of these files, one per line (`--affected`). tungsten decides the dependency from the manifest, its declared inputs and the files its offline compilation read; a project that does not compile counts as affected by every file. |
+| `affected-base` | empty | With `workspace`: also treat the files changed in `git diff <base>...HEAD` (both sides of a rename) as affected, for example `${{ github.event.pull_request.base.sha }}`. The base must be in the checkout (`fetch-depth: 0`). When affected files are requested and nothing changed, no project is checked and the step passes. |
 | `working-directory` | `.` | Directory the project paths are relative to. Project paths must stay inside it (no absolute paths, no `..`). |
 | `check` | `true` | Run `tungsten check`. |
 | `generate-check` | `true` | Run `tungsten generate --check`: writes nothing, exits 1 with `TG0901` when a generated file is missing, changed or extra. |
@@ -47,10 +51,32 @@ the expected `failed` output, and the regenerated project passes.
 | `locked` | `false` | Pass `--locked` to check and generate (`TG0128` unless the project matches its lock; inputs are acquired offline). |
 | `strict` | `false` | Pass `--strict` to check and generate: warnings fail. |
 | `allow-external` | `false` | Start the commands of `external` targets. See the trust model. |
+| `scenarios` | empty | Saved mock scenarios to run after the checks, one per line: `<scenario.json> [--expect-exit N] [--timeout-ms N] [--max-calls N] -- <command> [args...]`. Each runs `tungsten scenario run <scenario-input> --scenario <file> ... -- <command>`, the runner used locally; a failed assertion fails the step. Refused on `pull_request_target`. |
+| `scenario-input` | `.` | The project, manifest or OpenAPI document the scenarios run against. |
 | `install-only` | `false` | Install tungsten, add it to `PATH` and stop; run your own commands afterwards. |
 | `token` | `github.token` | Token for the provenance check of the release archive. Only the install step sees it. |
 
 Boolean inputs accept exactly `true` or `false`; anything else fails the step.
+
+`workspace`, `workspace-projects` and the affected inputs need a release that
+has `tungsten workspace` (newer than 0.1.3). Affected-project selection uses
+tungsten's own dependency evidence, so a change to an input shared by two
+projects checks both, and a change to one project's spec checks only that one:
+
+```yaml
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: pboachie/tungsten/actions/tungsten@<commit> # <tag>
+        with:
+          version: <release>
+          workspace: apis
+          affected-base: ${{ github.event.pull_request.base.sha || github.event.before }}
+```
+
+On a push to a new branch `github.event.before` is all zeros; the action
+treats an all-zeros base as no base and checks every selected project.
 
 ## Outputs
 
@@ -59,10 +85,36 @@ Boolean inputs accept exactly `true` or `false`; anything else fails the step.
 | `version` | The output of `tungsten --version`. |
 | `bin-dir` | Directory of the installed binary (also on `PATH` for later steps). |
 | `log-dir` | One log per check, `<n>-<check>.log` (`1-check.log`, `2-generate-check.log`, ...). Upload it with `actions/upload-artifact` when you want the logs outside the run page. |
+| `projects` | The number of projects checked; 0 when a workspace selection matched none. |
 | `failed` | The failed checks, one `<project>: <check>` per line; empty when all passed. |
 
 Each check also prints in its own log group and, on failure, adds an error
 annotation naming the project and the exit status.
+
+## Scenarios
+
+Each scenario line is split on whitespace and never passed through a shell:
+quoting, `$VAR`, globs and redirections are not interpreted, and a word cannot
+contain a space. Scenario files and the input must be relative paths inside
+`working-directory`, and every line is validated before any check runs. The
+command after `--` is code from your repository (an integration test, for
+example) and runs with the job's environment, like any `run:` step; the
+action does not pass the install token to it. tungsten bounds each run with
+`--timeout-ms` (default 30 s) and `--max-calls`, and its report is the mock's
+bounded summary. Scenarios need a release that has `tungsten scenario`
+(newer than 0.1.3).
+
+```yaml
+      - uses: pboachie/tungsten/actions/tungsten@<commit> # <tag>
+        with:
+          version: <release>
+          projects: openapi.json
+          generate-check: "false"
+          scenario-input: openapi.json
+          scenarios: |
+            scenarios/rate-limit.json -- python3 -I integration.py rate-limit
+            scenarios/malformed.json --expect-exit 3 -- python3 -I integration.py malformed
+```
 
 ## Installation and pinning
 
