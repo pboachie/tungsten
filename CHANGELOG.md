@@ -1335,6 +1335,14 @@ changes.
 
 ### Fixed
 
+- A read whose one-shot upload is answered with a same-origin `307` or `308`
+  redirect no longer gets the cross-origin remediation ("leaves the API's
+  origin ... check base_url"). The TypeScript, Python and Rust runtimes now
+  say the body is one-shot and was already read, so it cannot be re-sent
+  and the redirect was not followed, and suggest
+  `UploadSource.recreatable(...)` (`UploadSource::recreatable(...)` in Rust)
+  or calling the redirect target directly.
+
 - The Rust runtime validates an OpenAPI 3.2 custom method
   (`HttpMethod::Custom`) before sending, as the TypeScript and Python
   runtimes do: a token that is not an RFC 9110 token, a case variant of a

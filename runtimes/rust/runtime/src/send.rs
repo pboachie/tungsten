@@ -81,6 +81,7 @@ impl ClientCore {
                     key_header: &prepared.key_header,
                     attempts,
                     check,
+                    unreplayed: false,
                 };
                 return Err(fail(scrub_diagnostic(
                     outcome_unknown(
@@ -272,6 +273,9 @@ impl ClientCore {
                 prepared.may_have_sent.store(true, Ordering::Relaxed);
             }
             let mut hops = 0;
+            // Set when a redirect is not followed because the one-shot upload
+            // cannot be sent again.
+            let mut unreplayed = false;
             while !self.inner.redirects_disabled && !mutation && hops < MAX_REDIRECTS {
                 let AttemptOutcome::Response {
                     status,
@@ -298,6 +302,7 @@ impl ClientCore {
                 // A streamed body is read again for the redirect, never
                 // replayed from a spent one-shot source.
                 if !rewrite && upload.as_ref().is_some_and(|source| !source.sendable()) {
+                    unreplayed = true;
                     break;
                 }
                 uploading = upload
@@ -346,6 +351,7 @@ impl ClientCore {
                 key_header: &prepared.key_header,
                 attempts,
                 check: check.as_ref(),
+                unreplayed,
             };
             let responded = matches!(
                 outcome,
@@ -747,6 +753,10 @@ impl ClientCore {
                 } else if self.inner.redirects_disabled {
                     format!(
                         "The server answered with a redirect{to}. Redirects are disabled; check redirects and base_url."
+                    )
+                } else if call_ctx.unreplayed {
+                    format!(
+                        "The server answered with a redirect{to} that would need the upload body sent again. The body is one-shot and was already read, so it cannot be re-sent and the redirect was not followed; pass UploadSource::recreatable(...) so it can be read again, or call the redirect target directly."
                     )
                 } else {
                     format!(
