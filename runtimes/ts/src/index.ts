@@ -22,7 +22,11 @@ export { DEFAULT_MAX_EVENT_BYTES, SseParser, type SseEvent } from "./sse.js";
 export { MemoryIdempotencyStore } from "./idempotency.js";
 export {
   MemoryTelemetryCollector,
+  openTelemetryObserver,
   TELEMETRY_SCHEMA_VERSION,
+  type OpenTelemetryObserverOptions,
+  type OtelSpanLike,
+  type OtelTracerLike,
   type TelemetryEntry,
   type TelemetryEvent,
   type TelemetryEventName,
