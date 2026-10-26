@@ -547,6 +547,67 @@ by the maintainer in the capability contract (`tungsten capabilities`) once
 they exist; until then treat Android as unqualified. See the Rust runtime
 README's Limits section.
 """,
+    "file-transfer": """
+## Problem: files too large to hold in memory
+
+Media, backups and exports should move between disk and an API without the
+whole file in memory, and without leaving a half-written file behind when the
+transfer fails. The recipe starts a loopback file store
+([server.py](server.py)), generates TypeScript, Python and Rust SDKs for it
+([openapi.json](openapi.json)) and, in each language
+([transfer.py](transfer.py), [transfer.mjs](transfer.mjs),
+[transfer.rs](transfer.rs)):
+
+- writes a 16 MiB input file and uploads it from disk with a recreatable
+  `UploadSource` that declares its length and SHA-256;
+- downloads it with the generated download method and saves it to
+  `copy.bin`, checking the SHA-256;
+- shows that saving again without overwrite is refused, that a byte limit
+  refuses the body from its `Content-Length`, and that a missing file is
+  `NOT_FOUND`.
+
+Expected output, the same for each language:
+
+```text
+python: uploaded 16777216 bytes, sha256 matches
+python: downloaded 16777216 bytes to copy.bin, sha256 matches
+python: second save refused: DESTINATION_EXISTS
+python: capped download refused: RESPONSE_TOO_LARGE
+python: missing file: NOT_FOUND
+```
+
+## The calls
+
+```python
+source = UploadSource.recreatable(chunks, length=SIZE, sha256=sha256)
+client.files.update(name="report.bin", body=source)
+client.files.get_download(name="report.bin").value.save_to("copy.bin")
+```
+
+```js
+const source = UploadSource.recreatable(() => Readable.toWeb(createReadStream("input.bin")), { length: SIZE, sha256 });
+await client.files.update({ name: "report.bin", body: source });
+await saveDownload((await client.files.getDownload({ name: "report.bin" })).value, "copy.bin");
+```
+
+```rust
+client.files().update_upload(request, source, &opts).await?;
+client.files().get_download(get(), &opts, DownloadOptions::default()).await?.save_to("copy.bin", false).await?;
+```
+
+- An upload source is **one-shot** (a stream read once: a request whose body
+  was read is never sent again) or **recreatable** (opened again for every
+  attempt, as here). A declared length and SHA-256 are checked against the
+  bytes; the last chunk is held back until they match, so a file that changed
+  under the upload never completes its request.
+- A download is read in chunks with backpressure, bounded by `max_bytes`
+  (`maxBytes`), the idle timeout and the call deadline. Saving writes to a
+  temporary `.part` file next to the destination and renames it only after
+  the whole body arrived; a failure removes it and leaves the destination as
+  it was. The server's suggested `filename` never chooses the destination.
+- Range requests and resumable uploads are not supported. See each runtime
+  README's Limits section.
+""",
     "bulk-sync": """
 ## Problem: a bulk job turns into a storm of 429s
 
@@ -1101,6 +1162,79 @@ tokio = {{ version = "1", features = ["macros", "rt-multi-thread"] }}
             print(command(argv, cwd).stdout, end="", flush=True)
 
 
+FILE_TRANSFER_OUTCOME = """python: uploaded 16777216 bytes, sha256 matches
+python: downloaded 16777216 bytes to copy.bin, sha256 matches
+python: second save refused: DESTINATION_EXISTS
+python: capped download refused: RESPONSE_TOO_LARGE
+python: missing file: NOT_FOUND
+"""
+
+
+def file_transfer(binary: str, example: Path, work: Path, build_packages: bool) -> None:
+    runtime = REPO / "runtimes"
+    shutil.copyfile(example / "openapi.json", work / "openapi.json")
+    write_json(work / "tungsten.yml", {
+        "tungsten": 1, "api": {"name": "files", "title": "Files"},
+        "inputs": [{"namespace": "files", "spec": "openapi.json"}],
+        "targets": {
+            "python": {"package": "files-sdk", "module": "files_sdk", "out": "sdk"},
+            "typescript": {"package": "@gallery/files", "out": "typescript",
+                           "runtime_path": relative(runtime / "ts", work / "typescript")},
+            "rust": {"out": "rust", "runtime_path": relative(runtime / "rust/runtime", work / "rust/files-sdk"),
+                     "cli": {"kit_path": relative(runtime / "rust/cli-kit", work / "rust/files-cli")}},
+        },
+    })
+    outputs = ("sdk", "typescript", "rust")
+    tungsten(binary, work, "check")
+    tungsten(binary, work, "generate")
+    first = {name: digest_tree(work / name) for name in outputs}
+    assert all(first.values()), "a target produced no files; inspect skipped/refused target diagnostics"
+    tungsten(binary, work, "generate")
+    assert first == {name: digest_tree(work / name) for name in outputs}, "regeneration was not deterministic"
+    tungsten(binary, work, "generate", "--check")
+    if not build_packages:
+        return
+    python = python_environment(work)
+    npm_build(REPO / "runtimes/ts")
+    npm_build(work / "typescript")
+    shutil.copyfile(example / "transfer.mjs", work / "typescript/transfer.mjs")
+    consumer = work / "consumer"
+    consumer.mkdir()
+    shutil.copyfile(example / "transfer.rs", consumer / "transfer.rs")
+    (consumer / "Cargo.toml").write_text(f'''[package]
+name = "file-transfer"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[[bin]]
+name = "file-transfer"
+path = "transfer.rs"
+
+[dependencies]
+files-sdk = {{ path = "../rust/files-sdk" }}
+tungsten-runtime = {{ path = "{relative(runtime / "rust/runtime", consumer)}" }}
+serde_json = "1"
+sha2 = "0.10"
+tokio = {{ version = "1", features = ["macros", "rt-multi-thread"] }}
+
+[workspace]
+''')
+    command(["cargo", "build", "--quiet"], consumer)
+    scratch = {"python": work / "python-run", "typescript": work / "typescript", "rust": consumer}
+    scratch["python"].mkdir()
+    with quota_server(example, work) as base:
+        outputs = {}
+        for language, argv in (("python", [str(python), str(example / "transfer.py"), base]),
+                               ("typescript", ["node", "transfer.mjs", base]),
+                               ("rust", ["cargo", "run", "--quiet", "--", base])):
+            outputs[language] = command(argv, scratch[language]).stdout
+            print(outputs[language], end="", flush=True)
+    for language, output in outputs.items():
+        expected = FILE_TRANSFER_OUTCOME.replace("python:", f"{language}:")
+        assert output == expected, f"{language} printed {output!r}, expected {expected!r}"
+
+
 TELEMETRY_OUTCOME = """call 1 api.getRecord: auth ok; queue admitted; attempt 1 ok 200; ok after 1 attempt
 call 2 api.getRecord: auth ok; queue admitted; attempt 1 error UPSTREAM_UNAVAILABLE 503; retry_backoff ok; \
 queue admitted; attempt 2 ok 200; ok after 2 attempts
@@ -1304,6 +1438,9 @@ def execute(entry: dict, binary: str, build_packages: bool) -> None:
     if mode == "bulk-sync":
         bulk_sync(binary, example, work, build_packages)
         return
+    if mode == "file-transfer":
+        file_transfer(binary, example, work, build_packages)
+        return
     if mode == "webhooks":
         webhook_receiver(binary, example, work, build_packages)
         return
@@ -1490,7 +1627,7 @@ def main() -> None:
         execute(entry, binary, not args.generate_only)
         if args.generate_only and entry["mode"] == "target" and entry["target"] != "docs":
             print(f"OK: {entry['target']} generation is deterministic and fresh; package build was not run", flush=True)
-        elif args.generate_only and entry["mode"] in ("bulk-sync", "webhooks", "telemetry", "android-jni"):
+        elif args.generate_only and entry["mode"] in ("bulk-sync", "file-transfer", "webhooks", "telemetry", "android-jni"):
             print("OK: generation is deterministic and fresh; the clients were not run", flush=True)
         else:
             print(f"OK: {entry['outcome']}", flush=True)
