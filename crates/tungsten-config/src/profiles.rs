@@ -273,6 +273,11 @@ pub fn compose(
     }
 }
 
+/// A non-empty relative local path; URLs, `git+` sources and rooted forms are refused.
+pub fn is_relative_local_path(path: &str) -> bool {
+    relative_local_path(path)
+}
+
 fn relative_local_path(path: &str) -> bool {
     // Reject portable Windows drive/root forms even on Unix. On Windows,
     // drive-relative and rooted-without-drive joins can replace part of base.
