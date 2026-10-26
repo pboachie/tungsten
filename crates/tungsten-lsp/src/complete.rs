@@ -203,65 +203,10 @@ fn dynamic_keys(
     out
 }
 
+/// Option keys of a target, from the shared capability catalog; `out` for
+/// external or unknown targets.
 fn target_keys(target: &str) -> &'static [&'static str] {
-    match target {
-        "typescript" => &["package", "runtime", "out"],
-        "python" => &["package", "runtime", "models", "out"],
-        "rust" => &["crate", "runtime", "cli", "out"],
-        "java" => &[
-            "group_id",
-            "artifact_id",
-            "package",
-            "version",
-            "runtime",
-            "runtime_path",
-            "out",
-        ],
-        "csharp" => &[
-            "package_id",
-            "namespace",
-            "version",
-            "runtime",
-            "runtime_path",
-            "out",
-        ],
-        "fsharp" => &[
-            "package_id",
-            "namespace",
-            "version",
-            "runtime",
-            "runtime_path",
-            "csharp_runtime_path",
-            "out",
-        ],
-        "kotlin" => &[
-            "group",
-            "artifact",
-            "package",
-            "version",
-            "runtime",
-            "runtime_path",
-            "java_runtime_path",
-            "coroutines",
-            "coroutines_runtime_path",
-            "out",
-        ],
-        "ruby" => &["gem", "module", "version", "runtime", "runtime_path", "out"],
-        "dart" => &["package", "version", "runtime", "runtime_path", "out"],
-        "mcp" => &["package", "runtime", "out"],
-        "webmcp" => &[
-            "package",
-            "version",
-            "runtime",
-            "runtime_path",
-            "sdk",
-            "sdk_path",
-            "sdk_runtime",
-            "sdk_runtime_path",
-            "out",
-        ],
-        _ => &["out"],
-    }
+    tungsten_config::capabilities::target(target).map_or(&["out"], |target| target.option_keys)
 }
 
 fn overlay_keys(path: &[Seg]) -> &'static [&'static str] {

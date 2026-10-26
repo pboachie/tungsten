@@ -226,6 +226,16 @@ changes.
 
 ### Added
 
+- Extend the versioned capability catalog with each built-in target's option
+  keys, execution environments and implemented features, plus a registry of
+  feature ids. `tungsten capabilities --matrix` prints the support matrix
+  derived from those declarations, and the command refuses to answer from a
+  catalog with conflicting declarations (duplicate names, unregistered
+  features, empty version ranges, undeclared options). Editor completion of
+  target option keys now comes from the catalog, adding the missing Python
+  `module`, `python_version` and `models` keys. Declarations remain source
+  statements: qualification and artifact availability stay `unknown`.
+
 - Add explicit Linux support-bundle export to a new file in an existing,
   trusted user-owned directory. Export preserves the metadata-only preview
   manifest, caps complete artifacts at 128 KiB, refuses replacement and
