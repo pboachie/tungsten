@@ -629,6 +629,14 @@ changes.
   operations. TG0141 is retired and no longer reported; `tungsten capabilities`
   lists `query` as a compiled 3.2 construct.
 
+- OpenAPI 3.2 `$self` is accepted when it cannot change what a reference
+  resolves to: the document has no relative reference to another document,
+  or `$self` is a bare file name in the document's directory. TG0140 now
+  reports only a `$self` that would move the base of a relative `$ref`, one
+  that is not a string or has a fragment, and a `$ref` that names the
+  document by its absolute `$self` URI. `tungsten capabilities` lists `$self`
+  as a compiled 3.2 construct.
+
 - OpenAPI 3.2 `style: cookie` cookie parameters compile: values are sent with
   RFC 6265 syntax as written (only characters a cookie cannot carry are
   percent-encoded), and exploded arrays and objects as separate `n=v; n2=v2`
@@ -692,7 +700,7 @@ changes.
   3.1 has takes the 3.1 path and compiles to the same IR as its 3.1 twin. Each
   construct only 3.2 has is diagnosed at its member instead of being ignored, one
   code per feature. These are errors, because a client built without them would
-  differ from the API: `$self` (TG0140), other `itemSchema` uses (TG0145), `prefixEncoding` and `itemEncoding` (TG0146),
+  differ from the API: other `itemSchema` uses (TG0145), `prefixEncoding` and `itemEncoding` (TG0146),
   nested encodings (TG0147), `components.mediaTypes` and media types given by
   `$ref` (TG0148), discriminator `defaultMapping` (TG0149), the OAuth 2.0 device
   authorization flow (TG0150) and security requirements that name a scheme by URI

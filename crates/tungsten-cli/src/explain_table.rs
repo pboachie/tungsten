@@ -294,8 +294,8 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
     ),
     e(
         "TG0140",
-        "An OpenAPI 3.2 document declares `$self`, a self-assigned URI that changes the base URI used to resolve relative references. tungsten resolves references against the file location only, so honouring the document as written is not possible.",
-        "Remove `$self`, or keep relative references that resolve the same against the file location.",
+        "An OpenAPI 3.2 document declares a `$self` that tungsten cannot honour. `$self` is the document's own URI and the base for its relative references; tungsten resolves references against the file location, so it accepts `$self` only when that gives the same result: the document has no relative reference to another document, or `$self` is a bare file name in the document's directory. This code reports a `$self` that would move the base of a relative `$ref`, one that is not a string or has a fragment, and a `$ref` that names the document by its absolute `$self` URI.",
+        "Remove `$self`, or keep references that resolve the same against the file location.",
     ),
     e(
         "TG0141",

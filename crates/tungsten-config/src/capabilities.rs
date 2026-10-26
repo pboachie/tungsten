@@ -769,6 +769,11 @@ pub const OPENAPI_32_SUPPORTED: &[SupportedInputFeature] = &[
         behavior: "an operation sent with the HTTP QUERY method and its request body; safe, so read-only by default",
     },
     SupportedInputFeature {
+        id: "document_self",
+        member: "$self",
+        behavior: "accepted when it cannot change what a reference resolves to: no relative reference to another document, or $self names a file in the document's own directory. A $self that would move the base of relative references, has a fragment, or is named by a $ref is refused with TG0140",
+    },
+    SupportedInputFeature {
         id: "cookie_style",
         member: "style: cookie",
         behavior: "a cookie parameter sent with RFC 6265 syntax: values as written (only characters a cookie cannot carry are percent-encoded), exploded arrays and objects as separate `n=v; n2=v2` pairs. On a parameter that is not `in: cookie` it is refused with TG0144",
@@ -819,7 +824,6 @@ pub const OPENAPI_32_SUPPORTED: &[SupportedInputFeature] = &[
 /// document using none of these is read as its 3.1 twin plus the supported
 /// constructs above.
 pub const OPENAPI_32_FEATURES: &[UnsupportedInputFeature] = &[
-    feature("document_self", "$self", "TG0140", Rejected),
     feature("item_schema", "itemSchema (other uses)", "TG0145", Rejected),
     feature(
         "positional_multipart_encoding",
