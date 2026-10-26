@@ -335,6 +335,10 @@ changes.
   checked when it returns; a caller waiting on shared token work stops at its
   deadline without cancelling it.
 
+- Kotlin: add `deadline(kotlin.time.Duration)` extensions on the client and
+  call option builders, and describe the total deadline in the generated Java
+  and Kotlin SDK READMEs.
+
 - Add `tungsten lock`, a versioned single-project generation lock
   (`tungsten.lock.json`). It records the declared input closure (manifest,
   profiles, agent manifest, entry documents, local references and overlays in
