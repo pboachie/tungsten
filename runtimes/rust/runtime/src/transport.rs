@@ -227,6 +227,20 @@ fn multipart_form(parts: &[MultipartPart]) -> reqwest::multipart::Form {
                     reqwest::multipart::Part::bytes(data.clone()).file_name(filename.clone())
                 }),
         };
+        let built = if part.headers.is_empty() {
+            built
+        } else {
+            let mut headers = reqwest::header::HeaderMap::new();
+            for (name, value) in &part.headers {
+                if let (Ok(name), Ok(value)) = (
+                    reqwest::header::HeaderName::from_bytes(name.as_bytes()),
+                    reqwest::header::HeaderValue::from_str(value),
+                ) {
+                    headers.append(name, value);
+                }
+            }
+            built.headers(headers)
+        };
         form = form.part(part.name.clone(), built);
     }
     form

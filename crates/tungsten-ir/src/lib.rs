@@ -546,6 +546,19 @@ ir_struct! {
         /// the Encoding Object's `contentType` list.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub content_type: Option<String>,
+        /// Headers sent on each part of the property: the Encoding Object's
+        /// `headers` whose schema fixes one value (`const`, or an `enum` of
+        /// one value), in spec order.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        pub headers: Vec<PartHeader>,
+    }
+}
+
+ir_struct! {
+    /// A header with a fixed value on a multipart part.
+    pub struct PartHeader {
+        pub name: String,
+        pub value: String,
     }
 }
 

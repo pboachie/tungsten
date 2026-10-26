@@ -330,6 +330,16 @@ pub struct PartDescriptor {
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub content_type: Option<String>,
+    /// Headers with a fixed value sent on each part of the field.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub headers: Vec<PartHeaderDescriptor>,
+}
+
+/// A header with a fixed value on a multipart part.
+#[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
+pub struct PartHeaderDescriptor {
+    pub name: String,
+    pub value: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
@@ -884,6 +894,14 @@ fn operation(
                 .map(|part| PartDescriptor {
                     name: part.name.clone(),
                     content_type: part.content_type.clone(),
+                    headers: part
+                        .headers
+                        .iter()
+                        .map(|h| PartHeaderDescriptor {
+                            name: h.name.clone(),
+                            value: h.value.clone(),
+                        })
+                        .collect(),
                 })
                 .collect(),
         }
