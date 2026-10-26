@@ -229,6 +229,8 @@ pub(crate) enum MemberKind {
     Pages(usize),
     /// `<op>_stream`.
     Stream(usize),
+    /// `<op>_download`: the binary success body streamed.
+    Download(usize),
     /// Index into [`Plan::resources`].
     Child(usize),
 }
@@ -460,6 +462,10 @@ impl<'a> Plan<'a> {
                 if self.ops[o].op.stream.is_some() {
                     words.push(with_word(&base, "stream"));
                     kinds.push(MemberKind::Stream(o));
+                }
+                if self.ops[o].op.binary_success() {
+                    words.push(with_word(&base, "download"));
+                    kinds.push(MemberKind::Download(o));
                 }
             }
             let names = unique(&["l"], &words, Role::Method);
