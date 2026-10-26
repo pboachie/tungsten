@@ -714,7 +714,7 @@ pub(crate) fn read_lock(path: &Path) -> Existing {
 
 /// Write through a temporary sibling and rename, so readers never observe a
 /// partial lock. An existing link at the lock path is replaced, not followed.
-fn write_lock(path: &Path, recipe: &GenerationRecipe) -> std::io::Result<()> {
+pub(crate) fn write_lock(path: &Path, recipe: &GenerationRecipe) -> std::io::Result<()> {
     let mut text = serde_json::to_string_pretty(recipe).map_err(std::io::Error::other)?;
     text.push('\n');
     let mut temporary = PathBuf::from(path);

@@ -35,9 +35,13 @@ pub(crate) mod support_bundle_attach;
 mod support_bundle_file;
 pub(crate) mod support_bundle_inspect;
 pub(crate) mod update;
+pub(crate) mod upgrade;
+pub(crate) mod upgrade_apply;
 mod wizard;
 
-use crate::args::{BundleCommand, Cli, Command, IrCommand, OverlayCommand, PolicyCommand};
+use crate::args::{
+    BundleCommand, Cli, Command, IrCommand, OverlayCommand, PolicyCommand, UpgradeCommand,
+};
 use crate::{CliEnv, Report};
 
 pub(crate) fn dispatch(
@@ -69,6 +73,17 @@ pub(crate) fn dispatch(
         Command::Generate(args) => lock::required(&args.input.path, args.locked),
         _ => false,
     };
+    if matches!(cli.command, Command::Upgrade { .. }) && cli.refresh_inputs {
+        return crate::Report::new(cli.command_name().unwrap_or(crate::output::CommandName::Check))
+            .failed(
+                crate::exit::USAGE,
+                crate::output::CliError::new(
+                    crate::output::ErrorKind::Usage,
+                    "an upgrade never refreshes inputs; --refresh-inputs cannot be combined with upgrade",
+                )
+                .with_help("refresh and review inputs as a separate step, then run `tungsten lock --update` before rehearsing"),
+            );
+    }
     if locked && cli.refresh_inputs {
         return crate::Report::new(cli.command_name().unwrap_or(crate::output::CommandName::Check))
             .failed(
@@ -131,6 +146,12 @@ fn dispatch_with_inputs(
         } => overlay::suggest(args),
         Command::SupportBundle(args) => support_bundle::run(args, env, cli, cancellation),
         Command::Update { command } => update::run(command, cli.offline),
+        Command::Upgrade {
+            command: UpgradeCommand::Rehearse(args),
+        } => upgrade::rehearse(args, env),
+        Command::Upgrade {
+            command: UpgradeCommand::Apply(args),
+        } => upgrade_apply::run(args),
         Command::Lsp(_) => lsp::refuse(),
     }
 }
