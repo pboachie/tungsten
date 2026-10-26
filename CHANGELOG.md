@@ -626,6 +626,13 @@ changes.
   and the build reports it instead of the frontend; `tungsten capabilities`
   lists the construct as compiled.
 
+- The OpenAPI 3.2 OAuth 2.0 `deviceAuthorization` flow compiles. It is kept in
+  the IR like the `password` and `implicit` flows, and `OAuthFlow` gains an
+  optional `device_authorization_url` (additive). Generated clients accept an
+  access token obtained through the device flow as the scheme's credential;
+  they do not run the device flow (RFC 8628) themselves. TG0150 is retired and
+  no longer reported.
+
 - OpenAPI 3.2.x documents are read: a document that uses only constructs OpenAPI
   3.1 has takes the 3.1 path and compiles to the same IR as its 3.1 twin. Each
   construct only 3.2 has is diagnosed at its member instead of being ignored, one

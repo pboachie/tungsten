@@ -794,6 +794,11 @@ pub const OPENAPI_32_SUPPORTED: &[SupportedInputFeature] = &[
         member: "security requirement naming a URI",
         behavior: "the scheme under components.securitySchemes of an input document the URI references; any other URI is TG0151",
     },
+    SupportedInputFeature {
+        id: "oauth2_device_authorization",
+        member: "flows.deviceAuthorization",
+        behavior: "an OAuth2 flow kept with its deviceAuthorizationUrl; SDKs accept an access token obtained through it and do not run the device flow",
+    },
 ];
 
 /// OpenAPI 3.2 constructs without a 3.1 equivalent that are diagnosed. A 3.2
@@ -819,12 +824,6 @@ pub const OPENAPI_32_FEATURES: &[UnsupportedInputFeature] = &[
         "nested_encoding",
         "encoding, prefixEncoding, itemEncoding (Encoding Object)",
         "TG0147",
-        Rejected,
-    ),
-    feature(
-        "oauth2_device_authorization",
-        "flows.deviceAuthorization",
-        "TG0150",
         Rejected,
     ),
     feature(

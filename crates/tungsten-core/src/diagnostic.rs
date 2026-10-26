@@ -256,7 +256,7 @@ pub mod codes {
         ),
         (
             "TG0150",
-            "OpenAPI 3.2 OAuth 2.0 device authorization flow is not supported",
+            "OpenAPI 3.2 OAuth 2.0 device authorization flow (retired: now compiled)",
         ),
         (
             "TG0151",

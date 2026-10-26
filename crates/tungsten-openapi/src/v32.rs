@@ -7,7 +7,8 @@
 //! like any other reference), response `itemSchema` where
 //! [`response_item_schema`] places it, and a discriminator's
 //! `defaultMapping`. Security requirements that name a scheme by URI are
-//! resolved by the build (TG0151 when the URI names no scheme). Every other construct 3.2 added is either refused with an
+//! resolved by the build (TG0151 when the URI names no scheme), and the OAuth
+//! 2.0 `deviceAuthorization` flow is kept like the other flows. Every other construct 3.2 added is either refused with an
 //! error (when ignoring it would produce a client that behaves differently
 //! from the API) or reported as a warning (when it only adds metadata the
 //! compiler has no use for). Nothing is dropped silently. Codes
@@ -337,16 +338,6 @@ fn node_findings(node: &Node<'_>, out: &mut Vec<Finding>) {
         }
         Kind::Link => server_findings_single(&node.pointer, map.get("server"), out),
         Kind::SecurityScheme => {
-            if let Some(Value::Object(flows)) = map.get("flows")
-                && flows.contains_key("deviceAuthorization")
-            {
-                out.push(error(
-                    "TG0150",
-                    join_pointer(&at("flows"), "deviceAuthorization"),
-                    "the OpenAPI 3.2 OAuth 2.0 device authorization flow is not supported",
-                    "declare a flow tungsten supports, or obtain the token outside the client",
-                ));
-            }
             if map.contains_key("oauth2MetadataUrl") {
                 out.push(warning(
                     "TG0152",
