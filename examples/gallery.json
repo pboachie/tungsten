@@ -44,6 +44,14 @@
     "outcome": "the official MCP client lists the tools, reads typed pets, is refused a destructive call without a token, cannot reuse a preview token for other arguments, and deletes with the preview token, while the loopback mock sees exactly one DELETE"
   },
   {
+    "name": "webmcp-python",
+    "title": "Python-backed browser WebMCP tools (experimental)",
+    "description": "Register a page's WebMCP tools with registerRemoteWebMcp and run every call on a Python web app through the generated Python SDK, with the app's own sign-in.",
+    "mode": "webmcp-python",
+    "prerequisites": "Python venv and pip, and Node 22 or later with npm",
+    "outcome": "the page registers the server-chosen tools, reads typed pets, is refused an unconfirmed delete and a cross-user token, deletes with its own preview token, is refused when signed out and removes its tools on dispose, while the loopback mock sees exactly one DELETE"
+  },
+  {
     "name": "first-webmcp",
     "title": "First webmcp SDK",
     "description": "Generate and build a small webmcp package from a local OpenAPI 3.1 contract.",
