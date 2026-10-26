@@ -225,6 +225,8 @@ public record OperationDescriptor(
      * @param sensitiveResponseFields response fields carrying secrets
      * @param sensitiveRequestFields dotted argument paths carrying secrets
      * @param shownOnce whether the response holds values the API shows only once
+     * @param importPolicy the review policy of an operation imported from a
+     *     collection or capture, or null for an ordinary operation
      */
     public record Agent(
             Safety safety,
@@ -236,7 +238,42 @@ public record OperationDescriptor(
             String remediationNote,
             List<String> sensitiveResponseFields,
             List<String> sensitiveRequestFields,
-            boolean shownOnce) {}
+            boolean shownOnce,
+            ImportPolicy importPolicy) {
+
+        /** The agent metadata of an operation without an import policy. */
+        public Agent(
+                Safety safety,
+                Idempotency idempotency,
+                Preview preview,
+                Confirmation confirmation,
+                Verify verify,
+                Map<String, Remediation> remediation,
+                String remediationNote,
+                List<String> sensitiveResponseFields,
+                List<String> sensitiveRequestFields,
+                boolean shownOnce) {
+            this(safety, idempotency, preview, confirmation, verify, remediation, remediationNote,
+                    sensitiveResponseFields, sensitiveRequestFields, shownOnce, null);
+        }
+    }
+
+    /**
+     * The review policy of an operation imported from a Postman collection,
+     * cURL command, HTTP request file or HAR capture. A reviewed operation may
+     * be sent only to one of its allowed origins; an unreviewed one carries an
+     * effective safety tier that requires preview and confirmation.
+     *
+     * @param allowedOrigins the origins (scheme, host, port) the review covers
+     * @param inferredSafety the tier inferred from the HTTP method
+     * @param reviewed whether a person reviewed the operation
+     * @param source the kind of input the operation came from
+     */
+    public record ImportPolicy(
+            List<String> allowedOrigins,
+            Safety inferredSafety,
+            boolean reviewed,
+            String source) {}
 
     /**
      * The server-sent events of an operation.
