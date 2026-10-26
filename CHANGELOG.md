@@ -408,6 +408,14 @@ changes.
   text and JSON redact sensitive values and physical paths without compiling
   inputs, probing tools or executing emitters.
 
+- Compose Python (`package`, `version`, `runtime`, `models`, `python_version`)
+  and Rust (`crate`, `version`, `runtime`) defaults from the same bounded local
+  profiles, so one profile serves a multi-target library. Explicit project
+  fields still win and each value keeps its winning/shadowed origin. Python and
+  Rust options are declared in the shared capability schema and inspected by
+  `tungsten config`. The emitters reuse the same validators, so TG0731/TG0740
+  fallbacks are unchanged.
+
 - Compose bounded local TypeScript profiles for package, version, runtime and
   dependency defaults. Retain authored provenance through the compiler driver,
   strict profile diagnostics and existing manifest fallback behavior.
