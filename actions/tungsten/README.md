@@ -73,8 +73,8 @@ projects checks both, and a change to one project's spec checks only that one:
           affected-base: ${{ github.event.pull_request.base.sha || github.event.before }}
 ```
 
-On a push, `github.event.before` is all zeros for a new branch; leave
-`affected-base` empty there to check every project.
+On a push to a new branch `github.event.before` is all zeros; the action
+treats an all-zeros base as no base and checks every selected project.
 
 ## Outputs
 

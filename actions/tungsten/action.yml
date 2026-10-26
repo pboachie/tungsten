@@ -280,6 +280,11 @@ runs:
             inside "affected file" "$file"
             affected+=("$file")
           done < <(lines "$INPUT_AFFECTED_FILES")
+          if printf '%s' "$INPUT_AFFECTED_BASE" | grep -Eq '^0+$'; then
+            # github.event.before of a new branch: no base, check every project.
+            echo "::notice title=tungsten::affected-base is all zeros (a new branch); checking every selected project"
+            INPUT_AFFECTED_BASE=
+          fi
           if [ -n "$INPUT_AFFECTED_BASE" ]; then
             if ! printf '%s' "$INPUT_AFFECTED_BASE" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._/-]*$'; then
               echo "::error title=tungsten::input 'affected-base' must be a commit SHA or a ref name"
