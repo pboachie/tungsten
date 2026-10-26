@@ -230,6 +230,9 @@ changes.
 
 ### Added
 
+- `scenario run` now works on macOS and Windows as well as Linux. macOS owns
+  the integration through a process group and non-reaping `waitid`, Windows
+  through a Job Object; the binary cancels on Ctrl-C/SIGTERM on both.
 - Add `tungsten init --preset app|library|agent`, also accepted at the guided
   setup's outputs prompt. `library` writes and selects a local profile
   (`profiles/library.yml`) with shared SDK versions; `agent` configures an MCP
@@ -291,10 +294,6 @@ changes.
   Optional caps across every scope (`maxActiveTotal`/`max_active_total`,
   `maxStreamsTotal`/`max_streams_total`) bound requests in flight per
   scheduler; scopes waiting for them take turns so none is starved.
-
-- Under a total operation deadline, the Rust runtime now stops waiting for an
-  OAuth token request or 401 refresh at the deadline without cancelling a
-  refresh other callers share, and reports `DEADLINE_EXCEEDED`.
 
 - Add an opt-in total operation deadline to the TypeScript (`deadlineMs`),
   Python (`deadline_ms`) and Rust (`deadline`) runtimes, on client and call
@@ -380,6 +379,20 @@ changes.
 - Add `locked: true` to `tungsten.yml`, making every `generate` and `check`
   of the project a locked run as with `--locked`. The JSON results of both
   commands report `locked`.
+
+- Add `bundle export --include-consumer-cache DIR` (repeatable) to carry a
+  prepared, project-relative directory of consumer dependencies, such as
+  `npm pack` tarballs, `pip download` wheels or `cargo vendor` output, for
+  offline builds of generated consumers. Files are copied as supplied, with
+  role `consumer_cache`. The inventory's new `consumer_caches` records each
+  directory with its file count and size, provenance, the exporting platform
+  (`exported_on`) and a redistribution notice. Directories that overlap,
+  lie outside the project, sit in `.tungsten-inputs` or VCS metadata, or
+  overlap generated output are refused, as are links. Import accepts
+  `consumer_cache` entries only below a declared directory. Offline consumer
+  builds remain not guaranteed: tungsten does not check that a cache covers
+  every dependency, and native packages may install only on the exporting
+  platform.
 
 - Add `bundle export --include-input-cache` to carry the verified
   `.tungsten-inputs` pin records and pinned content of remote HTTP(S) and Git
