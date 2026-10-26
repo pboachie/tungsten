@@ -574,10 +574,20 @@ impl Ctx<'_> {
             "The SDK descriptor document (the resource tungsten-descriptors.json) and every callable operation as data for the runtime.",
         );
         let no_redirects = self.ir.agent.redirects == tungsten_ir::RedirectPolicy::None;
+        let imported = self
+            .plan
+            .operations
+            .iter()
+            .any(|p| p.op.agent.import_policy.is_some());
         w.block("object Ops {", "}", |w| {
             if no_redirects {
                 kdoc_line(w, "The manifest forbids redirects: the runtime must enforce redirect policy v1.");
                 w.line("init { io.github.pboachie.tungsten.runtime.ClientCore.requireRedirectPolicyV1() }");
+                w.blank();
+            }
+            if imported {
+                kdoc_line(w, "Operations carry imported-operation policy: the runtime must enforce import policy v1.");
+                w.line("init { io.github.pboachie.tungsten.runtime.ClientCore.requireImportPolicyV1() }");
                 w.blank();
             }
             kdoc_line(w, "The descriptor document, loaded once.");
