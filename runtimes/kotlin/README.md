@@ -72,6 +72,11 @@ The OAuth 2.0 device authorization flow (OpenAPI 3.2 `deviceAuthorization`) is
 not run by the client: configure the scheme with an access token obtained
 through it.
 
+A tagged union with an OpenAPI 3.2 discriminator `defaultMapping` decodes an
+object whose tag is missing, not a string or claimed by no other variant as the
+default variant; its own field types then apply. Without `defaultMapping`
+such an object is refused. A value that is not an object is always refused.
+
 This is a thin Kotlin layer over the Java runtime. Calls are synchronous (the
 coroutines artifact above wraps them);
 Java's lack of async calls, proxy configuration and pluggable transport also

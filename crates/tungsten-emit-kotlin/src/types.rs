@@ -741,8 +741,20 @@ impl Ctx<'_> {
                 format!("fun fromJson(json: Any?): {name} {{"),
                 "}",
                 |w| match plan {
-                    UnionPlan::Tagged { tag, variants, .. } => {
-                        w.line(format!("val tag = Codec.obj(json).get({})", lit(tag)));
+                    UnionPlan::Tagged {
+                        tag,
+                        variants,
+                        default,
+                    } => {
+                        let checked = variants
+                            .iter()
+                            .any(|(index, tags)| !tags.is_empty() && *default != Some(*index));
+                        if checked {
+                            w.line(format!("val tag = Codec.obj(json).get({})", lit(tag)));
+                        } else {
+                            // Only the default variant is left: `tag` would be unused.
+                            w.line("Codec.obj(json)");
+                        }
                         let mut all: Vec<String> = vec![];
                         for (index, tags) in variants {
                             let vn = &variant_names[*index];
@@ -750,18 +762,27 @@ impl Ctx<'_> {
                             let conds: Vec<String> =
                                 tags.iter().map(|t| format!("{} == tag", lit(t))).collect();
                             all.extend(tags.iter().map(|t| format!("\"{t}\"")));
-                            if conds.is_empty() {
+                            if conds.is_empty() || *default == Some(*index) {
                                 continue;
                             }
                             w.block(format!("if ({}) {{", conds.join(" || ")), "}", |w| {
                                 w.line(format!("return {vn}(Codec.apply(json, {dec}))"));
                             });
                         }
-                        w.line(format!(
-                            "throw Decode.Failure({}).below({})",
-                            lit(&format!("must be one of [{}]", all.join(", "))),
-                            lit(tag)
-                        ));
+                        if let Some(index) = default {
+                            // OpenAPI 3.2 `defaultMapping`: any other object.
+                            w.line(format!(
+                                "return {}(Codec.apply(json, {}))",
+                                variant_names[*index],
+                                payloads[*index].full_dec()
+                            ));
+                        } else {
+                            w.line(format!(
+                                "throw Decode.Failure({}).below({})",
+                                lit(&format!("must be one of [{}]", all.join(", "))),
+                                lit(tag)
+                            ));
+                        }
                     }
                     UnionPlan::LiteralTagged { variants } => {
                         for (index, _) in variants {
