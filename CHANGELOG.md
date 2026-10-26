@@ -292,6 +292,20 @@ changes.
   bundle grants no trust to external emitters or execution policy.
   `tungsten schema project-bundle` prints the inventory schema.
 
+- Add `--locked` to `generate` and `check`. A locked run verifies the compiled
+  project against `tungsten.lock.json` from the same compilation and fails with
+  `TG0128`, listing the changed identities, when the lock is missing, stale or
+  corrupt; nothing is generated. Locked runs acquire remote inputs offline from
+  their pins and cannot be combined with `--refresh-inputs`.
+
+- Add `bundle export --include-input-cache` to carry the verified
+  `.tungsten-inputs` pin records and pinned content of remote HTTP(S) and Git
+  inputs, and of the reviewed sources of converted imports, so such projects
+  reproduce offline after import. Only the files of each verified pin are
+  copied; import accepts them only below `.tungsten-inputs`. Without the flag,
+  the reviewed source of a converted import is now listed as excluded too.
+  Check that upstream terms allow redistributing bundled documents.
+
 - Extend the versioned capability catalog with each built-in target's option
   keys, execution environments and implemented features, plus a registry of
   feature ids. `tungsten capabilities --matrix` prints the support matrix
