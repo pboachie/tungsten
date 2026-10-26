@@ -145,10 +145,8 @@ pub(crate) fn run(args: &InitArgs) -> Report {
         &info,
         args,
     );
-    if tungsten_config::parse_str("tungsten.yml", &manifest)
-        .0
-        .is_none()
-    {
+    let (parsed, _) = tungsten_config::parse_str("tungsten.yml", &manifest);
+    let Some(mut parsed) = parsed else {
         return report.failed(
             exit::INTERNAL,
             CliError::new(
@@ -156,6 +154,19 @@ pub(crate) fn run(args: &InitArgs) -> Report {
                 "generated tungsten.yml does not validate",
             )
             .with_help("this is a bug in tungsten; please report it with the spec"),
+        );
+    };
+    // Selected profiles compose before anything is written, with the compiler's limits.
+    let checked = super::init_advanced::check_profiles(&mut parsed, dir);
+    if checked.has_errors() {
+        report.diagnostics = checked.0;
+        return report.failed(
+            exit::REFUSED,
+            CliError::new(
+                ErrorKind::Refused,
+                "a selected profile is invalid; no project files were written",
+            )
+            .with_help("correct the profile, or choose another with --profile"),
         );
     }
     let mut agent = agent_yml(&namespace, &spec_ref, spec.is_some(), &info);
@@ -433,14 +444,29 @@ fn tungsten_yml(
             let _ = writeln!(out, "    source_sha256: {}", yaml_scalar(hash));
         }
     }
-    if super::init_preset::writes_profile(args) {
-        let _ = write!(
-            out,
-            "\n# Shared defaults; fields under `targets` below win over the profile.\n\
-             profiles:\n  - path: {}\n    root: {}\n",
-            super::init_preset::LIBRARY_PROFILE,
-            super::init_preset::LIBRARY_PROFILE_ROOT
+    let preset_profile = super::init_preset::writes_profile(args);
+    if preset_profile || !args.profile.is_empty() {
+        out.push_str(
+            "\n# Shared local defaults, applied in order before this file's targets;\n\
+             # explicit target settings below win. `tungsten config` explains each value.\n\
+             profiles:\n",
         );
+        if preset_profile {
+            let _ = writeln!(
+                out,
+                "  - path: {}\n    root: {}",
+                super::init_preset::LIBRARY_PROFILE,
+                super::init_preset::LIBRARY_PROFILE_ROOT
+            );
+        }
+        for profile in &args.profile {
+            let _ = writeln!(
+                out,
+                "  - path: {}\n    root: {}",
+                yaml_scalar(profile),
+                yaml_scalar(&super::init_advanced::profile_root(profile))
+            );
+        }
     }
     if let Some(server) = args.server_url.as_ref().or(info.server.as_ref()) {
         let _ = write!(

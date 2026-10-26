@@ -586,6 +586,19 @@ fn walkthrough(args: &mut InitArgs) -> io::Result<bool> {
                     return Ok(false);
                 };
                 args.server_url = (!server.is_empty()).then_some(server);
+                let Some(profiles) = answer(
+                    "Shared local profiles, relative to the project (comma-separated, optional; later wins)",
+                    &args.profile.join(","),
+                )?
+                else {
+                    return Ok(false);
+                };
+                args.profile = profiles
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_owned)
+                    .collect();
                 let Some(strict) = answer(
                     "Strict generation validation? yes / no",
                     if args.strict { "yes" } else { "no" },

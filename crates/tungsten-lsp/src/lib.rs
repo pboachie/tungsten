@@ -21,7 +21,11 @@
 //! - document symbols outline the manifest;
 //! - quick fixes replace an unknown operation id or manifest value named
 //!   by a diagnostic with the closest known name, as a versioned edit the
-//!   editor previews and can undo.
+//!   editor previews and can undo;
+//! - TG0401/TG0403 on an operation id get the overlay action `tungsten
+//!   overlay suggest` derives, as one workspace edit that adds it to the
+//!   input's suggested overlay (creating and listing that file in
+//!   `tungsten.yml` when needed), previewed before it is applied.
 //!
 //! The server keeps no compilation: after each run it keeps the mapped
 //! diagnostics and an index with one small entry per operation, so memory
@@ -38,6 +42,7 @@ mod analysis;
 mod complete;
 mod docs;
 mod hover;
+mod overlay_actions;
 mod position;
 mod scan;
 mod schema;
