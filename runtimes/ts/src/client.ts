@@ -266,6 +266,18 @@ function safeName(value: unknown, key: string, fallback: string): string {
   }
 }
 
+/** Stands in for a macro where an operation is expected (its id, for
+ * diagnostics and telemetry, and its safety). */
+function macroSubject(macro: MacroDescriptor): OperationDescriptor {
+  let safety: unknown = "mutating";
+  try {
+    safety = isRecord(macro) ? macro.safety : safety;
+  } catch {
+    // Unreadable: treated as mutating.
+  }
+  return { id: safeName(macro, "name", "<unknown macro>"), agent: { safety } } as unknown as OperationDescriptor;
+}
+
 /** The `reason` of a `queue` telemetry phase: why admission ended. */
 function queueReason(refused: Diagnostic | null): TelemetryQueueReason {
   if (refused === null) return "admitted";
@@ -816,22 +828,14 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
    * to its `as` name; returns the evaluated output, or the first failing
    * step's envelope (its remediation names the steps already completed). */
   async runMacro<T>(macro: MacroDescriptor, input: Record<string, unknown>, opts?: CallOptions): Promise<Result<T>> {
-    try {
-      return await this.#runMacro<T>(macro, input, this.#callOptions(opts));
-    } catch (error) {
-      return fail(this.#internal({ id: safeName(macro, "name", "<unknown macro>") }, error, "running the macro"));
-    }
+    return this.#traced(macroSubject(macro), "macro", opts, (resolved) => this.#runMacro<T>(macro, input, resolved), "running the macro");
   }
 
   /** Preview a macro: no request is sent. Validates and renders the first
    * step, lists the effects of every step, and returns a confirmation token
    * bound to the macro and this exact input unless the macro is read-only. */
   async previewMacro(macro: MacroDescriptor, input: Record<string, unknown>, opts?: CallOptions): Promise<Result<PreviewResult>> {
-    try {
-      return await this.#previewMacro(macro, input, this.#callOptions(opts));
-    } catch (error) {
-      return fail(this.#internal({ id: safeName(macro, "name", "<unknown macro>") }, error, "previewing the macro"));
-    }
+    return this.#traced(macroSubject(macro), "macro_preview", opts, (resolved) => this.#previewMacro(macro, input, resolved), "previewing the macro");
   }
 
   // ------------------------------------------------------------ internals

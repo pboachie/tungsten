@@ -45,7 +45,9 @@ TelemetryQueueReason = Literal["admitted", "full", "timeout", "paused", "closed"
 #: covers every page it fetched, one ``poll`` operation every read it made,
 #: one ``stream`` operation its connection and every reconnect; their attempts
 #: are numbered across the whole operation.
-TelemetryEntry = Literal["call", "pages", "poll", "preview", "stream", "download", "export_pages"]
+TelemetryEntry = Literal[
+    "call", "pages", "poll", "preview", "stream", "download", "export_pages", "macro", "macro_preview"
+]
 
 
 class TelemetryEvent(TypedDict):
