@@ -206,6 +206,15 @@ pub mod codes {
             "remote input SHA256 differs from its pin or conversion",
         ),
         ("TG0123", "remote input cache is missing, invalid or unsafe"),
+        (
+            "TG0124",
+            "interrupted refresh-import --apply must be resumed or rolled back",
+        ),
+        ("TG0128", "project does not match its tungsten.lock.json"),
+        (
+            "TG0129",
+            "target no longer generates the output recorded in the lock",
+        ),
         ("TG0130", "invalid Git input reference"),
         ("TG0131", "Git acquisition or ref resolution failed"),
         ("TG0132", "Git input exceeds its acquisition safety budget"),
