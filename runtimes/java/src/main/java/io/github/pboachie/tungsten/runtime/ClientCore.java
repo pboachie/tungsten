@@ -53,6 +53,9 @@ public final class ClientCore {
 
     /** Generated clients call this when their manifest forbids redirects. */
     public static void requireRedirectPolicyV1() {}
+
+    /** Generated clients call this when an operation carries an imported-operation policy. */
+    public static void requireImportPolicyV1() {}
     final TokenStore tokenStore;
     final RuntimeIdentity identity;
     final Auth authResolver;
@@ -276,6 +279,46 @@ public final class ClientCore {
                     && u.getRawUserInfo() == null;
         } catch (URISyntaxException e) {
             return false;
+        }
+    }
+
+    /**
+     * The origin (scheme, host and port) of an absolute http(s) URL without
+     * credentials, or null.
+     */
+    static String origin(String text) {
+        if (text == null || !validUrl(text)) {
+            return null;
+        }
+        URI u = URI.create(text);
+        String scheme = u.getScheme().toLowerCase(Locale.ROOT);
+        int port = u.getPort() >= 0 ? u.getPort() : scheme.equals("https") ? 443 : 80;
+        return scheme + "://" + u.getHost().toLowerCase(Locale.ROOT) + ":" + port;
+    }
+
+    /**
+     * Refuses a reviewed imported operation whose target lies outside the
+     * origins its review covers. A malformed or missing scope fails closed.
+     */
+    private void checkImportScope(OperationDescriptor op, String target) {
+        OperationDescriptor.ImportPolicy policy = op.agent().importPolicy();
+        if (policy == null || !policy.reviewed()) {
+            return;
+        }
+        String actual = origin(target);
+        boolean allowed = false;
+        if (actual != null && policy.allowedOrigins() != null) {
+            for (String scope : policy.allowedOrigins()) {
+                if (actual.equals(origin(scope))) {
+                    allowed = true;
+                    break;
+                }
+            }
+        }
+        if (!allowed) {
+            throw diag(op.id(), Category.VALIDATION_FAILED).param(identity.baseUrl()).retry(Retryable.NEVER)
+                    .remedy("The target origin is outside this operation's saved review policy. Select a reviewed server or review a separate policy for this environment. Nothing was sent.")
+                    .fail();
         }
     }
 
@@ -814,6 +857,7 @@ public final class ClientCore {
                     .remedy("The operation descriptor is invalid: " + problem + ". Regenerate the SDK or fix the descriptor; nothing was sent.")
                     .fail();
         }
+        checkImportScope(op, urlOverride != null ? urlOverride : baseUrl);
         register(op);
         JsonObject supplied = normalizeArgs(rawArgs);
         if (supplied == null) {
@@ -1160,6 +1204,7 @@ public final class ClientCore {
         if (!validUrl(full)) {
             throw badBase(op);
         }
+        checkImportScope(op, full);
         return new String[] {full, display};
     }
 

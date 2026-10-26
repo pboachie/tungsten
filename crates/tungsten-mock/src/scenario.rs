@@ -28,6 +28,27 @@ struct Document {
 pub(crate) struct Expectations {
     total_calls: u64,
     calls: Vec<CallExpectation>,
+    #[serde(default)]
+    effects: Vec<EffectExpectation>,
+}
+
+/// Mock-side effects of one operation: fresh requests the mock processed to a
+/// success (whether or not the answer reached the client) and idempotent replays.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EffectExpectation {
+    operation: String,
+    #[serde(default)]
+    applied: Option<u64>,
+    #[serde(default)]
+    replayed: Option<u64>,
+}
+
+/// What the mock did with a processed request, for effect assertions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Effect {
+    Applied,
+    Replayed,
 }
 
 #[derive(Debug, Deserialize)]
@@ -58,8 +79,14 @@ pub(crate) fn prepare(model: &Model, bytes: &[u8]) -> Result<Prepared, String> {
     if doc.version != 1 {
         return Err("unsupported scenario version; expected 1".into());
     }
-    if doc.programs.len() > MAX_ENTRIES || doc.expect.calls.len() > MAX_ENTRIES {
-        return Err("scenario allows at most 256 programs and 256 call assertions".into());
+    if doc.programs.len() > MAX_ENTRIES
+        || doc.expect.calls.len() > MAX_ENTRIES
+        || doc.expect.effects.len() > MAX_ENTRIES
+    {
+        return Err(
+            "scenario allows at most 256 programs, 256 call assertions and 256 effect assertions"
+                .into(),
+        );
     }
     if doc.expect.total_calls > MAX_CALLS {
         return Err("scenario expected total_calls must be at most 10000".into());
@@ -100,6 +127,17 @@ pub(crate) fn prepare(model: &Model, bytes: &[u8]) -> Result<Prepared, String> {
             ));
         }
     }
+    for (index, effect) in doc.expect.effects.iter().enumerate() {
+        let counts = [effect.applied, effect.replayed];
+        if model.op_index(&effect.operation).is_none()
+            || counts.iter().all(Option::is_none)
+            || counts.iter().flatten().any(|c| *c > doc.expect.total_calls)
+        {
+            return Err(format!(
+                "scenario effect assertion {index} needs a callable operation and an applied or replayed count of at most total_calls"
+            ));
+        }
+    }
     Ok(Prepared {
         programs,
         expect: doc.expect,
@@ -137,6 +175,20 @@ pub struct ScenarioReport {
     pub calls: Vec<CountReport>,
     /// All queued responses must be consumed for the scenario to pass.
     pub programs_remaining: u64,
+    /// Same order as `expect.effects`; omitted when the file lists none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub effects: Vec<EffectReport>,
+}
+
+/// One effect assertion. Only the counts the file states are compared.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct EffectReport {
+    pub passed: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub applied: Option<CountReport>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replayed: Option<CountReport>,
 }
 
 #[derive(Debug)]
@@ -144,15 +196,31 @@ pub(crate) struct Progress {
     expect: Expectations,
     total: u64,
     counts: Vec<u64>,
+    /// `(applied, replayed)` per `expect.effects` entry.
+    effects: Vec<(u64, u64)>,
 }
 
 impl Progress {
     pub fn new(expect: Expectations) -> Self {
         let counts = vec![0; expect.calls.len()];
+        let effects = vec![(0, 0); expect.effects.len()];
         Self {
             expect,
             total: 0,
             counts,
+            effects,
+        }
+    }
+
+    pub fn effect(&mut self, operation: &str, effect: Effect) {
+        for (expected, (applied, replayed)) in self.expect.effects.iter().zip(&mut self.effects) {
+            if expected.operation == operation {
+                let count = match effect {
+                    Effect::Applied => applied,
+                    Effect::Replayed => replayed,
+                };
+                *count = count.saturating_add(1);
+            }
         }
     }
 
@@ -178,14 +246,32 @@ impl Progress {
             .zip(&self.counts)
             .map(|(expected, actual)| CountReport::new(expected.count, *actual))
             .collect();
-        let passed =
-            total_calls.passed && calls.iter().all(|c| c.passed) && programs_remaining == 0;
+        let effects: Vec<_> = self
+            .expect
+            .effects
+            .iter()
+            .zip(&self.effects)
+            .map(|(expected, (applied, replayed))| {
+                let applied = expected.applied.map(|e| CountReport::new(e, *applied));
+                let replayed = expected.replayed.map(|e| CountReport::new(e, *replayed));
+                EffectReport {
+                    passed: applied.iter().chain(&replayed).all(|c| c.passed),
+                    applied,
+                    replayed,
+                }
+            })
+            .collect();
+        let passed = total_calls.passed
+            && calls.iter().all(|c| c.passed)
+            && effects.iter().all(|e| e.passed)
+            && programs_remaining == 0;
         ScenarioReport {
             version: 1,
             passed,
             total_calls,
             calls,
             programs_remaining,
+            effects,
         }
     }
 }

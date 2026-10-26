@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use tungsten_core::{Diagnostic, Diagnostics, Digest};
 
-use crate::target_options::TypeScriptOptions;
+use crate::target_options::{PythonOptions, RustOptions, TypeScriptOptions};
 use crate::{ManifestSource, TungstenConfig, capabilities, parse_yaml, pointer};
 
 pub const MAX_FILE_BYTES: usize = 1024 * 1024;
@@ -16,6 +16,43 @@ pub const MAX_TOTAL_BYTES: usize = 16 * 1024 * 1024;
 pub const MAX_IDENTITIES: usize = 64;
 pub const MAX_EDGES: usize = 256;
 pub const MAX_DEPTH: usize = 8;
+
+/// Built-in targets whose typed options profiles may default, in application order.
+pub const PROFILE_TARGETS: &[&str] = &["typescript", "python", "rust"];
+
+/// Fields composed from profiles and projects, including project-only fields
+/// so explicit declarations are recorded and win.
+fn composed_fields(target: &str) -> &'static [&'static str] {
+    match target {
+        "typescript" => &[
+            "package",
+            "version",
+            "runtime",
+            "runtime_path",
+            "dependencies",
+        ],
+        "python" => &[
+            "package",
+            "version",
+            "runtime",
+            "runtime_path",
+            "models",
+            "python_version",
+        ],
+        "rust" => &["crate", "version", "runtime", "runtime_path"],
+        _ => &[],
+    }
+}
+
+/// Strict profile validation for one target's defaults.
+fn profile_diagnostics(target: &str, options: &Value) -> Diagnostics {
+    match target {
+        "typescript" => TypeScriptOptions::parse_profile(options).1,
+        "python" => PythonOptions::parse_profile(options).1,
+        "rust" => RustOptions::parse_profile(options).1,
+        _ => Diagnostics::new(),
+    }
+}
 
 /// Both paths are relative to the selected manifest/base directory. A root is
 /// deliberately supplied for each selection; included files cannot widen it.
@@ -66,6 +103,8 @@ pub struct FieldProvenance {
 pub struct EffectiveConfiguration {
     pub schema_version: u32,
     pub typescript: TypeScriptOptions,
+    pub python: PythonOptions,
+    pub rust: RustOptions,
     pub provenance: BTreeMap<String, FieldProvenance>,
     /// Portable source names paired with invocation-local physical identities.
     pub profiles: Vec<ProfileIdentity>,
@@ -84,7 +123,8 @@ pub struct CapturedProfile {
     pub digest: Digest,
     pub source: ManifestSource,
     includes: Vec<(usize, String)>,
-    options: Option<(String, Value)>,
+    /// Target id, authored alias and defaults, in authored order.
+    options: Vec<(&'static str, String, Value)>,
 }
 
 #[derive(Debug, Default)]
@@ -94,18 +134,25 @@ pub struct Composition {
     pub diagnostics: Diagnostics,
 }
 
-/// Profile v1 schema uses the shared TypeScript supported-value definitions.
+/// Profile v1 schema uses the shared target supported-value definitions.
+/// A target and its alias must not both appear in one profile.
 pub fn json_schema() -> Value {
-    let options = crate::target_options::typescript_profile_json_schema();
+    let typescript = crate::target_options::typescript_profile_json_schema();
+    let python = crate::target_options::python_profile_json_schema();
+    let rust = crate::target_options::rust_profile_json_schema();
     serde_json::json!({
         "$schema":"https://json-schema.org/draft/2020-12/schema",
-        "title":"Local TypeScript profile v1", "type":"object",
+        "title":"Local profile v1", "type":"object",
         "additionalProperties":false, "required":["tungsten_profile"],
         "properties":{
             "tungsten_profile":{"const":1},
             "includes":{"type":"array","maxItems":256,"items":{"type":"string","minLength":1}},
             "targets":{"type":"object","additionalProperties":false,
-                "maxProperties":1, "properties":{"typescript": options, "ts": options}}
+                "maxProperties":PROFILE_TARGETS.len(), "properties":{
+                    "typescript": typescript, "ts": typescript,
+                    "python": python, "py": python,
+                    "rust": rust, "rs": rust,
+                }}
         }
     })
 }
@@ -128,7 +175,7 @@ pub fn compose(
         bytes: 0,
         read_refused: false,
         edges: 0,
-        defaults: Map::new(),
+        defaults: BTreeMap::new(),
         provenance: BTreeMap::new(),
         diagnostics: Diagnostics::new(),
     };
@@ -167,39 +214,46 @@ pub fn compose(
     }
     let mut effective = None;
     if !loader.diagnostics.has_errors() && !source.is_cancelled() {
-        if let Some(value) = config.targets.get("typescript") {
-            if value.is_object() {
-                loader.apply(value, &project);
-            } else {
-                loader.defaults.clear();
-                loader.provenance.clear();
-                loader.record("/targets/typescript".into(), project.clone());
+        for &target in PROFILE_TARGETS {
+            let base = format!("/targets/{target}");
+            let mut origin = project.clone();
+            origin.pointer = base.clone();
+            if let Some(value) = config.targets.get(target) {
+                if value.is_object() {
+                    loader.apply(target, value, &origin);
+                } else {
+                    let nested = format!("{base}/");
+                    loader.defaults.remove(target);
+                    loader
+                        .provenance
+                        .retain(|path, _| path != &base && !path.starts_with(&nested));
+                    loader.record(base.clone(), origin);
+                }
             }
-        }
-        if !loader.defaults.is_empty() {
-            let mut merged = config
-                .targets
-                .get("typescript")
-                .and_then(Value::as_object)
-                .cloned()
-                .unwrap_or_default();
+            let Some(defaults) = loader.defaults.get(target).filter(|d| !d.is_empty()) else {
+                continue;
+            };
             // A non-mapping project target keeps its old raw emitter behavior.
-            if config
-                .targets
-                .get("typescript")
-                .is_none_or(Value::is_object)
-            {
-                merged.extend(loader.defaults.clone());
-                config
+            if config.targets.get(target).is_none_or(Value::is_object) {
+                let mut merged = config
                     .targets
-                    .insert("typescript".into(), Value::Object(merged));
+                    .get(target)
+                    .and_then(Value::as_object)
+                    .cloned()
+                    .unwrap_or_default();
+                merged.extend(defaults.clone());
+                config.targets.insert(target.into(), Value::Object(merged));
             }
         }
-        let (typescript, _) =
-            TypeScriptOptions::parse(config.targets.get("typescript").unwrap_or(&Value::Null));
+        let options = |target: &str| config.targets.get(target).unwrap_or(&Value::Null);
+        let (typescript, _) = TypeScriptOptions::parse(options("typescript"));
+        let (python, _) = PythonOptions::parse(options("python"));
+        let (rust, _) = RustOptions::parse(options("rust"));
         effective = Some(EffectiveConfiguration {
             schema_version: 1,
             typescript,
+            python,
+            rust,
             provenance: loader.provenance,
             profiles: loader
                 .captures
@@ -244,7 +298,8 @@ struct Loader<'s, S> {
     bytes: usize,
     read_refused: bool,
     edges: usize,
-    defaults: Map<String, Value>,
+    /// Composed declarations per target id.
+    defaults: BTreeMap<&'static str, Map<String, Value>>,
     provenance: BTreeMap<String, FieldProvenance>,
     diagnostics: Diagnostics,
 }
@@ -355,7 +410,7 @@ impl<S: ProfileSource> Loader<'_, S> {
                 digest,
                 source: parsed_source,
                 includes: vec![],
-                options: None,
+                options: vec![],
             });
             self.identities.insert(identity.clone(), index);
             match value {
@@ -404,12 +459,11 @@ impl<S: ProfileSource> Loader<'_, S> {
             );
         }
         self.active.remove(&identity);
-        if self.applied.insert(identity)
-            && !self.source.is_cancelled()
-            && let Some((alias, options)) = self.captures[index].options.clone()
-        {
-            let declaration = self.declaration(index, &format!("/targets/{alias}"));
-            self.apply(&options, &declaration);
+        if self.applied.insert(identity) && !self.source.is_cancelled() {
+            for (target, alias, options) in self.captures[index].options.clone() {
+                let declaration = self.declaration(index, &pointer::child("/targets", &alias));
+                self.apply(target, &options, &declaration);
+            }
         }
     }
 
@@ -475,30 +529,37 @@ impl<S: ProfileSource> Loader<'_, S> {
                 self.error(&origin, "/targets", "profile targets must be a mapping");
                 return;
             };
-            let mut found = false;
+            let mut found = BTreeSet::new();
             for (name, options) in targets {
                 let at = pointer::child("/targets", name);
-                if capabilities::target(name).is_none_or(|target| target.id != "typescript") {
-                    self.error(&origin, &at, "profile v1 supports only TypeScript defaults");
-                    continue;
-                }
-                if found {
+                let Some(target) = capabilities::target(name)
+                    .map(|target| target.id)
+                    .filter(|id| PROFILE_TARGETS.contains(id))
+                else {
                     self.error(
                         &origin,
                         &at,
-                        "conflicting aliases for TypeScript profile defaults",
+                        "profile v1 supports only TypeScript, Python and Rust defaults",
+                    );
+                    continue;
+                };
+                if !found.insert(target) {
+                    self.error(
+                        &origin,
+                        &at,
+                        "conflicting aliases for the same target's profile defaults",
                     );
                 }
-                found = true;
-                let (_, diagnostics) = TypeScriptOptions::parse_profile(options);
-                for mut diagnostic in diagnostics.0 {
+                for mut diagnostic in profile_diagnostics(target, options).0 {
                     for label in &mut diagnostic.labels {
                         label.file = origin.file.clone();
                         label.pointer = format!("{at}{}", label.pointer);
                     }
                     self.diagnostics.push(diagnostic);
                 }
-                self.captures[index].options = Some((name.clone(), options.clone()));
+                self.captures[index]
+                    .options
+                    .push((target, name.clone(), options.clone()));
             }
         }
     }
@@ -519,36 +580,27 @@ impl<S: ProfileSource> Loader<'_, S> {
         }
     }
 
-    fn apply(&mut self, value: &Value, origin: &Declaration) {
+    fn apply(&mut self, target: &'static str, value: &Value, origin: &Declaration) {
         let Some(fields) = value.as_object() else {
             return;
         };
+        let base = format!("/targets/{target}");
+        let entries_base = format!("{base}/dependencies/");
         for (key, value) in fields {
             if self.source.is_cancelled() {
                 break;
             }
-            if ![
-                "package",
-                "version",
-                "runtime",
-                "runtime_path",
-                "dependencies",
-            ]
-            .contains(&key.as_str())
-            {
+            if !composed_fields(target).contains(&key.as_str()) {
                 continue;
             }
             let mut declaration = origin.clone();
             declaration.pointer = pointer::child(&origin.pointer, key);
-            self.record(
-                pointer::child("/targets/typescript", key),
-                declaration.clone(),
-            );
+            self.record(pointer::child(&base, key), declaration.clone());
+            let defaults = self.defaults.entry(target).or_default();
             if key == "dependencies"
                 && let Some(entries) = value.as_object()
             {
-                let existing = self
-                    .defaults
+                let existing = defaults
                     .entry(key.clone())
                     .or_insert_with(|| Value::Object(Map::new()));
                 if !existing.is_object() {
@@ -561,17 +613,14 @@ impl<S: ProfileSource> Loader<'_, S> {
                 for name in entries.keys() {
                     let mut entry = declaration.clone();
                     entry.pointer = pointer::child(&declaration.pointer, name);
-                    self.record(
-                        pointer::child("/targets/typescript/dependencies", name),
-                        entry,
-                    );
+                    self.record(pointer::child(&format!("{base}/dependencies"), name), entry);
                 }
             } else {
+                defaults.insert(key.clone(), value.clone());
                 if key == "dependencies" {
                     self.provenance
-                        .retain(|path, _| !path.starts_with("/targets/typescript/dependencies/"));
+                        .retain(|path, _| !path.starts_with(&entries_base));
                 }
-                self.defaults.insert(key.clone(), value.clone());
             }
         }
     }
