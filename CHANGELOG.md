@@ -236,6 +236,13 @@ changes.
 
 ### Added
 
+- Generate streamed transfer methods in TypeScript, Python and Rust SDKs. An
+  operation whose 2xx response is a binary body gets a `<method>Download` /
+  `<method>_download` method returning the runtime's `Download` (Rust: async
+  client only, with `DownloadOptions`). A whole binary request body accepts an
+  `UploadSource` (TypeScript `Uint8Array | UploadSource`, Python
+  `BinaryInput`), and Rust SDKs add `<method>_upload(request, source, opts)`.
+  Regenerated SDKs for such operations change; other operations are unchanged.
 - Multipart request bodies honour the OpenAPI `encoding` map: a field whose
   Encoding Object declares a `contentType` is sent with that media type (the
   first entry of the list without wildcards) in TypeScript, Python and Rust
