@@ -25,7 +25,14 @@ from dataclasses import dataclass
 from typing import Literal, cast
 from urllib.parse import urlsplit
 
-__all__ = ["Permit", "Rejection", "RequestScheduler", "SchedulerOptions", "SchedulerStats"]
+__all__ = [
+    "Permit",
+    "Rejection",
+    "RequestScheduler",
+    "SchedulerEvent",
+    "SchedulerOptions",
+    "SchedulerStats",
+]
 
 Kind = Literal["call", "stream"]
 _KINDS: tuple[Kind, Kind] = ("call", "stream")
@@ -72,6 +79,36 @@ class SchedulerOptions:
     #: Event streams open at once across every scope, on top of each scope's
     #: ``max_streams``. None (default): no cap across scopes.
     max_streams_total: int | None = None
+    #: Receives every admission event, synchronously and outside the
+    #: scheduler's lock; see :class:`SchedulerEvent`. Its exceptions are
+    #: ignored and it must not block. None (default): no events.
+    on_event: Callable[[SchedulerEvent], object] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SchedulerEvent:
+    """One admission event (contract version 1). Events name no scope, tenant,
+    URL or payload, so they carry no secret and few distinct values; read
+    :meth:`RequestScheduler.stats` for counts. Durations are whole
+    milliseconds; a field that does not apply is None."""
+
+    #: ``admitted``: a request got capacity. ``rejected``: it did not and was
+    #: not sent. ``released``: a request gave its capacity back. ``paused``: a
+    #: ``RATE_LIMITED`` answer paused its scope. ``retry_denied``: the retry
+    #: budget refused a retry.
+    event: Literal["admitted", "rejected", "released", "paused", "retry_denied"]
+    #: Ordinary call or event stream; None for ``paused``.
+    kind: Kind | None
+    #: ``admitted``, ``rejected``: how long the request waited for capacity.
+    wait_ms: int | None = None
+    #: ``released``: how long the request held its capacity.
+    held_ms: int | None = None
+    #: ``paused``: how long the scope pauses; ``rejected`` with reason
+    #: ``paused``: how long the pause still lasts.
+    pause_ms: int | None = None
+    #: ``rejected``: why.
+    reason: Literal["full", "timeout", "paused", "closed", "aborted"] | None = None
+    version: Literal[1] = 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -198,6 +235,46 @@ class RequestScheduler:
         self._pools: dict[str, _Pool] = {}
         self._idle = threading.Condition(self._lock)
         self._closed = False
+        observer = cast(object, options.on_event)
+        if observer is not None and not callable(observer):
+            raise TypeError("on_event must be callable")
+        self._on_event: Callable[[SchedulerEvent], object] | None = options.on_event
+
+    def _emit(
+        self,
+        event: Literal["admitted", "rejected", "released", "paused", "retry_denied"],
+        kind: Kind | None,
+        *,
+        wait_ms: float | None = None,
+        held_ms: float | None = None,
+        pause_ms: float | None = None,
+        reason: Literal["full", "timeout", "paused", "closed", "aborted"] | None = None,
+    ) -> None:
+        """Hand one event to the observer; never under the lock."""
+        observer = self._on_event
+        if observer is None:
+            return
+
+        def ms(value: float | None) -> int | None:
+            return None if value is None else max(0, round(value))
+
+        # Observers never change admission.
+        with contextlib.suppress(Exception):
+            observer(SchedulerEvent(event, kind, ms(wait_ms), ms(held_ms), ms(pause_ms), reason))
+
+    def _admission(self, kind: Kind, started: float, outcome: Permit | Rejection) -> Permit | Rejection:
+        wait = _now() - started
+        if isinstance(outcome, Permit):
+            self._emit("admitted", kind, wait_ms=wait)
+        else:
+            self._emit(
+                "rejected",
+                kind,
+                wait_ms=wait,
+                reason=outcome.reason,
+                pause_ms=outcome.retry_after_ms if outcome.reason == "paused" else None,
+            )
+        return outcome
 
     def scope_key(self, url: str, tenant: str | None) -> str:
         """The scope of a request to ``url`` made for ``tenant``."""
@@ -233,10 +310,12 @@ class RequestScheduler:
             return True
         with self._lock:
             balance = self._budgets.get(key, float(self.retry_reserve))
-            if balance < 1:
-                return False
-            self._set_budget(key, balance - 1)
-            return True
+            allowed = balance >= 1
+            if allowed:
+                self._set_budget(key, balance - 1)
+        if not allowed:
+            self._emit("retry_denied", "call")
+        return allowed
 
     def _set_budget(self, key: str, balance: float) -> None:
         self._budgets.pop(key, None)
@@ -288,6 +367,12 @@ class RequestScheduler:
         """Wait (blocking this thread) for capacity in ``key``.
         ``deadline_ms`` is an absolute ``time.monotonic()`` time in
         milliseconds that also ends the wait."""
+        started = _now()
+        return self._admission(kind, started, self._acquire(key, kind, deadline_ms, random))
+
+    def _acquire(
+        self, key: str, kind: Kind, deadline_ms: float | None, random: Callable[[], float]
+    ) -> Permit | Rejection:
         budget = self._budget(deadline_ms)
         until = _now() + budget
         event = threading.Event()
@@ -315,6 +400,17 @@ class RequestScheduler:
     ) -> Permit | Rejection:
         """Wait (without blocking the event loop) for capacity in ``key``.
         Cancelling the task removes the request from the queue."""
+        started = _now()
+        try:
+            outcome = await self._acquire_async(key, kind, deadline_ms, random)
+        except BaseException:
+            self._emit("rejected", kind, wait_ms=_now() - started, reason="aborted")
+            raise
+        return self._admission(kind, started, outcome)
+
+    async def _acquire_async(
+        self, key: str, kind: Kind, deadline_ms: float | None, random: Callable[[], float]
+    ) -> Permit | Rejection:
         loop = asyncio.get_running_loop()
         budget = self._budget(deadline_ms)
         until = _now() + budget
@@ -441,29 +537,12 @@ class RequestScheduler:
         pool.active[kind] += 1
         self._total[kind] += 1
         self._served[kind] = key
+        granted = _now()
 
         def settle(rate_limited_ms: float | None, limited: bool) -> None:
-            with self._lock:
-                if not limited:
-                    pool.probing = False
-                    return
-                wait = min(
-                    _MAX_PAUSE_MS, max(0.0, _DEFAULT_PAUSE_MS if rate_limited_ms is None else rate_limited_ms)
-                )
-                try:
-                    r = float(random())
-                except Exception:
-                    r = 0.5
-                r = min(1.0, max(0.0, r)) if math.isfinite(r) else 0.5
-                # A little spread keeps clients that share a quota from all
-                # resuming at the same instant.
-                spread = min(1000.0, wait * 0.1) * r
-                pool.paused_until = max(pool.paused_until, _now() + wait + spread)
-                pool.probing = True
-                # Waiters recompute how long to sleep: until the pause ends.
-                for queue in pool.queue.values():
-                    for waiter in queue:
-                        waiter.wake()
+            pause = self._settle(pool, random, rate_limited_ms, limited)
+            if pause is not None:
+                self._emit("paused", None, pause_ms=pause)
 
         def release() -> None:
             with self._lock:
@@ -471,8 +550,36 @@ class RequestScheduler:
                 self._total[kind] -= 1
                 self._pump(key, pool)
                 self._forget(key, pool)
+            self._emit("released", kind, held_ms=_now() - granted)
 
         return Permit(settle, release)
+
+    def _settle(
+        self, pool: _Pool, random: Callable[[], float], rate_limited_ms: float | None, limited: bool
+    ) -> float | None:
+        """Record an answer; the pause it started, if any."""
+        with self._lock:
+            if not limited:
+                pool.probing = False
+                return None
+            wait = min(
+                _MAX_PAUSE_MS, max(0.0, _DEFAULT_PAUSE_MS if rate_limited_ms is None else rate_limited_ms)
+            )
+            try:
+                r = float(random())
+            except Exception:
+                r = 0.5
+            r = min(1.0, max(0.0, r)) if math.isfinite(r) else 0.5
+            # A little spread keeps clients that share a quota from all
+            # resuming at the same instant.
+            spread = min(1000.0, wait * 0.1) * r
+            pool.paused_until = max(pool.paused_until, _now() + wait + spread)
+            pool.probing = True
+            # Waiters recompute how long to sleep: until the pause ends.
+            for queue in pool.queue.values():
+                for waiter in queue:
+                    waiter.wake()
+            return wait + spread
 
     def _pump(self, key: str, pool: _Pool) -> None:
         """Under the lock: admit waiting requests in order while capacity allows."""

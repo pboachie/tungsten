@@ -104,7 +104,8 @@ pub use oauth_attempt::{
 };
 pub use pages::MAX_PAGES_REACHED;
 pub use scheduler::{
-    Rejection, RequestScheduler, SchedulerOptions, SchedulerScope, SchedulerStats,
+    Rejection, RequestScheduler, SchedulerEvent, SchedulerObserver, SchedulerOptions,
+    SchedulerScope, SchedulerStats,
 };
 pub use stream::{
     DEFAULT_MAX_COLLECT_BYTES, DEFAULT_MAX_COLLECT_TIME, DEFAULT_MAX_RECONNECTS,
