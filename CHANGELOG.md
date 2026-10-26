@@ -230,6 +230,20 @@ changes.
 
 ### Added
 
+- TypeScript, Python and Rust clients can report optional local telemetry to
+  an observer (`ClientOptions.telemetry`), off by default and never sent
+  anywhere by the runtime. `call()` emits correlated `operation`, `attempt`
+  and `phase` events (authentication, scheduler queueing, retry backoff) with
+  the same versioned fields in every runtime: durations, outcomes (including
+  `cancelled`, `deadline_exceeded` and `outcome_unknown`), diagnostic
+  categories, HTTP status codes and queue reasons, but never URLs, headers,
+  bodies, credentials, tenant labels or error text. A bounded
+  `MemoryTelemetryCollector` keeps recent events and counts dropped ones. The
+  capability catalog declares the `telemetry_hooks` feature for these targets.
+  Unreleased 0.2.0 only.
+
+
+
 - `tungsten workspace --run check|generate|lock [-- ARGS]` runs the command on
   each selected project, one at a time in discovery order, and reports every
   project's exit code and diagnostics (`runs` in the JSON result); the

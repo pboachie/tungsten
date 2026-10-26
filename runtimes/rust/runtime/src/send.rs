@@ -2,6 +2,8 @@
 //! Sending with tier-aware retries, classification of the answer into a
 //! result or an envelope, and OAuth2 client-credentials tokens.
 
+use crate::telemetry::{Pending, PendingKind};
+use crate::{TelemetryOutcome, TelemetryPhase, TelemetryQueueReason};
 use std::collections::BTreeMap;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
@@ -160,6 +162,7 @@ impl ClientCore {
             .pairs()
             .map(|(n, v)| (n.to_owned(), v.to_owned()))
             .collect();
+        let span = crate::telemetry::current();
         let mut attempts: u32 = 0;
         loop {
             self.check_send_deadline(prepared, attempts, check.as_ref())?;
@@ -179,8 +182,26 @@ impl ClientCore {
                 m.on_request(&ctx);
             }
             self.check_send_deadline(prepared, attempts, check.as_ref())?;
+            let queued = span.as_ref().map(|span| span.attempt() + 1);
+            let queue = Pending::new(
+                span.as_ref().filter(|_| self.inner.scheduler.is_some()),
+                PendingKind::Phase(TelemetryPhase::Queue, queued),
+            );
             let mut permit = match self.admit(prepared, stream).await {
                 Ok(permit) => {
+                    let start = queue.done();
+                    if permit.is_some()
+                        && let Some(span) = &span
+                    {
+                        span.phase(
+                            TelemetryPhase::Queue,
+                            start,
+                            None,
+                            false,
+                            queued,
+                            Some(TelemetryQueueReason::Admitted),
+                        );
+                    }
                     if permit.is_some()
                         && attempts == 1
                         && let Some(scheduler) = &self.inner.scheduler
@@ -191,11 +212,33 @@ impl ClientCore {
                 }
                 Err(rejected) => {
                     // A wait ended by the call's deadline reports that.
-                    self.check_send_deadline(prepared, attempts, check.as_ref())?;
+                    let rejected = self
+                        .check_send_deadline(prepared, attempts, check.as_ref())
+                        .err()
+                        .unwrap_or(rejected);
+                    let start = queue.done();
+                    if let Some(span) = &span {
+                        span.phase(
+                            TelemetryPhase::Queue,
+                            start,
+                            Some(&rejected.diagnostic),
+                            false,
+                            queued,
+                            Some(crate::telemetry::queue_reason(Some(&rejected.diagnostic))),
+                        );
+                    }
                     return Err(rejected);
                 }
             };
             self.check_send_deadline(prepared, attempts, check.as_ref())?;
+            let attempt_number = span.as_ref().map(|span| span.next_attempt());
+            if let (Some(span), Some(n)) = (&span, attempt_number) {
+                span.attempt_start(n);
+            }
+            let sending = Pending::new(
+                span.as_ref(),
+                PendingKind::Attempt(attempt_number.unwrap_or(0)),
+            );
             // Redirects are never followed by the HTTP client: it would
             // forward custom credential headers (API keys, CSRF headers) to
             // another origin. A read follows same-origin redirects here; a
@@ -298,6 +341,14 @@ impl ClientCore {
                 sink.as_deref_mut(),
             ) {
                 Ok(mut sent) => {
+                    let start = sending.done();
+                    if let (Some(span), Some(n)) = (&span, attempt_number) {
+                        let status = match &sent {
+                            Sent::Response(response, _) => response.meta.status,
+                            Sent::Stream(start) => start.meta.status,
+                        };
+                        span.attempt_end(n, start, None, false, Some(status));
+                    }
                     if let Some(mut permit) = permit.take() {
                         permit.settle(None);
                         // An open event stream or download keeps its capacity until it is dropped.
@@ -310,7 +361,19 @@ impl ClientCore {
                     }
                     return Ok(sent);
                 }
-                Err(error) => error,
+                Err(error) => {
+                    let start = sending.done();
+                    if let (Some(span), Some(n)) = (&span, attempt_number) {
+                        span.attempt_end(
+                            n,
+                            start,
+                            Some(&error.diagnostic),
+                            false,
+                            error.diagnostic.http_status,
+                        );
+                    }
+                    error
+                }
             };
             if let Some(mut permit) = permit.take() {
                 if error.diagnostic.category == Category::RateLimited {
@@ -371,9 +434,33 @@ impl ClientCore {
             if crate::verify::call_deadline()
                 .is_some_and(|deadline| std::time::Instant::now() + delay >= deadline)
             {
+                if let Some(span) = &span {
+                    span.phase_outcome(
+                        TelemetryPhase::RetryBackoff,
+                        std::time::Instant::now(),
+                        TelemetryOutcome::DeadlineExceeded,
+                        attempt_number,
+                        None,
+                    );
+                }
                 return Err(done(diagnostic, partial));
             }
+            let backoff = Pending::new(
+                span.as_ref(),
+                PendingKind::Phase(TelemetryPhase::RetryBackoff, attempt_number),
+            );
             tokio::time::sleep(delay).await;
+            let start = backoff.done();
+            if let Some(span) = &span {
+                span.phase(
+                    TelemetryPhase::RetryBackoff,
+                    start,
+                    None,
+                    false,
+                    attempt_number,
+                    None,
+                );
+            }
         }
     }
 
