@@ -578,7 +578,7 @@ pub(crate) fn index_file(plan: &Plan<'_>, has_macros: bool, header: &str) -> Str
         .filter(|m| Some(&m.name) != star.as_ref())
         .collect();
     let names = unique(
-        &["descriptors", "macros", "custom"],
+        &["descriptors", "macros", "custom", "webhooks"],
         &grouped
             .iter()
             .map(|m| with_word(&tungsten_ir::Ident::new(m.name.as_str()).words, "models"))
@@ -595,6 +595,9 @@ pub(crate) fn index_file(plan: &Plan<'_>, has_macros: bool, header: &str) -> Str
         ));
     }
     w.line("export * as descriptors from \"./descriptors.js\";");
+    if tungsten_emit::webhooks::has_webhooks(plan.ir) {
+        w.line("export * as webhooks from \"./webhooks.js\";");
+    }
     if has_macros {
         w.line("export * as macros from \"./macros.js\";");
     }

@@ -8,7 +8,8 @@
 //!
 //! Checks run in a fixed order, identical in every tungsten runtime, and the
 //! first failure is reported: body size, secret presence, header presence,
-//! header syntax, signature, timestamp tolerance, JSON payload, replay claim.
+//! header syntax, signature, timestamp tolerance, JSON payload, typed
+//! decoding, replay claim.
 //! Failures carry a stable [`WebhookRejection`] and a message that never
 //! contains the secret, the signature or the payload.
 
@@ -229,6 +230,22 @@ pub fn verify_webhook<T: DeserializeOwned>(
     signature_header: Option<&str>,
     options: &VerifyWebhookOptions<'_>,
 ) -> Outcome<T> {
+    verify_webhook_with(body, signature_header, options, |value| {
+        serde_json::from_value(value).ok()
+    })
+}
+
+/// [`verify_webhook`] with custom typed decoding of the parsed JSON payload,
+/// run before the replay claim: `decode` returns `None` to reject the
+/// delivery as `payload_invalid` (a decode that also checks constraints, for
+/// example). The same step as the `parse` option of the TypeScript and Python
+/// runtimes.
+pub fn verify_webhook_with<T>(
+    body: &[u8],
+    signature_header: Option<&str>,
+    options: &VerifyWebhookOptions<'_>,
+    decode: impl FnOnce(Value) -> Option<T>,
+) -> Outcome<T> {
     let tolerance = match options.tolerance_seconds {
         None => DEFAULT_WEBHOOK_TOLERANCE_SECONDS,
         Some(t) if t > 0 && t <= MAX_SAFE_INTEGER => t,
@@ -315,7 +332,7 @@ pub fn verify_webhook<T: DeserializeOwned>(
     };
     let field = |name: &str| value.get(name).and_then(Value::as_str).map(str::to_owned);
     let (id, r#type) = (field("id"), field("type"));
-    let Ok(event) = serde_json::from_value::<T>(value) else {
+    let Some(event) = decode(value) else {
         return reject(
             WebhookRejection::PayloadInvalid,
             "the payload does not match the event type",

@@ -840,6 +840,10 @@ pub(crate) fn init_file(plan: &Plan<'_>, has_macros: bool, header: &str) -> Stri
         imports.add(".", "macros");
         exported.push("macros".into());
     }
+    if tungsten_emit::webhooks::has_webhooks(plan.ir) {
+        imports.add(".", "webhooks");
+        exported.push("webhooks".into());
+    }
     exported.sort_by(|a, b| dunder_all_cmp(a, b));
     let mut w = Writer::new("    ");
     w.line(header);

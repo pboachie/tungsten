@@ -123,6 +123,9 @@ pub(crate) fn lib_file(plan: &Plan<'_>, has_macros: bool, header: &str) -> Strin
     if has_macros {
         mods.push("macros");
     }
+    if tungsten_emit::webhooks::has_webhooks(plan.ir) {
+        mods.push("webhooks");
+    }
     mods.sort_unstable();
     for m in mods {
         match m {
