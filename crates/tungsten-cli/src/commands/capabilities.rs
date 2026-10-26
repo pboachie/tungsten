@@ -10,7 +10,8 @@ use crate::{Report, exit};
 
 pub(crate) fn run(args: &CapabilitiesArgs) -> Report {
     let mut report = Report::new(CommandName::Capabilities);
-    let conflicts = capabilities::validate();
+    let mut conflicts = capabilities::validate();
+    conflicts.extend(super::init_preset::undeclared());
     if !conflicts.is_empty() {
         return report.failed(
             exit::INTERNAL,
@@ -296,6 +297,15 @@ fn matrix(catalog: &CapabilityCatalog) -> String {
         code(catalog.init.local_setup_targets),
         catalog.init.cli_alias,
     );
+    for preset in catalog.init.presets {
+        let _ = writeln!(
+            out,
+            "| `--preset {}`{} | {} |",
+            preset.name,
+            if preset.strict { " (`--strict`)" } else { "" },
+            code(preset.targets)
+        );
+    }
     for companion in catalog.init.companions {
         let _ = writeln!(
             out,
