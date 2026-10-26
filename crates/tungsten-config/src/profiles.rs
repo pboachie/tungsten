@@ -105,6 +105,8 @@ pub struct EffectiveConfiguration {
     pub typescript: TypeScriptOptions,
     pub python: PythonOptions,
     pub rust: RustOptions,
+    /// Composed transport and account references.
+    pub transport: crate::transport::TransportReferences,
     pub provenance: BTreeMap<String, FieldProvenance>,
     /// Portable source names paired with invocation-local physical identities.
     pub profiles: Vec<ProfileIdentity>,
@@ -125,6 +127,8 @@ pub struct CapturedProfile {
     includes: Vec<(usize, String)>,
     /// Target id, authored alias and defaults, in authored order.
     options: Vec<(&'static str, String, Value)>,
+    /// Validated `transport` references.
+    transport: Option<Map<String, Value>>,
 }
 
 #[derive(Debug, Default)]
@@ -147,6 +151,7 @@ pub fn json_schema() -> Value {
         "properties":{
             "tungsten_profile":{"const":1},
             "includes":{"type":"array","maxItems":256,"items":{"type":"string","minLength":1}},
+            "transport": crate::transport::json_schema(),
             "targets":{"type":"object","additionalProperties":false,
                 "maxProperties":PROFILE_TARGETS.len(), "properties":{
                     "typescript": typescript, "ts": typescript,
@@ -177,6 +182,7 @@ pub fn compose(
         read_refused: false,
         edges: 0,
         defaults: BTreeMap::new(),
+        transport: Map::new(),
         provenance: BTreeMap::new(),
         diagnostics: Diagnostics::new(),
     };
@@ -211,6 +217,15 @@ pub fn compose(
             let mut origin = project.clone();
             origin.pointer = format!("{at}/path");
             loader.visit(&base.join(&selected.path), &root, index, 0, &origin);
+        }
+    }
+    if let Some(value) = &config.transport {
+        let (_, found) = crate::transport::TransportReferences::parse(value);
+        loader.relabel(found, &project.file, "/transport");
+        if let Some(fields) = value.as_object() {
+            let mut origin = project.clone();
+            origin.pointer = "/transport".into();
+            loader.apply_transport(fields, &origin);
         }
     }
     let mut effective = None;
@@ -248,11 +263,14 @@ pub fn compose(
         let (typescript, _) = TypeScriptOptions::parse(options("typescript"));
         let (python, _) = PythonOptions::parse(options("python"));
         let (rust, _) = RustOptions::parse(options("rust"));
+        let (transport, _) =
+            crate::transport::TransportReferences::parse(&Value::Object(loader.transport.clone()));
         effective = Some(EffectiveConfiguration {
             schema_version: 1,
             typescript,
             python,
             rust,
+            transport,
             provenance: loader.provenance,
             profiles: loader
                 .captures
@@ -304,6 +322,8 @@ struct Loader<'s, S> {
     edges: usize,
     /// Composed declarations per target id.
     defaults: BTreeMap<&'static str, Map<String, Value>>,
+    /// Composed transport references, by field.
+    transport: Map<String, Value>,
     provenance: BTreeMap<String, FieldProvenance>,
     diagnostics: Diagnostics,
 }
@@ -415,6 +435,7 @@ impl<S: ProfileSource> Loader<'_, S> {
                 source: parsed_source,
                 includes: vec![],
                 options: vec![],
+                transport: None,
             });
             self.identities.insert(identity.clone(), index);
             match value {
@@ -468,6 +489,10 @@ impl<S: ProfileSource> Loader<'_, S> {
                 let declaration = self.declaration(index, &pointer::child("/targets", &alias));
                 self.apply(target, &options, &declaration);
             }
+            if let Some(fields) = self.captures[index].transport.clone() {
+                let declaration = self.declaration(index, "/transport");
+                self.apply_transport(&fields, &declaration);
+            }
         }
     }
 
@@ -489,7 +514,7 @@ impl<S: ProfileSource> Loader<'_, S> {
             return;
         };
         for key in fields.keys() {
-            if !["tungsten_profile", "includes", "targets"].contains(&key.as_str()) {
+            if !["tungsten_profile", "includes", "targets", "transport"].contains(&key.as_str()) {
                 self.error(
                     &origin,
                     &pointer::child("", key),
@@ -526,6 +551,14 @@ impl<S: ProfileSource> Loader<'_, S> {
                 }
             } else {
                 self.error(&origin, "/includes", "profile includes must be a list");
+            }
+        }
+        if let Some(transport) = fields.get("transport") {
+            let (_, found) = crate::transport::TransportReferences::parse(transport);
+            let failed = found.has_errors();
+            self.relabel(found, &origin.file.clone(), "/transport");
+            if !failed {
+                self.captures[index].transport = transport.as_object().cloned();
             }
         }
         if let Some(targets) = fields.get("targets") {
@@ -565,6 +598,27 @@ impl<S: ProfileSource> Loader<'_, S> {
                     .options
                     .push((target, name.clone(), options.clone()));
             }
+        }
+    }
+
+    /// Move diagnostics with relative pointers under `at` in `file`.
+    fn relabel(&mut self, found: Diagnostics, file: &str, at: &str) {
+        for mut diagnostic in found.0 {
+            for label in &mut diagnostic.labels {
+                label.file = file.into();
+                label.pointer = format!("{at}{}", label.pointer);
+            }
+            self.diagnostics.push(diagnostic);
+        }
+    }
+
+    /// Scalar references override by field, later sources winning.
+    fn apply_transport(&mut self, fields: &Map<String, Value>, origin: &Declaration) {
+        for (key, value) in fields {
+            let mut declaration = origin.clone();
+            declaration.pointer = pointer::child(&origin.pointer, key);
+            self.record(pointer::child("/transport", key), declaration);
+            self.transport.insert(key.clone(), value.clone());
         }
     }
 

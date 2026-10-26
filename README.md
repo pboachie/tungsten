@@ -1101,6 +1101,32 @@ input is an error. This result is not a replayable approval document. Hosts can
 select the external-emitter restrictions described above; executable approval
 remains separate.
 
+#### Transport and account references
+
+Profiles and `tungsten.yml` can declare where a runtime finds enterprise
+transport material, without holding it:
+
+```yaml
+transport:
+  proxy: { env: CORP_HTTPS_PROXY }        # env only: proxy URLs can carry credentials
+  no_proxy: { env: CORP_NO_PROXY }
+  ca_bundle: { file: certs/corp-ca.pem }  # env or a relative file, relative to the project
+  client_certificate: { env: CORP_MTLS_CERT }
+  client_key: { store: "keychain:corp-mtls" }  # env or a secure-store item, never a file
+  credential_provider: secure_store       # environment, secure_store or hook
+  account: build-bot                      # non-secret names
+  environment: staging
+```
+
+Fields compose like scalar target defaults: later profiles win, explicit project
+fields win over profiles, and `tungsten config` shows each reference with its
+winning and shadowed source. Inline values (a proxy URL, a PEM block, a token) are
+refused, as is any key that would disable certificate verification; trust a
+private CA with `ca_bundle` instead. References are names only: tungsten never
+reads the variables, files or store items they point to, and generated SDKs do not
+consume them yet. Wire them into a native or custom transport that keeps TLS
+verification, redirect/auth rules, deadlines and admission in place.
+
 `tungsten lsp` serves profile files too: completion and hover from the profile
 schema, diagnostics in the profile that caused them, and watchers for profile
 directories outside the workspace folder.

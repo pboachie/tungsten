@@ -18,6 +18,8 @@ pub struct ConfigurationInspection {
     pub targets: Vec<InspectedTarget>,
     /// Portable opaque source identities, with captured content digests.
     pub profiles: Vec<InspectedProfile>,
+    /// Transport and account references (names, never material), with sources.
+    pub transport: Vec<InspectedField>,
     /// Host restrictions, never replayable authority or executable approval.
     pub policy: tungsten_core::policy::PolicyInspection,
 }
@@ -214,9 +216,27 @@ pub fn inspect(
         }
         targets.push(target);
     }
+    let schema = crate::transport::json_schema();
+    let transport = effective
+        .transport
+        .fields()
+        .into_iter()
+        .map(|(key, value)| {
+            let path = pointer::child("/transport", key);
+            inspect_field(
+                &path,
+                value.as_ref(),
+                &schema["properties"][key],
+                effective.provenance.get(&path),
+                false,
+                effective,
+            )
+        })
+        .collect();
     (
         ConfigurationInspection {
             configuration_version: 1,
+            transport,
             policy: tungsten_core::policy::PolicyInspection::absent(),
             targets,
             profiles: effective
