@@ -319,7 +319,7 @@ function deadlineMs(): number | undefined {
 "#;
 
 /// Every variable of `.env.example` and the README: `(name, what)`.
-fn variables(ir: &Ir) -> Vec<(String, String)> {
+pub(crate) fn variables(ir: &Ir) -> Vec<(String, String)> {
     let mut out = vec![(
         env::base_url(ir),
         match ir.api.servers.first() {

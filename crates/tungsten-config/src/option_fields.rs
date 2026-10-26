@@ -312,6 +312,46 @@ pub const MCP: DeclaredOptions = DeclaredOptions {
     ],
 };
 
+/// Options of the experimental `mcp-python` target (a native Python MCP
+/// server on the generated Python SDK).
+pub const MCP_PYTHON: DeclaredOptions = DeclaredOptions {
+    diagnostic: Some("TG0728"),
+    fields: &[
+        s(
+            "package",
+            "distribution name of the server; default `<api>-mcp`",
+        ),
+        s("module", "import name of the server; default `<api>_mcp`"),
+        VERSION,
+        s(
+            "sdk",
+            "distribution name of the generated Python SDK; default from the `python` target",
+        ),
+        s(
+            "sdk_module",
+            "import name of the generated Python SDK; default from the `python` target",
+        ),
+        s(
+            "sdk_version",
+            "the SDK version required (`==`); default from the `python` target",
+        ),
+        s("sdk_path", "the SDK from a local path (a uv path source)"),
+        d(
+            "runtime",
+            "`tungsten-mcp` version specifier",
+            ">=0.1.3,<0.2.0",
+        ),
+        s(
+            "runtime_path",
+            "`tungsten-mcp` from a local path (a uv path source)",
+        ),
+        s(
+            "sdk_runtime_path",
+            "`tungsten-runtime` from a local path (a uv path source)",
+        ),
+    ],
+};
+
 pub const WEBMCP: DeclaredOptions = DeclaredOptions {
     diagnostic: Some("TG0790"),
     fields: &[

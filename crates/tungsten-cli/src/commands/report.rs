@@ -295,7 +295,7 @@ fn coverage(ir: &Ir, name: &str, e: &Emitted, configured: &[String]) -> TargetCo
     }
     let tools = match name {
         "docs" => tools_json(files).map(|t| t.into_iter().map(|(c, _)| c.kind).collect::<Vec<_>>()),
-        "mcp" | "webmcp" => {
+        "mcp" | "mcp-python" | "webmcp" => {
             mcp_manifest(files).map(|m| mcp_tools(&m).into_iter().map(|t| t.kind).collect())
         }
         _ => None,

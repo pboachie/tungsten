@@ -519,6 +519,21 @@ targets! {
         ],
     },
     {
+        id: "mcp-python", aliases: &[], source: BuiltInEmitter, family: Some("python"),
+        policy: true,
+        tools: &[ToolRequirement {
+            tool: "python3", minimum: Some([3, 12]), maximum_exclusive: None, minimum_option: None, excluded_versions: &[],
+        }],
+        schema: Some(TargetOptionSchema::Declared(&option_fields::MCP_PYTHON)),
+        summary: "Experimental: native Python MCP server over stdio, discrete tools, on the Python SDK",
+        options: &[
+            "package", "module", "version", "sdk", "sdk_module", "sdk_version", "sdk_path",
+            "runtime", "runtime_path", "sdk_runtime_path", "out",
+        ],
+        environments: [Cpython],
+        features: &["mcp_stdio"],
+    },
+    {
         id: "mock", aliases: &[], source: Reserved, family: None, policy: false, tools: &[],
         summary: "reserved; no emitter in this version", options: &["out"],
         environments: [], features: &[],
