@@ -793,6 +793,9 @@ impl Server<'_> {
                             list.push(why);
                         }
                         list.extend(overlays);
+                        if self.disabled_actions {
+                            list.extend(actions::unsupported_inputs(&p.context.diagnostics));
+                        }
                     }
                     self.reply(id, list)
                 }

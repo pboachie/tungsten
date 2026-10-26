@@ -16,6 +16,7 @@ mod init_advanced;
 mod init_edit;
 mod init_example;
 mod init_input;
+mod init_preset;
 mod init_setup;
 mod init_setup_mcp;
 mod init_setup_python;

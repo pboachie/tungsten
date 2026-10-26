@@ -252,6 +252,11 @@ ir_struct! {
         pub property: String,
         /// Explicit mapping from the spec, or derived from `const` fields.
         pub mapping: Vec<(String, TypeId)>,
+        /// The variant a value selects when the property is absent or its
+        /// value maps to no variant (OpenAPI 3.2 `defaultMapping`). It is
+        /// one of the union's variants. Without it such a value is refused.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub default_mapping: Option<TypeId>,
     }
 }
 
