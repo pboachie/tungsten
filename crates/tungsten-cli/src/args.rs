@@ -653,8 +653,25 @@ pub enum SchemaName {
     ProjectBundle,
 }
 
+/// Named starting points for `tungsten init`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum InitPreset {
+    /// TypeScript SDK and docs for one application.
+    App,
+    /// TypeScript, Python and Rust SDKs with docs, sharing a local profile
+    /// (profiles/library.yml) that other projects can select.
+    Library,
+    /// An MCP server on the TypeScript SDK for an agent integration,
+    /// generated with --strict. Agent safety defaults are unchanged.
+    Agent,
+}
+
 #[derive(Debug, Clone, Args)]
 pub(crate) struct InitArgs {
+    /// Start from a preset; explicit --targets and --strict still win. The
+    /// same names are accepted at the guided setup's outputs prompt.
+    #[arg(long, value_enum, conflicts_with = "resume")]
+    pub preset: Option<InitPreset>,
     /// Acquisition provenance for a converted remote import, set internally.
     #[arg(skip)]
     pub source_url: Option<String>,

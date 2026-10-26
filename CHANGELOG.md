@@ -226,6 +226,11 @@ changes.
 
 ### Added
 
+- Add `tungsten init --preset app|library|agent`, also accepted at the guided
+  setup's outputs prompt. `library` writes and selects a local profile
+  (`profiles/library.yml`) with shared SDK versions; `agent` configures an MCP
+  server and generates with `--strict`. Explicit `--targets` and `--strict`
+  win; presets never select inputs or change agent safety defaults.
 - Serve local profile files in `tungsten lsp`: completion and hover for
   profile keys and target defaults from the shared profile schema, and file
   watchers for profile directories outside the workspace folder so editing a

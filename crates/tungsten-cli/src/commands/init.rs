@@ -85,9 +85,12 @@ pub(crate) fn run(args: &InitArgs) -> Report {
 
     let manifest_path = input::join(dir, "tungsten.yml");
     let agent_path = input::join(dir, "agent.yml");
+    let preset_profile = super::init_preset::writes_profile(args)
+        .then(|| input::join(dir, super::init_preset::LIBRARY_PROFILE));
     let entry = |p: &PathBuf| std::fs::symlink_metadata(p).ok();
     let existing: Vec<&PathBuf> = [&manifest_path, &agent_path]
         .into_iter()
+        .chain(preset_profile.as_ref())
         .filter(|p| entry(p).is_some())
         .collect();
     if !args.force && !existing.is_empty() {
@@ -119,7 +122,8 @@ pub(crate) fn run(args: &InitArgs) -> Report {
             .with_help("remove the symlink or other entry, then run init again"),
         );
     }
-    if let Err(err) = std::fs::create_dir_all(dir) {
+    let profile_dir = preset_profile.as_ref().and_then(|p| p.parent());
+    if let Err(err) = std::fs::create_dir_all(profile_dir.unwrap_or(dir)) {
         return report.failed(
             exit::INTERNAL,
             CliError::new(
@@ -165,9 +169,13 @@ pub(crate) fn run(args: &InitArgs) -> Report {
     let mut files = vec![];
     let profile_path = args.dir.join("tungsten-profiles.toml");
     let profile_text = super::init_advanced::profiles(args);
+    let preset_text = super::init_preset::library_profile();
     let mut contents = vec![(&manifest_path, &manifest), (&agent_path, &agent)];
     if let Some(text) = &profile_text {
         contents.push((&profile_path, text));
+    }
+    if let Some(path) = &preset_profile {
+        contents.push((path, &preset_text));
     }
     for (path, text) in contents {
         let action = if args.force && path != &profile_path && entry(path).is_some() {
@@ -424,6 +432,15 @@ fn tungsten_yml(
         if let Some(hash) = &args.source_sha256 {
             let _ = writeln!(out, "    source_sha256: {}", yaml_scalar(hash));
         }
+    }
+    if super::init_preset::writes_profile(args) {
+        let _ = write!(
+            out,
+            "\n# Shared defaults; fields under `targets` below win over the profile.\n\
+             profiles:\n  - path: {}\n    root: {}\n",
+            super::init_preset::LIBRARY_PROFILE,
+            super::init_preset::LIBRARY_PROFILE_ROOT
+        );
     }
     if let Some(server) = args.server_url.as_ref().or(info.server.as_ref()) {
         let _ = write!(

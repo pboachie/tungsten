@@ -25,6 +25,7 @@ pub(crate) fn run(args: &InitArgs, json: bool, env: &CliEnv) -> Report {
         && args.from.is_none()
         && args.name.is_none()
         && args.targets.is_empty()
+        && args.preset.is_none()
         && args.dir == std::path::Path::new(".")
         && !args.force
         && !args.generate
@@ -54,6 +55,7 @@ pub(crate) fn run(args: &InitArgs, json: bool, env: &CliEnv) -> Report {
             }
         }
     }
+    super::init_preset::apply(&mut selected);
     if let Err(message) = super::init_advanced::validate(&selected) {
         return refused(
             message,
@@ -414,26 +416,38 @@ fn walkthrough(args: &mut InitArgs) -> io::Result<bool> {
                     );
                 }
             }
-            let defaults = if args.targets.is_empty() {
-                "typescript,docs".to_owned()
-            } else {
-                args.targets.join(",")
+            eprintln!("Or one preset (explicit outputs and --strict still win):");
+            for (name, about) in super::init_preset::NAMES {
+                eprintln!("  ( ) {name} - {about}");
+            }
+            let defaults = match args.preset {
+                Some(preset) if args.targets.is_empty() => {
+                    super::init_preset::name(preset).to_owned()
+                }
+                _ if args.targets.is_empty() => "typescript,docs".to_owned(),
+                _ => args.targets.join(","),
             };
             let Some(outputs) = answer("Outputs", &defaults)? else {
                 return Ok(false);
             };
-            let targets: Vec<String> = outputs
-                .split(',')
-                .map(|s| crate::targets::canonical(s.trim()).to_string())
-                .collect();
-            if targets
-                .iter()
-                .any(|s| s != "cli" && crate::targets::emitter(s).is_none())
-            {
-                eprintln!("Unknown output; choose from the displayed list.");
-                continue;
+            if let Some(preset) = super::init_preset::parse(outputs.trim()) {
+                args.preset = Some(preset);
+                args.targets.clear();
+                super::init_preset::apply(args);
+            } else {
+                let targets: Vec<String> = outputs
+                    .split(',')
+                    .map(|s| crate::targets::canonical(s.trim()).to_string())
+                    .collect();
+                if targets
+                    .iter()
+                    .any(|s| s != "cli" && crate::targets::emitter(s).is_none())
+                {
+                    eprintln!("Unknown output; choose from the displayed list.");
+                    continue;
+                }
+                args.targets = targets;
             }
-            args.targets = targets;
             let default = args
                 .from
                 .as_ref()
