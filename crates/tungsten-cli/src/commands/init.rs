@@ -157,7 +157,11 @@ pub(crate) fn run(args: &InitArgs) -> Report {
         );
     };
     // Selected profiles compose before anything is written, with the compiler's limits.
-    let checked = super::init_advanced::check_profiles(&mut parsed, dir);
+    let preset_text = super::init_preset::library_profile();
+    let pending = preset_profile
+        .as_deref()
+        .map(|path| (path, preset_text.as_str()));
+    let checked = super::init_advanced::check_profiles(&mut parsed, dir, pending);
     if checked.has_errors() {
         report.diagnostics = checked.0;
         return report.failed(
@@ -180,7 +184,6 @@ pub(crate) fn run(args: &InitArgs) -> Report {
     let mut files = vec![];
     let profile_path = args.dir.join("tungsten-profiles.toml");
     let profile_text = super::init_advanced::profiles(args);
-    let preset_text = super::init_preset::library_profile();
     let mut contents = vec![(&manifest_path, &manifest), (&agent_path, &agent)];
     if let Some(text) = &profile_text {
         contents.push((&profile_path, text));
