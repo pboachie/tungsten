@@ -70,26 +70,6 @@ impl Emitter for McpPythonEmitter {
 /// What the Python runtime does not serve for this API (TG0729).
 fn gaps(ir: &Ir, manifest: &McpManifest) -> Diagnostics {
     let mut diags = Diagnostics::new();
-    let streamed: Vec<&str> = ir
-        .operations()
-        .into_iter()
-        .filter(|op| op.stream.is_some())
-        .map(|op| op.id.0.as_str())
-        .filter(|id| manifest.tools.iter().any(|t| t.target == *id))
-        .collect();
-    if !streamed.is_empty() {
-        diags.push(
-            Diagnostic::warning(
-                "TG0729",
-                format!(
-                    "mcp-python does not collect event streams yet: streamed calls of {} return an envelope \
-                     and send nothing",
-                    streamed.join(", ")
-                ),
-            )
-            .with_help("use the `mcp` target, or the SDK's stream(), for these operations"),
-        );
-    }
     let python = tungsten_emit_py::PythonEmitter.supports(ir);
     let macros: Vec<String> = python
         .iter()
@@ -528,8 +508,7 @@ fn readme(ir: &Ir, opts: &PythonOptions, manifest: &McpManifest) -> String {
          taken effect: check it, and retry only with the same idempotency key.\n\
          - Sensitive response fields and shown-once results are returned once per session.\n\n\
          ## Limits\n\n\
-         - Streamed (server-sent event) results are not collected; such calls return an envelope and \
-         send nothing.\n\
+         - A streamed (server-sent event) call collects at most 1,000 events, 4 MiB of JSON and 60 seconds.\n\
          - No `run_script`, embedding search, resources or prompts.\n\
          - See the `tungsten-mcp` runtime README for the full list.\n\n\
          `custom/__init__.py` is yours: tungsten creates it once and never overwrites it.\n",
