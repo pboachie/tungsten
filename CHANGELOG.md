@@ -401,6 +401,11 @@ changes.
   log are recorded, it sets `runtime_acceptance` to passed or failed, and a
   failure blocks `upgrade apply`. The command runs with your privileges and
   environment; it is not sandboxed.
+- Add `upgrade rehearse --candidate FILE` to take the release selected by a
+  saved `tungsten update check --json` result as the explicit candidate. It
+  is read offline; the rehearsal is blocked unless the candidate is the
+  running compiler and was discovered by the locked release, and notes when
+  discovery did not confirm the platform archive. Discovery never upgrades.
 - Add `tungsten upgrade apply --workspace DIR` to apply an accepted rehearsal
   as a separate step. It refuses when inputs, the lock, the staged files or
   any output file changed since the rehearsal, backs up what it replaces,
