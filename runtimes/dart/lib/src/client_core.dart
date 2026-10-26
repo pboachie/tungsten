@@ -110,6 +110,7 @@ final class ClientCore {
         _maxOAuthTokenResponseBytes = options.maxOAuthTokenResponseBytes ??
             defaultMaxOAuthTokenResponseBytes,
         _timeoutMs = _positiveMs(options.timeout) ?? defaultTimeoutMs,
+        _deadlineMs = _positiveMs(options.deadline),
         maxResponseBytes = options.maxResponseBytes ?? 4 * 1024 * 1024,
         maxEventBytes = _positive(options.maxEventBytes) ?? 1024 * 1024,
         maxCollectBytes = _positive(options.maxCollectBytes) ?? 4 * 1024 * 1024,
@@ -257,6 +258,7 @@ final class ClientCore {
   final TokenStore _tokenStore;
   final int _maxOAuthTokenResponseBytes;
   final int _timeoutMs;
+  final int? _deadlineMs;
   late final bool _redirectsDisabled;
   final Map<String, OperationDescriptor> _registry = {};
   final _Lock _keyLock = _Lock();
@@ -317,7 +319,7 @@ final class ClientCore {
     final d = op as OperationDescriptor;
     final result = await _guard(
       d.id,
-      () => _callWith(d, args, options, null, null),
+      () => _callWith(d, args, _withCallDeadline(options), null, null),
     );
     return _typed(result, d.id, decode);
   }
@@ -333,7 +335,8 @@ final class ClientCore {
     final op = _resolve(operation);
     if (op is Err<Object?>) return op.cast<PreviewResult>();
     final d = op as OperationDescriptor;
-    final result = await _guard(d.id, () => _previewWith(d, args, options));
+    final result = await _guard(
+        d.id, () => _previewWith(d, args, _withCallDeadline(options)));
     return switch (result) {
       Err<Object?>() => result.cast<PreviewResult>(),
       Ok<Object?>() => result.withValue(result.value! as PreviewResult),
@@ -360,7 +363,7 @@ final class ClientCore {
         until,
         interval.inMilliseconds,
         budget.inMilliseconds,
-        options,
+        _withCallDeadline(options),
         null,
       ),
     );
@@ -368,6 +371,93 @@ final class ClientCore {
       Err<Object?>() => result.cast<PollResult>(),
       Ok<Object?>() => result.withValue(result.value! as PollResult),
     };
+  }
+
+  // ----------------------------------------------------------- deadline
+
+  /// The options with the absolute deadline of one logical call, fixed when
+  /// a public entry point starts it. Nested work (pages, polls,
+  /// verification, macro steps) inherits it and takes the earlier one, so
+  /// it is never restarted or extended.
+  CallOptions _withCallDeadline(CallOptions opts) {
+    final ms = _positiveMs(opts.deadline) ?? _deadlineMs;
+    if (ms == null) return opts;
+    final at = _Transport.monotonicMs() + ms;
+    final inherited = opts._callDeadline;
+    return opts._with(
+      callDeadline: inherited == null ? at : math.min(inherited, at),
+    );
+  }
+
+  /// Milliseconds left before the call's deadline, null without one.
+  int? _deadlineLeft(CallOptions opts) {
+    final at = opts._callDeadline;
+    return at == null ? null : at - _Transport.monotonicMs();
+  }
+
+  bool _deadlinePassed(CallOptions opts) {
+    final left = _deadlineLeft(opts);
+    return left != null && left <= 0;
+  }
+
+  _Stop _deadlineExpired(OperationDescriptor op, String during) => _Stop(
+        _diag(op.id, 'TRANSPORT_FAILED')
+            .code('DEADLINE_EXCEEDED')
+            .retrying('never')
+            .remedy(
+              'The operation deadline (deadline) expired $during, so the request was not sent. Call again with a larger deadline.',
+            )
+            .err<Object?>(),
+      );
+
+  /// Waits for [work] only until the call's deadline: (false, null) when
+  /// the deadline came first. The work is not cancelled: a shared token
+  /// refresh or store write keeps running for its other waiters, bounded by
+  /// its own timeout.
+  Future<(bool, R?)> _untilDeadline<R>(Future<R> work, CallOptions opts) async {
+    final left = _deadlineLeft(opts);
+    if (left == null) return (true, await work);
+    if (left <= 0) {
+      work.ignore();
+      return (false, null);
+    }
+    final first = Completer<(bool, R?)>();
+    final timer = Timer(Duration(milliseconds: left), () {
+      if (!first.isCompleted) first.complete((false, null));
+    });
+    unawaited(
+      work.then(
+        (v) {
+          if (!first.isCompleted) first.complete((true, v));
+        },
+        onError: (Object e, StackTrace s) {
+          if (!first.isCompleted) first.completeError(e, s);
+        },
+      ),
+    );
+    try {
+      return await first.future;
+    } finally {
+      timer.cancel();
+    }
+  }
+
+  /// The call's deadline ran out before a response (or a read's body)
+  /// arrived.
+  Result<Object?> _deadlineTimeout(_CallContext ctx, int? status) {
+    const cause = 'The operation deadline expired before a response arrived.';
+    if (ctx.op.isMutation) {
+      return Err<Object?>(_Classify.outcomeUnknown(ctx, cause));
+    }
+    return _diag(ctx.op.id, 'UPSTREAM_UNAVAILABLE')
+        .code('DEADLINE_EXCEEDED')
+        .status(status)
+        .retrying('never')
+        .remedy(
+          '$cause This read has no side effects; call again with a larger deadline.',
+        )
+        .attempts(ctx.attempts)
+        .err<Object?>();
   }
 
   // ------------------------------------------------------------ helpers
@@ -579,8 +669,11 @@ final class ClientCore {
     p.oauth = null;
     final current = p.headers.get('Authorization');
     if (current == null || !current.startsWith('Bearer ')) return rejected;
-    final token = await _refreshAfterRejection(scheme, current.substring(7));
-    if (token == null) return rejected;
+    final (refreshed, token) = await _untilDeadline(
+      _refreshAfterRejection(scheme, current.substring(7)),
+      opts,
+    );
+    if (!refreshed || token == null) return rejected;
     p.headers.set('Authorization', 'Bearer $token', true);
     p.secrets.add(token);
     return _sendRequest(p, opts);
@@ -926,8 +1019,16 @@ final class ClientCore {
       if (err != null) throw _Stop(err);
     }
     final method = op.method;
-    final auth = await _resolveAuth(op, method,
-        _insecureHttp(urlOverride ?? baseUrl) ? _insecureHttpAuth : null);
+    if (_deadlinePassed(opts)) {
+      throw _deadlineExpired(op, 'before the request could be sent');
+    }
+    final (authenticated, resolvedAuth) = await _untilDeadline(
+      _resolveAuth(op, method,
+          _insecureHttp(urlOverride ?? baseUrl) ? _insecureHttpAuth : null),
+      opts,
+    );
+    if (!authenticated) throw _deadlineExpired(op, 'while authenticating');
+    final auth = resolvedAuth!;
     if (auth.failed != null) {
       throw _Stop(
         _diag(op.id, 'AUTH_FAILED').remedy(auth.failed).err<Object?>(),
@@ -1459,7 +1560,7 @@ final class ClientCore {
               'for the same intent. Fix or replace ClientOptions.idempotencyStore.',
             )
             .err<Object?>();
-        final (key, err) = await _keyLock.run(() async {
+        final (reserved, keyed) = await _untilDeadline(_keyLock.run(() async {
           try {
             final key = await _store.reserve(op.id, logical, _Util.uuidV4());
             if (key.isNotEmpty) return (key, null);
@@ -1467,7 +1568,11 @@ final class ClientCore {
           } catch (_) {
             return (null, failed('it threw an error'));
           }
-        });
+        }), opts);
+        if (!reserved) {
+          throw _deadlineExpired(op, 'while reserving an idempotency key');
+        }
+        final (key, err) = keyed!;
         if (err != null) throw _Stop(err);
         return key;
       default:
@@ -1556,6 +1661,17 @@ final class ClientCore {
     var attempts = 0;
     while (true) {
       attempts++;
+      if (_deadlinePassed(opts)) {
+        return (
+          _deadlineExpired(op, 'before the request could be sent').err,
+          null,
+        );
+      }
+      // Each attempt's timeout is cut to the time left before the call's
+      // deadline.
+      final left = _deadlineLeft(opts);
+      final byDeadline = left != null && left < timeout;
+      final attemptMs = byDeadline ? math.max(left, 1) : timeout;
       var rctx = _requestContext(p, attempts);
       _onRequest(rctx);
       var target = p.url;
@@ -1567,9 +1683,11 @@ final class ClientCore {
             method: method,
             headers: headers,
             body: body,
-            timeoutMs: timeout,
+            timeoutMs: attemptMs,
             stream: stream,
-            idleMs: stream ? idleTimeoutMs : null,
+            // An open stream keeps the idle bound of an uncut attempt; the
+            // deadline only bounds connecting.
+            idleMs: stream ? idleTimeoutMs ?? timeout : null,
             maxResponseBytes: opts.maxResponseBytes ?? maxResponseBytes,
           );
       var outcome = await sendOnce();
@@ -1614,13 +1732,25 @@ final class ClientCore {
         attempts: attempts,
         check: check,
       );
-      final (result, streamed) = _classifyResponse(
-        ctx,
-        p,
-        outcome,
-        rctx,
-        timeout,
-      );
+      final (result, streamed) = byDeadline &&
+              (outcome.kind == _Kind.timeout ||
+                  (outcome.kind == _Kind.response &&
+                      outcome.bodyFailure == 'timeout' &&
+                      !mutation))
+          ? (
+              _deadlineTimeout(
+                ctx,
+                outcome.kind == _Kind.response ? outcome.status : null,
+              ),
+              null,
+            )
+          : _classifyResponse(
+              ctx,
+              p,
+              outcome,
+              rctx,
+              timeout,
+            );
       if (streamed != null) return (null, streamed);
       if (result is Ok<Object?>) {
         p.pageState
@@ -1657,6 +1787,9 @@ final class ClientCore {
           _ => r * ceiling,
         };
       }
+      // A retry that could not start before the deadline is not waited for.
+      final rest = _deadlineLeft(opts);
+      if (rest != null && rest <= delay) return (done, null);
       _onRetry(rctx, d);
       await Future<void>.delayed(
         Duration(microseconds: (math.max(delay, 0) * 1000).round()),
@@ -2220,6 +2353,12 @@ final class ClientCore {
           raw: ok.raw,
           meta: ok.meta,
         );
+      }
+      // The next poll could not be sent before the call's deadline, so it
+      // is not waited for.
+      final left = _deadlineLeft(opts);
+      if (left != null && left <= intervalMs) {
+        throw _deadlineExpired(op, 'before the next poll');
       }
       await Future<void>.delayed(
         Duration(milliseconds: math.max(intervalMs, 0)),
