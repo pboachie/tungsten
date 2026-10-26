@@ -300,9 +300,17 @@ public final class Descriptors {
                             str(f.get("key"), ""), str(f.get("wire"), "")));
                 }
             }
+            Map<String, String> partTypes = new LinkedHashMap<>();
+            for (JsonObject part : objects(b.get("parts"))) {
+                String contentType = str(part.get("content_type"));
+                if (contentType != null) {
+                    partTypes.putIfAbsent(str(part.get("name"), ""), contentType);
+                }
+            }
             body = new OperationDescriptor.Body(
                     str(b.get("media_type"), "application/json"), str(b.get("encoding"), "json"),
-                    bool(b.get("required")), Collections.unmodifiableList(fields), arg);
+                    bool(b.get("required")), Collections.unmodifiableList(fields), arg,
+                    Collections.unmodifiableMap(partTypes));
         }
         List<OperationDescriptor.Response> responses = new ArrayList<>();
         for (JsonObject r : objects(o.get("responses"))) {

@@ -415,7 +415,7 @@ const MCP: &[ToolRequirement] = &[
 const DOTNET: &[ToolRequirement] = &[ToolRequirement::new("dotnet", Some([10, 0]))];
 
 /// Typed SDK features shared by every built-in SDK target.
-const SDK: &[&str] = &["typed_sdk", "pagination_helpers"];
+const SDK: &[&str] = &["typed_sdk", "pagination_helpers", "multipart_part_encoding"];
 
 macro_rules! targets {
     ($({
@@ -496,7 +496,7 @@ targets! {
             "group", "artifact", "package", "version", "runtime", "runtime_path",
             "java_runtime_path", "coroutines", "coroutines_runtime_path", "out",
         ],
-        environments: [Jvm], features: &["typed_sdk", "pagination_helpers", "coroutines"],
+        environments: [Jvm], features: &["typed_sdk", "pagination_helpers", "coroutines", "multipart_part_encoding"],
     },
     {
         id: "mcp", aliases: &[], source: BuiltInEmitter, family: Some("typescript"), policy: true,

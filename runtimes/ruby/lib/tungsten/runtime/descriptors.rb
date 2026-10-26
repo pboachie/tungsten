@@ -13,7 +13,11 @@ module Tungsten
 
     # The request body: with `arg` set the whole body is that argument;
     # otherwise a JSON object of the merged `fields` ([name, wire] pairs).
-    BodyDescriptor = Data.define(:media_type, :encoding, :required, :fields, :arg)
+    # `parts` maps a multipart field's wire name to the media type its parts
+    # are sent with (OpenAPI `encoding`); a file part's own media type wins.
+    BodyDescriptor = Data.define(:media_type, :encoding, :required, :fields, :arg, :parts) do
+      def initialize(parts: {}, **rest) = super(parts: parts, **rest)
+    end
 
     # A declared response: `status` an Integer, `"4XX"` or `"default"`.
     ResponseDescriptor = Data.define(:status, :kind, :media_type)
@@ -90,8 +94,13 @@ module Tungsten
           arg = (shape["name"] || shape["arg"]).to_s
           @key_names[shape["arg"].to_s] = arg
         end
+        parts = {}
+        (b["parts"] || []).each do |part|
+          type = part["content_type"]
+          parts[part["name"].to_s] ||= type.to_s.dup.freeze if type
+        end
         BodyDescriptor.new(media_type: b["media_type"].to_s, encoding: b["encoding"] || "json",
-                           required: b["required"] == true, fields: fields, arg: arg)
+                           required: b["required"] == true, fields: fields, arg: arg, parts: parts.freeze)
       end
 
       def pagination_of(p)

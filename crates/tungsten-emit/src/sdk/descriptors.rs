@@ -316,6 +316,20 @@ pub struct BodyDescriptor {
     pub encoding: String,
     pub required: bool,
     pub shape: BodyShapeDescriptor,
+    /// The per-part encoding of a multipart body, by wire field name
+    /// (OpenAPI `encoding`); absent when no field declares one.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parts: Vec<PartDescriptor>,
+}
+
+/// The declared encoding of one multipart field: `content_type` is the media
+/// type each part of the field is sent with, unless a file part carries its
+/// own.
+#[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
+pub struct PartDescriptor {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_type: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
@@ -864,6 +878,14 @@ fn operation(
             encoding: encoding_str(content.encoding).to_string(),
             required: p.layout.body_required,
             shape,
+            parts: content
+                .parts
+                .iter()
+                .map(|part| PartDescriptor {
+                    name: part.name.clone(),
+                    content_type: part.content_type.clone(),
+                })
+                .collect(),
         }
     });
     let responses = op
