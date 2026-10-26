@@ -78,6 +78,7 @@ pub(crate) struct Inner {
     pub headers: BTreeMap<String, String>,
     pub base_url: Option<String>,
     pub timeout: Duration,
+    pub deadline: Option<Duration>,
     pub max_response_bytes: Option<u64>,
     pub max_oauth_token_response_bytes: u64,
     pub max_event_bytes: usize,
@@ -95,6 +96,8 @@ pub(crate) struct Inner {
     pub http: reqwest::Client,
     pub now: Option<Arc<dyn Fn() -> u64 + Send + Sync>>,
     pub random: Option<Arc<dyn Fn() -> f64 + Send + Sync>>,
+    pub scheduler: Option<crate::RequestScheduler>,
+    pub tenant: Option<String>,
     pub registry: Mutex<BTreeMap<String, Arc<OperationDescriptor>>>,
     /// Makes "find or create the key of a logical call" atomic, so concurrent
     /// identical calls share one key.
@@ -201,6 +204,7 @@ impl ClientCore {
                 headers: options.headers,
                 base_url,
                 timeout: options.timeout,
+                deadline: options.deadline,
                 max_response_bytes: options.max_response_bytes.or(Some(4 * 1024 * 1024)),
                 max_oauth_token_response_bytes: options.max_oauth_token_response_bytes,
                 max_event_bytes: options.max_event_bytes.max(1),
@@ -220,6 +224,8 @@ impl ClientCore {
                 http,
                 now: options.now,
                 random: options.random,
+                scheduler: options.scheduler,
+                tenant: options.tenant,
                 registry: Mutex::new(BTreeMap::new()),
                 used_tokens: Mutex::new(HashMap::new()),
                 oauth_tokens: tokio::sync::Mutex::new(HashMap::new()),
@@ -263,7 +269,8 @@ impl ClientCore {
     /// send with retries, classify the response. `args` is the arguments
     /// object (a JSON object keyed by argument name).
     pub async fn call(&self, op: &OperationDescriptor, args: Value, opts: &CallOptions) -> Outcome {
-        self.call_with(op, &args, opts, None, None).await
+        crate::verify::with_call_deadline(self, opts, self.call_with(op, &args, opts, None, None))
+            .await
     }
 
     /// [`ClientCore::call`] for a typed wrapper: the success body is decoded
@@ -283,8 +290,10 @@ impl ClientCore {
         let mut sink = crate::dispatch::TypedSink::<T>::new(op.response.clone());
         // The verification hook may read the response, so it needs the body's JSON form.
         let verifies = opts.verify && op.agent.verify.is_some();
-        let outcome = self
-            .call_with_tracked(
+        let outcome = crate::verify::with_call_deadline(
+            self,
+            opts,
+            self.call_with_tracked(
                 op,
                 &args,
                 opts,
@@ -295,8 +304,9 @@ impl ClientCore {
                     None,
                     (!verifies).then_some(&mut sink as &mut dyn crate::dispatch::BodySink),
                 ),
-            )
-            .await;
+            ),
+        )
+        .await;
         match (outcome, sink.take_value()) {
             (Ok(response), Some(value)) => Ok(Response {
                 value,
@@ -316,7 +326,7 @@ impl ClientCore {
         args: Value,
         opts: &CallOptions,
     ) -> Result<PreviewResult> {
-        self.preview_inner(op, &args, opts).await
+        crate::verify::with_call_deadline(self, opts, self.preview_inner(op, &args, opts)).await
     }
 
     /// Iterate pages; the stream ends after the last page or the first error.
@@ -340,7 +350,8 @@ impl ClientCore {
             interval,
             budget,
         };
-        self.poll_with(op, &args, &spec, opts, None).await
+        crate::verify::with_call_deadline(self, opts, self.poll_with(op, &args, &spec, opts, None))
+            .await
     }
 
     /// Run a compiled macro; returns its output or the first failing step's
@@ -352,7 +363,8 @@ impl ClientCore {
         input: Value,
         opts: &CallOptions,
     ) -> Outcome {
-        self.run_macro_inner(macro_, &input, opts).await
+        crate::verify::with_call_deadline(self, opts, self.run_macro_inner(macro_, &input, opts))
+            .await
     }
 
     /// Preview a macro without sending anything (see `MacroStepPreview`).
@@ -362,7 +374,12 @@ impl ClientCore {
         input: Value,
         opts: &CallOptions,
     ) -> Result<PreviewResult> {
-        self.preview_macro_inner(macro_, &input, opts).await
+        crate::verify::with_call_deadline(
+            self,
+            opts,
+            self.preview_macro_inner(macro_, &input, opts),
+        )
+        .await
     }
 
     // ------------------------------------------------------------ internals

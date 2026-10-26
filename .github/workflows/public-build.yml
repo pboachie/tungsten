@@ -16,18 +16,26 @@ concurrency:
 
 jobs:
   npm:
-    name: public npm package build (Node ${{ matrix.node-version }})
+    name: public npm package build (Node ${{ matrix.node-version }}${{ matrix.advisory && ', advisory' || '' }})
     # Standard public runners only; do not run if copied to a private repo.
     if: github.repository == 'pboachie/tungsten' && github.event.repository.private == false
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
       contents: read
+    # The legacy canary reports Node 20 behavior without blocking: Node 20 is
+    # end-of-life upstream and below every declared npm package floor.
+    continue-on-error: ${{ matrix.advisory }}
     strategy:
       fail-fast: false
       matrix:
-        # Security-patched maintenance and current LTS releases.
-        node-version: ["22.23.4", "24.22.1"]
+        # Security-patched maintenance and active LTS lines, plus the newest
+        # Current line. Recheck upstream lifecycle status at each release.
+        node-version: ["22.23.4", "24.22.1", "26.12.1"]
+        advisory: [false]
+        include:
+          - node-version: "20.20.2"
+            advisory: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -108,8 +116,10 @@ jobs:
         run: |
           python -I ../../crates/tungsten-cli/src/commands/bootstrap_python.py
           python -m pip install --disable-pip-version-check build==1.6.1 twine==7.0.0 hatchling==1.32.4 "certifi>=2026.10.19"
-          python -m build --no-isolation --outdir "$RUNNER_TEMP/python-dist"
-          python -m twine check "$RUNNER_TEMP/python-dist/"*
+          # Git Bash on Windows globs POSIX paths, not RUNNER_TEMP's native form.
+          temp="$(cygpath -u "$RUNNER_TEMP" 2>/dev/null || printf '%s' "$RUNNER_TEMP")"
+          python -m build --no-isolation --outdir "$temp/python-dist"
+          python -m twine check "$temp/python-dist/"*
       - name: Install each archive into a clean environment and import it
         run: |
           temp="$(cygpath -u "$RUNNER_TEMP" 2>/dev/null || printf '%s' "$RUNNER_TEMP")"

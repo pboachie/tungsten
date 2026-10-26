@@ -2,6 +2,7 @@
 //! One module per command. Each returns a [`Report`]; none writes to the
 //! output streams.
 
+pub(crate) mod bundle;
 mod capabilities;
 pub(crate) mod check;
 mod config;
@@ -20,6 +21,7 @@ mod init_setup_mcp;
 mod init_setup_python;
 mod init_setup_rust;
 mod ir;
+pub(crate) mod lock;
 pub(crate) mod lsp;
 pub(crate) mod mock;
 pub(crate) mod overlay;
@@ -29,10 +31,11 @@ pub(crate) mod scenario;
 mod schema;
 pub(crate) mod support_bundle;
 mod support_bundle_file;
+pub(crate) mod support_bundle_inspect;
 pub(crate) mod update;
 mod wizard;
 
-use crate::args::{Cli, Command, IrCommand, OverlayCommand, PolicyCommand};
+use crate::args::{BundleCommand, Cli, Command, IrCommand, OverlayCommand, PolicyCommand};
 use crate::{CliEnv, Report};
 
 pub(crate) fn dispatch(
@@ -86,6 +89,13 @@ fn dispatch_with_inputs(
         Command::Doctor(args) => doctor::run(args, env),
         Command::Capabilities(args) => capabilities::run(args),
         Command::Config(args) => config::run(args, env),
+        Command::Lock(args) => lock::run(args),
+        Command::Bundle {
+            command: BundleCommand::Export(args),
+        } => bundle::export(args),
+        Command::Bundle {
+            command: BundleCommand::Import(args),
+        } => bundle::import(args),
         Command::Policy {
             command: PolicyCommand::Digest(args),
         } => policy::digest(args),

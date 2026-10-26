@@ -16,10 +16,12 @@ use tungsten_emit::TargetConfig;
 use tungsten_ir::Ir;
 use tungsten_ir::naming::{self, Case};
 
+use tungsten_config::target_options::{self as shared, python::*};
+
 use crate::py::{is_identifier, is_keyword};
 
 /// Default `tungsten-runtime` version specifier.
-pub const DEFAULT_RUNTIME_SPEC: &str = ">=0.1.3,<0.2.0";
+pub const DEFAULT_RUNTIME_SPEC: &str = shared::PYTHON_RUNTIME_SPEC;
 /// Pydantic range of generated packages: PEP 695 `type` aliases are
 /// supported since 2.10. Generated models fail to import on 2.10.0 (an
 /// unresolved model-serializer annotation); 2.10.1 fixes it.
@@ -107,31 +109,23 @@ impl Options {
         )
         .unwrap_or_else(|| default_module(words));
         let version = read("version", &is_version, "a version such as 1.2.3")
-            .unwrap_or_else(|| "0.1.0".to_string());
-        let runtime_path = read(
-            "runtime_path",
-            &|s| !s.trim().is_empty() && !s.contains('"'),
-            "a non-empty path",
-        );
+            .unwrap_or_else(|| shared::PYTHON_PACKAGE_VERSION.to_string());
+        let runtime_path = read("runtime_path", &is_path, "a non-empty path");
         let runtime_spec = read(
             "runtime",
             &is_specifier,
             "a version specifier such as >=0.1,<0.2",
         );
-        let models = match read(
-            "models",
-            &|s| s == "pydantic" || s == "dataclasses",
-            "`pydantic` or `dataclasses`",
-        ) {
+        let models = match read("models", &is_models, "`pydantic` or `dataclasses`") {
             Some(m) if m == "dataclasses" => Models::Dataclasses,
             _ => Models::Pydantic,
         };
         let python_version = read(
             "python_version",
-            &|s| matches!(s, "3.10" | "3.11" | "3.12"),
+            &is_python_version,
             "`3.10`, `3.11`, or `3.12`",
         )
-        .unwrap_or_else(|| "3.12".to_string());
+        .unwrap_or_else(|| shared::PYTHON_VERSION.to_string());
         let runtime = match runtime_path {
             Some(p) => RuntimeDep::Path(p),
             None => RuntimeDep::Spec(match runtime_spec {
@@ -165,66 +159,10 @@ fn default_module(words: &[String]) -> String {
     }
 }
 
-/// PEP 508 names: ASCII letters and digits, with `.`, `_` and `-` inside.
-fn is_distribution_name(s: &str) -> bool {
-    let ok_edge = |c: Option<char>| c.is_some_and(|c| c.is_ascii_alphanumeric());
-    ok_edge(s.chars().next())
-        && ok_edge(s.chars().last())
-        && s.chars()
-            .all(|c| c.is_ascii_alphanumeric() || "._-".contains(c))
-}
-
 fn is_module_name(s: &str) -> bool {
     is_identifier(s)
         && !is_keyword(s)
         && !s.starts_with('_')
         && s.chars().all(|c| !c.is_ascii_uppercase())
         && !TAKEN_MODULES.contains(&s)
-}
-
-/// A PEP 440 release (`1`, `1.2.3`) with an optional pre-release (`a1`,
-/// `b2`, `rc1`), post-release (`.post1`) and dev release (`.dev1`).
-fn is_version(s: &str) -> bool {
-    let digits = |t: &str| !t.is_empty() && t.chars().all(|c| c.is_ascii_digit());
-    let mut rest = s;
-    if let Some((head, dev)) = rest.split_once(".dev") {
-        if !digits(dev) {
-            return false;
-        }
-        rest = head;
-    }
-    if let Some((head, post)) = rest.split_once(".post") {
-        if !digits(post) {
-            return false;
-        }
-        rest = head;
-    }
-    if let Some(i) = rest.find(|c: char| c.is_ascii_alphabetic()) {
-        let (head, pre) = rest.split_at(i);
-        let number = ["rc", "a", "b"]
-            .into_iter()
-            .find_map(|p| pre.strip_prefix(p));
-        if !number.is_some_and(digits) {
-            return false;
-        }
-        rest = head;
-    }
-    rest.split('.').all(digits)
-}
-
-/// A PEP 440 specifier set: comma-separated clauses of an operator and a
-/// version (`>=0.1,<0.2`, `==0.1.*`, `~=0.1`).
-fn is_specifier(s: &str) -> bool {
-    !s.trim().is_empty()
-        && s.split(',').all(|clause| {
-            let c = clause.trim();
-            let op = ["===", "~=", "==", "!=", "<=", ">=", "<", ">"]
-                .into_iter()
-                .find(|op| c.starts_with(op));
-            op.is_some_and(|op| {
-                let v = c[op.len()..].trim();
-                let v = v.strip_suffix(".*").unwrap_or(v);
-                is_version(v)
-            })
-        })
 }

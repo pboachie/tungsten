@@ -28,6 +28,8 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Generic, Literal, Protocol, TypedDict, TypeVar
 
+from .scheduler import RequestScheduler, SchedulerOptions
+
 if sys.version_info >= (3, 11):
     from typing import NotRequired
 else:
@@ -177,7 +179,7 @@ ergonomics. Branch with ``isinstance(result, Ok)`` or ``result.ok is True``
 
 # ------------------------------------------------------------- descriptors
 
-HttpMethod = Literal["GET", "PUT", "POST", "DELETE", "OPTIONS", "HEAD", "PATCH", "TRACE"]
+HttpMethod = Literal["GET", "PUT", "POST", "DELETE", "OPTIONS", "HEAD", "PATCH", "TRACE", "QUERY"]
 ParamLocation = Literal["path", "query", "header", "cookie"]
 ParamStyle = Literal["simple", "form", "label", "matrix", "space_delimited", "pipe_delimited", "deep_object"]
 ParamRole = Literal["plain", "idempotency_key", "dry_run", "origin", "auth", "constant"]
@@ -649,6 +651,10 @@ class ClientOptions:
     #: retain capacity until completion and late results are rejected, without a
     #: hard settlement guarantee. OS resolver cancellation is platform-dependent.
     timeout_ms: int = 30_000
+    #: Total deadline of one logical call in milliseconds (see
+    #: ``CallOptions.deadline_ms``). None: no total deadline, only ``timeout_ms``
+    #: per attempt.
+    deadline_ms: int | None = None
     #: Overrides the API's per-tier retry defaults (``ApiDescriptor.retries``)
     #: for every tier: a ``RetryPolicy`` mapping field by field, a
     #: ``RetryOptions`` instance as a whole.
@@ -669,6 +675,14 @@ class ClientOptions:
     now: Callable[[], float] | None = None
     #: Random number in [0, 1) for retry jitter.
     random: Callable[[], float] | None = None
+    #: Bounds the requests this client has in flight and waiting, and shares
+    #: rate-limit pauses between them. ``SchedulerOptions`` makes a scheduler
+    #: of this client alone; pass one ``RequestScheduler`` to several clients
+    #: that share a quota. None (default): every call is sent at once.
+    scheduler: RequestScheduler | SchedulerOptions | None = None
+    #: The tenant or principal this client calls for. Clients sharing a
+    #: scheduler keep separate capacity, queues and pauses per tenant.
+    tenant: str | None = None
     #: Largest server-sent event ``stream()`` accepts, in UTF-8 bytes (the
     #: field lines of one event plus the line being read). A larger one ends
     #: the stream with an ``UNEXPECTED_RESPONSE`` failure. Default 1 MiB.
@@ -712,6 +726,18 @@ class CallOptions(TypedDict, total=False):
     confirm: str | Literal[True]
     allow_confirm_true: bool
     timeout_ms: int
+    #: Total deadline in milliseconds for this call, overriding the client
+    #: default; 0 or omitted means none. Measured on a monotonic clock from the
+    #: call, it bounds authentication, idempotency-key reservation, every
+    #: attempt (each one's ``timeout_ms`` is cut to the time left), retry waits,
+    #: response bodies and verification; for ``pages``, ``poll`` and
+    #: ``run_macro`` the whole traversal, poll or macro. No attempt starts after
+    #: it expires (``code`` ``DEADLINE_EXCEEDED``). For ``stream()`` it bounds
+    #: connecting and each reconnect, not an open stream (see
+    #: ``idle_timeout_ms``). A mutation already sent reports ``OUTCOME_UNKNOWN``,
+    #: never a blind replay. Token refreshes, stores and hooks are not
+    #: cancelled, only no longer waited for.
+    deadline_ms: int
     max_response_bytes: int | None
     verify: bool
     headers: Mapping[str, str]

@@ -728,7 +728,9 @@ impl ClientCore {
         let params = arg_params(op);
         let param_names: Vec<&str> = params.iter().map(|p| p.name.as_str()).collect();
         let body_paths = sensitive_body_paths(op);
-        let value = if is_safe_method(method) && method != HttpMethod::Options {
+        let value = if is_safe_method(method)
+            && !matches!(method, HttpMethod::Options | HttpMethod::Query)
+        {
             None
         } else {
             body_value(op, &args, &param_names)
@@ -766,9 +768,17 @@ impl ClientCore {
 
         let header = key_header(op);
         crate::verify::check_poll_deadline(&op.id)?;
-        let key = self
-            .idempotency_key(op, &args, opts, purpose, encoded.hash_material.as_deref())
-            .await?;
+        let reserve =
+            self.idempotency_key(op, &args, opts, purpose, encoded.hash_material.as_deref());
+        // A store worker is not cancelled at the deadline, only no longer waited for.
+        let key = match crate::verify::call_deadline() {
+            Some(deadline) => tokio::time::timeout_at(deadline.into(), reserve)
+                .await
+                .map_err(|_| {
+                    crate::verify::deadline_exceeded(&op.id, "while reserving an idempotency key")
+                })??,
+            None => reserve.await?,
+        };
         if let Some(key) = &key {
             headers.set(&header, key.clone(), true);
             secrets.insert(key.clone());

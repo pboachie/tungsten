@@ -115,7 +115,7 @@ impl<'a> RequestView<'a> {
     }
 
     pub fn is_safe_method(&self) -> bool {
-        matches!(self.method, "GET" | "HEAD" | "OPTIONS" | "TRACE")
+        matches!(self.method, "GET" | "HEAD" | "OPTIONS" | "TRACE" | "QUERY")
     }
 }
 

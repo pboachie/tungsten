@@ -24,7 +24,7 @@ import uuid
 from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, replace
 from dataclasses import field as dataclass_field
-from typing import Any, Final, Literal, cast
+from typing import Any, Final, Literal, TypeVar, cast
 from urllib.parse import urljoin, urlsplit
 
 import httpx
@@ -58,17 +58,25 @@ from ._classify import (
 from ._confirm import CONFIRMATION_TTL_MS, check_token, issue_token, token_expiry
 from ._effects import (
     Answered,
+    AttemptOutcome,
     AttemptRequest,
     Bounded,
     Chunk,
+    CloseStream,
+    Emit,
     Flow,
     Lost,
     NotSent,
+    Observe,
     PollExpired,
+    ReadChunk,
+    Send,
+    Sleep,
     StreamEnded,
     StreamFailed,
     Streaming,
     TimedOut,
+    acquire,
     close_stream,
     emit,
     observe,
@@ -169,6 +177,7 @@ from ._util import (
     without_unset,
 )
 from .idempotency import MemoryIdempotencyStore
+from .scheduler import Permit, Rejection, RequestScheduler, SchedulerOptions
 from .schema import PatternNote, collect_pattern_notes
 from .sentinels import UNSET
 from .types import (
@@ -337,8 +346,82 @@ def _monotonic_ms() -> float:
     return time.monotonic() * 1000
 
 
+T = TypeVar("T")
+
+
 def _opt(opts: Mapping[str, object], key: str) -> object:
     return opts.get(key, UNSET)
+
+
+#: The call-options entry holding the absolute monotonic deadline (ms) of one
+#: logical call, fixed when a public entry point resolves ``deadline_ms``.
+#: Nested work (pages, polls, verification, macro steps) inherits it.
+_CALL_DEADLINE: Final = "\x00tungsten.call_deadline"
+
+
+def _deadline_of(opts: Mapping[str, object]) -> float | None:
+    value = opts.get(_CALL_DEADLINE)
+    return float(value) if is_number(value) else None
+
+
+def _deadline_failure(op_id: str, during: str) -> Err:
+    return _fail(
+        diagnostic(
+            op_id,
+            "TRANSPORT_FAILED",
+            code="DEADLINE_EXCEEDED",
+            retryable="never",
+            remediation=(
+                f"The operation deadline (deadline_ms) expired {during}, so the request was not sent. "
+                "Call again with a larger deadline_ms."
+            ),
+        )
+    )
+
+
+def _within_deadline(flow: Flow[T], deadline: float | None, expired: Callable[[bool], T]) -> Flow[T]:
+    """Run ``flow`` with every effect that may block on caller code (token
+    sources, stores, hooks) bounded by the call's deadline; attempts honour it
+    natively and retry waits check it themselves. A bounded effect is not
+    cancelled when the deadline passes, only no longer waited for: a shared
+    token refresh keeps running for its other waiters. ``expired(sent)``
+    answers the call when the deadline interrupted it."""
+    if deadline is None:
+        return (yield from flow)
+    sent: object = None
+    thrown: Exception | None = None
+    dispatched = False
+    try:
+        while True:
+            try:
+                effect = flow.throw(thrown) if thrown is not None else flow.send(sent)
+            except StopIteration as finished:
+                return cast(T, finished.value)
+            if isinstance(effect, Send):
+                dispatched = True
+            elif isinstance(effect, Bounded):
+                dispatched = dispatched or isinstance(effect.effect, Send)
+                effect = Bounded(effect.effect, min(effect.deadline_ms, deadline))
+            elif not isinstance(effect, Sleep | Emit | ReadChunk | CloseStream | Observe):
+                effect = Bounded(effect, deadline)
+            try:
+                sent = yield effect
+                thrown = None
+            except PollExpired:
+                raise
+            except Exception as error:
+                sent, thrown = None, error
+    except PollExpired:
+        return expired(dispatched)
+    finally:
+        flow.close()
+
+
+def _mark_deadline(outcome: AttemptOutcome, deadline: float | None) -> AttemptOutcome:
+    """A timeout at the operation deadline is reported as the deadline's."""
+    if isinstance(outcome, TimedOut) and deadline is not None and _monotonic_ms() >= deadline - 1:
+        return TimedOut(deadline=True)
+    return outcome
 
 
 class Engine:
@@ -384,6 +467,16 @@ class Engine:
                 "confirmation_key must contain at least 32 bytes; omit it to generate a random key"
             )
         self.confirmation_key: bytes = copied_key if copied_key is not None else random_bytes(32)
+        configured: object = self.options.scheduler
+        self.scheduler: RequestScheduler | None = None
+        if isinstance(configured, RequestScheduler):
+            self.scheduler = configured
+        elif isinstance(configured, SchedulerOptions):
+            self.scheduler = RequestScheduler(configured)
+        elif configured is not None:
+            raise TypeError("scheduler must be a RequestScheduler or SchedulerOptions")
+        if not isinstance(cast(object, self.options.tenant), str | None):
+            raise TypeError("tenant must be a string")
         operations: object = self.options.operations
         if is_array(operations):
             self.register(*cast(Sequence[OperationDescriptor], operations))
@@ -411,11 +504,21 @@ class Engine:
     # ------------------------------------------------------------ public
 
     def call(self, op: OperationDescriptor, args: object, opts: object) -> Flow[Ok[Any] | Err]:
-        answer = yield from self._call(op, args, self._call_options(opts), None, None)
+        resolved = self._call_options(opts)
+        answer = yield from _within_deadline(
+            self._call(op, args, resolved, None, None),
+            _deadline_of(resolved),
+            lambda sent: Answer(self._deadline_expired(op, sent)),
+        )
         return answer.result
 
     def preview(self, op: OperationDescriptor, args: object, opts: object) -> Flow[Ok[PreviewResult] | Err]:
-        result = yield from self._preview(op, args, self._call_options(opts))
+        resolved = self._call_options(opts)
+        result = yield from _within_deadline(
+            self._preview(op, args, resolved),
+            _deadline_of(resolved),
+            lambda sent: self._deadline_expired(op, sent),
+        )
         return result
 
     def pages(self, op: OperationDescriptor, args: object, opts: object) -> Flow[None]:
@@ -423,7 +526,15 @@ class Engine:
             yield from emit(page.result)
             return True
 
-        yield from self._pages(op, args, self._call_options(opts), None, deliver)
+        resolved = self._call_options(opts)
+        expired: list[Err] = []
+        yield from _within_deadline(
+            self._pages(op, args, resolved, None, deliver),
+            _deadline_of(resolved),
+            lambda sent: expired.append(self._deadline_expired(op, sent)),
+        )
+        if expired:
+            yield from emit(expired[0])
 
     def stream(
         self, op: OperationDescriptor, args: object, opts: object, cancelled: Callable[[], bool] | None = None
@@ -439,20 +550,57 @@ class Engine:
         budget_ms: object,
         opts: object,
     ) -> Flow[Ok[Any] | Err]:
-        answer = yield from self._poll(
-            op, args, until, interval_ms, budget_ms, self._call_options(opts), None
+        resolved = self._call_options(opts)
+        answer = yield from _within_deadline(
+            self._poll(op, args, until, interval_ms, budget_ms, resolved, None),
+            _deadline_of(resolved),
+            lambda sent: Answer(self._deadline_expired(op, sent)),
         )
         return answer.result
 
     def run_macro(self, macro: MacroDescriptor, input: object, opts: object) -> Flow[Ok[Any] | Err]:
-        result = yield from self._run_macro(macro, input, self._call_options(opts))
+        resolved = self._call_options(opts)
+        result = yield from _within_deadline(
+            self._run_macro(macro, input, resolved),
+            _deadline_of(resolved),
+            lambda sent: self._deadline_expired(macro, sent),
+        )
         return result
 
     def preview_macro(
         self, macro: MacroDescriptor, input: object, opts: object
     ) -> Flow[Ok[PreviewResult] | Err]:
-        result = yield from self._preview_macro(macro, input, self._call_options(opts))
+        resolved = self._call_options(opts)
+        result = yield from _within_deadline(
+            self._preview_macro(macro, input, resolved),
+            _deadline_of(resolved),
+            lambda sent: self._deadline_expired(macro, sent),
+        )
         return result
+
+    def _deadline_expired(self, subject: object, sent: bool) -> Err:
+        """The answer of a call its deadline interrupted outside an attempt.
+        A mutation sent before is not known to have failed."""
+        subject_id = str_field(subject, "id") or str_field(subject, "name") or "<unknown>"
+        if (
+            sent
+            and is_record(subject)
+            and is_record(subject.get("agent"))
+            and is_mutation(cast(OperationDescriptor, subject))
+        ):
+            return _fail(
+                diagnostic(
+                    subject_id,
+                    "OUTCOME_UNKNOWN",
+                    code="DEADLINE_EXCEEDED",
+                    retryable="never",
+                    remediation=(
+                        "The operation deadline (deadline_ms) expired after the request was sent; it may have "
+                        "taken effect. Check its effect before repeating it with the same idempotency key."
+                    ),
+                )
+            )
+        return _deadline_failure(subject_id, "before the call completed")
 
     def internal(self, subject: str, error: BaseException, during: str) -> Err:
         return _fail(
@@ -470,7 +618,11 @@ class Engine:
     # ---------------------------------------------------------- options
 
     def _call_options(self, opts: object) -> dict[str, object]:
-        return dict(entries_of(opts))
+        resolved = {k: v for k, v in entries_of(opts).items() if k != _CALL_DEADLINE}
+        ms = bounded(_opt(resolved, "deadline_ms"), bounded(self.options.deadline_ms, 0, 0), 0)
+        if ms > 0:
+            resolved[_CALL_DEADLINE] = _monotonic_ms() + ms
+        return resolved
 
     def now(self) -> float:
         clock = self.options.now
@@ -1024,7 +1176,7 @@ class Engine:
         try:
             value = (
                 UNSET
-                if is_safe_method(method) and method != "OPTIONS"
+                if is_safe_method(method) and method not in ("OPTIONS", "QUERY")
                 else body_value(op, args, {p["name"] for p in arg_params(op)})
             )
             body_paths = sensitive_body_paths(op)
@@ -1432,9 +1584,14 @@ class Engine:
         mutation = is_mutation(op)
         protected = has_replay_protection(op, prepared.key)
         timeout_ms = self._timeout(opts)
+        deadline = _deadline_of(opts)
         attempts = 0
         previous_mutation_failure: Answer | None = None
         while True:
+            if deadline is not None and _monotonic_ms() >= deadline:
+                return previous_mutation_failure or Answer(
+                    _deadline_failure(op["id"], "before the request could be sent")
+                )
             attempts += 1
             ctx = RequestContext(
                 operation=op,
@@ -1458,72 +1615,99 @@ class Engine:
                 return previous_mutation_failure or Answer(
                     _fail(diagnostic(op["id"], "AUTH_FAILED", remediation=INSECURE_HTTP_AUTH))
                 )
-            # Redirects are never followed by the HTTP client: it would forward
-            # credential headers to another origin. A read follows same-origin
-            # redirects here; a mutation follows none.
-            outcome = yield from send(
-                AttemptRequest(
-                    prepared.url,
-                    prepared.method,
-                    headers,
-                    prepared.body,
-                    timeout_ms,
-                    stream,
-                    idle_ms,
-                    max_response_bytes=self._max_response_bytes(opts),
-                )
-            )
-            current_url, current_method, current_body = prepared.url, prepared.method, prepared.body
-            hops = 0
-            while (
-                not self._redirects_disabled
-                and not mutation
-                and hops < _MAX_REDIRECTS
-                and isinstance(outcome, Answered)
-                and outcome.body_failure != "oversized"
-                and outcome.status in _REDIRECT_STATUSES
-            ):
-                target = self._redirect_target(prepared, current_url, outcome.headers.get("location"))
-                if target is None:
-                    break
-                rewrite = outcome.status not in (307, 308) and current_method not in ("GET", "HEAD")
-                current_url = target[0]
-                current_method = "GET" if rewrite else current_method
-                current_body = None if rewrite else current_body
-                ctx.url = target[1]
-                ctx.method = current_method
-                hop_headers = {
-                    k: v for k, v in headers.items() if not (rewrite and k.lower() == "content-type")
-                }
+            admitted = yield from self._admit(op, prepared.url, stream, deadline)
+            if isinstance(admitted, Rejection):
+                if deadline is not None and _monotonic_ms() >= deadline:
+                    return previous_mutation_failure or Answer(
+                        _deadline_failure(op["id"], "while the request waited for capacity")
+                    )
+                return previous_mutation_failure or Answer(_fail(self._rejected(op, admitted, stream)))
+            handed_off = False
+            try:
+                # Redirects are never followed by the HTTP client: it would forward
+                # credential headers to another origin. A read follows same-origin
+                # redirects here; a mutation follows none.
                 outcome = yield from send(
                     AttemptRequest(
-                        current_url,
-                        current_method,
-                        hop_headers,
-                        current_body,
+                        prepared.url,
+                        prepared.method,
+                        headers,
+                        prepared.body,
                         timeout_ms,
                         stream,
                         idle_ms,
-                        max_response_bytes=self._max_response_bytes(opts),
+                        deadline,
+                        self._max_response_bytes(opts),
                     )
                 )
-                hops += 1
-            # The read that shows whether an unprotected mutation took effect
-            # is only needed to explain an unknown outcome or a failure, so
-            # it is looked up (over the whole registry) only then.
-            check = (
-                self._outcome_check(op, prepared.args)
-                if mutation
-                and not protected
-                and not (
-                    isinstance(outcome, Answered)
-                    and outcome.body is not None
-                    and 200 <= outcome.status <= 299
+                outcome = _mark_deadline(outcome, deadline)
+                current_url, current_method, current_body = prepared.url, prepared.method, prepared.body
+                hops = 0
+                while (
+                    not self._redirects_disabled
+                    and not mutation
+                    and hops < _MAX_REDIRECTS
+                    and isinstance(outcome, Answered)
+                    and outcome.body_failure != "oversized"
+                    and outcome.status in _REDIRECT_STATUSES
+                ):
+                    target = self._redirect_target(prepared, current_url, outcome.headers.get("location"))
+                    if target is None:
+                        break
+                    rewrite = outcome.status not in (307, 308) and current_method not in ("GET", "HEAD")
+                    current_url = target[0]
+                    current_method = "GET" if rewrite else current_method
+                    current_body = None if rewrite else current_body
+                    ctx.url = target[1]
+                    ctx.method = current_method
+                    hop_headers = {
+                        k: v for k, v in headers.items() if not (rewrite and k.lower() == "content-type")
+                    }
+                    outcome = yield from send(
+                        AttemptRequest(
+                            current_url,
+                            current_method,
+                            hop_headers,
+                            current_body,
+                            timeout_ms,
+                            stream,
+                            idle_ms,
+                            deadline,
+                            self._max_response_bytes(opts),
+                        )
+                    )
+                    outcome = _mark_deadline(outcome, deadline)
+                    hops += 1
+                # The read that shows whether an unprotected mutation took effect
+                # is only needed to explain an unknown outcome or a failure, so
+                # it is looked up (over the whole registry) only then.
+                check = (
+                    self._outcome_check(op, prepared.args)
+                    if mutation
+                    and not protected
+                    and not (
+                        isinstance(outcome, Answered)
+                        and outcome.body is not None
+                        and 200 <= outcome.status <= 299
+                    )
+                    else None
                 )
-                else None
-            )
-            call_ctx = CallContext(self.api, op, prepared.key, prepared.key_header, attempts, check)
-            answer = yield from self._classify(call_ctx, prepared, outcome, ctx, timeout_ms)
+                call_ctx = CallContext(self.api, op, prepared.key, prepared.key_header, attempts, check)
+                answer = yield from self._classify(call_ctx, prepared, outcome, ctx, timeout_ms)
+                if admitted is not None:
+                    failure = answer.result.error if isinstance(answer.result, Err) else None
+                    if failure is not None and failure["category"] == "RATE_LIMITED":
+                        admitted.settle(failure["retry_after_ms"], limited=True)
+                    elif isinstance(outcome, Answered | Streaming):
+                        admitted.settle(None, limited=False)
+                    # An open event stream keeps its capacity until it is closed.
+                    value = answer.result.value if isinstance(answer.result, Ok) else None
+                    if isinstance(value, Streaming) and hasattr(value.stream, "on_close"):
+                        value.stream.on_close = admitted.release  # type: ignore[attr-defined]
+                        handed_off = True
+            finally:
+                if admitted is not None and not handed_off:
+                    admitted.release()
             result = answer.result
             if isinstance(result, Ok):
                 return replace(answer, request_url=current_url)
@@ -1554,7 +1738,67 @@ class Engine:
                 yield from observe(_hook(m, "on_retry"), ctx, error)
             if mutation:
                 previous_mutation_failure = done
+            # A retry that could not start before the deadline is not waited for.
+            if deadline is not None and _monotonic_ms() + delay >= deadline:
+                return done
             yield from sleep(delay)
+
+    def _admit(
+        self, op: OperationDescriptor, url: str, stream: bool, deadline: float | None
+    ) -> Flow[Permit | Rejection | None]:
+        """Wait for scheduler capacity for one attempt: None without a
+        scheduler, a ``Rejection`` (nothing is sent) when none was given."""
+        scheduler = self.scheduler
+        if scheduler is None:
+            return None
+        source = self.options.random
+        rnd: Callable[[], float] = (
+            (lambda: bounded(source(), 0.5, 0, 1)) if callable(source) else random.random
+        )
+        key = scheduler.scope_key(url, self.options.tenant)
+        admitted = yield from acquire(scheduler, key, "stream" if stream else "call", rnd, deadline)
+        return cast(Permit | Rejection, admitted)
+
+    @staticmethod
+    def _rejected(op: OperationDescriptor, rejection: Rejection, stream: bool) -> Diagnostic:
+        what = "event streams" if stream else "requests"
+        limit = "max_streams" if stream else "max_active"
+        if rejection.reason == "full":
+            return diagnostic(
+                op["id"],
+                "RATE_LIMITED",
+                code="QUEUE_FULL",
+                remediation=f"The client's queue of {what} waiting for capacity is full (SchedulerOptions.max_queued); nothing was sent. Retry after calls in flight finish, or raise max_queued or {limit}.",
+            )
+        if rejection.reason == "timeout":
+            return diagnostic(
+                op["id"],
+                "RATE_LIMITED",
+                code="QUEUE_TIMEOUT",
+                remediation=f"No capacity for {what} became free within the queue wait (SchedulerOptions.max_queue_ms) or the call's deadline; nothing was sent. Retry later, or raise max_queue_ms or {limit}.",
+            )
+        if rejection.reason == "paused":
+            return diagnostic(
+                op["id"],
+                "RATE_LIMITED",
+                code="RATE_LIMIT_PAUSED",
+                retry_after_ms=rejection.retry_after_ms,
+                remediation="An earlier call sharing this quota was rate limited, and the pause outlasts this call's queue wait or deadline; nothing was sent. Wait retry_after_ms before calling again.",
+            )
+        if rejection.reason == "closed":
+            return diagnostic(
+                op["id"],
+                "TRANSPORT_FAILED",
+                code="SCHEDULER_CLOSED",
+                retryable="never",
+                remediation="The request scheduler was closed (shutdown); nothing was sent. Use a client with an open scheduler.",
+            )
+        return diagnostic(
+            op["id"],
+            "TRANSPORT_FAILED",
+            retryable="never",
+            remediation="The caller cancelled the call while it waited for capacity; nothing was sent.",
+        )
 
     def _outcome_check(self, op: OperationDescriptor, args: Mapping[str, object]) -> OutcomeCheck | None:
         """How to find out whether ``op`` (a mutation without replay
@@ -1753,6 +1997,22 @@ class Engine:
                         op_id,
                         "TRANSPORT_FAILED",
                         remediation=f"{cause} This read has no side effects; call again.",
+                        attempts=attempts,
+                    )
+                )
+            )
+        if isinstance(outcome, TimedOut) and outcome.deadline:
+            cause = "The operation deadline expired before a response arrived."
+            return Answer(
+                _fail(
+                    outcome_unknown(call_ctx, cause)
+                    if mutation
+                    else diagnostic(
+                        op_id,
+                        "UPSTREAM_UNAVAILABLE",
+                        code="DEADLINE_EXCEEDED",
+                        retryable="never",
+                        remediation=f"{cause} This read has no side effects; call again with a larger deadline_ms.",
                         attempts=attempts,
                     )
                 )

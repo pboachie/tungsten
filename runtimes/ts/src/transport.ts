@@ -14,7 +14,7 @@ export interface AttemptRequest {
   body: BodyInit | null;
   redirect: RequestRedirect;
   timeoutMs: number;
-  /** Absolute monotonic polling deadline, independent of timer callbacks. */
+  /** Absolute monotonic deadline (operation or polling), independent of timer callbacks. */
   deadlineMs?: number | undefined;
   signal: AbortSignal | undefined;
   /** Hand a `text/event-stream` answer with a 2xx status back unread, as a
@@ -49,6 +49,7 @@ export class StreamBody {
   readonly #cancelRead = (): void => { void this.#reader.cancel().catch(() => undefined); };
   #timedOut = false;
   #closed = false;
+  #onClose: (() => void) | null = null;
 
   constructor(reader: ReadableStreamDefaultReader<Uint8Array>, controller: AbortController, signal: AbortSignal | undefined, onAbort: () => void, idleMs: number) {
     this.#reader = reader;
@@ -89,6 +90,15 @@ export class StreamBody {
     this.#signal?.removeEventListener("abort", this.#cancelRead);
     this.#reader.cancel().catch(() => undefined);
     this.#controller.abort();
+    const onClose = this.#onClose;
+    this.#onClose = null;
+    onClose?.();
+  }
+
+  /** Run `fn` once the connection is released (now, if it already is). */
+  whenClosed(fn: () => void): void {
+    if (this.#closed) fn();
+    else this.#onClose = fn;
   }
 }
 
@@ -109,7 +119,8 @@ export type AttemptOutcome =
   | { kind: "not_sent"; detail: string }
   /** Sent or possibly sent, then the connection failed without a response. */
   | { kind: "lost"; detail: string }
-  | { kind: "timeout" }
+  /** No response in time; `deadline` when the absolute deadline, not `timeoutMs`, ran out. */
+  | { kind: "timeout"; deadline?: boolean }
   /** The caller's signal aborted; `sent` is false only when it was already aborted. */
   | { kind: "aborted"; sent: boolean };
 
@@ -168,7 +179,8 @@ function isNotSent(error: unknown): boolean {
 export async function attempt(fetchImpl: typeof fetch, req: AttemptRequest): Promise<AttemptOutcome> {
   if (req.signal?.aborted) return { kind: "aborted", sent: false };
   const remainingMs = req.deadlineMs === undefined ? req.timeoutMs : Math.min(req.timeoutMs, req.deadlineMs - performance.now());
-  if (remainingMs <= 0) return { kind: "not_sent", detail: "polling deadline expired before send" };
+  if (remainingMs <= 0) return { kind: "not_sent", detail: "deadline expired before send" };
+  const byDeadline = remainingMs < req.timeoutMs;
   const controller = new AbortController();
   let timedOut = false;
   const timer = setTimeout(
@@ -185,7 +197,7 @@ export async function attempt(fetchImpl: typeof fetch, req: AttemptRequest): Pro
     let response: Response;
     try {
       if (req.deadlineMs !== undefined && performance.now() >= req.deadlineMs) {
-        return { kind: "not_sent", detail: "polling deadline expired before send" };
+        return { kind: "not_sent", detail: "deadline expired before send" };
       }
       response = await fetchImpl(req.url, {
         method: req.method,
@@ -195,7 +207,7 @@ export async function attempt(fetchImpl: typeof fetch, req: AttemptRequest): Pro
         signal: controller.signal,
       });
     } catch (error) {
-      if (timedOut) return { kind: "timeout" };
+      if (timedOut) return { kind: "timeout", deadline: byDeadline };
       if (req.signal?.aborted) return { kind: "aborted", sent: true };
       return isNotSent(error) ? { kind: "not_sent", detail: detail(error) } : { kind: "lost", detail: detail(error) };
     }

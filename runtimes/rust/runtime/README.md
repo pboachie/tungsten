@@ -120,6 +120,22 @@ each supported platform, including Windows and WSL.
 
 ## Limits
 
+In unreleased 0.2.0, `deadline` (on `ClientOptions` or `CallOptions`) sets a total
+deadline for one logical call, separate from the per-attempt `timeout`. It is
+measured on a monotonic clock and covers authentication, idempotency-key
+reservation, every attempt (each one's `timeout` is cut to the time left),
+retry waits, response bodies and verification; for `pages`, `poll` and
+`run_macro` it covers the whole traversal, poll or macro, and nested work
+cannot restart it. No attempt starts after it expires: the call fails with
+`code` `DEADLINE_EXCEEDED`, and a mutation that was already sent reports
+`OUTCOME_UNKNOWN`, never a blind replay. A retry wait that would end after the
+deadline returns the last failure at once. For `stream()` it bounds connecting
+and each reconnect, never an open stream (use `idle_timeout`). An in-flight
+OAuth token request is not cancelled, so a shared refresh still serves its
+other callers: it completes within its own `timeout` and the call then stops
+before sending. A blocking idempotency-store worker is no longer waited for at
+the deadline but runs to completion. Default: no total deadline.
+
 In unreleased 0.2.0, schema `minLength` and `maxLength` count Unicode code points, as
 JSON Schema does: an emoji outside the Basic Multilingual Plane is one character, and a
 lone surrogate counts as one. A schema `pattern` that the `regex` crate cannot compile is not
@@ -153,6 +169,29 @@ File idempotency leases read their owner host from `/proc/sys/kernel/hostname`.
 That host field is empty off Linux; it is diagnostic information, not a
 cross-host exclusion guarantee. Applications own file-store permissions and
 coordination across hosts.
+
+In unreleased 0.2.0, a client can bound its outbound requests with an opt-in
+request scheduler (`ClientOptions::scheduler`, a cloneable `RequestScheduler`). Without one, every call is sent at
+once, as before. With one, each scope (the client's `tenant` plus the request
+origin, or the tenant alone with scope ``SchedulerScope::Scheduler``) allows at most `max_active`
+ordinary attempts and `max_streams` event streams in flight (default: `max_active`),
+and at most `max_queued` more of each waiting in first-in-first-out order (default
+100) for at most `max_queue` (default 30 seconds; the call's own deadline and
+cancellation also end the wait). A request that cannot be admitted is never
+sent and fails with `RATE_LIMITED`, code `QUEUE_FULL`, `QUEUE_TIMEOUT` or
+`RATE_LIMIT_PAUSED`, or with `TRANSPORT_FAILED`, code `SCHEDULER_CLOSED`, after
+the scheduler was closed; the retry loop does not retry these. A permit covers
+one attempt with its redirects and body read, is released before a retry
+delay, and an event stream holds its permit until the stream is closed.
+Authentication token requests are not scheduled. A `RATE_LIMITED` answer
+pauses its scope for its `Retry-After` (one second when it names none) plus up
+to 10 % (at most one second) of random spread; afterwards one request per kind
+probes the quota until an answer that is not rate limited arrives. One
+scheduler can be shared by several clients; scopes never share capacity,
+queues or pauses, and nothing is coordinated across processes. Closing a
+scheduler rejects waiting and later requests; requests in flight keep their
+capacity until they finish, which `drained().await` waits for. Custom transports remain
+owned by the application and are not closed by the scheduler.
 
 No runtime ships a file-backed OAuth token store. Provide an application-owned
 token-store implementation when tokens must survive process restarts; protect

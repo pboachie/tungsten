@@ -2,7 +2,8 @@
 //! OpenAPI 3.2 constructs that have no 3.1 equivalent.
 //!
 //! A 3.2 document that uses only 3.1 constructs goes through the unchanged
-//! 3.1 path. Every construct 3.2 added is either refused with an error (when
+//! 3.1 path. The `query` method is compiled by the build (as `QUERY`); every
+//! other construct 3.2 added is either refused with an error (when
 //! ignoring it would produce a client that behaves differently from the API)
 //! or reported as a warning (when it only adds metadata the compiler has no
 //! use for). Nothing is dropped silently. Codes `TG0140`-`TG0156` form one
@@ -217,14 +218,6 @@ fn node_findings(node: &Node<'_>, schemes: &BTreeSet<String>, out: &mut Vec<Find
     match node.kind {
         Kind::Document => {}
         Kind::PathItem => {
-            if map.contains_key("query") {
-                out.push(error(
-                    "TG0141",
-                    at("query"),
-                    "the OpenAPI 3.2 `query` HTTP method is not supported; the operation would be left out",
-                    "describe the call with a supported method such as `post`",
-                ));
-            }
             if map.contains_key("additionalOperations") {
                 out.push(error(
                     "TG0142",

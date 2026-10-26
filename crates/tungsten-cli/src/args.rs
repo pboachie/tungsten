@@ -145,6 +145,13 @@ impl Cli {
             Command::Doctor(_) => CommandName::Doctor,
             Command::Capabilities(_) => CommandName::Capabilities,
             Command::Config(_) => CommandName::Config,
+            Command::Lock(_) => CommandName::Lock,
+            Command::Bundle {
+                command: BundleCommand::Export(_),
+            } => CommandName::BundleExport,
+            Command::Bundle {
+                command: BundleCommand::Import(_),
+            } => CommandName::BundleImport,
             Command::Policy { .. } => CommandName::PolicyDigest,
             Command::Emitters(_) => CommandName::Emitters,
             Command::Generate(_) => CommandName::Generate,
@@ -183,6 +190,15 @@ pub(crate) enum Command {
     Capabilities(CapabilitiesArgs),
     /// Explain supported effective configuration without compiling or running tools.
     Config(ConfigArgs),
+    /// Capture or verify the project's generation lock (tungsten.lock.json)
+    /// offline; never fetches inputs or runs emitters.
+    Lock(LockArgs),
+    /// Export or import a portable project bundle: the locked input closure
+    /// as a plain directory with a digest inventory. Runs nothing.
+    Bundle {
+        #[command(subcommand)]
+        command: BundleCommand,
+    },
     /// Explicit host policy utilities; never approves or runs executables.
     Policy {
         #[command(subcommand)]
@@ -239,6 +255,14 @@ pub(crate) struct SupportBundleArgs {
     /// Remove an entry by id from the bundle; repeatable.
     #[arg(long, value_name = "ID")]
     pub exclude: Vec<String>,
+    /// Read an existing bundle file, check it against its schema version and
+    /// show its entries; reads only this file and writes or runs nothing.
+    #[arg(
+        long,
+        value_name = "FILE",
+        conflicts_with_all = ["preview", "output", "exclude"]
+    )]
+    pub inspect: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]
@@ -253,6 +277,10 @@ pub(crate) struct LspArgs {
 pub(crate) struct CapabilitiesArgs {
     /// Limit the catalog to one target id or CLI alias.
     pub target: Option<String>,
+    /// Print the human output as a Markdown support matrix derived from the
+    /// same declarations (JSON output is unchanged).
+    #[arg(long)]
+    pub matrix: bool,
 }
 
 #[derive(Debug, Args)]
@@ -263,6 +291,65 @@ pub(crate) struct ConfigArgs {
     /// Fail on supported-option warnings as well as configuration errors.
     #[arg(long)]
     pub strict: bool,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct LockArgs {
+    /// Local project directory or tungsten manifest.
+    #[arg(default_value = ".")]
+    pub path: PathBuf,
+    /// Verify the existing lock; fail when it is missing, stale or corrupt.
+    /// Never writes.
+    #[arg(long, conflicts_with_all = ["preview", "update"])]
+    pub check: bool,
+    /// Print the recipe and its drift from the existing lock; never writes.
+    #[arg(long, conflicts_with = "update")]
+    pub preview: bool,
+    /// Accept changed identities and replace a stale or corrupt lock.
+    #[arg(long)]
+    pub update: bool,
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum BundleCommand {
+    /// Copy the locked input closure and lock into a new bundle directory.
+    /// Without --output, preview the inventory only.
+    Export(BundleExportArgs),
+    /// Validate a bundle completely, then copy it into a destination
+    /// directory without overwriting differing files.
+    Import(BundleImportArgs),
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct BundleExportArgs {
+    /// Local project directory or tungsten manifest.
+    #[arg(default_value = ".")]
+    pub path: PathBuf,
+    /// Show the inventory and what is excluded; writes nothing.
+    #[arg(long, conflicts_with = "output")]
+    pub preview: bool,
+    /// New bundle directory to create; never overwrites an existing entry.
+    #[arg(long, value_name = "DIR")]
+    pub output: Option<PathBuf>,
+    /// Export even when remote inputs, files outside the project or external
+    /// emitters keep the bundle from being self-contained.
+    #[arg(long)]
+    pub allow_incomplete: bool,
+    /// Export declared inputs whose names suggest credential or key material.
+    #[arg(long)]
+    pub allow_sensitive: bool,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct BundleImportArgs {
+    /// Bundle directory written by `bundle export`.
+    pub bundle: PathBuf,
+    /// Destination project directory; created when missing.
+    #[arg(long, value_name = "DIR")]
+    pub dest: PathBuf,
+    /// Validate and list what would be written; writes nothing.
+    #[arg(long)]
+    pub preview: bool,
 }
 
 #[derive(Debug, Subcommand)]
@@ -536,6 +623,10 @@ pub enum SchemaName {
     ToolCatalog,
     /// Built-in target capability declarations, independent of qualification.
     Capabilities,
+    /// The project generation lock written by `lock` (tungsten.lock.json).
+    GenerationLock,
+    /// The inventory of a project bundle (tungsten-bundle.json).
+    ProjectBundle,
 }
 
 #[derive(Debug, Clone, Args)]

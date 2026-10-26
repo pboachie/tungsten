@@ -801,6 +801,7 @@ pub(crate) fn method_str(m: HttpMethod) -> &'static str {
         HttpMethod::Head => "HEAD",
         HttpMethod::Patch => "PATCH",
         HttpMethod::Trace => "TRACE",
+        HttpMethod::Query => "QUERY",
     }
 }
 
@@ -814,6 +815,7 @@ fn method_rs(m: HttpMethod) -> &'static str {
         HttpMethod::Head => "HttpMethod::Head",
         HttpMethod::Patch => "HttpMethod::Patch",
         HttpMethod::Trace => "HttpMethod::Trace",
+        HttpMethod::Query => "HttpMethod::Query",
     }
 }
 

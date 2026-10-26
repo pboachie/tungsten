@@ -44,8 +44,9 @@ impl Node<'_> {
     }
 }
 
+/// `query` is an OpenAPI 3.2 method; in older documents the build ignores it.
 const METHODS: &[&str] = &[
-    "get", "put", "post", "delete", "options", "head", "patch", "trace",
+    "get", "put", "post", "delete", "options", "head", "patch", "trace", "query",
 ];
 
 const COMPONENTS: &[(&str, Kind)] = &[

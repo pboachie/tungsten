@@ -29,7 +29,8 @@ use crate::rpc::{self, RpcVariant};
 use crate::{NamespaceInput, bodies, params, responses, streams};
 
 /// Path item members that are operations, in visiting order.
-pub(crate) const METHODS: [(&str, HttpMethod); 8] = [
+/// `query` is read only from OpenAPI 3.2 documents (see `PathItem`).
+pub(crate) const METHODS: [(&str, HttpMethod); 9] = [
     ("get", HttpMethod::Get),
     ("put", HttpMethod::Put),
     ("post", HttpMethod::Post),
@@ -38,6 +39,7 @@ pub(crate) const METHODS: [(&str, HttpMethod); 8] = [
     ("head", HttpMethod::Head),
     ("patch", HttpMethod::Patch),
     ("trace", HttpMethod::Trace),
+    ("query", HttpMethod::Query),
 ];
 
 /// The operation being built, as the part builders see it.

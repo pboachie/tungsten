@@ -50,6 +50,7 @@ import {
 import { DEFAULT_MAX_EVENT_BYTES, SseParser, type SseEvent } from "./sse.js";
 import { EventStream } from "./streams.js";
 import { attempt, type AttemptOutcome, nextLink, parseRetryAfter, StreamBody } from "./transport.js";
+import { type Permit, type Rejection, RequestScheduler } from "./scheduler.js";
 import type {
   ApiDescriptor,
   CallOptions,
@@ -98,7 +99,7 @@ import { RUNTIME_VERSION } from "./version.js";
 type Failure = { ok: false; error: Diagnostic; partial?: unknown };
 type Step<T> = { ok: true; value: T } | Failure;
 
-const METHODS: ReadonlySet<string> = new Set(["GET", "PUT", "POST", "DELETE", "OPTIONS", "HEAD", "PATCH", "TRACE"]);
+const METHODS: ReadonlySet<string> = new Set(["GET", "PUT", "POST", "DELETE", "OPTIONS", "HEAD", "PATCH", "TRACE", "QUERY"]);
 const SAFETIES: ReadonlySet<string> = new Set(["read_only", "mutating", "destructive", "irreversible"]);
 const POLICIES: ReadonlySet<string> = new Set(["none", "auto", "caller_owned", "content_hash", "content_identity"]);
 const RETRY_CATEGORIES: ReadonlySet<string> = new Set(["RATE_LIMITED", "UPSTREAM_UNAVAILABLE", "TRANSPORT_FAILED", "OUTCOME_UNKNOWN"]);
@@ -126,7 +127,14 @@ const MACRO_CONFIRMED: unique symbol = Symbol("tungsten.macroConfirmed");
  * step that fails pre-flight leaves the token unspent. */
 const MACRO_CLAIM: unique symbol = Symbol("tungsten.macroClaim");
 const POLL_DEADLINE: unique symbol = Symbol("tungsten.pollDeadline");
-type StepOptions = CallOptions & { [POLL_DEADLINE]?: number | undefined; [MACRO_CONFIRMED]?: true; [MACRO_CLAIM]?: () => Failure | null };
+/** Absolute monotonic deadline (`performance.now()` ms) of one logical
+ * call, fixed when a public entry point resolves `deadlineMs`. Nested work
+ * (pages, polls, verification, macro steps) inherits it and cannot restart it. */
+const CALL_DEADLINE: unique symbol = Symbol("tungsten.callDeadline");
+type StepOptions = CallOptions & { [POLL_DEADLINE]?: number | undefined; [CALL_DEADLINE]?: number | undefined; [MACRO_CONFIRMED]?: true; [MACRO_CLAIM]?: () => Failure | null };
+
+/** `#untilDeadline` gave up waiting. */
+const DEADLINE_EXPIRED: unique symbol = Symbol("tungsten.deadlineExpired");
 
 const SAFETY_RANK: Readonly<Record<string, number>> = { read_only: 0, mutating: 1, destructive: 2, irreversible: 3 };
 
@@ -472,6 +480,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
   readonly #usedTokens = new Map<string, { bind: string | null; expiry: number }>();
 
   readonly #redirectsDisabled: boolean;
+  readonly #scheduler: RequestScheduler | null = null;
   readonly #redirectPolicyInvalid: boolean;
 
   /**
@@ -509,6 +518,16 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     } catch {
       throw new TypeError("confirmationKey must be a Uint8Array containing at least 32 bytes; omit it to generate a random key");
     }
+    const scheduler = this.options.scheduler;
+    if (scheduler instanceof RequestScheduler) this.#scheduler = scheduler;
+    else if (scheduler !== undefined && scheduler !== null) {
+      try {
+        this.#scheduler = new RequestScheduler(scheduler);
+      } catch (error) {
+        throw new TypeError(`scheduler: ${describeError(error)}`);
+      }
+    }
+    if (this.options.tenant !== undefined && typeof this.options.tenant !== "string") throw new TypeError("tenant must be a string");
     try {
       const candidate = this.options.idempotencyStore;
       if (isRecord(candidate) && typeof candidate.get === "function" && typeof candidate.put === "function") store = candidate;
@@ -635,7 +654,48 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
   // ------------------------------------------------------------ internals
 
   #callOptions(opts: unknown): CallOptions {
-    return isRecord(opts) ? (opts as CallOptions) : {};
+    const base = isRecord(opts) ? (opts as CallOptions) : {};
+    const ms = bounded(base.deadlineMs, bounded(this.options.deadlineMs, 0, 0), 0);
+    if (ms <= 0) return base;
+    const inherited = (base as StepOptions)[CALL_DEADLINE];
+    const deadline = performance.now() + ms;
+    return { ...base, [CALL_DEADLINE]: inherited === undefined ? deadline : Math.min(inherited, deadline) } as StepOptions;
+  }
+
+  /** The earliest absolute deadline bounding this work: the call's total
+   * deadline or a polling budget. */
+  #deadline(opts: CallOptions): number | undefined {
+    const call = (opts as StepOptions)[CALL_DEADLINE];
+    const poll = (opts as StepOptions)[POLL_DEADLINE];
+    return call === undefined ? poll : poll === undefined ? call : Math.min(call, poll);
+  }
+
+  #deadlineExpired(op: OperationDescriptor, during: string): Failure {
+    return fail(diagnostic(op.id, "TRANSPORT_FAILED", {
+      code: "DEADLINE_EXCEEDED",
+      retryable: "never",
+      remediation: `The operation deadline (deadlineMs) expired ${during}, so the request was not sent. Call again with a larger deadlineMs.`,
+    }));
+  }
+
+  /** Wait for `work` only until the call's deadline. The work is not
+   * cancelled: a shared token refresh or store write keeps running for its
+   * other waiters, bounded by its own timeout. */
+  async #untilDeadline<R>(work: Promise<R>, opts: CallOptions): Promise<R | typeof DEADLINE_EXPIRED> {
+    const deadline = (opts as StepOptions)[CALL_DEADLINE];
+    if (deadline === undefined) return work;
+    const remaining = deadline - performance.now();
+    if (remaining <= 0) {
+      work.catch(() => undefined);
+      return DEADLINE_EXPIRED;
+    }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const expired = new Promise<typeof DEADLINE_EXPIRED>((resolve) => { timer = setTimeout(() => resolve(DEADLINE_EXPIRED), remaining); });
+    try {
+      return await Promise.race([work, expired]);
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   #internal(op: unknown, error: unknown, during: string): Diagnostic {
@@ -699,8 +759,10 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     if (opts.signal?.aborted) return fail(diagnostic(op.id, "TRANSPORT_FAILED", {
       retryable: "never", remediation: "The caller cancelled the call before it was sent.",
     }));
-    const deadline = (opts as StepOptions)[POLL_DEADLINE];
-    if (deadline !== undefined && performance.now() >= deadline) return fail(diagnostic(op.id, "TRANSPORT_FAILED", {
+    const deadline = (opts as StepOptions)[CALL_DEADLINE];
+    if (deadline !== undefined && performance.now() >= deadline) return this.#deadlineExpired(op, "before the request could be sent");
+    const pollDeadline = (opts as StepOptions)[POLL_DEADLINE];
+    if (pollDeadline !== undefined && performance.now() >= pollDeadline) return fail(diagnostic(op.id, "TRANSPORT_FAILED", {
       retryable: "never", remediation: "The polling budget expired before the request was sent.",
     }));
     return null;
@@ -781,8 +843,8 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     const scheme = prepared.oauth;
     const current = prepared.headers.get("Authorization");
     if (scheme === null || current === undefined || !current.startsWith("Bearer ")) return rejected;
-    const token = await this.#oauth.refreshAfterRejection(scheme, current.slice("Bearer ".length));
-    if (token === null) return rejected;
+    const token = await this.#untilDeadline(this.#oauth.refreshAfterRejection(scheme, current.slice("Bearer ".length)), opts);
+    if (token === DEADLINE_EXPIRED || token === null) return rejected;
     prepared.headers.set("Authorization", `Bearer ${token}`, true);
     prepared.secrets.add(token);
     return this.#send<T>({ ...prepared, oauth: null }, opts);
@@ -1020,8 +1082,9 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     const beforeAuth = this.#beforeDispatch(op, opts);
     if (beforeAuth) return beforeAuth;
     const authTarget = urlOverride ?? (typeof this.options.baseUrl === "string" ? this.options.baseUrl : this.api.servers?.find(s => typeof s === "string"));
-    const auth = await resolveAuth(this.api, op, isRecord(this.options.auth) ? this.options.auth : {}, method, this.#tokenSource,
-      insecureHttp(authTarget, this.options.allowInsecureHttp) ? INSECURE_HTTP_AUTH : null);
+    const auth = await this.#untilDeadline(resolveAuth(this.api, op, isRecord(this.options.auth) ? this.options.auth : {}, method, this.#tokenSource,
+      insecureHttp(authTarget, this.options.allowInsecureHttp) ? INSECURE_HTTP_AUTH : null), opts);
+    if (auth === DEADLINE_EXPIRED) return this.#deadlineExpired(op, "while authenticating");
     if (!auth.ok) return fail(diagnostic(op.id, "AUTH_FAILED", { remediation: auth.remediation }));
     const secrets = new Set(auth.secrets.filter((s) => s !== ""));
     for (const p of op.params) {
@@ -1049,7 +1112,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
 
     let encoded;
     try {
-      const value = isSafeMethod(method) && method !== "OPTIONS" ? undefined : bodyValue(op, args, new Set(params.map((p) => p.name)));
+      const value = isSafeMethod(method) && method !== "OPTIONS" && method !== "QUERY" ? undefined : bodyValue(op, args, new Set(params.map((p) => p.name)));
       encoded = await encodeBody(op.body ?? null, value, (display) => {
         const bodyPaths = sensitiveBodyPaths(op);
         return redactSensitiveKeys(bodyPaths.includes("") ? REDACTED : redactPaths(display, bodyPaths.filter((p) => p !== "")));
@@ -1347,7 +1410,8 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
         if (purpose !== "call") return { ok: true, value: null };
         const logicalId = await argsDigest(args);
         try {
-          const key = await reserveKey(this.#store, op.id, logicalId, crypto.randomUUID());
+          const key = await this.#untilDeadline(reserveKey(this.#store, op.id, logicalId, crypto.randomUUID()), opts);
+          if (key === DEADLINE_EXPIRED) return this.#deadlineExpired(op, "while reserving an idempotency key");
           if (typeof key !== "string" || key === "") throw new Error("store returned an invalid key");
           return { ok: true, value: key };
         } catch (error) {
@@ -1436,50 +1500,67 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
       }
       const interrupted = this.#beforeDispatch(op, opts);
       if (interrupted) return previousMutationFailure ?? interrupted;
-      // Redirects are never followed by fetch: it would forward custom
-      // credential headers (API keys, CSRF headers) to another origin. A
-      // read follows same-origin redirects here; a mutation follows none.
-      let outcome = await attempt(this.#fetch(), {
-        url: prepared.url,
-        method: prepared.method,
-        headers,
-        body: prepared.body,
-        redirect: "manual",
-        timeoutMs,
-        signal: opts.signal,
-        stream,
-        idleMs,
-        maxResponseBytes: this.#responseLimit(opts),
-        deadlineMs: (opts as StepOptions)[POLL_DEADLINE],
-      });
+      const permit = await this.#admit(op, prepared.url, opts, stream);
+      if (permit !== null && "ok" in permit) return previousMutationFailure ?? permit;
+      let result: Result<T>;
       let current = { url: prepared.url, method: prepared.method, body: prepared.body };
-      for (let hops = 0; !this.#redirectsDisabled && !mutation && hops < MAX_REDIRECTS && outcome.kind === "response" && outcome.bodyFailure !== "oversized" && REDIRECT_STATUSES.has(outcome.status); hops += 1) {
-        const next = this.#redirectTarget(prepared, current.url, outcome.headers.location);
-        if (next === null) break;
-        const rewrite = outcome.status !== 307 && outcome.status !== 308 && current.method !== "GET" && current.method !== "HEAD";
-        current = { url: next.url, method: rewrite ? "GET" : current.method, body: rewrite ? null : current.body };
-        ctx.url = next.display;
-        ctx.method = current.method;
-        const hopHeaders = { ...headers };
-        if (rewrite) for (const name of Object.keys(hopHeaders)) if (name.toLowerCase() === "content-type") delete hopHeaders[name];
-        const beforeRedirect = this.#beforeDispatch(op, opts);
-        if (beforeRedirect) return beforeRedirect;
-        outcome = await attempt(this.#fetch(), {
-          url: current.url,
-          method: current.method,
-          headers: hopHeaders,
-          body: current.body,
+      let handedOff = false;
+      try {
+        // Redirects are never followed by fetch: it would forward custom
+        // credential headers (API keys, CSRF headers) to another origin. A
+        // read follows same-origin redirects here; a mutation follows none.
+        let outcome = await attempt(this.#fetch(), {
+          url: prepared.url,
+          method: prepared.method,
+          headers,
+          body: prepared.body,
           redirect: "manual",
           timeoutMs,
           signal: opts.signal,
           stream,
           idleMs,
           maxResponseBytes: this.#responseLimit(opts),
-          deadlineMs: (opts as StepOptions)[POLL_DEADLINE],
+          deadlineMs: this.#deadline(opts),
         });
+        for (let hops = 0; !this.#redirectsDisabled && !mutation && hops < MAX_REDIRECTS && outcome.kind === "response" && outcome.bodyFailure !== "oversized" && REDIRECT_STATUSES.has(outcome.status); hops += 1) {
+          const next = this.#redirectTarget(prepared, current.url, outcome.headers.location);
+          if (next === null) break;
+          const rewrite = outcome.status !== 307 && outcome.status !== 308 && current.method !== "GET" && current.method !== "HEAD";
+          current = { url: next.url, method: rewrite ? "GET" : current.method, body: rewrite ? null : current.body };
+          ctx.url = next.display;
+          ctx.method = current.method;
+          const hopHeaders = { ...headers };
+          if (rewrite) for (const name of Object.keys(hopHeaders)) if (name.toLowerCase() === "content-type") delete hopHeaders[name];
+          const beforeRedirect = this.#beforeDispatch(op, opts);
+          if (beforeRedirect) return beforeRedirect;
+          outcome = await attempt(this.#fetch(), {
+            url: current.url,
+            method: current.method,
+            headers: hopHeaders,
+            body: current.body,
+            redirect: "manual",
+            timeoutMs,
+            signal: opts.signal,
+            stream,
+            idleMs,
+            maxResponseBytes: this.#responseLimit(opts),
+            deadlineMs: this.#deadline(opts),
+          });
+        }
+        const callCtx: CallContext = { api: this.api, op, key: prepared.key, keyHeader: prepared.keyHeader, attempts, check };
+        result = await this.#classify<T>(callCtx, prepared, outcome, ctx, timeoutMs);
+        if (permit !== null) {
+          if (!result.ok && result.error.category === "RATE_LIMITED") permit.settle(result.error.retry_after_ms);
+          else if (outcome.kind === "response") permit.settle(undefined);
+          // An open event stream keeps its capacity until it is closed.
+          if (result.ok && result.value instanceof StreamBody) {
+            result.value.whenClosed(() => permit.release());
+            handedOff = true;
+          }
+        }
+      } finally {
+        if (!handedOff) permit?.release();
       }
-      const callCtx: CallContext = { api: this.api, op, key: prepared.key, keyHeader: prepared.keyHeader, attempts, check };
-      const result = await this.#classify<T>(callCtx, prepared, outcome, ctx, timeoutMs);
       if (result.ok) { pageRequestUrls.set(result.meta, current.url); return result; }
       const error = scrubDiagnostic(result.error, prepared.secrets);
       const done = (): Failure => (result.partial === undefined ? fail(error) : { ok: false, error, partial: result.partial });
@@ -1510,7 +1591,65 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
           // Observers never change the call.
         }
       }
+      // A retry that could not start before the deadline is not waited for.
+      const deadline = (opts as StepOptions)[CALL_DEADLINE];
+      if (deadline !== undefined && performance.now() + delay >= deadline) return previousMutationFailure ?? done();
       if (!(await sleep(delay, opts.signal))) return previousMutationFailure ?? done();
+    }
+  }
+
+  /** Wait for scheduler capacity for one attempt. Null without a
+   * scheduler; a failure (nothing sent) when no capacity was given. */
+  async #admit(op: OperationDescriptor, url: string, opts: CallOptions, stream: boolean): Promise<Permit | Failure | null> {
+    const scheduler = this.#scheduler;
+    if (scheduler === null) return null;
+    const random = typeof this.options.random === "function" ? () => bounded(this.options.random?.(), 0.5, 0, 1) : Math.random;
+    const key = scheduler.scopeKey(url, this.options.tenant);
+    const admitted = await scheduler.acquire(key, stream ? "stream" : "call", opts.signal, this.#deadline(opts), random);
+    if ("release" in admitted) {
+      // Cancelled or expired while it waited: the request is never sent.
+      const late = this.#beforeDispatch(op, opts);
+      if (late) {
+        admitted.release();
+        return late;
+      }
+      return admitted;
+    }
+    // A wait ended by the caller's signal or deadline reports that.
+    return this.#beforeDispatch(op, opts) ?? this.#rejected(op, admitted, stream);
+  }
+
+  #rejected(op: OperationDescriptor, rejection: Rejection, stream: boolean): Failure {
+    const what = stream ? "event streams" : "requests";
+    const limit = stream ? "maxStreams" : "maxActive";
+    switch (rejection.reason) {
+      case "full":
+        return fail(diagnostic(op.id, "RATE_LIMITED", {
+          code: "QUEUE_FULL",
+          remediation: `The client's queue of ${what} waiting for capacity is full (SchedulerOptions.maxQueued); nothing was sent. Retry after calls in flight finish, or raise maxQueued or ${limit}.`,
+        }));
+      case "timeout":
+        return fail(diagnostic(op.id, "RATE_LIMITED", {
+          code: "QUEUE_TIMEOUT",
+          remediation: `No capacity for ${what} became free within the queue wait (SchedulerOptions.maxQueueMs) or the call's deadline; nothing was sent. Retry later, or raise maxQueueMs or ${limit}.`,
+        }));
+      case "paused":
+        return fail(diagnostic(op.id, "RATE_LIMITED", {
+          code: "RATE_LIMIT_PAUSED",
+          retry_after_ms: rejection.retryAfterMs,
+          remediation: `An earlier call sharing this quota was rate limited, and the pause outlasts this call's queue wait or deadline; nothing was sent. Wait retry_after_ms before calling again.`,
+        }));
+      case "closed":
+        return fail(diagnostic(op.id, "TRANSPORT_FAILED", {
+          code: "SCHEDULER_CLOSED",
+          retryable: "never",
+          remediation: "The request scheduler was closed (shutdown); nothing was sent. Use a client with an open scheduler.",
+        }));
+      default:
+        return fail(diagnostic(op.id, "TRANSPORT_FAILED", {
+          retryable: "never",
+          remediation: "The caller cancelled the call while it waited for capacity; nothing was sent.",
+        }));
     }
   }
 
@@ -1680,6 +1819,18 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
               }),
         );
       case "timeout":
+        if (outcome.deadline === true) {
+          return fail(
+            mutation
+              ? outcomeUnknown(callCtx, "The operation deadline expired before a response arrived.")
+              : diagnostic(op.id, "UPSTREAM_UNAVAILABLE", {
+                  code: "DEADLINE_EXCEEDED",
+                  retryable: "never",
+                  remediation: "The operation deadline expired before a response arrived. This read has no side effects; call again with a larger deadlineMs.",
+                  trace: { attempts },
+                }),
+          );
+        }
         return fail(
           mutation
             ? outcomeUnknown(callCtx, `No response arrived within ${timeoutMs} ms.`)

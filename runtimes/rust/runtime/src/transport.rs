@@ -47,9 +47,16 @@ pub enum BodyRead {
 pub struct EventBody {
     response: reqwest::Response,
     idle: Duration,
+    /// Scheduler capacity held until the stream is dropped.
+    permit: Option<crate::scheduler::Permit>,
 }
 
 impl EventBody {
+    /// Keep `permit` until this body (the connection) is dropped.
+    pub(crate) fn hold(&mut self, permit: crate::scheduler::Permit) {
+        self.permit = Some(permit);
+    }
+
     pub async fn read(&mut self) -> BodyRead {
         match tokio::time::timeout(self.idle, self.response.chunk()).await {
             Err(_) => BodyRead::Timeout,
@@ -206,9 +213,9 @@ pub async fn attempt(client: &reqwest::Client, req: &AttemptRequest<'_>) -> Atte
     let mut deadline = now
         .checked_add(req.timeout)
         .unwrap_or_else(|| now + Duration::from_secs(86_400 * 365));
-    if let Some(poll_deadline) = crate::verify::poll_deadline() {
+    if let Some(poll_deadline) = crate::verify::effective_deadline() {
         if std::time::Instant::now() >= poll_deadline {
-            return AttemptOutcome::NotSent("polling deadline expired before send".to_owned());
+            return AttemptOutcome::NotSent("deadline expired before send".to_owned());
         }
         deadline = deadline.min(Instant::from_std(poll_deadline));
     }
@@ -270,6 +277,7 @@ pub async fn attempt(client: &reqwest::Client, req: &AttemptRequest<'_>) -> Atte
             body: EventBody {
                 response,
                 idle: req.idle.unwrap_or(req.timeout),
+                permit: None,
             },
         };
     }

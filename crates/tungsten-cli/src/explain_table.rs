@@ -294,8 +294,8 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
     ),
     e(
         "TG0141",
-        "A Path Item uses the OpenAPI 3.2 `query` operation (the HTTP QUERY method). tungsten does not compile the QUERY method and would leave the operation out of the client.",
-        "Describe the call with a supported method such as `post`, or remove the operation.",
+        "Retired. Earlier releases refused the OpenAPI 3.2 `query` operation (the HTTP QUERY method). tungsten now compiles it as a safe operation that sends its request body, and no longer reports this code.",
+        "Nothing to do; regenerate to pick up QUERY operations.",
     ),
     e(
         "TG0142",
@@ -814,8 +814,8 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
         "TG0705",
         "The project was imported from a Postman collection or another source whose operations \
          carry an enforced import policy (the runtime must apply it to every call), and a \
-         configured target cannot apply it. Only the typescript, python, rust, mcp, webmcp and \
-         docs targets declare that support, and an external emitter declares it with \
+         configured target cannot apply it. Only the typescript, python, rust, java, kotlin, ruby, \
+         mcp, webmcp and docs targets declare that support, and an external emitter declares it with \
          `import_policy` in its `--describe` response; generating any other target would \
          discard the policy. During input conversion, init refuses unsupported built-in \
          targets before saving the converted input or project manifests. During generation \
@@ -1182,7 +1182,7 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
          The emitter is not run and no files are written for that target. Other supported \
          targets are still processed. Built-in targets without this capability use TG0705.",
         "Use an emitter that declares `import_policy: true` and enforces the imported \
-         metadata, or select a supported TypeScript, Python, Rust, MCP, WebMCP or docs \
+         metadata, or select a supported TypeScript, Python, Rust, Java, Kotlin, Ruby, MCP, WebMCP or docs \
          target. Do not remove policy metadata merely to bypass this check. Protocol-1 \
          emitters remain compatible with projects that have no imported-operation policy.",
     ),

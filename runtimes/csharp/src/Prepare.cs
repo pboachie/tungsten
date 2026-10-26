@@ -789,7 +789,7 @@ public sealed partial class ClientCore
         var bodyPaths = SensitiveBodyPaths(op);
         JsonNode? value = null;
         bool hasValue = false;
-        if (!IsSafeMethod(method) || method == "OPTIONS")
+        if (!IsSafeMethod(method) || method is "OPTIONS" or "QUERY")
         {
             (value, hasValue) = Serialize.BodyValue(op, args, paramKeys);
         }

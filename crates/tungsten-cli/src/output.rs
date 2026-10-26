@@ -87,6 +87,12 @@ pub enum CommandName {
     Capabilities,
     #[serde(rename = "config")]
     Config,
+    #[serde(rename = "lock")]
+    Lock,
+    #[serde(rename = "bundle export")]
+    BundleExport,
+    #[serde(rename = "bundle import")]
+    BundleImport,
     #[serde(rename = "policy digest")]
     PolicyDigest,
     #[serde(rename = "emitters")]
@@ -197,6 +203,9 @@ pub enum CommandResult {
     Doctor(DoctorResult),
     Capabilities(tungsten_config::capabilities::CapabilityCatalog),
     Config(tungsten_config::inspection::ConfigurationInspection),
+    Lock(Box<crate::commands::lock::LockResult>),
+    BundleExport(Box<crate::commands::bundle::BundleExportResult>),
+    BundleImport(Box<crate::commands::bundle::BundleImportResult>),
     PolicyDigest(tungsten_core::policy::PolicyDigestResult),
     Emitters(EmittersResult),
     Generate(GenerateResult),
@@ -207,6 +216,7 @@ pub enum CommandResult {
     OverlaySuggest(OverlaySuggestResult),
     SupportBundle(Box<crate::commands::support_bundle::SupportBundlePreview>),
     SupportBundleExport(Box<crate::commands::support_bundle::SupportBundleExportReceipt>),
+    SupportBundleInspection(Box<crate::commands::support_bundle_inspect::SupportBundleInspection>),
     UpdateCheck(crate::commands::update::UpdateCheckResult),
     Help(HelpResult),
 }
@@ -1032,6 +1042,9 @@ const RESULT_DEFS: &[(CommandName, &str)] = &[
     (CommandName::Doctor, "DoctorResult"),
     (CommandName::Capabilities, "CapabilityCatalog"),
     (CommandName::Config, "ConfigurationInspection"),
+    (CommandName::Lock, "LockResult"),
+    (CommandName::BundleExport, "BundleExportResult"),
+    (CommandName::BundleImport, "BundleImportResult"),
     (CommandName::PolicyDigest, "PolicyDigestResult"),
     (CommandName::Emitters, "EmittersResult"),
     (CommandName::Generate, "GenerateResult"),
@@ -1070,6 +1083,7 @@ pub fn cli_output_schema() -> Value {
             let mut results = vec![json!({ "$ref": format!("#/$defs/{def}") }), json!({ "type": "null" })];
             if *command == CommandName::SupportBundle {
                 results.push(json!({ "$ref": "#/$defs/SupportBundleExportReceipt" }));
+                results.push(json!({ "$ref": "#/$defs/SupportBundleInspection" }));
             }
             json!({
                 "if": { "properties": { "command": { "const": command } }, "required": ["command"] },

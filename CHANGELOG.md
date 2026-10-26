@@ -226,6 +226,87 @@ changes.
 
 ### Added
 
+- Add an opt-in request scheduler to the TypeScript, Python and Rust runtimes
+  (`ClientOptions.scheduler`, `ClientOptions.tenant`). It bounds ordinary
+  attempts and event streams in flight per tenant and origin, queues a bounded
+  number of further requests first in, first out, rejects the rest without
+  sending them (`RATE_LIMITED` codes `QUEUE_FULL`, `QUEUE_TIMEOUT`,
+  `RATE_LIMIT_PAUSED`; `TRANSPORT_FAILED` code `SCHEDULER_CLOSED`), and shares
+  `Retry-After` pauses between callers of one scope, resuming with a single
+  probe. A scheduler can be shared by several clients, closed and drained.
+
+- Add an opt-in total operation deadline to the TypeScript (`deadlineMs`),
+  Python (`deadline_ms`) and Rust (`deadline`) runtimes, on client and call
+  options. Unlike the per-attempt timeout, it bounds one logical call across
+  authentication, idempotency-key reservation, retries and backoff, response
+  bodies and verification, and a whole traversal, poll or macro. No attempt
+  starts after it expires (`DEADLINE_EXCEEDED`); a mutation already sent still
+  reports `OUTCOME_UNKNOWN`. Existing timeout semantics are unchanged.
+
+- Add `tungsten lock`, a versioned single-project generation lock
+  (`tungsten.lock.json`). It records the declared input closure (manifest,
+  profiles, agent manifest, entry documents, local references and overlays in
+  application order) by content digest, with the compiler, IR and built-in
+  emitter identities, digests of the effective target options and each
+  target's consumer toolchain requirements. Capture compiles offline and never
+  fetches or refreshes inputs, runs emitters or probes tools; physical paths,
+  option values and credentials are not recorded. `lock --check` fails on a
+  missing, stale or corrupt lock and lists the drift; replacing a lock whose
+  identities changed requires `--update`. External emitters, remote inputs
+  and files outside the project are reported as reproduction gaps, and the
+  lock states that generated consumer dependencies are not vendored. The lock
+  grants no trust to external emitters. `tungsten schema generation-lock`
+  prints its schema.
+
+- Add `tungsten bundle export` and `tungsten bundle import` for portable
+  single-project bundles. Export requires a current generation lock and copies
+  only the locked input closure and the lock into a new plain directory with a
+  `tungsten-bundle.json` inventory of paths, sizes and digests; it never
+  includes credentials, input caches, generated output or unrelated files.
+  `--preview` shows the inventory, excluded remote or out-of-project inputs and
+  files named like credential material; exporting an incomplete bundle or such
+  files needs `--allow-incomplete` or `--allow-sensitive`. Import validates the
+  whole bundle before writing (file-count, size and depth limits, relative
+  path confinement, no links, digests and lock consistency), keeps identical
+  existing files, refuses to overwrite differing ones and runs nothing; the
+  bundle grants no trust to external emitters or execution policy.
+  `tungsten schema project-bundle` prints the inventory schema.
+
+- Extend the versioned capability catalog with each built-in target's option
+  keys, execution environments and implemented features, plus a registry of
+  feature ids. `tungsten capabilities --matrix` prints the support matrix
+  derived from those declarations, and the command refuses to answer from a
+  catalog with conflicting declarations (duplicate names, unregistered
+  features, empty version ranges, undeclared options). Editor completion of
+  target option keys now comes from the catalog, adding the missing Python
+  `module`, `python_version` and `models` keys. Declarations remain source
+  statements: qualification and artifact availability stay `unknown`.
+
+- Add `tungsten support-bundle --inspect <FILE>` to review an existing support
+  bundle locally on any platform. It reads one bounded regular file, refuses
+  unsupported `bundle_schema_version` values by number, requires exactly the
+  schema's keys, observed metadata-only entries and payload sizes that match,
+  and lists the entries. Errors name schema locations only, never file content.
+
+- Offer language-server quick fixes for unknown operation ids (`TG0603`) and
+  unknown manifest fields or values (`TG0602`), replacing the value named by
+  the diagnostic with the closest known name. Fixes are version-pinned edits
+  of the current buffer and are withheld when the buffer no longer matches.
+
+- The `java` and `kotlin` targets now enforce imported-operation policy and may
+  be generated for projects converted from Postman, cURL, `.http` or HAR input.
+  The Java runtime reads each operation's `import_policy`, refuses a reviewed
+  imported operation whose target origin is outside its saved review scope
+  (`VALIDATION_FAILED` on `baseUrl`, nothing sent), and applies the effective
+  safety tier of unreviewed operations. Generated SDKs require a runtime with
+  `ClientCore.requireImportPolicyV1()`.
+
+- The `ruby` target now enforces imported-operation policy the same way: the
+  Ruby runtime refuses a reviewed imported operation whose target origin is
+  outside its saved review scope (`VALIDATION_FAILED` on `base_url`, nothing
+  sent), and generated gems require
+  `Tungsten::Runtime::ClientCore.require_import_policy_v1`.
+
 - Add explicit Linux support-bundle export to a new file in an existing,
   trusted user-owned directory. Export preserves the metadata-only preview
   manifest, caps complete artifacts at 128 KiB, refuses replacement and
@@ -263,12 +344,19 @@ changes.
   project pins or generated clients, or sends project data. `--json` output adds
   the `update check` command to the CLI output schema.
 
+- The OpenAPI 3.2 `query` path-item method compiles to an operation sent with
+  the HTTP `QUERY` method and its request body in generated clients.
+  The IR gains the `QUERY` HTTP method, which is safe (read-only by default; set
+  `defaults.safety.query` in `agent.yml` to override), and all runtimes accept
+  it. `query` members of OpenAPI 3.0 and 3.1 documents are still not
+  operations. TG0141 is retired and no longer reported; `tungsten capabilities`
+  lists `query` as a compiled 3.2 construct.
+
 - OpenAPI 3.2.x documents are read: a document that uses only constructs OpenAPI
   3.1 has takes the 3.1 path and compiles to the same IR as its 3.1 twin. Each
   construct only 3.2 has is diagnosed at its member instead of being ignored, one
   code per feature. These are errors, because a client built without them would
-  differ from the API: `$self` (TG0140), the `query` method (TG0141),
-  `additionalOperations` (TG0142), `in: querystring` (TG0143), `style: cookie`
+  differ from the API: `$self` (TG0140), `additionalOperations` (TG0142), `in: querystring` (TG0143), `style: cookie`
   (TG0144), `itemSchema` (TG0145), `prefixEncoding` and `itemEncoding` (TG0146),
   nested encodings (TG0147), `components.mediaTypes` and media types given by
   `$ref` (TG0148), discriminator `defaultMapping` (TG0149), the OAuth 2.0 device
@@ -358,6 +446,14 @@ changes.
   text and JSON redact sensitive values and physical paths without compiling
   inputs, probing tools or executing emitters.
 
+- Compose Python (`package`, `version`, `runtime`, `models`, `python_version`)
+  and Rust (`crate`, `version`, `runtime`) defaults from the same bounded local
+  profiles, so one profile serves a multi-target library. Explicit project
+  fields still win and each value keeps its winning/shadowed origin. Python and
+  Rust options are declared in the shared capability schema and inspected by
+  `tungsten config`. The emitters reuse the same validators, so TG0731/TG0740
+  fallbacks are unchanged.
+
 - Compose bounded local TypeScript profiles for package, version, runtime and
   dependency defaults. Retain authored provenance through the compiler driver,
   strict profile diagnostics and existing manifest fallback behavior.
@@ -365,6 +461,11 @@ changes.
 - Declare the existing TypeScript target options and supported-value schema in
   the shared capability contract. Keep emitter defaults and TG0711 fallback
   behavior compatible while configuration and generation share validation.
+
+- Assert mock-side effects in saved scenarios with optional `expect.effects`
+  counts of applied writes and idempotent replays, so a lost-write retry that
+  changes its idempotency key fails even when call counts match. Failed runs
+  name each failing assertion by file position in terminal output.
 
 - Validate saved mock scenarios portably and explicitly run integration argv on
   Linux with a run-phase deadline, cancellation, owned process-group cleanup,
@@ -411,6 +512,13 @@ changes.
   now list 3.14 and 3.15; `requires-python` keeps its `>=3.10` floor without
   an upper cap.
 
+- Check the npm runtime packages on Node 26 (Current) as well as Node 22 and 24,
+  and add an advisory Node 20 canary that does not imply support. The README
+  now has one Node.js support table: supported lines, the declared floor for
+  each artifact, the checked patch versions, and the build-only scope of the
+  WebMCP floor. The TypeScript runtime now type-checks against Node 22 types,
+  so it cannot rely on APIs newer than its floor.
+
 - Locate primary and related LSP profile diagnostics in their captured local
   files, including invalid profiles, while preserving portable compiler and
   configuration-inspection source names.
@@ -444,6 +552,13 @@ changes.
   reusing a compatible generated value or omitting an optional field. Required
   fields remain intact, and the full intersection must validate before a repair
   is accepted.
+
+- Generated TypeScript SDKs no longer lose a `PATTERN_UNCHECKED` diagnostic when
+  the first untagged-union variant that accepts a value has a pattern the engine
+  cannot compile and a later variant also accepts it. Diagnostics now come only
+  from the first accepting variant, as in Dart and Python; rejected variants no
+  longer report speculative patterns. Schema shapes, `.options` and encoding are
+  unchanged.
 
 - Dart schema validation now reports unchecked patterns from the first accepting
   untagged-union variant, preserving nested property and array paths. Rejected

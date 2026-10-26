@@ -55,7 +55,7 @@ module Tungsten
 
       private
 
-      def safe_method?(method) = %w[GET HEAD OPTIONS TRACE].include?(method)
+      def safe_method?(method) = %w[GET HEAD OPTIONS TRACE QUERY].include?(method)
 
       def composite_key(part)
         case part["kind"]

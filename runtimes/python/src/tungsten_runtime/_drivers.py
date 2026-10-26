@@ -34,6 +34,7 @@ import httpcore
 import httpx
 
 from ._effects import (
+    Acquire,
     Answered,
     AttemptOutcome,
     AttemptRequest,
@@ -61,6 +62,7 @@ from ._effects import (
     Streaming,
     TimedOut,
 )
+from .scheduler import RequestScheduler
 
 T = TypeVar("T")
 
@@ -551,16 +553,28 @@ async def _quietly(awaitable: Awaitable[object]) -> None:
 _REPORTS: set[asyncio.Future[None]] = set()
 
 
+def _earliest(first: float | None, second: float | None) -> float | None:
+    return second if first is None else first if second is None else min(first, second)
+
+
+def _closed(stream: SyncStream | _AsyncStream) -> None:
+    on_close, stream.on_close = stream.on_close, None
+    if on_close is not None:
+        on_close()
+
+
 class SyncStream:
     """The unread body of an event stream on ``httpx.Client``. Each read waits
     at most the attempt timeout (httpx's read timeout), so an idle stream
     ends with a timeout."""
 
-    __slots__ = ("_chunks", "response")
+    __slots__ = ("_chunks", "on_close", "response")
 
     def __init__(self, response: httpx.Response) -> None:
         self.response = response
         self._chunks = response.iter_bytes()
+        #: Runs once when the stream is closed (frees scheduler capacity).
+        self.on_close: Callable[[], None] | None = None
 
     def read(self) -> ReadOutcome:
         try:
@@ -583,17 +597,22 @@ class SyncStream:
                 sock.shutdown(socket.SHUT_RDWR)
 
     def close(self) -> None:
-        self.response.close()
+        try:
+            self.response.close()
+        finally:
+            _closed(self)
 
 
 class _AsyncStream:
     """The unread body of an event stream on ``httpx.AsyncClient``."""
 
-    __slots__ = ("_chunks", "response")
+    __slots__ = ("_chunks", "on_close", "response")
 
     def __init__(self, response: httpx.Response) -> None:
         self.response = response
         self._chunks = response.aiter_bytes()
+        #: Runs once when the stream is closed (frees scheduler capacity).
+        self.on_close: Callable[[], None] | None = None
 
     async def read(self) -> ReadOutcome:
         try:
@@ -604,7 +623,10 @@ class _AsyncStream:
             return _read_failure(error)
 
     async def aclose(self) -> None:
-        await self.response.aclose()
+        try:
+            await self.response.aclose()
+        finally:
+            _closed(self)
 
 
 # ------------------------------------------------------------------ sync
@@ -701,11 +723,24 @@ class SyncDriver:
     _poll_workers = threading.BoundedSemaphore(16)
 
     def _perform(self, effect: Effect) -> object:
+        if isinstance(effect, Bounded) and isinstance(effect.effect, Acquire):
+            inner = effect.effect
+            return cast(RequestScheduler, inner.scheduler).acquire(
+                inner.key, inner.kind, _earliest(inner.deadline_ms, effect.deadline_ms), inner.random
+            )
+        if isinstance(effect, Acquire):
+            return cast(RequestScheduler, effect.scheduler).acquire(
+                effect.key, effect.kind, effect.deadline_ms, effect.random
+            )
         if isinstance(effect, Bounded):
             if isinstance(effect.effect, Send):
-                effect = replace(
-                    effect, effect=Send(replace(effect.effect.request, deadline_ms=effect.deadline_ms))
+                request = effect.effect.request
+                limit = (
+                    effect.deadline_ms
+                    if request.deadline_ms is None
+                    else min(request.deadline_ms, effect.deadline_ms)
                 )
+                effect = replace(effect, effect=Send(replace(request, deadline_ms=limit)))
             remaining = effect.deadline_ms / 1000 - time.monotonic()
             if remaining <= 0:
                 raise PollExpired()
@@ -790,7 +825,7 @@ class SyncDriver:
             return NotSent(_detail(error))
         try:
             if time.monotonic() >= deadline:
-                return NotSent("polling deadline expired before send")
+                return NotSent("deadline expired before send")
             response = self.http.send(request, stream=True)
         except Exception as error:
             return _send_failure(error)
@@ -922,11 +957,24 @@ class AsyncDriver:
             return None, error
 
     async def _perform(self, effect: Effect) -> object:
+        if isinstance(effect, Bounded) and isinstance(effect.effect, Acquire):
+            inner = effect.effect
+            return await cast(RequestScheduler, inner.scheduler).acquire_async(
+                inner.key, inner.kind, _earliest(inner.deadline_ms, effect.deadline_ms), inner.random
+            )
+        if isinstance(effect, Acquire):
+            return await cast(RequestScheduler, effect.scheduler).acquire_async(
+                effect.key, effect.kind, effect.deadline_ms, effect.random
+            )
         if isinstance(effect, Bounded):
             if isinstance(effect.effect, Send):
-                effect = replace(
-                    effect, effect=Send(replace(effect.effect.request, deadline_ms=effect.deadline_ms))
+                request = effect.effect.request
+                limit = (
+                    effect.deadline_ms
+                    if request.deadline_ms is None
+                    else min(request.deadline_ms, effect.deadline_ms)
                 )
+                effect = replace(effect, effect=Send(replace(request, deadline_ms=limit)))
             remaining = effect.deadline_ms / 1000 - time.monotonic()
             if remaining <= 0:
                 raise PollExpired()
@@ -1015,7 +1063,7 @@ class AsyncDriver:
             return NotSent(_detail(error))
         try:
             if time.monotonic() >= deadline:
-                return NotSent("polling deadline expired before send")
+                return NotSent("deadline expired before send")
             response = await _before_deadline(self.http.send(request, stream=True), deadline)
         except Exception as error:
             return _send_failure(error)

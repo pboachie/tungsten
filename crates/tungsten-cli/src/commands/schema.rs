@@ -45,5 +45,7 @@ fn schema_for(name: SchemaName) -> Value {
         SchemaName::SdkDescriptors => tungsten_emit::sdk::descriptors::json_schema(),
         SchemaName::ToolCatalog => tungsten_emit::tool_catalog::schema(),
         SchemaName::Capabilities => tungsten_config::capabilities::json_schema(),
+        SchemaName::GenerationLock => crate::commands::lock::json_schema(),
+        SchemaName::ProjectBundle => crate::commands::bundle::json_schema(),
     }
 }

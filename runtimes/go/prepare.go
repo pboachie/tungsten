@@ -610,7 +610,7 @@ func (c *ClientCore) prepare(ctx context.Context, op *OperationDescriptor, rawAr
 	bodyPaths := sensitiveBodyPaths(op)
 	var value any
 	hasValue := false
-	if !isSafeMethod(method) || method == "OPTIONS" {
+	if !isSafeMethod(method) || method == "OPTIONS" || method == "QUERY" {
 		value, hasValue = bodyValue(op, args, paramNames)
 	}
 	redact := func(display any) any {

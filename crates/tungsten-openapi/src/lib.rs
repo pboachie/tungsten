@@ -50,8 +50,9 @@ pub enum SpecVersion {
     /// 3.0.x; the document has been normalized to 3.1 form.
     V30(String),
     V31(String),
-    /// 3.2.x. Constructs equivalent to 3.1 take the 3.1 path unchanged; each
-    /// construct 3.2 added is diagnosed (`TG0140`-`TG0156`), never ignored.
+    /// 3.2.x. Constructs equivalent to 3.1 take the 3.1 path unchanged, and
+    /// the `query` method is compiled; each other construct 3.2 added is
+    /// diagnosed (`TG0140`-`TG0156`), never ignored.
     V32(String),
     /// A file loaded only because another document referenced it.
     Fragment,

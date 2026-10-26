@@ -11,13 +11,14 @@
 //! | `cli` | enabled | `false` skips the CLI crate; an object sets `bin` (default `<api>`), `crate` (default `<api>-cli`), `kit` (requirement of `tungsten-cli-kit`, default [`DEFAULT_RUNTIME_REQ`]) and `kit_path` (a local `tungsten-cli-kit` crate, with the `kit` requirement). |
 
 use serde_json::Value;
+use tungsten_config::target_options::{self as shared, rust::*};
 use tungsten_core::{Diagnostic, Diagnostics};
 use tungsten_emit::TargetConfig;
 use tungsten_ir::Ir;
 use tungsten_ir::naming::{self, Case};
 
 /// Default version requirement of `tungsten-runtime` and `tungsten-cli-kit`.
-pub const DEFAULT_RUNTIME_REQ: &str = "0.1.3";
+pub const DEFAULT_RUNTIME_REQ: &str = shared::RUST_RUNTIME_REQ;
 
 /// The oldest compiler supported by generated SDK and CLI code (let chains).
 pub(crate) const RUST_VERSION: &str = "1.88";
@@ -100,7 +101,7 @@ impl Options {
         )
         .unwrap_or_else(|| format!("{kebab}-sdk"));
         let version = read(o, "", "version", &is_semver, "a version such as 1.2.3")
-            .unwrap_or_else(|| "0.1.0".into());
+            .unwrap_or_else(|| shared::RUST_PACKAGE_VERSION.into());
         let runtime_path = read(o, "", "runtime_path", &is_path, "a non-empty path");
         let runtime_req = read(
             o,
@@ -180,52 +181,4 @@ fn default_cli(kebab: &str) -> CliOptions {
         package: format!("{kebab}-cli"),
         kit: Dep::Version(DEFAULT_RUNTIME_REQ.into()),
     }
-}
-
-fn is_crate_name(s: &str) -> bool {
-    s.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
-        && s.chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-        && !matches!(
-            s,
-            "tungsten-runtime" | "tungsten-cli-kit" | "tungsten_runtime" | "tungsten_cli_kit"
-        )
-}
-
-fn is_bin_name(s: &str) -> bool {
-    !s.is_empty()
-        && s.chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-}
-
-fn is_path(s: &str) -> bool {
-    !s.trim().is_empty() && !s.contains('"')
-}
-
-/// `1`, `1.2`, `1.2.3`, with an optional `-pre` suffix.
-fn is_semver(s: &str) -> bool {
-    let (core, pre) = s.split_once('-').map_or((s, None), |(c, p)| (c, Some(p)));
-    let parts: Vec<&str> = core.split('.').collect();
-    parts.len() == 3
-        && parts
-            .iter()
-            .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
-        && pre.is_none_or(|p| {
-            !p.is_empty() && p.chars().all(|c| c.is_ascii_alphanumeric() || c == '.')
-        })
-}
-
-/// A Cargo version requirement: comparator clauses (`>=0.1, <0.3`, `^0.1`,
-/// `~0.1.2`, `0.1`, `*`).
-fn is_req(s: &str) -> bool {
-    !s.trim().is_empty()
-        && s.split(',').all(|clause| {
-            let c = clause.trim();
-            let c = c.trim_start_matches(['^', '~', '=', '<', '>']).trim();
-            c == "*"
-                || (!c.is_empty()
-                    && c.split('.').all(|p| {
-                        p == "*" || (!p.is_empty() && p.chars().all(|ch| ch.is_ascii_digit()))
-                    }))
-        })
 }

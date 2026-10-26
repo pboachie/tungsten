@@ -60,6 +60,23 @@ each supported platform, including Windows and WSL.
 
 ## Limits
 
+In unreleased 0.2.0, `deadline_ms` (on `ClientOptions` or `CallOptions`) sets a total
+deadline for one logical call, separate from the per-attempt `timeout_ms`. It is
+measured on a monotonic clock and covers authentication, idempotency-key
+reservation, every attempt (each one's `timeout_ms` is cut to the time left),
+retry waits, response bodies and verification; for `pages`, `poll` and
+`run_macro` it covers the whole traversal, poll or macro, and nested work cannot
+restart it. No attempt starts after it expires: the call fails with `code`
+`DEADLINE_EXCEEDED`, and a mutation that was already sent reports
+`OUTCOME_UNKNOWN`, never a blind replay. A retry wait that would end after the
+deadline returns the last failure at once. For `stream()` it bounds connecting
+and each reconnect, never an open stream (use `idle_timeout_ms`). Token
+sources, stores and request hooks are not cancelled at the deadline, only no
+longer waited for (on `ClientCore` they run on a bounded worker pool, as for
+`poll` budgets), so a shared OAuth refresh still serves its other callers. An
+injected transport that blocks without honouring the request's timeouts can
+delay the result past the deadline on `ClientCore`. Default: no total deadline.
+
 Stream `collect(max_bytes=..., max_ms=...)` accepts optional byte and time budgets. An
 unset budget defaults to 4 MiB or 60 seconds. The byte count uses UTF-8
 JSON for the event values, excluding SSE framing. A limit closes the stream
@@ -104,6 +121,29 @@ their own buffering, decoding and settlement behavior need separate qualificatio
 Default idempotency and OAuth token state are in memory. A
 `FileIdempotencyStore` is available for durable idempotency keys; it does not
 store OAuth tokens. Applications own persistence, permissions and lifecycle.
+
+In unreleased 0.2.0, a client can bound its outbound requests with an opt-in
+request scheduler (`ClientOptions.scheduler`, a `RequestScheduler` or `SchedulerOptions`). Without one, every call is sent at
+once, as before. With one, each scope (the client's `tenant` plus the request
+origin, or the tenant alone with scope `"scheduler"`) allows at most `max_active`
+ordinary attempts and `max_streams` event streams in flight (default: `max_active`),
+and at most `max_queued` more of each waiting in first-in-first-out order (default
+100) for at most `max_queue_ms` (default 30 seconds; the call's own deadline and
+cancellation also end the wait). A request that cannot be admitted is never
+sent and fails with `RATE_LIMITED`, code `QUEUE_FULL`, `QUEUE_TIMEOUT` or
+`RATE_LIMIT_PAUSED`, or with `TRANSPORT_FAILED`, code `SCHEDULER_CLOSED`, after
+the scheduler was closed; the retry loop does not retry these. A permit covers
+one attempt with its redirects and body read, is released before a retry
+delay, and an event stream holds its permit until the stream is closed.
+Authentication token requests are not scheduled. A `RATE_LIMITED` answer
+pauses its scope for its `Retry-After` (one second when it names none) plus up
+to 10 % (at most one second) of random spread; afterwards one request per kind
+probes the quota until an answer that is not rate limited arrives. One
+scheduler can be shared by several clients; scopes never share capacity,
+queues or pauses, and nothing is coordinated across processes. Closing a
+scheduler rejects waiting and later requests; requests in flight keep their
+capacity until they finish, which `drained()` / `drained_async()` wait for. Custom transports remain
+owned by the application and are not closed by the scheduler.
 
 No runtime ships a file-backed OAuth token store. Provide an application-owned
 token-store implementation when tokens must survive process restarts; protect
