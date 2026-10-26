@@ -349,6 +349,10 @@ const JS: &[ToolRequirement] = &[
     ToolRequirement::new("npm", None),
 ];
 // The MCP root graph imports stripTypeScriptTypes, added in 22.13 and 23.2.
+/// Newest Node.js major the public npm package build lanes check. Doctor
+/// reports newer majors as unqualified until a release promotes them.
+pub const NODE_NEWEST_CHECKED_MAJOR: u32 = 26;
+
 const MCP: &[ToolRequirement] = &[
     ToolRequirement {
         tool: "node",

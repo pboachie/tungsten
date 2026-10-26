@@ -902,6 +902,11 @@ changes.
 
 ### Fixed
 
+- Check the MCP Node.js floor (22.13+, or 23.2+ on Node 23) in `init` local
+  setup when the MCP target is selected, matching `doctor`. Previously setup
+  accepted any Node 22 and failed later. `doctor` now also notes when Node is
+  an odd-numbered line or newer than the newest line the package builds check.
+
 - The Rust runtime runs an OAuth2 token fetch or refresh as its own task: a
   caller whose `deadline` passes, or whose future is dropped, stops waiting
   (with `DEADLINE_EXCEEDED` for an expired deadline) instead of cutting short
