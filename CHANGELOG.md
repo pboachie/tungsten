@@ -728,6 +728,11 @@ changes.
 
 ### Changed
 
+- The Python clean-consumer CI lane now also calls a second generated SDK sync and async,
+  covering bearer auth, cursor pagination, nullable and union models, a safe
+  retry, client-side validation, an operation deadline, async cancellation, an
+  unknown mutation outcome that is not replayed, and server-sent events.
+
 - Check the Python runtime archives on every CPython minor from 3.10 to 3.15
   (latest patches) in public CI, with macOS and Windows archive smoke, and add
   a clean-consumer check that installs the runtime wheel/sdist and freshly
