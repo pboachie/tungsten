@@ -126,18 +126,14 @@ impl Project {
             || a.inputs.contains(path)
             || a.overlays.iter().any(|o| o == path)
             || a.profiles.iter().any(|p| p == path)
-            || a.inputs_key
-                .as_ref()
-                .is_some_and(|k| k.paths().any(|p| p == path))
+            || a.identity.as_ref().is_some_and(|k| k.reads(path))
     }
 
     /// Whether the project's next check may depend on files it has not
     /// read yet: it was never checked, or its last check had errors (a
     /// missing input appearing must be noticed).
     fn open_ended(&self) -> bool {
-        self.analysis
-            .as_ref()
-            .is_none_or(|a| a.inputs_key.is_none())
+        self.analysis.as_ref().is_none_or(|a| a.identity.is_none())
     }
 }
 
@@ -690,7 +686,7 @@ impl Server<'_> {
         };
         project.deadline = None;
         let generation = project.generation;
-        let key = project.analysis.as_ref().and_then(|a| a.inputs_key.clone());
+        let key = project.analysis.as_ref().and_then(|a| a.identity.clone());
         let overrides: BTreeMap<PathBuf, String> = self
             .docs
             .iter()
@@ -701,7 +697,10 @@ impl Server<'_> {
         self.running = Some((manifest.clone(), cancellation.clone()));
         std::thread::spawn(move || {
             let result = std::panic::catch_unwind(|| {
-                if key.is_some_and(|k| k.unchanged(&manifest, &overrides, &cancellation)) {
+                if key.is_some_and(|k| {
+                    k.manifest() == normalize(&manifest)
+                        && k.sources_unchanged(&overrides, &cancellation)
+                }) {
                     return Checked::Unchanged;
                 }
                 Checked::Fresh(analyze(&manifest, overrides, cancellation).map(Box::new))

@@ -14,7 +14,7 @@ use lsp_types::{
     Diagnostic, DiagnosticRelatedInformation, DiagnosticSeverity, Location, NumberOrString, Range,
 };
 use tungsten_build::suggest::{Action, SUGGESTED_CODES, suggest};
-use tungsten_build::{CompileOptions, Compiled, compile_project};
+use tungsten_build::{CompileOptions, Compiled, ProjectIdentity, compile_project};
 use tungsten_core::{Diagnostic as Tg, Severity, SourceId};
 use tungsten_ir::{Ir, OperationStatus};
 use tungsten_openapi::{CancellationToken, Workspace};
@@ -100,109 +100,7 @@ pub struct Analysis {
     pub overlay_fixes: Vec<OverlayFix>,
     /// What the compilation read, when its result can be reused while
     /// those inputs are unchanged.
-    pub inputs_key: Option<InputKey>,
-}
-
-/// The identities of every local input of a compilation: the digest of
-/// each source text it read, by path, and the optional files it found
-/// absent. A compilation is reused only while each of these is the same
-/// in the open buffers and on disk; modification times are not consulted.
-#[derive(Debug, Clone)]
-pub struct InputKey {
-    manifest: PathBuf,
-    files: Vec<(PathBuf, tungsten_core::Digest)>,
-    absent: Vec<PathBuf>,
-}
-
-/// Most bytes read from one input to compare it with an [`InputKey`]; a
-/// larger file is treated as changed.
-const MAX_COMPARED_FILE: u64 = 64 * 1024 * 1024;
-
-impl InputKey {
-    /// Every path whose content or absence the key depends on.
-    pub fn paths(&self) -> impl Iterator<Item = &Path> {
-        std::iter::once(self.manifest.as_path())
-            .chain(self.files.iter().map(|(p, _)| p.as_path()))
-            .chain(self.absent.iter().map(PathBuf::as_path))
-    }
-
-    /// Whether every input still has the identity it had, with
-    /// `overrides` as the text of unsaved buffers. Cancellation counts as
-    /// a change.
-    pub fn unchanged(
-        &self,
-        manifest: &Path,
-        overrides: &BTreeMap<PathBuf, String>,
-        cancellation: &CancellationToken,
-    ) -> bool {
-        if normalize(manifest) != self.manifest {
-            return false;
-        }
-        for (path, digest) in &self.files {
-            if cancellation.is_cancelled() {
-                return false;
-            }
-            let current = match overrides.get(path) {
-                Some(text) => tungsten_core::Digest::of(text.as_bytes()),
-                None => {
-                    let fits = std::fs::metadata(path)
-                        .is_ok_and(|m| m.is_file() && m.len() <= MAX_COMPARED_FILE);
-                    match std::fs::read(path) {
-                        Ok(bytes) if fits => tungsten_core::Digest::of(&bytes),
-                        _ => return false,
-                    }
-                }
-            };
-            if current != *digest {
-                return false;
-            }
-        }
-        self.absent
-            .iter()
-            .all(|path| !overrides.contains_key(path) && !path.exists())
-    }
-}
-
-/// The key of `compiled`, or `None` when its result must not be reused:
-/// it has errors (a missing or unreadable input is an error, and creating
-/// it must be noticed), or it read a document without a local path.
-fn inputs_key(
-    compiled: &Compiled,
-    base: &Path,
-    manifest_name: &str,
-    manifest: &Path,
-    agent_file: &Path,
-) -> Option<InputKey> {
-    if compiled.has_errors()
-        || compiled
-            .workspace
-            .documents
-            .iter()
-            .any(|d| d.path().is_none())
-    {
-        return None;
-    }
-    let mut files: Vec<(PathBuf, tungsten_core::Digest)> = compiled
-        .workspace
-        .sources
-        .files()
-        .iter()
-        .map(|f| {
-            let path = file_path(&f.name, Some(f.id), compiled, base, manifest_name, manifest);
-            (path, tungsten_core::Digest::of(f.text.as_bytes()))
-        })
-        .collect();
-    files.sort();
-    files.dedup_by(|a, b| a.0 == b.0);
-    let mut absent = vec![];
-    if !files.iter().any(|(p, _)| p == agent_file) {
-        absent.push(agent_file.to_path_buf());
-    }
-    Some(InputKey {
-        manifest: manifest.to_path_buf(),
-        files,
-        absent,
-    })
+    pub identity: Option<ProjectIdentity>,
 }
 
 /// Compile the project whose manifest is `manifest`, with `overrides` as
@@ -265,12 +163,21 @@ pub fn analyze(
         return None;
     }
     out.overlay_fixes = overlay_fixes(&compiled, &base, &manifest_name, &out.manifest);
-    out.inputs_key = inputs_key(
+    out.identity = ProjectIdentity::with_paths(
         &compiled,
-        &base,
-        &manifest_name,
+        &opts,
         &out.manifest,
-        &out.agent_file,
+        std::slice::from_ref(&out.agent_file),
+        |f| {
+            file_path(
+                &f.name,
+                Some(f.id),
+                &compiled,
+                &base,
+                &manifest_name,
+                &out.manifest,
+            )
+        },
     );
     (!cancellation.is_cancelled()).then_some(out)
 }
