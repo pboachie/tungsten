@@ -714,6 +714,7 @@ public sealed partial class ClientCore
                 .Expected("a valid operation descriptor")
                 .Remedy($"The operation descriptor is invalid: {problem}. Regenerate the SDK or fix the descriptor; nothing was sent.").Fail();
         }
+        CheckImportScope(op, urlOverride ?? baseUrl);
         Register(new[] { op });
         JsonObject supplied;
         if (rawArgs is null)
@@ -1055,7 +1056,33 @@ public sealed partial class ClientCore
         {
             throw BadBase(op);
         }
+        CheckImportScope(op, full);
         return (full, display);
+    }
+
+    /// <summary>The origin (scheme, host and port) of an absolute http(s) URL without credentials, or null.</summary>
+    private static string? OriginOf(string? url) =>
+        url is not null && ValidBaseUrl(url) && Uri.TryCreate(url, UriKind.Absolute, out var u)
+            ? $"{u.Scheme}://{u.IdnHost.ToLowerInvariant()}:{u.Port}"
+            : null;
+
+    /// <summary>
+    /// Refuses a reviewed imported operation whose target lies outside the
+    /// origins its review covers. A malformed or missing scope fails closed.
+    /// </summary>
+    private static void CheckImportScope(OperationDescriptor op, string? target)
+    {
+        var policy = op.Agent.ImportPolicy;
+        if (policy is null || !policy.Reviewed)
+        {
+            return;
+        }
+        var actual = OriginOf(target);
+        if (actual is null || !policy.AllowedOrigins.Any(origin => OriginOf(origin) == actual))
+        {
+            throw new Diag(op.Id, Category.ValidationFailed).Param("BaseUrl").Retry(Retryable.Never)
+                .Remedy("The target origin is outside this operation's saved review policy. Select a reviewed server or review a separate policy for this environment. Nothing was sent.").Fail();
+        }
     }
 
     private void BuildHeaders(OperationDescriptor op, JsonObject args, CallOptions opts, AuthPlan plan, HeaderBag bag)

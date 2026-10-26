@@ -723,6 +723,11 @@ func (c *ClientCore) badBase(op *OperationDescriptor) *Error {
 		remedy("The base URL is not a valid absolute http(s) URL without credentials: fix ClientOptions.BaseURL. Nothing was sent.").err()
 }
 
+// RequireImportPolicyV1 is called by generated clients whose operations carry
+// an imported-operation policy, so they cannot build against a runtime that
+// would ignore it.
+func RequireImportPolicyV1() {}
+
 func checkImportScope(op *OperationDescriptor, target string) *Error {
 	if policy := op.Agent.ImportPolicy; policy != nil && policy.Reviewed {
 		parsed, err := url.Parse(target)

@@ -85,8 +85,17 @@ pub(crate) fn library(g: &Gen<'_, '_>) -> Library {
     w.doc("A client; throws `ClientConfigException` when the options are invalid (a base URL that is not an absolute http(s) URL without credentials).");
     let ctor = format!("{client}([ClientOptions options = const ClientOptions()])");
     let redirects_none = g.plan.ir.agent.redirects == RedirectPolicy::None;
+    let imported = g
+        .plan
+        .operations
+        .iter()
+        .any(|p| p.op.agent.import_policy.is_some());
     let init = "core = ClientCore(descriptors, options)";
-    let end = if redirects_none { " {" } else { ";" };
+    let end = if redirects_none || imported {
+        " {"
+    } else {
+        ";"
+    };
     let flat = format!("{ctor} : {init}{end}");
     if w.fits(&flat) {
         w.line(flat);
@@ -104,9 +113,14 @@ pub(crate) fn library(g: &Gen<'_, '_>) -> Library {
         w.dedent();
         w.line(format!("]) : {init}{end}"));
     }
-    if redirects_none {
+    if redirects_none || imported {
         w.indent();
-        w.line("ClientCore.requireRedirectPolicyV1();");
+        if redirects_none {
+            w.line("ClientCore.requireRedirectPolicyV1();");
+        }
+        if imported {
+            w.line("ClientCore.requireImportPolicyV1();");
+        }
         w.dedent();
         w.line("}");
     }

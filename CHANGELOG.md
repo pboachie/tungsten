@@ -226,6 +226,15 @@ changes.
 
 ### Added
 
+- The `csharp`, `fsharp` and `dart` targets now enforce imported-operation
+  policy, so every built-in SDK target can be generated for projects converted
+  from Postman, cURL, `.http` or HAR input. The .NET and Dart runtimes refuse a
+  reviewed imported operation whose target origin is outside its saved review
+  scope (`VALIDATION_FAILED` on the base URL, nothing sent); generated SDKs
+  require `ClientCore.RequireImportPolicyV1()` (.NET) or
+  `ClientCore.requireImportPolicyV1()` (Dart). The Go runtime adds
+  `RequireImportPolicyV1()` for external Go emitters to call.
+
 - Add an opt-in request scheduler to the TypeScript, Python and Rust runtimes
   (`ClientOptions.scheduler`, `ClientOptions.tenant`). It bounds ordinary
   attempts and event streams in flight per tenant and origin, queues a bounded

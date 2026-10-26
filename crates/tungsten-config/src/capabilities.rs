@@ -315,7 +315,6 @@ const MCP: &[ToolRequirement] = &[
 const DOTNET: &[ToolRequirement] = &[ToolRequirement::new("dotnet", Some([10, 0]))];
 
 /// Typed SDK features shared by every built-in SDK target.
-const SDK: &[&str] = &["typed_sdk", "pagination_helpers"];
 const SDK_POLICY: &[&str] = &[
     "typed_sdk",
     "pagination_helpers",
@@ -350,18 +349,18 @@ macro_rules! targets {
 targets! {
     {
         id: "csharp", aliases: &["cs"], source: BuiltInEmitter, family: Some("dotnet"),
-        policy: false, tools: DOTNET, summary: "C# SDK",
+        policy: true, tools: DOTNET, summary: "C# SDK",
         options: &["package_id", "namespace", "version", "runtime", "runtime_path", "out"],
-        environments: [Dotnet], features: SDK,
+        environments: [Dotnet], features: SDK_POLICY,
     },
     {
-        id: "dart", aliases: &[], source: BuiltInEmitter, family: Some("dart"), policy: false,
+        id: "dart", aliases: &[], source: BuiltInEmitter, family: Some("dart"), policy: true,
         tools: &[ToolRequirement {
             tool: "dart", minimum: Some([3, 6]), maximum_exclusive: Some([4, 0]), minimum_option: None, excluded_versions: &[],
         }],
         summary: "Dart SDK (sealed unions, Future methods returning Result, Stream pages)",
         options: &["package", "version", "runtime", "runtime_path", "out"],
-        environments: [DartIo], features: SDK,
+        environments: [DartIo], features: SDK_POLICY,
     },
     {
         id: "docs", aliases: &[], source: BuiltInEmitter, family: None, policy: true, tools: &[],
@@ -370,10 +369,10 @@ targets! {
     },
     {
         id: "fsharp", aliases: &["fs"], source: BuiltInEmitter, family: Some("dotnet"),
-        policy: false, tools: DOTNET,
+        policy: true, tools: DOTNET,
         summary: "F# SDK (records, discriminated unions, Task of Result)",
         options: &["package_id", "namespace", "version", "runtime", "runtime_path", "csharp_runtime_path", "out"],
-        environments: [Dotnet], features: SDK,
+        environments: [Dotnet], features: SDK_POLICY,
     },
     {
         id: "java", aliases: &[], source: BuiltInEmitter, family: Some("jvm"), policy: true,
