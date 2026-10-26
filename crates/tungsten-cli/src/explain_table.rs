@@ -319,8 +319,8 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
     ),
     e(
         "TG0145",
-        "A Media Type Object uses OpenAPI 3.2 `itemSchema`, which types each item of a sequential media type such as JSON Lines or Server-Sent Events. tungsten would type the payload without its items.",
-        "Describe the whole payload with `schema`, or remove the media type.",
+        "A Media Type Object uses OpenAPI 3.2 `itemSchema`, which types each item of a sequential media type, in a way tungsten does not compile. tungsten compiles `itemSchema` only in a response's `content` map (not in a reusable `components.mediaTypes` entry), without `schema` beside it, for JSON Lines (`application/jsonl`, `application/x-jsonl`, `application/ndjson`, `application/x-ndjson`; the type of one line) and for `text/event-stream` when the item is an event object whose `data` is a string with a JSON `contentMediaType` and a `contentSchema` (the event type). Request bodies, parameters, headers, other media types and events whose `data` is not JSON would be typed without their items.",
+        "Describe the whole payload with `schema`, or reshape the item into one of the compiled forms.",
     ),
     e(
         "TG0146",

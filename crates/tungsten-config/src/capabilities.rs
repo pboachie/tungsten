@@ -749,6 +749,16 @@ pub const OPENAPI_32_SUPPORTED: &[SupportedInputFeature] = &[
         member: "components.mediaTypes, $ref media type",
         behavior: "a media type object given by $ref is read as if written in place",
     },
+    SupportedInputFeature {
+        id: "item_schema_json_lines",
+        member: "itemSchema (JSON Lines response)",
+        behavior: "the type of one line of an application/jsonl or application/x-ndjson response",
+    },
+    SupportedInputFeature {
+        id: "item_schema_event_stream",
+        member: "itemSchema (text/event-stream response, JSON `data`)",
+        behavior: "the event type of a server-sent event stream: the `contentSchema` of the event's `data`",
+    },
 ];
 
 /// OpenAPI 3.2 constructs without a 3.1 equivalent that are diagnosed. A 3.2
@@ -769,7 +779,7 @@ pub const OPENAPI_32_FEATURES: &[UnsupportedInputFeature] = &[
         Rejected,
     ),
     feature("cookie_style", "style: cookie", "TG0144", Rejected),
-    feature("item_schema", "itemSchema", "TG0145", Rejected),
+    feature("item_schema", "itemSchema (other uses)", "TG0145", Rejected),
     feature(
         "positional_multipart_encoding",
         "prefixEncoding, itemEncoding",

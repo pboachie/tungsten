@@ -458,6 +458,14 @@ changes.
   project pins or generated clients, or sends project data. `--json` output adds
   the `update check` command to the CLI output schema.
 
+- OpenAPI 3.2 response `itemSchema` compiles onto the existing streaming
+  support. On a JSON Lines response it is the type of one line. On a
+  `text/event-stream` response whose item is an event object with a JSON `data`
+  string (`contentMediaType` JSON and `contentSchema`), the `contentSchema` is
+  the event type. Other uses, such as request bodies, other media types,
+  non-JSON event `data` or `schema` declared beside it, still report TG0145.
+  `itemSchema` in OpenAPI 3.0 and 3.1 documents is still not read.
+
 - The OpenAPI 3.2 `query` path-item method compiles to an operation sent with
   the HTTP `QUERY` method and its request body in generated clients.
   The IR gains the `QUERY` HTTP method, which is safe (read-only by default; set
@@ -478,7 +486,7 @@ changes.
   construct only 3.2 has is diagnosed at its member instead of being ignored, one
   code per feature. These are errors, because a client built without them would
   differ from the API: `$self` (TG0140), `additionalOperations` (TG0142), `in: querystring` (TG0143), `style: cookie`
-  (TG0144), `itemSchema` (TG0145), `prefixEncoding` and `itemEncoding` (TG0146),
+  (TG0144), other `itemSchema` uses (TG0145), `prefixEncoding` and `itemEncoding` (TG0146),
   nested encodings (TG0147), `components.mediaTypes` and media types given by
   `$ref` (TG0148), discriminator `defaultMapping` (TG0149), the OAuth 2.0 device
   authorization flow (TG0150) and security requirements that name a scheme by URI
