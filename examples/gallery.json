@@ -222,5 +222,13 @@
     "mode": "bulk-sync",
     "prerequisites": "Python venv and pip, Node 22 or later with npm, and the pinned Rust toolchain and Cargo",
     "outcome": "the TypeScript, Python and Rust clients each read 200 records through a request scheduler while the loopback server sees at most 4 concurrent requests and refuses none"
+  },
+  {
+    "name": "webhook-receiver",
+    "title": "Receive signed webhooks",
+    "description": "Verify signed order.shipped deliveries and decode typed payloads with the TypeScript, Python and Rust SDKs, without a web framework.",
+    "mode": "webhooks",
+    "prerequisites": "Python venv and pip, Node 22 or later with npm, and the pinned Rust toolchain and Cargo",
+    "outcome": "the TypeScript, Python and Rust receivers each accept the signed delivery and the rotated-secret delivery and reject the replay, the tampered body, the stale timestamp and the incomplete payload"
   }
 ]

@@ -104,11 +104,7 @@ pub struct Pages {
     deadline: Option<std::time::Instant>,
     /// The traversal's telemetry, started by the first `next`; reports it
     /// cancelled when the iterator is dropped before its end.
-    telemetry: Option<(
-        Arc<crate::telemetry::Span>,
-        Option<crate::telemetry::Pending>,
-    )>,
-    started: bool,
+    telemetry: crate::telemetry::Traversal,
 }
 
 impl std::fmt::Debug for Pages {
@@ -135,26 +131,14 @@ impl Pages {
             opts,
             state: PageState::new(args),
             deadline,
-            telemetry: None,
-            started: false,
+            telemetry: crate::telemetry::Traversal::default(),
         }
     }
 
     pub async fn next(&mut self) -> Option<Result<Page<Value>>> {
-        if !self.started {
-            self.started = true;
-            self.telemetry = self
-                .core
-                .start_span(&self.op, crate::TelemetryEntry::Pages)
-                .map(|span| {
-                    let pending = crate::telemetry::Pending::new(
-                        Some(&span),
-                        crate::telemetry::PendingKind::Operation,
-                    );
-                    (span, Some(pending))
-                });
-        }
-        let span = self.telemetry.as_ref().map(|(span, _)| span.clone());
+        let span = self
+            .telemetry
+            .span(&self.core, &self.op, crate::TelemetryEntry::Pages);
         let item = crate::telemetry::scoped(
             span,
             crate::verify::with_deadline_at(
@@ -164,17 +148,9 @@ impl Pages {
             ),
         )
         .await;
-        if let Some((span, pending)) = &mut self.telemetry
-            && let Some(pending) = pending.take_if(|_| match &item {
-                Some(Ok(_)) => self.state.done,
-                _ => true,
-            })
-        {
-            pending.done();
-            match &item {
-                Some(Err(error)) => span.end(Some(&error.diagnostic), false, None),
-                _ => span.end(None, false, None),
-            }
+        if !matches!(item, Some(Ok(_))) || self.state.done {
+            self.telemetry
+                .end(item.as_ref().and_then(|item| item.as_ref().err()));
         }
         item
     }

@@ -91,6 +91,7 @@ pub enum TelemetryEntry {
     Pages,
     Poll,
     Preview,
+    Stream,
 }
 
 /// One telemetry event. Fields that do not apply to an event are `None`
@@ -533,6 +534,44 @@ impl Drop for Pending {
                     TelemetryQueueReason::Cancelled
                 }),
             ),
+        }
+    }
+}
+
+/// The telemetry of an iterator (pages, an event stream): started by the
+/// first `next`, ended once by its last item, and reported cancelled when
+/// the iterator is dropped before that.
+#[derive(Default)]
+pub(crate) struct Traversal {
+    started: bool,
+    span: Option<Arc<Span>>,
+    pending: Option<Pending>,
+}
+
+impl Traversal {
+    /// The span (started on the first call), if telemetry is on.
+    pub(crate) fn span(
+        &mut self,
+        core: &crate::ClientCore,
+        op: &crate::types::OperationDescriptor,
+        entry: TelemetryEntry,
+    ) -> Option<Arc<Span>> {
+        if !self.started {
+            self.started = true;
+            self.span = core.start_span(op, entry);
+            self.pending = self
+                .span
+                .as_ref()
+                .map(|span| Pending::new(Some(span), PendingKind::Operation));
+        }
+        self.span.clone()
+    }
+
+    /// End the traversal: with its final error item, else as `ok`.
+    pub(crate) fn end(&mut self, error: Option<&crate::types::Error>) {
+        if let (Some(span), Some(pending)) = (&self.span, self.pending.take()) {
+            pending.done();
+            span.end(error.map(|error| &*error.diagnostic), false, None);
         }
     }
 }
