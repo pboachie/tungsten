@@ -42,6 +42,18 @@ export { evaluatePredicate } from "./expr.js";
 export { DEFAULT_RETRYABLE } from "./envelope.js";
 export { CONFIRMATION_TTL_MS } from "./confirm.js";
 export { RUNTIME_VERSION } from "./version.js";
+export {
+  DEFAULT_WEBHOOK_MAX_BODY_BYTES,
+  DEFAULT_WEBHOOK_TOLERANCE_SECONDS,
+  MAX_WEBHOOK_SIGNATURE_HEADER,
+  signWebhook,
+  verifyWebhook,
+  type RejectedWebhook,
+  type VerifiedWebhook,
+  type VerifyWebhookOptions,
+  type WebhookOutcome,
+  type WebhookRejection,
+} from "./webhooks.js";
 export { isBinaryInput, type BinaryInput, type NamedBinary } from "./util.js";
 
 /** Capability handshake used by generated imported descriptors. Older runtimes
