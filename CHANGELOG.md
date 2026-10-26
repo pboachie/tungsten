@@ -431,6 +431,13 @@ changes.
   fields remain intact, and the full intersection must validate before a repair
   is accepted.
 
+- Generated TypeScript SDKs no longer lose a `PATTERN_UNCHECKED` diagnostic when
+  the first untagged-union variant that accepts a value has a pattern the engine
+  cannot compile and a later variant also accepts it. Diagnostics now come only
+  from the first accepting variant, as in Dart and Python; rejected variants no
+  longer report speculative patterns. Schema shapes, `.options` and encoding are
+  unchanged.
+
 - Dart schema validation now reports unchecked patterns from the first accepting
   untagged-union variant, preserving nested property and array paths. Rejected
   variants do not emit speculative warnings.
