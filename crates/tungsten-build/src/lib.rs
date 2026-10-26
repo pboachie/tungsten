@@ -40,6 +40,7 @@ mod resources;
 mod responses;
 mod rpc;
 mod streams;
+mod webhooks;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -124,6 +125,7 @@ pub fn build_with_manifest(input: &BuildInput<'_>, manifest: &str) -> BuildOutpu
             .collect();
         let errors = errors::build(&mut cx, name, &responses);
         let resources = resources::build(&mut cx, name, ns.doc, ops.callable, &mut ops.planned);
+        let webhooks = webhooks::build(&mut cx, name, ns.doc);
         let doc = &ws.documents[ns.doc];
         let info = |k: &str| {
             doc.root
@@ -145,6 +147,7 @@ pub fn build_with_manifest(input: &BuildInput<'_>, manifest: &str) -> BuildOutpu
             planned: ops.planned.into_iter().map(|b| b.op).collect(),
             errors,
             protocol: None,
+            webhooks,
         });
     }
     check_operation_refs(&mut cx, &known_ids);

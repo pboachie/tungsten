@@ -29,6 +29,7 @@ pub mod sdk;
 mod staging;
 pub mod surface;
 pub mod tool_catalog;
+pub mod webhooks;
 mod writer;
 
 use std::path::PathBuf;

@@ -233,8 +233,12 @@ and durations: never URLs, headers, bodies, argument values, credentials,
 confirmation tokens, tenant labels or error text. The observer is called
 synchronously and never awaited; one that raises never changes the call.
 `MemoryTelemetryCollector` (thread-safe) keeps the newest events up to a capacity (default 1024, at most
-65536) and counts the ones it dropped. Previews, pages, polls, streams and
-macros do not emit telemetry yet.
+65536) and counts the ones it dropped. `preview()`, `pages()` and `poll()` are reported as
+operations too (`entry` `preview`, `pages`, `poll`): one `pages` or `poll`
+operation covers every request it made, with attempts numbered across it,
+and a page iteration the caller stops before its end is reported as
+`cancelled`. Only a `call` operation's end carries the final `http_status`.
+Event streams, page exports and macros do not emit telemetry yet.
 `open_telemetry_observer(tracer)` turns the events into one OpenTelemetry
 client span per operation (attempts and phases as span events, outcome
 attributes) for any object shaped like an `opentelemetry-api` `Tracer`; the

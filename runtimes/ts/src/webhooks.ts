@@ -9,7 +9,8 @@
  *
  * Checks run in a fixed order, identical in every tungsten runtime, and the
  * first failure is reported: body size, secret presence, header presence,
- * header syntax, signature, timestamp tolerance, JSON payload, replay claim.
+ * header syntax, signature, timestamp tolerance, JSON payload, typed decoding
+ * (`parse`), replay claim.
  * Failures carry a stable `reason` and a message that never contains the
  * secret, the signature or the payload.
  *
@@ -34,7 +35,7 @@ export type WebhookRejection =
   | "duplicate"
   | "payload_invalid";
 
-export interface VerifyWebhookOptions {
+export interface VerifyWebhookOptions<T = unknown> {
   /** The raw request body, exactly as received. Strings are encoded as UTF-8. */
   body: Uint8Array | string;
   /** The signature header value (`Stripe-Signature`), or null when absent. */
@@ -55,6 +56,12 @@ export interface VerifyWebhookOptions {
    * The store owns bounds and expiry (keep keys at least for the tolerance).
    */
   claim?: (key: string) => boolean | Promise<boolean>;
+  /**
+   * Typed decoding of the parsed JSON payload, run before `claim`: return
+   * the typed event, or throw to reject the delivery as `payload_invalid`
+   * (a Zod schema's `parse`, for example).
+   */
+  parse?: (event: unknown) => T;
 }
 
 /** A verified, parsed delivery. */
@@ -155,7 +162,7 @@ function bodyBytes(body: Uint8Array | string): Uint8Array {
  * Verify a Stripe-compatible signed delivery and parse its JSON payload.
  * Never throws for a bad delivery; throws `RangeError` for invalid options.
  */
-export async function verifyWebhook<T = unknown>(options: VerifyWebhookOptions): Promise<WebhookOutcome<T>> {
+export async function verifyWebhook<T = unknown>(options: VerifyWebhookOptions<T>): Promise<WebhookOutcome<T>> {
   const tolerance = positiveInteger(options.toleranceSeconds, DEFAULT_WEBHOOK_TOLERANCE_SECONDS, "toleranceSeconds");
   const maxBody = positiveInteger(options.maxBodyBytes, DEFAULT_WEBHOOK_MAX_BODY_BYTES, "maxBodyBytes");
   const body = bodyBytes(options.body);
@@ -196,6 +203,13 @@ export async function verifyWebhook<T = unknown>(options: VerifyWebhookOptions):
   const record = typeof event === "object" && event !== null && !Array.isArray(event) ? (event as Record<string, unknown>) : null;
   const id = record !== null && typeof record.id === "string" ? record.id : null;
   const type = record !== null && typeof record.type === "string" ? record.type : null;
+  if (options.parse !== undefined) {
+    try {
+      event = options.parse(event);
+    } catch {
+      return reject("payload_invalid", "the payload does not match the event type");
+    }
+  }
   if (options.claim !== undefined) {
     const claimed = await options.claim(id ?? `${parsed.timestamp}.${toHex(matched)}`);
     if (!claimed) return reject("duplicate", "the delivery was already accepted");

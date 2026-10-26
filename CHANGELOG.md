@@ -230,6 +230,32 @@ changes.
 
 ### Added
 
+- Concurrent commands of a generated Rust CLI refresh a stored login session
+  one process at a time: the token is refreshed before the call under a
+  per-session lock file and read again first, so a refresh token is not
+  presented twice to providers that rotate refresh tokens.
+
+- The runtime telemetry observer now also reports `preview()`, `pages()` and
+  `poll()` in TypeScript, Python and Rust as operations (`entry` `preview`,
+  `pages` or `poll`), each covering every request it made with attempts
+  numbered across it; a page iteration stopped early is `cancelled`. Only a
+  `call` operation's end carries the final `http_status`. Unreleased 0.2.0
+  only.
+
+
+- OpenAPI 3.1+ `webhooks` are compiled. Each operation of a `webhooks` entry
+  becomes an incoming webhook in the IR (`Namespace.webhooks`, omitted when
+  empty: event key, method, operation id, docs and the JSON request body as a
+  typed payload); webhooks are never callable. TypeScript, Python and Rust
+  SDKs of an API that declares webhooks gain a `webhooks` module: payload types
+  and schemas keyed by the `webhooks` key (`WebhookPayloads` /
+  `webhookSchemas`, `WEBHOOKS`, the `WebhookName` and `WebhookEvent` enums)
+  and `parseWebhook` / `parse_webhook`, which verifies a delivery with the
+  runtime's Stripe-compatible verifier and validates the payload, constraints
+  included, before the replay claim; a mismatch is `payload_invalid`. The
+  runtimes gain the matching hook (`parse` in TypeScript and Python,
+  `verify_webhook_with` in Rust). Registered as the `typed_webhooks` target
+  feature. Unreleased 0.2.0 only.
 - The TypeScript and Python runtimes include an optional OpenTelemetry
   adapter for the telemetry observer (`openTelemetryObserver(tracer)`,
   `open_telemetry_observer(tracer)`): one client span per operation named after
@@ -424,6 +450,11 @@ changes.
   write a project whose outputs collide with another's. The capability catalog
   declares the workspace contract under `workspace`.
 
+- The `actions/tungsten` GitHub Action checks the projects of a workspace
+  (`workspace`), narrowed by project id (`workspace-projects`) and by
+  `tungsten workspace --affected` evidence for listed files (`affected-files`)
+  or for the files changed since a base commit (`affected-base`), and reports
+  the number of checked projects in a `projects` output.
 - A reusable composite GitHub Action, `actions/tungsten`, installs a pinned
   tungsten release through `install.sh` from the action's own commit (checksum
   and build provenance verified, provenance cannot be disabled), then runs

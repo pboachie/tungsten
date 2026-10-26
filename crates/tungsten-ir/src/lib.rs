@@ -157,6 +157,41 @@ ir_struct! {
         /// HTTP. Targets that do not declare the protocol refuse the IR.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub protocol: Option<ProtocolBinding>,
+        /// Incoming webhooks the document declares (OpenAPI 3.1+
+        /// `webhooks`): requests the API sends to the application. They are
+        /// received, never called, so they are not operations.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        pub webhooks: Vec<Webhook>,
+    }
+}
+
+ir_struct! {
+    /// One incoming webhook: an operation of a `webhooks` entry, in the
+    /// direction API to application.
+    pub struct Webhook {
+        /// Event identity: the `webhooks` key as written, with the method
+        /// word appended to `words` when the entry has several operations.
+        pub name: Ident,
+        pub method: HttpMethod,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub operation_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub doc: Option<Doc>,
+        /// The JSON request body the API delivers; absent when the operation
+        /// declares no JSON body.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub payload: Option<WebhookPayload>,
+        pub source: SourceRef,
+    }
+}
+
+ir_struct! {
+    pub struct WebhookPayload {
+        pub media_type: String,
+        pub ty: TypeRef,
+        /// `requestBody.required`.
+        #[serde(default)]
+        pub required: bool,
     }
 }
 
