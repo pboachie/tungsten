@@ -22,7 +22,8 @@ pub enum TargetOptionSchema {
     Python,
     Rust,
     /// Field declarations mirroring the emitter's options module; see
-    /// [`crate::option_fields`]. Configuration inspection does not cover them.
+    /// [`crate::option_fields`]. Configuration inspection checks their JSON
+    /// types and fixed defaults; the emitter validates values.
     Declared(&'static crate::option_fields::DeclaredOptions),
 }
 
@@ -284,9 +285,21 @@ pub const FEATURES: &[FeatureDefinition] = &[
         None,
     ),
     def(
+        "pagination_checkpoints",
+        FeatureDomain::Runtime,
+        "sealed, caller-owned checkpoints that resume read-only page exports after a restart",
+        None,
+    ),
+    def(
         "generated_cli",
         FeatureDomain::Target,
         "a command-line client crate next to the SDK",
+        Some("cli"),
+    ),
+    def(
+        "cli_login_sessions",
+        FeatureDomain::Target,
+        "generated-CLI browser login, account switching and logout for OAuth2 authorizationCode schemes, with sessions in the macOS keychain, Secret Service or Windows Credential Locker, or an explicit owner-only file",
         Some("cli"),
     ),
     def(
@@ -329,6 +342,18 @@ pub const FEATURES: &[FeatureDefinition] = &[
         "webmcp_registration",
         FeatureDomain::Protocol,
         "browser tool manifest and WebMCP registration helper",
+        None,
+    ),
+    def(
+        "telemetry_hooks",
+        FeatureDomain::Runtime,
+        "opt-in local telemetry observer with bounded, redacted operation, attempt and phase events",
+        None,
+    ),
+    def(
+        "streaming_downloads",
+        FeatureDomain::Runtime,
+        "explicit streamed response bodies with byte limits, progress, idle timeout and deadline",
         None,
     ),
     def(
@@ -488,7 +513,7 @@ targets! {
         summary: "Sync and async Python SDK, Pydantic v2 or dataclass models",
         options: &["package", "module", "version", "runtime", "runtime_path", "python_version", "models", "out"],
         environments: [Cpython],
-        features: &["typed_sdk", "pagination_helpers", "dataclass_models", "webhook_verification", "typed_webhooks"],
+        features: &["typed_sdk", "pagination_helpers", "pagination_checkpoints", "dataclass_models", "webhook_verification", "typed_webhooks", "streaming_downloads", "telemetry_hooks"],
     },
     {
         id: "ruby", aliases: &["rb"], source: BuiltInEmitter, family: Some("ruby"), policy: true,
@@ -505,14 +530,14 @@ targets! {
         summary: "Async Rust SDK (serde, reqwest) and optional generated CLI",
         options: &["crate", "version", "runtime", "runtime_path", "cli", "out"],
         environments: [Native],
-        features: &["typed_sdk", "pagination_helpers", "generated_cli", "webhook_verification", "typed_webhooks"],
+        features: &["typed_sdk", "pagination_helpers", "pagination_checkpoints", "generated_cli", "webhook_verification", "typed_webhooks", "cli_login_sessions", "streaming_downloads", "telemetry_hooks"],
     },
     {
         id: "typescript", aliases: &["ts"], source: BuiltInEmitter, family: Some("typescript"),
         policy: true, tools: JS, schema: Some(TargetOptionSchema::TypeScript),
         summary: "Typed TypeScript SDK, Result values, Zod validation",
         options: &["package", "version", "runtime", "runtime_path", "dependencies", "out"],
-        environments: [Node], features: &["typed_sdk", "pagination_helpers", "webhook_verification", "typed_webhooks"],
+        environments: [Node], features: &["typed_sdk", "pagination_helpers", "pagination_checkpoints", "webhook_verification", "typed_webhooks", "streaming_downloads", "telemetry_hooks"],
     },
     {
         id: "webmcp", aliases: &[], source: BuiltInEmitter, family: Some("typescript"), policy: true,
@@ -575,6 +600,10 @@ pub struct WorkspaceCapability {
     /// Whether the language server routes documents to their owning
     /// project across several workspace folders and projects.
     pub editor_routing: bool,
+    /// Commands `tungsten workspace --run` runs on each selected project,
+    /// serially in discovery order (selection by `--project` and by
+    /// dependency evidence with `--affected`).
+    pub runs: &'static [&'static str],
 }
 
 /// The workspace declaration.
@@ -595,7 +624,8 @@ pub const WORKSPACE: WorkspaceCapability = WorkspaceCapability {
         "scenario validate",
         "scenario run",
     ],
-    editor_routing: false,
+    editor_routing: true,
+    runs: &["check", "generate", "lock"],
 };
 
 /// How an input format enters a project.
@@ -637,6 +667,9 @@ pub struct InputFormatCapability {
     pub acquisition: &'static [InputAcquisition],
     /// The saved document a conversion or inference writes.
     pub saved_as: Option<&'static str>,
+    /// Command that refreshes a saved conversion in place from a new source
+    /// revision, with review; null when the input is not refreshed that way.
+    pub refresh_command: Option<&'static str>,
 }
 
 const DOCUMENT: &[InputAcquisition] = &[
@@ -660,6 +693,7 @@ const fn converted(
         review_flags,
         acquisition: DOCUMENT,
         saved_as: Some("imported.openapi.json"),
+        refresh_command: Some("refresh-import"),
     }
 }
 
@@ -674,6 +708,7 @@ pub const INPUT_FORMATS: &[InputFormatCapability] = &[
         review_flags: &[],
         acquisition: DOCUMENT,
         saved_as: None,
+        refresh_command: None,
     },
     converted("swagger", &["2.0"], "`swagger` member", &[]),
     converted("postman", &["2.1"], "`info` and `item` members", &[]),
@@ -705,6 +740,7 @@ pub const INPUT_FORMATS: &[InputFormatCapability] = &[
         review_flags: &[],
         acquisition: &[],
         saved_as: Some("inferred.openapi.json"),
+        refresh_command: None,
     },
 ];
 
@@ -863,6 +899,11 @@ pub const OPENAPI_32_SUPPORTED: &[SupportedInputFeature] = &[
         id: "item_schema_event_stream",
         member: "itemSchema (text/event-stream response, JSON `data`)",
         behavior: "the event type of a server-sent event stream: the `contentSchema` of the event's `data`",
+    },
+    SupportedInputFeature {
+        id: "item_schema_text_event_stream",
+        member: "itemSchema (text/event-stream response, text `data`)",
+        behavior: "a server-sent event stream of strings: each event's `data` delivered as written, not decoded as JSON",
     },
     SupportedInputFeature {
         id: "discriminator_default_mapping",

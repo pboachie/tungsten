@@ -593,6 +593,8 @@ pub struct StreamDescriptor {
     /// Wire name of the boolean request body field that selects the stream;
     /// the stream call sets it to `true`.
     pub flag: Option<String>,
+    /// Every event's `data` is text delivered as written, not JSON.
+    pub text: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -951,6 +953,12 @@ pub struct ClientOptions {
     /// The tenant or principal this client calls for. Clients sharing a
     /// scheduler keep separate capacity, queues and pauses per tenant.
     pub tenant: Option<String>,
+    /// Receives local telemetry events for `call()` and `call_typed()`: the
+    /// operation, each attempt, and the authentication, scheduler queue and
+    /// retry backoff phases. Off by default; nothing is ever sent anywhere by
+    /// the runtime. Events hold only bounded values (no URLs, headers,
+    /// bodies, credentials or error text); see [`crate::TelemetryEvent`].
+    pub telemetry: Option<Arc<dyn crate::TelemetryObserver>>,
 }
 
 impl Default for ClientOptions {
@@ -984,6 +992,7 @@ impl Default for ClientOptions {
             random: None,
             scheduler: None,
             tenant: None,
+            telemetry: None,
         }
     }
 }

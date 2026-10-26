@@ -34,6 +34,7 @@ import httpcore
 import httpx
 
 from ._effects import (
+    CANCELLED_SEND,
     Acquire,
     Answered,
     AttemptOutcome,
@@ -296,12 +297,14 @@ class _DeadlineTransport(httpx.HTTPTransport):
             local.until = None
         if deadline is None:
             return response
-        if (
-            request.extensions.get("tungsten_stream")
-            and 200 <= response.status_code <= 299
-            and _is_event_stream(response)
-        ):
-            return response  # After SSE headers, the configured idle timeout applies.
+        stream = request.extensions.get("tungsten_stream")
+        if _hands_over(stream, request.method, response):
+            # After SSE headers, the configured idle timeout applies; a
+            # download stays bounded by the call's deadline, if any.
+            body_deadline = cast(float | None, request.extensions.get("tungsten_body_deadline"))
+            if body_deadline is not None:
+                response.stream = _DeadlineBody(response.stream, body_deadline)
+            return response
         response.stream = _DeadlineBody(response.stream, deadline)
         return response
 
@@ -434,13 +437,18 @@ def _request(
     headers = [(name.encode("latin-1"), value.encode("latin-1")) for name, value in req.headers.items()]
     # A stream waits at most the idle timeout for each read (httpx's read timeout).
     idle = max(1.0, req.idle_ms) / 1000 if req.stream and req.idle_ms is not None else seconds
+    body_deadline = req.deadline_ms / 1000 if req.stream == "bytes" and req.deadline_ms is not None else None
     return client.build_request(
         req.method,
         req.url,
         headers=headers,
         content=req.body,
         timeout=httpx.Timeout(seconds, read=idle),
-        extensions={"tungsten_deadline": deadline, "tungsten_stream": req.stream},
+        extensions={
+            "tungsten_deadline": deadline,
+            "tungsten_stream": req.stream,
+            "tungsten_body_deadline": body_deadline,
+        },
     )
 
 
@@ -462,7 +470,19 @@ def _is_event_stream(response: httpx.Response) -> bool:
     return media == "text/event-stream"
 
 
-def _read_failure(error: Exception) -> StreamFailed:
+def _hands_over(stream: object, method: str, response: httpx.Response) -> bool:
+    """Whether an answer goes back unread: a 2xx event stream (``stream``
+    True), or a 2xx answer with a body (``stream`` ``"bytes"``)."""
+    if not 200 <= response.status_code <= 299:
+        return False
+    if stream == "bytes":
+        return method != "HEAD" and response.status_code not in (204, 205, 304)
+    return stream is True and _is_event_stream(response)
+
+
+def _read_failure(error: Exception, deadline: float | None = None) -> StreamFailed:
+    if deadline is not None and time.monotonic() >= deadline:
+        return StreamFailed("deadline")
     return StreamFailed("timeout" if isinstance(error, httpx.TimeoutException) else "lost")
 
 
@@ -522,7 +542,7 @@ def _drain(flow: Flow[Any], outcome: AttemptOutcome) -> object:
             if isinstance(effect.item, Err):
                 failure = effect.item.error
         elif isinstance(effect, Send):
-            sent = Lost("cancelled")
+            sent = CANCELLED_SEND
         elif isinstance(effect, ReadChunk):
             sent = StreamFailed("lost")
         elif isinstance(effect, StoreGet | StorePut | StoreReserve):
@@ -564,25 +584,29 @@ def _closed(stream: SyncStream | _AsyncStream) -> None:
 
 
 class SyncStream:
-    """The unread body of an event stream on ``httpx.Client``. Each read waits
-    at most the attempt timeout (httpx's read timeout), so an idle stream
-    ends with a timeout."""
+    """The unread body of an event stream or download on ``httpx.Client``.
+    Each read waits at most the attempt timeout (httpx's read timeout), so an
+    idle stream ends with a timeout; a download's reads also end at its
+    deadline (``time.monotonic()`` seconds)."""
 
-    __slots__ = ("_chunks", "on_close", "response")
+    __slots__ = ("_chunks", "_deadline", "on_close", "response")
 
-    def __init__(self, response: httpx.Response) -> None:
+    def __init__(self, response: httpx.Response, deadline: float | None = None) -> None:
         self.response = response
         self._chunks = response.iter_bytes()
+        self._deadline = deadline
         #: Runs once when the stream is closed (frees scheduler capacity).
         self.on_close: Callable[[], None] | None = None
 
     def read(self) -> ReadOutcome:
+        if self._deadline is not None and time.monotonic() >= self._deadline:
+            return StreamFailed("deadline")
         try:
             return Chunk(next(self._chunks))
         except StopIteration:
             return StreamEnded()
         except Exception as error:
-            return _read_failure(error)
+            return _read_failure(error, self._deadline)
 
     def interrupt(self) -> None:
         """End a read another thread is blocked in: shut the socket down (a
@@ -604,23 +628,26 @@ class SyncStream:
 
 
 class _AsyncStream:
-    """The unread body of an event stream on ``httpx.AsyncClient``."""
+    """The unread body of an event stream or download on ``httpx.AsyncClient``."""
 
-    __slots__ = ("_chunks", "on_close", "response")
+    __slots__ = ("_chunks", "_deadline", "on_close", "response")
 
-    def __init__(self, response: httpx.Response) -> None:
+    def __init__(self, response: httpx.Response, deadline: float | None = None) -> None:
         self.response = response
         self._chunks = response.aiter_bytes()
+        self._deadline = deadline
         #: Runs once when the stream is closed (frees scheduler capacity).
         self.on_close: Callable[[], None] | None = None
 
     async def read(self) -> ReadOutcome:
+        if self._deadline is not None and time.monotonic() >= self._deadline:
+            return StreamFailed("deadline")
         try:
-            return Chunk(await anext(self._chunks))
+            return Chunk(await _before_deadline(anext(self._chunks), self._deadline))
         except StopAsyncIteration:
             return StreamEnded()
         except Exception as error:
-            return _read_failure(error)
+            return _read_failure(error, self._deadline)
 
     async def aclose(self) -> None:
         try:
@@ -832,8 +859,11 @@ class SyncDriver:
         if time.monotonic() >= deadline:
             response.close()
             return TimedOut()
-        if req.stream and 200 <= response.status_code <= 299 and _is_event_stream(response):
-            return Streaming(response.status_code, _headers(response), SyncStream(response))
+        if _hands_over(req.stream, req.method, response):
+            body_deadline = (
+                req.deadline_ms / 1000 if req.stream == "bytes" and req.deadline_ms is not None else None
+            )
+            return Streaming(response.status_code, _headers(response), SyncStream(response, body_deadline))
         maximum = req.max_response_bytes
         try:
             chunks: list[bytes] = []
@@ -934,7 +964,7 @@ class AsyncDriver:
         except asyncio.CancelledError:
             effective = effect.effect if isinstance(effect, Bounded) else effect
             if isinstance(effective, Send):
-                self._report(_drain(flow, Lost("cancelled")))
+                self._report(_drain(flow, CANCELLED_SEND))
             flow.close()
             raise
 
@@ -1070,8 +1100,11 @@ class AsyncDriver:
         if time.monotonic() >= deadline:
             await response.aclose()
             return TimedOut()
-        if req.stream and 200 <= response.status_code <= 299 and _is_event_stream(response):
-            return Streaming(response.status_code, _headers(response), _AsyncStream(response))
+        if _hands_over(req.stream, req.method, response):
+            body_deadline = (
+                req.deadline_ms / 1000 if req.stream == "bytes" and req.deadline_ms is not None else None
+            )
+            return Streaming(response.status_code, _headers(response), _AsyncStream(response, body_deadline))
         maximum = req.max_response_bytes
         try:
             chunks: list[bytes] = []

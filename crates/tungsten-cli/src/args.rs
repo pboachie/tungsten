@@ -20,6 +20,8 @@ Examples:
   tungsten mock --port 4010            Serve a mock of the API from the IR
   tungsten report --html report.html   Write a static coverage and safety report
   tungsten diff --semver               Show how the API surface changed
+  tungsten upgrade rehearse --workspace ../rehearsal
+                                       Preview an upgrade with this compiler
   tungsten overlay suggest --write fixes.overlay.yaml
                                        Suggest an overlay that fixes diagnostics
   tungsten lsp                         Serve diagnostics, completion and hover for
@@ -88,7 +90,7 @@ pub(crate) struct Cli {
     #[arg(long, global = true, conflicts_with = "refresh_inputs")]
     pub offline: bool,
     /// Refresh an HTTP content pin or resolve a Git ref again after review.
-    /// Converted imports require init into a fresh project to change sources.
+    /// Converted imports are refreshed with `tungsten refresh-import` instead.
     #[arg(long, global = true)]
     pub refresh_inputs: bool,
     /// Header for a URL typed on the command line; for manifest URLs use
@@ -147,6 +149,7 @@ impl Cli {
             Command::Config(_) => CommandName::Config,
             Command::Workspace(_) => CommandName::Workspace,
             Command::Lock(_) => CommandName::Lock,
+            Command::RefreshImport(_) => CommandName::RefreshImport,
             Command::Bundle {
                 command: BundleCommand::Export(_),
             } => CommandName::BundleExport,
@@ -165,6 +168,12 @@ impl Cli {
             } => CommandName::OverlaySuggest,
             Command::SupportBundle(_) => CommandName::SupportBundle,
             Command::Update { .. } => CommandName::UpdateCheck,
+            Command::Upgrade {
+                command: UpgradeCommand::Rehearse(_),
+            } => CommandName::UpgradeRehearse,
+            Command::Upgrade {
+                command: UpgradeCommand::Apply(_),
+            } => CommandName::UpgradeApply,
             Command::Lsp(_) => return None,
         })
     }
@@ -198,6 +207,10 @@ pub(crate) enum Command {
     /// Capture or verify the project's generation lock (tungsten.lock.json)
     /// offline; never fetches inputs or runs emitters.
     Lock(LockArgs),
+    /// Re-convert a converted import (Postman, HAR, cURL, HTTP file,
+    /// Swagger, endpoint manifest) in place. Previews the converted spec,
+    /// operation and generated-output changes; writes only with --apply.
+    RefreshImport(Box<RefreshImportArgs>),
     /// Export or import a portable project bundle: the locked input closure
     /// as a plain directory with a digest inventory. Runs nothing.
     Bundle {
@@ -239,6 +252,12 @@ pub(crate) enum Command {
         #[command(subcommand)]
         command: crate::commands::update::UpdateCommand,
     },
+    /// Rehearse a compiler/runtime upgrade into a scratch workspace, then
+    /// apply an accepted rehearsal as a separate, explicit step.
+    Upgrade {
+        #[command(subcommand)]
+        command: UpgradeCommand,
+    },
     /// Serve a Language Server Protocol server on stdin and stdout for
     /// tungsten.yml, agent.yml and overlays: diagnostics, completion, hover,
     /// go-to-definition and symbols. `--json` has no effect.
@@ -269,12 +288,18 @@ pub(crate) struct SupportBundleArgs {
     /// as user supplied (bundle schema version 2); repeatable.
     #[arg(long, value_name = "FILE")]
     pub attach_config: Vec<PathBuf>,
+    /// Opt in to an allowlisted summary of an `upgrade rehearse` workspace
+    /// (bundle schema version 3): versions, verdict, check states, target
+    /// ids with change and conflict counts, finding kinds and the apply
+    /// state. No paths, digests, file names or finding text.
+    #[arg(long, value_name = "DIR")]
+    pub rehearsal: Option<PathBuf>,
     /// Read an existing bundle file, check it against its schema version and
     /// show its entries; reads only this file and writes or runs nothing.
     #[arg(
         long,
         value_name = "FILE",
-        conflicts_with_all = ["preview", "output", "exclude", "attach_log", "attach_config"]
+        conflicts_with_all = ["preview", "output", "exclude", "attach_log", "attach_config", "rehearsal"]
     )]
     pub inspect: Option<PathBuf>,
 }
@@ -295,6 +320,40 @@ pub(crate) struct WorkspaceArgs {
     /// Only these projects, by id; repeatable. Unknown ids fail (TG0644).
     #[arg(long, value_name = "ID")]
     pub project: Vec<String>,
+    /// Only the projects that depend on FILE: its manifest, a declared
+    /// input, or a file the project's offline compilation read or looked
+    /// for. A project that does not compile counts as depending on every
+    /// file. Repeatable; combined with --project, both must hold.
+    #[arg(long, value_name = "FILE")]
+    pub affected: Vec<PathBuf>,
+    /// Run this command on each selected project, one at a time in
+    /// discovery order, and report every project's outcome. Arguments
+    /// after `--` are passed to each run; the project's manifest is
+    /// appended as PATH.
+    #[arg(long, value_enum, value_name = "COMMAND")]
+    pub run: Option<WorkspaceRun>,
+    /// Arguments for each run (after `--`), for example `-- --strict`.
+    #[arg(last = true, requires = "run", value_name = "ARGS")]
+    pub args: Vec<String>,
+}
+
+/// Commands `tungsten workspace --run` runs per project.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum WorkspaceRun {
+    Check,
+    Generate,
+    Lock,
+}
+
+impl WorkspaceRun {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Check => "check",
+            Self::Generate => "generate",
+            Self::Lock => "lock",
+        }
+    }
 }
 
 #[derive(Debug, Args)]
@@ -342,10 +401,68 @@ pub(crate) struct LockArgs {
     /// Accept changed identities and replace a stale or corrupt lock.
     #[arg(long)]
     pub update: bool,
+    /// Also record (or, with --check, verify) the identity of the bytes each
+    /// built-in target generates, by running the built-in emitters in memory.
+    /// External emitters are never run.
+    #[arg(long)]
+    pub outputs: bool,
     /// Lock one project of the workspace at PATH, by its id from
     /// `tungsten workspace`.
     #[arg(long, value_name = "ID")]
     pub project: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct RefreshImportArgs {
+    /// Local project directory or tungsten manifest.
+    #[arg(default_value = ".")]
+    pub path: PathBuf,
+    /// Namespace of the converted input; needed when several inputs are converted.
+    #[arg(long, value_name = "NAME")]
+    pub namespace: Option<String>,
+    /// New revision of the original source (file or HTTP(S) URL). Defaults to
+    /// the input's recorded `source_url`.
+    #[arg(long, value_name = "PATH|URL")]
+    pub from: Option<PathBuf>,
+    /// Write the refreshed conversion, its provenance and the generation lock.
+    /// Without it the command only previews and never writes.
+    #[arg(long, conflicts_with = "rollback")]
+    pub apply: bool,
+    /// Refresh digest printed by the preview; --apply refuses when the project,
+    /// source or conversion no longer match it.
+    #[arg(long, value_name = "DIGEST", requires = "apply")]
+    pub expect: Option<String>,
+    /// Confirm renewed review of an approved imported operation (exact
+    /// namespace.operation id) whose facts changed; repeatable.
+    #[arg(long, value_name = "ID", requires = "apply")]
+    pub accept_review: Vec<String>,
+    /// Restore the files of an interrupted --apply from its backups.
+    #[arg(long)]
+    pub rollback: bool,
+    /// Advanced input detection override for saved requests.
+    #[arg(long, default_value = "auto", value_parser = ["auto", "curl", "http"])]
+    pub input_format: String,
+    /// Trusted path template for each saved request or HAR path; repeatable.
+    #[arg(long)]
+    pub route: Vec<String>,
+    /// Shell quoting syntax of a saved cURL command; never executes a shell.
+    #[arg(long, default_value = "posix", value_parser = ["posix", "cmd", "powershell"])]
+    pub shell_dialect: String,
+    /// Exact HTTP(S) origin to select from a multi-origin HAR.
+    #[arg(long)]
+    pub har_origin: Option<String>,
+    /// Reviewed HAR paths: JSON object mapping captured URL paths to templates.
+    #[arg(long, value_name = "JSON")]
+    pub har_paths: Option<PathBuf>,
+    /// HAR path prefixes to include; repeatable.
+    #[arg(long)]
+    pub include_prefix: Vec<String>,
+    /// HAR path prefixes to exclude; repeatable.
+    #[arg(long)]
+    pub exclude_prefix: Vec<String>,
+    /// Additional HAR property names to redact.
+    #[arg(long)]
+    pub redact_property: Vec<String>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -401,6 +518,69 @@ pub(crate) struct BundleImportArgs {
     /// Validate and list what would be written; writes nothing.
     #[arg(long)]
     pub preview: bool,
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum UpgradeCommand {
+    /// Regenerate with this (candidate) compiler from the locked inputs and
+    /// report identity, file, API surface and dependency changes, migration
+    /// actions and conflicts. Never writes the project; with --workspace,
+    /// stages the output for review and `upgrade apply`. Offline; external
+    /// emitters are never started.
+    Rehearse(UpgradeRehearseArgs),
+    /// Apply a staged rehearsal to the project after checking that nothing
+    /// changed since; backs up what it replaces. --restore undoes an
+    /// interrupted or completed apply.
+    Apply(UpgradeApplyArgs),
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct UpgradeRehearseArgs {
+    /// Local project directory or tungsten manifest.
+    #[arg(default_value = ".")]
+    pub path: PathBuf,
+    /// New (or empty) scratch directory, outside every output directory, for
+    /// the staged output, the proposed lock and the rehearsal record.
+    /// Without it the rehearsal only reports.
+    #[arg(long, value_name = "DIR")]
+    pub workspace: Option<PathBuf>,
+    /// Require the lock to record this current compiler version.
+    #[arg(long, value_name = "VERSION")]
+    pub from: Option<String>,
+    /// Require the running compiler to be this candidate version.
+    #[arg(long, value_name = "VERSION")]
+    pub to: Option<String>,
+    /// Run the command after `--` in this target's staged output directory
+    /// once staging finishes (requires --workspace); a failure blocks the
+    /// rehearsal. It runs with your privileges and environment: not a
+    /// sandbox. No shell interpolation is performed.
+    #[arg(long, value_name = "TARGET", requires_all = ["workspace", "consumer_command"])]
+    pub consumer_target: Option<String>,
+    /// Stop the consumer command after this many seconds (only the started
+    /// process is stopped, not processes it started).
+    #[arg(long, default_value_t = 600, value_parser = clap::value_parser!(u64).range(1..=86_400))]
+    pub consumer_timeout_secs: u64,
+    /// Clean-consumer command and arguments, after `--`.
+    #[arg(last = true, num_args = 1.., value_name = "COMMAND", requires = "consumer_target")]
+    pub consumer_command: Vec<std::ffi::OsString>,
+    /// Only these targets, comma-separated. Default: every target in
+    /// tungsten.yml.
+    #[arg(long, value_name = "TARGETS", value_delimiter = ',')]
+    pub target: Vec<String>,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct UpgradeApplyArgs {
+    /// Local project directory or tungsten manifest.
+    #[arg(default_value = ".")]
+    pub path: PathBuf,
+    /// The workspace of a completed `upgrade rehearse`.
+    #[arg(long, value_name = "DIR")]
+    pub workspace: PathBuf,
+    /// Put back the files recorded before an interrupted or completed apply
+    /// of this workspace, and remove the files it added.
+    #[arg(long)]
+    pub restore: bool,
 }
 
 #[derive(Debug, Subcommand)]
@@ -837,8 +1017,8 @@ pub(crate) struct InitArgs {
     #[arg(long, value_parser = parse_api_name)]
     pub name: Option<String>,
     /// Targets to configure, comma-separated or repeated (ts, py, rs aliases).
-    /// Default: typescript,python,docs. WebMCP also configures TypeScript.
-    #[arg(long, value_name = "TARGETS", value_delimiter = ',', value_parser = parse_init_target)]
+    /// The default and companion targets come from the capability catalog.
+    #[arg(long, value_name = "TARGETS", value_delimiter = ',', value_parser = parse_init_target, help = init_targets_help())]
     pub targets: Vec<String>,
     /// Overwrite existing tungsten.yml and agent.yml.
     #[arg(long)]
@@ -876,6 +1056,22 @@ pub(crate) struct DoctorArgs {
 
 /// Accept built-in emitter targets and the `cli` output; refuse a reserved
 /// target before any file is written.
+/// `init --targets` help, derived from the capability catalog's `INIT`.
+fn init_targets_help() -> String {
+    let init = &tungsten_config::capabilities::INIT;
+    let mut help = format!(
+        "Targets to configure, comma-separated or repeated (ts, py, rs aliases). Default: {}.",
+        init.default_targets.join(",")
+    );
+    for companion in init.companions {
+        help.push_str(&format!(
+            " {} also configures {}.",
+            companion.target, companion.requires
+        ));
+    }
+    help
+}
+
 fn parse_init_target(s: &str) -> Result<String, String> {
     let target = crate::targets::canonical(s.trim());
     if target == tungsten_config::capabilities::INIT.cli_alias

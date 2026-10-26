@@ -95,8 +95,13 @@ fn is_json(media_type: &str) -> bool {
 ///   type of one line, as `schema` is for these media types in 3.1.
 /// - `text/event-stream` whose item is an event object with a `data` string
 ///   of JSON (`contentMediaType` JSON plus `contentSchema`):
-///   `/itemSchema/properties/data/contentSchema` is the event type. The
-///   other event fields (`event`, `id`, `retry`) carry no type.
+///   `/itemSchema/properties/data/contentSchema` is the event type.
+/// - `text/event-stream` whose `data` is plain text (a string without
+///   `contentMediaType`, or with a `text/*` one, and no `contentSchema`):
+///   [`TEXT_EVENT_DATA`], the string schema of `data`, is the event type,
+///   and the data is not decoded as JSON.
+///
+/// The other event fields (`event`, `id`, `retry`) carry no type.
 ///
 /// `None` for every other use, including a media type that declares
 /// `schema` too; TG0145 reports those.
@@ -126,16 +131,28 @@ pub fn response_item_schema(media_type: &str, media: &Map<String, Value>) -> Opt
         return None;
     }
     let data = properties.get("data")?.as_object()?;
-    let json = data
-        .get("contentMediaType")
-        .and_then(Value::as_str)
-        .is_some_and(is_json);
     let string = data
         .get("type")
         .is_none_or(|t| t.as_str() == Some("string"));
-    (json && string && data.contains_key("contentSchema"))
-        .then_some("/itemSchema/properties/data/contentSchema")
+    if !string {
+        return None;
+    }
+    match data.get("contentMediaType") {
+        Some(Value::String(m)) if is_json(m) => data
+            .contains_key("contentSchema")
+            .then_some("/itemSchema/properties/data/contentSchema"),
+        Some(Value::String(m)) if m.trim_start().to_ascii_lowercase().starts_with("text/") => {
+            (!data.contains_key("contentSchema")).then_some(TEXT_EVENT_DATA)
+        }
+        None if !data.contains_key("contentSchema") => Some(TEXT_EVENT_DATA),
+        _ => None,
+    }
 }
+
+/// What [`response_item_schema`] returns for an event stream whose `data`
+/// is text rather than JSON: the `data` string schema itself, which is the
+/// event type.
+pub const TEXT_EVENT_DATA: &str = "/itemSchema/properties/data";
 
 const IGNORED: &str = "the compiler does not use it; remove it to silence this warning";
 

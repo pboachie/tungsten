@@ -21,6 +21,7 @@ import {
   requestIdOf,
   verifyCallable,
 } from "./classify.js";
+import { checkpointBinding, checkpointStatus, type CheckpointStatus, openCheckpoint, sealCheckpoint } from "./checkpoint.js";
 import { argumentSnapshot, argsDigest, checkToken, CONFIRMATION_TTL_MS, issueToken } from "./confirm.js";
 import { diagnostic, scrubDiagnostic, scrubText } from "./envelope.js";
 import { OAuthFlow, OAuthSession } from "./oauth.js";
@@ -48,16 +49,21 @@ import {
   validHeaderValue,
 } from "./serialize.js";
 import { DEFAULT_MAX_EVENT_BYTES, SseParser, type SseEvent } from "./sse.js";
+import { declaredLength, Download, type DownloadFailure } from "./download.js";
 import { EventStream } from "./streams.js";
 import { attempt, type AttemptOutcome, nextLink, parseRetryAfter, StreamBody } from "./transport.js";
 import { type Permit, type Rejection, RequestScheduler } from "./scheduler.js";
+import { Telemetry, type TelemetryQueueReason, type TelemetrySpan } from "./telemetry.js";
 import type {
   ApiDescriptor,
   CallOptions,
+  CheckpointOptions,
+  CheckpointPage,
   ClientCoreApi,
   ClientCoreExtensions,
   ClientOptions,
   Diagnostic,
+  DownloadOptions,
   HttpMethod,
   IdempotencyStore,
   MacroDescriptor,
@@ -92,6 +98,7 @@ import {
   redactPaths,
   redactSensitiveKeys,
   sha256Hex,
+  timingSafeEqual,
   sleep,
   splitPath,
 } from "./util.js";
@@ -124,6 +131,16 @@ const pageRequestUrls = new WeakMap<object, string>();
 const MAX_REDIRECTS = 5;
 const REDIRECT_STATUSES: ReadonlySet<number> = new Set([301, 302, 303, 307, 308]);
 
+/** Why a traversal stopped while the server still offered a page. */
+type PageStop = "cycle" | "max" | "origin" | null;
+
+/** Hooks of a checkpointed traversal: the saved position to start from,
+ * and the real next-page value and stop reason of the last page. */
+interface PageControl {
+  start?: unknown;
+  last?: { next: unknown; stop: PageStop };
+}
+
 /** Why a request is being prepared. `macro_preview` renders a macro step
  * from a dry evaluation: argument values that are placeholders for earlier
  * results are not validated. */
@@ -141,7 +158,10 @@ const POLL_DEADLINE: unique symbol = Symbol("tungsten.pollDeadline");
  * call, fixed when a public entry point resolves `deadlineMs`. Nested work
  * (pages, polls, verification, macro steps) inherits it and cannot restart it. */
 const CALL_DEADLINE: unique symbol = Symbol("tungsten.callDeadline");
-type StepOptions = CallOptions & { [POLL_DEADLINE]?: number | undefined; [CALL_DEADLINE]?: number | undefined; [MACRO_CONFIRMED]?: true; [MACRO_CLAIM]?: () => Failure | null };
+/** The telemetry span of the operation a public entry point started; only
+ * work belonging to that operation reads it. */
+const TELEMETRY_SPAN: unique symbol = Symbol("tungsten.telemetrySpan");
+type StepOptions = CallOptions & { [POLL_DEADLINE]?: number | undefined; [CALL_DEADLINE]?: number | undefined; [TELEMETRY_SPAN]?: TelemetrySpan | undefined; [MACRO_CONFIRMED]?: true; [MACRO_CLAIM]?: () => Failure | null };
 
 /** `#untilDeadline` gave up waiting. */
 const DEADLINE_EXPIRED: unique symbol = Symbol("tungsten.deadlineExpired");
@@ -214,6 +234,29 @@ function safeName(value: unknown, key: string, fallback: string): string {
   }
 }
 
+/** The `reason` of a `queue` telemetry phase: why admission ended. */
+function queueReason(refused: Diagnostic | null): TelemetryQueueReason {
+  if (refused === null) return "admitted";
+  switch (refused.code) {
+    case "QUEUE_FULL": return "full";
+    case "QUEUE_TIMEOUT": return "timeout";
+    case "RATE_LIMIT_PAUSED": return "paused";
+    case "SCHEDULER_CLOSED": return "closed";
+    case "DEADLINE_EXCEEDED": return "deadline";
+    default: return "cancelled";
+  }
+}
+
+/** The origin of an absolute URL, or null. */
+function originOf(url: string): string | null {
+  try {
+    const origin = new URL(url).origin;
+    return origin === "null" ? null : origin;
+  } catch {
+    return null;
+  }
+}
+
 function safeId(op: unknown): string {
   return safeName(op, "id", "<unknown operation>");
 }
@@ -258,6 +301,7 @@ function descriptorProblem(op: unknown): string | null {
     if (!isRecord(stream)) return "`stream` must be an object";
     if (stream.done !== undefined && typeof stream.done !== "string") return "`stream.done` must be a string";
     if (stream.flag !== undefined && typeof stream.flag !== "string") return "`stream.flag` must be a string";
+    if (stream.text !== undefined && typeof stream.text !== "boolean") return "`stream.text` must be a boolean";
     if (stream.event !== undefined && !isSchema(stream.event)) return "`stream.event` must be a schema";
   }
   if (!isRecord(op.status) || (op.status.kind !== "implemented" && op.status.kind !== "gated")) return "`status.kind` must be implemented or gated";
@@ -494,6 +538,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
 
   readonly #redirectsDisabled: boolean;
   readonly #scheduler: RequestScheduler | null = null;
+  readonly #telemetry: Telemetry | null = null;
   readonly #redirectPolicyInvalid: boolean;
 
   /**
@@ -542,6 +587,11 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     }
     if (this.options.tenant !== undefined && typeof this.options.tenant !== "string") throw new TypeError("tenant must be a string");
     try {
+      this.#telemetry = Telemetry.of(this.options.telemetry);
+    } catch {
+      // Unreadable options: telemetry stays off.
+    }
+    try {
       const candidate = this.options.idempotencyStore;
       if (isRecord(candidate) && typeof candidate.get === "function" && typeof candidate.put === "function") store = candidate;
       if (Array.isArray(this.options.operations)) this.register(...this.options.operations);
@@ -575,11 +625,22 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
   /** Validate, authenticate, apply idempotency and confirmation rules,
    * send with retries and classify the response. Never throws. */
   async call<T>(op: OperationDescriptor, args: Record<string, unknown>, opts?: CallOptions): Promise<Result<T>> {
+    const span = this.#startSpan(op);
+    let result: Result<T>;
     try {
-      return await this.#call<T>(op, args, this.#callOptions(opts), null);
+      const resolved = this.#callOptions(opts);
+      result = await this.#call<T>(op, args, span === null ? resolved : ({ ...resolved, [TELEMETRY_SPAN]: span } as StepOptions), null);
     } catch (error) {
-      return fail(this.#internal(op, error, "building or sending the request"));
+      result = fail(this.#internal(op, error, "building or sending the request"));
     }
+    if (span !== null) {
+      try {
+        span.end(result.ok ? null : result.error, !result.ok && (opts as CallOptions | undefined)?.signal?.aborted === true, result.ok ? result.meta.status : result.error.http_status);
+      } catch {
+        // Telemetry never changes the call.
+      }
+    }
+    return result;
   }
 
   /** Run the operation's preview mode: local rendering (no network), a
@@ -603,6 +664,31 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     }
   }
 
+  /**
+   * Iterate the pages of a read-only operation like {@link pages}, each
+   * with a sealed checkpoint token to persist once the page is committed
+   * to the sink; pass a saved token as `checkpoint.resume` after a restart
+   * to continue with the page after it. Never throws. A token that is
+   * malformed, altered, sealed under another key, older than `maxAgeMs`,
+   * stopped, or issued for other arguments, origin, tenant, scope or
+   * contract is refused (`VALIDATION_FAILED`) before any request. Page
+   * budgets, cycle detection, deadlines and cancellation apply per run.
+   */
+  async *exportPages<T>(op: OperationDescriptor, args: Record<string, unknown>, checkpoint: CheckpointOptions, opts?: CallOptions): AsyncIterable<Result<CheckpointPage<T>>> {
+    try {
+      yield* this.#exportPages<T>(op, args, checkpoint, this.#callOptions(opts));
+    } catch (error) {
+      yield fail(this.#internal(op, error, "exporting pages"));
+    }
+  }
+
+  /** The secret-free status of a checkpoint token (operation, style,
+   * state, pages, issue time) for logs and support, or null when it is not
+   * a well-formed token. Its seal is not checked; the cursor is omitted. */
+  static describeCheckpoint(token: string): CheckpointStatus | null {
+    return checkpointStatus(token);
+  }
+
   /** Iterate the events of the operation's event stream: one item per
    * server-sent event, decoded from JSON, then the end of the stream or a
    * final failure item. Never throws. */
@@ -623,6 +709,23 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
       }
     };
     return new EventStream<T>(items(this), () => controller.abort(), safeId(op), !(isRecord(op) && isRecord(op.agent) && op.agent.safety === "read_only"));
+  }
+
+  /** Send the operation and hand its 2xx body over unread, as a
+   * {@link Download} to read chunk by chunk or write to a sink: the body is
+   * never held in memory whole. Everything before the answer (validation,
+   * auth, idempotency, confirmation, retries, the scheduler, `deadlineMs`)
+   * follows the rules of `call`; an error status is read and classified as
+   * for `call`. The body's reads are bounded by `ClientOptions.idleTimeoutMs`
+   * (default `timeoutMs`), by `deadlineMs` and by `maxBytes`; the
+   * connection and its scheduler capacity are held until the download
+   * ends or is closed. Never throws. */
+  async download(op: OperationDescriptor, args: Record<string, unknown>, opts?: DownloadOptions): Promise<Result<Download>> {
+    try {
+      return await this.#download(op, args, this.#callOptions(opts));
+    } catch (error) {
+      return fail(this.#internal(op, error, "downloading"));
+    }
   }
 
   /** Call a read operation until `until` holds on its body or the budget
@@ -841,6 +944,16 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     return Array.isArray(this.options.middleware) ? this.options.middleware.filter(isRecord) : [];
   }
 
+  /** Start the telemetry of one operation; null when telemetry is off. */
+  #startSpan(op: OperationDescriptor): TelemetrySpan | null {
+    if (this.#telemetry === null) return null;
+    try {
+      return this.#telemetry.start(safeName(this.api, "name", ""), safeId(op), "call", isRecord(op) && isRecord(op.agent) && isMutation(op));
+    } catch {
+      return null;
+    }
+  }
+
   async #call<T>(op: OperationDescriptor, args: Record<string, unknown>, opts: CallOptions, urlOverride: string | null, pageUrls?: Set<string>): Promise<Result<T>> {
     const prepared = await this.#prepare(op, args, opts, "call", urlOverride);
     if (!prepared.ok) return prepared;
@@ -855,7 +968,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
       result = await this.#retryRejected(prepared.value, result, opts);
     }
     if (result.ok && opts.verify === true && op.agent.verify) {
-      return { ...result, verification: await this.#verify(op, prepared.value.args, result.value, opts) };
+      return { ...result, verification: await this.#verify(op, prepared.value.args, result.value, { ...opts, [TELEMETRY_SPAN]: undefined } as StepOptions) };
     }
     return result;
   }
@@ -863,7 +976,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
   /** The answer to a request whose stored OAuth2 token was rejected (401):
    * the refreshed token is put on the same request, which is sent once more;
    * `rejected` stands when nothing could be refreshed. */
-  async #retryRejected<T>(prepared: Prepared, rejected: Failure, opts: CallOptions): Promise<Result<T>> {
+  async #retryRejected<T>(prepared: Prepared, rejected: Failure, opts: CallOptions, stream: boolean | "bytes" = false, idleMs?: number): Promise<Result<T>> {
     const interrupted = this.#beforeDispatch(prepared.op, opts);
     if (interrupted) return interrupted;
     const scheme = prepared.oauth;
@@ -874,7 +987,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     if (token === DEADLINE_EXPIRED || token === null) return rejected;
     prepared.headers.set("Authorization", `Bearer ${token}`, true);
     prepared.secrets.add(token);
-    return this.#send<T>({ ...prepared, oauth: null }, opts);
+    return this.#send<T>({ ...prepared, oauth: null }, opts, stream, idleMs);
   }
 
   /** The OAuth2 authorization-code helpers of the scheme `scheme`: PKCE, the
@@ -1109,11 +1222,26 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     const beforeAuth = this.#beforeDispatch(op, opts);
     if (beforeAuth) return beforeAuth;
     const authTarget = urlOverride ?? (typeof this.options.baseUrl === "string" ? this.options.baseUrl : this.api.servers?.find(s => typeof s === "string"));
+    const span = (opts as StepOptions)[TELEMETRY_SPAN];
+    const authStart = performance.now();
     const auth = await this.#untilDeadline(resolveAuth(this.api, op, isRecord(this.options.auth) ? this.options.auth : {}, method, this.#tokenSource,
       insecureHttp(authTarget, this.options.allowInsecureHttp) ? INSECURE_HTTP_AUTH : null), opts);
-    if (auth === DEADLINE_EXPIRED) return this.#deadlineExpired(op, "while authenticating");
-    if (auth === CALLER_CANCELLED) return this.#callerCancelled(op);
-    if (!auth.ok) return fail(diagnostic(op.id, "AUTH_FAILED", { remediation: auth.remediation }));
+    if (auth === DEADLINE_EXPIRED) {
+      const expired = this.#deadlineExpired(op, "while authenticating");
+      span?.phase("auth", authStart, expired.error, false);
+      return expired;
+    }
+    if (auth === CALLER_CANCELLED) {
+      const cancelled = this.#callerCancelled(op);
+      span?.phase("auth", authStart, cancelled.error, true);
+      return cancelled;
+    }
+    if (!auth.ok) {
+      const failed = fail(diagnostic(op.id, "AUTH_FAILED", { remediation: auth.remediation }));
+      span?.phase("auth", authStart, failed.error, false);
+      return failed;
+    }
+    span?.phase("auth", authStart, null, false);
     const secrets = new Set(auth.secrets.filter((s) => s !== ""));
     for (const p of op.params) {
       const value = args[p.name];
@@ -1501,12 +1629,13 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
 
   // -------------------------------------------------------------- sending
 
-  async #send<T>(prepared: Prepared, opts: CallOptions, stream = false, idleMs?: number): Promise<Result<T>> {
+  async #send<T>(prepared: Prepared, opts: CallOptions, stream: boolean | "bytes" = false, idleMs?: number): Promise<Result<T>> {
     const { op } = prepared;
     const mutation = isMutation(op);
     const protectedReplay = hasReplayProtection(op, prepared.key);
     const check = mutation && !protectedReplay ? this.#outcomeCheck(op, prepared.args) : null;
     const timeoutMs = this.#timeout(opts);
+    const span = (opts as StepOptions)[TELEMETRY_SPAN];
     let attempts = 0;
     let previousMutationFailure: Failure | undefined;
     for (;;) {
@@ -1529,8 +1658,15 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
       }
       const interrupted = this.#beforeDispatch(op, opts);
       if (interrupted) return previousMutationFailure ?? interrupted;
+      const queueStart = performance.now();
       const permit = await this.#admit(op, prepared.url, opts, stream);
+      if (permit !== null && span !== undefined) {
+        const refused = "ok" in permit ? permit.error : null;
+        span.phase("queue", queueStart, refused, opts.signal?.aborted === true, { attempt: span.attempt + 1, reason: queueReason(refused) });
+      }
       if (permit !== null && "ok" in permit) return previousMutationFailure ?? permit;
+      const attemptNumber = span?.nextAttempt() ?? 0;
+      const attemptStart = span?.attemptStart(attemptNumber) ?? 0;
       if (permit !== null && attempts === 1) this.#scheduler?.recordCall(this.#scopeKey(prepared.url));
       let result: Result<T>;
       let current = { url: prepared.url, method: prepared.method, body: prepared.body };
@@ -1582,7 +1718,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
         if (permit !== null) {
           if (!result.ok && result.error.category === "RATE_LIMITED") permit.settle(result.error.retry_after_ms);
           else if (outcome.kind === "response") permit.settle(undefined);
-          // An open event stream keeps its capacity until it is closed.
+          // An open event stream or download keeps its capacity until it is closed.
           if (result.ok && result.value instanceof StreamBody) {
             result.value.whenClosed(() => permit.release());
             handedOff = true;
@@ -1591,6 +1727,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
       } finally {
         if (!handedOff) permit?.release();
       }
+      span?.attemptEnd(attemptNumber, attemptStart, result.ok ? null : result.error, !result.ok && opts.signal?.aborted === true, result.ok ? result.meta.status : result.error.http_status);
       if (result.ok) { pageRequestUrls.set(result.meta, current.url); return result; }
       const error = scrubDiagnostic(result.error, prepared.secrets);
       const done = (): Failure => (result.partial === undefined ? fail(error) : { ok: false, error, partial: result.partial });
@@ -1625,19 +1762,26 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
       }
       // A retry that could not start before the deadline is not waited for.
       const deadline = (opts as StepOptions)[CALL_DEADLINE];
-      if (deadline !== undefined && performance.now() + delay >= deadline) return previousMutationFailure ?? done();
-      if (!(await sleep(delay, opts.signal))) return previousMutationFailure ?? done();
+      if (deadline !== undefined && performance.now() + delay >= deadline) {
+        span?.phase("retry_backoff", performance.now(), { code: "DEADLINE_EXCEEDED" }, false, { attempt: attemptNumber });
+        return previousMutationFailure ?? done();
+      }
+      const backoffStart = performance.now();
+      const slept = await sleep(delay, opts.signal);
+      span?.phase("retry_backoff", backoffStart, slept ? null : {}, !slept, { attempt: attemptNumber });
+      if (!slept) return previousMutationFailure ?? done();
     }
   }
 
   /** Wait for scheduler capacity for one attempt. Null without a
    * scheduler; a failure (nothing sent) when no capacity was given. */
-  async #admit(op: OperationDescriptor, url: string, opts: CallOptions, stream: boolean): Promise<Permit | Failure | null> {
+  async #admit(op: OperationDescriptor, url: string, opts: CallOptions, stream: boolean | "bytes"): Promise<Permit | Failure | null> {
     const scheduler = this.#scheduler;
     if (scheduler === null) return null;
     const random = typeof this.options.random === "function" ? () => bounded(this.options.random?.(), 0.5, 0, 1) : Math.random;
     const key = this.#scopeKey(url);
-    const admitted = await scheduler.acquire(key, stream ? "stream" : "call", opts.signal, this.#deadline(opts), random);
+    // A download holds an ordinary request's capacity until it is closed.
+    const admitted = await scheduler.acquire(key, stream === true ? "stream" : "call", opts.signal, this.#deadline(opts), random);
     if ("release" in admitted) {
       // Cancelled or expired while it waited: the request is never sent.
       const late = this.#beforeDispatch(op, opts);
@@ -1648,7 +1792,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
       return admitted;
     }
     // A wait ended by the caller's signal or deadline reports that.
-    return this.#beforeDispatch(op, opts) ?? this.#rejected(op, admitted, stream);
+    return this.#beforeDispatch(op, opts) ?? this.#rejected(op, admitted, stream === true);
   }
 
   #scopeKey(url: string): string {
@@ -2070,11 +2214,20 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     return (params.find((p) => p.name === key) ?? params.find((p) => p.wire === key))?.name ?? key;
   }
 
-  async *#pages<T>(op: OperationDescriptor, args: Record<string, unknown>, opts: CallOptions): AsyncGenerator<Result<Page<T>>> {
+  async *#pages<T>(op: OperationDescriptor, args: Record<string, unknown>, opts: CallOptions, ctl?: PageControl): AsyncGenerator<Result<Page<T>>> {
     const pagination = isRecord(op) && isRecord(op.pagination) ? op.pagination : null;
     let current: Record<string, unknown> = isRecord(args) ? { ...args } : args;
     let override: string | null = null;
     const seen = new Set<string>();
+    if (ctl?.start !== undefined && pagination && isRecord(current)) {
+      if (pagination.style === "link_header") {
+        override = String(ctl.start);
+        seen.add(override);
+      } else {
+        const param = pagination.style === "cursor" ? pagination.requestParam : pagination.style === "offset" ? pagination.offsetParam : pagination.pageParam;
+        current = { ...current, [this.#argName(op, param)]: ctl.start };
+      }
+    }
     const requestUrls = pagination?.style === "link_header" ? new Set<string>() : undefined;
     const maxPages = typeof opts.maxPages === "number" && Number.isSafeInteger(opts.maxPages) && opts.maxPages > 0 ? opts.maxPages : undefined;
     let count = 0;
@@ -2146,6 +2299,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
                 }
               })();
               if (resolved.origin !== origin || origin === null) {
+                if (ctl) ctl.last = { next: null, stop: "origin" };
                 yield { ok: true, value: { items, body, next: null }, meta: result.meta };
                 yield fail(
                   diagnostic(op.id, "UNEXPECTED_RESPONSE", {
@@ -2167,18 +2321,136 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
       }
       count += 1;
       let stop: string | null = null;
+      let stopKind: PageStop = null;
       if (next !== null) {
         const key = pagination?.style === "link_header" ? String(next) : canonicalJson(next);
-        if (seen.has(key)) stop = "Pagination detected a repeated cursor or page URL. Fix the server's next-page value before continuing.";
-        else if (maxPages !== undefined && count >= maxPages) stop = "Pagination reached maxPages before another request. Increase maxPages to continue.";
-        else seen.add(key);
+        if (seen.has(key)) {
+          stop = "Pagination detected a repeated cursor or page URL. Fix the server's next-page value before continuing.";
+          stopKind = "cycle";
+        } else if (maxPages !== undefined && count >= maxPages) {
+          stop = "Pagination reached maxPages before another request. Increase maxPages to continue.";
+          stopKind = "max";
+        } else seen.add(key);
       }
+      if (ctl) ctl.last = { next, stop: stopKind };
       yield { ok: true, value: { items, body, next: stop ? null : next }, meta: result.meta };
       if (stop) {
         yield fail(diagnostic(op.id, "UNEXPECTED_RESPONSE", { http_status: result.meta.status, request_id: result.meta.requestId, remediation: stop, trace: { attempts: result.meta.attempts } }));
         return;
       }
       if (next === null) return;
+    }
+  }
+
+  async *#exportPages<T>(op: OperationDescriptor, args: Record<string, unknown>, cp: CheckpointOptions, opts: CallOptions): AsyncGenerator<Result<CheckpointPage<T>>> {
+    const id = safeId(op);
+    const refuse = (expected: string, remediation: string, parameter = "checkpoint"): Result<never> =>
+      fail(diagnostic(id, "VALIDATION_FAILED", { failed_parameter: parameter, expected, retryable: "never", remediation }));
+    const pagination = isRecord(op) && isRecord(op.pagination) ? op.pagination : null;
+    if (!pagination || !["cursor", "offset", "page", "link_header"].includes(pagination.style)) {
+      yield refuse("an operation with a pagination contract", "This operation declares no pagination contract, so it cannot be resumed from a checkpoint; call it directly. Nothing was sent.", "operation");
+      return;
+    }
+    if (!(isRecord(op.agent) && op.agent.safety === "read_only")) {
+      yield refuse("a read-only operation", "Checkpointed exports run read-only operations only; nothing was sent.", "operation");
+      return;
+    }
+    const key = isRecord(cp) && cp.key instanceof Uint8Array ? cp.key : null;
+    if (key === null || key.byteLength < 32) {
+      yield refuse("a key of at least 32 bytes", "Pass checkpoint.key, a secret of at least 32 bytes kept stable across restarts. Nothing was sent.", "checkpoint.key");
+      return;
+    }
+    const scope = cp.scope ?? "";
+    if (typeof scope !== "string") {
+      yield refuse("a string", "checkpoint.scope names the account or principal the export reads for. Nothing was sent.", "checkpoint.scope");
+      return;
+    }
+    if (!isRecord(args)) {
+      yield refuse("an object of named arguments", "Pass the operation's arguments as an object. Nothing was sent.", "args");
+      return;
+    }
+    const style = pagination.style;
+    const param = style === "cursor" ? pagination.requestParam : style === "offset" ? pagination.offsetParam : style === "page" ? pagination.pageParam : "";
+    const rest: Record<string, unknown> = { ...args };
+    if (param !== "") delete rest[this.#argName(op, param)];
+    let base: unknown = this.options.baseUrl;
+    if (typeof base !== "string") base = Array.isArray(this.api.servers) ? this.api.servers.find((s) => typeof s === "string") : undefined;
+    const binding = await checkpointBinding(key, {
+      api: typeof this.api.name === "string" ? this.api.name : "",
+      operation: op.id,
+      method: op.method,
+      path: op.path,
+      style,
+      position: param,
+      base: typeof base === "string" ? base : "",
+      tenant: this.options.tenant ?? "",
+      scope,
+      args: rest,
+    });
+    let pages = 0;
+    let start: unknown = undefined;
+    if (cp.resume !== undefined) {
+      const restart = "Restart the export from the first page only if that is intended: omit checkpoint.resume. Nothing was sent.";
+      const saved = await openCheckpoint(key, cp.resume);
+      if (saved === null) {
+        yield refuse("a checkpoint token sealed under checkpoint.key", `The checkpoint is malformed, altered or sealed under another key. ${restart}`);
+        return;
+      }
+      if (saved.operation !== op.id || saved.style !== style) {
+        yield refuse(`a checkpoint of ${op.id} (${style})`, `The checkpoint belongs to ${saved.operation} (${saved.style}), not this operation and pagination contract. ${restart}`);
+        return;
+      }
+      if (!timingSafeEqual(saved.binding, binding)) {
+        yield refuse("a checkpoint of this traversal", `The checkpoint was issued for other arguments (filters, order, page size), base URL, tenant, scope or API. Resume with the original ones, or: ${restart}`);
+        return;
+      }
+      const maxAge = cp.maxAgeMs;
+      if (maxAge !== undefined && (typeof maxAge !== "number" || !(maxAge >= 0))) {
+        yield refuse("a non-negative number of milliseconds", "checkpoint.maxAgeMs must be a non-negative number. Nothing was sent.", "checkpoint.maxAgeMs");
+        return;
+      }
+      if (maxAge !== undefined && this.#now() - saved.issued > maxAge) {
+        yield refuse(`a checkpoint issued within ${maxAge} ms`, `The checkpoint is older than checkpoint.maxAgeMs, so the provider's cursor may have expired. ${restart}`);
+        return;
+      }
+      if (saved.state === "complete") return;
+      if (saved.state === "stopped") {
+        yield refuse("a resumable checkpoint", `The export stopped on a server fault (a repeated cursor or a cross-origin next-page link) that resuming would repeat. ${restart}`);
+        return;
+      }
+      const next = saved.next;
+      const valid =
+        style === "link_header"
+          ? typeof next === "string" && typeof base === "string" && originOf(next) !== null && originOf(next) === originOf(base)
+          : style === "cursor"
+            ? next !== null && next !== undefined && next !== ""
+            : Number.isSafeInteger(next) && (next as number) >= 0;
+      if (!valid) {
+        yield refuse("a resumable checkpoint", `The checkpoint's saved position cannot be resumed against this base URL. ${restart}`);
+        return;
+      }
+      pages = saved.pages;
+      start = next;
+    }
+    const ctl: PageControl = { start };
+    let resuming = start !== undefined;
+    for await (const item of this.#pages<T>(op, args, opts, ctl)) {
+      if (!item.ok) {
+        if (resuming && [400, 404, 410, 422].includes(item.error.http_status ?? 0)) {
+          item.error = {
+            ...item.error,
+            remediation: `${item.error.remediation} This request resumed from a saved checkpoint: if the provider's cursor or page position expired, restart the export from the first page (omit checkpoint.resume) and let the sink deduplicate.`,
+          };
+        }
+        yield item;
+        return;
+      }
+      resuming = false;
+      const last = ctl.last ?? { next: null, stop: null };
+      pages = Math.min(pages + 1, Number.MAX_SAFE_INTEGER);
+      const state = last.stop === "cycle" || last.stop === "origin" ? "stopped" : last.next === null ? "complete" : "partial";
+      const token = await sealCheckpoint(key, { v: 1, operation: op.id, style, binding, state, next: state === "partial" ? last.next : null, pages, issued: Math.max(0, Math.trunc(this.#now())) });
+      yield { ...item, value: { ...item.value, checkpoint: token, complete: state === "complete" } };
     }
   }
 
@@ -2307,16 +2579,18 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
             prep.secrets,
           ),
         );
-      let value: unknown;
-      try {
-        value = JSON.parse(event.data);
-      } catch {
-        return failure({
-          failed_parameter: `events[${index}]`,
-          received_value: envelopeValue(event.data, false),
-          expected: "JSON in the data of every event",
-          remediation: `Event ${index} of the stream (event "${event.event}") does not carry JSON in its data.${afterEffect} Events before it were delivered.`,
-        });
+      let value: unknown = event.data;
+      if (spec.text !== true) {
+        try {
+          value = JSON.parse(event.data);
+        } catch {
+          return failure({
+            failed_parameter: `events[${index}]`,
+            received_value: envelopeValue(event.data, false),
+            expected: "JSON in the data of every event",
+            remediation: `Event ${index} of the stream (event "${event.event}") does not carry JSON in its data.${afterEffect} Events before it were delivered.`,
+          });
+        }
       }
       if (mode !== "off" && isSchema(spec.event)) {
         let parsed: ReturnType<SchemaLike["safeParse"]>;
@@ -2435,6 +2709,72 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     } finally {
       body.close();
     }
+  }
+
+  async #download(op: OperationDescriptor, args: Record<string, unknown>, opts: DownloadOptions): Promise<Result<Download>> {
+    const maxBytes = opts.maxBytes === undefined || opts.maxBytes === null ? undefined : opts.maxBytes;
+    if (maxBytes !== undefined && !(Number.isSafeInteger(maxBytes) && maxBytes >= 0)) {
+      return fail(diagnostic(safeId(op), "VALIDATION_FAILED", {
+        failed_parameter: "maxBytes",
+        received_value: envelopeValue(maxBytes, false),
+        expected: "a non-negative safe integer",
+        remediation: "Pass maxBytes as a whole number of bytes, or leave it out for no limit. Nothing was sent.",
+      }));
+    }
+    const prepared = await this.#prepare(op, args, opts, "call", null);
+    if (!prepared.ok) return prepared;
+    const prep = prepared.value;
+    const idleSetting = bounded(this.options.idleTimeoutMs, 0, 0);
+    const idleMs = idleSetting > 0 ? idleSetting : undefined;
+    let sent = await this.#send<unknown>(prep, opts, "bytes", idleMs);
+    if (!sent.ok && sent.error.http_status === 401 && prep.oauth !== null) {
+      sent = await this.#retryRejected<unknown>(prep, sent, opts, "bytes", idleMs);
+    }
+    if (!sent.ok) return sent;
+    const { meta } = sent;
+    const mutation = isMutation(op);
+    const timeoutMs = this.#timeout(opts);
+    const hint = op.agent.verify ? `Call ${op.agent.verify.operation} to read the current state.` : null;
+    const failure = (why: DownloadFailure, bytes: number, detail?: string): Diagnostic => {
+      const after = `after ${bytes} ${bytes === 1 ? "byte" : "bytes"}`;
+      const code = why === "idle" ? "STREAM_IDLE" : why === "deadline" ? "DEADLINE_EXCEEDED" : why === "oversized" ? "RESPONSE_TOO_LARGE" : why === "sink" ? "SINK_FAILED" : null;
+      const cause =
+        why === "idle" ? `No bytes arrived within ${idleMs ?? timeoutMs} ms ${after}; the download was abandoned.`
+        : why === "deadline" ? `The operation deadline (deadlineMs) expired ${after}; the download was abandoned.`
+        : why === "aborted" ? `The download was cancelled ${after}.`
+        : why === "lost" ? `The connection failed ${after}, before the body ended.`
+        : why === "truncated" ? `The body ended ${after}, short of its Content-Length of ${declaredLength(meta.headers["content-length"]) ?? 0}.`
+        : why === "oversized" ? `The body is larger than the limit of ${maxBytes ?? 0} bytes (maxBytes); the download was abandoned ${after}.`
+        : `The sink failed (${detail ?? "error"}) ${after}; the download was abandoned.`;
+      const common = { http_status: meta.status, request_id: meta.requestId, code, trace: { attempts: meta.attempts } };
+      if (mutation) {
+        return scrubDiagnostic(diagnostic(op.id, "UNEXPECTED_RESPONSE", {
+          ...common,
+          retryable: "never",
+          next_action: hint,
+          remediation: `The server accepted ${op.id} (HTTP ${meta.status}). ${cause} The call took effect; do not repeat it.`,
+        }), prep.secrets);
+      }
+      const local = why === "aborted" || why === "sink" || why === "oversized" || why === "deadline";
+      const category = why === "idle" || why === "deadline" ? "UPSTREAM_UNAVAILABLE" : why === "oversized" ? "UNEXPECTED_RESPONSE" : "TRANSPORT_FAILED";
+      const again =
+        why === "idle" ? `call again later or with a larger ${idleMs === undefined ? "timeoutMs" : "idleTimeoutMs"}`
+        : why === "deadline" ? "call again with a larger deadlineMs"
+        : why === "oversized" ? "raise maxBytes if a body this large is expected"
+        : "call again";
+      return scrubDiagnostic(diagnostic(op.id, category, {
+        ...common,
+        ...(local ? { retryable: "never" as const } : {}),
+        remediation: `${cause} This read has no side effects; ${again}.`,
+      }), prep.secrets);
+    };
+    const body = sent.value instanceof StreamBody ? sent.value : null;
+    const download = new Download(body, meta, maxBytes, typeof opts.onProgress === "function" ? opts.onProgress : undefined, failure);
+    if (maxBytes !== undefined && download.contentLength !== null && download.contentLength > maxBytes) {
+      download.close();
+      return fail(failure("oversized", 0));
+    }
+    return { ok: true, value: download, meta };
   }
 
   async #poll<T>(

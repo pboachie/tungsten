@@ -461,6 +461,9 @@ pub struct StreamDescriptor {
     pub done: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub flag: Option<String>,
+    /// Every event's `data` is text delivered as written, not JSON.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub text: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
@@ -934,6 +937,7 @@ fn operation(
             event: schemas.type_ref(&s.event),
             done: s.done.clone(),
             flag: s.flag.clone(),
+            text: s.text,
         }),
         summary: (!summary.is_empty()).then_some(summary),
     }

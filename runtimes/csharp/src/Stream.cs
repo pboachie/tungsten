@@ -716,7 +716,8 @@ public sealed partial class ClientCore
         int index = o.Count;
         var afterEffect = Classify.IsMutation(op) ? " The call took effect; do not repeat it." : "";
         Failure Failed(Diag b) => new(o.Secrets.Scrub(b.Status(o.Meta.Status).RequestId(o.Meta.RequestId).Retry(Retryable.Never).Attempts(o.Meta.Attempts).Build()));
-        if (!Json.TryParse(ev.Data, out var value))
+        JsonNode? value = JsonValue.Create(ev.Data);
+        if (!spec.Text && !Json.TryParse(ev.Data, out value))
         {
             throw Failed(new Diag(op.Id, Category.UnexpectedResponse).Param($"events[{index}]")
                 .Received(Util.EnvelopeValue(JsonValue.Create(ev.Data), false)).Expected("JSON in the data of every event")

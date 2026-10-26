@@ -20,7 +20,7 @@ use crate::render::{
 };
 use crate::spec::CliFlag;
 use crate::tree::{self, Leaf, Tree};
-use crate::{builtin, check, dotted, explain, values};
+use crate::{builtin, check, dotted, explain, login, values};
 
 fn flag(m: &ArgMatches, name: &str) -> bool {
     m.try_get_one::<bool>(name)
@@ -438,11 +438,9 @@ struct Connected<D> {
     found: Vec<Found>,
 }
 
-fn connect<D, F>(ctx: &mut Ctx<'_>, m: &ArgMatches, make: &F) -> Result<Connected<D>, Fail>
-where
-    D: Dispatch,
-    F: Fn(ClientOptions) -> Result<D, ConfigError>,
-{
+/// The settings of the command line and the client options they give,
+/// before credentials.
+fn base(ctx: &Ctx<'_>, m: &ArgMatches) -> Result<(Settings, ClientOptions), Fail> {
     let settings = config::resolve(
         ctx.spec,
         &ctx.env,
@@ -465,6 +463,22 @@ where
     if let Some((d, _)) = &settings.deadline {
         options.deadline = Some(*d);
     }
+    Ok((settings, options))
+}
+
+/// `account`: the `--account` of an `auth` command; other commands take the
+/// account from the environment and profile only.
+fn connect<D, F>(
+    ctx: &mut Ctx<'_>,
+    m: &ArgMatches,
+    account: Option<&str>,
+    make: &F,
+) -> Result<Connected<D>, Fail>
+where
+    D: Dispatch,
+    F: Fn(ClientOptions) -> Result<D, ConfigError>,
+{
+    let (settings, mut options) = base(ctx, m)?;
     // The credentials the client needs are named by its own auth schemes,
     // so the first client only tells which they are.
     let probe = make(options.clone()).map_err(|e| Fail::Usage(e.message))?;
@@ -482,6 +496,8 @@ where
         probe
     } else {
         options.auth = auth;
+        let api = probe.core().api().clone();
+        login::attach(ctx, &settings, account, &api, &mut options)?;
         make(options).map_err(|e| Fail::Usage(e.message))?
     };
     Ok(Connected {
@@ -545,7 +561,7 @@ where
         )));
     };
     let spec = ctx.spec;
-    let conn = connect(ctx, m, make)?;
+    let conn = connect(ctx, m, None, make)?;
     let client = &conn.client;
     let plan = match *leaf {
         Leaf::Op(i) => {
@@ -608,22 +624,61 @@ where
     D: Dispatch,
     F: Fn(ClientOptions) -> Result<D, ConfigError>,
 {
-    let conn = connect(ctx, m, make)?;
+    let conn = connect(ctx, m, text(m, "account"), make)?;
     let api = conn.client.core().api();
     let known: Vec<String> =
         config::slots(&ctx.spec.env_prefix, &ctx.spec.credential_env, &api.auth)
             .into_iter()
             .map(|s| s.profile_key)
             .collect();
+    let mut known = known;
+    known.extend(crate::session::known_keys(&api.auth));
     let unknown = conn.settings.unknown_keys(&known);
     let default_url = api.servers.first().map(String::as_str);
+    let (auth, _, _) = config::credentials(
+        &ctx.spec.env_prefix,
+        &ctx.spec.credential_env,
+        &api.auth,
+        &ctx.env,
+        &conn.settings,
+    );
+    let sessions =
+        login::listed(ctx, &conn.settings, text(m, "account"), api, &auth).map_err(Fail::Usage)?;
     Ok(builtin::auth_status(
         ctx,
         &conn.settings,
         &conn.found,
         default_url,
         &unknown,
+        &sessions,
     ))
+}
+
+async fn auth_command<D, F>(
+    ctx: &mut Ctx<'_>,
+    sub: Option<&str>,
+    m: &ArgMatches,
+    make: &F,
+) -> Result<u8, Fail>
+where
+    D: Dispatch,
+    F: Fn(ClientOptions) -> Result<D, ConfigError>,
+{
+    match sub {
+        Some("login") => {
+            let (settings, options) = base(ctx, m)?;
+            login::login(ctx, m, settings, options, make).await
+        }
+        Some("switch") => {
+            let (settings, options) = base(ctx, m)?;
+            login::switch(ctx, m, settings, options, make).await
+        }
+        Some("logout") => {
+            let (settings, options) = base(ctx, m)?;
+            login::logout(ctx, m, settings, options, make).await
+        }
+        _ => auth_status(ctx, m, make).await,
+    }
 }
 
 pub(crate) async fn drive<D, F>(ctx: &mut Ctx<'_>, argv: Vec<String>, make: &F) -> u8
@@ -682,7 +737,7 @@ where
         Some("schema") => builtin::schema(ctx, &tree.leaves, leaf_m),
         Some("operations") => Ok(builtin::operations(ctx)),
         Some("explain-error") => explain::run(ctx, leaf_m),
-        Some("auth") => auth_status(ctx, leaf_m, make).await,
+        Some("auth") => auth_command(ctx, names.get(1).map(String::as_str), leaf_m, make).await,
         _ => run_leaf(ctx, &tree, &names, leaf_m, make).await,
     };
     match result {

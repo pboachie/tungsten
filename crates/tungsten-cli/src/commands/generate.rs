@@ -607,6 +607,11 @@ pub(crate) fn run(args: &GenerateArgs, env: &CliEnv, no_external: bool) -> Repor
         report.exit = exit::FAILED;
         return report;
     };
+    if let Some(diagnostic) = super::refresh_import::pending_diagnostic(&args.input.path) {
+        report.diagnostics.push(diagnostic);
+        report.exit = exit::FAILED;
+        return report;
+    }
     let locked = super::lock::required(&args.input.path, args.locked);
     if locked && let Some(diagnostic) = super::lock::locked_diagnostic(&args.input.path, &compiled)
     {
@@ -618,6 +623,15 @@ pub(crate) fn run(args: &GenerateArgs, env: &CliEnv, no_external: bool) -> Repor
         Ok(names) => names,
         Err(error) => return report.failed(exit::FAILED, error),
     };
+    if locked {
+        let mismatched =
+            super::lock::locked_output_diagnostics(&args.input.path, &compiled, env, &names);
+        if !mismatched.is_empty() {
+            report.diagnostics.extend(mismatched);
+            report.exit = exit::FAILED;
+            return report;
+        }
+    }
     let mode = if args.check {
         Mode::Check
     } else {

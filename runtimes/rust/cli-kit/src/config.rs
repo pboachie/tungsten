@@ -86,7 +86,10 @@ fn parse_seconds(text: &str, from: &str, what: &str) -> Result<Duration, String>
     }
 }
 
-fn default_config_path(spec: &CliSpec, env: &BTreeMap<String, String>) -> Option<PathBuf> {
+pub(crate) fn default_config_path(
+    spec: &CliSpec,
+    env: &BTreeMap<String, String>,
+) -> Option<PathBuf> {
     let base = if let Some(x) = nonempty(env, "XDG_CONFIG_HOME") {
         PathBuf::from(x)
     } else if let Some(h) = nonempty(env, "HOME") {
@@ -202,7 +205,7 @@ pub(crate) fn resolve(
 
 impl Settings {
     /// A string key of the selected profile.
-    fn profile_str(&self, key: &str) -> Option<&str> {
+    pub(crate) fn profile_value(&self, key: &str) -> Option<&str> {
         self.doc
             .as_ref()?
             .get(&["profile", &self.profile, key])?
@@ -361,7 +364,7 @@ pub(crate) fn credentials(
             .map(|v| (v.to_string(), Source::Env))
             .or_else(|| {
                 settings
-                    .profile_str(&slot.profile_key)
+                    .profile_value(&slot.profile_key)
                     .map(|v| (v.to_string(), Source::Profile))
             });
         let source = value.as_ref().map(|(_, s)| *s);

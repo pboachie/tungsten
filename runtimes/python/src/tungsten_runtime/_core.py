@@ -15,6 +15,7 @@ errors, which become diagnostic envelopes.
 from __future__ import annotations
 
 import codecs
+import hmac
 import math
 import random
 import re
@@ -40,6 +41,7 @@ from ._auth import (
     is_safe_method,
     resolve_auth,
 )
+from ._checkpoint import checkpoint_binding, open_checkpoint, seal_checkpoint
 from ._classify import (
     CallContext,
     OutcomeCheck,
@@ -56,7 +58,9 @@ from ._classify import (
     verify_callable,
 )
 from ._confirm import CONFIRMATION_TTL_MS, check_token, issue_token, token_expiry
+from ._download import DownloadFailure, DownloadStart, TransferProgress, declared_length
 from ._effects import (
+    CANCELLED_SEND,
     Answered,
     AttemptOutcome,
     AttemptRequest,
@@ -180,7 +184,9 @@ from .idempotency import MemoryIdempotencyStore
 from .scheduler import Permit, Rejection, RequestScheduler, SchedulerOptions
 from .schema import PatternNote, collect_pattern_notes
 from .sentinels import UNSET
+from .telemetry import Telemetry, TelemetryQueueReason, TelemetrySpan, now_ms
 from .types import (
+    CheckpointPage,
     ClientOptions,
     Diagnostic,
     Err,
@@ -299,6 +305,17 @@ class PageAnswer:
     items: list[object]
 
 
+@dataclass(slots=True)
+class _PageControl:
+    """Hooks of a checkpointed traversal: the saved position to start from,
+    and the real next-page value and stop reason (``cycle``, ``max``,
+    ``origin``) of the last page."""
+
+    start: object = UNSET
+    last_next: object = None
+    last_stop: str | None = None
+
+
 @dataclass(frozen=True, slots=True)
 class Prepared:
     """A request ready to send, with its redacted rendering."""
@@ -357,6 +374,32 @@ def _opt(opts: Mapping[str, object], key: str) -> object:
 #: logical call, fixed when a public entry point resolves ``deadline_ms``.
 #: Nested work (pages, polls, verification, macro steps) inherits it.
 _CALL_DEADLINE: Final = "\x00tungsten.call_deadline"
+#: The call-options entry holding the telemetry span of the operation a
+#: public entry point started; only work belonging to that operation reads it.
+_TELEMETRY_SPAN: Final = "\x00tungsten.telemetry_span"
+
+
+def _span_of(opts: Mapping[str, object]) -> TelemetrySpan | None:
+    span = opts.get(_TELEMETRY_SPAN)
+    return span if isinstance(span, TelemetrySpan) else None
+
+
+def _queue_reason(refused: Mapping[str, object] | None) -> TelemetryQueueReason:
+    """The ``reason`` of a ``queue`` telemetry phase: why admission ended."""
+    if refused is None:
+        return "admitted"
+    code = refused.get("code")
+    if code == "QUEUE_FULL":
+        return "full"
+    if code == "QUEUE_TIMEOUT":
+        return "timeout"
+    if code == "RATE_LIMIT_PAUSED":
+        return "paused"
+    if code == "SCHEDULER_CLOSED":
+        return "closed"
+    if code == "DEADLINE_EXCEEDED":
+        return "deadline"
+    return "cancelled"
 
 
 def _deadline_of(opts: Mapping[str, object]) -> float | None:
@@ -475,6 +518,7 @@ class Engine:
             self.scheduler = RequestScheduler(configured)
         elif configured is not None:
             raise TypeError("scheduler must be a RequestScheduler or SchedulerOptions")
+        self._telemetry = Telemetry.of(getattr(self.options, "telemetry", None))
         if not isinstance(cast(object, self.options.tenant), str | None):
             raise TypeError("tenant must be a string")
         operations: object = self.options.operations
@@ -505,12 +549,43 @@ class Engine:
 
     def call(self, op: OperationDescriptor, args: object, opts: object) -> Flow[Ok[Any] | Err]:
         resolved = self._call_options(opts)
-        answer = yield from _within_deadline(
-            self._call(op, args, resolved, None, None),
-            _deadline_of(resolved),
-            lambda sent: Answer(self._deadline_expired(op, sent)),
-        )
+        span = self._start_span(op)
+        if span is not None:
+            resolved[_TELEMETRY_SPAN] = span
+        try:
+            answer = yield from _within_deadline(
+                self._call(op, args, resolved, None, None),
+                _deadline_of(resolved),
+                lambda sent: Answer(self._deadline_expired(op, sent)),
+            )
+        except BaseException:
+            if span is not None:
+                span.end({}, True, None)
+            raise
+        if span is not None:
+            result = answer.result
+            if isinstance(result, Ok):
+                span.end(None, False, result.meta.status)
+            else:
+                span.end(result.error, False, result.error["http_status"])
         return answer.result
+
+    def _start_span(self, op: object) -> TelemetrySpan | None:
+        """Start the telemetry of one operation; None when telemetry is off."""
+        if self._telemetry is None:
+            return None
+        try:
+            mutation = (
+                is_record(op) and is_record(op.get("agent")) and is_mutation(cast(OperationDescriptor, op))
+            )
+            return self._telemetry.start(
+                str_field(self.api, "name") or "",
+                str_field(op, "id") or "<unknown operation>",
+                "call",
+                mutation,
+            )
+        except Exception:
+            return None
 
     def preview(self, op: OperationDescriptor, args: object, opts: object) -> Flow[Ok[PreviewResult] | Err]:
         resolved = self._call_options(opts)
@@ -536,10 +611,34 @@ class Engine:
         if expired:
             yield from emit(expired[0])
 
+    def export_pages(
+        self, op: OperationDescriptor, args: object, checkpoint: object, opts: object
+    ) -> Flow[None]:
+        resolved = self._call_options(opts)
+        expired: list[Err] = []
+        yield from _within_deadline(
+            self._export_pages(op, args, checkpoint, resolved),
+            _deadline_of(resolved),
+            lambda sent: expired.append(self._deadline_expired(op, sent)),
+        )
+        if expired:
+            yield from emit(expired[0])
+
     def stream(
         self, op: OperationDescriptor, args: object, opts: object, cancelled: Callable[[], bool] | None = None
     ) -> Flow[None]:
         yield from self._stream(op, args, self._call_options(opts), cancelled)
+
+    def download(self, op: OperationDescriptor, args: object, opts: object) -> Flow[Ok[Any] | Err]:
+        """Send ``op`` and hand its 2xx body over unread: ``Ok.value`` is a
+        ``DownloadStart`` the client wraps in a ``Download``."""
+        resolved = self._call_options(opts)
+        answer = yield from _within_deadline(
+            self._download(op, args, resolved),
+            _deadline_of(resolved),
+            lambda sent: Answer(self._deadline_expired(op, sent)),
+        )
+        return answer.result
 
     def poll(
         self,
@@ -618,7 +717,7 @@ class Engine:
     # ---------------------------------------------------------- options
 
     def _call_options(self, opts: object) -> dict[str, object]:
-        resolved = {k: v for k, v in entries_of(opts).items() if k != _CALL_DEADLINE}
+        resolved = {k: v for k, v in entries_of(opts).items() if k not in (_CALL_DEADLINE, _TELEMETRY_SPAN)}
         ms = bounded(_opt(resolved, "deadline_ms"), bounded(self.options.deadline_ms, 0, 0), 0)
         if ms > 0:
             resolved[_CALL_DEADLINE] = _monotonic_ms() + ms
@@ -764,12 +863,142 @@ class Engine:
             and _opt(opts, "verify") is True
             and is_record(field(op["agent"], "verify"))
         ):
-            verification = yield from self._verify(op, prepared.args, answer.raw, opts)
+            verification = yield from self._verify(
+                op, prepared.args, answer.raw, {k: v for k, v in opts.items() if k != _TELEMETRY_SPAN}
+            )
             return replace(answer, result=replace(answer.result, verification=verification))
         return answer
 
+    def _download(self, op: OperationDescriptor, args: object, opts: Mapping[str, object]) -> Flow[Answer]:
+        limit = opts.get("max_bytes")
+        if limit is not None and (
+            isinstance(limit, bool) or not isinstance(limit, int) or not 0 <= limit <= 9007199254740991
+        ):
+            return Answer(
+                _fail(
+                    diagnostic(
+                        safe_id(op),
+                        "VALIDATION_FAILED",
+                        failed_parameter="max_bytes",
+                        received_value=envelope_value(limit, False),
+                        expected="a non-negative safe integer",
+                        remediation=(
+                            "Pass max_bytes as a whole number of bytes, or leave it out for no limit. "
+                            "Nothing was sent."
+                        ),
+                    )
+                )
+            )
+        max_bytes = limit
+        prepared = yield from self._prepare(op, args, opts, "call", None, None)
+        if isinstance(prepared, Err):
+            return Answer(prepared)
+        idle_setting = bounded(cast(object, self.options.idle_timeout_ms), 0, 0)
+        idle_ms = idle_setting if idle_setting > 0 else None
+        answer = yield from self._send(prepared, opts, "bytes", idle_ms)
+        if (
+            prepared.oauth is not None
+            and isinstance(answer.result, Err)
+            and answer.result.error["http_status"] == 401
+        ):
+            answer = yield from self._retry_rejected(prepared, answer, opts, "bytes", idle_ms)
+        result = answer.result
+        if isinstance(result, Err):
+            return answer
+        meta = result.meta
+        mutation = is_mutation(op)
+        timeout_ms = self._timeout(opts)
+        verify_target = str_field(field(op["agent"], "verify"), "operation")
+        hint = f"Call {verify_target} to read the current state." if verify_target is not None else None
+        secrets = prepared.secrets
+
+        def failure(why: DownloadFailure, received: int, detail: str | None) -> Diagnostic:
+            after = f"after {received} {'byte' if received == 1 else 'bytes'}"
+            code = {
+                "idle": "STREAM_IDLE",
+                "deadline": "DEADLINE_EXCEEDED",
+                "oversized": "RESPONSE_TOO_LARGE",
+                "sink": "SINK_FAILED",
+            }.get(why)
+            if why == "idle":
+                cause = f"No bytes arrived within {js_number(idle_ms if idle_ms is not None else timeout_ms)} ms {after}; the download was abandoned."
+            elif why == "deadline":
+                cause = f"The operation deadline (deadline_ms) expired {after}; the download was abandoned."
+            elif why == "aborted":
+                cause = f"The download was cancelled {after}."
+            elif why == "lost":
+                cause = f"The connection failed {after}, before the body ended."
+            elif why == "truncated":
+                declared = declared_length(meta.headers.get("content-length")) or 0
+                cause = f"The body ended {after}, short of its Content-Length of {declared}."
+            elif why == "oversized":
+                cause = f"The body is larger than the limit of {max_bytes or 0} bytes (max_bytes); the download was abandoned {after}."
+            else:
+                cause = f"The sink failed ({detail or 'error'}) {after}; the download was abandoned."
+            if mutation:
+                error = diagnostic(
+                    op["id"],
+                    "UNEXPECTED_RESPONSE",
+                    http_status=meta.status,
+                    code=code,
+                    request_id=meta.request_id,
+                    retryable="never",
+                    next_action=hint,
+                    remediation=f"The server accepted {op['id']} (HTTP {meta.status}). {cause} The call took effect; do not repeat it.",
+                    attempts=meta.attempts,
+                )
+                return scrub_diagnostic(error, secrets)
+            local = why in ("aborted", "sink", "oversized", "deadline")
+            category: Literal["UPSTREAM_UNAVAILABLE", "UNEXPECTED_RESPONSE", "TRANSPORT_FAILED"] = (
+                "UPSTREAM_UNAVAILABLE"
+                if why in ("idle", "deadline")
+                else "UNEXPECTED_RESPONSE"
+                if why == "oversized"
+                else "TRANSPORT_FAILED"
+            )
+            if why == "idle":
+                again = f"call again later or with a larger {'timeout_ms' if idle_ms is None else 'idle_timeout_ms'}"
+            elif why == "deadline":
+                again = "call again with a larger deadline_ms"
+            elif why == "oversized":
+                again = "raise max_bytes if a body this large is expected"
+            else:
+                again = "call again"
+            error = diagnostic(
+                op["id"],
+                category,
+                http_status=meta.status,
+                code=code,
+                request_id=meta.request_id,
+                retryable="never" if local else None,
+                remediation=f"{cause} This read has no side effects; {again}.",
+                attempts=meta.attempts,
+            )
+            return scrub_diagnostic(error, secrets)
+
+        observer = opts.get("on_progress")
+        stream = result.value.stream if isinstance(result.value, Streaming) else None
+        start = DownloadStart(
+            stream,
+            meta,
+            max_bytes,
+            cast(Callable[[TransferProgress], object], observer) if callable(observer) else None,
+            failure,
+        )
+        length = declared_length(meta.headers.get("content-length"))
+        if max_bytes is not None and length is not None and length > max_bytes:
+            if stream is not None:
+                yield from close_stream(stream)
+            return Answer(_fail(failure("oversized", 0, None)))
+        return Answer(Ok(value=start, meta=meta))
+
     def _retry_rejected(
-        self, prepared: Prepared, rejected: Answer, opts: Mapping[str, object]
+        self,
+        prepared: Prepared,
+        rejected: Answer,
+        opts: Mapping[str, object],
+        stream: bool | Literal["bytes"] = False,
+        idle_ms: float | None = None,
     ) -> Flow[Answer]:
         """The answer to a request whose stored OAuth2 token was rejected (401):
         the refreshed token goes on the same request, which is sent once more;
@@ -782,7 +1011,7 @@ class Engine:
             return rejected
         prepared.headers.set("Authorization", f"Bearer {token}", True)
         retried = yield from self._send(
-            replace(prepared, secrets=prepared.secrets | {token}, oauth=None), opts
+            replace(prepared, secrets=prepared.secrets | {token}, oauth=None), opts, stream, idle_ms
         )
         return retried
 
@@ -1125,22 +1354,37 @@ class Engine:
 
         method = op["method"]
         configured_auth: object = self.options.auth
-        auth = yield from resolve_auth(
-            field(self.api, "auth"),
-            op_id,
-            op["security"],
-            entries_of(configured_auth),
-            method,
-            self._token_source,
-            INSECURE_HTTP_AUTH
-            if insecure_http(
-                url_override if url_override is not None else self._base_url(),
-                self.options.allow_insecure_http,
+        span = _span_of(opts)
+        auth_start = now_ms()
+        try:
+            auth = yield from resolve_auth(
+                field(self.api, "auth"),
+                op_id,
+                op["security"],
+                entries_of(configured_auth),
+                method,
+                self._token_source,
+                INSECURE_HTTP_AUTH
+                if insecure_http(
+                    url_override if url_override is not None else self._base_url(),
+                    self.options.allow_insecure_http,
+                )
+                else None,
             )
-            else None,
-        )
+        except BaseException:
+            if span is not None:
+                # Interrupted: by the call's deadline, else by cancellation.
+                deadline = _deadline_of(opts)
+                expired = deadline is not None and _monotonic_ms() >= deadline
+                span.phase("auth", auth_start, {"code": "DEADLINE_EXCEEDED"} if expired else {}, not expired)
+            raise
         if isinstance(auth, AuthMissing):
-            return _fail(diagnostic(op_id, "AUTH_FAILED", remediation=auth.remediation))
+            failed = _fail(diagnostic(op_id, "AUTH_FAILED", remediation=auth.remediation))
+            if span is not None:
+                span.phase("auth", auth_start, failed.error, False)
+            return failed
+        if span is not None:
+            span.phase("auth", auth_start, None, False)
         secrets = {s for s in auth.secrets if s != ""}
         for p in op["params"]:
             value = args.get(p["name"])
@@ -1576,7 +1820,7 @@ class Engine:
         self,
         prepared: Prepared,
         opts: Mapping[str, object],
-        stream: bool = False,
+        stream: bool | Literal["bytes"] = False,
         idle_ms: float | None = None,
     ) -> Flow[Answer]:
         op = prepared.op
@@ -1585,6 +1829,7 @@ class Engine:
         protected = has_replay_protection(op, prepared.key)
         timeout_ms = self._timeout(opts)
         deadline = _deadline_of(opts)
+        span = _span_of(opts)
         attempts = 0
         previous_mutation_failure: Answer | None = None
         while True:
@@ -1615,13 +1860,41 @@ class Engine:
                 return previous_mutation_failure or Answer(
                     _fail(diagnostic(op["id"], "AUTH_FAILED", remediation=INSECURE_HTTP_AUTH))
                 )
-            admitted = yield from self._admit(op, prepared.url, stream, deadline)
+            queue_start = now_ms()
+            try:
+                admitted = yield from self._admit(op, prepared.url, stream, deadline)
+            except BaseException:
+                if span is not None and self.scheduler is not None:
+                    span.phase("queue", queue_start, {}, True, attempt=span.attempt + 1, reason="cancelled")
+                raise
             if isinstance(admitted, Rejection):
                 if deadline is not None and _monotonic_ms() >= deadline:
-                    return previous_mutation_failure or Answer(
-                        _deadline_failure(op["id"], "while the request waited for capacity")
+                    expired = _deadline_failure(op["id"], "while the request waited for capacity")
+                    if span is not None:
+                        span.phase(
+                            "queue",
+                            queue_start,
+                            expired.error,
+                            False,
+                            attempt=span.attempt + 1,
+                            reason="deadline",
+                        )
+                    return previous_mutation_failure or Answer(expired)
+                refused = self._rejected(op, admitted, stream is True)
+                if span is not None:
+                    span.phase(
+                        "queue",
+                        queue_start,
+                        refused,
+                        refused.get("code") is None,
+                        attempt=span.attempt + 1,
+                        reason=_queue_reason(refused),
                     )
-                return previous_mutation_failure or Answer(_fail(self._rejected(op, admitted, stream)))
+                return previous_mutation_failure or Answer(_fail(refused))
+            if admitted is not None and span is not None:
+                span.phase("queue", queue_start, None, False, attempt=span.attempt + 1, reason="admitted")
+            attempt_number = span.next_attempt() if span is not None else 0
+            attempt_start = span.attempt_start(attempt_number) if span is not None else 0.0
             if admitted is not None and attempts == 1 and self.scheduler is not None:
                 self.scheduler.record_call(self._scope_key(prepared.url))
             handed_off = False
@@ -1643,6 +1916,9 @@ class Engine:
                     )
                 )
                 outcome = _mark_deadline(outcome, deadline)
+                if span is not None and outcome is CANCELLED_SEND:
+                    # The task was cancelled: the rest of the flow runs without I/O.
+                    span.cancel()
                 current_url, current_method, current_body = prepared.url, prepared.method, prepared.body
                 hops = 0
                 while (
@@ -1702,7 +1978,7 @@ class Engine:
                         admitted.settle(failure["retry_after_ms"], limited=True)
                     elif isinstance(outcome, Answered | Streaming):
                         admitted.settle(None, limited=False)
-                    # An open event stream keeps its capacity until it is closed.
+                    # An open event stream or download keeps its capacity until it is closed.
                     value = answer.result.value if isinstance(answer.result, Ok) else None
                     if isinstance(value, Streaming) and hasattr(value.stream, "on_close"):
                         value.stream.on_close = admitted.release  # type: ignore[attr-defined]
@@ -1711,6 +1987,13 @@ class Engine:
                 if admitted is not None and not handed_off:
                     admitted.release()
             result = answer.result
+            if span is not None:
+                if isinstance(result, Ok):
+                    span.attempt_end(attempt_number, attempt_start, None, False, result.meta.status)
+                else:
+                    span.attempt_end(
+                        attempt_number, attempt_start, result.error, False, result.error["http_status"]
+                    )
             if isinstance(result, Ok):
                 return replace(answer, request_url=current_url)
             error = scrub_diagnostic(result.error, prepared.secrets)
@@ -1745,11 +2028,27 @@ class Engine:
                 previous_mutation_failure = done
             # A retry that could not start before the deadline is not waited for.
             if deadline is not None and _monotonic_ms() + delay >= deadline:
+                if span is not None:
+                    span.phase(
+                        "retry_backoff",
+                        now_ms(),
+                        {"code": "DEADLINE_EXCEEDED"},
+                        False,
+                        attempt=attempt_number,
+                    )
                 return done
-            yield from sleep(delay)
+            backoff_start = now_ms()
+            try:
+                yield from sleep(delay)
+            except BaseException:
+                if span is not None:
+                    span.phase("retry_backoff", backoff_start, {}, True, attempt=attempt_number)
+                raise
+            if span is not None:
+                span.phase("retry_backoff", backoff_start, None, False, attempt=attempt_number)
 
     def _admit(
-        self, op: OperationDescriptor, url: str, stream: bool, deadline: float | None
+        self, op: OperationDescriptor, url: str, stream: bool | Literal["bytes"], deadline: float | None
     ) -> Flow[Permit | Rejection | None]:
         """Wait for scheduler capacity for one attempt: None without a
         scheduler, a ``Rejection`` (nothing is sent) when none was given."""
@@ -1761,7 +2060,8 @@ class Engine:
             (lambda: bounded(source(), 0.5, 0, 1)) if callable(source) else random.random
         )
         key = self._scope_key(url)
-        admitted = yield from acquire(scheduler, key, "stream" if stream else "call", rnd, deadline)
+        # A download holds an ordinary request's capacity until it is closed.
+        admitted = yield from acquire(scheduler, key, "stream" if stream is True else "call", rnd, deadline)
         return cast(Permit | Rejection, admitted)
 
     def _scope_key(self, url: str) -> str:
@@ -2322,6 +2622,221 @@ class Engine:
 
     # ------------------------------------------------- pages and polling
 
+    def _export_pages(
+        self, op: OperationDescriptor, args: object, cp: object, opts: Mapping[str, object]
+    ) -> Flow[None]:
+        subject = safe_id(op)
+
+        def refuse(expected: str, remediation: str, parameter: str = "checkpoint") -> Flow[None]:
+            yield from emit(
+                _fail(
+                    diagnostic(
+                        subject,
+                        "VALIDATION_FAILED",
+                        failed_parameter=parameter,
+                        expected=expected,
+                        retryable="never",
+                        remediation=remediation,
+                    )
+                )
+            )
+
+        pagination = field(op, "pagination")
+        style = field(pagination, "style")
+        if style not in ("cursor", "offset", "page", "link_header"):
+            yield from refuse(
+                "an operation with a pagination contract",
+                "This operation declares no pagination contract, so it cannot be resumed from a checkpoint; "
+                "call it directly. Nothing was sent.",
+                "operation",
+            )
+            return
+        if safety_of(op) != "read_only":
+            yield from refuse(
+                "a read-only operation",
+                "Checkpointed exports run read-only operations only; nothing was sent.",
+                "operation",
+            )
+            return
+        key = field(cp, "key")
+        if not isinstance(key, bytes | bytearray) or len(key) < 32:
+            yield from refuse(
+                "a key of at least 32 bytes",
+                "Pass checkpoint key, a secret of at least 32 bytes kept stable across restarts. Nothing was sent.",
+                "checkpoint.key",
+            )
+            return
+        key = bytes(key)
+        scope = field(cp, "scope")
+        scope = "" if scope is UNSET or scope is None else scope
+        if not isinstance(scope, str):
+            yield from refuse(
+                "a string",
+                "checkpoint scope names the account or principal the export reads for. Nothing was sent.",
+                "checkpoint.scope",
+            )
+            return
+        if not is_record(args):
+            yield from refuse(
+                "an object of named arguments",
+                "Pass the operation's arguments as an object. Nothing was sent.",
+                "args",
+            )
+            return
+        param = {"cursor": "request_param", "offset": "offset_param", "page": "page_param"}.get(str(style))
+        position = (str_field(pagination, param) or "") if param is not None else ""
+        rest = dict(args)
+        if position != "":
+            rest.pop(arg_name(op, position), None)
+        base = self._base_url()
+        tenant = self.options.tenant
+        binding = checkpoint_binding(
+            key,
+            {
+                "api": str_field(self.api, "name") or "",
+                "operation": op["id"],
+                "method": op["method"],
+                "path": op["path"],
+                "style": style,
+                "position": position,
+                "base": base or "",
+                "tenant": tenant if isinstance(tenant, str) else "",
+                "scope": scope,
+                "args": rest,
+            },
+        )
+        pages = 0
+        start: object = UNSET
+        resume = field(cp, "resume")
+        if resume is not UNSET and resume is not None:
+            restart = (
+                "Restart the export from the first page only if that is intended: omit checkpoint resume. "
+                "Nothing was sent."
+            )
+            saved = open_checkpoint(key, resume) if isinstance(resume, str) else None
+            if saved is None:
+                yield from refuse(
+                    "a checkpoint token sealed under checkpoint key",
+                    f"The checkpoint is malformed, altered or sealed under another key. {restart}",
+                )
+                return
+            if saved["operation"] != op["id"] or saved["style"] != style:
+                yield from refuse(
+                    f"a checkpoint of {op['id']} ({style})",
+                    f"The checkpoint belongs to {saved['operation']} ({saved['style']}), not this operation and "
+                    f"pagination contract. {restart}",
+                )
+                return
+            if not hmac.compare_digest(saved["binding"], binding):
+                yield from refuse(
+                    "a checkpoint of this traversal",
+                    "The checkpoint was issued for other arguments (filters, order, page size), base URL, tenant, "
+                    f"scope or API. Resume with the original ones, or: {restart}",
+                )
+                return
+            max_age = field(cp, "max_age_ms")
+            if max_age is not UNSET and max_age is not None:
+                if not is_number(max_age) or not max_age >= 0:
+                    yield from refuse(
+                        "a non-negative number of milliseconds",
+                        "checkpoint max_age_ms must be a non-negative number. Nothing was sent.",
+                        "checkpoint.max_age_ms",
+                    )
+                    return
+                if self.now() - saved["issued"] > max_age:
+                    yield from refuse(
+                        f"a checkpoint issued within {js_number(max_age)} ms",
+                        "The checkpoint is older than checkpoint max_age_ms, so the provider's cursor may have "
+                        f"expired. {restart}",
+                    )
+                    return
+            if saved["state"] == "complete":
+                return
+            if saved["state"] == "stopped":
+                yield from refuse(
+                    "a resumable checkpoint",
+                    "The export stopped on a server fault (a repeated cursor or a cross-origin next-page link) that "
+                    f"resuming would repeat. {restart}",
+                )
+                return
+            saved_next = saved["next"]
+            if style == "link_header":
+                valid = (
+                    isinstance(saved_next, str)
+                    and base is not None
+                    and origin_of(saved_next) is not None
+                    and origin_of(saved_next) == origin_of(base)
+                )
+            elif style == "cursor":
+                valid = saved_next is not None and saved_next != ""
+            else:
+                valid = type(saved_next) is int and 0 <= saved_next <= 2**53 - 1
+            if not valid:
+                yield from refuse(
+                    "a resumable checkpoint",
+                    f"The checkpoint's saved position cannot be resumed against this base URL. {restart}",
+                )
+                return
+            pages = saved["pages"]
+            start = saved_next
+        ctl = _PageControl(start=start)
+        resuming = [start is not UNSET]
+        counted = [pages]
+
+        def deliver(page: PageAnswer) -> Flow[bool]:
+            result = page.result
+            if isinstance(result, Err):
+                error = result.error
+                if resuming[0] and error.get("http_status") in (400, 404, 410, 422):
+                    error = with_fields(
+                        error,
+                        remediation=(
+                            f"{error.get('remediation')} This request resumed from a saved checkpoint: if the "
+                            "provider's cursor or page position expired, restart the export from the first page "
+                            "(omit checkpoint resume) and let the sink deduplicate."
+                        ),
+                    )
+                    result = _fail(error, result.partial)
+                yield from emit(result)
+                return True
+            resuming[0] = False
+            counted[0] = min(counted[0] + 1, 2**53 - 1)
+            if ctl.last_stop in ("cycle", "origin"):
+                state = "stopped"
+            elif ctl.last_next is None:
+                state = "complete"
+            else:
+                state = "partial"
+            token = seal_checkpoint(
+                key,
+                {
+                    "v": 1,
+                    "operation": op["id"],
+                    "style": style,
+                    "binding": binding,
+                    "state": state,
+                    "next": ctl.last_next if state == "partial" else None,
+                    "pages": counted[0],
+                    "issued": max(0, int(self.now())),
+                },
+            )
+            value = result.value
+            yield from emit(
+                replace(
+                    result,
+                    value=CheckpointPage(
+                        items=value.items,
+                        body=value.body,
+                        next=value.next,
+                        checkpoint=token,
+                        complete=state == "complete",
+                    ),
+                )
+            )
+            return True
+
+        yield from self._pages(op, args, opts, None, deliver, ctl)
+
     def _pages(
         self,
         op: OperationDescriptor,
@@ -2329,11 +2844,22 @@ class Engine:
         opts: Mapping[str, object],
         step: StepControl | None,
         sink: Callable[[PageAnswer], Flow[bool]],
+        ctl: _PageControl | None = None,
     ) -> Flow[None]:
         pagination = field(op, "pagination")
         current: dict[str, object] | None = dict(args) if is_record(args) else None
         override: str | None = None
         seen: set[str] = set()
+        if ctl is not None and ctl.start is not UNSET and current is not None:
+            start_style = field(pagination, "style")
+            if start_style == "link_header":
+                override = str(ctl.start)
+                seen.add(override)
+            else:
+                param = {"cursor": "request_param", "offset": "offset_param", "page": "page_param"}[
+                    str(start_style)
+                ]
+                current = {**current, arg_name(op, str_field(pagination, param) or ""): ctl.start}
         request_urls: set[str] | None = set() if field(pagination, "style") == "link_header" else None
         count = 0
         max_pages = opts.get("max_pages")
@@ -2402,6 +2928,8 @@ class Engine:
                     except ValueError:
                         resolved = ""
                     if origin is None or origin_of(resolved) != origin:
+                        if ctl is not None:
+                            ctl.last_next, ctl.last_stop = None, "origin"
                         yield from sink(
                             PageAnswer(
                                 Ok(
@@ -2438,16 +2966,21 @@ class Engine:
                     override = resolved
             count += 1
             stop = None
+            stop_kind: str | None = None
             if next_value is not None:
                 key = str(next_value) if style == "link_header" else canonical_json(next_value)
                 if key in seen:
                     stop = "Pagination detected a repeated cursor or page URL. Fix the server's next-page value before continuing."
+                    stop_kind = "cycle"
                 elif budget is not None and count >= budget:
                     stop = (
                         "Pagination reached max_pages before another request. Increase max_pages to continue."
                     )
+                    stop_kind = "max"
                 else:
                     seen.add(key)
+            if ctl is not None:
+                ctl.last_next, ctl.last_stop = next_value, stop_kind
             page_result = Ok(
                 value=Page(
                     items=(yield from self._page_items(op, items)),
@@ -2581,6 +3114,7 @@ class Engine:
         sensitive = [f for f in listed if isinstance(f, str)] if is_array(listed) else []
         validate = _hook(field(spec, "event"), "validate")
         done = str_field(spec, "done")
+        text_data = field(spec, "text") is True
         max_event_bytes = int(bounded(cast(object, self.options.max_event_bytes), DEFAULT_MAX_EVENT_BYTES, 1))
         max_reconnects = int(
             bounded(cast(object, self.options.max_reconnects), _DEFAULT_MAX_RECONNECTS, 0, 1000)
@@ -2691,18 +3225,20 @@ class Engine:
                     )
                 )
 
-            try:
-                value: object = parse_json(event.data)
-            except ValueError:
-                return failure(
-                    failed_parameter=f"events[{index}]",
-                    received_value=envelope_value(event.data, False),
-                    expected="JSON in the data of every event",
-                    remediation=(
-                        f'Event {index} of the stream (event "{event.event}") does not carry JSON in its '
-                        f"data.{after_effect} Events before it were delivered."
-                    ),
-                )
+            value: object = event.data
+            if not text_data:
+                try:
+                    value = parse_json(event.data)
+                except ValueError:
+                    return failure(
+                        failed_parameter=f"events[{index}]",
+                        received_value=envelope_value(event.data, False),
+                        expected="JSON in the data of every event",
+                        remediation=(
+                            f'Event {index} of the stream (event "{event.event}") does not carry JSON in its '
+                            f"data.{after_effect} Events before it were delivered."
+                        ),
+                    )
             if mode != "off" and callable(validate):
                 notes: list[PatternNote] = []
                 try:

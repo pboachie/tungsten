@@ -244,7 +244,7 @@ impl EventStream {
                                 self.state = State::Done;
                                 return Some(Err(error));
                             }
-                            BodyRead::Timeout => Dropped::Idle,
+                            BodyRead::Timeout | BodyRead::Deadline => Dropped::Idle,
                             BodyRead::Lost => Dropped::Lost,
                         }
                     };
@@ -698,7 +698,10 @@ impl ClientCore {
         let prepared = self
             .prepare(op, &args, &opts, Purpose::Call, None, None)
             .await?;
-        let start = match self.send_with(&prepared, &opts, true, None).await? {
+        let start = match self
+            .send_with(&prepared, &opts, crate::send::Handover::Events, None)
+            .await?
+        {
             Sent::Stream(start) => start,
             Sent::Response(response, _) => {
                 let content_type = response.meta.headers.get("content-type").cloned();
@@ -969,7 +972,12 @@ impl ClientCore {
                 &open.secrets,
             ))
         };
-        let value: Value = match serde_json::from_str(&event.data) {
+        let parsed = if spec.text {
+            Ok(Value::String(event.data.clone()))
+        } else {
+            serde_json::from_str(&event.data)
+        };
+        let value: Value = match parsed {
             Ok(mut value) => {
                 crate::util::integral_numbers(&mut value);
                 value

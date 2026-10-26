@@ -131,6 +131,35 @@ The OAuth 2.0 device authorization flow (OpenAPI 3.2 `deviceAuthorization`) is
 not run by the client: configure the scheme with an access token obtained
 through it.
 
+In unreleased 0.2.0, `ClientCore::export_pages(op, args, checkpoint, opts)` runs a read-only paginated operation as a durable
+export: every page carries a sealed `checkpoint` token and a `complete` flag.
+Persist the token only after the page's items are committed to your sink, and
+pass it back as `CheckpointOptions::resume` after a restart to continue with the next page. A
+crash after the sink commit but before the token is persisted replays that page
+once on resume, so the sink must be idempotent (deduplicate on a stable item
+key); a crash before the commit loses nothing. The token is
+`tgp1.<payload>.<HMAC-SHA-256>` under a caller-held `CheckpointOptions::key` of at least 32
+bytes, and binds the API name, operation, method, path, pagination style and
+position parameter, base URL, `ClientOptions::tenant`, `CheckpointOptions::scope` and every argument except
+the page position, as an HMAC, so no argument value or credential is stored.
+The provider's next-page cursor or URL is stored as is: treat tokens as
+secrets. A token that is malformed, longer than 16384 characters, altered,
+sealed under another key, issued for another operation, other arguments
+(filters, order, page size), base URL, tenant or scope, older than
+`CheckpointOptions::max_age_ms`, or stopped by a repeated cursor or cross-origin Link is refused
+with `VALIDATION_FAILED` before any request; restarting from the first page is
+always the caller's explicit choice (omit `CheckpointOptions::resume`). When the first resumed
+request fails with 400, 404, 410 or 422, the remediation says the provider's
+cursor may have expired. Cursor, offset, page-number and `Link` traversals can
+resume; checkpoints record a position, not a snapshot, so offset and page
+numbers can skip or repeat items when upstream data changes between runs, and
+only provider cursors that stay valid across sessions resume reliably.
+`max_pages`, cycle detection, deadlines, cancellation and the scheduler apply
+to each run; cycle detection covers the current run only. A token from one
+runtime is not guaranteed to resume in another. `describe_checkpoint(token)` returns the
+operation, style, state, page count and issue time without the cursor, for
+logs and support bundles.
+
 In unreleased 0.2.0, `deadline` (on `ClientOptions` or `CallOptions`) sets a total
 deadline for one logical call, separate from the per-attempt `timeout`. It is
 measured on a monotonic clock and covers authentication, idempotency-key
@@ -222,6 +251,26 @@ granted just as its wait was abandoned may be reported `rejected` (`aborted`) an
 secret and few distinct values; nothing is buffered, and an observer's
 exception or panic is ignored. Read `stats()` for current counts.
 See the [bulk-sync example](https://github.com/pboachie/tungsten/tree/main/examples/bulk-sync).
+
+In unreleased 0.2.0, a client can report local telemetry for `call()` and `call_typed()` to an
+opt-in observer (`ClientOptions::telemetry`, an `Arc<dyn TelemetryObserver>`; closures implement it). It is off by default and the runtime never sends
+telemetry anywhere. Each operation gets a `call_id`; events (`schema_version`
+1) mark `operation.start`/`operation.end`, `attempt.start`/`attempt.end` per
+attempt sent, and `phase` events for authentication (`auth`), request
+scheduler admission (`queue`, with `reason` `admitted`, `full`, `timeout`,
+`paused`, `closed`, `deadline` or `cancelled`) and the wait before a retry
+(`retry_backoff`). Each end carries `duration_ms` and an `outcome`: `ok`,
+`error` (with the diagnostic `category`), `cancelled`, `deadline_exceeded`, or
+`outcome_unknown` when a mutation may have taken effect. Events hold only the
+API name, operation id, enumerated values, HTTP status codes, attempt numbers
+and durations: never URLs, headers, bodies, argument values, credentials,
+confirmation tokens, tenant labels or error text. The observer is called
+synchronously and never awaited; one that panics never changes the call.
+`MemoryTelemetryCollector` keeps the newest events up to a capacity (default 1024, at most
+65536) and counts the ones it dropped. Previews, pages, polls, streams and
+macros do not emit telemetry yet.
+No OpenTelemetry adapter ships with the Rust runtime; forward events from an
+observer to the exporter of your choice.
 
 No runtime ships a file-backed OAuth token store. Provide an application-owned
 token-store implementation when tokens must survive process restarts; protect

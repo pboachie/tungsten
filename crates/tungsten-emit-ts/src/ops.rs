@@ -891,6 +891,9 @@ fn descriptor_js(plan: &Plan<'_>, info: &OpInfo<'_>, shape: &OpShape<'_>) -> Js 
         if let Some(flag) = &spec.request_flag {
             stream_entries.push(("flag", Js::str(flag)));
         }
+        if spec.text_data {
+            stream_entries.push(("text", Js::bool(true)));
+        }
         entries.push(("stream", Js::obj(stream_entries)));
     }
     entries.push((

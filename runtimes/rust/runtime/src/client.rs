@@ -15,6 +15,7 @@ use url::Url;
 use crate::idempotency::{MemoryIdempotencyStore, lock};
 use crate::oauth::{Gate, MemoryTokenStore, TokenStore};
 use crate::oauth_attempt::AuthorizationState;
+use crate::telemetry::{Pending, PendingKind};
 use crate::types::{
     ApiDescriptor, AuthConfig, CallOptions, ClientOptions, DiagnosticSink, IdempotencyStore,
     Jitter, MacroDescriptor, Middleware, OperationDescriptor, Outcome, PartialRetryOptions,
@@ -98,6 +99,7 @@ pub(crate) struct Inner {
     pub random: Option<Arc<dyn Fn() -> f64 + Send + Sync>>,
     pub scheduler: Option<crate::RequestScheduler>,
     pub tenant: Option<String>,
+    pub telemetry: Option<Arc<crate::telemetry::Telemetry>>,
     pub registry: Mutex<BTreeMap<String, Arc<OperationDescriptor>>>,
     /// Makes "find or create the key of a logical call" atomic, so concurrent
     /// identical calls share one key.
@@ -226,6 +228,9 @@ impl ClientCore {
                 random: options.random,
                 scheduler: options.scheduler,
                 tenant: options.tenant,
+                telemetry: options
+                    .telemetry
+                    .map(|observer| Arc::new(crate::telemetry::Telemetry::new(observer))),
                 registry: Mutex::new(BTreeMap::new()),
                 used_tokens: Mutex::new(HashMap::new()),
                 oauth_tokens: tokio::sync::Mutex::new(HashMap::new()),
@@ -269,8 +274,38 @@ impl ClientCore {
     /// send with retries, classify the response. `args` is the arguments
     /// object (a JSON object keyed by argument name).
     pub async fn call(&self, op: &OperationDescriptor, args: Value, opts: &CallOptions) -> Outcome {
-        crate::verify::with_call_deadline(self, opts, self.call_with(op, &args, opts, None, None))
-            .await
+        let span = self.start_span(op);
+        let pending = Pending::new(span.as_ref(), PendingKind::Operation);
+        let outcome = crate::telemetry::scoped(
+            span.clone(),
+            crate::verify::with_call_deadline(
+                self,
+                opts,
+                self.call_with(op, &args, opts, None, None),
+            ),
+        )
+        .await;
+        pending.done();
+        if let Some(span) = span {
+            match &outcome {
+                Ok(response) => span.end(None, false, Some(response.meta.status)),
+                Err(error) => {
+                    span.end(Some(&error.diagnostic), false, error.diagnostic.http_status)
+                }
+            }
+        }
+        outcome
+    }
+
+    /// Start the telemetry of one operation; `None` when telemetry is off.
+    fn start_span(&self, op: &OperationDescriptor) -> Option<Arc<crate::telemetry::Span>> {
+        let telemetry = self.inner.telemetry.as_ref()?;
+        Some(telemetry.start(
+            &self.inner.api.name,
+            &op.id,
+            crate::TelemetryEntry::Call,
+            crate::classify::is_mutation(op),
+        ))
     }
 
     /// [`ClientCore::call`] for a typed wrapper: the success body is decoded
@@ -290,31 +325,46 @@ impl ClientCore {
         let mut sink = crate::dispatch::TypedSink::<T>::new(op.response.clone());
         // The verification hook may read the response, so it needs the body's JSON form.
         let verifies = opts.verify && op.agent.verify.is_some();
-        let outcome = crate::verify::with_call_deadline(
-            self,
-            opts,
-            self.call_with_tracked(
-                op,
-                &args,
+        let span = self.start_span(op);
+        let pending = Pending::new(span.as_ref(), PendingKind::Operation);
+        let outcome = crate::telemetry::scoped(
+            span.clone(),
+            crate::verify::with_call_deadline(
+                self,
                 opts,
-                None,
-                None,
-                (
-                    &mut String::new(),
+                self.call_with_tracked(
+                    op,
+                    &args,
+                    opts,
                     None,
-                    (!verifies).then_some(&mut sink as &mut dyn crate::dispatch::BodySink),
+                    None,
+                    (
+                        &mut String::new(),
+                        None,
+                        (!verifies).then_some(&mut sink as &mut dyn crate::dispatch::BodySink),
+                    ),
                 ),
             ),
         )
         .await;
-        match (outcome, sink.take_value()) {
+        let result = match (outcome, sink.take_value()) {
             (Ok(response), Some(value)) => Ok(Response {
                 value,
                 meta: response.meta,
                 verification: response.verification,
             }),
             (outcome, _) => crate::dispatch::decode(&op.id, outcome),
+        };
+        pending.done();
+        if let Some(span) = span {
+            match &result {
+                Ok(response) => span.end(None, false, Some(response.meta.status)),
+                Err(error) => {
+                    span.end(Some(&error.diagnostic), false, error.diagnostic.http_status)
+                }
+            }
         }
+        result
     }
 
     /// Run the operation's preview mode: local rendering (no network), a
@@ -332,6 +382,25 @@ impl ClientCore {
     /// Iterate pages; the stream ends after the last page or the first error.
     pub fn pages(&self, op: Arc<OperationDescriptor>, args: Value, opts: CallOptions) -> Pages {
         Pages::new(self.clone(), op, args, opts)
+    }
+
+    /// Iterate the pages of a read-only operation like [`ClientCore::pages`],
+    /// each with a sealed checkpoint token to persist once the page is
+    /// committed to the sink; pass a saved token as
+    /// [`CheckpointOptions::resume`] after a restart to continue with the
+    /// page after it. A token that is malformed, altered, sealed under
+    /// another key, older than `max_age_ms`, stopped, or issued for other
+    /// arguments, origin, tenant, scope or contract is refused
+    /// (`VALIDATION_FAILED`) before any request. Page budgets, cycle
+    /// detection, deadlines and cancellation apply per run.
+    pub fn export_pages(
+        &self,
+        op: Arc<OperationDescriptor>,
+        args: Value,
+        checkpoint: crate::checkpoint::CheckpointOptions,
+        opts: CallOptions,
+    ) -> crate::checkpoint::ExportPages {
+        crate::checkpoint::ExportPages::new(self.clone(), op, args, checkpoint, opts)
     }
 
     /// Call a read operation until `until` holds or the budget runs out. On
@@ -455,8 +524,12 @@ impl ClientCore {
         };
         if opts.verify && op.agent.verify.is_some() {
             // Verification calls other operations, which may verify in turn.
-            let verification =
-                Box::pin(self.verify(op, &prepared.args, response.value.as_ref(), opts)).await;
+            // It is not part of this operation's telemetry.
+            let verification = Box::pin(crate::telemetry::scoped(
+                None,
+                self.verify(op, &prepared.args, response.value.as_ref(), opts),
+            ))
+            .await;
             response = Response {
                 verification: Some(verification),
                 ..response

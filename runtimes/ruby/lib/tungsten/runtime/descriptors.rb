@@ -53,7 +53,7 @@ module Tungsten
         @response = doc["response"] ? Schema.new(doc["response"], defs) : nil
         @page_item = doc["page_item"] ? Schema.new(doc["page_item"], defs) : nil
         s = doc["stream"]
-        @stream = s ? { "event" => Schema.new(s["event"], defs), "done" => s["done"], "flag" => s["flag"] } : nil
+        @stream = s ? { "event" => Schema.new(s["event"], defs), "done" => s["done"], "flag" => s["flag"], "text" => s["text"] == true } : nil
         @summary = doc["summary"].to_s
       end
 

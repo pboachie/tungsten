@@ -243,6 +243,161 @@ changes.
   runtimes gain the matching hook (`parse` in TypeScript and Python,
   `verify_webhook_with` in Rust). Registered as the `typed_webhooks` target
   feature. Unreleased 0.2.0 only.
+- The TypeScript and Python runtimes include an optional OpenTelemetry
+  adapter for the telemetry observer (`openTelemetryObserver(tracer)`,
+  `open_telemetry_observer(tracer)`): one client span per operation named after
+  its operation id, attempts and phases as span events, outcome attributes and
+  error status, with at most 10000 spans open. It accepts any tracer of the
+  OpenTelemetry API shape and adds no dependency. Unreleased 0.2.0 only.
+
+- TypeScript, Python and Rust clients can report optional local telemetry to
+  an observer (`ClientOptions.telemetry`), off by default and never sent
+  anywhere by the runtime. `call()` emits correlated `operation`, `attempt`
+  and `phase` events (authentication, scheduler queueing, retry backoff) with
+  the same versioned fields in every runtime: durations, outcomes (including
+  `cancelled`, `deadline_exceeded` and `outcome_unknown`), diagnostic
+  categories, HTTP status codes and queue reasons, but never URLs, headers,
+  bodies, credentials, tenant labels or error text. A bounded
+  `MemoryTelemetryCollector` keeps recent events and counts dropped ones. The
+  capability catalog declares the `telemetry_hooks` feature for these targets.
+  Unreleased 0.2.0 only.
+
+
+
+- `tungsten workspace --run check|generate|lock [-- ARGS]` runs the command on
+  each selected project, one at a time in discovery order, and reports every
+  project's exit code and diagnostics (`runs` in the JSON result); the
+  workspace exits with the highest code. `--affected FILE` (repeatable)
+  selects the projects that depend on a file: its manifest, a declared input,
+  or a file the project's offline compilation read or looked for; a project
+  that does not compile is always selected. A writing `generate` is refused
+  before any project runs when selected projects share output directories
+  (TG0642). The capability catalog lists the commands under
+  `workspace.runs`.
+- Add explicit streamed downloads to the TypeScript, Python and Rust
+  runtimes: `download()` sends an operation by the rules of `call` and hands a
+  2xx body over unread, to read chunk by chunk or write to a caller-owned sink
+  with backpressure. A download has a total-byte limit (`maxBytes`, checked
+  against `Content-Length` before the first byte and against the bytes read),
+  progress reports, the idle timeout and the call deadline; a short body,
+  a lost connection, cancellation and a failing sink end it with a diagnostic,
+  and the connection and its scheduler capacity are released however it
+  ends. The `Content-Disposition` file name is reduced to a plain base name.
+  Buffered calls, `maxResponseBytes` and event streams are unchanged.
+  Registered as the `streaming_downloads` runtime capability.
+- Generated Rust CLIs keep login sessions in the Windows Credential Locker
+  (through Windows PowerShell) by default on Windows. A session the locker
+  refuses, for example one above its secret size limit, fails with advice to
+  choose the owner-only file store explicitly.
+
+- `tungsten lsp` serves every project in the editor's workspace folders, found
+  as `tungsten workspace` finds them, plus any `tungsten.yml` that is opened.
+  Edits, saves and watched changes re-check only the projects that read the
+  changed file, so one project's edits never dirty another while a shared spec
+  (including its unsaved buffer) re-checks every project using it. One check
+  runs at a time across the session; diagnostics of a file read by several
+  projects are merged; completion, hover, definitions and quick fixes come from
+  the project owning the document. Adding or removing workspace folders
+  (`workspace/didChangeWorkspaceFolders`) starts or cancels their projects'
+  checks and clears stale diagnostics. Discovery findings (TG0640-TG0643) are
+  shown on the files they name. The capability catalog's
+  `workspace.editor_routing` is now `true`.
+- Add durable checkpoints for resumable read-only page exports to the
+  TypeScript, Python and Rust runtimes (`exportPages` / `export_pages`). Each
+  page carries a caller-owned, HMAC-sealed `checkpoint` token to persist after
+  the page is committed to the sink; passing it back resumes with the next page
+  after a restart. Tokens bind the operation, pagination contract, base URL,
+  tenant, scope and arguments without storing argument values or credentials,
+  and malformed, altered, mismatched, expired (`maxAgeMs` / `max_age_ms`) or
+  stopped tokens are refused before any request. A sink commit followed by a
+  crash before the token is saved replays that page once, so sinks must
+  deduplicate. `describeCheckpoint` / `describe_checkpoint` reports status
+  without the cursor. Registered as the `pagination_checkpoints` capability for
+  the `typescript`, `python` and `rust` targets. In Rust, `ExportPages::typed`
+  decodes items and `blocking::Runtime::export_pages` iterates an export with
+  blocking calls.
+
+- Generated Rust CLIs sign in to OAuth2 `authorizationCode` schemes:
+  `auth login` runs the runtime's managed S256 flow through a loopback
+  redirect (bounded by the 10-minute attempt and `--deadline`), `auth switch`
+  selects a stored account per profile, `auth logout` removes local sessions
+  (tokens are not revoked at the provider) and `auth status` lists sessions
+  without secrets. Sessions are partitioned by scheme, account, token
+  endpoint, client id, base-URL origin and scopes. Tokens live in the macOS
+  keychain or the Secret Service (`secret-tool`), or in an owner-only file
+  only when `--store file` / `session_store = "file"` is chosen; a locked or
+  missing keychain never falls back to plaintext. Login refuses to run in CI
+  or without a terminal, and no other command starts one.
+
+- `tungsten config` now inspects the C#, F#, Dart, Java, Kotlin, Ruby, MCP,
+  WebMCP and docs target options declared in the capability catalog (status
+  `declared_fields`): each declared field reports its authored value or fixed
+  default, a value of the wrong JSON type is reported with the target's
+  invalid-option warning code, and only package identity fields are exported
+  unredacted. The emitter still validates values when it runs.
+- The `init --targets` help lists the default and companion targets from the
+  capability catalog.
+
+- Add `tungsten refresh-import` to refresh a converted import (Postman, HAR,
+  saved cURL, HTTP file, Swagger or endpoint manifest) in place instead of
+  re-importing into a fresh project. It converts the new source revision
+  (`--from`, or the recorded `source_url`) and previews the converted-document
+  diff, added, removed and changed operations with the facts that changed, the
+  approved imported operations that need renewed review, the regenerated
+  output and API surface changes, and the generation lock outcome. `--apply`
+  writes only after every changed approval is confirmed with `--accept-review`
+  and an optional `--expect` digest still matches, then updates the
+  conversion, import report, `source_sha256`, the remote pin and a current
+  `tungsten.lock.json` together. Overlays, agent.yml and generated outputs are
+  not modified. An interrupted apply is detected from its journal and restored
+  with `--rollback`. The capability catalog lists the command for each
+  converted input format as `refresh_command`.
+- `init` records the reviewed importer settings of a saved cURL, HTTP file or
+  HAR conversion (format, routes, shell dialect, HAR origin, path templates,
+  prefixes and redactions) under `settings` in `import-report.json`, and
+  `refresh-import` reuses them for flags that are not given again. `check` and
+  `generate` refuse a project with an interrupted `refresh-import --apply`
+  (TG0124) until `--rollback` restores it.
+- The language server offers a disabled "Refresh the converted import" action
+  on TG0122 for a converted input whose remote source changed, naming the
+  `refresh-import` preview, `--apply` and `--offline` choices.
+
+- Add `tungsten upgrade rehearse`, run with a candidate release's binary: it
+  regenerates the project from its locked inputs, offline and without
+  touching the project, and reports compiler, emitter, consumer toolchain,
+  runtime family and option identity changes against `tungsten.lock.json`,
+  input drift, file and API surface changes with `diff --migration` actions,
+  and conflicts with edited generated files or files tungsten does not own.
+  Generated-source compatibility is reported apart from package availability
+  and runtime acceptance, which it does not check. With `--workspace` it
+  stages the output, proposed lock and rehearsal record for review;
+  `--from`/`--to` check the explicit identities. External emitters are never
+  started.
+- Add `support-bundle --rehearsal DIR` to include an allowlisted summary of an
+  upgrade rehearsal workspace as the observed `upgrade.rehearsal` entry
+  (bundle schema version 3): versions, verdict, check states, built-in
+  target ids with change and conflict counts, finding kinds and the apply
+  state, never paths, digests, file names or finding text. `--inspect`
+  reads schema versions 1 to 3.
+- Add `upgrade rehearse --consumer-target TARGET -- COMMAND` to run one
+  explicit clean-consumer command (no shell) in a target's staged output
+  after staging, with `--consumer-timeout-secs`. Its outcome, exit code and
+  log are recorded, it sets `runtime_acceptance` to passed or failed, and a
+  failure blocks `upgrade apply`. The command runs with your privileges and
+  environment; it is not sandboxed.
+- Add `tungsten upgrade apply --workspace DIR` to apply an accepted rehearsal
+  as a separate step. It refuses when inputs, the lock, the staged files or
+  any output file changed since the rehearsal, backs up what it replaces,
+  keeps custom files, and records a journal; `--restore` undoes an
+  interrupted or completed apply.
+
+- `tungsten update check` classifies a newer release as `compatible` or
+  `migration` (new `upgrade` field in `--json`). Before 1.0 a minor release, from
+  1.0 a major release, any prerelease, or notes with a Breaking section count as
+  migration; release notes can only make it stricter. Guidance names the
+  non-writing preview commands (`diff --migration`, `lock --preview`,
+  `generate --dry-run`) for migrations and `generate --check` otherwise, and the
+  cached update notice says when a migration may be required.
 
 - TypeScript, Python and Rust runtimes verify incoming webhooks without a web
   framework: `verifyWebhook` / `verify_webhook` check the Stripe-compatible
@@ -259,6 +414,7 @@ changes.
   storage, queues and acknowledgement stay with the application.
   `signWebhook` / `sign_webhook` build a header for local examples. Registered
   as the `webhook_verification` runtime feature. Unreleased 0.2.0 only.
+
 - Add `tungsten_build::ProjectIdentity`, the shared in-process identity of
   one compilation: its manifest, the content digest of every source it read,
   the optional files it found absent, and a digest of the compiler version,
@@ -299,6 +455,7 @@ changes.
   suppressed with `--json`, `--offline`, `--policy`, in CI, without a terminal
   and for `lsp` and `mock`. Cached answers expire after 7 days; a corrupt or
   unwritable cache is ignored.
+
 - Add the `examples/restricted-agent` customization example: an MCP server
   that reads freely, confirms writes and hides deletion, with transport
   references and SDK defaults from a shared profile and a check that verifies
@@ -490,6 +647,17 @@ changes.
   copied; import accepts them only below `.tungsten-inputs`. Without the flag,
   the reviewed source of a converted import is now listed as excluded too.
   Check that upstream terms allow redistributing bundled documents.
+
+- Add `lock --outputs` to record, and with `--check` verify, the identity of
+  the bytes each built-in target generates (file count and a digest over every
+  generated path and content digest), by running the built-in emitters in
+  memory; external emitters are never run and stay unrecorded. When the lock
+  records outputs, `generate --locked` also fails with `TG0129` before writing
+  if a selected built-in target generates different bytes from the same locked
+  identities, which certifies byte-identical reproduction on another machine
+  and surfaces platform-dependent differences explicitly. Plain `lock` and
+  `lock --check` still never run emitters; they leave the recorded outputs of
+  a current lock in place, and `lock --update` without `--outputs` drops them.
 
 - Extend the versioned capability catalog with each built-in target's option
   keys, execution environments and implemented features, plus a registry of
@@ -683,6 +851,13 @@ changes.
   project pins or generated clients, or sends project data. `--json` output adds
   the `update check` command to the CLI output schema.
 
+- An OpenAPI 3.2 `text/event-stream` response whose `itemSchema` gives each
+  event a plain-text `data` string (no `contentMediaType`, or a `text/*` one,
+  and no `contentSchema`) compiles to a stream of string events. Every runtime
+  delivers such data as written instead of parsing it as JSON; the IR marks the
+  stream `text_data` and SDK descriptors carry `text: true`. Generated Rust
+  stream descriptors now always set the new `text` field.
+
 - OpenAPI 3.2 response `itemSchema` compiles onto the existing streaming
   support. On a JSON Lines response it is the type of one line. On a
   `text/event-stream` response whose item is an event object with a JSON `data`
@@ -865,6 +1040,14 @@ changes.
   typed defaults/fallback policy and winning/shadowed authored origins. Plain
   text and JSON redact sensitive values and physical paths without compiling
   inputs, probing tools or executing emitters.
+
+- Check transport references in `tungsten doctor <project>`: report whether each
+  referenced environment variable is set and each project file exists, without
+  reading them. `--strict` fails on a missing referenced file.
+
+- Keep the specific, value-free messages of profile and `transport` diagnostics
+  in `tungsten config`, instead of a generic "configuration declaration is
+  invalid". Other manifest diagnostics stay redacted.
 
 - Select shared local configuration profiles from `tungsten init --profile PATH`
   (repeatable) and from the guided setup. Selections are composed with the

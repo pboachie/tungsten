@@ -44,8 +44,10 @@ The first fetch records the source URL and SHA256 under
 `.tungsten-inputs/<url-sha256>/source.lock.json`, beside immutable downloaded
 content. Retain the complete source cache directory for offline use. Online commands verify upstream
 bytes against the pin and refuse changed content. `--refresh-inputs` explicitly
-accepts a new OpenAPI pin; converted imports instead require re-import into a
-fresh project and another operation review. Their `source_url` and
+accepts a new OpenAPI pin; converted imports are instead refreshed with
+`tungsten refresh-import`, which previews the converted diff, operation and
+output changes and requires renewed review of changed approvals before
+`--apply` writes the conversion, pin and lock. Their `source_url` and
 `source_sha256` manifest fields preserve that provenance on every compilation.
 
 For authentication, repeat `--input-header 'Authorization: Bearer ...'`, or set
@@ -106,7 +108,7 @@ helpers retain their own platform limits.
 
 | Input | You provide | Entry point and conversion | Limits and required review |
 |---|---|---|---|
-| OpenAPI 3.0 / 3.1 | JSON or YAML document | `tungsten init --from openapi.json` (default when unset: `openapi.json`, `openapi.yaml` or `openapi.yml` in the target directory). The document is kept in place, so relative references retain meaning, and goes through the native frontend: `$ref` resolution, overlays | The full frontend surface; overlays remain optional. OpenAPI 3.2 documents are read when they use only constructs 3.1 has plus the `query` method (sent as HTTP `QUERY` with its body), `additionalOperations` (sent with their method token as written), form-encoded `in: querystring` objects, `style: cookie` cookie parameters, `$self` that leaves reference resolution unchanged and response `itemSchema` for JSON Lines and JSON server-sent events; each other 3.2-only construct gets its own diagnostic (TG0140 to TG0156), an error unless it only adds metadata, and `tungsten capabilities` lists them |
+| OpenAPI 3.0 / 3.1 | JSON or YAML document | `tungsten init --from openapi.json` (default when unset: `openapi.json`, `openapi.yaml` or `openapi.yml` in the target directory). The document is kept in place, so relative references retain meaning, and goes through the native frontend: `$ref` resolution, overlays | The full frontend surface; overlays remain optional. OpenAPI 3.2 documents are read when they use only constructs 3.1 has plus the `query` method (sent as HTTP `QUERY` with its body), `additionalOperations` (sent with their method token as written), form-encoded `in: querystring` objects, `style: cookie` cookie parameters, `$self` that leaves reference resolution unchanged and response `itemSchema` for JSON Lines and for server-sent events with JSON or plain-text data; each other 3.2-only construct gets its own diagnostic (TG0140 to TG0156), an error unless it only adds metadata, and `tungsten capabilities` lists them |
 | Swagger 2.0 | JSON or YAML document | `tungsten init --from swagger.json` (also a default name) or any path. Bounded offline conversion to OpenAPI, saved as `imported.openapi.json` | Unsupported semantics fail explicitly instead of being guessed; conversion never resolves external references |
 | Postman Collection v2.1 | JSON collection | `tungsten init --from collection.json`. Structural import; omissions are listed in `import-report.json` | Scripts and requests are never executed: script-dependent behavior, non-JSON bodies and saved responses and unsupported auth helpers are omitted per item, not interpreted — this is not a Postman runtime |
 | Saved cURL command | A saved command as text | `tungsten init --from command.curl --route '/pets/{id}'` (auto-detected by a leading `curl`, a `.curl` extension, or `--input-format curl`). Parsed as data against POSIX, cmd or PowerShell quoting (`--shell-dialect`) | Exactly one explicit `--route` path template is required; the command is parsed, never executed |
@@ -136,17 +138,19 @@ The support matrix below is generated from the capability catalog (`tungsten cap
 | `kotlin` | `kt` | Kotlin/JVM SDK (blocking functions returning Result; opt-in coroutines) | java >=17.0; gradle installed | jvm | `typed_sdk`, `pagination_helpers`, `coroutines` | enforced | unknown | unknown |
 | `mcp` |  | MCP server over stdio or Streamable HTTP, discrete or progressive | node >=22.13 excluding 23.0.x, 23.1.x; npm installed | node | `mcp_stdio`, `mcp_streamable_http`, `mcp_embedding_search`, `mcp_script_sandbox` | enforced | unknown | unknown |
 | `mock` |  | reserved; no emitter in this version | none |  |  | n/a | unknown | unknown |
-| `python` | `py` | Sync and async Python SDK, Pydantic v2 or dataclass models | python3 >=3.12 (`python_version` selects the minimum) | cpython | `typed_sdk`, `pagination_helpers`, `dataclass_models`, `webhook_verification`, `typed_webhooks` | enforced | unknown | unknown |
+| `python` | `py` | Sync and async Python SDK, Pydantic v2 or dataclass models | python3 >=3.12 (`python_version` selects the minimum) | cpython | `typed_sdk`, `pagination_helpers`, `pagination_checkpoints`, `dataclass_models`, `webhook_verification`, `typed_webhooks`, `streaming_downloads`, `telemetry_hooks` | enforced | unknown | unknown |
 | `ruby` | `rb` | Ruby SDK | ruby >=3.3; bundle installed | ruby | `typed_sdk`, `pagination_helpers` | enforced | unknown | unknown |
-| `rust` | `rs` | Async Rust SDK (serde, reqwest) and optional generated CLI | cargo >=1.88; rustc >=1.88 | native | `typed_sdk`, `pagination_helpers`, `generated_cli`, `webhook_verification`, `typed_webhooks` | enforced | unknown | unknown |
-| `typescript` | `ts` | Typed TypeScript SDK, Result values, Zod validation | node >=22.0; npm installed | node | `typed_sdk`, `pagination_helpers`, `webhook_verification`, `typed_webhooks` | enforced | unknown | unknown |
+| `rust` | `rs` | Async Rust SDK (serde, reqwest) and optional generated CLI | cargo >=1.88; rustc >=1.88 | native | `typed_sdk`, `pagination_helpers`, `pagination_checkpoints`, `generated_cli`, `webhook_verification`, `typed_webhooks`, `cli_login_sessions`, `streaming_downloads`, `telemetry_hooks` | enforced | unknown | unknown |
+| `typescript` | `ts` | Typed TypeScript SDK, Result values, Zod validation | node >=22.0; npm installed | node | `typed_sdk`, `pagination_helpers`, `pagination_checkpoints`, `webhook_verification`, `typed_webhooks`, `streaming_downloads`, `telemetry_hooks` | enforced | unknown | unknown |
 | `webmcp` |  | Browser ESM package with tool manifest and registration helper | node >=22.0; npm installed | browser | `webmcp_registration` | enforced | unknown | unknown |
 
 | Feature | Domain | Opt-in option | Description |
 |---|---|---|---|
 | `typed_sdk` | target |  | typed models and operation methods for every compiled operation |
 | `pagination_helpers` | target |  | page iteration helpers for operations with declared pagination |
+| `pagination_checkpoints` | runtime |  | sealed, caller-owned checkpoints that resume read-only page exports after a restart |
 | `generated_cli` | target | `cli` | a command-line client crate next to the SDK |
+| `cli_login_sessions` | target | `cli` | generated-CLI browser login, account switching and logout for OAuth2 authorizationCode schemes, with sessions in the macOS keychain, Secret Service or Windows Credential Locker, or an explicit owner-only file |
 | `dataclass_models` | target | `models` | stdlib dataclass models without a Pydantic dependency |
 | `coroutines` | target | `coroutines` | suspend functions and cold Flows next to the blocking surface |
 | `mcp_stdio` | protocol |  | Model Context Protocol server over stdio |
@@ -154,6 +158,8 @@ The support matrix below is generated from the capability catalog (`tungsten cap
 | `mcp_embedding_search` | target | `search` | optional embedding index for tool search |
 | `mcp_script_sandbox` | runtime | `sandbox` | opt-in run_script sandbox |
 | `webmcp_registration` | protocol |  | browser tool manifest and WebMCP registration helper |
+| `telemetry_hooks` | runtime |  | opt-in local telemetry observer with bounded, redacted operation, attempt and phase events |
+| `streaming_downloads` | runtime |  | explicit streamed response bodies with byte limits, progress, idle timeout and deadline |
 | `webhook_verification` | runtime |  | framework-free incoming webhook verification: Stripe-compatible `t=,v1=` HMAC-SHA256 signatures compared in constant time, secret rotation, bounded body, timestamp tolerance and an application-owned replay hook |
 | `typed_webhooks` | target |  | typed payloads of OpenAPI `webhooks` and a parse helper that verifies a delivery and validates its payload before the replay claim |
 | `llms_txt` | target |  | llms.txt, llms-full.txt and tools.json documentation |
@@ -335,6 +341,14 @@ your platform and `SHA256SUMS`. Upgrade guidance depends on how the CLI was inst
 pinned installer command for the release installer, `cargo install` for cargo, and
 package-manager guidance for npm. When the installation route cannot be determined,
 the command says so and prints no replacement command.
+
+A newer release is also classified in `upgrade`: `compatible` stays on your compatibility
+line (a patch release before 1.0, a minor or patch release from 1.0) and is followed by
+`tungsten generate --check`; `migration` starts a new line (a minor or major release before
+1.0, a major release from 1.0), is a prerelease, or has a Breaking section in its notes, and
+the guidance asks you to preview with `tungsten diff --migration`, `tungsten lock --preview`
+and `tungsten generate --dry-run` before replacing generated clients. Release notes can only
+make the classification stricter.
 
 | Exit code | Meaning |
 | --- | --- |
@@ -758,6 +772,7 @@ tungsten [--json] <command>
 | Command | Purpose |
 |---|---|
 | `init` | Write project manifests from any supported input ([Supported inputs](#supported-inputs)): `--from`, `--dir`, `--name`, `--targets`, `--force`; `--targets webmcp` includes a linked TypeScript SDK |
+| `workspace` | List the projects under a directory (bounded discovery, never following links) with their ids, outputs and inputs, and report outputs two projects share (TG0642); `--project ID` and `--affected FILE` select projects, `--run check\|generate\|lock -- ARGS` runs a command on each, one at a time. `--project ID` on `check`, `generate`, `lock` and the other project commands runs on one project of the workspace at PATH |
 | `check` | Validate the manifests and specs and report diagnostics (`--ci`, `--strict`); opt into response quality with `--audit-contracts` or audit-only enforcement with `--require-contracts`; `--ci` runs the emitters in memory, external ones included (`--no-external` skips them) |
 | `generate` | Generate every configured target (`--target`, `--dry-run`, `--check`, `--force`, `--strict`); `--locked` refuses (TG0128) unless the project matches `tungsten.lock.json` and acquires inputs offline |
 | `ir dump` | Write the IR as JSON (`--out`, `--compact`) |
@@ -770,7 +785,7 @@ tungsten [--json] <command>
 | `lsp` | Serve diagnostics, quick fixes, completion, hover, go-to-definition and symbols for `tungsten.yml`, `agent.yml` and overlays to an editor over stdio (`--config`) |
 | `doctor` | Report external tools; pass a project path and `--strict` to fail when its required tools are missing or too old |
 | `capabilities` | Query built-in target declarations without running tools or emitters; optionally select a target id or alias, such as `capabilities py --json`; `--matrix` prints the Markdown support matrix derived from the same declarations, and `--matrix --format markdown` wraps it in the markers of the README block CI checks |
-| `lock` | Capture the project generation lock `tungsten.lock.json` offline: content identities of the manifest, profiles, agent manifest, inputs, references and overlays (in order), compiler and built-in emitter identities, effective target option digests and consumer toolchains. `--check` fails when the lock is missing, stale or corrupt, `--preview` writes nothing, `--update` accepts changed identities |
+| `lock` | Capture the project generation lock `tungsten.lock.json` offline: content identities of the manifest, profiles, agent manifest, inputs, references and overlays (in order), compiler and built-in emitter identities, effective target option digests and consumer toolchains. `--check` fails when the lock is missing, stale or corrupt, `--preview` writes nothing, `--update` accepts changed identities; `--outputs` also records or verifies the identity of the bytes each built-in target generates |
 | `bundle export` / `bundle import` | Export the locked input closure and `tungsten.lock.json` into a new plain bundle directory with a digest inventory (`--preview` lists it; `--include-input-cache` carries the verified pins of remote inputs; `--include-consumer-cache DIR` carries a prepared consumer dependency directory with provenance and platform notes; incomplete or credential-named content needs `--allow-incomplete` / `--allow-sensitive`), or validate a bundle completely and copy it into `--dest` without overwriting differing files. Neither runs emitters or grants trust |
 | `support-bundle --preview` | Inspect the exact metadata-only support manifest without writing files; `--exclude <id>` removes an entry. On Linux, macOS and Windows, `--output <PATH>` instead publishes it to a new file in an existing, trusted directory; `--inspect <FILE>` checks and shows an existing bundle |
 
@@ -1164,7 +1179,10 @@ winning and shadowed source. Inline values (a proxy URL, a PEM block, a token) a
 refused, as is any key that would disable certificate verification; trust a
 private CA with `ca_bundle` instead. References are names only: tungsten never
 reads the variables, files or store items they point to, and generated SDKs do not
-consume them yet. Wire them into a native or custom transport that keeps TLS
+consume them yet. `tungsten doctor <project>` reports whether each referenced
+environment variable is set and each referenced project file exists, without reading
+either; `--strict` fails on a missing file, while variables may be supplied where
+the client runs and store items are left to the runtime's adapter. Wire them into a native or custom transport that keeps TLS
 verification, redirect/auth rules, deadlines and admission in place.
 
 `tungsten lsp` serves profile files too: completion and hover from the profile
@@ -1232,7 +1250,7 @@ including invalid or unsaved included profiles outside the manifest directory.
 Compiler source names and exported configuration provenance remain portable.
 Dedicated profile completion and navigation remain follow-up work.
 
-`tungsten lsp` is a language server for `tungsten.yml`, `agent.yml` and the overlay files a project lists. It checks the project with the same compiler as `tungsten check` and shows the same `TG` diagnostics on their source lines. Unsaved JSON/YAML manifests, specs, overlays and local references participate in the same source snapshot, including new files in an existing input directory. Closing a buffer restores its disk contents; file watchers pick up saved changes and deletions. File-size limits and local-reference confinement still apply. The selected project's `.tungsten-inputs` acquisition cache is reserved for verified disk content: buffers cannot replace or extend a pinned Git tree, while explicitly selected local overlays outside the cache remain editable. It completes keys, enumerated values and the operation ids, gates and clusters of the compiled project; shows field documentation, operation signatures and diagnostic explanations on hover; jumps from an operation id to its place in the OpenAPI document; and outlines the manifests. Quick fixes replace an unknown operation id (`TG0603`) or an unknown manifest field or value (`TG0602`) with the closest name the compiler knows; each fix is a single edit pinned to the buffer version it was computed for, so the editor previews it, refuses it after a later edit and can undo it. An operation without an `operationId` (`TG0403`) or with a repeated one (`TG0401`) gets the overlay action `tungsten overlay suggest` derives, added to the input's suggested overlay in one previewed edit. When a fix cannot be offered, editors that show disabled code actions show why and the equivalent command. Editors without versioned workspace edits get plain edits for the replacement fixes, still checked against the current buffer. A fix never runs emitters, installs packages or refreshes inputs. The workspace is the directory of `tungsten.yml` (found from the editor's workspace folder, or given with `--config <path>`); one project is served per process.
+`tungsten lsp` is a language server for `tungsten.yml`, `agent.yml` and the overlay files a project lists. It checks the project with the same compiler as `tungsten check` and shows the same `TG` diagnostics on their source lines. Unsaved JSON/YAML manifests, specs, overlays and local references participate in the same source snapshot, including new files in an existing input directory. Closing a buffer restores its disk contents; file watchers pick up saved changes and deletions. File-size limits and local-reference confinement still apply. The selected project's `.tungsten-inputs` acquisition cache is reserved for verified disk content: buffers cannot replace or extend a pinned Git tree, while explicitly selected local overlays outside the cache remain editable. It completes keys, enumerated values and the operation ids, gates and clusters of the compiled project; shows field documentation, operation signatures and diagnostic explanations on hover; jumps from an operation id to its place in the OpenAPI document; and outlines the manifests. Quick fixes replace an unknown operation id (`TG0603`) or an unknown manifest field or value (`TG0602`) with the closest name the compiler knows; each fix is a single edit pinned to the buffer version it was computed for, so the editor previews it, refuses it after a later edit and can undo it. An operation without an `operationId` (`TG0403`) or with a repeated one (`TG0401`) gets the overlay action `tungsten overlay suggest` derives, added to the input's suggested overlay in one previewed edit. When a fix cannot be offered, editors that show disabled code actions show why and the equivalent command. Editors without versioned workspace edits get plain edits for the replacement fixes, still checked against the current buffer. A fix never runs emitters, installs packages or refreshes inputs. Every project in the editor's workspace folders is served at once: projects are found the way `tungsten workspace` finds them (bounded, never following links), a folder inside a project serves that project, and opening a `tungsten.yml` elsewhere serves it too; `--config <path>` serves exactly one project. Each project is checked on its own, one check at a time for the whole session: editing a file re-checks only the projects that read it, so a shared spec updates every project using it and no other, diagnostics of a file read by several projects are merged, and removing a workspace folder cancels its projects' checks and clears their diagnostics. Requests about a file are answered from the project that owns it (its manifest, else the first project reading it, else the innermost project directory holding it).
 
 Edits retain the existing debounce and one active analysis worker. A newer edit
 cancels obsolete work cooperatively between compiler phases and during reference,

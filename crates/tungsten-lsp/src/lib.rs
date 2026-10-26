@@ -3,10 +3,12 @@
 //!
 //! `tungsten lsp` serves the Language Server Protocol over stdio for
 //! `tungsten.yml`, `agent.yml`, the overlay files a project lists and the
-//! local profiles it selects (watched even outside the workspace folder). The
-//! workspace is the directory of the `tungsten.yml` (found from the
-//! workspace folder or given with `--config`), and it is compiled once for
-//! all the files in it:
+//! local profiles it selects (watched even outside the workspace folders).
+//! It serves every project its workspace folders hold (bounded discovery,
+//! see `tungsten_config::workspace`), the projects whose manifests are
+//! opened, or the one `--config` names. Each project is compiled once for
+//! all the files it reads, and a file is routed to the projects that read
+//! it:
 //!
 //! - diagnostics are the compiler's own, with their `TG` codes, placed on
 //!   JSON/YAML spans the frontend keeps; manifests, specs, overlays and local

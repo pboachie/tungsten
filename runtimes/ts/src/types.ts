@@ -12,7 +12,9 @@
  * additive (new optional fields or union members), and update both sides
  * together.
  */
+import type { TelemetryEvent, TelemetryObserver } from "./telemetry.js";
 import type { TokenStore } from "./oauth.js";
+import type { Download, TransferProgress } from "./download.js";
 import type { EventStream } from "./streams.js";
 import type { RequestScheduler, SchedulerOptions } from "./scheduler.js";
 
@@ -409,6 +411,8 @@ export interface StreamDescriptor {
   /** Wire name of the boolean request body field that selects the stream;
    * `ClientCore.stream` sets it to `true`. */
   flag?: string;
+  /** Every event's `data` is text delivered as written, not JSON. */
+  text?: boolean;
 }
 
 /** The `authorizationCode` flow of an OAuth2 scheme (present only when the
@@ -650,6 +654,12 @@ export interface ClientOptions {
   /** The tenant or principal this client calls for. Clients sharing a
    * scheduler keep separate capacity, queues and pauses per tenant. */
   tenant?: string;
+  /** Receives local telemetry events for `call()`: the operation, each
+   * attempt, and the authentication, scheduler queue and retry backoff
+   * phases. Off by default; nothing is ever sent anywhere by the runtime.
+   * Events hold only bounded values (no URLs, headers, bodies, credentials
+   * or error text). See {@link TelemetryEvent}. */
+  telemetry?: TelemetryObserver;
 }
 
 /**
@@ -703,6 +713,19 @@ export interface CallOptions {
    * Extra headers for this invocation, overriding client header values.
    */
   headers?: Record<string, string>;
+}
+
+/** Options of `ClientCore.download`: those of a call, plus the transfer's own. */
+export interface DownloadOptions extends CallOptions {
+  /** Most body bytes the download may deliver. A larger declared
+   * `Content-Length` fails before any byte is read; a body that grows past
+   * it ends the download (`UNEXPECTED_RESPONSE`, `code`
+   * `RESPONSE_TOO_LARGE`). `maxResponseBytes` does not apply to a streamed
+   * body, only to an error body. Default: no limit. */
+  maxBytes?: number | null;
+  /** Called after every chunk with the bytes received so far. It must not
+   * throw; what it throws is ignored. */
+  onProgress?: (progress: TransferProgress) => void;
 }
 
 // --------------------------------------------------------------- results
@@ -788,6 +811,40 @@ export interface Page<T> {
   body: unknown;
   /** Cursor, offset, page number or URL for the next page; null at the end. */
   next: unknown;
+}
+
+/**
+ * A durable, resumable read-only export (`ClientCore.exportPages`). The
+ * checkpoint token is bound to the API, operation, pagination contract,
+ * base URL, `ClientOptions.tenant`, `scope` and every argument except the
+ * page position; a token from another traversal, key or runtime contract
+ * is refused before any request.
+ */
+export interface CheckpointOptions {
+  /** HMAC-SHA-256 key of at least 32 bytes that seals and verifies
+   * tokens. Keep it as a secret, stable across restarts. */
+  key: Uint8Array;
+  /** The account or principal the export reads for, when
+   * `ClientOptions.tenant` does not already say. Never a credential. */
+  scope?: string;
+  /** A token from an acknowledged page to resume after; omitted starts
+   * from the first page. Restarting is the caller's explicit choice. */
+  resume?: string;
+  /** Refuse a token issued more than this many milliseconds ago. */
+  maxAgeMs?: number;
+}
+
+/**
+ * A page of a checkpointed export. Persist `checkpoint` only after the
+ * page's items are committed to the sink: a crash before persisting replays
+ * this page on resume, so the sink must deduplicate.
+ */
+export interface CheckpointPage<T> extends Page<T> {
+  /** Sensitive token (it holds the provider's next-page cursor or URL)
+   * recording progress through this page. */
+  checkpoint: string;
+  /** The token records a finished traversal; resuming it reads nothing. */
+  complete: boolean;
 }
 
 /** Until-predicate for `ClientCore.poll`, same shape as `VerifyDescriptor.expect`. */
@@ -907,6 +964,9 @@ export interface ClientCoreApi {
    * the event type. The result is an async iterable with helpers
    * (`on`, `collect`, `reduce`, `first`, `cancel`). */
   stream<T>(op: OperationDescriptor, args: Record<string, unknown>, opts?: CallOptions): EventStream<T>;
+  /** Send the operation and hand its 2xx body over unread, as a
+   * `Download` read chunk by chunk (see `ClientCore.download`). */
+  download(op: OperationDescriptor, args: Record<string, unknown>, opts?: DownloadOptions): Promise<Result<Download>>;
   /** Iterate pages; stops after the last page or the first error result. */
   pages<T>(op: OperationDescriptor, args: Record<string, unknown>, opts?: CallOptions): AsyncIterable<Result<Page<T>>>;
   /** Call a read operation until `until` holds or the budget runs out. */

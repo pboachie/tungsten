@@ -255,7 +255,7 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
     e(
         "TG0122",
         "Downloaded or cached bytes differ from their SHA256 pin, or a converted import no longer matches its original remote source.",
-        "Review upstream changes before --refresh-inputs. Converted inputs require re-import into a fresh project and renewed review. Use --offline for the existing pin; restore corrupted cache bytes from a trusted copy.",
+        "Review upstream changes before --refresh-inputs. Converted inputs are refreshed with `tungsten refresh-import`, which previews the conversion and requires renewed review of changed approvals. Use --offline for the existing pin; restore corrupted cache bytes from a trusted copy.",
     ),
     e(
         "TG0123",
@@ -263,9 +263,19 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
         "Fetch once online and retain both source.lock.json and its content file for offline use. Inspect permissions and unexpected cache entries before retrying. Partial *.pending writes from an interrupted fetch are discarded by the next online run; a held acquire.lock means another run is fetching the same source.",
     ),
     e(
+        "TG0124",
+        "`tungsten refresh-import --apply` was interrupted: its journal under .tungsten/refresh-import/ remains, so the converted input, import report, source_sha256, pin and lock may be partly refreshed. `check` and `generate` refuse the project until it is recovered.",
+        "Run `tungsten refresh-import --rollback` to restore the backed-up files, then preview and apply the refresh again.",
+    ),
+    e(
         "TG0128",
         "A locked run (`generate --locked` or `check --locked`) found that the project does not match its generation lock: tungsten.lock.json is missing or corrupt, or a recorded source, reference, overlay, profile, target option, compiler or emitter identity changed. Nothing is generated.",
         "Review the change and accept it explicitly with `tungsten lock --update`; `tungsten lock --check` lists every difference. Locked runs never fetch or refresh inputs.",
+    ),
+    e(
+        "TG0129",
+        "A locked run (`generate --locked`) over a lock that records generated outputs found that a built-in target no longer generates the recorded bytes, although every locked input, option, compiler and emitter identity matches. This usually means a platform-dependent difference. Nothing is generated.",
+        "Compare the platform and toolchain with the environment that recorded the lock. After reviewing the new output, record it explicitly with `tungsten lock --outputs --update`.",
     ),
     e(
         "TG0130",
@@ -285,7 +295,7 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
     e(
         "TG0133",
         "The Git source lock or its materialized files are missing, invalid, modified, symlinked or not writable. Every reused content file is SHA256-verified.",
-        "Restore the pinned cache from a trusted copy or re-import into a fresh project. Retain .tungsten-inputs with the same access controls as the original source for offline use. Partial *.pending entries from an interrupted fetch are discarded by the next online run; a held acquire.lock means another run is fetching the same source.",
+        "Restore the pinned cache from a trusted copy, or refresh a converted input with `tungsten refresh-import`. Retain .tungsten-inputs with the same access controls as the original source for offline use. Partial *.pending entries from an interrupted fetch are discarded by the next online run; a held acquire.lock means another run is fetching the same source.",
     ),
     e(
         "TG0134",
@@ -319,7 +329,7 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
     ),
     e(
         "TG0145",
-        "A Media Type Object uses OpenAPI 3.2 `itemSchema`, which types each item of a sequential media type, in a way tungsten does not compile. tungsten compiles `itemSchema` only in a response's `content` map (not in a reusable `components.mediaTypes` entry), without `schema` beside it, for JSON Lines (`application/jsonl`, `application/x-jsonl`, `application/ndjson`, `application/x-ndjson`; the type of one line) and for `text/event-stream` when the item is an event object whose `data` is a string with a JSON `contentMediaType` and a `contentSchema` (the event type). Request bodies, parameters, headers, other media types and events whose `data` is not JSON would be typed without their items.",
+        "A Media Type Object uses OpenAPI 3.2 `itemSchema`, which types each item of a sequential media type, in a way tungsten does not compile. tungsten compiles `itemSchema` only for responses, without `schema` beside it, for JSON Lines (`application/jsonl`, `application/x-jsonl`, `application/ndjson`, `application/x-ndjson`; the type of one line) and for `text/event-stream` when the item is an event object whose `data` is a string with a JSON `contentMediaType` and a `contentSchema` (the event type), or a plain string without `contentMediaType` or with a `text/*` one (string events delivered as written). Request bodies, parameters, headers, other media types and event `data` of any other kind would be typed without their items.",
         "Describe the whole payload with `schema`, or reshape the item into one of the compiled forms.",
     ),
     e(

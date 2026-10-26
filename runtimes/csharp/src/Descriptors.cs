@@ -178,6 +178,8 @@ public sealed record StreamDescriptor
     public string? Done { get; init; }
     /// <summary>The wire name of the boolean body field that selects the stream.</summary>
     public string? Flag { get; init; }
+    /// <summary>Every event's data is text delivered as written, not JSON.</summary>
+    public bool Text { get; init; }
 }
 
 /// <summary>Everything the runtime needs to call one operation.</summary>
@@ -641,6 +643,7 @@ public sealed class SdkDescriptors
                 Event = st.ContainsKey("event") ? Schema.FromJson(st["event"], defs) : null,
                 Done = Str(st["done"]),
                 Flag = Str(st["flag"]),
+                Text = Bool(st["text"]),
             };
         }
         return new OperationDescriptor

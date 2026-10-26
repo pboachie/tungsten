@@ -63,16 +63,21 @@ pub(crate) fn run(args: &DoctorArgs, env: &CliEnv) -> Report {
                 );
             }
         };
-        let parsed = tungsten_build::driver::load_project_config(
+        let loaded = tungsten_build::driver::load_project_configuration(
             &manifest,
             &tungsten_build::CompileOptions::default(),
         );
+        let parsed = loaded.parsed;
         let Some(config) = parsed.config else {
             report.diagnostics = parsed.diagnostics.0;
             report.exit = exit::FAILED;
             return report;
         };
-        Some((manifest, config))
+        let transport = loaded
+            .effective
+            .map(|effective| effective.transport)
+            .unwrap_or_default();
+        Some((manifest, config, transport))
     } else {
         None
     };
@@ -96,7 +101,8 @@ pub(crate) fn run(args: &DoctorArgs, env: &CliEnv) -> Report {
         })
         .collect();
     let mut failures = vec![];
-    if let Some((manifest, config)) = configured {
+    let mut transport_notes = vec![];
+    if let Some((manifest, config, transport)) = configured {
         let has = |name: &str| {
             config.targets.get(name).is_some_and(|options| {
                 tungsten_config::external_target(options)
@@ -243,8 +249,12 @@ pub(crate) fn run(args: &DoctorArgs, env: &CliEnv) -> Report {
                 }
             }
         }
+        transport_notes = check_transport(&transport, base, &mut tools, &mut failures);
     }
     report.human = human(&tools);
+    for note in &transport_notes {
+        let _ = writeln!(report.human, "{note}");
+    }
     if project.is_some() {
         report.human = report.human.replace(
             "all tools are optional; a missing tool only disables what it is listed for\n",
@@ -493,4 +503,67 @@ pub(crate) fn parse_version(text: &str) -> Option<String> {
 fn version_pair(version: &str) -> Option<(u32, u32)> {
     let mut parts = version.split('.');
     Some((parts.next()?.parse().ok()?, parts.next()?.parse().ok()?))
+}
+
+/// Check that declared transport references resolve here, without reading
+/// them: environment variables are tested for presence, project-relative files
+/// for existence, and secure-store items are left to the runtime's adapter.
+/// A missing file is a project prerequisite; a missing variable is reported
+/// only, because it may be supplied where the generated client runs.
+fn check_transport(
+    transport: &tungsten_config::transport::TransportReferences,
+    base: &Path,
+    tools: &mut Vec<ToolReport>,
+    failures: &mut Vec<String>,
+) -> Vec<String> {
+    use tungsten_config::transport::Reference;
+    let mut notes = vec![];
+    for (field, reference) in [
+        ("proxy", &transport.proxy),
+        ("no_proxy", &transport.no_proxy),
+        ("ca_bundle", &transport.ca_bundle),
+        ("client_certificate", &transport.client_certificate),
+        ("client_key", &transport.client_key),
+    ] {
+        let name = format!("transport.{field}");
+        match reference {
+            None => {}
+            Some(Reference::Env(variable)) => {
+                let found = std::env::var_os(variable).is_some_and(|value| !value.is_empty());
+                tools.push(ToolReport {
+                    name,
+                    found,
+                    version: None,
+                    purpose: format!(
+                        "environment variable {variable} {} (value not read; it may be set where the client runs)",
+                        if found { "is set" } else { "is not set in this shell" }
+                    ),
+                });
+            }
+            Some(Reference::File(path)) => {
+                let found = base.join(path).is_file();
+                tools.push(ToolReport {
+                    name: name.clone(),
+                    found,
+                    version: None,
+                    purpose: format!(
+                        "project file {path} {} (contents not read)",
+                        if found { "exists" } else { "is missing" }
+                    ),
+                });
+                if !found {
+                    failures.push(format!("{name} file {path}"));
+                }
+            }
+            Some(Reference::Store(_)) => notes.push(format!(
+                "{name}: secure-store item, resolved by the runtime's store adapter; not checked here"
+            )),
+        }
+    }
+    if transport.credential_provider.as_deref() == Some("secure_store") {
+        notes.push(
+            "transport.credential_provider: secure_store; an unavailable store is an error at runtime, never a plaintext fallback".into(),
+        );
+    }
+    notes
 }

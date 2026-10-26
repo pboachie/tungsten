@@ -20,7 +20,7 @@ use std::time::{Duration, SystemTime};
 
 use serde::{Deserialize, Serialize};
 
-use super::update::{UpdateCheckResult, UpdateStatus, newer_than};
+use super::update::{UpdateCheckResult, UpdateStatus, UpgradeKind, newer_than};
 
 /// Cached answers older than this are ignored; run `update check` again.
 pub const CACHE_MAX_AGE: Duration = Duration::from_secs(7 * 24 * 60 * 60);
@@ -277,6 +277,9 @@ pub struct Cache {
     pub channel: Channel,
     pub latest: String,
     pub status: CachedStatus,
+    /// Expected upgrade effect; absent in entries written before it existed.
+    #[serde(default)]
+    pub upgrade: Option<UpgradeKind>,
     /// When a notice was last shown, seconds since the Unix epoch.
     #[serde(default)]
     pub noticed_at: Option<u64>,
@@ -318,6 +321,7 @@ pub fn cache_entry(result: &UpdateCheckResult, now: SystemTime) -> Option<Cache>
         },
         latest: result.latest_version.clone()?,
         status,
+        upgrade: result.upgrade,
         noticed_at: None,
     })
 }
@@ -354,8 +358,13 @@ pub fn notice(
     if !newer_than(&cache.latest, current)? {
         return None;
     }
+    let migration = if cache.upgrade == Some(UpgradeKind::Compatible) {
+        ""
+    } else {
+        "; it may require project migration"
+    };
     Some(format!(
-        "note: tungsten {} is available (installed {current}). Run `tungsten update check` for verified upgrade guidance; set TUNGSTEN_UPDATE_NOTICE=off to silence.\n",
+        "note: tungsten {} is available (installed {current}{migration}). Run `tungsten update check` for verified upgrade guidance; set TUNGSTEN_UPDATE_NOTICE=off to silence.\n",
         cache.latest
     ))
 }
