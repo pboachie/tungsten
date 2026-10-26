@@ -4,26 +4,21 @@ use crate::args::InitArgs;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
-use tungsten_config::capabilities::ToolRequirement;
 
-pub(super) fn preflight(args: &InitArgs) -> Result<(), String> {
+pub(super) fn preflight(args: &InitArgs) -> Result<(), &'static str> {
     let init = &tungsten_config::capabilities::INIT;
     // Docs alone builds nothing to set up.
     if args.targets.is_empty()
         || args.targets.iter().all(|t| t == "docs")
         || args.targets.iter().any(|t| !init.local_setup(t))
     {
-        return Err(
-            "local setup supports TypeScript, Python, Rust/CLI, MCP, WebMCP and docs".into(),
-        );
+        return Err("local setup supports TypeScript, Python, Rust/CLI, MCP, WebMCP and docs");
     }
     if ["tungsten.yml", "agent.yml", "generated"]
         .iter()
         .any(|name| std::fs::symlink_metadata(args.dir.join(name)).is_ok())
     {
-        return Err(
-            "local setup requires a new project to avoid executing existing custom code".into(),
-        );
+        return Err("local setup requires a new project to avoid executing existing custom code");
     }
     if args
         .targets
@@ -35,32 +30,27 @@ pub(super) fn preflight(args: &InitArgs) -> Result<(), String> {
     if args.targets.iter().any(|t| t == "python") {
         super::init_setup_python::interpreter()?;
     }
-    // Every selected target's declared `node` requirement must hold.
-    let node: Vec<ToolRequirement> = args
+    if !args
         .targets
         .iter()
-        .filter_map(|t| tungsten_config::capabilities::target(t))
-        .flat_map(|target| target.prerequisites.iter().copied())
-        .filter(|requirement| requirement.tool == "node")
-        .collect();
-    if node.is_empty() {
+        .any(|t| matches!(t.as_str(), "typescript" | "mcp" | "webmcp"))
+    {
         return Ok(());
     }
-    let required = node
-        .iter()
-        .map(ToolRequirement::description)
-        .collect::<std::collections::BTreeSet<_>>()
-        .into_iter()
-        .collect::<Vec<_>>()
-        .join(" and ");
-    execute(
-        "node",
-        &["-e", &node_check(&node)],
-        Path::new("."),
-        Duration::from_secs(5),
-    )
-    .map_err(|_| {
-        format!("Node {required} is required for local setup (toolchain check timed out or failed)")
+    // Check the same declared Node requirements doctor enforces, so a
+    // selected MCP target cannot pass on a Node line below its floor.
+    let check = node_check(args.targets.iter().filter_map(|t| {
+        tungsten_config::capabilities::target(t)
+            .into_iter()
+            .flat_map(|target| target.prerequisites)
+            .find(|requirement| requirement.tool == "node")
+    }));
+    execute("node", &["-e", &check], Path::new("."), Duration::from_secs(5)).map_err(|_| {
+        if args.targets.iter().any(|t| t == "mcp") {
+            "Node >=22.13 (>=23.2 on Node 23) is required for local MCP setup (toolchain check timed out or failed)"
+        } else {
+            "Node >=22 is required for local setup (toolchain check timed out or failed)"
+        }
     })?;
     execute(
         npm(),
@@ -72,27 +62,24 @@ pub(super) fn preflight(args: &InitArgs) -> Result<(), String> {
     Ok(())
 }
 
-/// A Node script exiting 0 exactly when the running version meets every
-/// requirement, compared on major.minor as [`ToolRequirement::accepts`] does.
-fn node_check(requirements: &[ToolRequirement]) -> String {
-    let mut conditions = vec![];
+/// A script that exits 0 only when the running Node satisfies every requirement.
+fn node_check<'a>(
+    requirements: impl Iterator<Item = &'a tungsten_config::capabilities::ToolRequirement>,
+) -> String {
+    let mut conditions = vec!["a>=22".to_string()];
     for requirement in requirements {
         if let Some([major, minor]) = requirement.minimum {
-            conditions.push(format!("c({major},{minor})>=0"));
+            conditions.push(format!("(a>{major}||(a==={major}&&b>={minor}))"));
         }
         if let Some([major, minor]) = requirement.maximum_exclusive {
-            conditions.push(format!("c({major},{minor})<0"));
+            conditions.push(format!("(a<{major}||(a==={major}&&b<{minor}))"));
         }
         for [major, minor] in requirement.excluded_versions {
-            conditions.push(format!("c({major},{minor})!==0"));
+            conditions.push(format!("!(a==={major}&&b==={minor})"));
         }
     }
-    if conditions.is_empty() {
-        conditions.push("true".into());
-    }
     format!(
-        "const v=process.versions.node.split('.').map(Number);\
-         const c=(a,b)=>v[0]-a||v[1]-b;process.exit(({})?0:1)",
+        "const [a,b]=process.versions.node.split('.').map(Number);process.exit({}?0:1)",
         conditions.join("&&")
     )
 }

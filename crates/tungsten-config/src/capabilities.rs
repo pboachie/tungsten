@@ -333,6 +333,12 @@ pub const FEATURES: &[FeatureDefinition] = &[
         None,
     ),
     def(
+        "webhook_verification",
+        FeatureDomain::Runtime,
+        "framework-free incoming webhook verification: Stripe-compatible `t=,v1=` HMAC-SHA256 signatures compared in constant time, secret rotation, bounded body, timestamp tolerance and an application-owned replay hook",
+        None,
+    ),
+    def(
         "llms_txt",
         FeatureDomain::Target,
         "llms.txt, llms-full.txt and tools.json documentation",
@@ -350,6 +356,10 @@ const JS: &[ToolRequirement] = &[
     ToolRequirement::new("npm", None),
 ];
 // The MCP root graph imports stripTypeScriptTypes, added in 22.13 and 23.2.
+/// Newest Node.js major the public npm package build lanes check. Doctor
+/// reports newer majors as unqualified until a release promotes them.
+pub const NODE_NEWEST_CHECKED_MAJOR: u32 = 26;
+
 const MCP: &[ToolRequirement] = &[
     ToolRequirement {
         tool: "node",
@@ -473,7 +483,7 @@ targets! {
         summary: "Sync and async Python SDK, Pydantic v2 or dataclass models",
         options: &["package", "module", "version", "runtime", "runtime_path", "python_version", "models", "out"],
         environments: [Cpython],
-        features: &["typed_sdk", "pagination_helpers", "dataclass_models"],
+        features: &["typed_sdk", "pagination_helpers", "dataclass_models", "webhook_verification"],
     },
     {
         id: "ruby", aliases: &["rb"], source: BuiltInEmitter, family: Some("ruby"), policy: true,
@@ -490,14 +500,14 @@ targets! {
         summary: "Async Rust SDK (serde, reqwest) and optional generated CLI",
         options: &["crate", "version", "runtime", "runtime_path", "cli", "out"],
         environments: [Native],
-        features: &["typed_sdk", "pagination_helpers", "generated_cli"],
+        features: &["typed_sdk", "pagination_helpers", "generated_cli", "webhook_verification"],
     },
     {
         id: "typescript", aliases: &["ts"], source: BuiltInEmitter, family: Some("typescript"),
         policy: true, tools: JS, schema: Some(TargetOptionSchema::TypeScript),
         summary: "Typed TypeScript SDK, Result values, Zod validation",
         options: &["package", "version", "runtime", "runtime_path", "dependencies", "out"],
-        environments: [Node], features: SDK,
+        environments: [Node], features: &["typed_sdk", "pagination_helpers", "webhook_verification"],
     },
     {
         id: "webmcp", aliases: &[], source: BuiltInEmitter, family: Some("typescript"), policy: true,

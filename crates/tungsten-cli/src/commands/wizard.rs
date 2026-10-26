@@ -66,7 +66,7 @@ pub(crate) fn run(args: &InitArgs, json: bool, env: &CliEnv) -> Report {
         && let Err(message) = super::init_setup::preflight(&selected)
     {
         return refused(
-            &message,
+            message,
             "use --generate alone for offline source generation or select typescript,docs",
         );
     }

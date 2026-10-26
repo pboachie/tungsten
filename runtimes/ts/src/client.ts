@@ -86,6 +86,7 @@ import {
   getPath,
   isRecord,
   looksSensitive,
+  MAX_TIMER_MS,
   mergeAccept,
   REDACTED,
   redactPaths,
@@ -711,7 +712,9 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     let timer: ReturnType<typeof setTimeout> | undefined;
     let onAbort: (() => void) | undefined;
     const stopped = new Promise<typeof DEADLINE_EXPIRED | typeof CALLER_CANCELLED>((resolve) => {
-      if (remaining !== Infinity) timer = setTimeout(() => resolve(DEADLINE_EXPIRED), remaining);
+      // A deadline beyond what a timer can hold is checked at the next
+      // boundary instead; a longer delay would fire at once.
+      if (remaining <= MAX_TIMER_MS) timer = setTimeout(() => resolve(DEADLINE_EXPIRED), remaining);
       onAbort = () => resolve(CALLER_CANCELLED);
       signal?.addEventListener("abort", onAbort, { once: true });
     });

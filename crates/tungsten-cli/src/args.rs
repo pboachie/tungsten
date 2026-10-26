@@ -20,6 +20,8 @@ Examples:
   tungsten mock --port 4010            Serve a mock of the API from the IR
   tungsten report --html report.html   Write a static coverage and safety report
   tungsten diff --semver               Show how the API surface changed
+  tungsten upgrade rehearse --workspace ../rehearsal
+                                       Preview an upgrade with this compiler
   tungsten overlay suggest --write fixes.overlay.yaml
                                        Suggest an overlay that fixes diagnostics
   tungsten lsp                         Serve diagnostics, completion and hover for
@@ -165,6 +167,12 @@ impl Cli {
             } => CommandName::OverlaySuggest,
             Command::SupportBundle(_) => CommandName::SupportBundle,
             Command::Update { .. } => CommandName::UpdateCheck,
+            Command::Upgrade {
+                command: UpgradeCommand::Rehearse(_),
+            } => CommandName::UpgradeRehearse,
+            Command::Upgrade {
+                command: UpgradeCommand::Apply(_),
+            } => CommandName::UpgradeApply,
             Command::Lsp(_) => return None,
         })
     }
@@ -238,6 +246,12 @@ pub(crate) enum Command {
     Update {
         #[command(subcommand)]
         command: crate::commands::update::UpdateCommand,
+    },
+    /// Rehearse a compiler/runtime upgrade into a scratch workspace, then
+    /// apply an accepted rehearsal as a separate, explicit step.
+    Upgrade {
+        #[command(subcommand)]
+        command: UpgradeCommand,
     },
     /// Serve a Language Server Protocol server on stdin and stdout for
     /// tungsten.yml, agent.yml and overlays: diagnostics, completion, hover,
@@ -401,6 +415,56 @@ pub(crate) struct BundleImportArgs {
     /// Validate and list what would be written; writes nothing.
     #[arg(long)]
     pub preview: bool,
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum UpgradeCommand {
+    /// Regenerate with this (candidate) compiler from the locked inputs and
+    /// report identity, file, API surface and dependency changes, migration
+    /// actions and conflicts. Never writes the project; with --workspace,
+    /// stages the output for review and `upgrade apply`. Offline; external
+    /// emitters are never started.
+    Rehearse(UpgradeRehearseArgs),
+    /// Apply a staged rehearsal to the project after checking that nothing
+    /// changed since; backs up what it replaces. --restore undoes an
+    /// interrupted or completed apply.
+    Apply(UpgradeApplyArgs),
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct UpgradeRehearseArgs {
+    /// Local project directory or tungsten manifest.
+    #[arg(default_value = ".")]
+    pub path: PathBuf,
+    /// New (or empty) scratch directory, outside every output directory, for
+    /// the staged output, the proposed lock and the rehearsal record.
+    /// Without it the rehearsal only reports.
+    #[arg(long, value_name = "DIR")]
+    pub workspace: Option<PathBuf>,
+    /// Require the lock to record this current compiler version.
+    #[arg(long, value_name = "VERSION")]
+    pub from: Option<String>,
+    /// Require the running compiler to be this candidate version.
+    #[arg(long, value_name = "VERSION")]
+    pub to: Option<String>,
+    /// Only these targets, comma-separated. Default: every target in
+    /// tungsten.yml.
+    #[arg(long, value_name = "TARGETS", value_delimiter = ',')]
+    pub target: Vec<String>,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct UpgradeApplyArgs {
+    /// Local project directory or tungsten manifest.
+    #[arg(default_value = ".")]
+    pub path: PathBuf,
+    /// The workspace of a completed `upgrade rehearse`.
+    #[arg(long, value_name = "DIR")]
+    pub workspace: PathBuf,
+    /// Put back the files recorded before an interrupted or completed apply
+    /// of this workspace, and remove the files it added.
+    #[arg(long)]
+    pub restore: bool,
 }
 
 #[derive(Debug, Subcommand)]
