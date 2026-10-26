@@ -19,7 +19,8 @@
 //! - whether the generation lock would be updated.
 //!
 //! `--apply` writes the conversion, the import report, `source_sha256` and
-//! the remote pin, then rewrites `tungsten.lock.json` when it matched the
+//! the remote pin (for Git, the reviewed commit's pin and tree, never a
+//! newly resolved ref), then rewrites `tungsten.lock.json` when it matched the
 //! project before the refresh. It refuses unresolved reviews, a mismatched
 //! `--expect` digest, compile errors and files that changed during the run.
 //! Overlays, agent.yml, profiles and generated outputs are never touched; run
@@ -295,6 +296,10 @@ struct Plan {
     source: String,
     /// The URL and fetched bytes of a remote source.
     remote: Option<(String, Vec<u8>)>,
+    /// For a Git source: the reviewed commit's pin record and tree files,
+    /// project-relative, pin record last. Applied as ordinary replacements,
+    /// so the ref is never resolved again after review.
+    git_pin: Vec<(String, Vec<u8>)>,
     sha_before: Option<String>,
     sha_after: Option<String>,
 }
@@ -384,7 +389,13 @@ impl Plan {
             exclude_prefix: pick(&args.exclude_prefix, &recorded.exclude_prefix),
             redact_property: pick(&args.redact_property, &recorded.redact_property),
         };
-        let (prepared, remote, source) = if tungsten_openapi::acquire::is_remote(&from) {
+        let mut git_pin = vec![];
+        let (prepared, remote, source) = if tungsten_openapi::git_input::is_source(&from) {
+            let (bytes, pin, prepared) = fetch_git(&from, &options)?;
+            git_pin = pin;
+            let shown = tungsten_openapi::acquire::display_source(&from);
+            (prepared, Some((from, bytes)), shown)
+        } else if tungsten_openapi::acquire::is_remote(&from) {
             let bytes = tungsten_openapi::acquire::fetch(
                 &from,
                 &tungsten_openapi::acquire::current_options(),
@@ -449,9 +460,16 @@ impl Plan {
             new_report,
             source,
             remote,
+            git_pin,
             sha_before,
             sha_after,
         })
+    }
+
+    /// The HTTP(S) source whose content pin --apply replaces; Git pins are
+    /// applied as files instead.
+    fn http_pin(&self) -> Option<&(String, Vec<u8>)> {
+        self.remote.as_ref().filter(|_| self.git_pin.is_empty())
     }
 
     fn digest(&self) -> String {
@@ -701,8 +719,13 @@ impl Plan {
             })?;
             files.push((relative(manifest), Some(updated.into_bytes())));
         }
+        files.extend(
+            self.git_pin
+                .iter()
+                .map(|(path, bytes)| (path.clone(), Some(bytes.clone()))),
+        );
         let mut derived = vec![];
-        if let Some((url, _)) = &self.remote {
+        if let Some((url, _)) = self.http_pin() {
             derived.push(
                 tungsten_openapi::acquire::pin_file(url)
                     .map_err(|d| io("cannot pin", &d.message))?,
@@ -750,7 +773,7 @@ impl Plan {
                 derived,
             });
         }
-        if let Some((_, bytes)) = &self.remote {
+        if let Some((_, bytes)) = self.http_pin() {
             write_atomic(&state_dir.join("staged/source"), bytes)
                 .map_err(|e| io("cannot stage the fetched source", &e))?;
         }
@@ -758,7 +781,7 @@ impl Plan {
             version: 1,
             entries,
             manifest: Some(relative(manifest)),
-            pin: self.remote.as_ref().map(|(url, _)| url.clone()),
+            pin: self.http_pin().map(|(url, _)| url.clone()),
             relock,
         };
         let encoded = serde_json::to_vec_pretty(&journal)
@@ -787,7 +810,10 @@ fn complete(
         let target = root.join(&entry.path);
         match &entry.staged {
             Some(staged) => match read_bytes(&state_dir.join(staged)) {
-                Some(bytes) => write_atomic(&target, &bytes),
+                Some(bytes) => target
+                    .parent()
+                    .map_or(Ok(()), std::fs::create_dir_all)
+                    .and_then(|()| write_atomic(&target, &bytes)),
                 None => Err(std::io::Error::other("staged content missing")),
             },
             None => match std::fs::remove_file(&target) {
@@ -964,6 +990,78 @@ fn rollback(mut report: Report, root: &Path, state_dir: &Path) -> Report {
     report
 }
 
+/// Resolve and fetch a Git source into a private scratch project, convert its
+/// document and return the document bytes with the commit's pin files.
+#[allow(clippy::type_complexity)]
+fn fetch_git(
+    source: &str,
+    options: &ConvertOptions<'_>,
+) -> Result<(Vec<u8>, Vec<(String, Vec<u8>)>, Option<PreparedImport>), CliError> {
+    let from_diagnostic = |d: tungsten_core::Diagnostic| {
+        let mut error = CliError::new(ErrorKind::Io, d.message.clone());
+        error.help = d.help.clone();
+        error
+    };
+    let scratch = scratch_dir()?;
+    let fetched = (|| {
+        let mut policy = tungsten_openapi::acquire::current_options();
+        if policy.offline {
+            return Err(usage(
+                "refreshing a Git input requires network access",
+                "run without --offline, or convert a local checkout and pass it with --from",
+            ));
+        }
+        policy.refresh = true;
+        let document = tungsten_openapi::acquire::acquire(source, &scratch, &policy)
+            .map_err(from_diagnostic)?;
+        let bytes = read_bytes(&document)
+            .ok_or_else(|| CliError::new(ErrorKind::Io, "cannot read the fetched Git document"))?;
+        let prepared = convert(&document, options).map_err(|e| {
+            usage(
+                e,
+                "repeat the importer settings used by `init` (--route, --har-paths, --har-origin and prefixes)",
+            )
+        })?;
+        let mut pin = vec![];
+        let mut record = None;
+        for path in
+            tungsten_openapi::acquire::pinned_files(source, &scratch).map_err(from_diagnostic)?
+        {
+            let content = read_bytes(&scratch.join(&path)).ok_or_else(|| {
+                CliError::new(
+                    ErrorKind::Io,
+                    format!("cannot read the fetched pin file {path}"),
+                )
+            })?;
+            if path.ends_with("/source.lock.json") {
+                record = Some((path, content));
+            } else {
+                pin.push((path, content));
+            }
+        }
+        // The pin record goes last: it names the tree only once the tree exists.
+        pin.extend(record);
+        Ok((bytes, pin, prepared))
+    })();
+    let _ = std::fs::remove_dir_all(&scratch);
+    fetched
+}
+
+/// A new private directory under the system temporary directory.
+fn scratch_dir() -> Result<PathBuf, CliError> {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos());
+    let dir = std::env::temp_dir().join(format!("tungsten-refresh-{}-{nanos}", std::process::id()));
+    std::fs::create_dir(&dir).map_err(|e| {
+        CliError::new(
+            ErrorKind::Io,
+            format!("cannot create scratch directory: {e}"),
+        )
+    })?;
+    Ok(dir)
+}
+
 /// Convert fetched bytes through a private scratch file, so detection by
 /// extension behaves as for a local file.
 fn convert_bytes(
@@ -978,16 +1076,7 @@ fn convert_bytes(
         .map(|(_, ext)| ext)
         .filter(|ext| ext.len() <= 8 && ext.bytes().all(|b| b.is_ascii_alphanumeric()))
         .unwrap_or("json");
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_nanos());
-    let dir = std::env::temp_dir().join(format!("tungsten-refresh-{}-{nanos}", std::process::id()));
-    std::fs::create_dir(&dir).map_err(|e| {
-        CliError::new(
-            ErrorKind::Io,
-            format!("cannot create scratch directory: {e}"),
-        )
-    })?;
+    let dir = scratch_dir()?;
     let path = dir.join(format!("source.{extension}"));
     let converted = write_atomic(&path, bytes)
         .map_err(|e| CliError::new(ErrorKind::Io, format!("cannot stage fetched source: {e}")))

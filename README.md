@@ -81,7 +81,8 @@ The Git source lock under `.tungsten-inputs/git/` records the repository URL,
 requested ref, resolved commit, selected document and SHA256 of every materialized
 file. Ordinary runs retain that commit; `--refresh-inputs` is the explicit request
 to resolve a moving ref again. Converted imports retain their review provenance
-and require re-import into a fresh project to change source commits. Discovery
+and change source commits through `tungsten refresh-import`, which installs
+exactly the reviewed commit. Discovery
 recognizes all supported input formats and requires an explicit `#path` when
 multiple documents are found. Relative references retain the compiler's local
 input-root confinement. Acquisition is limited to 60 seconds, 512 files, 8 MiB per
