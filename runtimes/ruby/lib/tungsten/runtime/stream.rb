@@ -278,7 +278,7 @@ module Tungsten
           return FailedStream.new(Runtime.diag(d.id, "VALIDATION_FAILED").param("opts").expected("call options")
                                          .remedy("Pass the call options as a Hash of idempotency_key, confirm, timeout_ms, verify and headers (#{e.message}).").err)
         end
-        EventStream.new(self, d, args, with_deadline(o), decode)
+        EventStream.new(self, d, args, with_call_deadline(o), decode)
       end
 
       # A stream that fails before it starts.

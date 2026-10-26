@@ -44,8 +44,8 @@ module Tungsten
     #   `redirect_uri`);
     # - `token_store`: where authorization-code tokens live (memory by default);
     # - `timeout_ms`: the per-attempt timeout (30 s);
-    # - `deadline_ms`: the total deadline of one logical call (none; see
-    #   CallOptions);
+    # - `deadline_ms`: the total deadline of one logical call (none), see
+    #   CallOptions;
     # - `max_oauth_token_response_bytes`: a positive safe integer cap for each
     #   code/refresh response (64 KiB by default); separate from ordinary bodies;
     # - `retries`: RetryOptions over the API's per-tier defaults;
@@ -106,23 +106,24 @@ module Tungsten
     # - `refuse_confirm_yes`: `confirm: true` confirms nothing and
     #   remediation never offers it (callers that only forward tokens);
     # - `timeout_ms`: the per-attempt timeout;
-    # - `deadline_ms`: the total deadline of this call (the client's when
-    #   nil). Measured on a monotonic clock from the call, it bounds
-    #   authentication, idempotency-key reservation, every attempt (each
-    #   one's timeout is cut to the time left), retry waits, response bodies
-    #   and verification; for `pages`, `poll` and `run_macro` the whole
-    #   traversal, poll or macro. No attempt starts after it expires (code
-    #   DEADLINE_EXCEEDED); a mutation already sent reports OUTCOME_UNKNOWN.
-    #   For `stream` it is checked before connecting and each reconnect,
-    #   never on an open stream;
-    # - `deadline_at`: the absolute deadline (`CLOCK_MONOTONIC` milliseconds)
-    #   the runtime resolves from `deadline_ms`; nested work inherits it;
+    # - `deadline_ms`: the total deadline of this call in milliseconds, over
+    #   the client's (none by default). Measured on a monotonic clock from
+    #   the call, it bounds authentication, idempotency-key reservation,
+    #   every attempt (each one's timeout is cut to the time left), retry
+    #   waits, response bodies and verification; for pages, poll and macros
+    #   the whole traversal, poll or macro. No attempt starts after it
+    #   expires (code DEADLINE_EXCEEDED); a mutation already sent reports
+    #   OUTCOME_UNKNOWN. For a stream it bounds connecting and each
+    #   reconnect, never an open stream;
     # - `verify`: run the operation's verification hook after success;
     # - `headers`: sent with this call.
-    CallOptions = Data.define(:idempotency_key, :confirm, :refuse_confirm_yes, :timeout_ms, :verify, :headers, :max_response_bytes,
-                              :deadline_ms, :deadline_at) do
-      def initialize(idempotency_key: nil, confirm: nil, refuse_confirm_yes: false, timeout_ms: nil, verify: false,
-                     headers: {}, max_response_bytes: nil, deadline_ms: nil, deadline_at: nil)
+    #
+    # `call_deadline` is internal: the absolute monotonic deadline (ms) the
+    # runtime fixes when a call starts, inherited by nested work.
+    CallOptions = Data.define(:idempotency_key, :confirm, :refuse_confirm_yes, :timeout_ms, :deadline_ms, :verify, :headers,
+                              :max_response_bytes, :call_deadline) do
+      def initialize(idempotency_key: nil, confirm: nil, refuse_confirm_yes: false, timeout_ms: nil, deadline_ms: nil, verify: false,
+                     headers: {}, max_response_bytes: nil, call_deadline: nil)
         super
       end
 
@@ -133,7 +134,7 @@ module Tungsten
         when CallOptions then value
         when Hash
           given = value.transform_keys(&:to_sym)
-          unknown = given.keys - members
+          unknown = given.keys - members + (given.key?(:call_deadline) ? [:call_deadline] : [])
           raise ArgumentError, "unknown call option #{unknown.first}" unless unknown.empty?
 
           new(**given)

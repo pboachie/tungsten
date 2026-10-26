@@ -43,6 +43,10 @@ changes.
 
 ### Documentation
 
+- Add a migration note contrasting the new opt-in total operation deadline
+  with the existing per-attempt `timeoutMs` and its equivalents, across the
+  runtimes, the generated Rust CLI and the MCP server.
+
 - Expand the Postman import and generation-freshness guides with contract
   review, source-checkout prerequisites and links to the existing example
   workflows.
@@ -279,10 +283,9 @@ changes.
   cannot pay for is not made. A runnable bulk-sync example shows a job staying
   within a local API's concurrency quota.
 
-- Extend the total operation deadline to the Ruby runtime (`deadline_ms` on
-  client and call options). Under a deadline, the Rust runtime now stops
-  waiting for an OAuth token request at the deadline without cancelling a
-  refresh other callers share.
+- Under a total operation deadline, the Rust runtime now stops waiting for an
+  OAuth token request or 401 refresh at the deadline without cancelling a
+  refresh other callers share, and reports `DEADLINE_EXCEEDED`.
 
 - Add an opt-in total operation deadline to the TypeScript (`deadlineMs`),
   Python (`deadline_ms`) and Rust (`deadline`) runtimes, on client and call
@@ -297,6 +300,9 @@ changes.
   clock. Authentication and a shared OAuth refresh are waited for only until
   the deadline, never cancelled for other callers. F# SDKs use the same
   options through the .NET runtime.
+
+- Add the same total operation deadline to the Ruby runtime (`deadline_ms` on
+  client and call options); generated Ruby SDKs document it.
 
 - Add a per-tool-call total deadline to the MCP adapter
   (`ServerOptions.toolDeadlineMs`, `<API>_MCP_DEADLINE_MS` in generated
@@ -380,6 +386,11 @@ changes.
 - Support-bundle collection, for preview and export, is limited to 30 seconds
   and writes nothing when the limit is reached; library cancellation of an
   export is now honoured while collection runs.
+
+- On Linux, the `tungsten` binary turns SIGINT and SIGTERM during
+  `support-bundle --output` into cooperative cancellation: the interrupted
+  export removes its temporary file and exits with status 4 without
+  publishing. A signal after publication does not change the outcome.
 
 - Generate the README support matrix from the capability catalog.
   `tungsten capabilities --matrix --format markdown` prints the matrix

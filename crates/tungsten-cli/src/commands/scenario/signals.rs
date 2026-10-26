@@ -79,6 +79,13 @@ impl Signals {
             .take(16 * 1024 + 1)
             .read_to_end(&mut status)?;
         child_reaping_status(&status)?;
+        Self::capture_interrupts()
+    }
+
+    /// SIGINT/SIGTERM capture alone, for commands that start no children
+    /// (support-bundle export). Also called before any worker thread starts,
+    /// so every thread inherits the blocked mask.
+    pub fn capture_interrupts() -> io::Result<Self> {
         let mut set = SigSet::empty();
         set.add(Signal::SIGINT);
         set.add(Signal::SIGTERM);

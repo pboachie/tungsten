@@ -193,19 +193,19 @@ each supported platform, including Windows and WSL.
 
 ## Limits
 
-In unreleased 0.2.0, `deadline_ms` (on `ClientOptions` or `CallOptions`) sets a
-total deadline for one logical call, separate from the per-attempt `timeout_ms`.
-It is measured on the monotonic clock from the call and carried on the call
-options (`deadline_at`), so it covers authentication, idempotency-key
-reservation, every attempt (each one's timeout is cut to the time left), retry
-waits, response bodies and verification; for `pages`, `poll` and `run_macro` it
-covers the whole traversal, poll or macro. No attempt starts after it expires:
-the call fails with code `DEADLINE_EXCEEDED`, and a mutation that was already
-sent reports `OUTCOME_UNKNOWN`, never a blind replay. A retry wait that would
-end after the deadline returns the last failure at once. For `stream` it is
-checked before connecting and before each reconnect, never on an open stream.
-Token requests, stores and hooks already running are not interrupted; the call
-stops at the next boundary after they return. Default: no total deadline.
+In unreleased 0.2.0, `deadline_ms` (on `ClientOptions` or the call options) sets a total deadline
+for one logical call, separate from the per-attempt `timeout_ms`. It is measured on a monotonic
+clock and covers authentication, idempotency-key reservation, every attempt (each one's
+`timeout_ms` is cut to the time left), retry waits, response bodies and verification; for `pages`,
+`poll` and `run_macro` it covers the whole traversal, poll or macro, and nested work cannot restart
+it. No attempt starts after it expires: the call fails with `code` `DEADLINE_EXCEEDED`, and a
+mutation that was already sent reports `OUTCOME_UNKNOWN`, never a blind replay. A retry wait or
+poll interval that would end after the deadline is not waited for. For `stream` it bounds
+connecting and each reconnect, never an open stream (use `idle_timeout_ms`). With a deadline,
+authentication, a shared OAuth token refresh and idempotency-key reservation run on a helper
+thread that is waited for only until the deadline and never killed, so other callers still get a
+shared refresh's result; it stays bounded by its own timeout, and a custom store that blocks keeps
+its thread busy. Default: no total deadline.
 
 In unreleased 0.2.0, ordinary buffered responses default to **4 MiB (4,194,304 bytes) per response**.
 Set `ClientOptions.new(max_response_bytes: ...)` to choose a finite client cap; the call option with the same
