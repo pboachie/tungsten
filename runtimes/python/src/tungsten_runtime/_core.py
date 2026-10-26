@@ -1694,7 +1694,12 @@ class Engine:
                     _fail(diagnostic(op["id"], "AUTH_FAILED", remediation=INSECURE_HTTP_AUTH))
                 )
             queue_start = now_ms()
-            admitted = yield from self._admit(op, prepared.url, stream, deadline)
+            try:
+                admitted = yield from self._admit(op, prepared.url, stream, deadline)
+            except BaseException:
+                if span is not None and self.scheduler is not None:
+                    span.phase("queue", queue_start, {}, True, attempt=span.attempt + 1, reason="cancelled")
+                raise
             if isinstance(admitted, Rejection):
                 if deadline is not None and _monotonic_ms() >= deadline:
                     expired = _deadline_failure(op["id"], "while the request waited for capacity")

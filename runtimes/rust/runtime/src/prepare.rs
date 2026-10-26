@@ -657,6 +657,11 @@ impl ClientCore {
         let auth_target = url_override.unwrap_or(self.inner.base_url.as_deref().unwrap_or(""));
         let credential_error = insecure_http(auth_target, self.inner.allow_insecure_http)
             .then_some(INSECURE_HTTP_AUTH);
+        let span = crate::telemetry::current();
+        let authenticating = crate::telemetry::Pending::new(
+            span.as_ref(),
+            crate::telemetry::PendingKind::Phase(crate::TelemetryPhase::Auth, None),
+        );
         let plan = match resolve_auth_transport(
             &self.inner.api,
             op,
@@ -671,21 +676,38 @@ impl ClientCore {
                 plan,
                 secrets,
                 oauth,
-            } => (plan, secrets, oauth),
+            } => {
+                let start = authenticating.done();
+                if let Some(span) = &span {
+                    span.phase(crate::TelemetryPhase::Auth, start, None, false, None, None);
+                }
+                (plan, secrets, oauth)
+            }
             AuthResolution::Failed { remediation } => {
                 // A token wait cut short by the deadline reports that.
-                if crate::verify::call_deadline_expired() {
-                    return Err(crate::verify::deadline_exceeded(
-                        &op.id,
-                        "while authenticating",
-                    ));
+                let failed = if crate::verify::call_deadline_expired() {
+                    crate::verify::deadline_exceeded(&op.id, "while authenticating")
+                } else if let Err(expired) = crate::verify::check_poll_deadline(&op.id) {
+                    expired
+                } else {
+                    fail(
+                        Diag::new(op.id.clone(), Category::AuthFailed)
+                            .remediation(remediation)
+                            .build(),
+                    )
+                };
+                let start = authenticating.done();
+                if let Some(span) = &span {
+                    span.phase(
+                        crate::TelemetryPhase::Auth,
+                        start,
+                        Some(&failed.diagnostic),
+                        false,
+                        None,
+                        None,
+                    );
                 }
-                crate::verify::check_poll_deadline(&op.id)?;
-                return Err(fail(
-                    Diag::new(op.id.clone(), Category::AuthFailed)
-                        .remediation(remediation)
-                        .build(),
-                ));
+                return Err(failed);
             }
         };
         let (plan, auth_secrets, oauth) = plan;
