@@ -405,6 +405,13 @@ changes.
   listing it under the input's `overlays` in `tungsten.yml` when needed. No fix
   is offered from an analysis older than the latest edit.
 
+- Explain unavailable language-server overlay fixes: editors that show disabled
+  code actions show why no fix is offered for a `TG0403`/`TG0401` diagnostic (a
+  pending check, no derivable action, an editor without versioned edits or file
+  creation, or a manifest shape the fix does not edit) and the equivalent
+  `tungsten overlay suggest` command. Replacement fixes for `TG0603`/`TG0602`
+  fall back to plain edits for editors without versioned workspace edits.
+
 - The `java` and `kotlin` targets now enforce imported-operation policy and may
   be generated for projects converted from Postman, cURL, `.http` or HAR input.
   The Java runtime reads each operation's `import_policy`, refuses a reviewed
