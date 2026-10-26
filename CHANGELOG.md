@@ -230,6 +230,15 @@ changes.
 
 ### Added
 
+- A reusable composite GitHub Action, `actions/tungsten`, installs a pinned
+  tungsten release through `install.sh` from the action's own commit (checksum
+  and build provenance verified, provenance cannot be disabled), then runs
+  `tungsten check`, `tungsten generate --check` and `tungsten lock --check`
+  for one or more projects. It writes one log per check, a run summary and a
+  `failed` output, keeps external targets off by default and ignores
+  `allow-external` for fork pull requests and `pull_request_target`. Linux
+  and macOS runners; `examples/github-actions/tungsten-action.yml` shows it in
+  a workflow.
 - Add the `examples/restricted-agent` customization example: an MCP server
   that reads freely, confirms writes and hides deletion, with transport
   references and SDK defaults from a shared profile and a check that verifies

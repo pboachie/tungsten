@@ -13,6 +13,23 @@ Set `TUNGSTEN_PROJECT` in the file to the directory of your `tungsten.yml` (the
 default is the repository root) and commit the generated output of
 `tungsten generate` next to it.
 
+The same checks are available as a reusable action,
+[`actions/tungsten`](../../actions/tungsten/README.md), shown in
+[`tungsten-action.yml`](tungsten-action.yml):
+
+```sh
+cp examples/github-actions/tungsten-action.yml .github/workflows/tungsten.yml
+```
+
+Replace `<commit>` in that file with the full commit SHA of a tungsten release
+tag that contains `actions/tungsten` (until a release contains it, a commit of
+`main`), keep the tag in the comment and set `version`. The action also checks
+`tungsten.lock.json` when the project has one, checks several projects in one
+step (`projects`, one per line), writes one log per check (uploaded as the
+`tungsten-logs` artifact when the job fails) and a summary table on the run
+page. Its inputs, outputs and trust model are in its README. The rest of this
+page describes the inline `tungsten.yml`; both follow the same trust model.
+
 ## What it runs
 
 1. `actions/checkout`, without persisting the token.
