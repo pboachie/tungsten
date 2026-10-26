@@ -226,6 +226,11 @@ changes.
 
 ### Added
 
+- The `fsharp` target now enforces imported-operation policy through the
+  .NET runtime it wraps and may be generated for projects converted from
+  Postman, cURL, `.http` or HAR input. Generated F# SDKs require a .NET runtime
+  with `ClientCore.RequireImportPolicyV1()`.
+
 - The `csharp` target now enforces imported-operation policy and may be
   generated for projects converted from Postman, cURL, `.http` or HAR input.
   The C# runtime reads each operation's `import_policy` (`AgentMeta.ImportPolicy`),
