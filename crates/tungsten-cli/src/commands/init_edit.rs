@@ -35,19 +35,18 @@ pub(super) fn add_outputs(args: &InitArgs) -> Result<Added, String> {
         .and_then(Value::as_object_mut)
         .ok_or("existing project has no target mapping")?;
     let mut selected = args.add_targets.clone();
-    if selected
-        .iter()
-        .any(|s| matches!(s.as_str(), "mcp" | "webmcp"))
-        && !targets.contains_key("typescript")
-        && !selected.iter().any(|s| s == "typescript")
-    {
-        selected.insert(0, "typescript".into());
+    let existing: Vec<&str> = targets.keys().map(String::as_str).collect();
+    let chosen: Vec<&str> = selected.iter().map(String::as_str).collect();
+    let companions = tungsten_config::capabilities::INIT.required_companions(&chosen, &existing);
+    for (index, companion) in companions.into_iter().enumerate() {
+        selected.insert(index, companion.into());
     }
     for target in &selected {
-        if target != "cli" && !tungsten_config::KNOWN_TARGETS.contains(&target.as_str()) {
-            return Err(
-                "unknown output; choose typescript, python, rust, cli, mcp, webmcp or docs".into(),
-            );
+        if target != "cli" && crate::targets::emitter(target).is_none() {
+            return Err(format!(
+                "unknown output; choose {}",
+                crate::targets::init_choices()
+            ));
         }
         let name = if target == "cli" {
             "rust"

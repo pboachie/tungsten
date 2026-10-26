@@ -626,7 +626,8 @@ impl AuthScheme {
 
 ir_struct! {
     pub struct OAuthFlow {
-        /// `clientCredentials`, `authorizationCode`, `password`, `implicit`.
+        /// `clientCredentials`, `authorizationCode`, `password`, `implicit`,
+        /// or (OpenAPI 3.2) `deviceAuthorization`.
         pub kind: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub token_url: Option<String>,
@@ -636,6 +637,11 @@ ir_struct! {
         pub refresh_url: Option<String>,
         #[serde(default)]
         pub scopes: BTreeMap<String, String>,
+        /// The device authorization endpoint of a `deviceAuthorization`
+        /// flow (RFC 8628). Generated clients do not run the device flow;
+        /// they accept an access token obtained through it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub device_authorization_url: Option<String>,
     }
 }
 

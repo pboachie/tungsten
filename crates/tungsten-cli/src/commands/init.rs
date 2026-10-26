@@ -483,14 +483,18 @@ fn tungsten_yml(
          # (an MCP server) and webmcp (a browser adapter on the TypeScript SDK).\n\
          targets:\n",
     );
+    let init = &tungsten_config::capabilities::INIT;
     let mut targets: Vec<&str> = if selected.is_empty() {
-        vec!["typescript", "python", "docs"]
+        init.default_targets.to_vec()
     } else {
         selected.iter().map(String::as_str).collect()
     };
-    if (targets.contains(&"webmcp") || targets.contains(&"mcp")) && !targets.contains(&"typescript")
+    for (index, companion) in init
+        .required_companions(&targets, &[])
+        .into_iter()
+        .enumerate()
     {
-        targets.insert(0, "typescript");
+        targets.insert(index, companion);
     }
     let has_cli = targets.contains(&"cli");
     let has_typescript = targets.contains(&"typescript");

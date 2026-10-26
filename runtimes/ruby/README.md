@@ -193,6 +193,10 @@ each supported platform, including Windows and WSL.
 
 ## Limits
 
+The OAuth 2.0 device authorization flow (OpenAPI 3.2 `deviceAuthorization`) is
+not run by the client: configure the scheme with an access token obtained
+through it.
+
 In unreleased 0.2.0, `deadline_ms` (on `ClientOptions` or the call options) sets a total deadline
 for one logical call, separate from the per-attempt `timeout_ms`. It is measured on a monotonic
 clock and covers authentication, idempotency-key reservation, every attempt (each one's
