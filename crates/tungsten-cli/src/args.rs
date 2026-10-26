@@ -353,6 +353,14 @@ pub(crate) struct BundleExportArgs {
     /// redistributing those documents.
     #[arg(long)]
     pub include_input_cache: bool,
+    /// Also carry this project-relative directory of prepared consumer
+    /// dependencies (for example `npm pack` tarballs, `pip download` wheels
+    /// or `cargo vendor` output) for offline consumer builds. Repeatable.
+    /// Its files are copied as supplied, recorded with provenance, the
+    /// exporting platform and a redistribution notice; tungsten does not
+    /// verify that they cover every dependency.
+    #[arg(long, value_name = "DIR")]
+    pub include_consumer_cache: Vec<String>,
 }
 
 #[derive(Debug, Args)]

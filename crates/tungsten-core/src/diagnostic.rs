@@ -227,7 +227,7 @@ pub mod codes {
         ),
         (
             "TG0142",
-            "OpenAPI 3.2 `additionalOperations` custom HTTP methods are not supported",
+            "OpenAPI 3.2 `additionalOperations` method cannot be sent",
         ),
         (
             "TG0143",

@@ -173,7 +173,8 @@ export type Result<T> =
 /**
  * HTTP request methods accepted by an operation descriptor.
  */
-export type HttpMethod = "GET" | "PUT" | "POST" | "DELETE" | "OPTIONS" | "HEAD" | "PATCH" | "TRACE" | "QUERY";
+/** A standard method, or an OpenAPI 3.2 `additionalOperations` method token sent as written (unsafe, not idempotent). */
+export type HttpMethod = "GET" | "PUT" | "POST" | "DELETE" | "OPTIONS" | "HEAD" | "PATCH" | "TRACE" | "QUERY" | (string & {});
 
 /**
  * Wire location of an OpenAPI parameter.

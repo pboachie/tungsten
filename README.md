@@ -106,7 +106,7 @@ helpers retain their own platform limits.
 
 | Input | You provide | Entry point and conversion | Limits and required review |
 |---|---|---|---|
-| OpenAPI 3.0 / 3.1 | JSON or YAML document | `tungsten init --from openapi.json` (default when unset: `openapi.json`, `openapi.yaml` or `openapi.yml` in the target directory). The document is kept in place, so relative references retain meaning, and goes through the native frontend: `$ref` resolution, overlays | The full frontend surface; overlays remain optional. OpenAPI 3.2 documents are read when they use only constructs 3.1 has plus the `query` method (sent as HTTP `QUERY` with its body) and response `itemSchema` for JSON Lines and JSON server-sent events; each other 3.2-only construct gets its own diagnostic (TG0140 to TG0156), an error unless it only adds metadata, and `tungsten capabilities` lists them |
+| OpenAPI 3.0 / 3.1 | JSON or YAML document | `tungsten init --from openapi.json` (default when unset: `openapi.json`, `openapi.yaml` or `openapi.yml` in the target directory). The document is kept in place, so relative references retain meaning, and goes through the native frontend: `$ref` resolution, overlays | The full frontend surface; overlays remain optional. OpenAPI 3.2 documents are read when they use only constructs 3.1 has plus the `query` method (sent as HTTP `QUERY` with its body), `additionalOperations` (sent with their method token as written) and response `itemSchema` for JSON Lines and JSON server-sent events; each other 3.2-only construct gets its own diagnostic (TG0140 to TG0156), an error unless it only adds metadata, and `tungsten capabilities` lists them |
 | Swagger 2.0 | JSON or YAML document | `tungsten init --from swagger.json` (also a default name) or any path. Bounded offline conversion to OpenAPI, saved as `imported.openapi.json` | Unsupported semantics fail explicitly instead of being guessed; conversion never resolves external references |
 | Postman Collection v2.1 | JSON collection | `tungsten init --from collection.json`. Structural import; omissions are listed in `import-report.json` | Scripts and requests are never executed: script-dependent behavior, non-JSON bodies and saved responses and unsupported auth helpers are omitted per item, not interpreted — this is not a Postman runtime |
 | Saved cURL command | A saved command as text | `tungsten init --from command.curl --route '/pets/{id}'` (auto-detected by a leading `curl`, a `.curl` extension, or `--input-format curl`). Parsed as data against POSIX, cmd or PowerShell quoting (`--shell-dialect`) | Exactly one explicit `--route` path template is required; the command is parsed, never executed |
@@ -160,7 +160,7 @@ The support matrix below is generated from the capability catalog (`tungsten cap
 |---|---|---|
 | 3.0 | supported | 0 |
 | 3.1 | supported | 0 |
-| 3.2 | subset | 15 |
+| 3.2 | subset | 13 |
 
 | Input format | Versions | Route | Detection | Operations | Review flags | Acquisition |
 |---|---|---|---|---|---|---|
@@ -731,7 +731,7 @@ tungsten [--json] <command>
 | `doctor` | Report external tools; pass a project path and `--strict` to fail when its required tools are missing or too old |
 | `capabilities` | Query built-in target declarations without running tools or emitters; optionally select a target id or alias, such as `capabilities py --json`; `--matrix` prints the Markdown support matrix derived from the same declarations, and `--matrix --format markdown` wraps it in the markers of the README block CI checks |
 | `lock` | Capture the project generation lock `tungsten.lock.json` offline: content identities of the manifest, profiles, agent manifest, inputs, references and overlays (in order), compiler and built-in emitter identities, effective target option digests and consumer toolchains. `--check` fails when the lock is missing, stale or corrupt, `--preview` writes nothing, `--update` accepts changed identities |
-| `bundle export` / `bundle import` | Export the locked input closure and `tungsten.lock.json` into a new plain bundle directory with a digest inventory (`--preview` lists it; `--include-input-cache` carries the verified pins of remote inputs; incomplete or credential-named content needs `--allow-incomplete` / `--allow-sensitive`), or validate a bundle completely and copy it into `--dest` without overwriting differing files. Neither runs emitters or grants trust |
+| `bundle export` / `bundle import` | Export the locked input closure and `tungsten.lock.json` into a new plain bundle directory with a digest inventory (`--preview` lists it; `--include-input-cache` carries the verified pins of remote inputs; `--include-consumer-cache DIR` carries a prepared consumer dependency directory with provenance and platform notes; incomplete or credential-named content needs `--allow-incomplete` / `--allow-sensitive`), or validate a bundle completely and copy it into `--dest` without overwriting differing files. Neither runs emitters or grants trust |
 | `support-bundle --preview` | Inspect the exact metadata-only support manifest without writing files; `--exclude <id>` removes an entry. On Linux, macOS and Windows, `--output <PATH>` instead publishes it to a new file in an existing, trusted directory; `--inspect <FILE>` checks and shows an existing bundle |
 
 With `--json`, stdout carries exactly one JSON document described by `tungsten schema cli-output` (`lsp` speaks the language server protocol on stdio instead). Color is used only on a terminal and never when `NO_COLOR` is set.
@@ -936,7 +936,7 @@ Validate without binding a server or launching a process on any platform:
 tungsten scenario validate . --scenario retry.json
 ```
 
-On Linux (including WSL), run your integration explicitly:
+On Linux (including WSL), macOS or Windows, run your integration explicitly:
 
 ```sh
 tungsten --json scenario run . --scenario retry.json --timeout-ms 30000 --expect-exit 0 -- python3 integration.py
@@ -945,9 +945,10 @@ tungsten --json scenario run . --scenario retry.json --timeout-ms 30000 --expect
 The integration reads its URL from `TUNGSTEN_MOCK_BASE_URL`. Arguments after
 `--` are passed directly to the named executable. There is no implicit shell;
 commands cannot be supplied by the saved file. An interpreter such as `python3`
-runs only when explicitly named by the caller. Other platforms reject `run`
-before input acquisition, port binding or process creation; `validate` remains
-portable.
+runs only when explicitly named by the caller. On Windows, a bare name resolves
+only to an `.exe` (for example `python`); name a script shim in full, such as
+`npm.cmd`. Other platforms reject `run` before input acquisition, port
+binding or process creation; `validate` remains portable.
 
 `--timeout-ms` bounds the whole command. It starts before input acquisition
 and compilation, and covers scenario validation, server startup, process
@@ -958,19 +959,23 @@ and compilation. A run stopped there reports `timed_out` or `cancelled` with
 still being acquired are abandoned, not interrupted: a remote fetch continues
 in the background only until the process exits or its own acquisition limit
 expires. Library callers' `RunOptions.timeout` remains the run-phase budget.
-The runner owns a fresh loopback port and process group, stops
+The runner owns a fresh loopback port and a process group (a Job Object on
+Windows), stops
 its server before reading final counts, and fails on cancellation, timeout,
 cleanup failure, unfinished admitted requests, unexpected exit or unmet counts.
 Request completion tracks server-side handler and response-body generation,
 independently of when a call was counted; it does not prove transport delivery.
-The binary handles SIGINT/SIGTERM for this run; library callers supply explicit
-cancellation instead of installing signal handlers. The Linux binary refuses an
+The binary handles SIGINT/SIGTERM for this run (Ctrl-C, Ctrl-Break and console
+close on Windows); library callers supply explicit cancellation instead of
+installing signal handlers. Linux uses a scoped signal mask; macOS and Windows
+install one Ctrl-C handler in the binary on first use. The Linux binary refuses an
 unreadable or malformed `/proc/self/status` and observable ignored/caught SIGCHLD
 dispositions before acquiring inputs or creating a server or child. Embeddings
 must exclusively reap their runner children, avoid auto-reap dispositions and
 keep SIGCHLD disposition stable; the binary preflight does not establish these
 conditions for a concurrent embedding or inspect every `SA_NOCLDWAIT` setting.
-Process groups cover ordinary
+macOS has no equivalent preflight; the same embedding requirements apply.
+Windows terminates the Job Object on cleanup. Process groups and Job Objects cover ordinary
 descendants, not processes that deliberately leave the group. Signal delivery
 and leader reaping do not prove that every descendant has settled, and this is
 not a sandbox.
@@ -1226,8 +1231,11 @@ Public CI builds the runtime sdist and wheel on the latest patch of CPython
 3.10, 3.11, 3.12, 3.13, 3.14 and 3.15 (macOS and Windows on 3.14), and
 installs them with freshly generated SDKs into clean environments: both model
 modes, `"3.10"` output on every minor and default output on 3.12 and newer,
-with compile, import, strict Pyright and sync/async mock-request checks. The
-3.10 lane also runs the lowest declared dependency versions. Python 3.10 is
+with compile, import, strict Pyright and sync/async requests covering
+confirmation, auth, pagination, safe retries, validation, deadlines,
+cancellation, unknown outcomes and server-sent events. The 3.10 lane also runs
+the lowest declared dependency versions. Generated packages list classifiers
+for these minors from their `python_version` upward. Python 3.10 is
 end-of-life upstream: it remains a compatibility lane, not a
 security-maintained runtime. Prerelease interpreters are not claimed, and
 `requires-python` sets only a floor.

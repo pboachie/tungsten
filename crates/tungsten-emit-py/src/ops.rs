@@ -16,10 +16,10 @@ use tungsten_emit::Writer;
 use tungsten_emit::args::{BodyArg, args_layout, resolve as args_resolve};
 use tungsten_ir::naming::Role;
 use tungsten_ir::{
-    ApiKeyIn, AuthScheme, BodyContent, BodyEncoding, CompositePart, HttpMethod, IdempotencyKind,
-    Ir, Jitter, Operation, OperationAgentMeta, OperationStatus, PaginationStyle, Param, ParamRole,
-    ParamStyle, Presence, PreviewMode, Remediation, ResponseKind, RetryPolicy, Retryable, Safety,
-    Shape, StatusMatch, TypeRef,
+    ApiKeyIn, AuthScheme, BodyContent, BodyEncoding, CompositePart, IdempotencyKind, Ir, Jitter,
+    Operation, OperationAgentMeta, OperationStatus, PaginationStyle, Param, ParamRole, ParamStyle,
+    Presence, PreviewMode, Remediation, ResponseKind, RetryPolicy, Retryable, Safety, Shape,
+    StatusMatch, TypeRef,
 };
 
 use crate::options::Options;
@@ -417,20 +417,6 @@ pub(crate) fn op_shape<'a>(plan: &Plan<'a>, info: &OpInfo<'a>) -> OpShape<'a> {
 /// success body (the body itself when the field is empty).
 fn items_ref<'p>(plan: &'p Plan<'_>, body: &'p TypeRef, items_field: &str) -> Option<&'p TypeRef> {
     tungsten_emit::args::page_items_ref(plan.ir, body, items_field)
-}
-
-pub(crate) fn method_str(m: HttpMethod) -> &'static str {
-    match m {
-        HttpMethod::Get => "GET",
-        HttpMethod::Put => "PUT",
-        HttpMethod::Post => "POST",
-        HttpMethod::Delete => "DELETE",
-        HttpMethod::Options => "OPTIONS",
-        HttpMethod::Head => "HEAD",
-        HttpMethod::Patch => "PATCH",
-        HttpMethod::Trace => "TRACE",
-        HttpMethod::Query => "QUERY",
-    }
 }
 
 pub(crate) fn safety_str(s: Safety) -> &'static str {
@@ -909,7 +895,7 @@ pub(crate) fn descriptor_py(plan: &Plan<'_>, info: &OpInfo<'_>, shape: &OpShape<
     };
     let mut entries = vec![
         ("id", Py::str(&op.id.0)),
-        ("method", Py::str(method_str(op.method))),
+        ("method", Py::str(op.wire_method())),
         ("path", Py::str(&op.path.raw)),
         ("params", params),
         ("body", body),
@@ -1234,7 +1220,7 @@ pub(crate) fn descriptors_file(
         docstring(
             &mut body,
             &paragraphs([
-                format!("`{} {}`", method_str(info.op.method), info.op.path.raw),
+                format!("`{} {}`", info.op.wire_method(), info.op.path.raw),
                 doc_summary(info.op.doc.as_ref()),
             ]),
         );

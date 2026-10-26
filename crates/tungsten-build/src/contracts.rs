@@ -98,6 +98,26 @@ impl Walk<'_> {
                 };
                 self.operation(target, method, path);
             }
+            if query {
+                let extra = |at: &RefTarget| {
+                    self.ws
+                        .get(&child(at, "additionalOperations"))
+                        .and_then(Value::as_object)
+                        .map(|m| m.keys().cloned().collect::<Vec<_>>())
+                        .unwrap_or_default()
+                };
+                let mut seen = BTreeSet::new();
+                for at in [local.clone(), base.clone()] {
+                    for token in extra(&at) {
+                        if tungsten_openapi::custom_method_problem(&token).is_none()
+                            && seen.insert(token.clone())
+                        {
+                            let target = child(&child(&at, "additionalOperations"), &token);
+                            self.operation(target, &token, path);
+                        }
+                    }
+                }
+            }
         }
     }
 

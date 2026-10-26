@@ -12,7 +12,7 @@
 use tungsten_emit::Writer;
 use tungsten_ir::{IdempotencyKind, OperationStatus, Safety};
 
-use crate::ops::{ArgField, OpShape, arg_doc_line, idempotency_str, method_str, safety_str};
+use crate::ops::{ArgField, OpShape, arg_doc_line, idempotency_str, safety_str};
 use crate::plan::{MemberKind, OpInfo, Plan, ResInfo};
 use crate::py::{
     LINE_LENGTH, Py, PyImports, doc_text, docstring, dunder_all, dunder_all_cmp, paragraphs,
@@ -40,7 +40,7 @@ pub(crate) fn op_doc(
     let mut parts = vec![doc_text(op.doc.as_ref())];
     parts.push(format!(
         "`{} {}` (`{}`). Safety: `{}`.",
-        method_str(op.method),
+        op.wire_method(),
         op.path.raw,
         op.id.0,
         safety_str(a.safety)
@@ -272,7 +272,7 @@ fn stream_doc(info: &OpInfo<'_>, names: &OpNames, fields: &[ArgField]) -> String
     let mut parts = vec![format!(
         "The events of `{}` (`{}`): one `StreamEvent` per server-sent event, then either the end of the stream or one final `Err`. An error before the stream starts is the only item. Leaving the loop closes the connection. A dropped stream of a call that is safe to repeat is reconnected with `Last-Event-ID`. The result also has `on`, `collect`, `reduce`, `first` and `cancel`.",
         op.id.0,
-        method_str(op.method)
+        op.wire_method()
     )];
     if let Some(spec) = &op.stream {
         if let Some(done) = &spec.done {
