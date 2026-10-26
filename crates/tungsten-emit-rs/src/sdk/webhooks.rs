@@ -9,7 +9,7 @@ use tungsten_ir::Ident;
 use tungsten_ir::naming::Role;
 
 use super::plan::{Plan, unique};
-use super::rs::{doc, doc_text, string_lit};
+use super::rs::{Rx, doc, doc_text, put, string_lit};
 use super::types::{Cx, emit_stmts, write_check_fn};
 
 struct Entry {
@@ -89,13 +89,20 @@ pub(crate) fn webhooks_file(plan: &Plan<'_>, header: &str) -> String {
     w.line("impl WebhookName {");
     w.indent();
     doc(&mut w, "Every webhook, in API description order.");
-    w.line("pub const ALL: &'static [WebhookName] = &[");
-    w.indent();
-    for e in &entries {
-        w.line(format!("WebhookName::{},", e.variant));
-    }
-    w.dedent();
-    w.line("];");
+    let all = Rx::Vec {
+        open: "&[",
+        items: entries
+            .iter()
+            .map(|e| Rx::atom(format!("WebhookName::{}", e.variant)))
+            .collect(),
+    };
+    put(
+        &mut w,
+        4,
+        "pub const ALL: &'static [WebhookName] = ",
+        &all,
+        ";",
+    );
     w.blank();
     doc(&mut w, "The event key.");
     w.line("pub fn key(self) -> &'static str {");

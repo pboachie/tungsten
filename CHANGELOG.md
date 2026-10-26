@@ -1382,6 +1382,8 @@ changes.
 
 ### Fixed
 
+- Write `WebhookName::ALL` of generated Rust SDKs in rustfmt's layout: on one
+  line when it fits, so `src/webhooks.rs` passes `cargo fmt --check`.
 - Register TG0124, TG0128 and TG0129 in the diagnostic code registry, so
   `tungsten explain` and editor hovers describe them.
 - A TypeScript call whose `deadlineMs` runs out while it waits in the request
