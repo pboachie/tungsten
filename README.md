@@ -106,7 +106,7 @@ helpers retain their own platform limits.
 
 | Input | You provide | Entry point and conversion | Limits and required review |
 |---|---|---|---|
-| OpenAPI 3.0 / 3.1 | JSON or YAML document | `tungsten init --from openapi.json` (default when unset: `openapi.json`, `openapi.yaml` or `openapi.yml` in the target directory). The document is kept in place, so relative references retain meaning, and goes through the native frontend: `$ref` resolution, overlays | The full frontend surface; overlays remain optional. OpenAPI 3.2 documents are read when they use only constructs 3.1 has plus the `query` method (sent as HTTP `QUERY` with its body); each other 3.2-only construct gets its own diagnostic (TG0140 to TG0156), an error unless it only adds metadata, and `tungsten capabilities` lists them |
+| OpenAPI 3.0 / 3.1 | JSON or YAML document | `tungsten init --from openapi.json` (default when unset: `openapi.json`, `openapi.yaml` or `openapi.yml` in the target directory). The document is kept in place, so relative references retain meaning, and goes through the native frontend: `$ref` resolution, overlays | The full frontend surface; overlays remain optional. OpenAPI 3.2 documents are read when they use only constructs 3.1 has plus the `query` method (sent as HTTP `QUERY` with its body) and response `itemSchema` for JSON Lines and JSON server-sent events; each other 3.2-only construct gets its own diagnostic (TG0140 to TG0156), an error unless it only adds metadata, and `tungsten capabilities` lists them |
 | Swagger 2.0 | JSON or YAML document | `tungsten init --from swagger.json` (also a default name) or any path. Bounded offline conversion to OpenAPI, saved as `imported.openapi.json` | Unsupported semantics fail explicitly instead of being guessed; conversion never resolves external references |
 | Postman Collection v2.1 | JSON collection | `tungsten init --from collection.json`. Structural import; omissions are listed in `import-report.json` | Scripts and requests are never executed: script-dependent behavior, non-JSON bodies and saved responses and unsupported auth helpers are omitted per item, not interpreted — this is not a Postman runtime |
 | Saved cURL command | A saved command as text | `tungsten init --from command.curl --route '/pets/{id}'` (auto-detected by a leading `curl`, a `.curl` extension, or `--input-format curl`). Parsed as data against POSIX, cmd or PowerShell quoting (`--shell-dialect`) | Exactly one explicit `--route` path template is required; the command is parsed, never executed |
@@ -704,7 +704,7 @@ tungsten [--json] <command>
 | `capabilities` | Query built-in target declarations without running tools or emitters; optionally select a target id or alias, such as `capabilities py --json`; `--matrix` prints the Markdown support matrix derived from the same declarations, and `--matrix --format markdown` wraps it in the markers of the README block CI checks |
 | `lock` | Capture the project generation lock `tungsten.lock.json` offline: content identities of the manifest, profiles, agent manifest, inputs, references and overlays (in order), compiler and built-in emitter identities, effective target option digests and consumer toolchains. `--check` fails when the lock is missing, stale or corrupt, `--preview` writes nothing, `--update` accepts changed identities |
 | `bundle export` / `bundle import` | Export the locked input closure and `tungsten.lock.json` into a new plain bundle directory with a digest inventory (`--preview` lists it; `--include-input-cache` carries the verified pins of remote inputs; incomplete or credential-named content needs `--allow-incomplete` / `--allow-sensitive`), or validate a bundle completely and copy it into `--dest` without overwriting differing files. Neither runs emitters or grants trust |
-| `support-bundle --preview` | Inspect the exact metadata-only support manifest without writing files; `--exclude <id>` removes an entry. On Linux and macOS, `--output <PATH>` instead publishes it to a new file in an existing, trusted directory; `--inspect <FILE>` checks and shows an existing bundle |
+| `support-bundle --preview` | Inspect the exact metadata-only support manifest without writing files; `--exclude <id>` removes an entry. On Linux, macOS and Windows, `--output <PATH>` instead publishes it to a new file in an existing, trusted directory; `--inspect <FILE>` checks and shows an existing bundle |
 
 With `--json`, stdout carries exactly one JSON document described by `tungsten schema cli-output` (`lsp` speaks the language server protocol on stdio instead). Color is used only on a terminal and never when `NO_COLOR` is set.
 
@@ -718,8 +718,8 @@ network. It excludes configuration values, private paths, URLs, credentials,
 source text, logs, hashes and project identifiers. Use `--exclude <id>` to omit
 an entry; collection of additional sensitive content is not supported.
 
-On Linux and macOS, `tungsten support-bundle --output <PATH>` creates a new
-local file.
+On Linux, macOS and Windows, `tungsten support-bundle --output <PATH>` creates
+a new local file.
 Its bytes are exactly the same manifest serialized as compact JSON with one
 trailing newline, capped at 128 KiB including metadata; entry payloads retain
 their 16 KiB individual and 64 KiB combined limits. The JSON command result is
@@ -739,8 +739,18 @@ operation semantics. Every path component is opened without following
 symlinks, so macOS paths through the `/tmp`, `/var` and `/etc` symlinks are
 refused; use the `/private/...` path or a directory in your home folder.
 Publication needs hard-link support in the destination filesystem, which some
-FAT, exFAT and network volumes lack. Other platforms refuse export before
-collecting data; preview remains available.
+FAT, exFAT and network volumes lack. On Windows, every directory from the
+drive root to the destination is held open without delete sharing, so none
+can be renamed or replaced during export; reparse points (symlinks and
+junctions), network shares, device paths, reserved device names and
+alternate data streams are refused. Windows does not check the directory's
+owner or ACL: export into a directory only you can write, such as one in your
+user profile. Other platforms refuse export before collecting data; preview
+remains available.
+
+Collection, for preview and export alike, stops after 30 seconds with nothing
+written. It only reads, so an abandoned collection has no side effects; in an
+embedding process its worker thread may keep running until it finishes.
 
 Library callers can cooperatively cancel an export before publication with
 `run_with_cancellation`. Successful publication is the commit point: a later

@@ -367,6 +367,17 @@ pub(crate) fn compile_offline(manifest: &Path) -> Compiled {
     compile_project(manifest, &opts)
 }
 
+/// Whether a `generate` or `check` of `path` runs locked: `--locked` was
+/// given, or the project's manifest sets `locked: true`. A manifest that
+/// does not parse is not locked here; compiling it reports its errors.
+pub(crate) fn required(path: &Path, flag: bool) -> bool {
+    flag || matches!(
+        input::resolve(path),
+        Ok(input::Input::Project(manifest))
+            if tungsten_config::load(&manifest).0.is_some_and(|config| config.locked)
+    )
+}
+
 /// `--locked`: verify an already compiled project against its lock. Using the
 /// same compilation means no input can change between verification and use.
 /// `None` when the project matches, or when it did not compile (its own

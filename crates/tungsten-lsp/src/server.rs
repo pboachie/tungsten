@@ -35,6 +35,7 @@ use crate::analysis::{Analysis, Index, analyze};
 use crate::complete::{Inputs, complete};
 use crate::docs::Kind;
 use crate::hover;
+use crate::overlay_actions::{self, EditSupport};
 use crate::position::LineIndex;
 use crate::schema::Schema;
 use crate::symbols::symbols;
@@ -93,6 +94,8 @@ struct Server<'c> {
     watched_profiles: BTreeSet<PathBuf>,
     docs: BTreeMap<PathBuf, Doc>,
     analysis: Option<Analysis>,
+    /// The generation `analysis` was computed for.
+    analysis_generation: u64,
     /// The index of the last compilation that built the IR.
     index: Option<Index>,
     published: BTreeSet<PathBuf>,
@@ -103,6 +106,8 @@ struct Server<'c> {
     cancellation: Option<CancellationToken>,
     done_tx: Sender<Done>,
     shutdown: bool,
+    /// What workspace edits the client can apply.
+    edits: EditSupport,
 }
 
 impl Drop for Server<'_> {
@@ -155,6 +160,7 @@ pub fn serve(connection: &Connection, options: Options) -> Result<i32, String> {
         watched_profiles: BTreeSet::new(),
         docs: BTreeMap::new(),
         analysis: None,
+        analysis_generation: 0,
         index: None,
         published: BTreeSet::new(),
         generation: 0,
@@ -163,6 +169,7 @@ pub fn serve(connection: &Connection, options: Options) -> Result<i32, String> {
         cancellation: None,
         done_tx,
         shutdown: false,
+        edits: edit_support(&params),
     };
     server.manifest = server.discover(&params);
     server.watch = watch_support(&params);
@@ -197,6 +204,28 @@ fn capabilities() -> ServerCapabilities {
             ..CodeActionOptions::default()
         })),
         ..ServerCapabilities::default()
+    }
+}
+
+/// Largest file read from disk to compute an edit of it.
+const MAX_EDITED_FILE: u64 = 4 * 1024 * 1024;
+
+fn edit_support(params: &InitializeParams) -> EditSupport {
+    let edit = params
+        .capabilities
+        .workspace
+        .as_ref()
+        .and_then(|w| w.workspace_edit.as_ref());
+    let Some(edit) = edit else {
+        return EditSupport::default();
+    };
+    EditSupport {
+        document_changes: edit.document_changes.unwrap_or(false),
+        create_files: edit
+            .resource_operations
+            .as_ref()
+            .is_some_and(|ops| ops.contains(&lsp_types::ResourceOperationKind::Create)),
+        annotations: edit.change_annotation_support.is_some(),
     }
 }
 
@@ -438,6 +467,7 @@ impl Server<'_> {
         }
         let current = generation == self.generation;
         self.analysis = Some(analysis);
+        self.analysis_generation = generation;
         if current {
             self.publish()?;
             self.watch_profiles()?;
@@ -729,7 +759,7 @@ impl Server<'_> {
                     });
                     let uri = &p.text_document.uri;
                     let doc = uri_to_path(uri).and_then(|path| self.docs.get(&path));
-                    let list = match doc {
+                    let mut list = match doc {
                         Some(d) if wants_fixes => {
                             let buffer = Buffer {
                                 uri,
@@ -741,6 +771,9 @@ impl Server<'_> {
                         }
                         _ => vec![],
                     };
+                    if wants_fixes {
+                        list.extend(self.overlay_fixes(uri, &p.context.diagnostics));
+                    }
                     self.reply(id, list)
                 }
                 None => self.fail(
@@ -751,6 +784,47 @@ impl Server<'_> {
             },
             _ => self.fail(id, ErrorCode::MethodNotFound, "method not supported"),
         }
+    }
+
+    /// The overlay quick fixes for diagnostics of the file at `uri`, from
+    /// the latest analysis that is still current.
+    fn overlay_fixes(
+        &self,
+        uri: &Uri,
+        diagnostics: &[lsp_types::Diagnostic],
+    ) -> Vec<lsp_types::CodeActionOrCommand> {
+        let (Some(path), Some(analysis), Some(manifest)) =
+            (uri_to_path(uri), &self.analysis, &self.manifest)
+        else {
+            return vec![];
+        };
+        // An edit since the analysis may have fixed or moved the
+        // diagnostics; the next analysis offers the fixes again.
+        if self.analysis_generation != self.generation {
+            return vec![];
+        }
+        let read = |path: &Path| self.read(path);
+        overlay_actions::actions(
+            &path,
+            diagnostics,
+            &analysis.overlay_fixes,
+            manifest,
+            self.edits,
+            &read,
+        )
+    }
+
+    /// The text of `path` as the editor has it: the open buffer and its
+    /// version, else the file on disk (bounded).
+    fn read(&self, path: &Path) -> Option<(String, Option<i32>)> {
+        if let Some(doc) = self.docs.get(path) {
+            return Some((doc.text.clone(), Some(doc.version)));
+        }
+        let meta = std::fs::metadata(path).ok()?;
+        if !meta.is_file() || meta.len() > MAX_EDITED_FILE {
+            return None;
+        }
+        std::fs::read_to_string(path).ok().map(|t| (t, None))
     }
 
     /// Run `f` on the open document at `uri` with the cursor offset.
