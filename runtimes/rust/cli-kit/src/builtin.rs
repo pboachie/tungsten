@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The kit's own commands: `schema`, `operations` and `auth status`.
+//! The kit's own commands: `schema`, `operations` and `auth status`
+//! (`auth login`, `switch` and `logout` are in `login`).
 
 use std::collections::BTreeMap;
 
@@ -135,6 +136,10 @@ pub(crate) fn auth_status(
     found: &[Found],
     default_url: Option<&str>,
     unknown: &[String],
+    sessions: &(
+        Vec<(crate::session::Entry, bool)>,
+        crate::session::SessionSettings,
+    ),
 ) -> u8 {
     let url = match (&settings.base_url, default_url) {
         (Some((v, s)), _) => (Some(v.as_str()), *s),
@@ -161,6 +166,13 @@ pub(crate) fn auth_status(
             "credentials": creds,
             "unrecognized_profile_keys": unknown,
         });
+        let mut doc = doc;
+        if let (Value::Object(map), Value::Object(extra)) = (
+            &mut doc,
+            crate::login::status_json(&sessions.0, &sessions.1),
+        ) {
+            map.extend(extra);
+        }
         let text = json_doc(&doc, ctx.pretty);
         ctx.out(&text);
         return exit::OK;
@@ -190,6 +202,9 @@ pub(crate) fn auth_status(
             "{}{part}: {state}; env {}, profile key {}",
             f.slot.scheme, f.slot.env, f.slot.profile_key
         ));
+    }
+    for line in crate::login::status_lines(&sessions.0, &sessions.1) {
+        ctx.out(&line);
     }
     for k in unknown {
         ctx.out(&format!("unrecognized key in the profile: {k}"));

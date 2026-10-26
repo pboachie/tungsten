@@ -29,6 +29,21 @@ pub(crate) struct PageState {
     pub done: bool,
     /// An error to report after the page that precedes it.
     pub pending_error: Option<Error>,
+    /// The real next-page value of the last page, before a stop cleared it.
+    pub last_next: Option<Value>,
+    /// Why the last page ended the traversal while the server offered more.
+    pub last_stop: Option<PageStop>,
+}
+
+/// Why a traversal stopped while the server still offered a page.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PageStop {
+    /// A repeated cursor or page URL.
+    Cycle,
+    /// `CallOptions::max_pages` was reached.
+    Max,
+    /// The next-page `Link` points to another origin.
+    Origin,
 }
 
 impl PageState {
@@ -41,6 +56,33 @@ impl PageState {
             count: 0,
             done: false,
             pending_error: None,
+            last_next: None,
+            last_stop: None,
+        }
+    }
+
+    /// A traversal resuming at a saved position: the cursor, offset or page
+    /// argument, or the next-page URL of a `Link` traversal.
+    pub fn resumed(op: &OperationDescriptor, mut args: Value, start: Value) -> Self {
+        let param = match &op.pagination {
+            Some(PaginationDescriptor::Cursor { request_param, .. }) => Some(request_param),
+            Some(PaginationDescriptor::Offset { offset_param, .. }) => Some(offset_param),
+            Some(PaginationDescriptor::Page { page_param, .. }) => Some(page_param),
+            Some(PaginationDescriptor::LinkHeader { .. }) | None => None,
+        };
+        match param {
+            Some(param) => {
+                ClientCore::set_arg(&mut args, &arg_name(op, param), start);
+                PageState::new(args)
+            }
+            None => {
+                let mut state = PageState::new(args);
+                if let Value::String(url) = start {
+                    state.seen.insert(url.clone());
+                    state.override_url = Some(url);
+                }
+                state
+            }
         }
     }
 }
@@ -136,7 +178,7 @@ impl ClientCore {
         args.get(key)
     }
 
-    fn set_arg(args: &mut Value, key: &str, value: Value) {
+    pub(crate) fn set_arg(args: &mut Value, key: &str, value: Value) {
         if let Value::Object(map) = args {
             map.insert(key.to_owned(), value);
         }
@@ -229,6 +271,7 @@ impl ClientCore {
             _ => Vec::new(),
         };
         let mut next: Option<Value> = None;
+        st.last_stop = None;
         match &op.pagination {
             Some(PaginationDescriptor::Cursor {
                 request_param,
@@ -318,6 +361,7 @@ impl ClientCore {
                             next = Some(Value::String(target));
                         }
                         _ => {
+                            st.last_stop = Some(PageStop::Origin);
                             st.pending_error = Some(Error::new(
                                 Diag::new(op.id.clone(), Category::UnexpectedResponse)
                                     .http_status(Some(response.meta.status))
@@ -333,6 +377,7 @@ impl ClientCore {
             None => {}
         }
         st.count += 1;
+        st.last_next = next.clone();
         if let Some(value) = &next {
             let key = if matches!(
                 &op.pagination,
@@ -343,10 +388,12 @@ impl ClientCore {
                 canonical_json(value)
             };
             let stop = if st.seen.contains(&key) {
+                st.last_stop = Some(PageStop::Cycle);
                 Some(
                     "Pagination detected a repeated cursor or page URL. Fix the server's next-page value before continuing.",
                 )
             } else if opts.max_pages.is_some_and(|max| max > 0 && st.count >= max) {
+                st.last_stop = Some(PageStop::Max);
                 Some(MAX_PAGES_REACHED)
             } else {
                 st.seen.insert(key);
