@@ -106,7 +106,11 @@ pub fn inspect(
     let mut targets = Vec::new();
     for (index, (name, raw)) in config.targets.iter().enumerate() {
         let external = crate::external_target(raw).ok().flatten().is_some();
-        let declaration = capabilities::target(name).and_then(|target| target.options_schema);
+        // Declared field schemas carry no shared parser, so their targets
+        // stay uninspected.
+        let declaration = capabilities::target(name)
+            .and_then(|target| target.options_schema)
+            .filter(|schema| !matches!(schema, capabilities::TargetOptionSchema::Declared(_)));
         let mut target = InspectedTarget {
             target: capabilities::target(name).map_or_else(
                 || format!("external[{index}]"),
@@ -138,6 +142,9 @@ pub fn inspect(
                     serde_json::to_value(&effective.rust).expect("typed configuration serializes"),
                     |value| RustOptions::parse(value).1,
                 ),
+                capabilities::TargetOptionSchema::Declared(_) => {
+                    unreachable!("declared field schemas are filtered above")
+                }
             };
             let base = format!("/targets/{id}");
             target.status = if raw.is_object() {

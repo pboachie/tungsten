@@ -5,6 +5,8 @@
 //! executed to build this catalog.
 
 use schemars::JsonSchema;
+
+use crate::option_fields;
 use serde::Serialize;
 
 /// Component-owned schema declaration. An absent declaration is unknown,
@@ -14,6 +16,9 @@ pub enum TargetOptionSchema {
     TypeScript,
     Python,
     Rust,
+    /// Field declarations mirroring the emitter's options module; see
+    /// [`crate::option_fields`]. Configuration inspection does not cover them.
+    Declared(&'static crate::option_fields::DeclaredOptions),
 }
 
 impl TargetOptionSchema {
@@ -22,6 +27,7 @@ impl TargetOptionSchema {
             Self::TypeScript => crate::target_options::typescript_json_schema(),
             Self::Python => crate::target_options::python_json_schema(),
             Self::Rust => crate::target_options::rust_json_schema(),
+            Self::Declared(options) => options.json_schema(),
         }
     }
 }
@@ -386,7 +392,8 @@ macro_rules! targets {
 targets! {
     {
         id: "csharp", aliases: &["cs"], source: BuiltInEmitter, family: Some("dotnet"),
-        policy: true, tools: DOTNET, summary: "C# SDK",
+        policy: true, tools: DOTNET,
+        schema: Some(TargetOptionSchema::Declared(&option_fields::CSHARP)), summary: "C# SDK",
         options: &["package_id", "namespace", "version", "runtime", "runtime_path", "out"],
         environments: [Dotnet], features: SDK,
     },
@@ -395,18 +402,21 @@ targets! {
         tools: &[ToolRequirement {
             tool: "dart", minimum: Some([3, 6]), maximum_exclusive: Some([4, 0]), minimum_option: None, excluded_versions: &[],
         }],
+        schema: Some(TargetOptionSchema::Declared(&option_fields::DART)),
         summary: "Dart SDK (sealed unions, Future methods returning Result, Stream pages)",
         options: &["package", "version", "runtime", "runtime_path", "out"],
         environments: [DartIo], features: SDK,
     },
     {
         id: "docs", aliases: &[], source: BuiltInEmitter, family: None, policy: true, tools: &[],
+        schema: Some(TargetOptionSchema::Declared(&option_fields::DOCS)),
         summary: "llms.txt, llms-full.txt, tools.json and README", options: &["out"],
         environments: [Static], features: &["llms_txt"],
     },
     {
         id: "fsharp", aliases: &["fs"], source: BuiltInEmitter, family: Some("dotnet"),
         policy: true, tools: DOTNET,
+        schema: Some(TargetOptionSchema::Declared(&option_fields::FSHARP)),
         summary: "F# SDK (records, discriminated unions, Task of Result)",
         options: &["package_id", "namespace", "version", "runtime", "runtime_path", "csharp_runtime_path", "out"],
         environments: [Dotnet], features: SDK,
@@ -414,6 +424,7 @@ targets! {
     {
         id: "java", aliases: &[], source: BuiltInEmitter, family: Some("jvm"), policy: true,
         tools: &[ToolRequirement::new("java", Some([17, 0])), ToolRequirement::new("mvn", None)],
+        schema: Some(TargetOptionSchema::Declared(&option_fields::JAVA)),
         summary: "Java SDK",
         options: &["group_id", "artifact_id", "package", "version", "runtime", "runtime_path", "out"],
         environments: [Jvm], features: SDK,
@@ -421,6 +432,7 @@ targets! {
     {
         id: "kotlin", aliases: &["kt"], source: BuiltInEmitter, family: Some("jvm"), policy: true,
         tools: &[ToolRequirement::new("java", Some([17, 0])), ToolRequirement::new("gradle", None)],
+        schema: Some(TargetOptionSchema::Declared(&option_fields::KOTLIN)),
         summary: "Kotlin/JVM SDK (blocking functions returning Result; opt-in coroutines)",
         options: &[
             "group", "artifact", "package", "version", "runtime", "runtime_path",
@@ -431,6 +443,7 @@ targets! {
     {
         id: "mcp", aliases: &[], source: BuiltInEmitter, family: Some("typescript"), policy: true,
         tools: MCP,
+        schema: Some(TargetOptionSchema::Declared(&option_fields::MCP)),
         summary: "MCP server over stdio or Streamable HTTP, discrete or progressive",
         options: &[
             "package", "version", "sdk", "sdk_path", "runtime", "runtime_path", "sdk_runtime",
@@ -459,6 +472,7 @@ targets! {
     {
         id: "ruby", aliases: &["rb"], source: BuiltInEmitter, family: Some("ruby"), policy: true,
         tools: &[ToolRequirement::new("ruby", Some([3, 3])), ToolRequirement::new("bundle", None)],
+        schema: Some(TargetOptionSchema::Declared(&option_fields::RUBY)),
         summary: "Ruby SDK",
         options: &["gem", "module", "version", "runtime", "runtime_path", "out"],
         environments: [Ruby], features: SDK,
@@ -482,6 +496,7 @@ targets! {
     {
         id: "webmcp", aliases: &[], source: BuiltInEmitter, family: Some("typescript"), policy: true,
         tools: JS,
+        schema: Some(TargetOptionSchema::Declared(&option_fields::WEBMCP)),
         summary: "Browser ESM package with tool manifest and registration helper",
         options: &[
             "package", "version", "runtime", "runtime_path", "sdk", "sdk_path", "sdk_runtime",
@@ -971,6 +986,16 @@ pub fn validate_parts(
                     errors.push(format!(
                         "target `{id}`: option schema property `{property}` is not a declared option key"
                     ));
+                }
+            }
+            // Field declarations are complete: every key but `out` is typed.
+            if let Some(TargetOptionSchema::Declared(options)) = target.options_schema {
+                for key in target.option_keys {
+                    if *key != "out" && !options.fields.iter().any(|field| field.key == *key) {
+                        errors.push(format!(
+                            "target `{id}`: option key `{key}` has no declared field"
+                        ));
+                    }
                 }
             }
         }

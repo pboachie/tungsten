@@ -390,6 +390,13 @@ changes.
   and writes nothing when the limit is reached; library cancellation of an
   export is now honoured while collection runs.
 
+- Declare a typed `options_schema` for every built-in target in
+  `tungsten capabilities`: C#, F#, Dart, Java, Kotlin, Ruby, MCP, WebMCP and
+  docs now list each option's JSON type, fixed default, description and the
+  warning code an invalid value produces. The emitters read their fixed
+  defaults from the same declarations, the catalog check rejects an option
+  key without a declared field, and editor hover shows the descriptions.
+
 - On Linux, the `tungsten` binary turns SIGINT and SIGTERM during
   `support-bundle --output` into cooperative cancellation: the interrupted
   export removes its temporary file and exits with status 4 without

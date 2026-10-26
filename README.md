@@ -1000,8 +1000,13 @@ unknown major contract versions before interpreting them.
 
 The TypeScript declaration also includes `options_schema`, a JSON Schema for
 supported raw `package`, `version`, `runtime`, `runtime_path` and `dependencies`
-values. The `ts` alias returns the same declaration. Other targets report null
-until their option schemas are declared. This does not change generation policy:
+values. The `ts` alias returns the same declaration. Python and Rust declare
+their typed options the same way. Every other built-in target declares a field
+schema with the JSON type, fixed default and description of each option it
+reads (besides `out`), plus the warning code an invalid value produces; the
+emitter keeps the semantic validators, and `config` inspection covers only the
+TypeScript, Python and Rust schemas. The reserved `mock` target reports null.
+This does not change generation policy:
 invalid TypeScript scalars still produce TG0711 warnings and use defaults;
 invalid custom dependencies produce errors. Unknown keys remain ignored, and
 defaults that depend on the compiled API remain in the emitter. This is an
