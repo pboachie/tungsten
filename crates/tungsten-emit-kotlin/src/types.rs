@@ -741,7 +741,7 @@ impl Ctx<'_> {
                 format!("fun fromJson(json: Any?): {name} {{"),
                 "}",
                 |w| match plan {
-                    UnionPlan::Tagged { tag, variants } => {
+                    UnionPlan::Tagged { tag, variants, .. } => {
                         w.line(format!("val tag = Codec.obj(json).get({})", lit(tag)));
                         let mut all: Vec<String> = vec![];
                         for (index, tags) in variants {
