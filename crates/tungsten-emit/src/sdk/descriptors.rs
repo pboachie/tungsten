@@ -77,7 +77,7 @@ use serde::Serialize;
 use serde_json::{Map, Value, json};
 use tungsten_ir::naming::{self, Role, Target};
 use tungsten_ir::{
-    ApiKeyIn, AuthScheme, BodyEncoding, CompositePart, HttpMethod, IdempotencyKind, Ident, Jitter,
+    ApiKeyIn, AuthScheme, BodyEncoding, CompositePart, IdempotencyKind, Ident, Jitter,
     OperationAgentMeta, OperationStatus, PaginationStyle, ParamRole, ParamStyle, PreviewMode,
     Remediation, ResponseKind, RetryPolicy, Retryable, Safety, Shape, StatusMatch, TypeId, TypeRef,
 };
@@ -719,21 +719,6 @@ fn remediation(r: &Remediation) -> RemediationEntry {
     }
 }
 
-/// The wire spelling of an HTTP method.
-pub fn method_str(m: HttpMethod) -> &'static str {
-    match m {
-        HttpMethod::Get => "GET",
-        HttpMethod::Put => "PUT",
-        HttpMethod::Post => "POST",
-        HttpMethod::Delete => "DELETE",
-        HttpMethod::Options => "OPTIONS",
-        HttpMethod::Head => "HEAD",
-        HttpMethod::Patch => "PATCH",
-        HttpMethod::Trace => "TRACE",
-        HttpMethod::Query => "QUERY",
-    }
-}
-
 /// The contract spelling of a safety tier.
 pub fn safety_str(s: Safety) -> &'static str {
     match s {
@@ -921,7 +906,7 @@ fn operation(
     let summary = op_summary(op);
     OperationDescriptor {
         id: op.id.0.clone(),
-        method: method_str(op.method).to_string(),
+        method: op.wire_method().to_string(),
         path: op.path.raw.clone(),
         params,
         body,

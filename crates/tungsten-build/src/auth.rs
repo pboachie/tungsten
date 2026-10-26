@@ -477,6 +477,7 @@ fn infer_api_key(cx: &mut Ctx<'_>, namespace: usize, doc: usize) -> Option<Defin
             METHODS
                 .iter()
                 .filter_map(|(word, _)| entry.operation(word))
+                .chain(entry.additional().into_iter().map(|(_, at, op)| (at, op)))
                 .filter(|(_, op)| op.is_object())
                 .map(|(at, _)| at),
         );

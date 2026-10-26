@@ -760,6 +760,11 @@ pub const OPENAPI_32_SUPPORTED: &[SupportedInputFeature] = &[
         behavior: "an operation sent with the HTTP QUERY method and its request body; safe, so read-only by default",
     },
     SupportedInputFeature {
+        id: "additional_operations",
+        member: "additionalOperations",
+        behavior: "each entry is an operation sent with its method token exactly as written; unsafe and not idempotent by default. Tokens that cannot be sent (not an RFC 9110 token, a fixed method, CONNECT or TRACK) are refused with TG0142",
+    },
+    SupportedInputFeature {
         id: "reusable_media_types",
         member: "components.mediaTypes, $ref media type",
         behavior: "a media type object given by $ref is read as if written in place",
@@ -786,12 +791,6 @@ pub const OPENAPI_32_SUPPORTED: &[SupportedInputFeature] = &[
 /// constructs above.
 pub const OPENAPI_32_FEATURES: &[UnsupportedInputFeature] = &[
     feature("document_self", "$self", "TG0140", Rejected),
-    feature(
-        "additional_operations",
-        "additionalOperations",
-        "TG0142",
-        Rejected,
-    ),
     feature(
         "querystring_parameter",
         "in: querystring",

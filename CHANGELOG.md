@@ -565,6 +565,17 @@ changes.
   operations. TG0141 is retired and no longer reported; `tungsten capabilities`
   lists `query` as a compiled 3.2 construct.
 
+- OpenAPI 3.2 `additionalOperations` compile: each entry is an operation sent
+  with its method token exactly as written (for example `COPY` or `LINK`),
+  treated as unsafe and not idempotent. The IR gains the `CUSTOM` HTTP method
+  and the operation's `custom_method` wire token; the TypeScript, Python and
+  Rust runtimes accept a custom method token in descriptors (the Rust runtime's
+  `HttpMethod` gains `Custom(&'static str)`), and other runtimes already send
+  the method as given. TG0142 now reports only entries that cannot be sent: a
+  key that is not an RFC 9110 token, a case variant of a fixed path item
+  method, `CONNECT` or `TRACK`. `tungsten capabilities` lists
+  `additionalOperations` as a compiled 3.2 construct.
+
 - OpenAPI 3.2 reusable media types compile: a Media Type Object given by `$ref`
   (usually to `components.mediaTypes`) in a request body, response, parameter
   or header `content` map is read as if written in place, including its schema
@@ -585,7 +596,7 @@ changes.
   3.1 has takes the 3.1 path and compiles to the same IR as its 3.1 twin. Each
   construct only 3.2 has is diagnosed at its member instead of being ignored, one
   code per feature. These are errors, because a client built without them would
-  differ from the API: `$self` (TG0140), `additionalOperations` (TG0142), `in: querystring` (TG0143), `style: cookie`
+  differ from the API: `$self` (TG0140), `in: querystring` (TG0143), `style: cookie`
   (TG0144), other `itemSchema` uses (TG0145), `prefixEncoding` and `itemEncoding` (TG0146),
   nested encodings (TG0147), `components.mediaTypes` and media types given by
   `$ref` (TG0148), discriminator `defaultMapping` (TG0149), the OAuth 2.0 device
