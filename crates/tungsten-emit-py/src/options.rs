@@ -26,6 +26,10 @@ pub const DEFAULT_RUNTIME_SPEC: &str = shared::PYTHON_RUNTIME_SPEC;
 /// supported since 2.10. Generated models fail to import on 2.10.0 (an
 /// unresolved model-serializer annotation); 2.10.1 fixes it.
 pub const PYDANTIC_RANGE: &str = ">=2.10.1,<3";
+/// CPython 3 minors the public clean-consumer lanes check. Generated packages
+/// list those at or above their `python_version` as classifiers; this is
+/// metadata, not an upper cap (`requires-python` sets only a floor).
+pub const CHECKED_PYTHON_MINORS: [u32; 6] = [10, 11, 12, 13, 14, 15];
 /// httpx range of generated packages (the runtime's transport).
 pub const HTTPX_RANGE: &str = ">=0.27,<1";
 

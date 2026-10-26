@@ -8,7 +8,9 @@ use std::collections::BTreeSet;
 use tungsten_ir::{AuthScheme, CompositePart, IdempotencyKind, Safety};
 
 use crate::ops::{OpShape, has_preview, safety_str};
-use crate::options::{HTTPX_RANGE, Models, Options, PYDANTIC_RANGE, RuntimeDep};
+use crate::options::{
+    CHECKED_PYTHON_MINORS, HTTPX_RANGE, Models, Options, PYDANTIC_RANGE, RuntimeDep,
+};
 use crate::plan::{MemberKind, Plan};
 use crate::py::{LINE_LENGTH, string_lit};
 
@@ -50,7 +52,18 @@ pub(crate) fn pyproject(plan: &Plan<'_>, opts: &Options, header: &str) -> String
     for dep in deps {
         out.push_str(&format!("  {},\n", toml_str(&dep)));
     }
-    out.push_str("]\nclassifiers = [\n  \"Programming Language :: Python :: 3\",\n  \"Typing :: Typed\",\n]\n\n");
+    out.push_str("]\nclassifiers = [\n  \"Programming Language :: Python :: 3\",\n");
+    let floor = opts
+        .python_version
+        .split_once('.')
+        .and_then(|(_, minor)| minor.parse::<u32>().ok())
+        .unwrap_or(0);
+    for minor in CHECKED_PYTHON_MINORS.iter().filter(|&&m| m >= floor) {
+        out.push_str(&format!(
+            "  \"Programming Language :: Python :: 3.{minor}\",\n"
+        ));
+    }
+    out.push_str("  \"Typing :: Typed\",\n]\n\n");
     out.push_str(&format!(
         "[tool.hatch.build.targets.wheel]\npackages = [{}]\n",
         toml_str(&opts.module)

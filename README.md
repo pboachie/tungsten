@@ -1088,8 +1088,11 @@ Public CI builds the runtime sdist and wheel on the latest patch of CPython
 3.10, 3.11, 3.12, 3.13, 3.14 and 3.15 (macOS and Windows on 3.14), and
 installs them with freshly generated SDKs into clean environments: both model
 modes, `"3.10"` output on every minor and default output on 3.12 and newer,
-with compile, import, strict Pyright and sync/async mock-request checks. The
-3.10 lane also runs the lowest declared dependency versions. Python 3.10 is
+with compile, import, strict Pyright and sync/async requests covering
+confirmation, auth, pagination, safe retries, validation, deadlines,
+cancellation, unknown outcomes and server-sent events. The 3.10 lane also runs
+the lowest declared dependency versions. Generated packages list classifiers
+for these minors from their `python_version` upward. Python 3.10 is
 end-of-life upstream: it remains a compatibility lane, not a
 security-maintained runtime. Prerelease interpreters are not claimed, and
 `requires-python` sets only a floor.
