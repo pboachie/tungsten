@@ -311,12 +311,7 @@ fn node_findings(node: &Node<'_>, schemes: &BTreeSet<String>, out: &mut Vec<Find
         }
         Kind::Parameter => {
             if map.get("in").and_then(Value::as_str) == Some("querystring") {
-                out.push(error(
-                    "TG0143",
-                    at("in"),
-                    "the OpenAPI 3.2 `querystring` parameter location is not supported",
-                    "describe the query as separate `query` parameters",
-                ));
+                querystring_findings(&node.pointer, map, out);
             }
             if map.get("style").and_then(Value::as_str) == Some("cookie") {
                 out.push(error(

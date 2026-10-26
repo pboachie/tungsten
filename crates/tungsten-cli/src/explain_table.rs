@@ -309,8 +309,8 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
     ),
     e(
         "TG0143",
-        "A parameter uses `in: querystring`, the OpenAPI 3.2 location that treats the whole query string as one value described by `content`. tungsten models the query as named parameters.",
-        "Describe the query as separate `in: query` parameters.",
+        "An OpenAPI 3.2 `in: querystring` parameter (the whole query string as one value described by `content`) cannot be compiled. tungsten compiles one whose `content` is a single `application/x-www-form-urlencoded` media type with an object schema, sent as one `key=value` pair per property, when it is the operation's only query parameter. Other media types, a schema that is not an object, or `query` parameters beside it are refused, and the parameter is left out.",
+        "Describe the query string as one form-encoded object, or as separate `in: query` parameters.",
     ),
     e(
         "TG0144",

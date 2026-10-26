@@ -792,12 +792,6 @@ pub const OPENAPI_32_FEATURES: &[UnsupportedInputFeature] = &[
         "TG0142",
         Rejected,
     ),
-    feature(
-        "querystring_parameter",
-        "in: querystring",
-        "TG0143",
-        Rejected,
-    ),
     feature("cookie_style", "style: cookie", "TG0144", Rejected),
     feature("item_schema", "itemSchema (other uses)", "TG0145", Rejected),
     feature(
