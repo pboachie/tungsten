@@ -31,6 +31,7 @@ pub(crate) const RESERVED_FLAGS: &[&str] = &[
     "base-url",
     "body",
     "config",
+    "deadline",
     "dry-run",
     "help",
     "i-understand",

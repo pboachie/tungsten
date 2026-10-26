@@ -63,10 +63,16 @@ final class Transport {
             Duration timeout,
             boolean stream,
             Duration idle,
-            Long maxResponseBytes) {
+            Long maxResponseBytes,
+            Long deadline) {
         Request(String url, String method, List<Serialize.Header> headers, Serialize.Payload body,
                 Duration timeout, boolean stream, Duration idle) {
-            this(url, method, headers, body, timeout, stream, idle, null);
+            this(url, method, headers, body, timeout, stream, idle, null, null);
+        }
+
+        Request(String url, String method, List<Serialize.Header> headers, Serialize.Payload body,
+                Duration timeout, boolean stream, Duration idle, Long maxResponseBytes) {
+            this(url, method, headers, body, timeout, stream, idle, maxResponseBytes, null);
         }
     }
 
@@ -81,6 +87,8 @@ final class Transport {
         Body stream;
         String detail = "";
         boolean sent;
+        /** The call's deadline (absolute {@code nanoTime}), not the per-attempt timeout, ended the attempt. */
+        boolean deadline;
 
         static Outcome of(Kind kind, String detail) {
             Outcome o = new Outcome();
@@ -617,15 +625,32 @@ final class Transport {
         if (wire == null) {
             return Outcome.of(Kind.NOT_SENT, "INVALID_REQUEST");
         }
-        long deadline = System.nanoTime() + req.timeout().toNanos();
+        // The call deadline cuts this attempt's timeout to the time left; a stream's idle limit
+        // stays the per-attempt timeout.
+        Duration limit = req.timeout();
+        boolean byDeadline = false;
+        if (req.deadline() != null) {
+            long left = req.deadline() - System.nanoTime();
+            if (left <= 0) {
+                Outcome o = Outcome.of(Kind.NOT_SENT, "deadline expired before send");
+                o.deadline = true;
+                return o;
+            }
+            if (left < limit.toNanos()) {
+                limit = Duration.ofNanos(left);
+                byDeadline = true;
+            }
+        }
+        long deadline = System.nanoTime() + limit.toNanos();
         Duration idle = req.idle() != null ? req.idle() : req.timeout();
         Body body = new Body(idle);
         CompletableFuture<Head> head = new CompletableFuture<>();
         byte[][] request = wire;
+        Duration connectLimit = limit;
         Thread worker = new Thread(() -> {
             Socket socket = null;
             try {
-                socket = connect(t, req.timeout(), tls, body);
+                socket = connect(t, connectLimit, tls, body);
                 OutputStream out = socket.getOutputStream();
                 out.write(request[0]);
                 if (request[1] != null) {
@@ -669,10 +694,12 @@ final class Transport {
         }
         Head response;
         try {
-            response = head.get(Math.max(1, req.timeout().toMillis()), TimeUnit.MILLISECONDS);
+            response = head.get(Math.max(1, (deadline - System.nanoTime()) / 1_000_000), TimeUnit.MILLISECONDS);
         } catch (TimeoutException e) {
             body.close();
-            return Outcome.of(Kind.TIMEOUT, "");
+            Outcome o = Outcome.of(Kind.TIMEOUT, "");
+            o.deadline = byDeadline;
+            return o;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             body.close();
@@ -709,7 +736,7 @@ final class Transport {
             long left = deadline - System.nanoTime();
             if (left <= 0) {
                 body.close();
-                out.bodyFailure = "timeout";
+                out.bodyFailure = byDeadline ? "deadline" : "timeout";
                 return out;
             }
             Read r = body.read(Duration.ofNanos(left));
@@ -726,7 +753,7 @@ final class Transport {
                 return out;
             } else if (r == Read.TIMEOUT) {
                 body.close();
-                out.bodyFailure = "timeout";
+                out.bodyFailure = byDeadline ? "deadline" : "timeout";
                 return out;
             } else {
                 out.bodyFailure = "broken";

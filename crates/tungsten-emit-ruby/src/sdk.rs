@@ -231,7 +231,7 @@ fn op_doc(g: &Gen<'_, '_>, index: usize, op: &OpPlan<'_>, member: &str) -> Strin
         .map(|(a, n)| format!("@param {n} {}", arg_doc(g, a)))
         .collect();
     tags.push(
-        "@param opts [Tungsten::Runtime::CallOptions, Hash, nil] call options: `idempotency_key`, `confirm`, `timeout_ms`, `verify`, `headers`."
+        "@param opts [Tungsten::Runtime::CallOptions, Hash, nil] call options: `idempotency_key`, `confirm`, `timeout_ms`, `deadline_ms`, `verify`, `headers`."
             .to_string(),
     );
     let value = match &op.success {
@@ -487,7 +487,7 @@ fn client(g: &Gen<'_, '_>) -> String {
         w.blank();
         comment(
             w,
-            "@param options [Tungsten::Runtime::ClientOptions, Hash, nil] client options; keywords are merged over them (`base_url:`, `auth:`, `timeout_ms:`, `retries:`, `middleware:`, ...).",
+            "@param options [Tungsten::Runtime::ClientOptions, Hash, nil] client options; keywords are merged over them (`base_url:`, `auth:`, `timeout_ms:`, `deadline_ms:`, `retries:`, `middleware:`, ...).",
         );
         w.line("def initialize(options = nil, **keywords)");
         w.indent();

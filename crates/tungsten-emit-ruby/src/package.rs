@@ -180,8 +180,8 @@ fn readme(g: &Gen<'_, '_>) -> String {
     out.push_str("```ruby\nclient.some_resource.create(name: \"x\", opts: { idempotency_key: SecureRandom.uuid, timeout_ms: 10_000 })\n```\n\n");
     out.push_str("- `idempotency_key`: the key of an operation that takes one (generate it once per intent and reuse it on every retry);\n");
     out.push_str("- `confirm`: `true` for a destructive operation, or the `confirmation_token` of the operation's `preview_<method>` (the only way for an irreversible one);\n");
-    out.push_str("- `timeout_ms`, `verify`, `headers`.\n\n");
-    out.push_str("Client options (keywords of `new`): `base_url`, `auth` (credentials by scheme name), `timeout_ms`, `retries`, `idempotency_store`, `middleware`, `validate_responses` (`\"warn\"`, `\"strict\"`, `\"off\"`), `on_diagnostic`, `headers`, `max_event_bytes`, `max_reconnects`, `reconnect_max_ms`, `idle_timeout_ms`, `token_store`, `max_oauth_token_response_bytes` (positive safe integer, 64 KiB by default for each code/refresh response).\n\n");
+    out.push_str("- `timeout_ms` (per attempt), `deadline_ms` (total, across auth, retries and verification), `verify`, `headers`.\n\n");
+    out.push_str("Client options (keywords of `new`): `base_url`, `auth` (credentials by scheme name), `timeout_ms`, `deadline_ms`, `retries`, `idempotency_store`, `middleware`, `validate_responses` (`\"warn\"`, `\"strict\"`, `\"off\"`), `on_diagnostic`, `headers`, `max_event_bytes`, `max_reconnects`, `reconnect_max_ms`, `idle_timeout_ms`, `token_store`, `max_oauth_token_response_bytes` (positive safe integer, 64 KiB by default for each code/refresh response).\n\n");
     let mut destructive: Vec<String> = vec![];
     for (o, op) in g.plan.operations.iter().enumerate() {
         if matches!(op.safety, Safety::Destructive | Safety::Irreversible)
