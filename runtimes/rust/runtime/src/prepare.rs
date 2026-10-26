@@ -113,6 +113,69 @@ pub(crate) struct Prepared<'a> {
     pub may_have_sent: AtomicBool,
 }
 
+/// A [`Prepared`] request without its borrow of the operation: an open stream
+/// keeps it so that a reconnect resends the same request (one auth phase per
+/// logical call), as the TypeScript and Python runtimes do.
+pub(crate) struct Detached {
+    args: Map<String, Value>,
+    method: HttpMethod,
+    url: String,
+    display_url: String,
+    headers: HeaderBag,
+    payload: Payload,
+    display_body: Value,
+    key: Option<String>,
+    key_header: String,
+    auth_query: Vec<(String, String)>,
+    hidden_query: Vec<String>,
+    secrets: SecretSet,
+    oauth: Option<String>,
+    may_have_sent: AtomicBool,
+}
+
+impl Prepared<'_> {
+    pub(crate) fn detach(self) -> Detached {
+        Detached {
+            args: self.args,
+            method: self.method,
+            url: self.url,
+            display_url: self.display_url,
+            headers: self.headers,
+            payload: self.payload,
+            display_body: self.display_body,
+            key: self.key,
+            key_header: self.key_header,
+            auth_query: self.auth_query,
+            hidden_query: self.hidden_query,
+            secrets: self.secrets,
+            oauth: self.oauth,
+            may_have_sent: self.may_have_sent,
+        }
+    }
+}
+
+impl Detached {
+    pub(crate) fn attach(self, op: &OperationDescriptor) -> Prepared<'_> {
+        Prepared {
+            op,
+            args: self.args,
+            method: self.method,
+            url: self.url,
+            display_url: self.display_url,
+            headers: self.headers,
+            payload: self.payload,
+            display_body: self.display_body,
+            key: self.key,
+            key_header: self.key_header,
+            auth_query: self.auth_query,
+            hidden_query: self.hidden_query,
+            secrets: self.secrets,
+            oauth: self.oauth,
+            may_have_sent: self.may_have_sent,
+        }
+    }
+}
+
 pub(crate) fn fail(diagnostic: crate::types::Diagnostic) -> Error {
     Error::new(diagnostic)
 }
