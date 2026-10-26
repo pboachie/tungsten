@@ -241,6 +241,16 @@ changes.
   grants no trust to external emitters. `tungsten schema generation-lock`
   prints its schema.
 
+- Extend the versioned capability catalog with each built-in target's option
+  keys, execution environments and implemented features, plus a registry of
+  feature ids. `tungsten capabilities --matrix` prints the support matrix
+  derived from those declarations, and the command refuses to answer from a
+  catalog with conflicting declarations (duplicate names, unregistered
+  features, empty version ranges, undeclared options). Editor completion of
+  target option keys now comes from the catalog, adding the missing Python
+  `module`, `python_version` and `models` keys. Declarations remain source
+  statements: qualification and artifact availability stay `unknown`.
+
 - Add `tungsten support-bundle --inspect <FILE>` to review an existing support
   bundle locally on any platform. It reads one bounded regular file, refuses
   unsupported `bundle_schema_version` values by number, requires exactly the

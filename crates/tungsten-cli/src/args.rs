@@ -265,6 +265,10 @@ pub(crate) struct LspArgs {
 pub(crate) struct CapabilitiesArgs {
     /// Limit the catalog to one target id or CLI alias.
     pub target: Option<String>,
+    /// Print the human output as a Markdown support matrix derived from the
+    /// same declarations (JSON output is unchanged).
+    #[arg(long)]
+    pub matrix: bool,
 }
 
 #[derive(Debug, Args)]

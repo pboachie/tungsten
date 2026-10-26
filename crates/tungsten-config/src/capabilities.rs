@@ -138,6 +138,159 @@ pub struct TargetCapability {
     pub qualification: EvidenceState,
     pub artifact_availability: EvidenceState,
     pub platform_qualification: EvidenceState,
+    /// One-line description of what the target emits, used by the support matrix.
+    pub summary: &'static str,
+    /// Top-level `tungsten.yml` option keys the target reads. Editor completion
+    /// derives from this list; `options_schema`, when declared, types them.
+    pub option_keys: &'static [&'static str],
+    /// Where generated output is designed to run. A declared environment is
+    /// a source design statement, not platform qualification.
+    pub execution_environments: &'static [ExecutionEnvironment],
+    /// Features from [`FEATURES`] the target implements in source.
+    pub features: &'static [&'static str],
+}
+
+/// Environment generated output is designed to run in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutionEnvironment {
+    /// Node.js, at the target's `node` prerequisite.
+    Node,
+    /// A browser exposing the APIs the runtime requires.
+    Browser,
+    /// CPython.
+    Cpython,
+    /// A native binary built by Cargo.
+    Native,
+    /// A Java virtual machine.
+    Jvm,
+    /// The .NET runtime.
+    Dotnet,
+    /// The Dart VM or AOT with `dart:io`; not Dart web.
+    DartIo,
+    /// CRuby.
+    Ruby,
+    /// Static files read by people and agents; nothing executes.
+    Static,
+}
+
+/// What part of the product a feature describes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum FeatureDomain {
+    /// Generated SDK or server surface.
+    Target,
+    /// Runtime behaviour shipped with generated output.
+    Runtime,
+    /// Wire protocol or transport exposed by generated output.
+    Protocol,
+}
+
+/// A registered feature id. Components add a definition here and list the
+/// id on each target implementing it; [`validate`] rejects unregistered ids.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct FeatureDefinition {
+    pub id: &'static str,
+    pub domain: FeatureDomain,
+    pub description: &'static str,
+    /// The target option that enables the feature, when it is opt-in.
+    pub option: Option<&'static str>,
+}
+
+const fn def(
+    id: &'static str,
+    domain: FeatureDomain,
+    description: &'static str,
+    option: Option<&'static str>,
+) -> FeatureDefinition {
+    FeatureDefinition {
+        id,
+        domain,
+        description,
+        option,
+    }
+}
+
+/// Registered features. Ids are stable; descriptions may be refined.
+pub const FEATURES: &[FeatureDefinition] = &[
+    def(
+        "imported_operation_policy",
+        FeatureDomain::Runtime,
+        "enforces imported-operation policy (Postman, cURL, .http, HAR inputs) at run time",
+        None,
+    ),
+    def(
+        "typed_sdk",
+        FeatureDomain::Target,
+        "typed models and operation methods for every compiled operation",
+        None,
+    ),
+    def(
+        "pagination_helpers",
+        FeatureDomain::Target,
+        "page iteration helpers for operations with declared pagination",
+        None,
+    ),
+    def(
+        "generated_cli",
+        FeatureDomain::Target,
+        "a command-line client crate next to the SDK",
+        Some("cli"),
+    ),
+    def(
+        "dataclass_models",
+        FeatureDomain::Target,
+        "stdlib dataclass models without a Pydantic dependency",
+        Some("models"),
+    ),
+    def(
+        "coroutines",
+        FeatureDomain::Target,
+        "suspend functions and cold Flows next to the blocking surface",
+        Some("coroutines"),
+    ),
+    def(
+        "mcp_stdio",
+        FeatureDomain::Protocol,
+        "Model Context Protocol server over stdio",
+        None,
+    ),
+    def(
+        "mcp_streamable_http",
+        FeatureDomain::Protocol,
+        "Model Context Protocol server over Streamable HTTP",
+        None,
+    ),
+    def(
+        "mcp_embedding_search",
+        FeatureDomain::Target,
+        "optional embedding index for tool search",
+        Some("search"),
+    ),
+    def(
+        "mcp_script_sandbox",
+        FeatureDomain::Runtime,
+        "opt-in run_script sandbox",
+        Some("sandbox"),
+    ),
+    def(
+        "webmcp_registration",
+        FeatureDomain::Protocol,
+        "browser tool manifest and WebMCP registration helper",
+        None,
+    ),
+    def(
+        "llms_txt",
+        FeatureDomain::Target,
+        "llms.txt, llms-full.txt and tools.json documentation",
+        None,
+    ),
+];
+
+/// Look up a registered feature.
+pub fn feature_definition(id: &str) -> Option<&'static FeatureDefinition> {
+    FEATURES.iter().find(|feature| feature.id == id)
 }
 
 const JS: &[ToolRequirement] = &[
@@ -157,8 +310,21 @@ const MCP: &[ToolRequirement] = &[
 ];
 const DOTNET: &[ToolRequirement] = &[ToolRequirement::new("dotnet", Some([10, 0]))];
 
+/// Typed SDK features shared by every built-in SDK target.
+const SDK: &[&str] = &["typed_sdk", "pagination_helpers"];
+const SDK_POLICY: &[&str] = &[
+    "typed_sdk",
+    "pagination_helpers",
+    "imported_operation_policy",
+];
+
 macro_rules! targets {
-    ($(($id:literal, $aliases:expr, $source:ident, $family:expr, $policy:literal, $tools:expr $(, $schema:expr)?)),* $(,)?) => {
+    ($({
+        id: $id:literal, aliases: $aliases:expr, source: $source:ident, family: $family:expr,
+        policy: $policy:literal, tools: $tools:expr, $(schema: $schema:expr,)?
+        summary: $summary:literal, options: $options:expr, environments: [$($env:ident),*],
+        features: $features:expr $(,)?
+    }),* $(,)?) => {
         /// Target ids accepted in a manifest; aliases are CLI-only.
         pub const KNOWN_TARGETS: &[&str] = &[$($id),*];
         pub const TARGETS: &[TargetCapability] = &[$(TargetCapability {
@@ -168,6 +334,9 @@ macro_rules! targets {
             options_schema: targets!(@schema $($schema)?),
             artifact_availability: EvidenceState::Unknown,
             platform_qualification: EvidenceState::Unknown,
+            summary: $summary, option_keys: $options,
+            execution_environments: &[$(ExecutionEnvironment::$env),*],
+            features: $features,
         }),*];
     };
     (@schema $schema:expr) => { $schema };
@@ -175,31 +344,112 @@ macro_rules! targets {
 }
 
 targets! {
-    ("csharp", &["cs"], BuiltInEmitter, Some("dotnet"), false, DOTNET),
-    ("dart", &[], BuiltInEmitter, Some("dart"), false, &[ToolRequirement {
-        tool: "dart", minimum: Some([3, 6]), maximum_exclusive: Some([4, 0]), minimum_option: None, excluded_versions: &[],
-    }]),
-    ("docs", &[], BuiltInEmitter, None, true, &[]),
-    ("fsharp", &["fs"], BuiltInEmitter, Some("dotnet"), false, DOTNET),
-    ("java", &[], BuiltInEmitter, Some("jvm"), true, &[
-        ToolRequirement::new("java", Some([17, 0])), ToolRequirement::new("mvn", None),
-    ]),
-    ("kotlin", &["kt"], BuiltInEmitter, Some("jvm"), true, &[
-        ToolRequirement::new("java", Some([17, 0])), ToolRequirement::new("gradle", None),
-    ]),
-    ("mcp", &[], BuiltInEmitter, Some("typescript"), true, MCP),
-    ("mock", &[], Reserved, None, false, &[]),
-    ("python", &["py"], BuiltInEmitter, Some("python"), true, &[ToolRequirement {
-        tool: "python3", minimum: Some([3, 12]), maximum_exclusive: None, minimum_option: Some("python_version"), excluded_versions: &[],
-    }]),
-    ("ruby", &["rb"], BuiltInEmitter, Some("ruby"), true, &[
-        ToolRequirement::new("ruby", Some([3, 3])), ToolRequirement::new("bundle", None),
-    ]),
-    ("rust", &["rs"], BuiltInEmitter, Some("rust"), true, &[
-        ToolRequirement::new("cargo", Some([1, 88])), ToolRequirement::new("rustc", Some([1, 88])),
-    ]),
-    ("typescript", &["ts"], BuiltInEmitter, Some("typescript"), true, JS, Some(TargetOptionSchema::TypeScript)),
-    ("webmcp", &[], BuiltInEmitter, Some("typescript"), true, JS),
+    {
+        id: "csharp", aliases: &["cs"], source: BuiltInEmitter, family: Some("dotnet"),
+        policy: false, tools: DOTNET, summary: "C# SDK",
+        options: &["package_id", "namespace", "version", "runtime", "runtime_path", "out"],
+        environments: [Dotnet], features: SDK,
+    },
+    {
+        id: "dart", aliases: &[], source: BuiltInEmitter, family: Some("dart"), policy: false,
+        tools: &[ToolRequirement {
+            tool: "dart", minimum: Some([3, 6]), maximum_exclusive: Some([4, 0]), minimum_option: None, excluded_versions: &[],
+        }],
+        summary: "Dart SDK (sealed unions, Future methods returning Result, Stream pages)",
+        options: &["package", "version", "runtime", "runtime_path", "out"],
+        environments: [DartIo], features: SDK,
+    },
+    {
+        id: "docs", aliases: &[], source: BuiltInEmitter, family: None, policy: true, tools: &[],
+        summary: "llms.txt, llms-full.txt, tools.json and README", options: &["out"],
+        environments: [Static], features: &["llms_txt", "imported_operation_policy"],
+    },
+    {
+        id: "fsharp", aliases: &["fs"], source: BuiltInEmitter, family: Some("dotnet"),
+        policy: false, tools: DOTNET,
+        summary: "F# SDK (records, discriminated unions, Task of Result)",
+        options: &["package_id", "namespace", "version", "runtime", "runtime_path", "csharp_runtime_path", "out"],
+        environments: [Dotnet], features: SDK,
+    },
+    {
+        id: "java", aliases: &[], source: BuiltInEmitter, family: Some("jvm"), policy: true,
+        tools: &[ToolRequirement::new("java", Some([17, 0])), ToolRequirement::new("mvn", None)],
+        summary: "Java SDK",
+        options: &["group_id", "artifact_id", "package", "version", "runtime", "runtime_path", "out"],
+        environments: [Jvm], features: SDK_POLICY,
+    },
+    {
+        id: "kotlin", aliases: &["kt"], source: BuiltInEmitter, family: Some("jvm"), policy: true,
+        tools: &[ToolRequirement::new("java", Some([17, 0])), ToolRequirement::new("gradle", None)],
+        summary: "Kotlin/JVM SDK (blocking functions returning Result; opt-in coroutines)",
+        options: &[
+            "group", "artifact", "package", "version", "runtime", "runtime_path",
+            "java_runtime_path", "coroutines", "coroutines_runtime_path", "out",
+        ],
+        environments: [Jvm], features: &["typed_sdk", "pagination_helpers", "imported_operation_policy", "coroutines"],
+    },
+    {
+        id: "mcp", aliases: &[], source: BuiltInEmitter, family: Some("typescript"), policy: true,
+        tools: MCP,
+        summary: "MCP server over stdio or Streamable HTTP, discrete or progressive",
+        options: &[
+            "package", "version", "sdk", "sdk_path", "runtime", "runtime_path", "sdk_runtime",
+            "sdk_runtime_path", "search", "sandbox", "out",
+        ],
+        environments: [Node],
+        features: &[
+            "mcp_stdio", "mcp_streamable_http", "mcp_embedding_search", "mcp_script_sandbox",
+            "imported_operation_policy",
+        ],
+    },
+    {
+        id: "mock", aliases: &[], source: Reserved, family: None, policy: false, tools: &[],
+        summary: "reserved; no emitter in this version", options: &["out"],
+        environments: [], features: &[],
+    },
+    {
+        id: "python", aliases: &["py"], source: BuiltInEmitter, family: Some("python"), policy: true,
+        tools: &[ToolRequirement {
+            tool: "python3", minimum: Some([3, 12]), maximum_exclusive: None, minimum_option: Some("python_version"), excluded_versions: &[],
+        }],
+        summary: "Sync and async Python SDK, Pydantic v2 or dataclass models",
+        options: &["package", "module", "version", "runtime", "runtime_path", "python_version", "models", "out"],
+        environments: [Cpython],
+        features: &["typed_sdk", "pagination_helpers", "imported_operation_policy", "dataclass_models"],
+    },
+    {
+        id: "ruby", aliases: &["rb"], source: BuiltInEmitter, family: Some("ruby"), policy: true,
+        tools: &[ToolRequirement::new("ruby", Some([3, 3])), ToolRequirement::new("bundle", None)],
+        summary: "Ruby SDK",
+        options: &["gem", "module", "version", "runtime", "runtime_path", "out"],
+        environments: [Ruby], features: SDK_POLICY,
+    },
+    {
+        id: "rust", aliases: &["rs"], source: BuiltInEmitter, family: Some("rust"), policy: true,
+        tools: &[ToolRequirement::new("cargo", Some([1, 88])), ToolRequirement::new("rustc", Some([1, 88]))],
+        summary: "Async Rust SDK (serde, reqwest) and optional generated CLI",
+        options: &["crate", "version", "runtime", "runtime_path", "cli", "out"],
+        environments: [Native],
+        features: &["typed_sdk", "pagination_helpers", "imported_operation_policy", "generated_cli"],
+    },
+    {
+        id: "typescript", aliases: &["ts"], source: BuiltInEmitter, family: Some("typescript"),
+        policy: true, tools: JS, schema: Some(TargetOptionSchema::TypeScript),
+        summary: "Typed TypeScript SDK, Result values, Zod validation",
+        options: &["package", "version", "runtime", "runtime_path", "dependencies", "out"],
+        environments: [Node], features: SDK_POLICY,
+    },
+    {
+        id: "webmcp", aliases: &[], source: BuiltInEmitter, family: Some("typescript"), policy: true,
+        tools: JS,
+        summary: "Browser ESM package with tool manifest and registration helper",
+        options: &[
+            "package", "version", "runtime", "runtime_path", "sdk", "sdk_path", "sdk_runtime",
+            "sdk_runtime_path", "out",
+        ],
+        environments: [Browser],
+        features: &["webmcp_registration", "imported_operation_policy"],
+    },
 }
 
 /// Look up a built-in declaration without reading project input or running tools.
@@ -214,6 +464,8 @@ pub fn target(name: &str) -> Option<&'static TargetCapability> {
 pub struct CapabilityCatalog {
     pub capability_version: u32,
     pub targets: Vec<TargetCapability>,
+    /// Registered feature ids that target `features` lists refer to.
+    pub features: Vec<FeatureDefinition>,
     pub openapi_inputs: Vec<OpenApiVersionCapability>,
     pub execution_policy: ExecutionPolicyCapability,
 }
@@ -412,3 +664,143 @@ pub const OPENAPI_INPUTS: &[OpenApiVersionCapability] = &[
         unsupported_features: OPENAPI_32_FEATURES,
     },
 ];
+
+/// Check the built-in declarations for conflicts: duplicate ids or aliases,
+/// unregistered features, empty or inverted version ranges, and option
+/// references the target does not declare. Returns one message per conflict;
+/// an empty list means the catalog is consistent.
+pub fn validate() -> Vec<String> {
+    validate_parts(TARGETS, FEATURES, OPENAPI_INPUTS)
+}
+
+/// [`validate`] over explicit declarations, so a component can check a
+/// catalog it extends before registering it.
+pub fn validate_parts(
+    targets: &[TargetCapability],
+    features: &[FeatureDefinition],
+    inputs: &[OpenApiVersionCapability],
+) -> Vec<String> {
+    use std::collections::BTreeSet;
+    let mut errors = vec![];
+    let mut names = BTreeSet::new();
+    for target in targets {
+        for name in std::iter::once(&target.id).chain(target.aliases) {
+            if !names.insert(*name) {
+                errors.push(format!(
+                    "target name `{name}` is declared more than once (target `{}`)",
+                    target.id
+                ));
+            }
+        }
+    }
+    let mut feature_ids = BTreeSet::new();
+    for feature in features {
+        if !feature_ids.insert(feature.id) {
+            errors.push(format!("feature `{}` is registered twice", feature.id));
+        }
+    }
+    for target in targets {
+        let id = target.id;
+        let keys: BTreeSet<_> = target.option_keys.iter().copied().collect();
+        if keys.len() != target.option_keys.len() {
+            errors.push(format!("target `{id}` lists an option key twice"));
+        }
+        let mut seen = BTreeSet::new();
+        for name in target.features {
+            if !seen.insert(*name) {
+                errors.push(format!("target `{id}` lists feature `{name}` twice"));
+            }
+            match features.iter().find(|feature| feature.id == *name) {
+                None => errors.push(format!(
+                    "target `{id}` lists unregistered feature `{name}`"
+                )),
+                Some(FeatureDefinition {
+                    option: Some(option),
+                    ..
+                }) if !keys.contains(option) => errors.push(format!(
+                    "target `{id}` lists feature `{name}`, enabled by option `{option}` it does not declare"
+                )),
+                Some(_) => {}
+            }
+        }
+        if target.features.contains(&"imported_operation_policy")
+            != target.imported_operation_policy
+        {
+            errors.push(format!(
+                "target `{id}`: `imported_operation_policy` disagrees with its feature list"
+            ));
+        }
+        if target.source_support == SourceSupport::Reserved
+            && (!target.prerequisites.is_empty()
+                || !target.features.is_empty()
+                || !target.execution_environments.is_empty()
+                || target.imported_operation_policy)
+        {
+            errors.push(format!(
+                "reserved target `{id}` declares support it has no emitter for"
+            ));
+        }
+        if let Some(schema) = target.options_schema {
+            let schema = schema.json_schema();
+            let properties = schema
+                .get("properties")
+                .and_then(serde_json::Value::as_object);
+            for property in properties.into_iter().flat_map(|map| map.keys()) {
+                if !keys.contains(property.as_str()) {
+                    errors.push(format!(
+                        "target `{id}`: option schema property `{property}` is not a declared option key"
+                    ));
+                }
+            }
+        }
+        for requirement in target.prerequisites {
+            let tool = requirement.tool;
+            if let Some(option) = requirement.minimum_option
+                && !keys.contains(option)
+            {
+                errors.push(format!(
+                    "target `{id}`: `{tool}` minimum depends on undeclared option `{option}`"
+                ));
+            }
+            if let (Some(min), Some(max)) = (requirement.minimum, requirement.maximum_exclusive)
+                && min >= max
+            {
+                errors.push(format!("target `{id}`: `{tool}` version range is empty"));
+            }
+            for excluded in requirement.excluded_versions {
+                if requirement.minimum.is_some_and(|min| *excluded < min)
+                    || requirement
+                        .maximum_exclusive
+                        .is_some_and(|max| *excluded >= max)
+                {
+                    errors.push(format!(
+                        "target `{id}`: `{tool}` excludes {}.{}, outside its range",
+                        excluded[0], excluded[1]
+                    ));
+                }
+            }
+        }
+    }
+    let mut lines = BTreeSet::new();
+    let mut diagnostics = BTreeSet::new();
+    for input in inputs {
+        if !lines.insert(input.line) {
+            errors.push(format!("OpenAPI line {} is declared twice", input.line));
+        }
+        if (input.support == OpenApiSupport::Supported) != input.unsupported_features.is_empty() {
+            errors.push(format!(
+                "OpenAPI line {}: support level disagrees with its unsupported-feature list",
+                input.line
+            ));
+        }
+        for feature in input.unsupported_features {
+            if !diagnostics.insert(feature.diagnostic) {
+                errors.push(format!(
+                    "OpenAPI diagnostic {} is declared for more than one construct",
+                    feature.diagnostic
+                ));
+            }
+        }
+    }
+    errors
+}
