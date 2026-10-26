@@ -263,6 +263,11 @@ changes.
   starts after it expires (`DEADLINE_EXCEEDED`); a mutation already sent still
   reports `OUTCOME_UNKNOWN`. Existing timeout semantics are unchanged.
 
+- Add the same total operation deadline to the C# runtime
+  (`ClientOptions.Deadline`, `CallOptions.Deadline`), measured on a monotonic
+  clock. Authentication and a shared OAuth refresh are waited for only until
+  the deadline, never cancelled for other callers.
+
 - Add a per-tool-call total deadline to the MCP adapter
   (`ServerOptions.toolDeadlineMs`, `<API>_MCP_DEADLINE_MS` in generated
   servers). It maps to the TypeScript runtime's `deadlineMs`; tool results
