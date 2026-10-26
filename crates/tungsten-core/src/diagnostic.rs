@@ -231,7 +231,7 @@ pub mod codes {
         ),
         (
             "TG0143",
-            "OpenAPI 3.2 `querystring` parameter is not supported",
+            "OpenAPI 3.2 `querystring` parameter cannot be compiled",
         ),
         (
             "TG0144",

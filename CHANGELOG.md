@@ -230,6 +230,10 @@ changes.
 
 ### Added
 
+- Add the `examples/restricted-agent` customization example: an MCP server
+  that reads freely, confirms writes and hides deletion, with transport
+  references and SDK defaults from a shared profile and a check that verifies
+  sources and the generated tool manifest offline.
 - Declare proxy, `NO_PROXY`, private CA, mTLS and account/provider references
   under `transport` in profiles and `tungsten.yml`. Values are references
   (`{env: NAME}`, `{file: path}`, `{store: store:item}`) or non-secret names;
@@ -502,6 +506,14 @@ changes.
   code, with the construct, its refused or ignored policy and the
   `tungsten capabilities` and `tungsten explain` pointers.
 
+- Reuse the language server's last check while its inputs are unchanged. A
+  save, or a watched-file event such as output written by `tungsten generate`,
+  no longer recompiles the project when every source the check read has the
+  same content digest in the open buffers and on disk, and no optional file
+  it found missing has appeared. Checks with errors or remote documents are
+  never reused, and modification times are not consulted. On a 3,000-operation
+  spec, a save without changes dropped from about 3 s to about 1 ms.
+
 - Explain unavailable language-server overlay fixes: editors that show disabled
   code actions show why no fix is offered for a `TG0403`/`TG0401` diagnostic (a
   pending check, no derivable action, an editor without versioned edits or file
@@ -593,6 +605,13 @@ changes.
   non-JSON event `data` or `schema` declared beside it, still report TG0145.
   `itemSchema` in OpenAPI 3.0 and 3.1 documents is still not read.
 
+- A reusable OpenAPI 3.2 media type (`components.mediaTypes`) with
+  `itemSchema` compiles where a response's `content` map refers to it as JSON
+  Lines or an event stream. Its `itemSchema` is checked at each use, with the
+  media type of the referring `content` entry, instead of being refused at the
+  component. A use the compiler does not support, such as a request body,
+  reports TG0145 at the `$ref`.
+
 - The OpenAPI 3.2 `query` path-item method compiles to an operation sent with
   the HTTP `QUERY` method and its request body in generated clients.
   The IR gains the `QUERY` HTTP method, which is safe (read-only by default; set
@@ -600,6 +619,15 @@ changes.
   it. `query` members of OpenAPI 3.0 and 3.1 documents are still not
   operations. TG0141 is retired and no longer reported; `tungsten capabilities`
   lists `query` as a compiled 3.2 construct.
+
+- OpenAPI 3.2 `in: querystring` parameters compile when their `content` is one
+  `application/x-www-form-urlencoded` media type with an object schema: the
+  argument is an object sent as the whole query string, one form-encoded
+  `key=value` pair per property (the IR records it as an exploded `form` query
+  parameter, so runtimes need no change). TG0143 now reports only querystring
+  parameters that cannot be sent this way: another media type, a schema that
+  is not an object, or other query parameters beside it. `tungsten
+  capabilities` lists `in: querystring` as a compiled 3.2 construct.
 
 - OpenAPI 3.2 `additionalOperations` compile: each entry is an operation sent
   with its method token exactly as written (for example `COPY` or `LINK`),
@@ -647,7 +675,7 @@ changes.
   3.1 has takes the 3.1 path and compiles to the same IR as its 3.1 twin. Each
   construct only 3.2 has is diagnosed at its member instead of being ignored, one
   code per feature. These are errors, because a client built without them would
-  differ from the API: `$self` (TG0140), `in: querystring` (TG0143), `style: cookie`
+  differ from the API: `$self` (TG0140), `style: cookie`
   (TG0144), other `itemSchema` uses (TG0145), `prefixEncoding` and `itemEncoding` (TG0146),
   nested encodings (TG0147), `components.mediaTypes` and media types given by
   `$ref` (TG0148), discriminator `defaultMapping` (TG0149), the OAuth 2.0 device

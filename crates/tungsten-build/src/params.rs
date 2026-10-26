@@ -24,13 +24,16 @@ enum Location {
     Query,
     Header,
     Cookie,
+    /// OpenAPI 3.2: the whole query string, one form-encoded object.
+    QueryString,
 }
 
 impl Location {
-    fn parse(s: &str) -> Option<Self> {
+    fn parse(s: &str, v3_2: bool) -> Option<Self> {
         match s {
             "path" => Some(Self::Path),
             "query" => Some(Self::Query),
+            "querystring" if v3_2 => Some(Self::QueryString),
             "header" => Some(Self::Header),
             "cookie" => Some(Self::Cookie),
             _ => None,
@@ -43,6 +46,7 @@ impl Location {
             Self::Query => "query",
             Self::Header => "header",
             Self::Cookie => "cookie",
+            Self::QueryString => "querystring",
         }
     }
 
@@ -50,7 +54,7 @@ impl Location {
     fn default_style(self) -> ParamStyle {
         match self {
             Self::Path | Self::Header => ParamStyle::Simple,
-            Self::Query | Self::Cookie => ParamStyle::Form,
+            Self::Query | Self::Cookie | Self::QueryString => ParamStyle::Form,
         }
     }
 }
@@ -72,6 +76,12 @@ impl Declared<'_> {
                 Location::Header => self.wire.eq_ignore_ascii_case(&other.wire),
                 _ => self.wire == other.wire,
             }
+    }
+
+    /// Whether the declaration fills the query string: a query or a
+    /// querystring parameter.
+    fn in_query(&self) -> bool {
+        matches!(self.location, Location::Query | Location::QueryString)
     }
 }
 
@@ -109,6 +119,10 @@ pub(crate) fn build(
                 None => merged.push(decl),
             }
         }
+    }
+
+    if !querystring_alone(cx, &merged) {
+        merged.retain(|d| d.location != Location::QueryString);
     }
 
     let in_template = template_params(split_query(&template.raw).0);
@@ -154,6 +168,7 @@ pub(crate) fn build(
     for location in [
         Location::Path,
         Location::Query,
+        Location::QueryString,
         Location::Header,
         Location::Cookie,
     ] {
@@ -213,7 +228,7 @@ pub(crate) fn build(
         p.name = name;
         match location {
             Location::Path => set.path.push(p),
-            Location::Query => set.query.push(p),
+            Location::Query | Location::QueryString => set.query.push(p),
             Location::Header => set.header.push(p),
             Location::Cookie => set.cookie.push(p),
         }
@@ -221,17 +236,65 @@ pub(crate) fn build(
     set
 }
 
+/// An OpenAPI 3.2 `querystring` parameter is the whole query string: it is
+/// compiled only when it is the operation's one query parameter and its
+/// value is a form-encoded object (the media type itself is checked by the
+/// frontend). Otherwise TG0143 and `false`: the parameter is left out.
+fn querystring_alone(cx: &mut Ctx<'_>, merged: &[Declared<'_>]) -> bool {
+    let Some(qs) = merged.iter().find(|d| d.location == Location::QueryString) else {
+        return true;
+    };
+    let refuse = |cx: &mut Ctx<'_>, message: String| {
+        cx.report(
+            Diagnostic::error("TG0143", message).with_help(
+                "declare one `querystring` parameter whose `application/x-www-form-urlencoded` schema is an object, and no `query` parameters",
+            ),
+            &qs.at,
+        );
+        false
+    };
+    if merged.iter().filter(|d| d.in_query()).count() > 1 {
+        return refuse(
+            cx,
+            format!(
+                "querystring parameter `{}` is the whole query string, so the operation cannot also have other `query` or `querystring` parameters",
+                qs.wire
+            ),
+        );
+    }
+    let schema = schema_target(cx, qs).0;
+    let object = schema
+        .as_ref()
+        .and_then(|t| cx.deref_value(t))
+        .is_some_and(|(_, s)| {
+            s.get("type").and_then(Value::as_str) == Some("object")
+                || s.get("properties").is_some()
+                || s.get("additionalProperties").is_some()
+        });
+    if !object {
+        return refuse(
+            cx,
+            format!(
+                "querystring parameter `{}` must describe an object, sent as form-encoded `key=value` pairs",
+                qs.wire
+            ),
+        );
+    }
+    true
+}
+
 /// Read one entry of a `parameters` list. Malformed entries are TG0508
 /// warnings; dangling `$ref`s were reported by the frontend.
 fn declared<'v>(cx: &mut Ctx<'v>, at: &RefTarget) -> Option<Declared<'v>> {
     let (target, value) = cx.deref_value(at)?;
     let wire = str_of(value, "name");
-    let location = str_of(value, "in").and_then(Location::parse);
+    let v3_2 = crate::pathitem::reads_3_2(cx.ws, &target);
+    let location = str_of(value, "in").and_then(|s| Location::parse(s, v3_2));
     let (Some(wire), Some(location)) = (wire, location) else {
         cx.report(
             Diagnostic::warning(
                 "TG0508",
-                "a parameter needs `name` and `in` (path, query, header or cookie); ignored",
+                "a parameter needs `name` and `in` (path, query, header or cookie, or querystring in OpenAPI 3.2); ignored",
             ),
             &target,
         );
@@ -250,7 +313,12 @@ fn declared<'v>(cx: &mut Ctx<'v>, at: &RefTarget) -> Option<Declared<'v>> {
 }
 
 fn param(cx: &mut Ctx<'_>, auth: &AuthTable, scope: &OpScope<'_>, decl: &Declared<'_>) -> Param {
-    let (schema, media_type) = schema_target(cx, decl);
+    let (schema, mut media_type) = schema_target(cx, decl);
+    if decl.location == Location::QueryString {
+        // A form-encoded object filling the query string is the `form`
+        // style, exploded: one `key=value` pair per property, no name.
+        media_type = None;
+    }
     let ty = match &schema {
         Some(t) => cx
             .tb
@@ -259,12 +327,14 @@ fn param(cx: &mut Ctx<'_>, auth: &AuthTable, scope: &OpScope<'_>, decl: &Declare
     };
     let style = str_of(decl.value, "style")
         .and_then(parse_style)
+        .filter(|_| decl.location != Location::QueryString)
         .unwrap_or_else(|| decl.location.default_style());
-    let explode = decl
-        .value
-        .get("explode")
-        .and_then(Value::as_bool)
-        .unwrap_or(style == ParamStyle::Form);
+    let explode = decl.location == Location::QueryString
+        || decl
+            .value
+            .get("explode")
+            .and_then(Value::as_bool)
+            .unwrap_or(style == ParamStyle::Form);
     let required = decl.location == Location::Path || flag(decl.value, "required");
     let mut role = role(cx, auth, scope.ns_index, decl, schema.as_ref());
     let mut constant = None;
@@ -394,7 +464,7 @@ fn role(
         Location::Header => ApiKeyIn::Header,
         Location::Cookie => ApiKeyIn::Cookie,
         Location::Query => ApiKeyIn::Query,
-        Location::Path => return ParamRole::Plain,
+        Location::Path | Location::QueryString => return ParamRole::Plain,
     };
     if auth.is_credential(ns_index, location, &decl.wire) {
         ParamRole::Auth

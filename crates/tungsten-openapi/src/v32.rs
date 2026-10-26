@@ -182,9 +182,46 @@ pub(crate) fn scan_document(root: &Value) -> Vec<Finding> {
     server_findings("/servers", doc.get("servers"), &mut out);
     walk(root, "", Kind::Document, |node| {
         node_findings(node, &mut out);
+        referenced_item_schema(root, node, &mut out);
         true
     });
     out
+}
+
+/// TG0145 at a Media Type Object `$ref` into this document whose target uses
+/// `itemSchema` in a way the compiler does not support where it is used. A
+/// reusable media type (`components.mediaTypes`) is checked at each use,
+/// because its media type is the key of the `content` map that refers to it.
+fn referenced_item_schema(root: &Value, node: &Node<'_>, out: &mut Vec<Finding>) {
+    if node.kind != Kind::MediaType {
+        return;
+    }
+    let Some(target) = node
+        .reference()
+        .and_then(Value::as_str)
+        .and_then(|r| r.strip_prefix('#'))
+        .and_then(crate::refs::percent_decode)
+        .and_then(|p| root.pointer(&p))
+        .and_then(Value::as_object)
+    else {
+        return;
+    };
+    if !target.contains_key("itemSchema") {
+        return;
+    }
+    let supported = node.parent == Some(Kind::Response)
+        && node.pointer.rsplit_once('/').is_some_and(|(_, key)| {
+            let media_type = key.replace("~1", "/").replace("~0", "~");
+            response_item_schema(&media_type, target).is_some()
+        });
+    if !supported {
+        out.push(error(
+            "TG0145",
+            join_pointer(&node.pointer, "$ref"),
+            "the referenced media type uses OpenAPI 3.2 `itemSchema` in a way that is not supported here",
+            "only response JSON Lines items and server-sent events whose `data` has a JSON `contentSchema` are compiled; otherwise describe the whole payload with `schema`",
+        ));
+    }
 }
 
 /// Findings of the subtree of a fragment at `pointer`, read as `kind`.
@@ -259,12 +296,7 @@ fn node_findings(node: &Node<'_>, out: &mut Vec<Finding>) {
         }
         Kind::Parameter => {
             if map.get("in").and_then(Value::as_str) == Some("querystring") {
-                out.push(error(
-                    "TG0143",
-                    at("in"),
-                    "the OpenAPI 3.2 `querystring` parameter location is not supported",
-                    "describe the query as separate `query` parameters",
-                ));
+                querystring_findings(&node.pointer, map, out);
             }
             if map.get("style").and_then(Value::as_str) == Some("cookie") {
                 out.push(error(
@@ -276,11 +308,16 @@ fn node_findings(node: &Node<'_>, out: &mut Vec<Finding>) {
             }
         }
         Kind::MediaType => {
-            let supported = node.parent == Some(Kind::Response)
-                && node.pointer.rsplit_once('/').is_some_and(|(_, key)| {
-                    let media_type = key.replace("~1", "/").replace("~0", "~");
-                    response_item_schema(&media_type, map).is_some()
-                });
+            // A reusable media type of this document is checked where it is
+            // used (`referenced_item_schema`, or the build for a use from
+            // another document).
+            let reusable = node.parent == Some(Kind::Document);
+            let supported = reusable
+                || node.parent == Some(Kind::Response)
+                    && node.pointer.rsplit_once('/').is_some_and(|(_, key)| {
+                        let media_type = key.replace("~1", "/").replace("~0", "~");
+                        response_item_schema(&media_type, map).is_some()
+                    });
             if map.contains_key("itemSchema") && !supported {
                 out.push(error(
                     "TG0145",
@@ -366,6 +403,41 @@ fn node_findings(node: &Node<'_>, out: &mut Vec<Finding>) {
         }
         Kind::Header | Kind::RequestBody | Kind::Callback => {}
     }
+}
+
+/// An OpenAPI 3.2 `querystring` parameter is compiled when its `content` is
+/// one `application/x-www-form-urlencoded` media type; the build checks that
+/// its schema is an object and that it is the operation's only query
+/// parameter.
+fn querystring_findings(pointer: &str, map: &Map<String, Value>, out: &mut Vec<Finding>) {
+    const HELP: &str = "describe the query string as one `application/x-www-form-urlencoded` object under `content`, or as separate `query` parameters";
+    let content = map.get("content").and_then(Value::as_object);
+    let media = content
+        .filter(|c| c.len() == 1)
+        .and_then(|c| c.keys().next());
+    let form = media.is_some_and(|m| {
+        m.split(';').next().is_some_and(|m| {
+            m.trim()
+                .eq_ignore_ascii_case("application/x-www-form-urlencoded")
+        })
+    });
+    if form {
+        return;
+    }
+    let (at, message) = match media {
+        Some(m) => (
+            join_pointer(&join_pointer(pointer, "content"), m),
+            format!(
+                "an OpenAPI 3.2 `querystring` parameter with media type `{m}` is not supported; only `application/x-www-form-urlencoded` is"
+            ),
+        ),
+        None => (
+            join_pointer(pointer, "in"),
+            "an OpenAPI 3.2 `querystring` parameter needs `content` with exactly one media type"
+                .to_string(),
+        ),
+    };
+    out.push(error("TG0143", at, &message, HELP));
 }
 
 /// Path item members that are operations; `additionalOperations` must not
