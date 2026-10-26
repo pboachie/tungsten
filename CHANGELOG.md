@@ -546,6 +546,15 @@ changes.
   `tungsten capabilities` lists reusable media types as a compiled 3.2
   construct.
 
+- OpenAPI 3.2 discriminator `defaultMapping` compiles: the IR `Discriminator`
+  gains an optional `default_mapping` (additive), and TypeScript, Python and
+  Rust SDKs and the mock decode a value whose tag is absent, not a string or
+  mapped to no variant as that default variant instead of refusing it. Tool
+  JSON schemas list such a union with `anyOf` and leave the default variant's
+  tag open. A `defaultMapping` that is not a variant of the union is reported
+  as TG0306 and ignored. Other SDK targets still refuse an unmapped tag.
+  TG0149 is retired and no longer reported.
+
 - OpenAPI 3.2.x documents are read: a document that uses only constructs OpenAPI
   3.1 has takes the 3.1 path and compiles to the same IR as its 3.1 twin. Each
   construct only 3.2 has is diagnosed at its member instead of being ignored, one
