@@ -166,12 +166,7 @@ impl Ctx<'_> {
 
     fn op_label(&self, index: usize) -> String {
         let op = self.plan.operations[index].op;
-        format!(
-            "{} ({} {})",
-            op.id.0,
-            tungsten_emit::sdk::descriptors::method_str(op.method),
-            op.path.raw
-        )
+        format!("{} ({} {})", op.id.0, op.wire_method(), op.path.raw)
     }
 
     fn summary(&self, index: usize) -> String {

@@ -7,6 +7,9 @@
 use schemars::JsonSchema;
 
 use crate::option_fields;
+
+pub mod init;
+pub use init::{CompanionTarget, INIT, InitCapability};
 use serde::Serialize;
 
 /// Component-owned schema declaration. An absent declaration is unknown,
@@ -526,6 +529,8 @@ pub struct CapabilityCatalog {
     /// native OpenAPI lines.
     pub input_formats: Vec<InputFormatCapability>,
     pub execution_policy: ExecutionPolicyCapability,
+    /// Target selection by `tungsten init` and the wizard.
+    pub init: InitCapability,
 }
 
 /// How an input format enters a project.
@@ -760,6 +765,11 @@ pub const OPENAPI_32_SUPPORTED: &[SupportedInputFeature] = &[
         behavior: "an operation sent with the HTTP QUERY method and its request body; safe, so read-only by default",
     },
     SupportedInputFeature {
+        id: "additional_operations",
+        member: "additionalOperations",
+        behavior: "each entry is an operation sent with its method token exactly as written; unsafe and not idempotent by default. Tokens that cannot be sent (not an RFC 9110 token, a fixed method, CONNECT or TRACK) are refused with TG0142",
+    },
+    SupportedInputFeature {
         id: "reusable_media_types",
         member: "components.mediaTypes, $ref media type",
         behavior: "a media type object given by $ref is read as if written in place",
@@ -774,6 +784,21 @@ pub const OPENAPI_32_SUPPORTED: &[SupportedInputFeature] = &[
         member: "itemSchema (text/event-stream response, JSON `data`)",
         behavior: "the event type of a server-sent event stream: the `contentSchema` of the event's `data`",
     },
+    SupportedInputFeature {
+        id: "discriminator_default_mapping",
+        member: "discriminator.defaultMapping",
+        behavior: "a tagged union decodes a missing or unmapped tag as the default variant",
+    },
+    SupportedInputFeature {
+        id: "security_scheme_by_uri",
+        member: "security requirement naming a URI",
+        behavior: "the scheme under components.securitySchemes of an input document the URI references; any other URI is TG0151",
+    },
+    SupportedInputFeature {
+        id: "oauth2_device_authorization",
+        member: "flows.deviceAuthorization",
+        behavior: "an OAuth2 flow kept with its deviceAuthorizationUrl; SDKs accept an access token obtained through it and do not run the device flow",
+    },
 ];
 
 /// OpenAPI 3.2 constructs without a 3.1 equivalent that are diagnosed. A 3.2
@@ -781,12 +806,6 @@ pub const OPENAPI_32_SUPPORTED: &[SupportedInputFeature] = &[
 /// constructs above.
 pub const OPENAPI_32_FEATURES: &[UnsupportedInputFeature] = &[
     feature("document_self", "$self", "TG0140", Rejected),
-    feature(
-        "additional_operations",
-        "additionalOperations",
-        "TG0142",
-        Rejected,
-    ),
     feature(
         "querystring_parameter",
         "in: querystring",
@@ -805,24 +824,6 @@ pub const OPENAPI_32_FEATURES: &[UnsupportedInputFeature] = &[
         "nested_encoding",
         "encoding, prefixEncoding, itemEncoding (Encoding Object)",
         "TG0147",
-        Rejected,
-    ),
-    feature(
-        "discriminator_default_mapping",
-        "discriminator.defaultMapping",
-        "TG0149",
-        Rejected,
-    ),
-    feature(
-        "oauth2_device_authorization",
-        "flows.deviceAuthorization",
-        "TG0150",
-        Rejected,
-    ),
-    feature(
-        "security_scheme_by_uri",
-        "security requirement naming a URI",
-        "TG0151",
         Rejected,
     ),
     feature(
@@ -876,6 +877,7 @@ pub const OPENAPI_INPUTS: &[OpenApiVersionCapability] = &[
 pub fn validate() -> Vec<String> {
     let mut errors = validate_parts(TARGETS, FEATURES, OPENAPI_INPUTS);
     errors.extend(validate_inputs(INPUT_FORMATS, OPENAPI_INPUTS));
+    errors.extend(INIT.validate(TARGETS));
     errors
 }
 

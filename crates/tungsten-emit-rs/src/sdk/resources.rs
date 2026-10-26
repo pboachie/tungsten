@@ -13,7 +13,7 @@ use tungsten_emit::Writer;
 use tungsten_ir::{IdempotencyKind, OperationStatus, Safety};
 
 use super::ops::{
-    OpShape, StatusEnum, fn_sig, idempotency_str, method_str, response_check_name, safety_str,
+    OpShape, StatusEnum, fn_sig, idempotency_str, response_check_name, safety_str,
     status_check_stmts, write_request,
 };
 use super::plan::{MemberKind, OpInfo, Plan, ResInfo};
@@ -34,7 +34,7 @@ pub(crate) fn op_doc(
     let mut parts = vec![doc_text(op.doc.as_ref())];
     parts.push(format!(
         "`{} {}` (`{}`). Safety: `{}`.",
-        method_str(op.method),
+        op.wire_method(),
         op.path.raw,
         op.id.0,
         safety_str(a.safety)
@@ -265,7 +265,7 @@ fn write_method(
             let mut parts = vec![format!(
                 "The events of `{}` (`{}`): one item per server-sent event, then either the end of the stream or one final error. An error before the stream starts is the only item. The request is sent by the first `next()`; dropping the stream closes the connection. An event that does not decode as `{event}` is an `UNEXPECTED_RESPONSE` error.",
                 info.op.id.0,
-                method_str(info.op.method)
+                info.op.wire_method()
             )];
             if let Some(spec) = &info.op.stream {
                 if let Some(done) = &spec.done {

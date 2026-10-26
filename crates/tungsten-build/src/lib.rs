@@ -262,7 +262,7 @@ pub mod __testing {
 
     /// The id given to an operation without `operationId`.
     pub fn synthesize_operation_id(method: HttpMethod, path: &str) -> String {
-        crate::names::synthesize_operation_id(method, path)
+        crate::names::synthesize_operation_id(crate::names::method_word(method), path)
     }
 
     /// A Responses Object key as a status.

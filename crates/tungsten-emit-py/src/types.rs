@@ -645,8 +645,16 @@ impl<'p, 'a> Cx<'p, 'a> {
                 aliases.push((value.clone(), (*tag).to_string()));
             }
         }
+        // OpenAPI 3.2 `defaultMapping`: the tag of the variant any other
+        // value selects. Pydantic's field discriminator cannot fall back.
+        let default = d.default_mapping.as_ref().and_then(|id| {
+            u.variants
+                .iter()
+                .find(|v| matches!(&v.ty, TypeRef::Named(t) if t == id))
+                .and_then(|v| v.tag.clone())
+        });
         let mut attr: Option<String> = None;
-        let mut field_form = aliases.is_empty();
+        let mut field_form = aliases.is_empty() && default.is_none();
         let mut seen_tags: Vec<&str> = vec![];
         let mut seen_ids: Vec<&TypeId> = vec![];
         for v in &u.variants {
@@ -710,20 +718,29 @@ impl<'p, 'a> Cx<'p, 'a> {
             })
             .collect();
         let joined = PyTy::union(labelled);
-        let disc = if aliases.is_empty() {
-            format!("{}({})", self.internal("tag"), string_lit(prop))
-        } else {
+        let mut tag_args = vec![string_lit(prop)];
+        if !aliases.is_empty() {
             let entries: Vec<String> = aliases
                 .iter()
                 .map(|(from, to)| format!("{}: {}", string_lit(from), string_lit(to)))
                 .collect();
-            format!(
-                "{}({}, {{{}}})",
-                self.internal("tag"),
-                string_lit(prop),
-                entries.join(", ")
-            )
-        };
+            tag_args.push(format!("{{{}}}", entries.join(", ")));
+        }
+        if let Some(default) = &default {
+            let known: Vec<String> = u
+                .variants
+                .iter()
+                .filter_map(|v| v.tag.as_deref())
+                .map(string_lit)
+                .collect();
+            tag_args.push(format!("default={}", string_lit(default)));
+            let known = match known.as_slice() {
+                [one] => format!("({one},)"),
+                _ => format!("({})", known.join(", ")),
+            };
+            tag_args.push(format!("known={known}"));
+        }
+        let disc = format!("{}({})", self.internal("tag"), tag_args.join(", "));
         self.annotated(&joined, &[disc])
     }
 

@@ -2,16 +2,23 @@
 //! OpenAPI 3.2 constructs that have no 3.1 equivalent.
 //!
 //! A 3.2 document that uses only 3.1 constructs goes through the unchanged
-//! 3.1 path. The `query` method is compiled by the build (as `QUERY`), and
-//! reusable media types (`components.mediaTypes`, `$ref` in a `content` map)
-//! are followed like any other reference. Every other construct 3.2 added is
-//! either refused with an error (when ignoring it would produce a client that
-//! behaves differently from the API) or reported as a warning (when it only
-//! adds metadata the compiler has no use for). Nothing is dropped silently. Codes `TG0140`-`TG0156` form one
-//! family, one code per feature, each located at the member that introduces
-//! it.
+//! 3.1 path. The build compiles the `query` method (as `QUERY`), reusable
+//! media types (`components.mediaTypes`, `$ref` in a `content` map, followed
+//! like any other reference), response `itemSchema` where
+//! [`response_item_schema`] places it, and a discriminator's
+//! `defaultMapping`. Security requirements that name a scheme by URI are
+//! resolved by the build (TG0151 when the URI names no scheme), and the OAuth
+//! 2.0 `deviceAuthorization` flow is kept like the other flows. Every other construct 3.2 added is either refused with an
+//! error (when ignoring it would produce a client that behaves differently
+//! from the API) or reported as a warning (when it only adds metadata the
+//! compiler has no use for). Nothing is dropped silently. Codes
+//! `TG0140`-`TG0156` form one family, one code per feature, each located at
+//! the member that introduces it.
+//!
+//! `additionalOperations` entries are compiled too, as custom methods sent
+//! as written; only tokens that cannot be sent are refused (TG0142).
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::HashSet;
 
 use serde_json::{Map, Value};
 use tungsten_core::Diagnostic;
@@ -128,7 +135,6 @@ pub fn response_item_schema(media_type: &str, media: &Map<String, Value>) -> Opt
         .then_some("/itemSchema/properties/data/contentSchema")
 }
 
-const REMOVE: &str = "use only OpenAPI 3.1 constructs, or declare the document as OpenAPI 3.1";
 const IGNORED: &str = "the compiler does not use it; remove it to silence this warning";
 
 fn error(code: &'static str, pointer: String, message: &str, help: &'static str) -> Finding {
@@ -166,7 +172,6 @@ pub(crate) fn scan_document(root: &Value) -> Vec<Finding> {
             "remove `$self`; relative references resolve against the file location",
         ));
     }
-    let schemes = scheme_names(doc);
     if let Some(Value::Array(tags)) = doc.get("tags") {
         for (i, tag) in tags.iter().enumerate() {
             if let Value::Object(tag) = tag {
@@ -175,28 +180,19 @@ pub(crate) fn scan_document(root: &Value) -> Vec<Finding> {
         }
     }
     server_findings("/servers", doc.get("servers"), &mut out);
-    requirements(doc.get("security"), "/security", &schemes, &mut out);
     walk(root, "", Kind::Document, |node| {
-        node_findings(node, &schemes, &mut out);
+        node_findings(node, &mut out);
         true
     });
     out
 }
 
 /// Findings of the subtree of a fragment at `pointer`, read as `kind`.
-/// Security names use the input entry's component names, as in the builder;
-/// a fragment's own members cannot introduce a different namespace. Whole
-/// document-only members are checked separately by `scan_document`.
-pub(crate) fn scan_subtree(
-    value: &Value,
-    pointer: &str,
-    kind: Kind,
-    entry: &Value,
-) -> Vec<Finding> {
+/// Whole document-only members are checked separately by `scan_document`.
+pub(crate) fn scan_subtree(value: &Value, pointer: &str, kind: Kind) -> Vec<Finding> {
     let mut out = vec![];
-    let schemes = entry.as_object().map(scheme_names).unwrap_or_default();
     walk(value, pointer, kind, |node| {
-        node_findings(node, &schemes, &mut out);
+        node_findings(node, &mut out);
         true
     });
     out
@@ -211,14 +207,6 @@ impl Reported {
     pub(crate) fn first(&mut self, doc: usize, finding: &Finding) -> bool {
         self.0.insert((doc, finding.pointer.clone(), finding.code))
     }
-}
-
-fn scheme_names(doc: &Map<String, Value>) -> BTreeSet<String> {
-    doc.get("components")
-        .and_then(|c| c.get("securitySchemes"))
-        .and_then(Value::as_object)
-        .map(|m| m.keys().cloned().collect())
-        .unwrap_or_default()
 }
 
 fn tag_findings(pointer: &str, tag: &Map<String, Value>, out: &mut Vec<Finding>) {
@@ -255,58 +243,19 @@ fn server_findings(pointer: &str, servers: Option<&Value>, out: &mut Vec<Finding
     }
 }
 
-/// A security requirement key that is not a component name but looks like a
-/// URI reference names a Security Scheme Object by location (3.2).
-fn requirements(
-    value: Option<&Value>,
-    pointer: &str,
-    schemes: &BTreeSet<String>,
-    out: &mut Vec<Finding>,
-) {
-    let Some(Value::Array(list)) = value else {
-        return;
-    };
-    for (i, requirement) in list.iter().enumerate() {
-        let Value::Object(requirement) = requirement else {
-            continue;
-        };
-        for key in requirement.keys() {
-            let by_uri = !schemes.contains(key)
-                && !key.starts_with("x-")
-                && (key.starts_with('.') || key.contains([':', '/', '#']));
-            if by_uri {
-                out.push(error(
-                    "TG0151",
-                    join_pointer(&join_pointer(pointer, &i.to_string()), key),
-                    &format!(
-                        "OpenAPI 3.2 security requirement `{key}` names a security scheme by URI, which is not supported"
-                    ),
-                    "name a scheme declared under `components.securitySchemes`",
-                ));
-            }
-        }
-    }
-}
-
-fn node_findings(node: &Node<'_>, schemes: &BTreeSet<String>, out: &mut Vec<Finding>) {
+fn node_findings(node: &Node<'_>, out: &mut Vec<Finding>) {
     let map = node.value;
     let at = |key: &str| join_pointer(&node.pointer, key);
     match node.kind {
         Kind::Document => {}
         Kind::PathItem => {
-            if map.contains_key("additionalOperations") {
-                out.push(error(
-                    "TG0142",
-                    at("additionalOperations"),
-                    "OpenAPI 3.2 `additionalOperations` (custom HTTP methods) are not supported; the operations would be left out",
-                    "describe the calls with the standard methods the path item supports",
-                ));
+            if let Some(extra) = map.get("additionalOperations") {
+                additional_operations(&at("additionalOperations"), extra, out);
             }
             server_findings(&at("servers"), map.get("servers"), out);
         }
         Kind::Operation => {
             server_findings(&at("servers"), map.get("servers"), out);
-            requirements(map.get("security"), &at("security"), schemes, out);
         }
         Kind::Parameter => {
             if map.get("in").and_then(Value::as_str) == Some("querystring") {
@@ -389,16 +338,6 @@ fn node_findings(node: &Node<'_>, schemes: &BTreeSet<String>, out: &mut Vec<Find
         }
         Kind::Link => server_findings_single(&node.pointer, map.get("server"), out),
         Kind::SecurityScheme => {
-            if let Some(Value::Object(flows)) = map.get("flows")
-                && flows.contains_key("deviceAuthorization")
-            {
-                out.push(error(
-                    "TG0150",
-                    join_pointer(&at("flows"), "deviceAuthorization"),
-                    "the OpenAPI 3.2 OAuth 2.0 device authorization flow is not supported",
-                    "declare a flow tungsten supports, or obtain the token outside the client",
-                ));
-            }
             if map.contains_key("oauth2MetadataUrl") {
                 out.push(warning(
                     "TG0152",
@@ -415,16 +354,6 @@ fn node_findings(node: &Node<'_>, schemes: &BTreeSet<String>, out: &mut Vec<Find
             }
         }
         Kind::Schema => {
-            if let Some(Value::Object(discriminator)) = map.get("discriminator")
-                && discriminator.contains_key("defaultMapping")
-            {
-                out.push(error(
-                    "TG0149",
-                    join_pointer(&at("discriminator"), "defaultMapping"),
-                    "the OpenAPI 3.2 discriminator `defaultMapping` is not supported",
-                    REMOVE,
-                ));
-            }
             if let Some(Value::Object(xml)) = map.get("xml")
                 && xml.contains_key("nodeType")
             {
@@ -436,6 +365,58 @@ fn node_findings(node: &Node<'_>, schemes: &BTreeSet<String>, out: &mut Vec<Find
             }
         }
         Kind::Header | Kind::RequestBody | Kind::Callback => {}
+    }
+}
+
+/// Path item members that are operations; `additionalOperations` must not
+/// repeat them.
+const FIXED_METHODS: [&str; 9] = [
+    "get", "put", "post", "delete", "options", "head", "patch", "trace", "query",
+];
+
+/// Why `token` cannot be compiled as an `additionalOperations` method, or
+/// `None` when it is sent as written.
+pub fn custom_method_problem(token: &str) -> Option<String> {
+    let tchar = |c: char| c.is_ascii_alphanumeric() || "!#$%&'*+-.^_`|~".contains(c);
+    if token.is_empty() || !token.chars().all(tchar) {
+        return Some(format!(
+            "`{token}` is not an HTTP method token (RFC 9110 `tchar` characters only)"
+        ));
+    }
+    if let Some(fixed) = FIXED_METHODS.iter().find(|m| m.eq_ignore_ascii_case(token)) {
+        return Some(format!(
+            "`{token}` must be described by the path item's `{fixed}` field, not by `additionalOperations`"
+        ));
+    }
+    if token.eq_ignore_ascii_case("CONNECT") || token.eq_ignore_ascii_case("TRACK") {
+        return Some(format!(
+            "`{token}` is a forbidden method (it opens a tunnel or traces the connection, not a resource); generated clients cannot send it"
+        ));
+    }
+    None
+}
+
+/// Each `additionalOperations` entry is compiled with its key as the wire
+/// method; only keys that cannot be sent are refused.
+fn additional_operations(pointer: &str, extra: &Value, out: &mut Vec<Finding>) {
+    let Value::Object(extra) = extra else {
+        out.push(error(
+            "TG0142",
+            pointer.to_string(),
+            "OpenAPI 3.2 `additionalOperations` must be a map from HTTP method to operation",
+            "write a map such as `additionalOperations: { COPY: { ... } }`",
+        ));
+        return;
+    };
+    for token in extra.keys() {
+        if let Some(problem) = custom_method_problem(token) {
+            out.push(error(
+                "TG0142",
+                join_pointer(pointer, token),
+                &format!("OpenAPI 3.2 `additionalOperations` method {problem}; the operation would be left out"),
+                "use the method token the server expects, or the matching fixed path item field",
+            ));
+        }
     }
 }
 

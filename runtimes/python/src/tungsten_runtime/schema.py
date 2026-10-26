@@ -112,6 +112,7 @@ class TagReader:
 
     wire: str
     aliases: tuple[tuple[str, str], ...] = ()
+    default: str | None = None
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -139,12 +140,21 @@ class _AllOf:
     members: Callable[[], Sequence[Any]]
 
 
-def tag(wire: str, aliases: Mapping[str, str] | None = None) -> TagReader:
+def tag(
+    wire: str,
+    aliases: Mapping[str, str] | None = None,
+    default: str | None = None,
+    known: Sequence[str] = (),
+) -> TagReader:
     """The discriminator of a tagged union: the value of the ``wire`` property
     of a mapping, or of the field with that wire name of a model. ``aliases``
     maps the other tag values of the discriminator mapping to their variant's
-    tag (``{"puppy": "dog"}`` when both select ``Dog``)."""
-    return TagReader(wire, tuple((aliases or {}).items()))
+    tag (``{"puppy": "dog"}`` when both select ``Dog``). With ``default`` (an
+    OpenAPI 3.2 ``defaultMapping``), a missing tag or one that selects no
+    variant selects the variant tagged ``default``; ``known`` lists the
+    variant tags (the union's own members are used here)."""
+    del known
+    return TagReader(wire, tuple((aliases or {}).items()), default)
 
 
 def pattern(source: str) -> _Pattern:
@@ -589,6 +599,12 @@ class _TaggedNode(_Node):
         found = self._read(value)
         if isinstance(found, str):
             found = dict(self.reader.aliases).get(found, found)
+        is_object = isinstance(value, Mapping) or (
+            dataclasses.is_dataclass(value) and not isinstance(value, type)
+        )
+        unmapped = not isinstance(found, str) or found not in self.members
+        if self.reader.default is not None and is_object and unmapped:
+            found = self.reader.default
         if not isinstance(found, str):
             if not isinstance(value, Mapping) and not (
                 dataclasses.is_dataclass(value) and not isinstance(value, type)

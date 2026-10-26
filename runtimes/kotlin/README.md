@@ -52,9 +52,10 @@ gradle -p runtimes/kotlin/coroutines publishToMavenLocal --no-daemon
   flow ends or is cancelled. `itemsOrThrow()` and `valuesOrThrow()` flatten them.
 
 Not covered: calls made through `dispatch()`, macros, previews and the OAuth
-helpers remain blocking; there is no deadline shared by a whole pagination
-(each request keeps its own timeout); the Java runtime still uses one
-platform thread per in-flight request.
+helpers remain blocking; the Java runtime still uses one platform thread per
+in-flight request. A coroutine `withTimeout` cancels (`CancellationException`);
+for a `Result` with code `DEADLINE_EXCEEDED` instead, set the runtime's total
+deadline, which also bounds a whole pagination (see Limits).
 
 ## Opening authorization URLs safely
 
@@ -67,6 +68,10 @@ Compatibility helpers retain application-owned custom-scheme policy.
 
 ## Limits
 
+The OAuth 2.0 device authorization flow (OpenAPI 3.2 `deviceAuthorization`) is
+not run by the client: configure the scheme with an access token obtained
+through it.
+
 This is a thin Kotlin layer over the Java runtime. Calls are synchronous (the
 coroutines artifact above wraps them);
 Java's lack of async calls, proxy configuration and pluggable transport also
@@ -77,6 +82,14 @@ applies. Transport, retries, validation and diagnostics are the Java runtime's.
   the same name) to change it; overflow returns `UNEXPECTED_RESPONSE`, code
   `RESPONSE_TOO_LARGE`. See the
   [Java limits](../java/README.md#limits) for the exact rules.
+- **Total deadline.** In unreleased 0.2.0, `deadline(...)` on the client or
+  call options builder bounds one logical call (a whole traversal, poll or
+  macro) across authentication, retries and verification; expiry gives
+  `DEADLINE_EXCEEDED`, and a mutation already sent `OUTCOME_UNKNOWN`. Pass a
+  `java.time.Duration`, or a `kotlin.time.Duration` through the extension
+  `io.github.pboachie.tungsten.runtime.kotlin.deadline`. The rules, including
+  what blocking work is only checked when it returns, are the
+  [Java runtime's](../java/README.md#limits).
 - **Strings.** `min_length` and `max_length` count Unicode code points, and a
   `pattern` is a `java.util.regex` expression; a pattern Java cannot check is
   accepted and reported as `PATTERN_UNCHECKED`. Both come from the Java runtime.

@@ -246,6 +246,7 @@ final class ClientOptions {
     this.tokenStore,
     this.maxOAuthTokenResponseBytes,
     this.timeout,
+    this.deadline,
     this.retries,
     this.idempotencyStore,
     this.middleware = const [],
@@ -287,6 +288,10 @@ final class ClientOptions {
 
   /// The per-attempt timeout (30 s).
   final Duration? timeout;
+
+  /// The total deadline of one logical call, see [CallOptions.deadline].
+  /// Default: none (only [timeout] per attempt).
+  final Duration? deadline;
 
   /// Retry settings over the API's per-tier defaults.
   final RetryOptions? retries;
@@ -367,10 +372,23 @@ final class CallOptions {
     this.confirm,
     this.refuseConfirmYes = false,
     this.timeout,
+    this.deadline,
     this.verify = false,
     this.headers = const {},
     this.maxResponseBytes,
-  });
+  }) : _callDeadline = null;
+
+  const CallOptions._full({
+    required this.idempotencyKey,
+    required this.confirm,
+    required this.refuseConfirmYes,
+    required this.timeout,
+    required this.deadline,
+    required this.verify,
+    required this.headers,
+    required this.maxResponseBytes,
+    required int? callDeadline,
+  }) : _callDeadline = callDeadline;
 
   /// Required for caller-owned operations that persist a key: generate it
   /// once per intent and reuse it on every retry.
@@ -385,6 +403,21 @@ final class CallOptions {
 
   /// The per-attempt timeout of this call.
   final Duration? timeout;
+
+  /// The total deadline of this call, over the client's (default none).
+  /// Measured on a monotonic clock from the call, it bounds authentication,
+  /// idempotency-key reservation, every attempt (each one's [timeout] is cut
+  /// to the time left), retry waits, response bodies and verification; for
+  /// pages, polls and macros the whole traversal, poll or macro. No attempt
+  /// starts after it expires (code `DEADLINE_EXCEEDED`); a mutation already
+  /// sent reports `OUTCOME_UNKNOWN`, never a blind replay. For a stream it
+  /// bounds connecting and each reconnect, never an open stream. A shared
+  /// token refresh is not cancelled, only no longer waited for.
+  final Duration? deadline;
+
+  /// The absolute monotonic deadline (ms) fixed when a public entry point
+  /// starts the call; nested work inherits it.
+  final int? _callDeadline;
 
   /// Run the operation's verification hook after a success.
   final bool verify;
@@ -409,19 +442,22 @@ final class CallOptions {
     bool clearConfirm = false,
     bool? verify,
     Map<String, String>? headers,
+    int? callDeadline,
   }) =>
-      CallOptions(
+      CallOptions._full(
         idempotencyKey: clearKey ? null : idempotencyKey,
         confirm: clearConfirm ? null : confirm,
         refuseConfirmYes: refuseConfirmYes,
         timeout: timeout,
+        deadline: deadline,
         verify: verify ?? this.verify,
         maxResponseBytes: maxResponseBytes,
         headers: headers ?? this.headers,
+        callDeadline: callDeadline ?? _callDeadline,
       );
 
   @override
   String toString() =>
       'CallOptions(idempotencyKey: ${_hasKey ? redacted : null}, confirm: $confirm, '
-      'timeout: $timeout, verify: $verify, headers: ${headers.keys.toList()})';
+      'timeout: $timeout, deadline: $deadline, verify: $verify, headers: ${headers.keys.toList()})';
 }

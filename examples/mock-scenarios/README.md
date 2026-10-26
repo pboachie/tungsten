@@ -3,7 +3,7 @@
 Run an explicit integration against saved 429, interrupted-stream, malformed-response and lost-write scenarios, and fail deliberately broken retries.
 
 Prerequisites: matching tungsten compiler and source checkout, Python 3.12 or
-later for the runner; Linux for scenario run; no target-specific toolchain.
+later for the runner; Linux, macOS or Windows for scenario run; no target-specific toolchain.
 
 From the repository root:
 
@@ -56,6 +56,6 @@ run binds its own port and mock state, so runs never share responses or counts.
 The runner validates all four files, runs each correct integration, and
 requires each broken variant to fail. The lost-write broken variant matches
 every call count; only `expect.effects` (`applied` 2, `replayed` 0) rejects it.
-`scenario run` is currently Linux-only, and this recipe fails explicitly on
-other platforms after validation. Assertions describe the mock's observations
-and its own processing, not a real provider's behavior.
+`scenario run` works on Linux, macOS and Windows; on any other platform this
+recipe fails explicitly after validation. Assertions describe the mock's
+observations and its own processing, not a real provider's behavior.

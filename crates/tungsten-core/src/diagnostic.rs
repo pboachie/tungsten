@@ -227,7 +227,7 @@ pub mod codes {
         ),
         (
             "TG0142",
-            "OpenAPI 3.2 `additionalOperations` custom HTTP methods are not supported",
+            "OpenAPI 3.2 `additionalOperations` method cannot be sent",
         ),
         (
             "TG0143",
@@ -252,15 +252,15 @@ pub mod codes {
         ),
         (
             "TG0149",
-            "OpenAPI 3.2 discriminator `defaultMapping` is not supported",
+            "OpenAPI 3.2 discriminator `defaultMapping` (retired: now compiled)",
         ),
         (
             "TG0150",
-            "OpenAPI 3.2 OAuth 2.0 device authorization flow is not supported",
+            "OpenAPI 3.2 OAuth 2.0 device authorization flow (retired: now compiled)",
         ),
         (
             "TG0151",
-            "OpenAPI 3.2 security scheme named by URI is not supported",
+            "OpenAPI 3.2 security requirement URI names no scheme of an input document",
         ),
         ("TG0152", "OpenAPI 3.2 `oauth2MetadataUrl` is ignored"),
         ("TG0153", "OpenAPI 3.2 tag `parent` and `kind` are ignored"),

@@ -248,6 +248,11 @@ impl<'p, 'a> TypeCx<'p, 'a> {
             return None;
         }
         let d = u.discriminator.as_ref()?;
+        if is_default(u, v) {
+            // The default variant (OpenAPI 3.2 `defaultMapping`) takes any
+            // tag the other variants do not claim.
+            return None;
+        }
         let prop = d.property.as_str();
         let tag = v.tag.as_deref()?;
         let mut tags = vec![tag];
@@ -391,6 +396,7 @@ impl<'p, 'a> TypeCx<'p, 'a> {
         }
         if u.strategy == UnionStrategy::Tagged
             && let Some(d) = &u.discriminator
+            && d.default_mapping.is_none()
             && let Some(options) = self.discriminated_options(u)
         {
             return format!(
@@ -404,6 +410,19 @@ impl<'p, 'a> TypeCx<'p, 'a> {
             .iter()
             .map(|v| {
                 let base = self.zod_ref(&v.ty);
+                if let Some(d) = &u.discriminator
+                    && is_default(u, v)
+                {
+                    return format!(
+                        "{base}.and(z.object({{ {}: z.unknown().refine((t) => typeof t !== \"string\" || ![{}].includes(t)) }}))",
+                        prop_key(&d.property),
+                        claimed_tags(u)
+                            .iter()
+                            .map(|t| string_lit(t))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    );
+                }
                 match self.narrowing(u, v) {
                     Some((prop, tags)) => format!(
                         "{base}.and(z.object({{ {}: {} }}))",
@@ -481,6 +500,36 @@ impl<'p, 'a> TypeCx<'p, 'a> {
 }
 
 /// `z.literal("dog")`, or `z.literal(["dog", "puppy"])` for several tags.
+/// Whether `v` is the variant of a tagged union's OpenAPI 3.2
+/// `defaultMapping`.
+fn is_default(u: &Union, v: &Variant) -> bool {
+    u.strategy == UnionStrategy::Tagged
+        && u.discriminator
+            .as_ref()
+            .and_then(|d| d.default_mapping.as_ref())
+            .is_some_and(|id| matches!(&v.ty, TypeRef::Named(t) if t == id))
+}
+
+/// The tag values that select a variant other than the default one.
+fn claimed_tags(u: &Union) -> Vec<&str> {
+    let mut out: Vec<&str> = vec![];
+    for v in u.variants.iter().filter(|v| !is_default(u, v)) {
+        if let Some(tag) = v.tag.as_deref()
+            && !out.contains(&tag)
+        {
+            out.push(tag);
+        }
+    }
+    if let Some(d) = &u.discriminator {
+        for (value, id) in &d.mapping {
+            if d.default_mapping.as_ref() != Some(id) && !out.contains(&value.as_str()) {
+                out.push(value);
+            }
+        }
+    }
+    out
+}
+
 fn zod_literal(tags: &[&str]) -> String {
     match tags {
         [one] => format!("z.literal({})", string_lit(one)),

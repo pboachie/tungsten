@@ -29,12 +29,12 @@ use serde_json::Value;
 use tungsten_config::{AuthProfile, CompositePartConfig};
 use tungsten_core::Diagnostic;
 use tungsten_ir::{ApiKeyIn, AuthScheme, CompositePart, OAuthFlow, SchemeUse, SecurityRequirement};
-use tungsten_openapi::RefTarget;
+use tungsten_openapi::{RefTarget, unescape_token};
 
 use crate::NamespaceInput;
 use crate::ctx::{Ctx, child, doc_of, pointer, str_of};
 use crate::operations::METHODS;
-use crate::pathitem::PathItem;
+use crate::pathitem::{PathItem, reads_3_2};
 
 /// Header names that carry an API key when the document declares no
 /// security scheme (lowercase).
@@ -63,6 +63,9 @@ pub(crate) struct AuthTable {
     /// (namespace index, spec scheme name) of defined but unsupported
     /// schemes.
     unsupported: BTreeSet<(usize, String)>,
+    /// The entry document of each namespace, to resolve OpenAPI 3.2
+    /// requirements that name a scheme by URI.
+    entry_docs: Vec<usize>,
 }
 
 /// One definition of a scheme name in one namespace.
@@ -74,7 +77,10 @@ struct Definition {
 
 impl AuthTable {
     pub fn build(cx: &mut Ctx<'_>, namespaces: &[NamespaceInput]) -> Self {
-        let mut table = AuthTable::default();
+        let mut table = AuthTable {
+            entry_docs: namespaces.iter().map(|ns| ns.doc).collect(),
+            ..AuthTable::default()
+        };
         let mut by_name: BTreeMap<String, Vec<Definition>> = BTreeMap::new();
         let mut inferred: BTreeSet<usize> = BTreeSet::new();
         for (ns_index, ns) in namespaces.iter().enumerate() {
@@ -357,10 +363,10 @@ impl AuthTable {
                 );
                 continue;
             };
-            if let Some(name) = schemes
-                .keys()
-                .find(|n| self.unsupported.contains(&(ns_index, (*n).clone())))
-            {
+            if let Some(name) = schemes.keys().find(|n| {
+                let key = self.scheme_key(cx, ns_index, &item_at, n);
+                key.is_some_and(|key| self.unsupported.contains(&key))
+            }) {
                 cx.report(
                     Diagnostic::warning(
                         "TG0509",
@@ -375,8 +381,22 @@ impl AuthTable {
             }
             let mut all_of = vec![];
             for (name, scopes) in schemes {
-                let scheme = match self.names.get(&(ns_index, name.clone())) {
+                let key = self.scheme_key(cx, ns_index, &item_at, name);
+                let scheme = match key.as_ref().and_then(|key| self.names.get(key)) {
                     Some(ir) => ir.clone(),
+                    None if by_uri(cx, &item_at, name) => {
+                        cx.report(
+                            Diagnostic::error(
+                                "TG0151",
+                                format!(
+                                    "security requirement `{name}` names a security scheme by URI, but it does not resolve to a scheme under `components.securitySchemes` of an input document"
+                                ),
+                            )
+                            .with_help("reference a scheme of an input document (`#/components/securitySchemes/<name>`), or name it"),
+                            &child(&item_at, name),
+                        );
+                        name.clone()
+                    }
                     None => {
                         cx.report(
                             Diagnostic::error(
@@ -413,6 +433,50 @@ impl AuthTable {
         }
         out
     }
+}
+
+impl AuthTable {
+    /// The (namespace index, spec scheme name) a requirement key names: a
+    /// component name of the namespace, or (OpenAPI 3.2) a URI reference to
+    /// a `components.securitySchemes` entry of any input document. A
+    /// component name wins over a URI that reads the same. `None` for a URI
+    /// that names no such entry.
+    fn scheme_key(
+        &self,
+        cx: &Ctx<'_>,
+        ns_index: usize,
+        item_at: &RefTarget,
+        key: &str,
+    ) -> Option<(usize, String)> {
+        let own = (ns_index, key.to_string());
+        if self.names.contains_key(&own)
+            || self.unsupported.contains(&own)
+            || !by_uri(cx, item_at, key)
+        {
+            return Some(own);
+        }
+        let target = cx.ws.resolve(item_at.doc, key)?;
+        let name = target
+            .pointer
+            .strip_prefix("/components/securitySchemes/")
+            .filter(|rest| !rest.contains('/'))
+            .map(unescape_token)?;
+        // The requirement's own namespace first, when several namespaces
+        // share the document.
+        let namespace = (ns_index..self.entry_docs.len())
+            .chain(0..ns_index)
+            .find(|&k| self.entry_docs[k] == target.doc)?;
+        Some((namespace, name))
+    }
+}
+
+/// Whether a requirement key is an OpenAPI 3.2 URI reference to a scheme:
+/// a key of a 3.2 document that is not an extension and looks like a URI
+/// reference (relative path, fragment, or scheme).
+fn by_uri(cx: &Ctx<'_>, item_at: &RefTarget, key: &str) -> bool {
+    reads_3_2(cx.ws, item_at)
+        && !key.starts_with("x-")
+        && (key.starts_with('.') || key.contains([':', '/', '#']))
 }
 
 /// Every supported scheme of one entry document, in spec order, and the
@@ -477,6 +541,7 @@ fn infer_api_key(cx: &mut Ctx<'_>, namespace: usize, doc: usize) -> Option<Defin
             METHODS
                 .iter()
                 .filter_map(|(word, _)| entry.operation(word))
+                .chain(entry.additional().into_iter().map(|(_, at, op)| (at, op)))
                 .filter(|(_, op)| op.is_object())
                 .map(|(at, _)| at),
         );
@@ -584,6 +649,7 @@ fn flow(kind: &str, f: &Value) -> OAuthFlow {
         token_url: url("tokenUrl"),
         authorization_url: url("authorizationUrl"),
         refresh_url: url("refreshUrl"),
+        device_authorization_url: url("deviceAuthorizationUrl"),
         scopes: f
             .get("scopes")
             .and_then(Value::as_object)

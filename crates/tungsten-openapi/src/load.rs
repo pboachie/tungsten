@@ -308,14 +308,12 @@ impl<'o> Loader<'o> {
 
     /// A fragment reached from a 3.2 document is read as 3.2: the subtree
     /// the reference selects is checked like the document itself.
-    fn diagnose_fragment_v32(&mut self, entry: DocId, target: &RefTarget, kind: Kind) {
+    fn diagnose_fragment_v32(&mut self, target: &RefTarget, kind: Kind) {
         let document = &self.ws.documents[target.doc];
         let Some(value) = document.get(&target.pointer) else {
             return;
         };
-        for finding in
-            v32::scan_subtree(value, &target.pointer, kind, &self.ws.documents[entry].root)
-        {
+        for finding in v32::scan_subtree(value, &target.pointer, kind) {
             if self.reported_v32.first(target.doc, &finding) {
                 let diagnostic = finding.into_diagnostic(&document.name, &document.spans);
                 self.ws.diagnostics.push(diagnostic);
@@ -495,7 +493,7 @@ impl<'o> Loader<'o> {
                         }
                     };
                     if fragment && target_context.v32 {
-                        self.diagnose_fragment_v32(context.entry, &target, site.kind);
+                        self.diagnose_fragment_v32(&target, site.kind);
                     }
                     queue.push_back((target.doc, target.pointer, site.kind, target_context));
                 }
