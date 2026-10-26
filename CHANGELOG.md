@@ -610,6 +610,15 @@ changes.
   operations. TG0141 is retired and no longer reported; `tungsten capabilities`
   lists `query` as a compiled 3.2 construct.
 
+- OpenAPI 3.2 `in: querystring` parameters compile when their `content` is one
+  `application/x-www-form-urlencoded` media type with an object schema: the
+  argument is an object sent as the whole query string, one form-encoded
+  `key=value` pair per property (the IR records it as an exploded `form` query
+  parameter, so runtimes need no change). TG0143 now reports only querystring
+  parameters that cannot be sent this way: another media type, a schema that
+  is not an object, or other query parameters beside it. `tungsten
+  capabilities` lists `in: querystring` as a compiled 3.2 construct.
+
 - OpenAPI 3.2 `additionalOperations` compile: each entry is an operation sent
   with its method token exactly as written (for example `COPY` or `LINK`),
   treated as unsafe and not idempotent. The IR gains the `CUSTOM` HTTP method
@@ -656,7 +665,7 @@ changes.
   3.1 has takes the 3.1 path and compiles to the same IR as its 3.1 twin. Each
   construct only 3.2 has is diagnosed at its member instead of being ignored, one
   code per feature. These are errors, because a client built without them would
-  differ from the API: `$self` (TG0140), `in: querystring` (TG0143), `style: cookie`
+  differ from the API: `$self` (TG0140), `style: cookie`
   (TG0144), other `itemSchema` uses (TG0145), `prefixEncoding` and `itemEncoding` (TG0146),
   nested encodings (TG0147), `components.mediaTypes` and media types given by
   `$ref` (TG0148), discriminator `defaultMapping` (TG0149), the OAuth 2.0 device

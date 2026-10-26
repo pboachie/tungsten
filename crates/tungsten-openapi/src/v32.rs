@@ -296,12 +296,7 @@ fn node_findings(node: &Node<'_>, out: &mut Vec<Finding>) {
         }
         Kind::Parameter => {
             if map.get("in").and_then(Value::as_str) == Some("querystring") {
-                out.push(error(
-                    "TG0143",
-                    at("in"),
-                    "the OpenAPI 3.2 `querystring` parameter location is not supported",
-                    "describe the query as separate `query` parameters",
-                ));
+                querystring_findings(&node.pointer, map, out);
             }
             if map.get("style").and_then(Value::as_str) == Some("cookie") {
                 out.push(error(
@@ -408,6 +403,41 @@ fn node_findings(node: &Node<'_>, out: &mut Vec<Finding>) {
         }
         Kind::Header | Kind::RequestBody | Kind::Callback => {}
     }
+}
+
+/// An OpenAPI 3.2 `querystring` parameter is compiled when its `content` is
+/// one `application/x-www-form-urlencoded` media type; the build checks that
+/// its schema is an object and that it is the operation's only query
+/// parameter.
+fn querystring_findings(pointer: &str, map: &Map<String, Value>, out: &mut Vec<Finding>) {
+    const HELP: &str = "describe the query string as one `application/x-www-form-urlencoded` object under `content`, or as separate `query` parameters";
+    let content = map.get("content").and_then(Value::as_object);
+    let media = content
+        .filter(|c| c.len() == 1)
+        .and_then(|c| c.keys().next());
+    let form = media.is_some_and(|m| {
+        m.split(';').next().is_some_and(|m| {
+            m.trim()
+                .eq_ignore_ascii_case("application/x-www-form-urlencoded")
+        })
+    });
+    if form {
+        return;
+    }
+    let (at, message) = match media {
+        Some(m) => (
+            join_pointer(&join_pointer(pointer, "content"), m),
+            format!(
+                "an OpenAPI 3.2 `querystring` parameter with media type `{m}` is not supported; only `application/x-www-form-urlencoded` is"
+            ),
+        ),
+        None => (
+            join_pointer(pointer, "in"),
+            "an OpenAPI 3.2 `querystring` parameter needs `content` with exactly one media type"
+                .to_string(),
+        ),
+    };
+    out.push(error("TG0143", at, &message, HELP));
 }
 
 /// Path item members that are operations; `additionalOperations` must not

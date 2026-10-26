@@ -765,6 +765,11 @@ pub const OPENAPI_32_SUPPORTED: &[SupportedInputFeature] = &[
         behavior: "an operation sent with the HTTP QUERY method and its request body; safe, so read-only by default",
     },
     SupportedInputFeature {
+        id: "querystring_parameter",
+        member: "in: querystring",
+        behavior: "an object argument sent as the whole query string, one form-encoded key=value pair per property. Other media types, a non-object schema or other query parameters beside it are refused with TG0143",
+    },
+    SupportedInputFeature {
         id: "additional_operations",
         member: "additionalOperations",
         behavior: "each entry is an operation sent with its method token exactly as written; unsafe and not idempotent by default. Tokens that cannot be sent (not an RFC 9110 token, a fixed method, CONNECT or TRACK) are refused with TG0142",
@@ -806,12 +811,6 @@ pub const OPENAPI_32_SUPPORTED: &[SupportedInputFeature] = &[
 /// constructs above.
 pub const OPENAPI_32_FEATURES: &[UnsupportedInputFeature] = &[
     feature("document_self", "$self", "TG0140", Rejected),
-    feature(
-        "querystring_parameter",
-        "in: querystring",
-        "TG0143",
-        Rejected,
-    ),
     feature("cookie_style", "style: cookie", "TG0144", Rejected),
     feature("item_schema", "itemSchema (other uses)", "TG0145", Rejected),
     feature(
