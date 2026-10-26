@@ -116,6 +116,9 @@ pub(crate) struct Report {
     pub error: Option<CliError>,
     /// Human-mode stdout text.
     pub human: String,
+    /// Human-mode stderr text written after the diagnostics: diagnostics
+    /// already rendered against sources the report does not carry.
+    pub rendered: String,
     /// Human mode: show a repeated warning or info code only a few times.
     pub collapse: Option<Collapse>,
     /// A mock server started by `mock`, served after the report is printed.
@@ -143,6 +146,7 @@ impl Report {
             result: None,
             error: None,
             human: String::new(),
+            rendered: String::new(),
             collapse: None,
             serving: None,
         }
@@ -517,6 +521,7 @@ fn emit_human(report: Report, color: bool, stdout: &mut dyn Write, stderr: &mut 
             );
         }
     }
+    let _ = stderr.write_all(report.rendered.as_bytes());
     let mut code = report.exit;
     if !report.human.is_empty() && write_or_internal(stdout, &report.human) != exit::OK {
         code = exit::INTERNAL;
