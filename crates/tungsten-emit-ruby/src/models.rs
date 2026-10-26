@@ -153,7 +153,7 @@ fn named_type(g: &Gen<'_, '_>, w: &mut Writer, t: &NamedType) {
             w.line("def self.from_json(value)");
             w.indent();
             match union {
-                UnionPlan::Tagged { tag, variants } => {
+                UnionPlan::Tagged { tag, variants, .. } => {
                     w.line("return value unless value.is_a?(Hash)");
                     w.blank();
                     w.line(format!("case value[{}]", str_lit(tag)));

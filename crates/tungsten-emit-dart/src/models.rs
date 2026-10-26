@@ -1044,7 +1044,7 @@ impl ModelFile<'_, '_, '_> {
             )
         };
         match plan {
-            UnionPlan::Tagged { tag, variants } => {
+            UnionPlan::Tagged { tag, variants, .. } => {
                 w.line("final o = Wire.object(json, path);");
                 w.line(format!("switch (o[{}]) {{", str_lit(tag)));
                 w.indent();
