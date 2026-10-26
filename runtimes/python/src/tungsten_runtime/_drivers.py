@@ -703,9 +703,13 @@ class SyncDriver:
     def _perform(self, effect: Effect) -> object:
         if isinstance(effect, Bounded):
             if isinstance(effect.effect, Send):
-                effect = replace(
-                    effect, effect=Send(replace(effect.effect.request, deadline_ms=effect.deadline_ms))
+                request = effect.effect.request
+                limit = (
+                    effect.deadline_ms
+                    if request.deadline_ms is None
+                    else min(request.deadline_ms, effect.deadline_ms)
                 )
+                effect = replace(effect, effect=Send(replace(request, deadline_ms=limit)))
             remaining = effect.deadline_ms / 1000 - time.monotonic()
             if remaining <= 0:
                 raise PollExpired()
@@ -790,7 +794,7 @@ class SyncDriver:
             return NotSent(_detail(error))
         try:
             if time.monotonic() >= deadline:
-                return NotSent("polling deadline expired before send")
+                return NotSent("deadline expired before send")
             response = self.http.send(request, stream=True)
         except Exception as error:
             return _send_failure(error)
@@ -924,9 +928,13 @@ class AsyncDriver:
     async def _perform(self, effect: Effect) -> object:
         if isinstance(effect, Bounded):
             if isinstance(effect.effect, Send):
-                effect = replace(
-                    effect, effect=Send(replace(effect.effect.request, deadline_ms=effect.deadline_ms))
+                request = effect.effect.request
+                limit = (
+                    effect.deadline_ms
+                    if request.deadline_ms is None
+                    else min(request.deadline_ms, effect.deadline_ms)
                 )
+                effect = replace(effect, effect=Send(replace(request, deadline_ms=limit)))
             remaining = effect.deadline_ms / 1000 - time.monotonic()
             if remaining <= 0:
                 raise PollExpired()
@@ -1015,7 +1023,7 @@ class AsyncDriver:
             return NotSent(_detail(error))
         try:
             if time.monotonic() >= deadline:
-                return NotSent("polling deadline expired before send")
+                return NotSent("deadline expired before send")
             response = await _before_deadline(self.http.send(request, stream=True), deadline)
         except Exception as error:
             return _send_failure(error)

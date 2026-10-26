@@ -79,6 +79,9 @@ class Lost:
 class TimedOut:
     """No response within the attempt's deadline, after the request was (possibly) sent."""
 
+    #: The operation's total deadline, not the per-attempt timeout, ran out.
+    deadline: bool = False
+
 
 AttemptOutcome = Answered | Streaming | NotSent | Lost | TimedOut
 
