@@ -44,8 +44,10 @@ The first fetch records the source URL and SHA256 under
 `.tungsten-inputs/<url-sha256>/source.lock.json`, beside immutable downloaded
 content. Retain the complete source cache directory for offline use. Online commands verify upstream
 bytes against the pin and refuse changed content. `--refresh-inputs` explicitly
-accepts a new OpenAPI pin; converted imports instead require re-import into a
-fresh project and another operation review. Their `source_url` and
+accepts a new OpenAPI pin; converted imports are instead refreshed with
+`tungsten refresh-import`, which previews the converted diff, operation and
+output changes and requires renewed review of changed approvals before
+`--apply` writes the conversion, pin and lock. Their `source_url` and
 `source_sha256` manifest fields preserve that provenance on every compilation.
 
 For authentication, repeat `--input-header 'Authorization: Bearer ...'`, or set
@@ -777,7 +779,7 @@ tungsten [--json] <command>
 | `lsp` | Serve diagnostics, quick fixes, completion, hover, go-to-definition and symbols for `tungsten.yml`, `agent.yml` and overlays to an editor over stdio (`--config`) |
 | `doctor` | Report external tools; pass a project path and `--strict` to fail when its required tools are missing or too old |
 | `capabilities` | Query built-in target declarations without running tools or emitters; optionally select a target id or alias, such as `capabilities py --json`; `--matrix` prints the Markdown support matrix derived from the same declarations, and `--matrix --format markdown` wraps it in the markers of the README block CI checks |
-| `lock` | Capture the project generation lock `tungsten.lock.json` offline: content identities of the manifest, profiles, agent manifest, inputs, references and overlays (in order), compiler and built-in emitter identities, effective target option digests and consumer toolchains. `--check` fails when the lock is missing, stale or corrupt, `--preview` writes nothing, `--update` accepts changed identities |
+| `lock` | Capture the project generation lock `tungsten.lock.json` offline: content identities of the manifest, profiles, agent manifest, inputs, references and overlays (in order), compiler and built-in emitter identities, effective target option digests and consumer toolchains. `--check` fails when the lock is missing, stale or corrupt, `--preview` writes nothing, `--update` accepts changed identities; `--outputs` also records or verifies the identity of the bytes each built-in target generates |
 | `bundle export` / `bundle import` | Export the locked input closure and `tungsten.lock.json` into a new plain bundle directory with a digest inventory (`--preview` lists it; `--include-input-cache` carries the verified pins of remote inputs; `--include-consumer-cache DIR` carries a prepared consumer dependency directory with provenance and platform notes; incomplete or credential-named content needs `--allow-incomplete` / `--allow-sensitive`), or validate a bundle completely and copy it into `--dest` without overwriting differing files. Neither runs emitters or grants trust |
 | `support-bundle --preview` | Inspect the exact metadata-only support manifest without writing files; `--exclude <id>` removes an entry. On Linux, macOS and Windows, `--output <PATH>` instead publishes it to a new file in an existing, trusted directory; `--inspect <FILE>` checks and shows an existing bundle |
 
@@ -1171,7 +1173,10 @@ winning and shadowed source. Inline values (a proxy URL, a PEM block, a token) a
 refused, as is any key that would disable certificate verification; trust a
 private CA with `ca_bundle` instead. References are names only: tungsten never
 reads the variables, files or store items they point to, and generated SDKs do not
-consume them yet. Wire them into a native or custom transport that keeps TLS
+consume them yet. `tungsten doctor <project>` reports whether each referenced
+environment variable is set and each referenced project file exists, without reading
+either; `--strict` fails on a missing file, while variables may be supplied where
+the client runs and store items are left to the runtime's adapter. Wire them into a native or custom transport that keeps TLS
 verification, redirect/auth rules, deadlines and admission in place.
 
 `tungsten lsp` serves profile files too: completion and hover from the profile

@@ -647,7 +647,7 @@ fn compile_prepared(
         if let Some(source) = &input.source_url {
             // A converted artifact must remain tied to the raw bytes from which
             // it was reviewed. Refreshing only the pin would silently retain an
-            // old conversion; require re-import into a fresh project instead.
+            // old conversion; `tungsten refresh-import` re-converts with review.
             let mut policy = load.acquisition.clone();
             policy.refresh = false;
             let verified =
@@ -665,7 +665,7 @@ fn compile_prepared(
                     });
             if let Err(mut error) = verified {
                 if error.code == "TG0122" {
-                    error = error.with_help("review the changed source and re-import it into a fresh project, then review imported operations again; use --offline to retain the existing conversion");
+                    error = error.with_help("preview and apply the reviewed conversion with `tungsten refresh-import`; use --offline to retain the existing conversion");
                 }
                 diagnostics.push(error);
             }

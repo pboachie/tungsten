@@ -37,6 +37,8 @@ pub(crate) struct Ctx<'a> {
     pub err_style: Style,
     /// The `--flag.member value` tokens of the command line.
     pub dotted: Vec<crate::dotted::Dotted>,
+    pub stdin_tty: bool,
+    pub stderr_tty: bool,
     stdin: Box<dyn Read + Send>,
     stdin_state: StdinState,
     stdout: Box<dyn Write + Send>,
@@ -59,6 +61,8 @@ impl<'a> Ctx<'a> {
                 on: color_ok && host.stderr_tty,
             },
             dotted: Vec::new(),
+            stdin_tty: host.stdin_tty,
+            stderr_tty: host.stderr_tty,
             env: host.env,
             stdin: host.stdin,
             stdin_state: StdinState::Unused,

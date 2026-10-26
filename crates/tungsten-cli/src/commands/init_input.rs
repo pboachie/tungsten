@@ -14,8 +14,10 @@ fn hinted(d: &tungsten_contract::Diagnostic) -> String {
     format!("{d} (see `tungsten explain {}`)", d.code)
 }
 
-fn har_paths(args: &InitArgs) -> Result<std::collections::BTreeMap<String, String>, String> {
-    let Some(path) = &args.har_paths else {
+fn har_paths(
+    args: &ConvertOptions<'_>,
+) -> Result<std::collections::BTreeMap<String, String>, String> {
+    let Some(path) = args.har_paths else {
         return Ok(Default::default());
     };
     if !std::fs::metadata(path).is_ok_and(|metadata| metadata.is_file()) {
@@ -208,6 +210,28 @@ pub(super) struct PreparedImport {
     report: Option<serde_json::Value>,
 }
 
+/// How a source is converted: the importer settings of `init` that
+/// `refresh-import` repeats for a new revision of the same source.
+pub(super) struct ConvertOptions<'a> {
+    pub input_format: &'a str,
+    pub route: &'a [String],
+    pub shell_dialect: &'a str,
+    pub har_origin: Option<&'a str>,
+    pub har_paths: Option<&'a Path>,
+    pub include_prefix: &'a [String],
+    pub exclude_prefix: &'a [String],
+    pub redact_property: &'a [String],
+}
+
+impl PreparedImport {
+    pub(super) fn document(&self) -> &serde_json::Value {
+        &self.document
+    }
+    pub(super) fn report(&self) -> Option<&serde_json::Value> {
+        self.report.as_ref()
+    }
+}
+
 /// Detect and convert an input without writing project files. OpenAPI input is
 /// left in place so relative references retain meaning.
 pub(super) fn import(args: &InitArgs) -> Result<Option<PreparedImport>, String> {
@@ -226,8 +250,28 @@ pub(super) fn import(args: &InitArgs) -> Result<Option<PreparedImport>, String> 
     let Some(source) = source else {
         return Ok(None);
     };
+    convert(
+        &source,
+        &ConvertOptions {
+            input_format: &args.input_format,
+            route: &args.route,
+            shell_dialect: &args.shell_dialect,
+            har_origin: args.har_origin.as_deref(),
+            har_paths: args.har_paths.as_deref(),
+            include_prefix: &args.include_prefix,
+            exclude_prefix: &args.exclude_prefix,
+            redact_property: &args.redact_property,
+        },
+    )
+}
+
+/// Convert one source file; `None` when it is OpenAPI and needs no conversion.
+pub(super) fn convert(
+    source: &Path,
+    args: &ConvertOptions<'_>,
+) -> Result<Option<PreparedImport>, String> {
     let mut bytes = Vec::new();
-    std::fs::File::open(&source)
+    std::fs::File::open(source)
         .map_err(|_| "cannot open input file")?
         .take(8 * 1024 * 1024 + 1)
         .read_to_end(&mut bytes)
@@ -259,7 +303,7 @@ pub(super) fn import(args: &InitArgs) -> Result<Option<PreparedImport>, String> 
                     "saved cURL requires exactly one explicit --route path template".into(),
                 );
             }
-            let dialect = match args.shell_dialect.as_str() {
+            let dialect = match args.shell_dialect {
                 "cmd" => tungsten_contract::request_import::ShellDialect::WindowsCmd,
                 "powershell" => tungsten_contract::request_import::ShellDialect::PowerShell,
                 "posix" => tungsten_contract::request_import::ShellDialect::Posix,
@@ -269,7 +313,7 @@ pub(super) fn import(args: &InitArgs) -> Result<Option<PreparedImport>, String> 
         } else {
             tungsten_contract::request_import::http(
                 text,
-                &args.route,
+                args.route,
                 &std::collections::BTreeMap::new(),
                 &limits,
             )
@@ -282,12 +326,12 @@ pub(super) fn import(args: &InitArgs) -> Result<Option<PreparedImport>, String> 
     } else if root.get("log").is_some() {
         let limits = Limits::default();
         let options = tungsten_contract::har::HarOptions {
-            origin: args.har_origin.clone(),
+            origin: args.har_origin.map(str::to_owned),
             path_templates: har_paths(args)?,
-            include_prefixes: args.include_prefix.clone(),
-            exclude_prefixes: args.exclude_prefix.clone(),
+            include_prefixes: args.include_prefix.to_vec(),
+            exclude_prefixes: args.exclude_prefix.to_vec(),
             redact_properties: args.redact_property.iter().cloned().collect(),
-            route_templates: args.route.clone(),
+            route_templates: args.route.to_vec(),
             ..Default::default()
         };
         let imported = tungsten_contract::har::import_har(&bytes, &options, &limits)
@@ -328,7 +372,7 @@ pub(super) fn import(args: &InitArgs) -> Result<Option<PreparedImport>, String> 
         output.openapi
     } else if root.get("endpoint_manifest").is_some() {
         let canonical =
-            std::fs::canonicalize(&source).map_err(|_| "cannot resolve endpoint manifest")?;
+            std::fs::canonicalize(source).map_err(|_| "cannot resolve endpoint manifest")?;
         let allowed = canonical
             .parent()
             .ok_or("endpoint manifest needs a parent directory")?
