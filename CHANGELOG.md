@@ -391,6 +391,11 @@ changes.
   the shared capability contract. Keep emitter defaults and TG0711 fallback
   behavior compatible while configuration and generation share validation.
 
+- Assert mock-side effects in saved scenarios with optional `expect.effects`
+  counts of applied writes and idempotent replays, so a lost-write retry that
+  changes its idempotency key fails even when call counts match. Failed runs
+  name each failing assertion by file position in terminal output.
+
 - Validate saved mock scenarios portably and explicitly run integration argv on
   Linux with a run-phase deadline, cancellation, owned process-group cleanup,
   final exit/call-count assertions and a value-free JSON report. The run budget

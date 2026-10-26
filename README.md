@@ -773,6 +773,39 @@ only, without operation names, credentials or bodies. A snapshot can change
 when another request arrives; it does not stop the server or prove provider
 effects. In particular, a recorded write is not proof of an applied write.
 
+Optional `expect.effects` entries assert what the mock did with an operation's
+requests: `applied` counts fresh requests it processed to a 2xx answer, even when
+that answer was then dropped (`drop-after-write`) or replaced (`status=...;apply`);
+`replayed` counts requests answered from a stored idempotency key. Programmed
+responses are neither. State at least one of the two counts. This recipe checks
+that a client retries a lost write with the same `Idempotency-Key`, so the write
+is applied once and replayed once:
+
+```json
+{
+  "version": 1,
+  "programs": [
+    {"operation": "openapi.createPet", "inject": "drop-after-write"}
+  ],
+  "expect": {
+    "total_calls": 2,
+    "calls": [
+      {"operation": "openapi.createPet", "status": 0, "count": 1},
+      {"operation": "openapi.createPet", "status": 201, "count": 1}
+    ],
+    "effects": [
+      {"operation": "openapi.createPet", "applied": 1, "replayed": 1}
+    ]
+  }
+}
+```
+
+A client that sends a new key on the retry still matches both call counts, but
+reports `applied` 2 and `replayed` 0, so the scenario fails. The report lists
+`effects` in file order only when the file declares any. Effect counts describe
+the mock's own processing; they do not prove a real provider's behavior or that
+the client received a response.
+
 Programs use the existing `/__tungsten/program` controls: `status` (200–599),
 optional JSON `body`, string-valued `headers`, `times`, error `code`, and
 `cut_after` bytes; or `inject` with optional `times`. For malformed JSON, use a
@@ -783,8 +816,8 @@ and idempotency behavior still applies. `inject: "reset"` is unsupported in a
 program because it acts before routing. Unknown fields and unsupported controls
 are rejected before the port is bound.
 
-Version 1 limits each file to 1 MiB, 256 programs, 256 call assertions, 10,000
-programmed calls and at most 10,000 expected total calls. Timeout/stall injection
+Version 1 limits each file to 1 MiB, 256 programs, 256 call assertions, 256
+effect assertions, 10,000 programmed calls and at most 10,000 expected total calls. Timeout/stall injection
 holds cannot exceed 30 seconds. These are input limits, not an overall run
 deadline. Keep scenarios synthetic: bodies and headers are served as written,
 and the separate `/__tungsten/calls` endpoint still exposes recorded data.
