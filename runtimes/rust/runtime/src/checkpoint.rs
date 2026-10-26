@@ -13,6 +13,7 @@
 use std::sync::Arc;
 
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 use serde_json::{Map, Value, json};
 use url::Url;
 
@@ -21,8 +22,8 @@ use crate::envelope::Diag;
 use crate::helpers::arg_name;
 use crate::pages::{PageState, PageStop};
 use crate::types::{
-    CallOptions, Category, Error, OperationDescriptor, PaginationDescriptor, Response, Result,
-    Retryable, Safety,
+    CallOptions, Category, Error, OperationDescriptor, Page, PaginationDescriptor, Response,
+    Result, Retryable, Safety,
 };
 use crate::util::{base64url, canonical_json, hmac_sha256, timing_safe_equal};
 
@@ -478,5 +479,58 @@ impl ExportPages {
                 }))
             }
         }
+    }
+}
+
+impl ExportPages {
+    /// Items typed as `T` (an item that does not decode is an
+    /// `UNEXPECTED_RESPONSE` error item, and that page's checkpoint is not
+    /// returned).
+    pub fn typed<T: DeserializeOwned>(self) -> TypedExportPages<T> {
+        TypedExportPages {
+            inner: self,
+            marker: std::marker::PhantomData,
+        }
+    }
+}
+
+/// [`ExportPages`] with typed items.
+#[derive(Debug)]
+pub struct TypedExportPages<T> {
+    inner: ExportPages,
+    marker: std::marker::PhantomData<fn() -> T>,
+}
+
+impl<T: DeserializeOwned> TypedExportPages<T> {
+    pub async fn next(&mut self) -> Option<Result<CheckpointPage<T>>> {
+        let response = match self.inner.next().await? {
+            Ok(response) => response,
+            Err(error) => return Some(Err(error)),
+        };
+        let CheckpointPage {
+            items,
+            body,
+            next,
+            checkpoint,
+            complete,
+        } = response.value;
+        let page = Response {
+            value: Page { items, body, next },
+            meta: response.meta,
+            verification: response.verification,
+        };
+        Some(
+            crate::dispatch::decode_page::<T>(&self.inner.op.id, Ok(page)).map(|typed| Response {
+                value: CheckpointPage {
+                    items: typed.value.items,
+                    body: typed.value.body,
+                    next: typed.value.next,
+                    checkpoint,
+                    complete,
+                },
+                meta: typed.meta,
+                verification: typed.verification,
+            }),
+        )
     }
 }
