@@ -230,6 +230,11 @@ changes.
 
 ### Added
 
+- The runtime telemetry observer reports `stream()` in TypeScript, Python and
+  Rust as one `stream` operation covering its connection and every reconnect,
+  ending `ok`, `error` (final failure item) or `cancelled` (cancelled or left
+  early). Unreleased 0.2.0 only.
+
 - The runtime telemetry observer now also reports `preview()`, `pages()` and
   `poll()` in TypeScript, Python and Rust as operations (`entry` `preview`,
   `pages` or `poll`), each covering every request it made with attempts
