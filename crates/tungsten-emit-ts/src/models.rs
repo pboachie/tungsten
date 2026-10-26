@@ -837,6 +837,8 @@ pub(crate) struct Uses {
     pub length: bool,
     /// The `binary()` helper and the `BinaryInput` type.
     pub binary: bool,
+    /// The runtime's `UploadSource`, for a whole binary request body.
+    pub upload: bool,
     /// Model namespaces referenced (other than the module's own).
     pub namespaces: std::collections::BTreeSet<String>,
 }
