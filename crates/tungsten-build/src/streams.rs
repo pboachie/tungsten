@@ -89,7 +89,7 @@ pub(crate) fn apply(cx: &mut Ctx<'_>, op: &mut Operation, at: &RefTarget) {
     let response_at = response_key(cx, &responses_at, response.status)
         .map_or_else(|| responses_at.clone(), |key| child(&responses_at, &key));
     let media_at = cx.deref(&response_at).map_or(response_at, |t| {
-        child(&child(&t, "content"), &content.media_type)
+        crate::bodies::media_at(cx, &child(&t, "content"), &content.media_type)
     });
     let media = cx.get(&media_at);
     let typed = media.is_some_and(|m| m.get("schema").is_some());

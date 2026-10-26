@@ -352,6 +352,13 @@ changes.
   operations. TG0141 is retired and no longer reported; `tungsten capabilities`
   lists `query` as a compiled 3.2 construct.
 
+- OpenAPI 3.2 reusable media types compile: a Media Type Object given by `$ref`
+  (usually to `components.mediaTypes`) in a request body, response, parameter
+  or header `content` map is read as if written in place, including its schema
+  and event-stream extensions. TG0148 is retired and no longer reported;
+  `tungsten capabilities` lists reusable media types as a compiled 3.2
+  construct.
+
 - OpenAPI 3.2.x documents are read: a document that uses only constructs OpenAPI
   3.1 has takes the 3.1 path and compiles to the same IR as its 3.1 twin. Each
   construct only 3.2 has is diagnosed at its member instead of being ignored, one

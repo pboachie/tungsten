@@ -177,6 +177,9 @@ fn header_schema(cx: &Ctx<'_>, header: &RefTarget, value: &Value) -> Option<RefT
         return Some(child(header, "schema"));
     }
     let (media, _) = value.get("content")?.as_object()?.iter().next()?;
-    let target = child(&child(&child(header, "content"), media), "schema");
+    let target = child(
+        &bodies::media_at(cx, &child(header, "content"), media),
+        "schema",
+    );
     cx.get(&target).map(|_| target)
 }
