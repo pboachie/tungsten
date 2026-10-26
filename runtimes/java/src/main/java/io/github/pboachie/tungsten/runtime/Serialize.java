@@ -228,8 +228,69 @@ final class Serialize {
         return scalar(v);
     }
 
-    /** name=value of a cookie parameter. */
+    /** Whether {@code c} is an RFC 6265 cookie-octet. */
+    private static boolean cookieOctet(int c) {
+        return c == 0x21 || (c >= 0x23 && c <= 0x2B) || (c >= 0x2D && c <= 0x3A)
+                || (c >= 0x3C && c <= 0x5B) || (c >= 0x5D && c <= 0x7E);
+    }
+
+    /** A cookie style value as written; only characters a cookie cannot carry are percent-encoded. */
+    private static String cookieText(String text) {
+        StringBuilder out = new StringBuilder();
+        text.codePoints().forEach(c -> {
+            if (cookieOctet(c)) {
+                out.appendCodePoint(c);
+            } else {
+                out.append(Text.encodeComponent(new String(Character.toChars(c))));
+            }
+        });
+        return out.toString();
+    }
+
+    /** OpenAPI 3.2 cookie style: n=v, n=v1,v2 or exploded n=v1; n=v2 and k=v; k2=v2. */
+    private static String cookieStyle(OperationDescriptor.Param p, Object v) {
+        if (v instanceof List<?>) {
+            List<String> items = new ArrayList<>();
+            for (Object item : (List<?>) v) {
+                if (item != null) {
+                    items.add(cookieText(scalar(item)));
+                }
+            }
+            if (p.explode() && !items.isEmpty()) {
+                List<String> parts = new ArrayList<>();
+                for (String item : items) {
+                    parts.add(p.wire() + "=" + item);
+                }
+                return String.join("; ", parts);
+            }
+            return p.wire() + "=" + String.join(",", items);
+        }
+        if (v instanceof JsonObject) {
+            JsonObject o = (JsonObject) v;
+            List<Pair> pairs = new ArrayList<>();
+            for (String k : o.keys()) {
+                Object item = o.get(k);
+                if (item != null) {
+                    pairs.add(new Pair(cookieText(k), cookieText(scalar(item))));
+                }
+            }
+            if (p.explode() && !pairs.isEmpty()) {
+                List<String> parts = new ArrayList<>();
+                for (Pair kv : pairs) {
+                    parts.add(kv.k() + "=" + kv.v());
+                }
+                return String.join("; ", parts);
+            }
+            return p.wire() + "=" + String.join(",", flat(pairs));
+        }
+        return p.wire() + "=" + cookieText(scalar(v));
+    }
+
+    /** name=value of a cookie parameter (form style, values encoded; or cookie style). */
     static String cookieParam(OperationDescriptor.Param p, Object v) {
+        if ("cookie".equals(p.style())) {
+            return cookieStyle(p, v);
+        }
         if (v instanceof List<?>) {
             return p.wire() + "=" + String.join(",", encodedItems((List<?>) v));
         }

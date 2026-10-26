@@ -54,7 +54,7 @@ public record OperationDescriptor(
      * @param in path, query, header or cookie
      * @param required whether it must be given
      * @param style the OpenAPI style (simple, form, label, matrix, space_delimited,
-     *     pipe_delimited, deep_object)
+     *     pipe_delimited, deep_object, cookie)
      * @param explode the OpenAPI explode flag
      * @param role plain, dry_run, idempotency_key, origin, auth or constant
      * @param constant the header value of a constant parameter, or null

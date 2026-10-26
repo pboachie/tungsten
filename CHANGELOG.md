@@ -610,6 +610,14 @@ changes.
   operations. TG0141 is retired and no longer reported; `tungsten capabilities`
   lists `query` as a compiled 3.2 construct.
 
+- OpenAPI 3.2 `style: cookie` cookie parameters compile: values are sent with
+  RFC 6265 syntax as written (only characters a cookie cannot carry are
+  percent-encoded), and exploded arrays and objects as separate `n=v; n2=v2`
+  pairs (explode defaults to true). The IR gains the `cookie` parameter style,
+  and every runtime implements it. TG0144 now reports only `style: cookie` on a
+  parameter that is not `in: cookie`. `tungsten capabilities` lists
+  `style: cookie` as a compiled 3.2 construct.
+
 - OpenAPI 3.2 `in: querystring` parameters compile when their `content` is one
   `application/x-www-form-urlencoded` media type with an object schema: the
   argument is an object sent as the whole query string, one form-encoded
@@ -665,8 +673,7 @@ changes.
   3.1 has takes the 3.1 path and compiles to the same IR as its 3.1 twin. Each
   construct only 3.2 has is diagnosed at its member instead of being ignored, one
   code per feature. These are errors, because a client built without them would
-  differ from the API: `$self` (TG0140), `style: cookie`
-  (TG0144), other `itemSchema` uses (TG0145), `prefixEncoding` and `itemEncoding` (TG0146),
+  differ from the API: `$self` (TG0140), other `itemSchema` uses (TG0145), `prefixEncoding` and `itemEncoding` (TG0146),
   nested encodings (TG0147), `components.mediaTypes` and media types given by
   `$ref` (TG0148), discriminator `defaultMapping` (TG0149), the OAuth 2.0 device
   authorization flow (TG0150) and security requirements that name a scheme by URI
