@@ -242,7 +242,7 @@ pub enum HttpMethod {
 }
 
 impl HttpMethod {
-    const STANDARD: [HttpMethod; 9] = [
+    pub(crate) const STANDARD: [HttpMethod; 9] = [
         HttpMethod::Get,
         HttpMethod::Put,
         HttpMethod::Post,
