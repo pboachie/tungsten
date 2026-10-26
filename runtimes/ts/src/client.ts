@@ -100,6 +100,15 @@ type Failure = { ok: false; error: Diagnostic; partial?: unknown };
 type Step<T> = { ok: true; value: T } | Failure;
 
 const METHODS: ReadonlySet<string> = new Set(["GET", "PUT", "POST", "DELETE", "OPTIONS", "HEAD", "PATCH", "TRACE", "QUERY"]);
+const METHOD_TOKEN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
+const FORBIDDEN_METHODS: ReadonlySet<string> = new Set(["CONNECT", "TRACK"]);
+
+/** A standard method, or an OpenAPI 3.2 custom method token that is not a case variant of one and not forbidden. */
+function isMethod(method: string): boolean {
+  if (METHODS.has(method)) return true;
+  const upper = method.toUpperCase();
+  return METHOD_TOKEN.test(method) && !METHODS.has(upper) && !FORBIDDEN_METHODS.has(upper);
+}
 const SAFETIES: ReadonlySet<string> = new Set(["read_only", "mutating", "destructive", "irreversible"]);
 const POLICIES: ReadonlySet<string> = new Set(["none", "auto", "caller_owned", "content_hash", "content_identity"]);
 const RETRY_CATEGORIES: ReadonlySet<string> = new Set(["RATE_LIMITED", "UPSTREAM_UNAVAILABLE", "TRANSPORT_FAILED", "OUTCOME_UNKNOWN"]);
@@ -218,7 +227,7 @@ function isSchema(value: unknown): value is SchemaLike {
 function descriptorProblem(op: unknown): string | null {
   if (!isRecord(op)) return "the operation descriptor is not an object";
   if (typeof op.id !== "string" || op.id === "") return "`id` must be a non-empty string";
-  if (typeof op.method !== "string" || !METHODS.has(op.method)) return "`method` must be an HTTP method";
+  if (typeof op.method !== "string" || !isMethod(op.method)) return "`method` must be an HTTP method";
   if (typeof op.path !== "string") return "`path` must be a string";
   if (!Array.isArray(op.params)) return "`params` must be an array";
   for (const p of op.params) {

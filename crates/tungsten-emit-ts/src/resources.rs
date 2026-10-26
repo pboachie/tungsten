@@ -15,7 +15,7 @@ use tungsten_ir::naming::Role;
 use tungsten_ir::{IdempotencyKind, OperationStatus, PreviewMode, Safety};
 
 use crate::models::write_imports;
-use crate::ops::{OpShape, idempotency_str, method_str, safety_str};
+use crate::ops::{OpShape, idempotency_str, safety_str};
 use crate::plan::{MemberKind, OpInfo, Plan, ResInfo, unique, with_word};
 use crate::ts::{doc_text, paragraphs, prop_key, string_lit};
 
@@ -58,7 +58,7 @@ pub(crate) fn op_doc(plan: &Plan<'_>, info: &OpInfo<'_>, shape: &OpShape<'_>) ->
     let mut parts = vec![doc_text(op.doc.as_ref())];
     parts.push(format!(
         "`{} {}` (`{}`). Safety: `{}`.",
-        method_str(op.method),
+        op.wire_method(),
         op.path.raw,
         op.id.0,
         safety_str(a.safety)
@@ -211,7 +211,7 @@ fn stream_doc(info: &OpInfo<'_>) -> String {
     let mut parts = vec![format!(
         "The events of `{}` (`{}`), as an async iterable of `StreamItem`s: one per server-sent event, then either the end of the stream or one final `{{ ok: false, error }}`. An error before the stream starts is the only item. A dropped stream of a call that is safe to repeat is reconnected with `Last-Event-ID`. The result also has `on`, `collect`, `reduce`, `first` and `cancel`.",
         op.id.0,
-        method_str(op.method)
+        op.wire_method()
     )];
     if let Some(done) = spec.and_then(|s| s.done.as_ref()) {
         parts.push(format!(

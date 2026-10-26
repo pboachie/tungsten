@@ -254,7 +254,7 @@ pub(crate) fn blocking_file(
             let id = &info.op.id.0;
             let facts = format!(
                 "`{} {}` (`{}`). Safety: `{}`.",
-                super::ops::method_str(info.op.method),
+                info.op.wire_method(),
                 info.op.path.raw,
                 id,
                 super::ops::safety_str(info.op.agent.safety)

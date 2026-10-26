@@ -225,8 +225,7 @@ pub type Outcome = Result<Option<Value>>;
 
 // ----------------------------------------------------------- descriptors
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "UPPERCASE")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HttpMethod {
     Get,
     Put,
@@ -237,9 +236,24 @@ pub enum HttpMethod {
     Patch,
     Trace,
     Query,
+    /// An OpenAPI 3.2 `additionalOperations` method, sent exactly as
+    /// written. It is treated as unsafe and not idempotent.
+    Custom(&'static str),
 }
 
 impl HttpMethod {
+    const STANDARD: [HttpMethod; 9] = [
+        HttpMethod::Get,
+        HttpMethod::Put,
+        HttpMethod::Post,
+        HttpMethod::Delete,
+        HttpMethod::Options,
+        HttpMethod::Head,
+        HttpMethod::Patch,
+        HttpMethod::Trace,
+        HttpMethod::Query,
+    ];
+
     pub fn as_str(self) -> &'static str {
         match self {
             HttpMethod::Get => "GET",
@@ -251,7 +265,31 @@ impl HttpMethod {
             HttpMethod::Patch => "PATCH",
             HttpMethod::Trace => "TRACE",
             HttpMethod::Query => "QUERY",
+            HttpMethod::Custom(token) => token,
         }
+    }
+}
+
+impl Serialize for HttpMethod {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+/// Only standard methods are read back: a custom method exists only as a
+/// token compiled into a descriptor.
+impl<'de> Deserialize<'de> for HttpMethod {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
+        let name = String::deserialize(deserializer)?;
+        HttpMethod::STANDARD
+            .into_iter()
+            .find(|m| m.as_str() == name)
+            .ok_or_else(|| serde::de::Error::custom(format!("unknown HTTP method `{name}`")))
     }
 }
 

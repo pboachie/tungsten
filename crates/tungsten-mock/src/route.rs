@@ -4,7 +4,7 @@
 use serde_json::Value;
 use tungsten_ir::{PathSegment, PathTemplate};
 
-use crate::model::{Model, method_str};
+use crate::model::Model;
 use crate::params::{parse_query, percent_decode};
 
 /// Captured path parameters, in segment order.
@@ -154,7 +154,7 @@ pub(crate) enum Routed {
         ns: usize,
     },
     /// The path is served under other methods only.
-    NotAllowed(Vec<&'static str>),
+    NotAllowed(Vec<String>),
     NotFound,
 }
 
@@ -171,14 +171,14 @@ pub(crate) fn route(
     let query = parse_query(query);
     let mut best: Option<Vec<u8>> = None;
     let mut group: Vec<(usize, Captures)> = vec![];
-    let mut other_methods: Vec<&'static str> = vec![];
+    let mut other_methods: Vec<String> = vec![];
     for (index, entry) in model.ops.iter().enumerate() {
         let Some((score, params)) = entry.path.matches(&segments, &query) else {
             continue;
         };
-        let op_method = method_str(entry.op.method);
+        let op_method = entry.op.wire_method();
         if op_method != method {
-            other_methods.push(op_method);
+            other_methods.push(op_method.to_string());
             continue;
         }
         match best.as_ref().map(|b| score.cmp(b)) {

@@ -192,6 +192,7 @@ fn children_of<'v>(node: &Node<'v>, out: &mut Vec<(String, Kind, &'v Value)>) {
             for m in METHODS {
                 one(out, m, Kind::Operation);
             }
+            each(out, "additionalOperations", Kind::Operation, false);
         }
         Kind::Operation => {
             list(out, "parameters", Kind::Parameter);

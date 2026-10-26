@@ -2,7 +2,8 @@
 //! OpenAPI 3.2 constructs that have no 3.1 equivalent.
 //!
 //! A 3.2 document that uses only 3.1 constructs goes through the unchanged
-//! 3.1 path. The `query` method is compiled by the build (as `QUERY`); every
+//! 3.1 path. The `query` method (as `QUERY`) and `additionalOperations`
+//! (custom methods, sent as written) are compiled by the build; every
 //! other construct 3.2 added is either refused with an error (when
 //! ignoring it would produce a client that behaves differently from the API)
 //! or reported as a warning (when it only adds metadata the compiler has no
@@ -218,13 +219,8 @@ fn node_findings(node: &Node<'_>, schemes: &BTreeSet<String>, out: &mut Vec<Find
     match node.kind {
         Kind::Document => {}
         Kind::PathItem => {
-            if map.contains_key("additionalOperations") {
-                out.push(error(
-                    "TG0142",
-                    at("additionalOperations"),
-                    "OpenAPI 3.2 `additionalOperations` (custom HTTP methods) are not supported; the operations would be left out",
-                    "describe the calls with the standard methods the path item supports",
-                ));
+            if let Some(extra) = map.get("additionalOperations") {
+                additional_operations(&at("additionalOperations"), extra, out);
             }
             server_findings(&at("servers"), map.get("servers"), out);
         }
@@ -363,6 +359,58 @@ fn node_findings(node: &Node<'_>, schemes: &BTreeSet<String>, out: &mut Vec<Find
             }
         }
         Kind::Header | Kind::RequestBody | Kind::Callback => {}
+    }
+}
+
+/// Path item members that are operations; `additionalOperations` must not
+/// repeat them.
+const FIXED_METHODS: [&str; 9] = [
+    "get", "put", "post", "delete", "options", "head", "patch", "trace", "query",
+];
+
+/// Why `token` cannot be compiled as an `additionalOperations` method, or
+/// `None` when it is sent as written.
+pub fn custom_method_problem(token: &str) -> Option<String> {
+    let tchar = |c: char| c.is_ascii_alphanumeric() || "!#$%&'*+-.^_`|~".contains(c);
+    if token.is_empty() || !token.chars().all(tchar) {
+        return Some(format!(
+            "`{token}` is not an HTTP method token (RFC 9110 `tchar` characters only)"
+        ));
+    }
+    if let Some(fixed) = FIXED_METHODS.iter().find(|m| m.eq_ignore_ascii_case(token)) {
+        return Some(format!(
+            "`{token}` must be described by the path item's `{fixed}` field, not by `additionalOperations`"
+        ));
+    }
+    if token.eq_ignore_ascii_case("CONNECT") || token.eq_ignore_ascii_case("TRACK") {
+        return Some(format!(
+            "`{token}` is a forbidden method (it opens a tunnel or traces the connection, not a resource); generated clients cannot send it"
+        ));
+    }
+    None
+}
+
+/// Each `additionalOperations` entry is compiled with its key as the wire
+/// method; only keys that cannot be sent are refused.
+fn additional_operations(pointer: &str, extra: &Value, out: &mut Vec<Finding>) {
+    let Value::Object(extra) = extra else {
+        out.push(error(
+            "TG0142",
+            pointer.to_string(),
+            "OpenAPI 3.2 `additionalOperations` must be a map from HTTP method to operation",
+            "write a map such as `additionalOperations: { COPY: { ... } }`",
+        ));
+        return;
+    };
+    for token in extra.keys() {
+        if let Some(problem) = custom_method_problem(token) {
+            out.push(error(
+                "TG0142",
+                join_pointer(pointer, token),
+                &format!("OpenAPI 3.2 `additionalOperations` method {problem}; the operation would be left out"),
+                "use the method token the server expects, or the matching fixed path item field",
+            ));
+        }
     }
 }
 

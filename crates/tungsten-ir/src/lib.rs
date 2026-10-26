@@ -203,9 +203,30 @@ pub enum HttpMethod {
     Trace,
     /// OpenAPI 3.2 `query`: a safe, idempotent request that carries a body.
     Query,
+    /// An OpenAPI 3.2 `additionalOperations` method. The token sent on the
+    /// wire is `Operation::custom_method`; nothing is assumed about its
+    /// semantics, so it is treated as unsafe and not idempotent.
+    Custom,
 }
 
 impl HttpMethod {
+    /// The standard method name; `Custom` has no name of its own (see
+    /// `Operation::wire_method`).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            HttpMethod::Get => "GET",
+            HttpMethod::Put => "PUT",
+            HttpMethod::Post => "POST",
+            HttpMethod::Delete => "DELETE",
+            HttpMethod::Options => "OPTIONS",
+            HttpMethod::Head => "HEAD",
+            HttpMethod::Patch => "PATCH",
+            HttpMethod::Trace => "TRACE",
+            HttpMethod::Query => "QUERY",
+            HttpMethod::Custom => "CUSTOM",
+        }
+    }
+
     pub fn is_safe(self) -> bool {
         matches!(
             self,
@@ -227,6 +248,10 @@ ir_struct! {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub operation_id: Option<String>,
         pub method: HttpMethod,
+        /// The method token sent on the wire, exactly as written, when
+        /// `method` is `Custom`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub custom_method: Option<String>,
         pub path: PathTemplate,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub doc: Option<Doc>,
@@ -260,6 +285,16 @@ ir_struct! {
         #[serde(default)]
         pub agent: OperationAgentMeta,
         pub source: SourceRef,
+    }
+}
+
+impl Operation {
+    /// The method token sent on the wire (`GET`, or a custom token).
+    pub fn wire_method(&self) -> &str {
+        match (self.method, &self.custom_method) {
+            (HttpMethod::Custom, Some(token)) => token,
+            (method, _) => method.as_str(),
+        }
     }
 }
 
