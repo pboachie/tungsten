@@ -130,10 +130,10 @@ cannot restart it. No attempt starts after it expires: the call fails with
 `code` `DEADLINE_EXCEEDED`, and a mutation that was already sent reports
 `OUTCOME_UNKNOWN`, never a blind replay. A retry wait that would end after the
 deadline returns the last failure at once. For `stream()` it bounds connecting
-and each reconnect, never an open stream (use `idle_timeout`). An in-flight
-OAuth token request is not cancelled, so a shared refresh still serves its
-other callers: it completes within its own `timeout` and the call then stops
-before sending. A blocking idempotency-store worker is no longer waited for at
+and each reconnect, never an open stream (use `idle_timeout`). Under a deadline, an
+OAuth token request runs as its own task: the call stops waiting for it at the
+deadline, while the request is not cancelled, so a shared refresh still serves
+its other callers within its own `timeout`. A blocking idempotency-store worker is no longer waited for at
 the deadline but runs to completion. Default: no total deadline.
 
 In unreleased 0.2.0, schema `minLength` and `maxLength` count Unicode code points, as

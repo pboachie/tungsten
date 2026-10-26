@@ -283,6 +283,10 @@ changes.
   cannot pay for is not made. A runnable bulk-sync example shows a job staying
   within a local API's concurrency quota.
 
+- Under a total operation deadline, the Rust runtime now stops waiting for an
+  OAuth token request or 401 refresh at the deadline without cancelling a
+  refresh other callers share, and reports `DEADLINE_EXCEEDED`.
+
 - Add an opt-in total operation deadline to the TypeScript (`deadlineMs`),
   Python (`deadline_ms`) and Rust (`deadline`) runtimes, on client and call
   options. Unlike the per-attempt timeout, it bounds one logical call across
