@@ -496,6 +496,14 @@ changes.
   code, with the construct, its refused or ignored policy and the
   `tungsten capabilities` and `tungsten explain` pointers.
 
+- Reuse the language server's last check while its inputs are unchanged. A
+  save, or a watched-file event such as output written by `tungsten generate`,
+  no longer recompiles the project when every source the check read has the
+  same content digest in the open buffers and on disk, and no optional file
+  it found missing has appeared. Checks with errors or remote documents are
+  never reused, and modification times are not consulted. On a 3,000-operation
+  spec, a save without changes dropped from about 3 s to about 1 ms.
+
 - Explain unavailable language-server overlay fixes: editors that show disabled
   code actions show why no fix is offered for a `TG0403`/`TG0401` diagnostic (a
   pending check, no derivable action, an editor without versioned edits or file
