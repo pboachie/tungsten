@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "programs": [
+    {
+      "operation": "openapi.watchPets",
+      "status": 200,
+      "headers": {"Content-Type": "text/event-stream"},
+      "body": "id: 1\ndata: {\"id\":\"pet-1\"}\n\nid: 2\ndata: {\"id\":\"pet-2\"}\n\n",
+      "cut_after": 30
+    },
+    {
+      "operation": "openapi.watchPets",
+      "status": 200,
+      "headers": {"Content-Type": "text/event-stream"},
+      "body": "id: 2\ndata: {\"id\":\"pet-2\"}\n\n"
+    }
+  ],
+  "expect": {
+    "total_calls": 2,
+    "calls": [{"operation": "openapi.watchPets", "status": 200, "count": 2}]
+  }
+}

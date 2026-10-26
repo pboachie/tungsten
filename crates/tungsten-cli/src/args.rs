@@ -227,7 +227,8 @@ pub(crate) enum Command {
         #[command(subcommand)]
         command: OverlayCommand,
     },
-    /// Preview metadata-only diagnostics, or export them to a new file on Linux.
+    /// Preview metadata-only diagnostics, or export them to a new file on Linux or
+    /// macOS.
     SupportBundle(SupportBundleArgs),
     /// Check for a newer release; never installs anything.
     Update {
@@ -248,7 +249,7 @@ pub(crate) struct SupportBundleArgs {
     /// Print what a bundle would contain; writes, uploads and runs nothing.
     #[arg(long)]
     pub preview: bool,
-    /// Export metadata to a new file on Linux; never overwrite an existing entry.
+    /// Export metadata to a new file on Linux or macOS; never overwrite an existing entry.
     /// Its existing directory must be owned by you and not writable by others.
     #[arg(long, value_name = "PATH", conflicts_with = "preview")]
     pub output: Option<PathBuf>,
@@ -281,6 +282,16 @@ pub(crate) struct CapabilitiesArgs {
     /// same declarations (JSON output is unchanged).
     #[arg(long)]
     pub matrix: bool,
+    /// Matrix rendering: `human` prints the table, `markdown` wraps it in
+    /// the start/end markers that delimit the README's generated block.
+    #[arg(long, value_enum, default_value_t = MatrixFormat::Human, requires = "matrix")]
+    pub format: MatrixFormat,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub(crate) enum MatrixFormat {
+    Human,
+    Markdown,
 }
 
 #[derive(Debug, Args)]
@@ -533,7 +544,7 @@ pub(crate) struct ScenarioRunArgs {
     pub input: InputArgs,
     #[arg(long, value_name = "FILE")]
     pub scenario: PathBuf,
-    /// Run-phase budget including cleanup; compilation/validation precede it.
+    /// Whole-command budget: acquisition, compilation, validation, run and cleanup.
     #[arg(long, default_value_t = 30_000, value_parser = clap::value_parser!(u64).range(20..=600_000))]
     pub timeout_ms: u64,
     #[arg(long, default_value_t = 0)]
