@@ -23,6 +23,7 @@
 pub mod capabilities;
 pub mod execution_policy;
 pub mod inspection;
+pub mod option_fields;
 pub mod pointer;
 pub mod profiles;
 mod source;
