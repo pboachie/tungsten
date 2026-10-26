@@ -1364,6 +1364,25 @@ changes.
   and send the request again after the deadline; it now reports the earlier
   `OUTCOME_UNKNOWN` without resending, as TypeScript, Python and Rust do.
 
+- Webhook verification behaves the same in the TypeScript, Python and Rust
+  runtimes:
+  - A JSON payload with a `\u` escape that is a lone surrogate, or with a
+    number outside the double range (`1e400`), is now rejected as
+    `payload_invalid` by TypeScript and Python too. Rust already rejected
+    both, and cannot represent either value.
+  - The Rust runtime parses JSON numbers with correct rounding (serde_json
+    `float_roundtrip`). Finite values at the edge of the double range, such
+    as `1.7976931348623158e308`, are now accepted as they are in TypeScript
+    and Python, and every number parses to the same double.
+  - Python encodes a `str` body or secret as UTF-8 with each lone surrogate
+    as U+FFFD, as TypeScript's `TextEncoder` does. Previously it used
+    `surrogatepass`, so signatures differed.
+  - Rust's `verify_webhook_with` rejects a `max_body_bytes` above 2^53 - 1,
+    as TypeScript and Python do.
+  - Python's `verify_webhook` raises `TypeError` for an `async def` claim,
+    or a claim that returns an awaitable. Previously the coroutine was never
+    awaited and, being truthy, let duplicates through.
+
 - Webhook verification in the TypeScript, Python and Rust runtimes applies
   one documented nesting limit: a payload whose arrays and objects nest more
   than 100 levels deep (`MAX_WEBHOOK_JSON_DEPTH`) is rejected as
