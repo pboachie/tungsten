@@ -361,6 +361,20 @@ changes.
   of the project a locked run as with `--locked`. The JSON results of both
   commands report `locked`.
 
+- Add `bundle export --include-consumer-cache DIR` (repeatable) to carry a
+  prepared, project-relative directory of consumer dependencies, such as
+  `npm pack` tarballs, `pip download` wheels or `cargo vendor` output, for
+  offline builds of generated consumers. Files are copied as supplied, with
+  role `consumer_cache`. The inventory's new `consumer_caches` records each
+  directory with its file count and size, provenance, the exporting platform
+  (`exported_on`) and a redistribution notice. Directories that overlap,
+  lie outside the project, sit in `.tungsten-inputs` or VCS metadata, or
+  overlap generated output are refused, as are links. Import accepts
+  `consumer_cache` entries only below a declared directory. Offline consumer
+  builds remain not guaranteed: tungsten does not check that a cache covers
+  every dependency, and native packages may install only on the exporting
+  platform.
+
 - Add `bundle export --include-input-cache` to carry the verified
   `.tungsten-inputs` pin records and pinned content of remote HTTP(S) and Git
   inputs, and of the reviewed sources of converted imports, so such projects
