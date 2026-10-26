@@ -36,6 +36,14 @@
     "target": "mcp"
   },
   {
+    "name": "first-mcp-python",
+    "title": "First Python MCP server (experimental)",
+    "description": "Generate the experimental native Python MCP server on the generated Python SDK and call it over stdio with the official MCP client, without Node.",
+    "mode": "mcp-python",
+    "prerequisites": "Python venv and pip",
+    "outcome": "the official MCP client lists the tools, reads typed pets, is refused a destructive call without a token, cannot reuse a preview token for other arguments, and deletes with the preview token, while the loopback mock sees exactly one DELETE"
+  },
+  {
     "name": "first-webmcp",
     "title": "First webmcp SDK",
     "description": "Generate and build a small webmcp package from a local OpenAPI 3.1 contract.",
