@@ -7,6 +7,9 @@
 use schemars::JsonSchema;
 
 use crate::option_fields;
+
+pub mod init;
+pub use init::{CompanionTarget, INIT, InitCapability};
 use serde::Serialize;
 
 /// Component-owned schema declaration. An absent declaration is unknown,
@@ -526,6 +529,8 @@ pub struct CapabilityCatalog {
     /// native OpenAPI lines.
     pub input_formats: Vec<InputFormatCapability>,
     pub execution_policy: ExecutionPolicyCapability,
+    /// Target selection by `tungsten init` and the wizard.
+    pub init: InitCapability,
 }
 
 /// How an input format enters a project.
@@ -873,6 +878,7 @@ pub const OPENAPI_INPUTS: &[OpenApiVersionCapability] = &[
 pub fn validate() -> Vec<String> {
     let mut errors = validate_parts(TARGETS, FEATURES, OPENAPI_INPUTS);
     errors.extend(validate_inputs(INPUT_FORMATS, OPENAPI_INPUTS));
+    errors.extend(INIT.validate(TARGETS));
     errors
 }
 

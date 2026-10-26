@@ -401,20 +401,9 @@ fn walkthrough(args: &mut InitArgs) -> io::Result<bool> {
                 .collect();
             args.resume = true;
         } else {
-            eprintln!(
-                "Outputs (comma-separated multi-select):\n  [ ] typescript - JavaScript/TypeScript SDK (Node/npm)\n  [ ] python - Python SDK\n  [ ] rust - Rust SDK and CLI (Cargo)\n  [ ] cli - command-line client (Rust SDK + Cargo)\n  [ ] mcp - local MCP server (Node/npm; adds TypeScript)\n  [ ] webmcp - browser adapter (Node/npm; adds TypeScript)\n  [ ] docs - documentation"
-            );
-            for target in tungsten_config::KNOWN_TARGETS {
-                if crate::targets::emitter(target).is_some()
-                    && !matches!(
-                        *target,
-                        "typescript" | "python" | "rust" | "mcp" | "webmcp" | "docs"
-                    )
-                {
-                    eprintln!(
-                        "  [ ] {target} - SDK source generation only; declared OpenAPI, no imported contracts or local build/setup"
-                    );
-                }
+            eprintln!("Outputs (comma-separated multi-select):");
+            for line in crate::targets::wizard_output_lines() {
+                eprintln!("  [ ] {line}");
             }
             eprintln!("Or one preset (explicit outputs and --strict still win):");
             for (name, about) in super::init_preset::NAMES {
@@ -424,7 +413,9 @@ fn walkthrough(args: &mut InitArgs) -> io::Result<bool> {
                 Some(preset) if args.targets.is_empty() => {
                     super::init_preset::name(preset).to_owned()
                 }
-                _ if args.targets.is_empty() => "typescript,docs".to_owned(),
+                _ if args.targets.is_empty() => tungsten_config::capabilities::INIT
+                    .wizard_default_targets
+                    .join(","),
                 _ => args.targets.join(","),
             };
             let Some(outputs) = answer("Outputs", &defaults)? else {
@@ -700,12 +691,10 @@ fn walkthrough(args: &mut InitArgs) -> io::Result<bool> {
                     "Configuration precedence: input shapes, tungsten.yml target/server overrides, then agent.yml per-operation policy. Inspect the effective contract with tungsten --json ir dump. Imported operations retain preview confirmation until explicitly reviewed; no credentials are required for the mock."
                 );
             }
-            let setup_supported = args.targets.iter().all(|t| {
-                matches!(
-                    t.as_str(),
-                    "typescript" | "python" | "rust" | "cli" | "mcp" | "webmcp" | "docs"
-                )
-            });
+            let setup_supported = args
+                .targets
+                .iter()
+                .all(|t| tungsten_config::capabilities::INIT.local_setup(t));
             if !setup_supported {
                 eprintln!(
                     "This selection includes source-only SDK outputs. Generate and inspect those sources with their language toolchains; this combination has no automated local setup or successful first-call claim."

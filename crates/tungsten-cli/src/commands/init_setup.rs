@@ -6,19 +6,11 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 pub(super) fn preflight(args: &InitArgs) -> Result<(), &'static str> {
+    let init = &tungsten_config::capabilities::INIT;
+    // Docs alone builds nothing to set up.
     if args.targets.is_empty()
-        || !args.targets.iter().any(|t| {
-            matches!(
-                t.as_str(),
-                "typescript" | "mcp" | "webmcp" | "python" | "rust" | "cli"
-            )
-        })
-        || args.targets.iter().any(|t| {
-            !matches!(
-                t.as_str(),
-                "typescript" | "mcp" | "webmcp" | "docs" | "python" | "rust" | "cli"
-            )
-        })
+        || args.targets.iter().all(|t| t == "docs")
+        || args.targets.iter().any(|t| !init.local_setup(t))
     {
         return Err("local setup supports TypeScript, Python, Rust/CLI, MCP, WebMCP and docs");
     }
