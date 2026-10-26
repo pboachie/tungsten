@@ -30,6 +30,7 @@ pub(crate) mod scenario;
 mod schema;
 pub(crate) mod support_bundle;
 mod support_bundle_file;
+pub(crate) mod support_bundle_inspect;
 pub(crate) mod update;
 mod wizard;
 

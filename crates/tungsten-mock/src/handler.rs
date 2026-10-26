@@ -21,6 +21,7 @@ use crate::params::{self, RequestView, media_essence};
 use crate::reply::{self, Reply, header_text, value_text};
 use crate::route::{Routed, route};
 use crate::rules;
+use crate::scenario::Effect;
 use crate::state::{Action, Answer, Idempotent, Program, State};
 use crate::validate::{Context, Validator, empty_object, json_eq};
 
@@ -516,12 +517,19 @@ fn operation(state: &State, entry: &OpEntry, request: &Exchange<'_>) -> Reply {
         .idempotency_header()
         .and_then(|h| request.view.header(h).map(|k| (h, k)))
     else {
-        return success(model, entry, None, streams(entry, request));
+        return applied(
+            state,
+            entry,
+            success(model, entry, None, streams(entry, request)),
+        );
     };
     let mut fingerprint = format!("{}?{}\n", request.path, request.query).into_bytes();
     fingerprint.extend_from_slice(request.body);
     match state.idempotent(entry.id(), &key, &fingerprint) {
-        Idempotent::Replay(stored) => replayed(stored),
+        Idempotent::Replay(stored) => {
+            state.effect(entry.id(), Effect::Replayed);
+            replayed(stored)
+        }
         Idempotent::Conflict => op_error(
             model,
             entry,
@@ -531,11 +539,23 @@ fn operation(state: &State, entry: &OpEntry, request: &Exchange<'_>) -> Reply {
             &format!("{header} was used with a different request"),
         ),
         Idempotent::Fresh => {
-            let reply = success(model, entry, None, streams(entry, request));
+            let reply = applied(
+                state,
+                entry,
+                success(model, entry, None, streams(entry, request)),
+            );
             state.store(entry.id(), &key, fingerprint, reply.clone());
             reply
         }
     }
+}
+
+/// Count a fresh successful answer as an applied effect for scenario assertions.
+fn applied(state: &State, entry: &OpEntry, reply: Reply) -> Reply {
+    if (200..300).contains(&reply.status) {
+        state.effect(entry.id(), Effect::Applied);
+    }
+    reply
 }
 
 fn check_body(model: &Model, entry: &OpEntry, request: &Exchange<'_>) -> Result<(), String> {

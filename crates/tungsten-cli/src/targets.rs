@@ -73,7 +73,7 @@ pub(crate) fn import_policy_refusal(name: &str) -> Diagnostic {
         format!("target `{name}` does not declare enforced imported-operation policy support"),
     )
     .with_help(
-        "select a supported TypeScript, Python, Rust, MCP, WebMCP or docs target, or an \
+        "select a supported TypeScript, Python, Rust, Java, Kotlin, Ruby, MCP, WebMCP or docs target, or an \
          external emitter that declares `import_policy` (`tungsten init --resume --add-targets \
          <targets>` adds one); imported-policy metadata must not be discarded. `tungsten \
          explain TG0705` has the details",
@@ -92,7 +92,7 @@ pub(crate) fn external_import_policy_refusal(name: &str) -> Diagnostic {
     .with_help(
         "use an emitter whose --describe response declares `import_policy: true` and \
          enforces imported-operation policy, or select a supported TypeScript, Python, \
-         Rust, MCP, WebMCP or docs target; `tungsten explain TG0808` has the details",
+         Rust, Java, Kotlin, Ruby, MCP, WebMCP or docs target; `tungsten explain TG0808` has the details",
     )
 }
 
