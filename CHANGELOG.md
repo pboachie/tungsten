@@ -234,6 +234,10 @@ changes.
   `RATE_LIMIT_PAUSED`; `TRANSPORT_FAILED` code `SCHEDULER_CLOSED`), and shares
   `Retry-After` pauses between callers of one scope, resuming with a single
   probe. A scheduler can be shared by several clients, closed and drained.
+  An optional retry budget (`retryRatio`/`retry_ratio`, with a reserve)
+  limits the retries all callers of one scope make together; a retry it
+  cannot pay for is not made. A runnable bulk-sync example shows a job staying
+  within a local API's concurrency quota.
 
 - Add an opt-in total operation deadline to the TypeScript (`deadlineMs`),
   Python (`deadline_ms`) and Rust (`deadline`) runtimes, on client and call
