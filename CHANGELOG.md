@@ -236,6 +236,20 @@ changes.
 
 ### Added
 
+- Experimental `mcp-python` target and `tungsten-mcp` Python runtime
+  (`runtimes/mcp-python`): a native Python MCP server, generated from the same
+  tool manifest as the `mcp` target, that serves discrete tools over stdio on
+  top of the generated Python SDK, with no Node or TypeScript SDK. It is built
+  on the official MCP Python SDK pinned to `mcp==2.3.0` and offers previews with
+  argument-bound confirmation tokens (never `true`), per-call deadlines
+  (`<API>_MCP_DEADLINE_MS`, `DEADLINE_EXCEEDED` separate from
+  `OUTCOME_UNKNOWN`), diagnostic envelope results, shown-once redaction and
+  bounded results. Progressive disclosure, Streamable HTTP, streamed results
+  and `run_script` are not served: a progressive manifest is refused at
+  startup, and TG0729 reports what the API uses that it does not serve.
+  TG0728 reports invalid target options. The target sits in the capability
+  catalog as experimental, and the runtime is not published.
+
 - TypeScript, Python and Rust SDKs send the headers of a multipart field's
   OpenAPI Encoding Object whose schema fixes one value (`const` or a one-value
   `enum`) on every part of the field. `Content-Type` and `Content-Disposition`

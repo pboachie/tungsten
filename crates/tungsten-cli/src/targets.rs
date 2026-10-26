@@ -17,7 +17,7 @@ use tungsten_emit_docs::DocsEmitter;
 use tungsten_emit_fsharp::FSharpEmitter;
 use tungsten_emit_java::JavaEmitter;
 use tungsten_emit_kotlin::KotlinEmitter;
-use tungsten_emit_mcp::McpEmitter;
+use tungsten_emit_mcp::{McpEmitter, McpPythonEmitter};
 use tungsten_emit_py::PythonEmitter;
 use tungsten_emit_rs::RustEmitter;
 use tungsten_emit_ruby::RubyEmitter;
@@ -28,6 +28,7 @@ use tungsten_ir::Ir;
 static TYPESCRIPT: TypeScriptEmitter = TypeScriptEmitter;
 static DOCS: DocsEmitter = DocsEmitter;
 static MCP: McpEmitter = McpEmitter;
+static MCP_PYTHON: McpPythonEmitter = McpPythonEmitter;
 static WEBMCP: WebMcpEmitter = WebMcpEmitter;
 static PYTHON: PythonEmitter = PythonEmitter;
 static RUST: RustEmitter = RustEmitter;
@@ -44,6 +45,7 @@ pub fn emitter(id: &str) -> Option<&'static dyn Emitter> {
         "typescript" => Some(&TYPESCRIPT),
         "docs" => Some(&DOCS),
         "mcp" => Some(&MCP),
+        "mcp-python" => Some(&MCP_PYTHON),
         "webmcp" => Some(&WEBMCP),
         "python" => Some(&PYTHON),
         "rust" => Some(&RUST),
@@ -217,7 +219,7 @@ pub(crate) fn external_import_policy_refusal(name: &str) -> Diagnostic {
 /// docs targets.
 pub fn tool_names(id: &str, ir: &Ir) -> BTreeMap<String, String> {
     match id {
-        "mcp" => tungsten_emit_mcp::tool_names(ir),
+        "mcp" | "mcp-python" => tungsten_emit_mcp::tool_names(ir),
         "webmcp" => tungsten_emit_webmcp::tool_names(ir),
         _ => BTreeMap::new(),
     }
@@ -263,6 +265,20 @@ pub fn target_config_for(
             .filter_map(|k| Some(((*k).to_string(), ts.get(*k)?.clone())))
             .collect();
         map.insert("typescript_target".into(), serde_json::Value::Object(pick));
+    }
+    if name == "mcp-python" && options.is_null() {
+        options = serde_json::json!({});
+    }
+    if name == "mcp-python"
+        && let Some(map) = options.as_object_mut()
+        && let Some(py) = config.and_then(|c| c.targets.get("python"))
+    {
+        // The Python MCP server depends on the SDK the `python` target generates.
+        let pick: serde_json::Map<String, serde_json::Value> = ["package", "module", "version"]
+            .iter()
+            .filter_map(|k| Some(((*k).to_string(), py.get(*k)?.clone())))
+            .collect();
+        map.insert("python_target".into(), serde_json::Value::Object(pick));
     }
     if name == "mcp"
         && let Some(map) = options.as_object_mut()
