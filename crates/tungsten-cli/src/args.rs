@@ -239,6 +239,14 @@ pub(crate) struct SupportBundleArgs {
     /// Remove an entry by id from the bundle; repeatable.
     #[arg(long, value_name = "ID")]
     pub exclude: Vec<String>,
+    /// Read an existing bundle file, check it against its schema version and
+    /// show its entries; reads only this file and writes or runs nothing.
+    #[arg(
+        long,
+        value_name = "FILE",
+        conflicts_with_all = ["preview", "output", "exclude"]
+    )]
+    pub inspect: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]

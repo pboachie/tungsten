@@ -226,6 +226,12 @@ changes.
 
 ### Added
 
+- Add `tungsten support-bundle --inspect <FILE>` to review an existing support
+  bundle locally on any platform. It reads one bounded regular file, refuses
+  unsupported `bundle_schema_version` values by number, requires exactly the
+  schema's keys, observed metadata-only entries and payload sizes that match,
+  and lists the entries. Errors name schema locations only, never file content.
+
 - Offer language-server quick fixes for unknown operation ids (`TG0603`) and
   unknown manifest fields or values (`TG0602`), replacing the value named by
   the diagnostic with the closest known name. Fixes are version-pinned edits
