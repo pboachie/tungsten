@@ -192,7 +192,7 @@ pub fn run(
     )
 }
 
-/// Embed scenario execution or Linux and macOS support-bundle export with cooperative
+/// Embed scenario execution or support-bundle export with cooperative
 /// cancellation; never changes signal masks. Export commits at publication.
 pub fn run_with_cancellation(
     args: impl IntoIterator<Item = OsString>,
@@ -211,7 +211,8 @@ pub fn run_with_cancellation(
     )
 }
 
-/// Process entry point. Linux scenario runs own scoped SIGINT/SIGTERM capture;
+/// Process entry point. Linux scenario runs and support-bundle exports own
+/// scoped SIGINT/SIGTERM capture;
 /// library callers use `run` or `run_with_cancellation` instead.
 pub fn run_binary(
     args: impl IntoIterator<Item = OsString>,
@@ -255,12 +256,20 @@ fn run_inner(
     let env = &selected_env;
     #[cfg(target_os = "linux")]
     let signals = if _binary_signals
+        && matches!(&cli.command, args::Command::SupportBundle(bundle) if bundle.output.is_some())
+    {
+        // Turns SIGINT/SIGTERM into cooperative cancellation so an interrupted
+        // export removes its temporary file. Without capture, the default
+        // disposition applies, as before.
+        commands::scenario::signals::Signals::capture_interrupts().ok()
+    } else if _binary_signals
         && matches!(
             &cli.command,
             args::Command::Scenario {
                 command: args::ScenarioCommand::Run(_)
             }
-        ) {
+        )
+    {
         match commands::scenario::signals::Signals::capture() {
             Ok(signals) => Some(signals),
             Err(_) => {
@@ -308,6 +317,8 @@ fn run_inner(
     #[cfg(target_os = "linux")]
     if let Some(signals) = signals {
         match signals.restore() {
+            // Export commits at publication; a later signal changes nothing.
+            Ok(true) if matches!(&cli.command, args::Command::SupportBundle(_)) => {}
             Ok(true) => commands::scenario::reject_late_cancellation(&mut report),
             Ok(false) => {}
             Err(_) => {

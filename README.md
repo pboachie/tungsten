@@ -106,7 +106,7 @@ helpers retain their own platform limits.
 
 | Input | You provide | Entry point and conversion | Limits and required review |
 |---|---|---|---|
-| OpenAPI 3.0 / 3.1 | JSON or YAML document | `tungsten init --from openapi.json` (default when unset: `openapi.json`, `openapi.yaml` or `openapi.yml` in the target directory). The document is kept in place, so relative references retain meaning, and goes through the native frontend: `$ref` resolution, overlays | The full frontend surface; overlays remain optional. OpenAPI 3.2 documents are read when they use only constructs 3.1 has plus the `query` method (sent as HTTP `QUERY` with its body); each other 3.2-only construct gets its own diagnostic (TG0140 to TG0156), an error unless it only adds metadata, and `tungsten capabilities` lists them |
+| OpenAPI 3.0 / 3.1 | JSON or YAML document | `tungsten init --from openapi.json` (default when unset: `openapi.json`, `openapi.yaml` or `openapi.yml` in the target directory). The document is kept in place, so relative references retain meaning, and goes through the native frontend: `$ref` resolution, overlays | The full frontend surface; overlays remain optional. OpenAPI 3.2 documents are read when they use only constructs 3.1 has plus the `query` method (sent as HTTP `QUERY` with its body) and response `itemSchema` for JSON Lines and JSON server-sent events; each other 3.2-only construct gets its own diagnostic (TG0140 to TG0156), an error unless it only adds metadata, and `tungsten capabilities` lists them |
 | Swagger 2.0 | JSON or YAML document | `tungsten init --from swagger.json` (also a default name) or any path. Bounded offline conversion to OpenAPI, saved as `imported.openapi.json` | Unsupported semantics fail explicitly instead of being guessed; conversion never resolves external references |
 | Postman Collection v2.1 | JSON collection | `tungsten init --from collection.json`. Structural import; omissions are listed in `import-report.json` | Scripts and requests are never executed: script-dependent behavior, non-JSON bodies and saved responses and unsupported auth helpers are omitted per item, not interpreted — this is not a Postman runtime |
 | Saved cURL command | A saved command as text | `tungsten init --from command.curl --route '/pets/{id}'` (auto-detected by a leading `curl`, a `.curl` extension, or `--input-format curl`). Parsed as data against POSIX, cmd or PowerShell quoting (`--shell-dialect`) | Exactly one explicit `--route` path template is required; the command is parsed, never executed |
@@ -131,7 +131,7 @@ The support matrix below is generated from the capability catalog (`tungsten cap
 | `csharp` | `cs` | C# SDK | dotnet >=10.0 | dotnet | `typed_sdk`, `pagination_helpers` | enforced | unknown | unknown |
 | `dart` |  | Dart SDK (sealed unions, Future methods returning Result, Stream pages) | dart >=3.6 <4.0 | dart_io | `typed_sdk`, `pagination_helpers` | enforced | unknown | unknown |
 | `docs` |  | llms.txt, llms-full.txt, tools.json and README | none | static | `llms_txt` | enforced | unknown | unknown |
-| `fsharp` | `fs` | F# SDK (records, discriminated unions, Task of Result) | dotnet >=10.0 | dotnet | `typed_sdk`, `pagination_helpers` | refused (TG0705) | unknown | unknown |
+| `fsharp` | `fs` | F# SDK (records, discriminated unions, Task of Result) | dotnet >=10.0 | dotnet | `typed_sdk`, `pagination_helpers` | enforced | unknown | unknown |
 | `java` |  | Java SDK | java >=17.0; mvn installed | jvm | `typed_sdk`, `pagination_helpers` | enforced | unknown | unknown |
 | `kotlin` | `kt` | Kotlin/JVM SDK (blocking functions returning Result; opt-in coroutines) | java >=17.0; gradle installed | jvm | `typed_sdk`, `pagination_helpers`, `coroutines` | enforced | unknown | unknown |
 | `mcp` |  | MCP server over stdio or Streamable HTTP, discrete or progressive | node >=22.13 excluding 23.0.x, 23.1.x; npm installed | node | `mcp_stdio`, `mcp_streamable_http`, `mcp_embedding_search`, `mcp_script_sandbox` | enforced | unknown | unknown |
@@ -526,6 +526,24 @@ uninterruptible callbacks retain capacity until completion and late results are
 rejected, without a hard settlement deadline. OS resolver cancellation depends on
 the platform.
 
+Migrating to the total deadline (unreleased 0.2.0): `timeoutMs` and its
+equivalents keep their meaning. They bound one attempt, so retries, backoff,
+authentication, pages and verification can together take several times as long.
+To bound what a caller waits for one logical call, set the new opt-in total
+deadline as well: `deadlineMs` (TypeScript), `deadline_ms` (Python), `deadline`
+(Rust), `Deadline` (Go), `--deadline <SECONDS>` with `<PREFIX>_DEADLINE` or the
+profile key `deadline` (generated Rust CLI), and `toolDeadlineMs` with
+`<API>_MCP_DEADLINE_MS` (MCP server, per tool call). Other runtimes describe
+their support in their README's `Limits` section. With both set, each attempt
+gets at most the time the deadline has left, and queue admission waits no longer
+than the deadline. No attempt starts after the deadline expires (`code`
+`DEADLINE_EXCEEDED`). A mutation already sent at that point reports
+`OUTCOME_UNKNOWN` and is never replayed blindly, so retry it only with the same
+idempotency key. An open event stream is not cut by the deadline; its idle and
+collection limits apply. Shared token refreshes and custom transports or stores
+that ignore cancellation are no longer waited for, but they are not stopped.
+Without a deadline, behaviour is unchanged.
+
 For a saved collection, start with [Postman import and contract review](examples/input-postman/README.md).
 For an API change, use the [stale-output and regeneration walkthrough](examples/ci-drift/README.md).
 Both build on the existing gallery recipes.
@@ -766,8 +784,14 @@ Library callers can cooperatively cancel an export before publication with
 `run_with_cancellation`. Successful publication is the commit point: a later
 cancellation does not remove the file. A cleanup failure after publication
 returns a nonzero status while retaining `published: true` in the receipt.
-Abrupt process termination and binary signal cleanup are not qualified by this
-command. Abrupt termination or unconfirmed cleanup can leave one owned
+On Linux, the `tungsten` binary blocks SIGINT and SIGTERM for the duration of
+an export and turns them into the same cooperative cancellation: an
+interrupted export stops collection or writing within about 50 ms, removes its
+temporary file and exits with status 4 without publishing. A signal after
+publication leaves the published file and the success status in place. On
+macOS and Windows the default signal and console-control behavior still
+applies. Abrupt termination (SIGKILL, a crash or power loss), interrupts on
+macOS and Windows, or unconfirmed cleanup can leave one owned
 `.tungsten-support-*.pending` entry per invocation; later commands do not sweep
 existing temporary entries. File syncing before publication does not establish
 a power-loss durability guarantee. There is no automatic upload or issue creation.
@@ -1084,7 +1108,7 @@ including invalid or unsaved included profiles outside the manifest directory.
 Compiler source names and exported configuration provenance remain portable.
 Dedicated profile completion and navigation remain follow-up work.
 
-`tungsten lsp` is a language server for `tungsten.yml`, `agent.yml` and the overlay files a project lists. It checks the project with the same compiler as `tungsten check` and shows the same `TG` diagnostics on their source lines. Unsaved JSON/YAML manifests, specs, overlays and local references participate in the same source snapshot, including new files in an existing input directory. Closing a buffer restores its disk contents; file watchers pick up saved changes and deletions. File-size limits and local-reference confinement still apply. The selected project's `.tungsten-inputs` acquisition cache is reserved for verified disk content: buffers cannot replace or extend a pinned Git tree, while explicitly selected local overlays outside the cache remain editable. It completes keys, enumerated values and the operation ids, gates and clusters of the compiled project; shows field documentation, operation signatures and diagnostic explanations on hover; jumps from an operation id to its place in the OpenAPI document; and outlines the manifests. Quick fixes replace an unknown operation id (`TG0603`) or an unknown manifest field or value (`TG0602`) with the closest name the compiler knows; each fix is a single edit pinned to the buffer version it was computed for, so the editor previews it, refuses it after a later edit and can undo it. A fix never runs emitters, installs packages or refreshes inputs. The workspace is the directory of `tungsten.yml` (found from the editor's workspace folder, or given with `--config <path>`); one project is served per process.
+`tungsten lsp` is a language server for `tungsten.yml`, `agent.yml` and the overlay files a project lists. It checks the project with the same compiler as `tungsten check` and shows the same `TG` diagnostics on their source lines. Unsaved JSON/YAML manifests, specs, overlays and local references participate in the same source snapshot, including new files in an existing input directory. Closing a buffer restores its disk contents; file watchers pick up saved changes and deletions. File-size limits and local-reference confinement still apply. The selected project's `.tungsten-inputs` acquisition cache is reserved for verified disk content: buffers cannot replace or extend a pinned Git tree, while explicitly selected local overlays outside the cache remain editable. It completes keys, enumerated values and the operation ids, gates and clusters of the compiled project; shows field documentation, operation signatures and diagnostic explanations on hover; jumps from an operation id to its place in the OpenAPI document; and outlines the manifests. Quick fixes replace an unknown operation id (`TG0603`) or an unknown manifest field or value (`TG0602`) with the closest name the compiler knows; each fix is a single edit pinned to the buffer version it was computed for, so the editor previews it, refuses it after a later edit and can undo it. An operation without an `operationId` (`TG0403`) or with a repeated one (`TG0401`) gets the overlay action `tungsten overlay suggest` derives, added to the input's suggested overlay in one previewed edit. When a fix cannot be offered, editors that show disabled code actions show why and the equivalent command. Editors without versioned workspace edits get plain edits for the replacement fixes, still checked against the current buffer. A fix never runs emitters, installs packages or refreshes inputs. The workspace is the directory of `tungsten.yml` (found from the editor's workspace folder, or given with `--config <path>`); one project is served per process.
 
 Edits retain the existing debounce and one active analysis worker. A newer edit
 cancels obsolete work cooperatively between compiler phases and during reference,

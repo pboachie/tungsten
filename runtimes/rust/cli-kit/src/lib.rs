@@ -22,7 +22,7 @@
 //!   `--i-understand`, `--idempotency-key` and `--verify`; on paginated
 //!   operations: `--all` and, with it, `--max-pages <N>`;
 //! - global flags: `--json`, `--base-url`, `--profile`, `--config`,
-//!   `--timeout`, `--max-response-bytes`, `--no-color`;
+//!   `--timeout`, `--deadline`, `--max-response-bytes`, `--no-color`;
 //! - `schema <command>` (the compact JSON Schema of the arguments),
 //!   `operations` (every command with its tier), `auth status` (which
 //!   credentials are present, never their values), `macros <name>` for the
@@ -37,7 +37,7 @@
 //! SDK's auth schemes: `ZROTEXT_BEARER_AUTH`; each part of a composite
 //! profile has its own) and from the config file
 //! `~/.config/<config_dir>/config.toml` (`XDG_CONFIG_HOME` is respected)
-//! whose `[profile.<name>]` tables hold `base_url`, `timeout` and the same
+//! whose `[profile.<name>]` tables hold `base_url`, `timeout`, `deadline` and the same
 //! credential names in lower case. Precedence: flag, then environment, then
 //! profile, then the SDK's default. A flag marked `sensitive` takes `-` (a
 //! line of standard input) or `env:NAME` instead of a value.
