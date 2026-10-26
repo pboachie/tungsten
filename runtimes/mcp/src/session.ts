@@ -160,6 +160,8 @@ export class Session {
   readonly #maxResponseBytes: number;
   readonly #maxStreamBytes: number;
   readonly #maxStreamMs: number;
+  /** `ServerOptions.toolDeadlineMs`, or null for none. */
+  readonly #deadlineMs: number | null;
   readonly #core: ClientCore | null;
   readonly #coreError: string | null;
   /** Digests of identical replayable calls whose sensitive or shown-once
@@ -179,6 +181,8 @@ export class Session {
     this.#maxResponseBytes = typeof responseCap === "number" && Number.isSafeInteger(responseCap) && responseCap > 0 ? responseCap : DEFAULT_MAX_RESPONSE_BYTES;
     this.#maxStreamBytes = positive(options.maxStreamBytes, DEFAULT_MAX_STREAM_BYTES);
     this.#maxStreamMs = positive(options.maxStreamMs, DEFAULT_MAX_STREAM_MS);
+    const deadline = options.toolDeadlineMs;
+    this.#deadlineMs = typeof deadline === "number" && Number.isFinite(deadline) && deadline > 0 ? deadline : null;
     let core: ClientCore | null = null;
     let coreError: string | null = null;
     try {
@@ -344,6 +348,7 @@ export class Session {
       error.failed_parameter ? `failed_parameter: ${error.failed_parameter}` : null,
       error.expected ? `expected: ${error.expected}` : null,
       error.retry_after_ms !== null ? `retry_after_ms: ${error.retry_after_ms}` : null,
+      typeof error.code === "string" && error.code !== "" ? `code: ${error.code}` : null,
     ].filter((x): x is string => x !== null);
     if (detail.length > 0) lines.push(detail.join("; "));
     if (tool) lines.push(...this.#mcpHints(tool, error));
@@ -362,6 +367,13 @@ export class Session {
     const named = this.#namedTools(`${error.remediation} ${error.next_action ?? ""}`);
     if (named.length > 0) hints.push(`Here ${named.map((t) => `${t.target} is called as ${this.#callForm(t)}`).join("; ")}.`);
     const keyField = tool.reserved.idempotencyKey;
+    if (error.code === "DEADLINE_EXCEEDED") {
+      hints.push(
+        this.#deadlineMs !== null
+          ? `Here deadlineMs is the server's per-tool-call deadline (${this.#deadlineMs} ms, ServerOptions.toolDeadlineMs); a later call gets a fresh one.`
+          : "Here deadlineMs is the server's per-tool-call deadline (ServerOptions.toolDeadlineMs).",
+      );
+    }
     if (error.failed_parameter === "idempotencyKey" && keyField) hints.push(`In this tool the idempotency key is the argument "${keyField}".`);
     if (error.category === "CONFIRMATION_REQUIRED") {
       const field = tool.reserved.confirmationToken;
@@ -548,6 +560,7 @@ export class Session {
     // A non-string key is passed through so the runtime reports it.
     if (prepared.idempotencyKey !== undefined && prepared.idempotencyKey !== null) opts.idempotencyKey = prepared.idempotencyKey as string;
     if (withConfirm && prepared.confirm !== undefined) opts.confirm = prepared.confirm;
+    if (this.#deadlineMs !== null) opts.deadlineMs = this.#deadlineMs;
     return opts;
   }
 

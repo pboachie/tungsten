@@ -1519,6 +1519,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
       if (interrupted) return previousMutationFailure ?? interrupted;
       const permit = await this.#admit(op, prepared.url, opts, stream);
       if (permit !== null && "ok" in permit) return previousMutationFailure ?? permit;
+      if (permit !== null && attempts === 1) this.#scheduler?.recordCall(this.#scopeKey(prepared.url));
       let result: Result<T>;
       let current = { url: prepared.url, method: prepared.method, body: prepared.body };
       let handedOff = false;
@@ -1601,6 +1602,8 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
         const random = typeof this.options.random === "function" ? bounded(this.options.random(), 0.5, 0, 1) : Math.random();
         delay = retries.jitter === "none" ? ceiling : retries.jitter === "equal" ? ceiling / 2 + (random * ceiling) / 2 : random * ceiling;
       }
+      // Callers sharing a quota share one retry budget.
+      if (this.#scheduler !== null && !this.#scheduler.allowRetry(this.#scopeKey(prepared.url))) return previousMutationFailure ?? done();
       for (const m of this.#middleware()) {
         try {
           await m.onRetry?.(ctx, error);
@@ -1621,7 +1624,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     const scheduler = this.#scheduler;
     if (scheduler === null) return null;
     const random = typeof this.options.random === "function" ? () => bounded(this.options.random?.(), 0.5, 0, 1) : Math.random;
-    const key = scheduler.scopeKey(url, this.options.tenant);
+    const key = this.#scopeKey(url);
     const admitted = await scheduler.acquire(key, stream ? "stream" : "call", opts.signal, this.#deadline(opts), random);
     if ("release" in admitted) {
       // Cancelled or expired while it waited: the request is never sent.
@@ -1634,6 +1637,10 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     }
     // A wait ended by the caller's signal or deadline reports that.
     return this.#beforeDispatch(op, opts) ?? this.#rejected(op, admitted, stream);
+  }
+
+  #scopeKey(url: string): string {
+    return this.#scheduler?.scopeKey(url, this.options.tenant) ?? "";
   }
 
   #rejected(op: OperationDescriptor, rejection: Rejection, stream: boolean): Failure {

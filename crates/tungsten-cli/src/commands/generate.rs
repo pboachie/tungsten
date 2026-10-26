@@ -596,6 +596,13 @@ pub(crate) fn run(args: &GenerateArgs, env: &CliEnv, no_external: bool) -> Repor
         report.exit = exit::FAILED;
         return report;
     };
+    let locked = super::lock::required(&args.input.path, args.locked);
+    if locked && let Some(diagnostic) = super::lock::locked_diagnostic(&args.input.path, &compiled)
+    {
+        report.diagnostics.push(diagnostic);
+        report.exit = exit::FAILED;
+        return report;
+    }
     let names = match select(&compiled, &args.target) {
         Ok(names) => names,
         Err(error) => return report.failed(exit::FAILED, error),
@@ -620,6 +627,7 @@ pub(crate) fn run(args: &GenerateArgs, env: &CliEnv, no_external: bool) -> Repor
         check: args.check,
         strict: args.strict,
         promoted: promoted + outcome.promoted,
+        locked,
     };
     let path = args.input.path.display().to_string();
     report.human = human(

@@ -339,19 +339,19 @@ fn schema_target(cx: &Ctx<'_>, decl: &Declared<'_>) -> (Option<RefTarget>, Optio
     if decl.value.get("schema").is_some() {
         return (Some(child(&decl.at, "schema")), None);
     }
-    let Some((media, entry)) = decl
+    let Some(media) = decl
         .value
         .get("content")
         .and_then(Value::as_object)
-        .and_then(|c| c.iter().next())
+        .and_then(|c| c.keys().next())
     else {
         return (None, None);
     };
-    let target = child(&child(&child(&decl.at, "content"), media), "schema");
-    let schema = entry
-        .get("schema")
-        .and_then(|_| cx.get(&target))
-        .map(|_| target);
+    let target = child(
+        &crate::bodies::media_at(cx, &child(&decl.at, "content"), media),
+        "schema",
+    );
+    let schema = cx.get(&target).map(|_| target);
     (schema, Some(media.clone()))
 }
 

@@ -672,6 +672,12 @@ impl ClientCore {
                 secrets,
                 oauth,
             } => (plan, secrets, oauth),
+            AuthResolution::Failed { .. } if crate::verify::call_deadline_expired() => {
+                return Err(crate::verify::deadline_exceeded(
+                    &op.id,
+                    "while authenticating",
+                ));
+            }
             AuthResolution::Failed { remediation } => {
                 // A token wait cut short by the deadline reports that.
                 if crate::verify::call_deadline_expired() {

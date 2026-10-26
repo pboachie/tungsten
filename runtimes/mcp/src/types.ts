@@ -205,6 +205,18 @@ export interface ServerOptions {
    * may spend collecting events (same failure). Default 60000. A streamed
    * call also stops after 1000 events (`truncated: true`). */
   maxStreamMs?: number;
+  /** Total deadline, in milliseconds, of one tool call: passed to the
+   * client runtime as `CallOptions.deadlineMs`, so it bounds authentication,
+   * idempotency-key reservation, queue admission, every attempt, retry
+   * waits, response bodies and verification, and a whole macro. A streamed
+   * call's deadline bounds connecting and reconnects; `maxStreamMs` bounds
+   * collecting. Expiry gives a failure with `code` `DEADLINE_EXCEEDED` and
+   * nothing more is sent; a mutation already sent reports `OUTCOME_UNKNOWN`.
+   * Each tool call (each call of a `run_script` script too) gets its own
+   * deadline. Omitted or 0: none (each attempt keeps the client's
+   * per-attempt `timeoutMs`). Needs `@elysra/tungsten-runtime` with
+   * `deadlineMs`; older runtimes ignore it. */
+  toolDeadlineMs?: number;
 }
 
 /** Options of `TungstenMcpServer.connectHttp` (Streamable HTTP). */

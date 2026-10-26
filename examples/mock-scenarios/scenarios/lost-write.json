@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "programs": [
+    {"operation": "openapi.createPet", "inject": "drop-after-write"}
+  ],
+  "expect": {
+    "total_calls": 2,
+    "calls": [
+      {"operation": "openapi.createPet", "status": 0, "count": 1},
+      {"operation": "openapi.createPet", "status": 201, "count": 1}
+    ],
+    "effects": [
+      {"operation": "openapi.createPet", "applied": 1, "replayed": 1}
+    ]
+  }
+}

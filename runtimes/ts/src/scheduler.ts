@@ -12,7 +12,8 @@
  * @module
  */
 
-/** Limits of a {@link RequestScheduler}. Every limit applies per scope. */
+/** Limits of a {@link RequestScheduler}. Every limit applies per scope,
+ * except the optional `maxActiveTotal` and `maxStreamsTotal`. */
 export interface SchedulerOptions {
   /** Ordinary requests in flight at once. A positive integer (at most 10000). */
   maxActive: number;
@@ -29,6 +30,23 @@ export interface SchedulerOptions {
   /** `"origin"` (default): one scope per tenant and request origin.
    * `"scheduler"`: one scope per tenant, whatever the origin. */
   scope?: "origin" | "scheduler";
+  /** Retries per call a scope may spend over time, shared by every caller
+   * of the scope (0 to 1). Each call adds this much to the scope's retry
+   * budget and each retry spends 1; a retry the budget cannot pay for is not
+   * made and the call returns its last failure. Default: retries are not
+   * budgeted. */
+  retryRatio?: number;
+  /** Retries a scope's budget holds before any call added to it, and the
+   * base of its cap (`retryReserve + 100 × retryRatio`). Default 10. */
+  retryReserve?: number;
+  /** Ordinary requests in flight at once across every scope, on top of
+   * each scope's `maxActive`. Scopes waiting for this capacity take turns,
+   * one request each, so a busy scope cannot starve a quiet one. Default:
+   * no cap across scopes. A positive integer (at most 1000000). */
+  maxActiveTotal?: number;
+  /** Event streams open at once across every scope, on top of each
+   * scope's `maxStreams`. Default: no cap across scopes. */
+  maxStreamsTotal?: number;
 }
 
 /** Why a request was not admitted. */
@@ -71,6 +89,10 @@ interface Pool {
   timer: ReturnType<typeof setTimeout> | null;
 }
 
+/** Scopes whose retry budget is remembered; the least recently used is
+ * forgotten (and starts again from the reserve) beyond this. */
+const MAX_BUDGETS = 1024;
+
 /** The pause after a `RATE_LIMITED` answer that names no wait. */
 const DEFAULT_PAUSE_MS = 1000;
 const MAX_PAUSE_MS = 3_600_000;
@@ -95,7 +117,15 @@ export class RequestScheduler {
   readonly maxStreams: number;
   readonly maxQueueMs: number;
   readonly scope: "origin" | "scheduler";
+  readonly retryRatio: number | null;
+  readonly retryReserve: number;
+  readonly maxActiveTotal: number | null;
+  readonly maxStreamsTotal: number | null;
+  readonly #total: Record<Kind, number> = { call: 0, stream: 0 };
+  /** The scope served last under a cap across scopes, per kind. */
+  readonly #served: Record<Kind, string | null> = { call: null, stream: null };
   readonly #pools = new Map<string, Pool>();
+  readonly #budgets = new Map<string, number>();
   readonly #idle: Array<() => void> = [];
   #closed = false;
 
@@ -108,6 +138,43 @@ export class RequestScheduler {
       throw new RangeError(`scope must be "origin" or "scheduler", got ${String(options.scope)}`);
     }
     this.scope = options.scope ?? "origin";
+    const ratio = options.retryRatio;
+    if (ratio !== undefined && ratio !== null && (typeof ratio !== "number" || !Number.isFinite(ratio) || ratio < 0 || ratio > 1)) {
+      throw new RangeError(`retryRatio must be a number from 0 to 1, got ${String(ratio)}`);
+    }
+    this.retryRatio = ratio ?? null;
+    this.retryReserve = integer(options.retryReserve, 10, 0, 10_000);
+    this.maxActiveTotal = options.maxActiveTotal === undefined || options.maxActiveTotal === null ? null : integer(options.maxActiveTotal, 0, 1, 1_000_000);
+    this.maxStreamsTotal = options.maxStreamsTotal === undefined || options.maxStreamsTotal === null ? null : integer(options.maxStreamsTotal, 0, 1, 1_000_000);
+  }
+
+  /** Add one call's share to the retry budget of `key`. */
+  recordCall(key: string): void {
+    if (this.retryRatio === null) return;
+    const cap = this.retryReserve + 100 * this.retryRatio;
+    this.#setBudget(key, Math.min(cap, this.#budget(key) + this.retryRatio));
+  }
+
+  /** Spend one retry from the budget of `key`; false when it cannot pay. */
+  allowRetry(key: string): boolean {
+    if (this.retryRatio === null) return true;
+    const balance = this.#budget(key);
+    if (balance < 1) return false;
+    this.#setBudget(key, balance - 1);
+    return true;
+  }
+
+  #budget(key: string): number {
+    return this.#budgets.get(key) ?? this.retryReserve;
+  }
+
+  #setBudget(key: string, balance: number): void {
+    this.#budgets.delete(key);
+    this.#budgets.set(key, balance);
+    if (this.#budgets.size > MAX_BUDGETS) {
+      const oldest = this.#budgets.keys().next().value;
+      if (oldest !== undefined) this.#budgets.delete(oldest);
+    }
   }
 
   /** The scope of a request to `url` made for `tenant`. */
@@ -135,7 +202,7 @@ export class RequestScheduler {
     const now = performance.now();
     const budget = Math.min(this.maxQueueMs, deadline === undefined ? Infinity : Math.max(0, deadline - now));
     const paused = Math.max(0, pool.pausedUntil - now);
-    if (paused === 0 && pool.queue[kind].length === 0 && pool.active[kind] < this.#limit(pool, kind)) {
+    if (paused === 0 && pool.queue[kind].length === 0 && pool.active[kind] < this.#limit(pool, kind) && this.#room(kind)) {
       return Promise.resolve(this.#grant(key, pool, kind, random));
     }
     if (paused > budget) {
@@ -213,8 +280,16 @@ export class RequestScheduler {
     return kind === "call" ? this.maxActive : this.maxStreams;
   }
 
+  /** Whether the cap across scopes, if any, leaves room for one more. */
+  #room(kind: Kind): boolean {
+    const cap = kind === "call" ? this.maxActiveTotal : this.maxStreamsTotal;
+    return cap === null || this.#total[kind] < cap;
+  }
+
   #grant(key: string, pool: Pool, kind: Kind, random: () => number): Permit {
     pool.active[kind] += 1;
+    this.#total[kind] += 1;
+    this.#served[kind] = key;
     let settled = false;
     let released = false;
     return {
@@ -238,6 +313,7 @@ export class RequestScheduler {
         if (released) return;
         released = true;
         pool.active[kind] -= 1;
+        this.#total[kind] -= 1;
         this.#pump(key, pool);
         this.#forget(key, pool);
       },
@@ -246,21 +322,57 @@ export class RequestScheduler {
 
   /** Admit waiting requests in order while capacity allows. */
   #pump(key: string, pool: Pool): void {
-    const wait = pool.pausedUntil - performance.now();
-    if (wait > 0) {
-      if (pool.timer === null && (pool.queue.call.length > 0 || pool.queue.stream.length > 0)) {
-        pool.timer = setTimeout(() => {
-          pool.timer = null;
-          this.#pump(key, pool);
-        }, wait);
-      }
+    if (this.maxActiveTotal !== null || this.maxStreamsTotal !== null) {
+      this.#pumpAll();
       return;
     }
+    if (!this.#ready(key, pool)) return;
     for (const kind of ["call", "stream"] as const) {
       const queue = pool.queue[kind];
       while (queue.length > 0 && pool.active[kind] < this.#limit(pool, kind)) {
         const waiter = queue[0] as Waiter;
         waiter.grant(this.#grant(key, pool, kind, waiter.random));
+      }
+    }
+  }
+
+  /** Whether the pool's rate-limit pause has passed; while it lasts, a
+   * timer pumps the pool when it ends. */
+  #ready(key: string, pool: Pool): boolean {
+    const wait = pool.pausedUntil - performance.now();
+    if (wait <= 0) return true;
+    if (pool.timer === null && (pool.queue.call.length > 0 || pool.queue.stream.length > 0)) {
+      pool.timer = setTimeout(() => {
+        pool.timer = null;
+        this.#pump(key, pool);
+      }, wait);
+    }
+    return false;
+  }
+
+  /** Under a cap across scopes: admit waiting requests while capacity
+   * allows, one per scope in turn (scopes in key order, starting after the
+   * one served last), each scope's own queue first in, first out. */
+  #pumpAll(): void {
+    for (const kind of ["call", "stream"] as const) {
+      const keys = [...this.#pools]
+        .filter(([key, pool]) => pool.queue[kind].length > 0 && this.#ready(key, pool))
+        .map(([key]) => key)
+        .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+      if (keys.length === 0) continue;
+      const last = this.#served[kind];
+      const start = last === null ? 0 : Math.max(0, keys.findIndex((key) => key > last));
+      const order = [...keys.slice(start), ...keys.slice(0, start)];
+      for (let progress = true; progress && this.#room(kind); ) {
+        progress = false;
+        for (const key of order) {
+          if (!this.#room(kind)) break;
+          const pool = this.#pools.get(key);
+          if (pool === undefined || pool.queue[kind].length === 0 || pool.active[kind] >= this.#limit(pool, kind)) continue;
+          const waiter = pool.queue[kind][0] as Waiter;
+          waiter.grant(this.#grant(key, pool, kind, waiter.random));
+          progress = true;
+        }
       }
     }
   }
