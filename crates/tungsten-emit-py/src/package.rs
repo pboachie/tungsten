@@ -17,6 +17,20 @@ fn toml_str(s: &str) -> String {
     string_lit(s)
 }
 
+/// The newest Python minor (`3.x`) the runtime's own `pyproject.toml`
+/// advertises; generated classifiers stop here.
+const NEWEST_PYTHON_MINOR: u32 = 15;
+
+/// The `3.x` minors from the `python_version` floor up to the newest
+/// supported line, for the per-version trove classifiers.
+fn python_minors(floor: &str) -> std::ops::RangeInclusive<u32> {
+    let floor = floor
+        .strip_prefix("3.")
+        .and_then(|m| m.parse().ok())
+        .unwrap_or(NEWEST_PYTHON_MINOR);
+    floor..=NEWEST_PYTHON_MINOR
+}
+
 pub(crate) fn pyproject(plan: &Plan<'_>, opts: &Options, header: &str) -> String {
     let runtime = match &opts.runtime {
         RuntimeDep::Spec(spec) => format!("tungsten-runtime{spec}"),
@@ -50,7 +64,13 @@ pub(crate) fn pyproject(plan: &Plan<'_>, opts: &Options, header: &str) -> String
     for dep in deps {
         out.push_str(&format!("  {},\n", toml_str(&dep)));
     }
-    out.push_str("]\nclassifiers = [\n  \"Programming Language :: Python :: 3\",\n  \"Typing :: Typed\",\n]\n\n");
+    out.push_str("]\nclassifiers = [\n  \"Programming Language :: Python :: 3\",\n");
+    for minor in python_minors(&opts.python_version) {
+        out.push_str(&format!(
+            "  \"Programming Language :: Python :: 3.{minor}\",\n"
+        ));
+    }
+    out.push_str("  \"Typing :: Typed\",\n]\n\n");
     out.push_str(&format!(
         "[tool.hatch.build.targets.wheel]\npackages = [{}]\n",
         toml_str(&opts.module)
