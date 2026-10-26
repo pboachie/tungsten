@@ -506,14 +506,26 @@ func encodeBody(d *BodyDescriptor, v any, has bool, redact func(any) any) (encod
 				}
 			}
 			shown := []any{}
+			declared := ""
+			for _, part := range d.Parts {
+				if part.Name == k && part.ContentType != "" {
+					declared = part.ContentType
+					break
+				}
+			}
+			essence, _, _ := strings.Cut(declared, ";")
+			declaredJSON := declared != "" && isJSONMedia(strings.ToLower(strings.TrimSpace(essence)))
 			for _, x := range list {
 				if bin, ok := BinaryOf(x); ok {
-					shown = append(shown, binaryDisplay(len(bin.Data), bin.ContentType))
+					ct := bin.ContentType
+					if ct == "" {
+						ct = declared
+					}
+					shown = append(shown, binaryDisplay(len(bin.Data), ct))
 					name := bin.Filename
 					if name == "" {
 						name = k
 					}
-					ct := bin.ContentType
 					if ct == "" {
 						ct = "application/octet-stream"
 					}
@@ -522,8 +534,19 @@ func encodeBody(d *BodyDescriptor, v any, has bool, redact func(any) any) (encod
 					}
 					parts = append(parts, multipartPart{name: k, kind: partFile, data: bin.Data, filename: name, contentType: ct})
 				} else if _, isObj := x.(*Object); isObj {
-					parts = append(parts, multipartPart{name: k, kind: partJSON, text: JSONText(x)})
+					ct := "application/json"
+					if declaredJSON {
+						ct = declared
+					}
+					parts = append(parts, multipartPart{name: k, kind: partJSON, text: JSONText(x), contentType: ct})
 					shown = append(shown, x)
+				} else if declared != "" {
+					text := scalar(x)
+					if declaredJSON {
+						text = JSONText(x)
+					}
+					parts = append(parts, multipartPart{name: k, kind: partJSON, text: text, contentType: declared})
+					shown = append(shown, scalar(x))
 				} else {
 					parts = append(parts, multipartPart{name: k, kind: partText, text: scalar(x)})
 					shown = append(shown, scalar(x))
