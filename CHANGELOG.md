@@ -374,6 +374,10 @@ changes.
 - `refresh-import --apply` stages the reviewed content beside its backups, so
   `refresh-import --resume` finishes an interrupted apply (writes, pin and
   lock) as an alternative to `--rollback`.
+- `refresh-import` refreshes converted inputs acquired from Git sources
+  (`git+https://…@ref#path`). The preview resolves the ref into a private
+  scratch cache; `--apply` installs exactly that reviewed commit's pin and
+  tree, so the ref is never resolved again between review and apply.
 - The language server offers a disabled "Refresh the converted import" action
   on TG0122 for a converted input whose remote source changed, naming the
   `refresh-import` preview, `--apply` and `--offline` choices.
