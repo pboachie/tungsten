@@ -64,6 +64,14 @@ Use your application's browser session and API authorization. The API must enfor
 
 ## Limits
 
+In unreleased 0.2.0, `toolDeadlineMs` (a registration option of `register` and
+`registerTungstenWebMcp`) gives each tool call a total deadline, passed to the
+client runtime as `deadlineMs`. It bounds authentication, every attempt, retry
+waits and a whole macro; a streamed call's deadline bounds connecting, while
+`streamCollection.maxDurationMs` bounds collecting. Expiry returns a failure
+with `code` `DEADLINE_EXCEEDED` and sends nothing more; a mutation already sent
+reports `OUTCOME_UNKNOWN`. Omitted or 0 keeps the client's `deadlineMs`, if any.
+
 Browser support depends on the available WebMCP backend. No file-backed OAuth token store is provided; persist credentials only through application-owned browser authorization flows.
 
 ## Related packages and documentation

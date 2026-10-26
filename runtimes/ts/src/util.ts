@@ -286,7 +286,12 @@ export function envelopeValue(value: unknown, sensitive: boolean): unknown {
   return json.length > MAX_RECEIVED_CHARS ? cut(json) : (JSON.parse(json) as unknown);
 }
 
-/** Sleep for `ms`, resolving early (to `false`) when `signal` aborts. */
+/** The longest delay a timer honours: `setTimeout` runs a larger one after
+ * about 1 ms instead. */
+export const MAX_TIMER_MS = 2 ** 31 - 1;
+
+/** Sleep for `ms` (at most `MAX_TIMER_MS`), resolving early (to `false`)
+ * when `signal` aborts. */
 export function sleep(ms: number, signal?: AbortSignal): Promise<boolean> {
   return new Promise((resolve) => {
     if (signal?.aborted) {
@@ -302,7 +307,7 @@ export function sleep(ms: number, signal?: AbortSignal): Promise<boolean> {
         signal?.removeEventListener("abort", onAbort);
         resolve(true);
       },
-      Math.max(0, ms),
+      Math.min(MAX_TIMER_MS, Math.max(0, ms)),
     );
     signal?.addEventListener("abort", onAbort, { once: true });
   });

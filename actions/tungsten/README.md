@@ -26,7 +26,13 @@ Replace `<commit>` with the full commit SHA of a tungsten release tag and keep
 the tag in the comment. A complete workflow is in
 [`examples/github-actions/tungsten-action.yml`](../../examples/github-actions/tungsten-action.yml).
 This action is consumed from this repository by path; it is not published on
-the GitHub Marketplace.
+the GitHub Marketplace. No release tag contains it yet: until one does, pin a
+`main` commit that contains `actions/tungsten`.
+
+The `examples` workflow of this repository runs the action from its checkout
+on Linux x86_64, Linux aarch64 and macOS against a small consumer project: an
+unchanged contract passes, a stale output and an invalid manifest fail with
+the expected `failed` output, and the regenerated project passes.
 
 ## Inputs
 
@@ -37,7 +43,7 @@ the GitHub Marketplace.
 | `working-directory` | `.` | Directory the project paths are relative to. Project paths must stay inside it (no absolute paths, no `..`). |
 | `check` | `true` | Run `tungsten check`. |
 | `generate-check` | `true` | Run `tungsten generate --check`: writes nothing, exits 1 with `TG0901` when a generated file is missing, changed or extra. |
-| `lock-check` | `auto` | Run `tungsten lock --check`: `auto` runs it when the project directory has a `tungsten.lock.json`; `true` always (a missing lock fails); `false` never. |
+| `lock-check` | `auto` | Run `tungsten lock --check`: `auto` runs it when the project directory has a `tungsten.lock.json`; `true` always (a missing lock fails); `false` never. `tungsten lock` is newer than 0.1.3: keep `auto` (without a lock) or `false` for that release. |
 | `locked` | `false` | Pass `--locked` to check and generate (`TG0128` unless the project matches its lock; inputs are acquired offline). |
 | `strict` | `false` | Pass `--strict` to check and generate: warnings fail. |
 | `allow-external` | `false` | Start the commands of `external` targets. See the trust model. |
