@@ -280,6 +280,9 @@ pub struct CallContext<'a> {
     /// For a mutation without replay protection: the read that shows whether
     /// it took effect, or `None`.
     pub check: Option<&'a OutcomeCheck>,
+    /// A redirect was not followed because the one-shot upload body cannot
+    /// be sent again.
+    pub unreplayed: bool,
 }
 
 /// How to find out whether an unprotected mutation took effect, in words:

@@ -1760,6 +1760,8 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
       let sending: UploadAttempt | null = upload === null ? null : upload.attempt();
       let current = { url: prepared.url, method: prepared.method, body: sending?.stream ?? prepared.body };
       let handedOff = false;
+      // Set when a redirect is not followed because the one-shot upload cannot be sent again.
+      let unreplayed = false;
       try {
         // Redirects are never followed by fetch: it would forward custom
         // credential headers (API keys, CSRF headers) to another origin. A
@@ -1782,7 +1784,10 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
           if (next === null) break;
           const rewrite = outcome.status !== 307 && outcome.status !== 308 && current.method !== "GET" && current.method !== "HEAD";
           // A streamed body is read again for the redirect, never replayed from a spent one-shot source.
-          if (upload !== null && !rewrite && !upload.sendable) break;
+          if (upload !== null && !rewrite && !upload.sendable) {
+            unreplayed = true;
+            break;
+          }
           sending = upload !== null && !rewrite ? upload.attempt() : null;
           current = { url: next.url, method: rewrite ? "GET" : current.method, body: rewrite ? null : sending?.stream ?? current.body };
           ctx.url = next.display;
@@ -1806,7 +1811,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
           });
         }
         const callCtx: CallContext = { api: this.api, op, key: prepared.key, keyHeader: prepared.keyHeader, attempts, check };
-        result = (sending === null ? null : uploadFailure(op, callCtx, sending, mutation)) ?? await this.#classify<T>(callCtx, prepared, outcome, ctx, timeoutMs);
+        result = (sending === null ? null : uploadFailure(op, callCtx, sending, mutation)) ?? await this.#classify<T>(callCtx, prepared, outcome, ctx, timeoutMs, unreplayed);
         if (permit !== null) {
           if (!result.ok && result.error.category === "RATE_LIMITED") permit.settle(result.error.retry_after_ms);
           else if (outcome.kind === "response") permit.settle(undefined);
@@ -2070,7 +2075,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     }
   }
 
-  async #classify<T>(callCtx: CallContext, prepared: Prepared, outcome: AttemptOutcome, ctx: RequestContext, timeoutMs: number): Promise<Result<T>> {
+  async #classify<T>(callCtx: CallContext, prepared: Prepared, outcome: AttemptOutcome, ctx: RequestContext, timeoutMs: number, unreplayed = false): Promise<Result<T>> {
     const { op } = prepared;
     const mutation = isMutation(op);
     const attempts = callCtx.attempts;
@@ -2182,7 +2187,9 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
               ? `The server answered with a redirect${to}. Redirects are never followed on mutations; check baseUrl (scheme, host, trailing slash). Whether the call took effect is unknown only if the server applied it before redirecting.`
               : this.#redirectsDisabled
                 ? `The server answered with a redirect${to}. Redirects are disabled; check redirects and baseUrl.`
-                : `The server answered with a redirect${to} that leaves the API's origin (or too many redirects). It is not followed, so credentials never leave the API's host; check baseUrl.`,
+                : unreplayed
+                  ? `The server answered with a redirect${to} that would need the upload body sent again. The body is one-shot and was already read, so it cannot be re-sent and the redirect was not followed; pass UploadSource.recreatable(...) so it can be read again, or call the redirect target directly.`
+                  : `The server answered with a redirect${to} that leaves the API's origin (or too many redirects). It is not followed, so credentials never leave the API's host; check baseUrl.`,
             next_action: mutation ? hint : null,
             trace: { attempts },
           }),

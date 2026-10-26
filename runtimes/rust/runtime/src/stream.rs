@@ -850,6 +850,7 @@ impl ClientCore {
             key_header: &open.key_header,
             attempts: open.meta.attempts,
             check: open.check.as_ref(),
+            unreplayed: false,
         };
         let diagnostic = if dropped.is_none() || idle {
             let silence = match self.inner.idle_timeout.filter(|_| idle) {
