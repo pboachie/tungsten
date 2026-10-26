@@ -297,6 +297,9 @@ changes.
   the deadline, never cancelled for other callers. F# SDKs use the same
   options through the .NET runtime.
 
+- Add the same total operation deadline to the Ruby runtime (`deadline_ms` on
+  client and call options); generated Ruby SDKs document it.
+
 - Add a per-tool-call total deadline to the MCP adapter
   (`ServerOptions.toolDeadlineMs`, `<API>_MCP_DEADLINE_MS` in generated
   servers). It maps to the TypeScript runtime's `deadlineMs`; tool results
