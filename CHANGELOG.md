@@ -236,6 +236,14 @@ changes.
 
 ### Added
 
+- Gallery recipe `webmcp-python` (`python3 examples/run.py --only
+  webmcp-python`): a Python web app mounts the generated `webmcp.py` dispatch
+  with its own sign-in, and a page registers its tools with
+  `registerRemoteWebMcp` against a stub WebMCP backend. The recipe shows
+  server-chosen tools, a typed read, a refused unconfirmed delete and
+  cross-user token, a confirmed delete (exactly one DELETE reaches the mock),
+  a refused signed-out listing, and cleanup on dispose.
+
 - Experimental Python dispatch for browser WebMCP tools: `webmcp: true` on the
   `mcp-python` target generates `<module>/webmcp.py`, an ASGI app
   (`tungsten_mcp.webmcp_app`) that lists the tools a signed-in principal may
