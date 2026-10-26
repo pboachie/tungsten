@@ -42,6 +42,9 @@ class ServerOptions:
     #: sent; a mutation already sent reports ``OUTCOME_UNKNOWN``. None or 0:
     #: none.
     tool_deadline_ms: int | None = None
+    #: Override the manifest's disclosure mode: ``discrete`` (every tool) or
+    #: ``progressive`` (``search_tools``, ``describe_tool``, ``invoke``...).
+    mode: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.max_result_chars, int) or self.max_result_chars < 200:
@@ -52,3 +55,5 @@ class ServerOptions:
             not isinstance(self.tool_deadline_ms, int) or self.tool_deadline_ms < 0
         ):
             raise ValueError("tool_deadline_ms must be a non-negative integer of milliseconds")
+        if self.mode is not None and self.mode not in ("discrete", "progressive"):
+            raise ValueError('mode must be "discrete" or "progressive"')

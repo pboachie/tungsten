@@ -23,7 +23,7 @@ from typing import Any
 
 from tungsten_runtime import AsyncClientCore, Ok
 
-from ._catalog import Catalog, CatalogTool, verifies
+from ._catalog import PROGRESSIVE_TOOLS, TOOL_META_KEY, Catalog, CatalogTool, verifies
 from ._options import ServerOptions
 from ._render import (
     REDACTED_REPEAT,
@@ -34,10 +34,17 @@ from ._render import (
     envelope,
     holds_any,
     redact_paths,
+    skeleton,
     to_json,
     truncate,
 )
+from ._search import bm25, suggest
 
+DEFAULT_SEARCH_LIMIT = 10
+SEARCH_HINT = (
+    "Call describe_tool(name) for the schema, preview(name, arguments) before destructive or irreversible calls, "
+    "invoke(name, arguments) to execute (invoke_read for read_only tools)."
+)
 SAFETY_TIERS = ("read_only", "mutating", "destructive", "irreversible")
 _BASE64 = re.compile(r"^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$")
 _BASE64URL = re.compile(r"^[A-Za-z0-9_-]*$")
@@ -178,27 +185,74 @@ class Session:
             )
 
     async def _dispatch(self, name: str, args: dict[str, Any]) -> Result:
-        if name == "preview" and self.catalog.previewable:
-            bad = self._check_args(name, args)
+        catalog = self.catalog
+        if catalog.mode == "discrete":
+            if name == "preview" and catalog.previewable:
+                bad = self._check_args(name, args, {"tool": ("string", True), "arguments": ("object", False)})
+                if bad is not None:
+                    return bad
+                found = self._lookup(args["tool"], "tool", name)
+                return found if isinstance(found, dict) else await self._preview(found, args.get("arguments"))
+            tool = catalog.by_name.get(name)
+            if tool is None:
+                return self._unknown_tool(name)
+            prepared = self._prepare(tool, args)
+            return self._render(tool, await self._execute(prepared), prepared)
+        if name == "invoke_read" and not catalog.has_read_only:
+            return self._unknown_tool(name)
+        if name == "search_tools":
+            spec = {"query": ("string", True), "cluster": ("string", False), "limit": ("integer", False)}
+            return self._check_args(name, args, spec) or self._search(args)
+        if name == "describe_tool":
+            bad = self._check_args(name, args, {"name": ("string", True)})
             if bad is not None:
                 return bad
-            tool = self.catalog.by_name.get(args["tool"])
-            if tool is None:
-                return self._unknown(args["tool"], "tool", name)
-            return await self._preview(tool, args.get("arguments"))
-        tool = self.catalog.by_name.get(name)
-        if tool is None:
-            return self._unknown(name, "name", name)
-        prepared = self._prepare(tool, args)
-        return self._render(tool, await self._execute(prepared), prepared)
+            found = self._lookup(args["name"], "name", name)
+            return found if isinstance(found, dict) else self._describe(found)
+        if name in ("invoke_read", "invoke", "preview"):
+            bad = self._check_args(name, args, {"name": ("string", True), "arguments": ("object", False)})
+            if bad is not None:
+                return bad
+            found = self._lookup(args["name"], "name", name)
+            if isinstance(found, dict):
+                return found
+            if name == "invoke_read" and found.safety != "read_only":
+                return self._with_tool_meta(
+                    self._failure(
+                        None,
+                        envelope(
+                            name,
+                            "VALIDATION_FAILED",
+                            failed_parameter="name",
+                            received_value=found.name,
+                            expected="the name of a read_only tool",
+                            remediation=(
+                                f"{found.name} is {found.safety}, so invoke_read refuses it; nothing ran. Call "
+                                "preview(name, arguments) and then invoke(name, arguments) instead."
+                            ),
+                        ),
+                    ),
+                    found,
+                )
+            if name == "preview":
+                return self._with_tool_meta(await self._preview(found, args.get("arguments")), found)
+            prepared = self._prepare(found, args.get("arguments"))
+            return self._with_tool_meta(self._render(found, await self._execute(prepared), prepared), found)
+        if name == "list_clusters":
+            return self._check_args(name, args, {}) or self._list_clusters()
+        return self._unknown_tool(name)
 
     # ---------------------------------------------------------- arguments
 
-    def _check_args(self, name: str, args: Mapping[str, Any]) -> Result | None:
-        """The ``preview`` meta tool's own arguments: ``tool`` (required) and
-        ``arguments`` (an object or its JSON text)."""
+    def _check_args(self, name: str, args: Mapping[str, Any], spec: Mapping[str, tuple[str, bool]]) -> Result | None:
+        """A meta tool's own arguments against ``spec``: name -> (type, required),
+        the type being ``string`` (non-empty), ``integer`` or ``object`` (an
+        object or its JSON text)."""
+        allowed = list(spec)
         for key, value in args.items():
-            if key not in ("tool", "arguments") and value is not None:
+            if key not in spec and value is not None:
+                close = suggest(key, allowed, (), 1)
+                did = f" (did you mean {close[0]}?)" if close else ""
                 return self._failure(
                     None,
                     envelope(
@@ -206,45 +260,65 @@ class Session:
                         "VALIDATION_FAILED",
                         failed_parameter=key,
                         received_value=value,
-                        expected="one of: tool, arguments",
-                        remediation=f"Remove {clip(key)}; {name} does not accept it.",
+                        expected=f"one of: {', '.join(allowed)}" if allowed else "no arguments",
+                        remediation=f"Remove {clip(key)}; {name} does not accept it{did}.",
                     ),
                 )
-        tool = args.get("tool")
-        if not isinstance(tool, str) or tool == "":
-            return self._failure(
-                None,
-                envelope(
-                    name,
-                    "VALIDATION_FAILED",
-                    failed_parameter="tool",
-                    received_value=tool,
-                    expected="a non-empty string",
-                    remediation=f"Pass tool, the name of the tool to preview; {name} cannot be called without it.",
-                ),
-            )
-        inner = args.get("arguments")
-        if inner is not None and not isinstance(inner, (Mapping, str)):
-            return self._failure(
-                None,
-                envelope(
-                    name,
-                    "VALIDATION_FAILED",
-                    failed_parameter="arguments",
-                    received_value=inner,
-                    expected="an object (or its JSON text)",
-                    remediation=f"Pass arguments as an object and call {name} again.",
-                ),
-            )
+        for key, (kind, required) in spec.items():
+            value = args.get(key)
+            if value is None:
+                if not required:
+                    continue
+                return self._failure(
+                    None,
+                    envelope(
+                        name,
+                        "VALIDATION_FAILED",
+                        failed_parameter=key,
+                        expected=f"a {kind}",
+                        remediation=f"Pass {key}; {name} cannot be called without it.",
+                    ),
+                )
+            if kind == "string":
+                ok = isinstance(value, str) and value != ""
+            elif kind == "integer":
+                ok = isinstance(value, int) and not isinstance(value, bool)
+            else:
+                ok = isinstance(value, (Mapping, str))
+            if not ok:
+                article = "an" if kind == "integer" else "a"
+                expected = (
+                    "an object (or its JSON text)"
+                    if kind == "object"
+                    else f"{article} {'non-empty string' if kind == 'string' else kind}"
+                )
+                shown = "an object" if kind == "object" else f"{article} {kind}"
+                return self._failure(
+                    None,
+                    envelope(
+                        name,
+                        "VALIDATION_FAILED",
+                        failed_parameter=key,
+                        received_value=value,
+                        expected=expected,
+                        remediation=f"Pass {key} as {shown} and call {name} again.",
+                    ),
+                )
         return None
 
-    def _unknown(self, name: str, parameter: str, via: str) -> Result:
-        listed = sorted(self.catalog.by_name)
-        if self.catalog.previewable:
-            listed.append("preview")
-        words = set(re.split(r"[^a-z0-9]+", name.lower())) - {""}
-        close = [n for n in listed if words & set(n.split("_"))][:3]
-        hint = f" Did you mean: {', '.join(close)}?" if close else ""
+    def _ranked(self, text: str) -> list[str]:
+        """Tool names sharing words with ``text``, best first."""
+        docs = self.catalog.documents
+        return [docs[i].name for i, _ in bm25(self.catalog.index, len(docs), text)]
+
+    def _lookup(self, name: str, parameter: str, via: str) -> CatalogTool | Result:
+        """The catalog tool called ``name``, or an error result with suggestions."""
+        tool = self.catalog.by_name.get(name)
+        if tool is not None:
+            return tool
+        close = suggest(name, [t.name for t in self.catalog.tools], self._ranked(name))
+        where = "tools/list" if self.catalog.mode == "discrete" else "search_tools(query)"
+        did = f" Did you mean: {', '.join(close)}?" if close else ""
         return self._failure(
             None,
             envelope(
@@ -252,10 +326,63 @@ class Session:
                 "VALIDATION_FAILED",
                 failed_parameter=parameter,
                 received_value=name,
-                expected="a tool from tools/list",
-                remediation=f"No tool is named {clip(name)}.{hint} Call tools/list for the available tools.",
+                expected="the name of a tool of this server",
+                remediation=f"No tool is named {clip(name)}.{did} Use {where} to find tools.",
             ),
         )
+
+    def _unknown_tool(self, name: str) -> Result:
+        catalog = self.catalog
+        if catalog.mode == "progressive" and name in catalog.by_name:
+            return self._failure(
+                None,
+                envelope(
+                    name,
+                    "VALIDATION_FAILED",
+                    failed_parameter="name",
+                    received_value=name,
+                    expected="a tool from tools/list",
+                    remediation=(
+                        f'{name} is reached through invoke: call invoke({{"name": "{name}", "arguments": {{...}}}}) '
+                        "(describe_tool gives its schema)."
+                    ),
+                ),
+            )
+        if catalog.mode == "discrete":
+            listed = [t.name for t in catalog.tools] + (["preview"] if catalog.previewable else [])
+            ranked = self._ranked(name)
+        else:
+            listed = [t for t in PROGRESSIVE_TOOLS if t != "invoke_read" or catalog.has_read_only]
+            ranked = []
+        close = suggest(name, listed, ranked)
+        did = f" Did you mean: {', '.join(close)}?" if close else ""
+        return self._failure(
+            None,
+            envelope(
+                name,
+                "VALIDATION_FAILED",
+                failed_parameter="name",
+                received_value=name,
+                expected="a tool from tools/list",
+                remediation=f"No tool is named {clip(name)}.{did} Call tools/list for the available tools.",
+            ),
+        )
+
+    def _preview_form(self, tool: CatalogTool) -> str:
+        key = "tool" if self.catalog.mode == "discrete" else "name"
+        return f'preview({{"{key}": "{tool.name}", "arguments": ...}})'
+
+    def _call_form(self, tool: CatalogTool) -> str:
+        if self.catalog.mode == "discrete":
+            return tool.name
+        return f'invoke({{"name": "{tool.name}", "arguments": ...}})'
+
+    def _with_tool_meta(self, result: Result, tool: CatalogTool) -> Result:
+        """``result`` with the tool's tier and hints in ``_meta``, so a host that
+        sees only ``invoke`` or ``preview`` still learns what it just ran."""
+        meta = dict(result.get("_meta") or {})
+        meta[TOOL_META_KEY] = {"name": tool.name, "safety": tool.safety, "annotations": tool.hints}
+        return {**result, "_meta": meta}
 
     def _prepare(self, tool: CatalogTool, raw: Any) -> _Prepared:
         args: Any = {} if raw is None else raw
@@ -521,9 +648,9 @@ class Session:
         if error.get("category") == "CONFIRMATION_REQUIRED":
             token_field = tool.confirmation_token
             hints.append(
-                f'Call preview({{"tool": "{tool.name}", "arguments": ...}}) with the same arguments, then call '
-                f'{tool.name} again with "{token_field}" set to its confirmation_token (only a token from this '
-                "session is accepted, never true)."
+                f"Call {self._preview_form(tool)} with the same arguments, then call {self._call_form(tool)} "
+                f'again with "{token_field}" set to its confirmation_token (only a token from this session is '
+                "accepted, never true)."
                 if token_field
                 else "This tool takes no confirmation token, so it cannot be confirmed through this server."
             )
@@ -556,7 +683,7 @@ class Session:
             expires = preview.get("expires_in_ms")
             valid = "briefly" if expires is None else f"{round(expires / 1000)} s"
             lines.append(
-                f'To execute, call {tool.name} with the same arguments plus "{field_name}": "{token}" (valid '
+                f'To execute, call {self._call_form(tool)} with the same arguments plus "{field_name}": "{token}" (valid '
                 f"{valid}, for these exact arguments, in this session only)."
             )
         elif confirmed:
@@ -564,10 +691,148 @@ class Session:
                 "This tool needs confirmation but takes no confirmation token, so it cannot be executed through this server."
             )
         elif preview.get("safety") == "read_only":
-            lines.append(f"Read-only: call {tool.name} directly.")
+            lines.append(f"Read-only: call {self._call_form(tool)} directly.")
         else:
-            lines.append(f"No confirmation is needed: call {tool.name} with the same arguments to execute.")
+            lines.append(f"No confirmation is needed: call {self._call_form(tool)} with the same arguments to execute.")
         return self._success(preview, lines, "steps" if isinstance(preview.get("steps"), list) else None)
+
+    # ------------------------------------------------------ progressive mode
+
+    def _search(self, args: Mapping[str, Any]) -> Result:
+        catalog = self.catalog
+        query = args["query"]
+        limit = args.get("limit")
+        limit = DEFAULT_SEARCH_LIMIT if limit is None else limit
+        if limit < 1 or limit > 50:
+            return self._failure(
+                None,
+                envelope(
+                    "search_tools",
+                    "VALIDATION_FAILED",
+                    failed_parameter="limit",
+                    received_value=limit,
+                    expected="an integer from 1 to 50",
+                    remediation="Pass limit between 1 and 50.",
+                ),
+            )
+        cluster = None
+        if isinstance(args.get("cluster"), str):
+            cluster = next((c for c in catalog.clusters if c.name == args["cluster"]), None)
+            if cluster is None:
+                names = [c.name for c in catalog.clusters]
+                close = suggest(args["cluster"], names)
+                did = f" Did you mean: {', '.join(close)}?" if close else ""
+                return self._failure(
+                    None,
+                    envelope(
+                        "search_tools",
+                        "VALIDATION_FAILED",
+                        failed_parameter="cluster",
+                        received_value=args["cluster"],
+                        expected=f"one of: {', '.join(names)}" if names else "no cluster (this API has none)",
+                        remediation=(
+                            f"No cluster is named {clip(args['cluster'])}.{did} Call list_clusters() for the "
+                            "clusters, or search without one."
+                        ),
+                    ),
+                )
+        docs = catalog.documents
+        hits = [
+            docs[i]
+            for i, _ in bm25(catalog.index, len(docs), query)
+            if cluster is None or catalog.in_cluster(docs[i], cluster)
+        ]
+        hint = SEARCH_HINT
+        if not hits and cluster is not None:
+            hits = [t for t in catalog.tools if catalog.in_cluster(t, cluster)]
+            hint = f"No tool matched the query; these are the tools of cluster {cluster.name}. {SEARCH_HINT}"
+        elif not hits:
+            hint = (
+                "No tool matched. Use other words from the task (resource names, verbs), or call list_clusters() "
+                "and search one cluster."
+            )
+        results = [
+            {
+                "name": t.name,
+                "summary": t.summary,
+                "safety": t.safety,
+                "annotations": t.hints,
+                "idempotency": t.idempotency,
+                "schema_tokens": t.schema_tokens,
+                "call_with": t.call_with,
+            }
+            for t in hits[:limit]
+        ]
+        return self._success({"results": results, "hint": hint}, [])
+
+    def _describe(self, tool: CatalogTool) -> Result:
+        example = skeleton(tool.input_schema)
+        call: dict[str, Any] = example if isinstance(example, dict) else {}
+        key_field = tool.idempotency_key
+        token_field = tool.confirmation_token
+        if key_field:
+            properties = tool.input_schema.get("properties")
+            key_schema = properties.get(key_field) if isinstance(properties, dict) else None
+            label = "UUIDv4" if isinstance(key_schema, dict) and key_schema.get("format") == "uuid" else "unique key"
+            call[key_field] = f"<{label}: generate once, persist with the intent, reuse on every retry>"
+        if token_field:
+            if tool.safety in ("destructive", "irreversible"):
+                call[token_field] = "<confirmation_token from preview with these arguments>"
+            else:
+                call.pop(token_field, None)
+        op = self._core.operation(tool.target) if tool.kind == "operation" and self._core is not None else None
+        remediation = op["agent"].get("remediation") if op and isinstance(op.get("agent"), Mapping) else None
+        if tool.safety == "read_only":
+            steps = "Read-only: invoke it directly."
+        elif tool.safety == "mutating":
+            keyed = f': pass "{key_field}" and reuse it on every retry of the same intent' if key_field else ""
+            steps = f"Mutating{keyed}; preview(name, arguments) shows the request first."
+        else:
+            tier = "Irreversible" if tool.safety == "irreversible" else "Destructive"
+            set_to = f'"{token_field}" set to' if token_field else ""
+            steps = (
+                f"{tier}: call preview(name, arguments) first, then invoke with the same arguments and {set_to} its "
+                "confirmation_token."
+            )
+        return self._success(
+            {
+                "name": tool.name,
+                "kind": tool.kind,
+                "summary": tool.summary,
+                "description": tool.description,
+                "safety": tool.safety,
+                "idempotency": tool.idempotency,
+                "cluster": tool.cluster,
+                "annotations": tool.annotations,
+                "input_schema": tool.input_schema,
+                "output_schema": tool.output_schema,
+                "reserved_fields": {"idempotency_key": key_field, "confirmation_token": token_field},
+                "sensitive_response_fields": list(tool.sensitive_response_fields),
+                "shown_once": tool.shown_once,
+                "remediation": to_json(remediation) if isinstance(remediation, Mapping) else {},
+                "schema_tokens": tool.schema_tokens,
+                "call_with": tool.call_with,
+                "example": {"tool": tool.call_with, "arguments": {"name": tool.name, "arguments": call}},
+                "hint": steps,
+            },
+            [],
+        )
+
+    def _list_clusters(self) -> Result:
+        catalog = self.catalog
+        clusters = [
+            {"name": c.name, "summary": c.summary, "tools": sum(1 for t in catalog.tools if catalog.in_cluster(t, c))}
+            for c in catalog.clusters
+        ]
+        unclustered = sum(1 for t in catalog.tools if not any(catalog.in_cluster(t, c) for c in catalog.clusters))
+        return self._success(
+            {
+                "clusters": clusters,
+                "unclustered": unclustered,
+                "hint": "search_tools(query, cluster) searches one cluster.",
+            },
+            [],
+        )
 
 
 def _step_lines(preview: Mapping[str, Any]) -> list[str]:
