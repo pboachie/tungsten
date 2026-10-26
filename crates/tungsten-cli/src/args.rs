@@ -255,12 +255,21 @@ pub(crate) struct SupportBundleArgs {
     /// Remove an entry by id from the bundle; repeatable.
     #[arg(long, value_name = "ID")]
     pub exclude: Vec<String>,
+    /// Opt in to including the redacted end of a log file, labelled as
+    /// user supplied (bundle schema version 2); repeatable. The path is not
+    /// recorded. Redaction is not a guarantee: review the preview first.
+    #[arg(long, value_name = "FILE")]
+    pub attach_log: Vec<PathBuf>,
+    /// Opt in to including the redacted end of a configuration file, labelled
+    /// as user supplied (bundle schema version 2); repeatable.
+    #[arg(long, value_name = "FILE")]
+    pub attach_config: Vec<PathBuf>,
     /// Read an existing bundle file, check it against its schema version and
     /// show its entries; reads only this file and writes or runs nothing.
     #[arg(
         long,
         value_name = "FILE",
-        conflicts_with_all = ["preview", "output", "exclude"]
+        conflicts_with_all = ["preview", "output", "exclude", "attach_log", "attach_config"]
     )]
     pub inspect: Option<PathBuf>,
 }
