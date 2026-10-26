@@ -403,7 +403,18 @@ async fn print_export<D: Dispatch>(
         });
         let (page, token) = match item {
             Ok((page, token)) => (Ok(page), Some(token)),
-            Err(e) => (Err(e), None),
+            Err(mut e) => {
+                if e.diagnostic.failed_parameter.as_deref() == Some("checkpoint")
+                    || e.diagnostic.remediation.contains("omit checkpoint.resume")
+                {
+                    e.diagnostic.remediation = format!(
+                        "{} With this command, starting over means deleting {}.",
+                        e.diagnostic.remediation,
+                        export.path.display()
+                    );
+                }
+                (Err(e), None)
+            }
         };
         if out.page(page).is_break() {
             break;
