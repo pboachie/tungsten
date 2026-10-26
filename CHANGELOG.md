@@ -230,6 +230,18 @@ changes.
 
 ### Added
 
+- `tungsten lsp` serves every project in the editor's workspace folders, found
+  as `tungsten workspace` finds them, plus any `tungsten.yml` that is opened.
+  Edits, saves and watched changes re-check only the projects that read the
+  changed file, so one project's edits never dirty another while a shared spec
+  (including its unsaved buffer) re-checks every project using it. One check
+  runs at a time across the session; diagnostics of a file read by several
+  projects are merged; completion, hover, definitions and quick fixes come from
+  the project owning the document. Adding or removing workspace folders
+  (`workspace/didChangeWorkspaceFolders`) starts or cancels their projects'
+  checks and clears stale diagnostics. Discovery findings (TG0640-TG0643) are
+  shown on the files they name. The capability catalog's
+  `workspace.editor_routing` is now `true`.
 - Add durable checkpoints for resumable read-only page exports to the
   TypeScript, Python and Rust runtimes (`exportPages` / `export_pages`). Each
   page carries a caller-owned, HMAC-sealed `checkpoint` token to persist after
