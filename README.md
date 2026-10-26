@@ -840,7 +840,7 @@ Validate without binding a server or launching a process on any platform:
 tungsten scenario validate . --scenario retry.json
 ```
 
-On Linux (including WSL), run your integration explicitly:
+On Linux (including WSL), macOS or Windows, run your integration explicitly:
 
 ```sh
 tungsten --json scenario run . --scenario retry.json --timeout-ms 30000 --expect-exit 0 -- python3 integration.py
@@ -849,26 +849,31 @@ tungsten --json scenario run . --scenario retry.json --timeout-ms 30000 --expect
 The integration reads its URL from `TUNGSTEN_MOCK_BASE_URL`. Arguments after
 `--` are passed directly to the named executable. There is no implicit shell;
 commands cannot be supplied by the saved file. An interpreter such as `python3`
-runs only when explicitly named by the caller. Other platforms reject `run`
-before input acquisition, port binding or process creation; `validate` remains
-portable.
+runs only when explicitly named by the caller. On Windows, a bare name resolves
+only to an `.exe` (for example `python`); name a script shim in full, such as
+`npm.cmd`. Other platforms reject `run` before input acquisition, port
+binding or process creation; `validate` remains portable.
 
 The run-phase deadline starts after compilation and scenario validation. It
 covers server startup, process execution, cleanup and final assertions; a small
 part of that budget is reserved for cleanup. It does not bound input acquisition
-or compilation. The runner owns a fresh loopback port and process group, stops
+or compilation. The runner owns a fresh loopback port and a process group (a Job Object on
+Windows), stops
 its server before reading final counts, and fails on cancellation, timeout,
 cleanup failure, unfinished admitted requests, unexpected exit or unmet counts.
 Request completion tracks server-side handler and response-body generation,
 independently of when a call was counted; it does not prove transport delivery.
-The binary handles SIGINT/SIGTERM for this run; library callers supply explicit
-cancellation instead of installing signal handlers. The Linux binary refuses an
+The binary handles SIGINT/SIGTERM for this run (Ctrl-C, Ctrl-Break and console
+close on Windows); library callers supply explicit cancellation instead of
+installing signal handlers. Linux uses a scoped signal mask; macOS and Windows
+install one Ctrl-C handler in the binary on first use. The Linux binary refuses an
 unreadable or malformed `/proc/self/status` and observable ignored/caught SIGCHLD
 dispositions before acquiring inputs or creating a server or child. Embeddings
 must exclusively reap their runner children, avoid auto-reap dispositions and
 keep SIGCHLD disposition stable; the binary preflight does not establish these
 conditions for a concurrent embedding or inspect every `SA_NOCLDWAIT` setting.
-Process groups cover ordinary
+macOS has no equivalent preflight; the same embedding requirements apply.
+Windows terminates the Job Object on cleanup. Process groups and Job Objects cover ordinary
 descendants, not processes that deliberately leave the group. Signal delivery
 and leader reaping do not prove that every descendant has settled, and this is
 not a sandbox.

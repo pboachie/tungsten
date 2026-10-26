@@ -226,6 +226,10 @@ changes.
 
 ### Added
 
+- `scenario run` now works on macOS and Windows as well as Linux. macOS owns
+  the integration through a process group and non-reaping `waitid`, Windows
+  through a Job Object; the binary cancels on Ctrl-C/SIGTERM on both.
+
 - The `csharp` target now enforces imported-operation policy and may be
   generated for projects converted from Postman, cURL, `.http` or HAR input.
   The C# runtime reads each operation's `import_policy` (`AgentMeta.ImportPolicy`),

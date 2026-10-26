@@ -211,7 +211,7 @@ pub fn run_with_cancellation(
     )
 }
 
-/// Process entry point. Linux scenario runs own scoped SIGINT/SIGTERM capture;
+/// Process entry point. Scenario runs own scoped SIGINT/SIGTERM (Ctrl-C) capture;
 /// library callers use `run` or `run_with_cancellation` instead.
 pub fn run_binary(
     args: impl IntoIterator<Item = OsString>,
@@ -253,7 +253,7 @@ fn run_inner(
         }
     };
     let env = &selected_env;
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_vendor = "apple", windows))]
     let signals = if _binary_signals
         && matches!(
             &cli.command,
@@ -261,7 +261,7 @@ fn run_inner(
                 command: args::ScenarioCommand::Run(_)
             }
         ) {
-        match commands::scenario::signals::Signals::capture() {
+        match commands::scenario::BinarySignals::capture() {
             Ok(signals) => Some(signals),
             Err(_) => {
                 let report = Report::new(CommandName::Scenario).failed(
@@ -269,7 +269,11 @@ fn run_inner(
                     CliError::new(
                         ErrorKind::Io,
                         "cannot establish scenario cancellation and child ownership",
-                    ).with_help("Linux scenario run requires readable /proc/self/status and default SIGCHLD disposition"),
+                    ).with_help(if cfg!(target_os = "linux") {
+                        "Linux scenario run requires readable /proc/self/status and default SIGCHLD disposition"
+                    } else {
+                        "scenario run could not install its Ctrl-C handler"
+                    }),
                 );
                 return if cli.json {
                     emit_json(report, stdout)
@@ -281,7 +285,7 @@ fn run_inner(
     } else {
         None
     };
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_vendor = "apple", windows))]
     let cancellation = signals.as_ref().map_or(cancellation, |s| s.cancellation());
     let report = panic::catch_unwind(AssertUnwindSafe(|| {
         commands::dispatch(&cli, env, &cancellation)
@@ -305,7 +309,7 @@ fn run_inner(
         )
     });
     let mut report = report;
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_vendor = "apple", windows))]
     if let Some(signals) = signals {
         match signals.restore() {
             Ok(true) => commands::scenario::reject_late_cancellation(&mut report),

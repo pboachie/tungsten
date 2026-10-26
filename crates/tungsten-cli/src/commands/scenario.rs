@@ -1,7 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Explicit saved-scenario validation and Linux integration orchestration.
+//! Explicit saved-scenario validation and integration orchestration.
+#[cfg(any(target_vendor = "apple", windows))]
+pub(crate) mod interrupt;
 #[cfg(target_os = "linux")]
 pub(crate) mod signals;
+
+/// The binary's scoped cancellation capture for `scenario run`.
+#[cfg(any(target_vendor = "apple", windows))]
+pub(crate) use interrupt::Signals as BinarySignals;
+#[cfg(target_os = "linux")]
+pub(crate) use signals::Signals as BinarySignals;
+
+/// Where `scenario run` can own an integration process.
+pub(crate) const RUN_SUPPORTED: bool =
+    cfg!(any(target_os = "linux", target_vendor = "apple", windows));
 use std::io::Read;
 use std::path::Path;
 use std::time::Duration;
@@ -22,9 +34,9 @@ pub(crate) fn input(command: &ScenarioCommand) -> &Path {
 
 pub(crate) fn run(command: &ScenarioCommand, cancellation: &RunCancellation) -> Report {
     let mut report = Report::new(CommandName::Scenario);
-    if matches!(command, ScenarioCommand::Run(_)) && !cfg!(target_os = "linux") {
+    if matches!(command, ScenarioCommand::Run(_)) && !RUN_SUPPORTED {
         return report.failed(exit::USAGE, CliError::new(ErrorKind::Usage,
-            "scenario run is currently available on Linux only; use scenario validate on this platform"));
+            "scenario run is available on Linux, macOS and Windows only; use scenario validate on this platform"));
     }
     let mut compiled = compile_input::compile(input(command));
     report.diagnostics = compiled.diagnostics.0.clone();
@@ -150,8 +162,8 @@ fn failed_assertions(scenario: &tungsten_mock::ScenarioReport) -> String {
     lines
 }
 
-/// Pending binary signals drained during mask restoration still fail the run.
-#[cfg(target_os = "linux")]
+/// Binary cancellation observed while ending the capture still fails the run.
+#[cfg(any(target_os = "linux", target_vendor = "apple", windows))]
 pub(crate) fn reject_late_cancellation(report: &mut Report) {
     if report.exit != exit::OK {
         return;
