@@ -263,6 +263,11 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
         "Fetch once online and retain both source.lock.json and its content file for offline use. Inspect permissions and unexpected cache entries before retrying. Partial *.pending writes from an interrupted fetch are discarded by the next online run; a held acquire.lock means another run is fetching the same source.",
     ),
     e(
+        "TG0128",
+        "A locked run (`generate --locked` or `check --locked`) found that the project does not match its generation lock: tungsten.lock.json is missing or corrupt, or a recorded source, reference, overlay, profile, target option, compiler or emitter identity changed. Nothing is generated.",
+        "Review the change and accept it explicitly with `tungsten lock --update`; `tungsten lock --check` lists every difference. Locked runs never fetch or refresh inputs.",
+    ),
+    e(
         "TG0130",
         "The Git input reference has an unsupported transport, URL credentials, query, invalid ref or unsafe subpath. Git authentication stays in the credential helper or environment.",
         "Use git+https://host/owner/repository@ref#path. Local hermetic inputs may use git+file:///absolute/repository@ref#path. Do not put secrets in the reference.",
@@ -314,8 +319,8 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
     ),
     e(
         "TG0145",
-        "A Media Type Object uses OpenAPI 3.2 `itemSchema`, which types each item of a sequential media type such as JSON Lines or Server-Sent Events. tungsten would type the payload without its items.",
-        "Describe the whole payload with `schema`, or remove the media type.",
+        "A Media Type Object uses OpenAPI 3.2 `itemSchema`, which types each item of a sequential media type, in a way tungsten does not compile. tungsten compiles `itemSchema` only in a response's `content` map (not in a reusable `components.mediaTypes` entry), without `schema` beside it, for JSON Lines (`application/jsonl`, `application/x-jsonl`, `application/ndjson`, `application/x-ndjson`; the type of one line) and for `text/event-stream` when the item is an event object whose `data` is a string with a JSON `contentMediaType` and a `contentSchema` (the event type). Request bodies, parameters, headers, other media types and events whose `data` is not JSON would be typed without their items.",
+        "Describe the whole payload with `schema`, or reshape the item into one of the compiled forms.",
     ),
     e(
         "TG0146",
@@ -329,8 +334,8 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
     ),
     e(
         "TG0148",
-        "The document defines `components.mediaTypes` or gives a media type object by `$ref`, both OpenAPI 3.2 features. tungsten reads media types only where they are written.",
-        "Inline the media type object under each `content` map.",
+        "Retired. Earlier releases refused OpenAPI 3.2 `components.mediaTypes` and media type objects given by `$ref`. tungsten now follows the reference and reads the media type as if written in place, and no longer reports this code.",
+        "Nothing to do; regenerate to pick up the referenced media types.",
     ),
     e(
         "TG0149",
@@ -815,8 +820,9 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
         "The project was imported from a Postman collection or another source whose operations \
          carry an enforced import policy (the runtime must apply it to every call), and a \
          configured target cannot apply it. Only the typescript, python, rust, java, kotlin, ruby, \
-         mcp, webmcp and docs targets declare that support, and an external emitter declares it with \
-         `import_policy` in its `--describe` response; generating any other target would \
+         csharp, dart, mcp, webmcp and docs targets declare that support, and an external emitter \
+         declares it with `import_policy` in its `--describe` response (the Go emitter in \
+         `emitters/go` does); generating any other target would \
          discard the policy. During input conversion, init refuses unsupported built-in \
          targets before saving the converted input or project manifests. During generation \
          of an existing project, tungsten refuses that target alone; other targets are \
@@ -1182,8 +1188,8 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
          The emitter is not run and no files are written for that target. Other supported \
          targets are still processed. Built-in targets without this capability use TG0705.",
         "Use an emitter that declares `import_policy: true` and enforces the imported \
-         metadata, or select a supported TypeScript, Python, Rust, Java, Kotlin, Ruby, MCP, WebMCP or docs \
-         target. Do not remove policy metadata merely to bypass this check. Protocol-1 \
+         metadata (the Go emitter in `emitters/go` does), or select a supported TypeScript, Python, Rust, Java, Kotlin, Ruby, C#, Dart, MCP, \
+         WebMCP or docs target. Do not remove policy metadata merely to bypass this check. Protocol-1 \
          emitters remain compatible with projects that have no imported-operation policy.",
     ),
     e(

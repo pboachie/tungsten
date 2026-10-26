@@ -143,6 +143,11 @@ final class ClientCore {
   /// build only against a runtime that honours the policy.
   static void requireRedirectPolicyV1() {}
 
+  /// Generated clients call this when an operation carries an
+  /// imported-operation policy, so they build only against a runtime that
+  /// enforces it.
+  static void requireImportPolicyV1() {}
+
   static List<int> _configuredConfirmationKey(List<int>? key) {
     if (key == null) return _Util.randomBytes(32);
     if (key.length < 32 || key.any((byte) => byte < 0 || byte > 255)) {
@@ -895,6 +900,7 @@ final class ClientCore {
             .err<Object?>(),
       );
     }
+    _checkImportScope(op, urlOverride ?? baseUrl);
     register([op]);
     final args = _normalizeArgs(op, rawArgs);
     if (_Util.nestsDeeper(args, _Util.maxArgDepth)) {
@@ -1267,7 +1273,39 @@ final class ClientCore {
       display = root + displayedPath + join(shown);
     }
     if (!_validBaseUrl(full)) throw _badBase(op);
+    _checkImportScope(op, full);
     return (full, display);
+  }
+
+  /// The origin (scheme, host and port) of an absolute http(s) URL without
+  /// credentials, or null.
+  static String? _originOf(Object? url) {
+    if (url is! String || !_validBaseUrl(url)) return null;
+    final u = Uri.parse(url);
+    return '${u.scheme.toLowerCase()}://${u.host.toLowerCase()}:${u.port}';
+  }
+
+  /// Refuses a reviewed imported operation whose target lies outside the
+  /// origins its review covers; throws [_Stop]. A malformed or missing scope
+  /// fails closed.
+  void _checkImportScope(OperationDescriptor op, String target) {
+    final policy = op.agent['import_policy'];
+    if (policy is! Map || policy['reviewed'] != true) return;
+    final actual = _originOf(target);
+    final origins = policy['allowed_origins'];
+    final allowed = actual != null &&
+        origins is List &&
+        origins.any((o) => _originOf(o) == actual);
+    if (allowed) return;
+    throw _Stop(
+      _diag(op.id, 'VALIDATION_FAILED')
+          .param('base_url')
+          .retrying('never')
+          .remedy(
+            "The target origin is outside this operation's saved review policy. Select a reviewed server or review a separate policy for this environment. Nothing was sent.",
+          )
+          .err<Object?>(),
+    );
   }
 
   static List<(String, String)> _queryPairs(String? raw) {

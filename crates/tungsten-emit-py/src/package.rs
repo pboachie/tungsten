@@ -8,15 +8,27 @@ use std::collections::BTreeSet;
 use tungsten_ir::{AuthScheme, CompositePart, IdempotencyKind, Safety};
 
 use crate::ops::{OpShape, has_preview, safety_str};
-use crate::options::{
-    CHECKED_PYTHON_MINORS, HTTPX_RANGE, Models, Options, PYDANTIC_RANGE, RuntimeDep,
-};
+use crate::options::{HTTPX_RANGE, Models, Options, PYDANTIC_RANGE, RuntimeDep};
 use crate::plan::{MemberKind, Plan};
 use crate::py::{LINE_LENGTH, string_lit};
 
 /// A TOML basic string (JSON string escapes are valid TOML escapes).
 fn toml_str(s: &str) -> String {
     string_lit(s)
+}
+
+/// The newest Python minor (`3.x`) the runtime's own `pyproject.toml`
+/// advertises; generated classifiers stop here.
+const NEWEST_PYTHON_MINOR: u32 = 15;
+
+/// The `3.x` minors from the `python_version` floor up to the newest
+/// supported line, for the per-version trove classifiers.
+fn python_minors(floor: &str) -> std::ops::RangeInclusive<u32> {
+    let floor = floor
+        .strip_prefix("3.")
+        .and_then(|m| m.parse().ok())
+        .unwrap_or(NEWEST_PYTHON_MINOR);
+    floor..=NEWEST_PYTHON_MINOR
 }
 
 pub(crate) fn pyproject(plan: &Plan<'_>, opts: &Options, header: &str) -> String {
@@ -53,12 +65,7 @@ pub(crate) fn pyproject(plan: &Plan<'_>, opts: &Options, header: &str) -> String
         out.push_str(&format!("  {},\n", toml_str(&dep)));
     }
     out.push_str("]\nclassifiers = [\n  \"Programming Language :: Python :: 3\",\n");
-    let floor = opts
-        .python_version
-        .split_once('.')
-        .and_then(|(_, minor)| minor.parse::<u32>().ok())
-        .unwrap_or(0);
-    for minor in CHECKED_PYTHON_MINORS.iter().filter(|&&m| m >= floor) {
+    for minor in python_minors(&opts.python_version) {
         out.push_str(&format!(
             "  \"Programming Language :: Python :: 3.{minor}\",\n"
         ));
