@@ -436,7 +436,8 @@ pub(crate) struct CheckArgs {
     #[arg(long)]
     pub all_warnings: bool,
     /// Fail (TG0128) unless the project matches its tungsten.lock.json
-    /// exactly. Implies offline input acquisition.
+    /// exactly. Implies offline input acquisition. `locked: true` in the
+    /// manifest has the same effect.
     #[arg(long)]
     pub locked: bool,
 }
@@ -466,6 +467,7 @@ pub(crate) struct GenerateArgs {
     pub strict: bool,
     /// Refuse (TG0128) unless the project matches its tungsten.lock.json
     /// exactly; nothing is written. Implies offline input acquisition.
+    /// `locked: true` in the manifest has the same effect.
     #[arg(long)]
     pub locked: bool,
 }

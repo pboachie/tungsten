@@ -318,6 +318,10 @@ changes.
   corrupt; nothing is generated. Locked runs acquire remote inputs offline from
   their pins and cannot be combined with `--refresh-inputs`.
 
+- Add `locked: true` to `tungsten.yml`, making every `generate` and `check`
+  of the project a locked run as with `--locked`. The JSON results of both
+  commands report `locked`.
+
 - Add `bundle export --include-input-cache` to carry the verified
   `.tungsten-inputs` pin records and pinned content of remote HTTP(S) and Git
   inputs, and of the reviewed sources of converted imports, so such projects
