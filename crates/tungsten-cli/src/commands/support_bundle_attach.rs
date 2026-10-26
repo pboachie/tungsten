@@ -94,7 +94,7 @@ pub(crate) fn read(
     file.take(MAX_ATTACHMENT_BYTES as u64)
         .read_to_end(&mut bytes)
         .map_err(|_| AttachError::Unreadable)?;
-    let truncated = start > 0;
+    let mut truncated = start > 0;
     if truncated {
         // Drop the partial first line.
         let cut = bytes
@@ -104,7 +104,14 @@ pub(crate) fn read(
         bytes.drain(..cut);
     }
     let text = String::from_utf8_lossy(&bytes);
-    let (text, redactions) = redact(&text, secrets);
+    let (mut text, redactions) = redact(&text, secrets);
+    // Markers can be longer than what they replace; keep whole lines from the
+    // end within the reader's bound.
+    while text.len() > MAX_ATTACHMENT_TEXT_BYTES {
+        truncated = true;
+        let cut = text.find('\n').map_or(text.len(), |n| n + 1);
+        text.drain(..cut);
+    }
     Ok(AttachmentPayload {
         kind,
         source_bytes,

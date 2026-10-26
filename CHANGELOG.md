@@ -385,6 +385,16 @@ changes.
   export removes its temporary file and exits with status 4 without
   publishing. A signal after publication does not change the outcome.
 
+- Add opt-in, explicitly labelled user-supplied material to support bundles:
+  `--attach-log <FILE>` and `--attach-config <FILE>` (at most four) add
+  `user.attachment[N]` entries holding the redacted last 8 KiB of each file,
+  with origin `user_supplied` and sensitivity `user_supplied_text`. Paths are
+  not recorded. Environment values, credential-like values, URLs, private keys,
+  home-path user names and long tokens are redacted, but redaction is not a
+  guarantee. Such bundles use `bundle_schema_version: 2`. Bundles without
+  attachments are unchanged version 1, and `support-bundle --inspect` reads
+  both versions.
+
 - Generate the README support matrix from the capability catalog.
   `tungsten capabilities --matrix --format markdown` prints the matrix
   between the markers that delimit README's generated block, and CI fails

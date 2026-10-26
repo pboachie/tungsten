@@ -744,7 +744,24 @@ declared prerequisites. Collection works with a broken project and does not
 compile it, read API documents, probe tool versions, run extensions or contact a
 network. It excludes configuration values, private paths, URLs, credentials,
 source text, logs, hashes and project identifiers. Use `--exclude <id>` to omit
-an entry; collection of additional sensitive content is not supported.
+an entry.
+
+Logs and configuration files are never collected unless you name them.
+`--attach-log <FILE>` and `--attach-config <FILE>` (repeatable, at most four in
+total) add `user.attachment[N]` entries, numbered from 0 with log files first.
+Each entry has origin `user_supplied` and sensitivity `user_supplied_text`.
+Such a bundle uses `bundle_schema_version: 2` with privacy level
+`metadata_and_user_supplied`; without attachments the bundle stays version 1
+and unchanged. Each file must be a regular, nonsymlink file, and its path is
+never recorded. Only its last 8 KiB are kept, starting at a line boundary.
+Automatic redaction then replaces environment variable values, values of
+credential-like keys (`password`, `token`, `secret`, `api_key`, `authorization`
+and similar), `Bearer`/`Basic` credentials, private-key blocks, URLs, user names
+in home directory paths and long token-like strings, and counts its
+replacements. Redaction is not a guarantee that arbitrary text is safe to
+share: review the preview, and use `--exclude user.attachment[N]` to drop an
+attachment. An unreadable attachment fails the command before anything is
+written.
 
 On Linux, macOS and Windows, `tungsten support-bundle --output <PATH>` creates
 a new local file.
@@ -800,10 +817,12 @@ a power-loss durability guarantee. There is no automatic upload or issue creatio
 platform before you share it. It reads one regular, nonsymlink file of at most
 128 KiB, writes nothing and starts no program. A bundle whose
 `bundle_schema_version` this tungsten does not read is refused with that
-number. Otherwise every object must have exactly the keys of that schema
-version, every entry must be an observed, metadata-only entry, and recorded
-sizes, statuses and totals must match the payloads; free text is limited to
-printable ASCII. The result lists each entry with its exact payload. Errors name
+number; versions 1 and 2 are read. Otherwise every object must have exactly
+the keys of that schema version, and the six observed entries must be
+metadata only. Version 2 may follow them with up to four entries labelled
+user supplied. Recorded sizes, statuses and totals must match the payloads.
+Free text in observed entries is limited to printable ASCII, and attachment
+text to 12 KiB without control characters other than newline and tab. The result lists each entry with its exact payload. Errors name
 only schema locations such as `/entries/0/payload/os`, never file content or
 unexpected keys. These checks confirm the bundle's shape, not that its text is
 safe to publish.

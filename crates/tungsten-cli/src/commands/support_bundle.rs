@@ -52,6 +52,8 @@ const COLLECTION_TIME_LIMIT: std::time::Duration = std::time::Duration::from_sec
 /// How often a waiting collection checks for cancellation.
 const COLLECTION_POLL: std::time::Duration = std::time::Duration::from_millis(50);
 
+const USER_SUPPLIED_WARNING: &str = "includes user-supplied text (user.attachment entries) after automatic redaction; redaction is not a guarantee, so review it before sharing.\n";
+
 /// Entry ids in manifest order; `--exclude` accepts exactly these.
 pub(super) const ENTRY_IDS: [&str; 6] = [
     "tool.versions",
@@ -106,8 +108,9 @@ pub struct SupportBundlePreview {
     pub wrote_files: bool,
     /// True only if running the command started a program or extension.
     pub executed_programs: bool,
-    /// Every datum is an observation of the local installation or of the
-    /// project's declared configuration. Nothing here is user supplied.
+    /// Observed entries describe the local installation or the project's
+    /// declared configuration. Only schema version 2 adds user-supplied
+    /// `user.attachment` entries, and labels them so.
     pub privacy: BundlePrivacyDefaults,
     pub limits: BundleLimits,
     /// What a bundle would contain, in order, with the exact payloads.
@@ -210,7 +213,9 @@ pub enum BundleEntryStatus {
 pub struct OmittedCategory {
     pub category: String,
     pub description: String,
-    /// Always `excluded_by_default`; opting in is not available yet.
+    /// Always `excluded_by_default`: tungsten never collects these itself.
+    /// Logs and configuration files enter a bundle only as labelled
+    /// `user.attachment` entries the user names explicitly.
     pub reason: String,
 }
 
@@ -477,9 +482,17 @@ pub(crate) fn run(
         Err(error) => return export_failed(report, error),
     };
     report.human = format!(
-        "Published a metadata-only support bundle ({} bytes). Nothing was uploaded or executed.\n",
+        "Published a {} support bundle ({} bytes). Nothing was uploaded or executed.\n",
+        if manifest.bundle_schema_version == BUNDLE_SCHEMA_VERSION {
+            "metadata-only"
+        } else {
+            "schema 2"
+        },
         bytes.len()
     );
+    if manifest.bundle_schema_version != BUNDLE_SCHEMA_VERSION {
+        report.human.push_str(USER_SUPPLIED_WARNING);
+    }
     report.result = Some(CommandResult::SupportBundleExport(Box::new(
         SupportBundleExportReceipt {
             manifest,
@@ -545,14 +558,14 @@ fn inspect_file(mut report: Report, file: &Path) -> Report {
                 format!("unsupported support bundle schema version {version}"),
             )
             .with_help(format!(
-                "this tungsten reads schema version {BUNDLE_SCHEMA_VERSION}; use the tungsten release that wrote the bundle"
+                "this tungsten reads schema versions {BUNDLE_SCHEMA_VERSION} and {BUNDLE_SCHEMA_VERSION_ATTACHMENTS}; use the tungsten release that wrote the bundle"
             )),
         ),
         InspectError::Invalid(problem) => (
             exit::REFUSED,
             CliError::new(
                 ErrorKind::Refused,
-                format!("support bundle does not match schema version {BUNDLE_SCHEMA_VERSION}: {problem}"),
+                format!("support bundle does not match its schema version: {problem}"),
             ),
         ),
     };
@@ -1036,9 +1049,16 @@ fn human(preview: &SupportBundlePreview) -> String {
         tungsten_build::TUNGSTEN_VERSION,
         preview.bundle_schema_version
     );
-    out.push_str(
-        "metadata only; nothing is written, uploaded or executed. These are the exact entries a bundle would hold.\n",
-    );
+    if preview.bundle_schema_version == BUNDLE_SCHEMA_VERSION {
+        out.push_str(
+            "metadata only; nothing is written, uploaded or executed. These are the exact entries a bundle would hold.\n",
+        );
+    } else {
+        out.push_str(
+            "nothing is written, uploaded or executed. These are the exact entries a bundle would hold.\n",
+        );
+        out.push_str(USER_SUPPLIED_WARNING);
+    }
     let _ = writeln!(
         out,
         "entries: {} bytes of {} allowed",
