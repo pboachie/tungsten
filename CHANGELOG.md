@@ -735,6 +735,10 @@ changes.
 
 ### Changed
 
+- The `mock-scenarios` gallery recipe (429 then success, stream interruption,
+  malformed response and lost write) now runs on macOS and Windows as well as
+  Linux, matching `scenario run`.
+
 - The Python clean-consumer CI lane now also calls a second generated SDK sync and async,
   covering bearer auth, cursor pagination, nullable and union models, a safe
   retry, client-side validation, an operation deadline, async cancellation, an
