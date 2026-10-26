@@ -458,6 +458,10 @@ changes.
   write a project whose outputs collide with another's. The capability catalog
   declares the workspace contract under `workspace`.
 
+- The `actions/tungsten` GitHub Action runs saved mock scenarios after the
+  checks (`scenarios`, `scenario-input`) through `tungsten scenario run`, one
+  line per scenario split on whitespace without a shell; a failed assertion
+  fails the step, and scenarios are refused on `pull_request_target`.
 - The `actions/tungsten` GitHub Action checks the projects of a workspace
   (`workspace`), narrowed by project id (`workspace-projects`) and by
   `tungsten workspace --affected` evidence for listed files (`affected-files`)
