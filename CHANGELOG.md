@@ -230,6 +230,19 @@ changes.
 
 ### Added
 
+- OpenAPI 3.1+ `webhooks` are compiled. Each operation of a `webhooks` entry
+  becomes an incoming webhook in the IR (`Namespace.webhooks`, omitted when
+  empty: event key, method, operation id, docs and the JSON request body as a
+  typed payload); webhooks are never callable. TypeScript, Python and Rust
+  SDKs of an API that declares webhooks gain a `webhooks` module: payload types
+  and schemas keyed by the `webhooks` key (`WebhookPayloads` /
+  `webhookSchemas`, `WEBHOOKS`, the `WebhookName` and `WebhookEvent` enums)
+  and `parseWebhook` / `parse_webhook`, which verifies a delivery with the
+  runtime's Stripe-compatible verifier and validates the payload, constraints
+  included, before the replay claim; a mismatch is `payload_invalid`. The
+  runtimes gain the matching hook (`parse` in TypeScript and Python,
+  `verify_webhook_with` in Rust). Registered as the `typed_webhooks` target
+  feature. Unreleased 0.2.0 only.
 - The TypeScript and Python runtimes include an optional OpenTelemetry
   adapter for the telemetry observer (`openTelemetryObserver(tracer)`,
   `open_telemetry_observer(tracer)`): one client span per operation named after
