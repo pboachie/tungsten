@@ -12,6 +12,8 @@ export const REDACTED = "<redacted>";
 /** Longest string kept in `Diagnostic.received_value`. */
 export const MAX_RECEIVED_CHARS = 200;
 
+import { UploadSource } from "./upload.js";
+
 const encoder = new TextEncoder();
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
@@ -36,8 +38,9 @@ export interface NamedBinary {
 }
 
 /** What a binary request field takes: bytes, a `Blob` or `File`, or
- * {@link NamedBinary}. */
-export type BinaryInput = Uint8Array | ArrayBuffer | Blob | NamedBinary;
+ * {@link NamedBinary}; a whole binary request body also takes an
+ * {@link UploadSource}. */
+export type BinaryInput = Uint8Array | ArrayBuffer | Blob | NamedBinary | UploadSource;
 
 export function isNamedBinary(value: unknown): value is NamedBinary {
   if (!isRecord(value) || isBinary(value) || value instanceof Date) return false;
@@ -53,7 +56,7 @@ export function isNamedBinary(value: unknown): value is NamedBinary {
 
 /** Whether `value` is a `BinaryInput`: bytes, a Blob or File, or `{ data, filename?, contentType? }`. */
 export function isBinaryInput(value: unknown): value is BinaryInput {
-  return isBinary(value) || isNamedBinary(value);
+  return isBinary(value) || isNamedBinary(value) || value instanceof UploadSource;
 }
 
 export function binarySize(value: Uint8Array | ArrayBuffer | Blob): number {
@@ -198,6 +201,7 @@ export function canonicalJson(value: unknown): string {
     if (v instanceof Uint8Array) return `{"$bytes":${JSON.stringify(bytesToBase64(v))}}`;
     if (v instanceof ArrayBuffer) return `{"$bytes":${JSON.stringify(bytesToBase64(new Uint8Array(v)))}}`;
     if (isBlob(v)) return `{"$blob":{"size":${v.size},"type":${JSON.stringify(v.type)}}}`;
+    if (v instanceof UploadSource) return `{"$upload":{"length":${v.length ?? "null"},"replay":${JSON.stringify(v.replay)},"sha256":${v.sha256 === null ? "null" : JSON.stringify(v.sha256)}}}`;
     const obj = v as object;
     if (stack.has(obj)) throw new TypeError("the value contains a cycle");
     stack.add(obj);

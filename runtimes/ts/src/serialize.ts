@@ -4,6 +4,7 @@
  * header and cookie parameters) and request body encoding.
  */
 import type { BodyDescriptor, OperationDescriptor, ParamDescriptor } from "./types.js";
+import { UploadSource } from "./upload.js";
 import { binarySize, canonicalJson, isBinary, isBlob, isNamedBinary, isRecord, REDACTED, utf8 } from "./util.js";
 
 /** Problem found while serializing an argument; becomes VALIDATION_FAILED. */
@@ -154,6 +155,20 @@ export interface EncodedBody {
   raw: unknown;
   /** Bytes or text whose SHA-256 is the `content_hash` key. */
   hashMaterial: string | Uint8Array | null;
+  /** A streamed body: `body` is then null and each attempt reads the source. */
+  upload?: UploadSource;
+}
+
+/** The path of an {@link UploadSource} inside `value`, or null. */
+function uploadPath(value: unknown, path: string, seen = new Set<object>()): string | null {
+  if (value instanceof UploadSource) return path;
+  if (value === null || typeof value !== "object" || isBinary(value) || value instanceof Date || seen.has(value)) return null;
+  seen.add(value);
+  for (const [k, v] of Object.entries(value)) {
+    const found = uploadPath(v, Array.isArray(value) ? `${path}[${k}]` : `${path}.${k}`, seen);
+    if (found !== null) return found;
+  }
+  return null;
 }
 
 const NO_BODY: EncodedBody = { body: null, contentType: null, display: null, raw: null, hashMaterial: null };
@@ -228,6 +243,10 @@ export async function encodeBody(
   const encoding = descriptor?.encoding ?? "json";
   const mediaType = descriptor?.mediaType ?? "application/json";
   const parameter = "body";
+  const nested = encoding === "bytes" && value instanceof UploadSource ? null : uploadPath(value, parameter);
+  if (nested !== null) {
+    throw new SerializationError(nested, "bytes, a Blob or a File: an UploadSource can only be the whole body of a binary request", "<upload>");
+  }
   switch (encoding) {
     case "json": {
       let text: string | undefined;
@@ -288,6 +307,10 @@ export async function encodeBody(
       return { body: form, contentType: null, display: redactDisplay(display), raw: display, hashMaterial: canonicalJson(value) };
     }
     case "bytes": {
+      if (value instanceof UploadSource) {
+        const shown = `<upload of ${value.length === null ? "unknown length" : `${value.length} bytes`}${mediaType ? ` of ${mediaType}` : ""}>`;
+        return { body: null, contentType: mediaType, display: shown, raw: shown, hashMaterial: null, upload: value };
+      }
       let bytes: Uint8Array | Blob;
       if (value instanceof Uint8Array) bytes = value;
       else if (value instanceof ArrayBuffer) bytes = new Uint8Array(value);
