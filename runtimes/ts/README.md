@@ -107,9 +107,45 @@ each supported platform, including Windows and WSL.
 
 ## Limits
 
+Incoming webhooks: `verifyWebhook` accepts a body of at most 1 MiB by default
+(`maxBodyBytes`) and a signature header of at most 8192 characters, rejects a signed
+timestamp more than 300 seconds from now by default (`toleranceSeconds`), and supports
+only the Stripe-compatible `t=,v1=` HMAC-SHA256 scheme (`v0` and other schemes
+are ignored). Replay tracking is the application's `claim` hook; the runtime
+keeps no delivery state. Unreleased 0.2.0 only.
+
 The OAuth 2.0 device authorization flow (OpenAPI 3.2 `deviceAuthorization`) is
 not run by the client: configure the scheme with an access token obtained
 through it.
+
+In unreleased 0.2.0, `ClientCore.exportPages(op, args, checkpoint, opts)` runs a read-only paginated operation as a durable
+export: every page carries a sealed `checkpoint` token and a `complete` flag.
+Persist the token only after the page's items are committed to your sink, and
+pass it back as `checkpoint.resume` after a restart to continue with the next page. A
+crash after the sink commit but before the token is persisted replays that page
+once on resume, so the sink must be idempotent (deduplicate on a stable item
+key); a crash before the commit loses nothing. The token is
+`tgp1.<payload>.<HMAC-SHA-256>` under a caller-held `checkpoint.key` of at least 32
+bytes, and binds the API name, operation, method, path, pagination style and
+position parameter, base URL, `ClientOptions.tenant`, `checkpoint.scope` and every argument except
+the page position, as an HMAC, so no argument value or credential is stored.
+The provider's next-page cursor or URL is stored as is: treat tokens as
+secrets. A token that is malformed, longer than 16384 characters, altered,
+sealed under another key, issued for another operation, other arguments
+(filters, order, page size), base URL, tenant or scope, older than
+`checkpoint.maxAgeMs`, or stopped by a repeated cursor or cross-origin Link is refused
+with `VALIDATION_FAILED` before any request; restarting from the first page is
+always the caller's explicit choice (omit `checkpoint.resume`). When the first resumed
+request fails with 400, 404, 410 or 422, the remediation says the provider's
+cursor may have expired. Cursor, offset, page-number and `Link` traversals can
+resume; checkpoints record a position, not a snapshot, so offset and page
+numbers can skip or repeat items when upstream data changes between runs, and
+only provider cursors that stay valid across sessions resume reliably.
+`maxPages`, cycle detection, deadlines, cancellation and the scheduler apply
+to each run; cycle detection covers the current run only. A token from one
+runtime is not guaranteed to resume in another. `ClientCore.describeCheckpoint(token)` returns the
+operation, style, state, page count and issue time without the cursor, for
+logs and support bundles.
 
 In unreleased 0.2.0, `deadlineMs` (on `ClientOptions` or `CallOptions`) sets a total
 deadline for one logical call, separate from the per-attempt `timeoutMs`. It is
@@ -194,6 +230,15 @@ Optionally, `maxActiveTotal` and `maxStreamsTotal` cap ordinary requests and eve
 flight across every scope, on top of each scope's `maxActive` and `maxStreams` (default:
 no cap across scopes). Scopes waiting for that shared capacity take turns, one
 request each, in scope order, so one busy tenant or origin cannot starve another.
+For queue telemetry, the optional scheduler observer `onEvent` is called
+synchronously (in Python and Rust outside the scheduler's lock) with version-1
+events: `admitted` and `rejected` (with `wait_ms`, and `reason` and `pause_ms`
+for a rejection), `released` (`held_ms`), `paused` (`pause_ms`) and
+`retry_denied`. Every `admitted` is followed by one `released`; a request
+granted just as its wait was abandoned may be reported `rejected` (`aborted`) and
+`released`. Events carry no scope key, tenant, URL or payload, so they hold no
+secret and few distinct values; nothing is buffered, and an observer's
+exception or panic is ignored. Read `stats()` for current counts.
 See the [bulk-sync example](https://github.com/pboachie/tungsten/tree/main/examples/bulk-sync).
 
 In unreleased 0.2.0, a client can report local telemetry for `call()` to an

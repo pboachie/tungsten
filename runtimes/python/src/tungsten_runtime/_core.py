@@ -15,6 +15,7 @@ errors, which become diagnostic envelopes.
 from __future__ import annotations
 
 import codecs
+import hmac
 import math
 import random
 import re
@@ -40,6 +41,7 @@ from ._auth import (
     is_safe_method,
     resolve_auth,
 )
+from ._checkpoint import checkpoint_binding, open_checkpoint, seal_checkpoint
 from ._classify import (
     CallContext,
     OutcomeCheck,
@@ -183,6 +185,7 @@ from .schema import PatternNote, collect_pattern_notes
 from .sentinels import UNSET
 from .telemetry import Telemetry, TelemetryQueueReason, TelemetrySpan, now_ms
 from .types import (
+    CheckpointPage,
     ClientOptions,
     Diagnostic,
     Err,
@@ -299,6 +302,17 @@ class Answer:
 class PageAnswer:
     result: Ok[Page[Any]] | Err
     items: list[object]
+
+
+@dataclass(slots=True)
+class _PageControl:
+    """Hooks of a checkpointed traversal: the saved position to start from,
+    and the real next-page value and stop reason (``cycle``, ``max``,
+    ``origin``) of the last page."""
+
+    start: object = UNSET
+    last_next: object = None
+    last_stop: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -590,6 +604,19 @@ class Engine:
         expired: list[Err] = []
         yield from _within_deadline(
             self._pages(op, args, resolved, None, deliver),
+            _deadline_of(resolved),
+            lambda sent: expired.append(self._deadline_expired(op, sent)),
+        )
+        if expired:
+            yield from emit(expired[0])
+
+    def export_pages(
+        self, op: OperationDescriptor, args: object, checkpoint: object, opts: object
+    ) -> Flow[None]:
+        resolved = self._call_options(opts)
+        expired: list[Err] = []
+        yield from _within_deadline(
+            self._export_pages(op, args, checkpoint, resolved),
             _deadline_of(resolved),
             lambda sent: expired.append(self._deadline_expired(op, sent)),
         )
@@ -2454,6 +2481,221 @@ class Engine:
 
     # ------------------------------------------------- pages and polling
 
+    def _export_pages(
+        self, op: OperationDescriptor, args: object, cp: object, opts: Mapping[str, object]
+    ) -> Flow[None]:
+        subject = safe_id(op)
+
+        def refuse(expected: str, remediation: str, parameter: str = "checkpoint") -> Flow[None]:
+            yield from emit(
+                _fail(
+                    diagnostic(
+                        subject,
+                        "VALIDATION_FAILED",
+                        failed_parameter=parameter,
+                        expected=expected,
+                        retryable="never",
+                        remediation=remediation,
+                    )
+                )
+            )
+
+        pagination = field(op, "pagination")
+        style = field(pagination, "style")
+        if style not in ("cursor", "offset", "page", "link_header"):
+            yield from refuse(
+                "an operation with a pagination contract",
+                "This operation declares no pagination contract, so it cannot be resumed from a checkpoint; "
+                "call it directly. Nothing was sent.",
+                "operation",
+            )
+            return
+        if safety_of(op) != "read_only":
+            yield from refuse(
+                "a read-only operation",
+                "Checkpointed exports run read-only operations only; nothing was sent.",
+                "operation",
+            )
+            return
+        key = field(cp, "key")
+        if not isinstance(key, bytes | bytearray) or len(key) < 32:
+            yield from refuse(
+                "a key of at least 32 bytes",
+                "Pass checkpoint key, a secret of at least 32 bytes kept stable across restarts. Nothing was sent.",
+                "checkpoint.key",
+            )
+            return
+        key = bytes(key)
+        scope = field(cp, "scope")
+        scope = "" if scope is UNSET or scope is None else scope
+        if not isinstance(scope, str):
+            yield from refuse(
+                "a string",
+                "checkpoint scope names the account or principal the export reads for. Nothing was sent.",
+                "checkpoint.scope",
+            )
+            return
+        if not is_record(args):
+            yield from refuse(
+                "an object of named arguments",
+                "Pass the operation's arguments as an object. Nothing was sent.",
+                "args",
+            )
+            return
+        param = {"cursor": "request_param", "offset": "offset_param", "page": "page_param"}.get(str(style))
+        position = (str_field(pagination, param) or "") if param is not None else ""
+        rest = dict(args)
+        if position != "":
+            rest.pop(arg_name(op, position), None)
+        base = self._base_url()
+        tenant = self.options.tenant
+        binding = checkpoint_binding(
+            key,
+            {
+                "api": str_field(self.api, "name") or "",
+                "operation": op["id"],
+                "method": op["method"],
+                "path": op["path"],
+                "style": style,
+                "position": position,
+                "base": base or "",
+                "tenant": tenant if isinstance(tenant, str) else "",
+                "scope": scope,
+                "args": rest,
+            },
+        )
+        pages = 0
+        start: object = UNSET
+        resume = field(cp, "resume")
+        if resume is not UNSET and resume is not None:
+            restart = (
+                "Restart the export from the first page only if that is intended: omit checkpoint resume. "
+                "Nothing was sent."
+            )
+            saved = open_checkpoint(key, resume) if isinstance(resume, str) else None
+            if saved is None:
+                yield from refuse(
+                    "a checkpoint token sealed under checkpoint key",
+                    f"The checkpoint is malformed, altered or sealed under another key. {restart}",
+                )
+                return
+            if saved["operation"] != op["id"] or saved["style"] != style:
+                yield from refuse(
+                    f"a checkpoint of {op['id']} ({style})",
+                    f"The checkpoint belongs to {saved['operation']} ({saved['style']}), not this operation and "
+                    f"pagination contract. {restart}",
+                )
+                return
+            if not hmac.compare_digest(saved["binding"], binding):
+                yield from refuse(
+                    "a checkpoint of this traversal",
+                    "The checkpoint was issued for other arguments (filters, order, page size), base URL, tenant, "
+                    f"scope or API. Resume with the original ones, or: {restart}",
+                )
+                return
+            max_age = field(cp, "max_age_ms")
+            if max_age is not UNSET and max_age is not None:
+                if not is_number(max_age) or not max_age >= 0:
+                    yield from refuse(
+                        "a non-negative number of milliseconds",
+                        "checkpoint max_age_ms must be a non-negative number. Nothing was sent.",
+                        "checkpoint.max_age_ms",
+                    )
+                    return
+                if self.now() - saved["issued"] > max_age:
+                    yield from refuse(
+                        f"a checkpoint issued within {js_number(max_age)} ms",
+                        "The checkpoint is older than checkpoint max_age_ms, so the provider's cursor may have "
+                        f"expired. {restart}",
+                    )
+                    return
+            if saved["state"] == "complete":
+                return
+            if saved["state"] == "stopped":
+                yield from refuse(
+                    "a resumable checkpoint",
+                    "The export stopped on a server fault (a repeated cursor or a cross-origin next-page link) that "
+                    f"resuming would repeat. {restart}",
+                )
+                return
+            saved_next = saved["next"]
+            if style == "link_header":
+                valid = (
+                    isinstance(saved_next, str)
+                    and base is not None
+                    and origin_of(saved_next) is not None
+                    and origin_of(saved_next) == origin_of(base)
+                )
+            elif style == "cursor":
+                valid = saved_next is not None and saved_next != ""
+            else:
+                valid = type(saved_next) is int and 0 <= saved_next <= 2**53 - 1
+            if not valid:
+                yield from refuse(
+                    "a resumable checkpoint",
+                    f"The checkpoint's saved position cannot be resumed against this base URL. {restart}",
+                )
+                return
+            pages = saved["pages"]
+            start = saved_next
+        ctl = _PageControl(start=start)
+        resuming = [start is not UNSET]
+        counted = [pages]
+
+        def deliver(page: PageAnswer) -> Flow[bool]:
+            result = page.result
+            if isinstance(result, Err):
+                error = result.error
+                if resuming[0] and error.get("http_status") in (400, 404, 410, 422):
+                    error = with_fields(
+                        error,
+                        remediation=(
+                            f"{error.get('remediation')} This request resumed from a saved checkpoint: if the "
+                            "provider's cursor or page position expired, restart the export from the first page "
+                            "(omit checkpoint resume) and let the sink deduplicate."
+                        ),
+                    )
+                    result = _fail(error, result.partial)
+                yield from emit(result)
+                return True
+            resuming[0] = False
+            counted[0] = min(counted[0] + 1, 2**53 - 1)
+            if ctl.last_stop in ("cycle", "origin"):
+                state = "stopped"
+            elif ctl.last_next is None:
+                state = "complete"
+            else:
+                state = "partial"
+            token = seal_checkpoint(
+                key,
+                {
+                    "v": 1,
+                    "operation": op["id"],
+                    "style": style,
+                    "binding": binding,
+                    "state": state,
+                    "next": ctl.last_next if state == "partial" else None,
+                    "pages": counted[0],
+                    "issued": max(0, int(self.now())),
+                },
+            )
+            value = result.value
+            yield from emit(
+                replace(
+                    result,
+                    value=CheckpointPage(
+                        items=value.items,
+                        body=value.body,
+                        next=value.next,
+                        checkpoint=token,
+                        complete=state == "complete",
+                    ),
+                )
+            )
+            return True
+
+        yield from self._pages(op, args, opts, None, deliver, ctl)
+
     def _pages(
         self,
         op: OperationDescriptor,
@@ -2461,11 +2703,22 @@ class Engine:
         opts: Mapping[str, object],
         step: StepControl | None,
         sink: Callable[[PageAnswer], Flow[bool]],
+        ctl: _PageControl | None = None,
     ) -> Flow[None]:
         pagination = field(op, "pagination")
         current: dict[str, object] | None = dict(args) if is_record(args) else None
         override: str | None = None
         seen: set[str] = set()
+        if ctl is not None and ctl.start is not UNSET and current is not None:
+            start_style = field(pagination, "style")
+            if start_style == "link_header":
+                override = str(ctl.start)
+                seen.add(override)
+            else:
+                param = {"cursor": "request_param", "offset": "offset_param", "page": "page_param"}[
+                    str(start_style)
+                ]
+                current = {**current, arg_name(op, str_field(pagination, param) or ""): ctl.start}
         request_urls: set[str] | None = set() if field(pagination, "style") == "link_header" else None
         count = 0
         max_pages = opts.get("max_pages")
@@ -2534,6 +2787,8 @@ class Engine:
                     except ValueError:
                         resolved = ""
                     if origin is None or origin_of(resolved) != origin:
+                        if ctl is not None:
+                            ctl.last_next, ctl.last_stop = None, "origin"
                         yield from sink(
                             PageAnswer(
                                 Ok(
@@ -2570,16 +2825,21 @@ class Engine:
                     override = resolved
             count += 1
             stop = None
+            stop_kind: str | None = None
             if next_value is not None:
                 key = str(next_value) if style == "link_header" else canonical_json(next_value)
                 if key in seen:
                     stop = "Pagination detected a repeated cursor or page URL. Fix the server's next-page value before continuing."
+                    stop_kind = "cycle"
                 elif budget is not None and count >= budget:
                     stop = (
                         "Pagination reached max_pages before another request. Increase max_pages to continue."
                     )
+                    stop_kind = "max"
                 else:
                     seen.add(key)
+            if ctl is not None:
+                ctl.last_next, ctl.last_stop = next_value, stop_kind
             page_result = Ok(
                 value=Page(
                     items=(yield from self._page_items(op, items)),

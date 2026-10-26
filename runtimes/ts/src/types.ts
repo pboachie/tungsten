@@ -797,6 +797,40 @@ export interface Page<T> {
   next: unknown;
 }
 
+/**
+ * A durable, resumable read-only export (`ClientCore.exportPages`). The
+ * checkpoint token is bound to the API, operation, pagination contract,
+ * base URL, `ClientOptions.tenant`, `scope` and every argument except the
+ * page position; a token from another traversal, key or runtime contract
+ * is refused before any request.
+ */
+export interface CheckpointOptions {
+  /** HMAC-SHA-256 key of at least 32 bytes that seals and verifies
+   * tokens. Keep it as a secret, stable across restarts. */
+  key: Uint8Array;
+  /** The account or principal the export reads for, when
+   * `ClientOptions.tenant` does not already say. Never a credential. */
+  scope?: string;
+  /** A token from an acknowledged page to resume after; omitted starts
+   * from the first page. Restarting is the caller's explicit choice. */
+  resume?: string;
+  /** Refuse a token issued more than this many milliseconds ago. */
+  maxAgeMs?: number;
+}
+
+/**
+ * A page of a checkpointed export. Persist `checkpoint` only after the
+ * page's items are committed to the sink: a crash before persisting replays
+ * this page on resume, so the sink must deduplicate.
+ */
+export interface CheckpointPage<T> extends Page<T> {
+  /** Sensitive token (it holds the provider's next-page cursor or URL)
+   * recording progress through this page. */
+  checkpoint: string;
+  /** The token records a finished traversal; resuming it reads nothing. */
+  complete: boolean;
+}
+
 /** Until-predicate for `ClientCore.poll`, same shape as `VerifyDescriptor.expect`. */
 export type Predicate = Record<string, unknown>;
 

@@ -21,6 +21,7 @@ import {
   requestIdOf,
   verifyCallable,
 } from "./classify.js";
+import { checkpointBinding, checkpointStatus, type CheckpointStatus, openCheckpoint, sealCheckpoint } from "./checkpoint.js";
 import { argumentSnapshot, argsDigest, checkToken, CONFIRMATION_TTL_MS, issueToken } from "./confirm.js";
 import { diagnostic, scrubDiagnostic, scrubText } from "./envelope.js";
 import { OAuthFlow, OAuthSession } from "./oauth.js";
@@ -55,6 +56,8 @@ import { Telemetry, type TelemetryQueueReason, type TelemetrySpan } from "./tele
 import type {
   ApiDescriptor,
   CallOptions,
+  CheckpointOptions,
+  CheckpointPage,
   ClientCoreApi,
   ClientCoreExtensions,
   ClientOptions,
@@ -87,11 +90,13 @@ import {
   getPath,
   isRecord,
   looksSensitive,
+  MAX_TIMER_MS,
   mergeAccept,
   REDACTED,
   redactPaths,
   redactSensitiveKeys,
   sha256Hex,
+  timingSafeEqual,
   sleep,
   splitPath,
 } from "./util.js";
@@ -123,6 +128,16 @@ const MACRO_PAGE_LIMIT = 100;
 const pageRequestUrls = new WeakMap<object, string>();
 const MAX_REDIRECTS = 5;
 const REDIRECT_STATUSES: ReadonlySet<number> = new Set([301, 302, 303, 307, 308]);
+
+/** Why a traversal stopped while the server still offered a page. */
+type PageStop = "cycle" | "max" | "origin" | null;
+
+/** Hooks of a checkpointed traversal: the saved position to start from,
+ * and the real next-page value and stop reason of the last page. */
+interface PageControl {
+  start?: unknown;
+  last?: { next: unknown; stop: PageStop };
+}
 
 /** Why a request is being prepared. `macro_preview` renders a macro step
  * from a dry evaluation: argument values that are placeholders for earlier
@@ -227,6 +242,16 @@ function queueReason(refused: Diagnostic | null): TelemetryQueueReason {
     case "SCHEDULER_CLOSED": return "closed";
     case "DEADLINE_EXCEEDED": return "deadline";
     default: return "cancelled";
+  }
+}
+
+/** The origin of an absolute URL, or null. */
+function originOf(url: string): string | null {
+  try {
+    const origin = new URL(url).origin;
+    return origin === "null" ? null : origin;
+  } catch {
+    return null;
   }
 }
 
@@ -636,6 +661,31 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     }
   }
 
+  /**
+   * Iterate the pages of a read-only operation like {@link pages}, each
+   * with a sealed checkpoint token to persist once the page is committed
+   * to the sink; pass a saved token as `checkpoint.resume` after a restart
+   * to continue with the page after it. Never throws. A token that is
+   * malformed, altered, sealed under another key, older than `maxAgeMs`,
+   * stopped, or issued for other arguments, origin, tenant, scope or
+   * contract is refused (`VALIDATION_FAILED`) before any request. Page
+   * budgets, cycle detection, deadlines and cancellation apply per run.
+   */
+  async *exportPages<T>(op: OperationDescriptor, args: Record<string, unknown>, checkpoint: CheckpointOptions, opts?: CallOptions): AsyncIterable<Result<CheckpointPage<T>>> {
+    try {
+      yield* this.#exportPages<T>(op, args, checkpoint, this.#callOptions(opts));
+    } catch (error) {
+      yield fail(this.#internal(op, error, "exporting pages"));
+    }
+  }
+
+  /** The secret-free status of a checkpoint token (operation, style,
+   * state, pages, issue time) for logs and support, or null when it is not
+   * a well-formed token. Its seal is not checked; the cursor is omitted. */
+  static describeCheckpoint(token: string): CheckpointStatus | null {
+    return checkpointStatus(token);
+  }
+
   /** Iterate the events of the operation's event stream: one item per
    * server-sent event, decoded from JSON, then the end of the stream or a
    * final failure item. Never throws. */
@@ -745,7 +795,9 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     let timer: ReturnType<typeof setTimeout> | undefined;
     let onAbort: (() => void) | undefined;
     const stopped = new Promise<typeof DEADLINE_EXPIRED | typeof CALLER_CANCELLED>((resolve) => {
-      if (remaining !== Infinity) timer = setTimeout(() => resolve(DEADLINE_EXPIRED), remaining);
+      // A deadline beyond what a timer can hold is checked at the next
+      // boundary instead; a longer delay would fire at once.
+      if (remaining <= MAX_TIMER_MS) timer = setTimeout(() => resolve(DEADLINE_EXPIRED), remaining);
       onAbort = () => resolve(CALLER_CANCELLED);
       signal?.addEventListener("abort", onAbort, { once: true });
     });
@@ -2141,11 +2193,20 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     return (params.find((p) => p.name === key) ?? params.find((p) => p.wire === key))?.name ?? key;
   }
 
-  async *#pages<T>(op: OperationDescriptor, args: Record<string, unknown>, opts: CallOptions): AsyncGenerator<Result<Page<T>>> {
+  async *#pages<T>(op: OperationDescriptor, args: Record<string, unknown>, opts: CallOptions, ctl?: PageControl): AsyncGenerator<Result<Page<T>>> {
     const pagination = isRecord(op) && isRecord(op.pagination) ? op.pagination : null;
     let current: Record<string, unknown> = isRecord(args) ? { ...args } : args;
     let override: string | null = null;
     const seen = new Set<string>();
+    if (ctl?.start !== undefined && pagination && isRecord(current)) {
+      if (pagination.style === "link_header") {
+        override = String(ctl.start);
+        seen.add(override);
+      } else {
+        const param = pagination.style === "cursor" ? pagination.requestParam : pagination.style === "offset" ? pagination.offsetParam : pagination.pageParam;
+        current = { ...current, [this.#argName(op, param)]: ctl.start };
+      }
+    }
     const requestUrls = pagination?.style === "link_header" ? new Set<string>() : undefined;
     const maxPages = typeof opts.maxPages === "number" && Number.isSafeInteger(opts.maxPages) && opts.maxPages > 0 ? opts.maxPages : undefined;
     let count = 0;
@@ -2217,6 +2278,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
                 }
               })();
               if (resolved.origin !== origin || origin === null) {
+                if (ctl) ctl.last = { next: null, stop: "origin" };
                 yield { ok: true, value: { items, body, next: null }, meta: result.meta };
                 yield fail(
                   diagnostic(op.id, "UNEXPECTED_RESPONSE", {
@@ -2238,18 +2300,136 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
       }
       count += 1;
       let stop: string | null = null;
+      let stopKind: PageStop = null;
       if (next !== null) {
         const key = pagination?.style === "link_header" ? String(next) : canonicalJson(next);
-        if (seen.has(key)) stop = "Pagination detected a repeated cursor or page URL. Fix the server's next-page value before continuing.";
-        else if (maxPages !== undefined && count >= maxPages) stop = "Pagination reached maxPages before another request. Increase maxPages to continue.";
-        else seen.add(key);
+        if (seen.has(key)) {
+          stop = "Pagination detected a repeated cursor or page URL. Fix the server's next-page value before continuing.";
+          stopKind = "cycle";
+        } else if (maxPages !== undefined && count >= maxPages) {
+          stop = "Pagination reached maxPages before another request. Increase maxPages to continue.";
+          stopKind = "max";
+        } else seen.add(key);
       }
+      if (ctl) ctl.last = { next, stop: stopKind };
       yield { ok: true, value: { items, body, next: stop ? null : next }, meta: result.meta };
       if (stop) {
         yield fail(diagnostic(op.id, "UNEXPECTED_RESPONSE", { http_status: result.meta.status, request_id: result.meta.requestId, remediation: stop, trace: { attempts: result.meta.attempts } }));
         return;
       }
       if (next === null) return;
+    }
+  }
+
+  async *#exportPages<T>(op: OperationDescriptor, args: Record<string, unknown>, cp: CheckpointOptions, opts: CallOptions): AsyncGenerator<Result<CheckpointPage<T>>> {
+    const id = safeId(op);
+    const refuse = (expected: string, remediation: string, parameter = "checkpoint"): Result<never> =>
+      fail(diagnostic(id, "VALIDATION_FAILED", { failed_parameter: parameter, expected, retryable: "never", remediation }));
+    const pagination = isRecord(op) && isRecord(op.pagination) ? op.pagination : null;
+    if (!pagination || !["cursor", "offset", "page", "link_header"].includes(pagination.style)) {
+      yield refuse("an operation with a pagination contract", "This operation declares no pagination contract, so it cannot be resumed from a checkpoint; call it directly. Nothing was sent.", "operation");
+      return;
+    }
+    if (!(isRecord(op.agent) && op.agent.safety === "read_only")) {
+      yield refuse("a read-only operation", "Checkpointed exports run read-only operations only; nothing was sent.", "operation");
+      return;
+    }
+    const key = isRecord(cp) && cp.key instanceof Uint8Array ? cp.key : null;
+    if (key === null || key.byteLength < 32) {
+      yield refuse("a key of at least 32 bytes", "Pass checkpoint.key, a secret of at least 32 bytes kept stable across restarts. Nothing was sent.", "checkpoint.key");
+      return;
+    }
+    const scope = cp.scope ?? "";
+    if (typeof scope !== "string") {
+      yield refuse("a string", "checkpoint.scope names the account or principal the export reads for. Nothing was sent.", "checkpoint.scope");
+      return;
+    }
+    if (!isRecord(args)) {
+      yield refuse("an object of named arguments", "Pass the operation's arguments as an object. Nothing was sent.", "args");
+      return;
+    }
+    const style = pagination.style;
+    const param = style === "cursor" ? pagination.requestParam : style === "offset" ? pagination.offsetParam : style === "page" ? pagination.pageParam : "";
+    const rest: Record<string, unknown> = { ...args };
+    if (param !== "") delete rest[this.#argName(op, param)];
+    let base: unknown = this.options.baseUrl;
+    if (typeof base !== "string") base = Array.isArray(this.api.servers) ? this.api.servers.find((s) => typeof s === "string") : undefined;
+    const binding = await checkpointBinding(key, {
+      api: typeof this.api.name === "string" ? this.api.name : "",
+      operation: op.id,
+      method: op.method,
+      path: op.path,
+      style,
+      position: param,
+      base: typeof base === "string" ? base : "",
+      tenant: this.options.tenant ?? "",
+      scope,
+      args: rest,
+    });
+    let pages = 0;
+    let start: unknown = undefined;
+    if (cp.resume !== undefined) {
+      const restart = "Restart the export from the first page only if that is intended: omit checkpoint.resume. Nothing was sent.";
+      const saved = await openCheckpoint(key, cp.resume);
+      if (saved === null) {
+        yield refuse("a checkpoint token sealed under checkpoint.key", `The checkpoint is malformed, altered or sealed under another key. ${restart}`);
+        return;
+      }
+      if (saved.operation !== op.id || saved.style !== style) {
+        yield refuse(`a checkpoint of ${op.id} (${style})`, `The checkpoint belongs to ${saved.operation} (${saved.style}), not this operation and pagination contract. ${restart}`);
+        return;
+      }
+      if (!timingSafeEqual(saved.binding, binding)) {
+        yield refuse("a checkpoint of this traversal", `The checkpoint was issued for other arguments (filters, order, page size), base URL, tenant, scope or API. Resume with the original ones, or: ${restart}`);
+        return;
+      }
+      const maxAge = cp.maxAgeMs;
+      if (maxAge !== undefined && (typeof maxAge !== "number" || !(maxAge >= 0))) {
+        yield refuse("a non-negative number of milliseconds", "checkpoint.maxAgeMs must be a non-negative number. Nothing was sent.", "checkpoint.maxAgeMs");
+        return;
+      }
+      if (maxAge !== undefined && this.#now() - saved.issued > maxAge) {
+        yield refuse(`a checkpoint issued within ${maxAge} ms`, `The checkpoint is older than checkpoint.maxAgeMs, so the provider's cursor may have expired. ${restart}`);
+        return;
+      }
+      if (saved.state === "complete") return;
+      if (saved.state === "stopped") {
+        yield refuse("a resumable checkpoint", `The export stopped on a server fault (a repeated cursor or a cross-origin next-page link) that resuming would repeat. ${restart}`);
+        return;
+      }
+      const next = saved.next;
+      const valid =
+        style === "link_header"
+          ? typeof next === "string" && typeof base === "string" && originOf(next) !== null && originOf(next) === originOf(base)
+          : style === "cursor"
+            ? next !== null && next !== undefined && next !== ""
+            : Number.isSafeInteger(next) && (next as number) >= 0;
+      if (!valid) {
+        yield refuse("a resumable checkpoint", `The checkpoint's saved position cannot be resumed against this base URL. ${restart}`);
+        return;
+      }
+      pages = saved.pages;
+      start = next;
+    }
+    const ctl: PageControl = { start };
+    let resuming = start !== undefined;
+    for await (const item of this.#pages<T>(op, args, opts, ctl)) {
+      if (!item.ok) {
+        if (resuming && [400, 404, 410, 422].includes(item.error.http_status ?? 0)) {
+          item.error = {
+            ...item.error,
+            remediation: `${item.error.remediation} This request resumed from a saved checkpoint: if the provider's cursor or page position expired, restart the export from the first page (omit checkpoint.resume) and let the sink deduplicate.`,
+          };
+        }
+        yield item;
+        return;
+      }
+      resuming = false;
+      const last = ctl.last ?? { next: null, stop: null };
+      pages = Math.min(pages + 1, Number.MAX_SAFE_INTEGER);
+      const state = last.stop === "cycle" || last.stop === "origin" ? "stopped" : last.next === null ? "complete" : "partial";
+      const token = await sealCheckpoint(key, { v: 1, operation: op.id, style, binding, state, next: state === "partial" ? last.next : null, pages, issued: Math.max(0, Math.trunc(this.#now())) });
+      yield { ...item, value: { ...item.value, checkpoint: token, complete: state === "complete" } };
     }
   }
 
