@@ -257,7 +257,7 @@ func multipartBody(parts []multipartPart) ([]byte, string, error) {
 			h.Set("Content-Type", p.contentType)
 		case partJSON:
 			h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="%s"`, escapeQuotes(p.name)))
-			h.Set("Content-Type", "application/json")
+			h.Set("Content-Type", p.contentType)
 		default:
 			h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="%s"`, escapeQuotes(p.name)))
 		}

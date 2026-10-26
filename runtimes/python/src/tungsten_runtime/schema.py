@@ -631,7 +631,7 @@ class _TaggedNode(_Node):
                 f"Input tag '{found}' found using '{self.reader.wire}' does not match any of the expected tags: {expected}",
                 "union_tag_invalid",
             )
-        return member.check(value, path, mode, issues)
+        return member.check(cast("object", value), path, mode, issues)
 
 
 class _AliasNode(_Node):

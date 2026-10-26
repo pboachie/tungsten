@@ -314,7 +314,7 @@ internal static class Transport
                     break;
                 case PartKind.Json:
                     Write($"Content-Disposition: form-data; name=\"{Escape(p.Name)}\"\r\n");
-                    Write("Content-Type: application/json\r\n\r\n");
+                    Write($"Content-Type: {p.ContentType}\r\n\r\n");
                     Write(p.Text);
                     break;
                 default:

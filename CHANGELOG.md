@@ -243,6 +243,22 @@ changes.
   `UploadSource` (TypeScript `Uint8Array | UploadSource`, Python
   `BinaryInput`), and Rust SDKs add `<method>_upload(request, source, opts)`.
   Regenerated SDKs for such operations change; other operations are unchanged.
+- Gallery recipe `android-jni`: call a generated Rust SDK from Java through a
+  minimal JNI bridge (`examples/android-jni`), with one Tokio runtime per
+  native handle, the total deadline and response-size bound, diagnostic
+  envelopes as Java exceptions, cancellation on `close()` and freeing without
+  use after close. It runs on the development host against a loopback mock;
+  `TUNGSTEN_ANDROID_TARGETS` adds a `cargo check` per Android target. The
+  Rust runtime README's Limits section states the Android scope: it
+  type-checks for `aarch64-linux-android` and `x86_64-linux-android`, is not
+  device-qualified, and uses bundled Mozilla roots rather than Android's
+  trust store.
+
+- Go, Java, Kotlin, C#, F#, Ruby and Dart SDKs honour multipart per-part
+  `encoding.contentType` with the same rules as the TypeScript, Python and Rust
+  SDKs. The SDK descriptor document's `BodyDescriptor` gains an optional
+  `parts` list, and the targets list the `multipart_part_encoding` capability.
+
 - Multipart request bodies honour the OpenAPI `encoding` map: a field whose
   Encoding Object declares a `contentType` is sent with that media type (the
   first entry of the list without wildcards) in TypeScript, Python and Rust

@@ -301,9 +301,15 @@ type Body struct {
 }
 
 type BodyContent struct {
-	MediaType string  `json:"media_type"`
-	Ty        TypeRef `json:"ty"`
-	Encoding  string  `json:"encoding"`
+	MediaType string         `json:"media_type"`
+	Ty        TypeRef        `json:"ty"`
+	Encoding  string         `json:"encoding"`
+	Parts     []PartEncoding `json:"parts"`
+}
+
+type PartEncoding struct {
+	Name        string  `json:"name"`
+	ContentType *string `json:"content_type"`
 }
 
 type StatusMatch struct {

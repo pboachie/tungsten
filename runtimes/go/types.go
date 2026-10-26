@@ -278,6 +278,17 @@ type BodyDescriptor struct {
 	Required  bool
 	Fields    []MergedField
 	Arg       string
+	// Parts is the declared encoding of multipart fields (OpenAPI
+	// `encoding`), by wire name.
+	Parts []PartDescriptor
+}
+
+// PartDescriptor is the declared encoding of one multipart field:
+// ContentType is the media type each part of the field is sent with, unless
+// a file part carries its own.
+type PartDescriptor struct {
+	Name        string
+	ContentType string
 }
 
 // StatusMatch matches a response status.
