@@ -808,6 +808,11 @@ reports `applied` 2 and `replayed` 0, so the scenario fails. The report lists
 the mock's own processing; they do not prove a real provider's behavior or that
 the client received a response.
 
+The [mock-scenarios gallery recipe](examples/mock-scenarios/README.md) runs
+429-then-success, interrupted-stream, malformed-response and lost-write
+scenarios against a small integration, and shows each deliberately broken
+retry failing.
+
 Programs use the existing `/__tungsten/program` controls: `status` (200–599),
 optional JSON `body`, string-valued `headers`, `times`, error `code`, and
 `cut_after` bytes; or `inject` with optional `times`. For malformed JSON, use a

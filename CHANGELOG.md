@@ -462,6 +462,11 @@ changes.
   the shared capability contract. Keep emitter defaults and TG0711 fallback
   behavior compatible while configuration and generation share validation.
 
+- Add a runnable `mock-scenarios` gallery recipe: saved 429-then-success,
+  interrupted-stream, malformed-response and lost-write scenarios run through
+  `tungsten scenario run`, and deliberately broken retry, resume and replay
+  variants must fail their assertions.
+
 - Assert mock-side effects in saved scenarios with optional `expect.effects`
   counts of applied writes and idempotent replays, so a lost-write retry that
   changes its idempotency key fails even when call counts match. Failed runs
