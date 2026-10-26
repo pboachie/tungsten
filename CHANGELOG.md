@@ -396,6 +396,13 @@ changes.
   macOS `/tmp` and `/var` symlinks are refused; publication needs hard-link
   support in the destination filesystem.
 
+- Extend support-bundle export to Windows with its own no-clobber writer: it
+  holds every traversed directory open without delete sharing, refuses
+  reparse points, network shares, device paths and reserved names, creates
+  the temporary file with `CREATE_NEW` and publishes it with a hard link that
+  never replaces an existing entry. The directory's owner and ACL are not
+  checked.
+
 - A copyable GitHub Actions workflow in `examples/github-actions/` installs a pinned,
   checksum- and provenance-verified release through `install.sh`, runs `tungsten check`
   and fails on stale generated output with `tungsten generate --check`. It uses
