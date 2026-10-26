@@ -230,6 +230,19 @@ changes.
 
 ### Added
 
+- Add durable checkpoints for resumable read-only page exports to the
+  TypeScript, Python and Rust runtimes (`exportPages` / `export_pages`). Each
+  page carries a caller-owned, HMAC-sealed `checkpoint` token to persist after
+  the page is committed to the sink; passing it back resumes with the next page
+  after a restart. Tokens bind the operation, pagination contract, base URL,
+  tenant, scope and arguments without storing argument values or credentials,
+  and malformed, altered, mismatched, expired (`maxAgeMs` / `max_age_ms`) or
+  stopped tokens are refused before any request. A sink commit followed by a
+  crash before the token is saved replays that page once, so sinks must
+  deduplicate. `describeCheckpoint` / `describe_checkpoint` reports status
+  without the cursor. Registered as the `pagination_checkpoints` capability for
+  the `typescript`, `python` and `rust` targets.
+
 - Generated Rust CLIs sign in to OAuth2 `authorizationCode` schemes:
   `auth login` runs the runtime's managed S256 flow through a loopback
   redirect (bounded by the 10-minute attempt and `--deadline`), `auth switch`
