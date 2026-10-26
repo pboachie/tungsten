@@ -14,6 +14,7 @@
  */
 import type { TokenStore } from "./oauth.js";
 import type { EventStream } from "./streams.js";
+import type { RequestScheduler, SchedulerOptions } from "./scheduler.js";
 
 // ---------------------------------------------------------------- errors
 
@@ -637,6 +638,14 @@ export interface ClientOptions {
   now?: () => number;
   /** Random number in [0, 1) for retry jitter. Default `Math.random`. */
   random?: () => number;
+  /** Bounds the requests this client has in flight and waiting, and shares
+   * rate-limit pauses between them. Pass `SchedulerOptions` for a scheduler
+   * of this client alone, or one `RequestScheduler` to several clients that
+   * share a quota. Default: none, every call is sent at once. */
+  scheduler?: RequestScheduler | SchedulerOptions;
+  /** The tenant or principal this client calls for. Clients sharing a
+   * scheduler keep separate capacity, queues and pauses per tenant. */
+  tenant?: string;
 }
 
 /**
