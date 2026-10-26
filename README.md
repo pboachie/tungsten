@@ -334,6 +334,14 @@ pinned installer command for the release installer, `cargo install` for cargo, a
 package-manager guidance for npm. When the installation route cannot be determined,
 the command says so and prints no replacement command.
 
+A newer release is also classified in `upgrade`: `compatible` stays on your compatibility
+line (a patch release before 1.0, a minor or patch release from 1.0) and is followed by
+`tungsten generate --check`; `migration` starts a new line (a minor or major release before
+1.0, a major release from 1.0), is a prerelease, or has a Breaking section in its notes, and
+the guidance asks you to preview with `tungsten diff --migration`, `tungsten lock --preview`
+and `tungsten generate --dry-run` before replacing generated clients. Release notes can only
+make the classification stricter.
+
 | Exit code | Meaning |
 | --- | --- |
 | 0 | Up to date, or this build is newer than the newest release considered |
