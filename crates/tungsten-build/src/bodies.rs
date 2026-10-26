@@ -2,6 +2,7 @@
 //! Request bodies and media-type content (`Body`, `BodyContent`). One entry per media type, in spec order.
 
 use serde_json::Value;
+use tungsten_core::Diagnostic;
 use tungsten_ir::{Body, BodyContent, BodyEncoding, Primitive, Shape, TypeRef};
 use tungsten_openapi::RefTarget;
 
@@ -147,6 +148,25 @@ pub(crate) fn content(
             .then(|| cx.get(&media_at).and_then(Value::as_object))
             .flatten()
             .and_then(|m| tungsten_openapi::response_item_schema(media_type, m));
+        let entry_at = child(&map_at, media_type);
+        if item.is_none()
+            && media_at.doc != entry_at.doc
+            && crate::pathitem::reads_3_2(cx.ws, &media_at)
+            && cx
+                .get(&media_at)
+                .is_some_and(|m| m.get("itemSchema").is_some())
+        {
+            // A reusable media type of another document: its own scan leaves
+            // `itemSchema` to the use, which only the build sees.
+            cx.report(
+                Diagnostic::error(
+                    "TG0145",
+                    "the referenced media type uses OpenAPI 3.2 `itemSchema` in a way that is not supported here",
+                )
+                .with_help("only response JSON Lines items and server-sent events whose `data` has a JSON `contentSchema` are compiled; otherwise describe the whole payload with `schema`"),
+                &child(&entry_at, "$ref"),
+            );
+        }
         let schema = match item {
             Some(suffix) => RefTarget {
                 doc: media_at.doc,
