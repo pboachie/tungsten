@@ -813,8 +813,8 @@ pub(crate) struct InitArgs {
     #[arg(long, value_parser = parse_api_name)]
     pub name: Option<String>,
     /// Targets to configure, comma-separated or repeated (ts, py, rs aliases).
-    /// Default: typescript,python,docs. WebMCP also configures TypeScript.
-    #[arg(long, value_name = "TARGETS", value_delimiter = ',', value_parser = parse_init_target)]
+    /// The default and companion targets come from the capability catalog.
+    #[arg(long, value_name = "TARGETS", value_delimiter = ',', value_parser = parse_init_target, help = init_targets_help())]
     pub targets: Vec<String>,
     /// Overwrite existing tungsten.yml and agent.yml.
     #[arg(long)]
@@ -852,6 +852,22 @@ pub(crate) struct DoctorArgs {
 
 /// Accept built-in emitter targets and the `cli` output; refuse a reserved
 /// target before any file is written.
+/// `init --targets` help, derived from the capability catalog's `INIT`.
+fn init_targets_help() -> String {
+    let init = &tungsten_config::capabilities::INIT;
+    let mut help = format!(
+        "Targets to configure, comma-separated or repeated (ts, py, rs aliases). Default: {}.",
+        init.default_targets.join(",")
+    );
+    for companion in init.companions {
+        help.push_str(&format!(
+            " {} also configures {}.",
+            companion.target, companion.requires
+        ));
+    }
+    help
+}
+
 fn parse_init_target(s: &str) -> Result<String, String> {
     let target = crate::targets::canonical(s.trim());
     if target == tungsten_config::capabilities::INIT.cli_alias

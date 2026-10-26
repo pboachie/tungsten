@@ -230,6 +230,17 @@ changes.
 
 ### Added
 
+- `tungsten config` now inspects the C#, F#, Dart, Java, Kotlin, Ruby, MCP,
+  WebMCP and docs target options declared in the capability catalog (status
+  `declared_fields`): each declared field reports its authored value or fixed
+  default, a value of the wrong JSON type is reported with the target's
+  invalid-option warning code, and only package identity fields are exported
+  unredacted. The emitter still validates values when it runs.
+- The `init --local-example` Node.js preflight checks every selected target's
+  declared `node` requirement, so MCP now requires 22.13 or newer (excluding
+  23.0 and 23.1) before setup instead of any Node 22. The `init --targets`
+  help lists the default and companion targets from the catalog.
+
 - Add the `examples/restricted-agent` customization example: an MCP server
   that reads freely, confirms writes and hides deletion, with transport
   references and SDK defaults from a shared profile and a check that verifies
