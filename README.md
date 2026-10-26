@@ -784,8 +784,14 @@ Library callers can cooperatively cancel an export before publication with
 `run_with_cancellation`. Successful publication is the commit point: a later
 cancellation does not remove the file. A cleanup failure after publication
 returns a nonzero status while retaining `published: true` in the receipt.
-Abrupt process termination and binary signal cleanup are not qualified by this
-command. Abrupt termination or unconfirmed cleanup can leave one owned
+On Linux, the `tungsten` binary blocks SIGINT and SIGTERM for the duration of
+an export and turns them into the same cooperative cancellation: an
+interrupted export stops collection or writing within about 50 ms, removes its
+temporary file and exits with status 4 without publishing. A signal after
+publication leaves the published file and the success status in place. On
+macOS and Windows the default signal and console-control behavior still
+applies. Abrupt termination (SIGKILL, a crash or power loss), interrupts on
+macOS and Windows, or unconfirmed cleanup can leave one owned
 `.tungsten-support-*.pending` entry per invocation; later commands do not sweep
 existing temporary entries. File syncing before publication does not establish
 a power-loss durability guarantee. There is no automatic upload or issue creation.

@@ -380,6 +380,11 @@ changes.
   and writes nothing when the limit is reached; library cancellation of an
   export is now honoured while collection runs.
 
+- On Linux, the `tungsten` binary turns SIGINT and SIGTERM during
+  `support-bundle --output` into cooperative cancellation: the interrupted
+  export removes its temporary file and exits with status 4 without
+  publishing. A signal after publication does not change the outcome.
+
 - Generate the README support matrix from the capability catalog.
   `tungsten capabilities --matrix --format markdown` prints the matrix
   between the markers that delimit README's generated block, and CI fails
