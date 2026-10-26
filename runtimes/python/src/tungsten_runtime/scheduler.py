@@ -351,11 +351,14 @@ class RequestScheduler:
             return Rejection("full" if full else "timeout")
         return pool
 
-    def _budget(self, deadline_ms: float | None) -> float:
-        budget = float(self.max_queue_ms)
+    def _until(self, deadline_ms: float | None) -> tuple[float, float]:
+        """The absolute end of the wait (the deadline itself when it comes
+        first) and the budget left until then."""
+        now = _now()
+        until = now + self.max_queue_ms
         if deadline_ms is not None:
-            budget = min(budget, max(0.0, deadline_ms - _now()))
-        return budget
+            until = min(until, deadline_ms)
+        return until, max(0.0, until - now)
 
     def acquire(
         self,
@@ -373,8 +376,7 @@ class RequestScheduler:
     def _acquire(
         self, key: str, kind: Kind, deadline_ms: float | None, random: Callable[[], float]
     ) -> Permit | Rejection:
-        budget = self._budget(deadline_ms)
-        until = _now() + budget
+        until, budget = self._until(deadline_ms)
         event = threading.Event()
         with self._lock:
             found = self._try(key, kind, budget, random)
@@ -412,8 +414,7 @@ class RequestScheduler:
         self, key: str, kind: Kind, deadline_ms: float | None, random: Callable[[], float]
     ) -> Permit | Rejection:
         loop = asyncio.get_running_loop()
-        budget = self._budget(deadline_ms)
-        until = _now() + budget
+        until, budget = self._until(deadline_ms)
         holder: list[asyncio.Future[None]] = [loop.create_future()]
 
         def wake() -> None:
