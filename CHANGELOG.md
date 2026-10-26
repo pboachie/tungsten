@@ -259,6 +259,12 @@ changes.
   starts after it expires (`DEADLINE_EXCEEDED`); a mutation already sent still
   reports `OUTCOME_UNKNOWN`. Existing timeout semantics are unchanged.
 
+- Add a per-tool-call total deadline to the MCP adapter
+  (`ServerOptions.toolDeadlineMs`, `<API>_MCP_DEADLINE_MS` in generated
+  servers). It maps to the TypeScript runtime's `deadlineMs`; tool results
+  name `code: DEADLINE_EXCEEDED`, and a mutation already sent still reports
+  `OUTCOME_UNKNOWN`.
+
 - Add the same total operation deadline to the Go runtime
   (`ClientOptions.Deadline`, `CallOptions.Deadline`), applied as a
   `context.Context` deadline on top of the caller's context.

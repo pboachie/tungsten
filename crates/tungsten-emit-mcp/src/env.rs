@@ -13,8 +13,9 @@
 //! | OAuth 2, OpenID Connect | `<API>_<SCHEME>_TOKEN` (an access token) |
 //! | composite profile | `<API>_<SCHEME>_<PART>` per part, `<PART>` being the part's key in the profile's credentials object (cookie name, config key, `bearer`); a bearer part with `env` uses it |
 //!
-//! plus `<API>_BASE_URL` (the base URL) and `<API>_MCP_MODE` (`discrete` or
-//! `progressive`, overriding the manifest's mode). A plain scheme whose
+//! plus `<API>_BASE_URL` (the base URL), `<API>_MCP_MODE` (`discrete` or
+//! `progressive`, overriding the manifest's mode) and `<API>_MCP_DEADLINE_MS`
+//! (the total deadline of one tool call, `ServerOptions.toolDeadlineMs`). A plain scheme whose
 //! name is also a composite profile's is configured through the profile
 //! (credentials are keyed by name).
 
@@ -52,6 +53,10 @@ pub(crate) fn base_url(ir: &Ir) -> String {
 
 pub(crate) fn mode(ir: &Ir) -> String {
     format!("{}_MCP_MODE", prefix(ir))
+}
+
+pub(crate) fn deadline(ir: &Ir) -> String {
+    format!("{}_MCP_DEADLINE_MS", prefix(ir))
 }
 
 /// The credentials of every scheme, in IR order.
