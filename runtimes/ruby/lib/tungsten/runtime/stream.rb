@@ -463,7 +463,7 @@ module Tungsten
           Err.new(error: Util.scrub_diagnostic(b.status(o.meta.status).request_id(o.meta.request_id).retrying("never")
                                                  .attempts(o.meta.attempts).build, o.secrets))
         end
-        value = Json.try_parse(ev.data)
+        value = op.stream["text"] ? ev.data : Json.try_parse(ev.data)
         if UNSET.equal?(value)
           return failure.call(Runtime.diag(op.id, "UNEXPECTED_RESPONSE").param("events[#{index}]")
                                      .received(Util.envelope_value(ev.data, false)).expected("JSON in the data of every event")

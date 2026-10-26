@@ -301,6 +301,7 @@ function descriptorProblem(op: unknown): string | null {
     if (!isRecord(stream)) return "`stream` must be an object";
     if (stream.done !== undefined && typeof stream.done !== "string") return "`stream.done` must be a string";
     if (stream.flag !== undefined && typeof stream.flag !== "string") return "`stream.flag` must be a string";
+    if (stream.text !== undefined && typeof stream.text !== "boolean") return "`stream.text` must be a boolean";
     if (stream.event !== undefined && !isSchema(stream.event)) return "`stream.event` must be a schema";
   }
   if (!isRecord(op.status) || (op.status.kind !== "implemented" && op.status.kind !== "gated")) return "`status.kind` must be implemented or gated";
@@ -2578,16 +2579,18 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
             prep.secrets,
           ),
         );
-      let value: unknown;
-      try {
-        value = JSON.parse(event.data);
-      } catch {
-        return failure({
-          failed_parameter: `events[${index}]`,
-          received_value: envelopeValue(event.data, false),
-          expected: "JSON in the data of every event",
-          remediation: `Event ${index} of the stream (event "${event.event}") does not carry JSON in its data.${afterEffect} Events before it were delivered.`,
-        });
+      let value: unknown = event.data;
+      if (spec.text !== true) {
+        try {
+          value = JSON.parse(event.data);
+        } catch {
+          return failure({
+            failed_parameter: `events[${index}]`,
+            received_value: envelopeValue(event.data, false),
+            expected: "JSON in the data of every event",
+            remediation: `Event ${index} of the stream (event "${event.event}") does not carry JSON in its data.${afterEffect} Events before it were delivered.`,
+          });
+        }
       }
       if (mode !== "off" && isSchema(spec.event)) {
         let parsed: ReturnType<SchemaLike["safeParse"]>;

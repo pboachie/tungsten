@@ -425,6 +425,8 @@ class StreamDescriptor(TypedDict):
     #: Wire name of the boolean request body field that selects the stream;
     #: ``ClientCore.stream`` sets it to ``True``.
     flag: NotRequired[str]
+    #: Every event's ``data`` is text delivered as written, not JSON.
+    text: NotRequired[bool]
 
 
 class OperationDescriptor(TypedDict):

@@ -118,6 +118,8 @@ def descriptor_problem(op: object) -> str | None:
             return "`stream.done` must be a string"
         if "flag" in stream and not isinstance(stream["flag"], str):
             return "`stream.flag` must be a string"
+        if "text" in stream and not isinstance(stream["text"], bool):
+            return "`stream.text` must be a boolean"
     if not is_array(op.get("responses")):
         return "`responses` must be a list"
     if not is_array(op.get("security")):

@@ -764,8 +764,9 @@ ir_struct! {
         pub status: StatusMatch,
         /// The event stream media type as the spec wrote it.
         pub media_type: String,
-        /// The type every event's `data` (JSON) is checked against: the
-        /// schema of the media type, usually a union tagged by `type`.
+        /// The type every event's `data` (JSON, or text with `text_data`) is
+        /// checked against: the schema of the media type, usually a union
+        /// tagged by `type`.
         pub event: TypeRef,
         /// A `data` value that ends the stream and is not an event
         /// (`[DONE]`); declared with `x-tungsten-stream-done`.
@@ -779,6 +780,11 @@ ir_struct! {
         /// stream, which the plain method returns.
         #[serde(default)]
         pub also_plain: bool,
+        /// Whether every event's `data` is text taken as written rather
+        /// than JSON (an OpenAPI 3.2 `itemSchema` whose `data` is a plain
+        /// string); `event` is then a string type.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        pub text_data: bool,
     }
 }
 
