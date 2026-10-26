@@ -230,6 +230,9 @@ changes.
 
 ### Added
 
+- `scenario run` now works on macOS and Windows as well as Linux. macOS owns
+  the integration through a process group and non-reaping `waitid`, Windows
+  through a Job Object; the binary cancels on Ctrl-C/SIGTERM on both.
 - Add `tungsten init --preset app|library|agent`, also accepted at the guided
   setup's outputs prompt. `library` writes and selects a local profile
   (`profiles/library.yml`) with shared SDK versions; `agent` configures an MCP
