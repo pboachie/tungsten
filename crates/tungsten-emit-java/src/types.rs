@@ -739,7 +739,11 @@ impl Ctx<'_> {
             format!("static {name} fromJson(Object json) {{"),
             "}",
             |w| match plan {
-                UnionPlan::Tagged { tag, variants } => {
+                UnionPlan::Tagged {
+                    tag,
+                    variants,
+                    default,
+                } => {
                     w.line("JsonObject o = Decode.object(json);");
                     w.line(format!("Object tag = o.get({});", lit(tag)));
                     let mut all: Vec<String> = vec![];
@@ -751,18 +755,26 @@ impl Ctx<'_> {
                             .map(|t| format!("{}.equals(tag)", lit(t)))
                             .collect();
                         all.extend(tags.iter().map(|t| format!("\"{t}\"")));
-                        if conds.is_empty() {
+                        if conds.is_empty() || *default == Some(*index) {
                             continue;
                         }
                         w.block(format!("if ({}) {{", conds.join(" || ")), "}", |w| {
                             w.line(format!("return new {vn}(Decode.apply(json, {dec}));"));
                         });
                     }
-                    w.line(format!(
-                        "throw new Decode.Failure({}).below({});",
-                        lit(&format!("must be one of [{}]", all.join(", "))),
-                        lit(tag)
-                    ));
+                    if let Some(index) = default {
+                        // OpenAPI 3.2 `defaultMapping`: any other object.
+                        w.line(format!(
+                            "return new {}(Decode.apply(json, {}));",
+                            variant_names[*index], payloads[*index].dec
+                        ));
+                    } else {
+                        w.line(format!(
+                            "throw new Decode.Failure({}).below({});",
+                            lit(&format!("must be one of [{}]", all.join(", "))),
+                            lit(tag)
+                        ));
+                    }
                 }
                 UnionPlan::LiteralTagged { variants } => {
                     for (index, _) in variants {
