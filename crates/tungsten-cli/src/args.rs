@@ -255,12 +255,21 @@ pub(crate) struct SupportBundleArgs {
     /// Remove an entry by id from the bundle; repeatable.
     #[arg(long, value_name = "ID")]
     pub exclude: Vec<String>,
+    /// Opt in to including the redacted end of a log file, labelled as
+    /// user supplied (bundle schema version 2); repeatable. The path is not
+    /// recorded. Redaction is not a guarantee: review the preview first.
+    #[arg(long, value_name = "FILE")]
+    pub attach_log: Vec<PathBuf>,
+    /// Opt in to including the redacted end of a configuration file, labelled
+    /// as user supplied (bundle schema version 2); repeatable.
+    #[arg(long, value_name = "FILE")]
+    pub attach_config: Vec<PathBuf>,
     /// Read an existing bundle file, check it against its schema version and
     /// show its entries; reads only this file and writes or runs nothing.
     #[arg(
         long,
         value_name = "FILE",
-        conflicts_with_all = ["preview", "output", "exclude"]
+        conflicts_with_all = ["preview", "output", "exclude", "attach_log", "attach_config"]
     )]
     pub inspect: Option<PathBuf>,
 }
@@ -353,6 +362,14 @@ pub(crate) struct BundleExportArgs {
     /// redistributing those documents.
     #[arg(long)]
     pub include_input_cache: bool,
+    /// Also carry this project-relative directory of prepared consumer
+    /// dependencies (for example `npm pack` tarballs, `pip download` wheels
+    /// or `cargo vendor` output) for offline consumer builds. Repeatable.
+    /// Its files are copied as supplied, recorded with provenance, the
+    /// exporting platform and a redistribution notice; tungsten does not
+    /// verify that they cover every dependency.
+    #[arg(long, value_name = "DIR")]
+    pub include_consumer_cache: Vec<String>,
 }
 
 #[derive(Debug, Args)]

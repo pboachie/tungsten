@@ -179,7 +179,9 @@ ergonomics. Branch with ``isinstance(result, Ok)`` or ``result.ok is True``
 
 # ------------------------------------------------------------- descriptors
 
-HttpMethod = Literal["GET", "PUT", "POST", "DELETE", "OPTIONS", "HEAD", "PATCH", "TRACE", "QUERY"]
+# A standard method, or an OpenAPI 3.2 ``additionalOperations`` method token
+# sent as written (unsafe, not idempotent).
+HttpMethod = Literal["GET", "PUT", "POST", "DELETE", "OPTIONS", "HEAD", "PATCH", "TRACE", "QUERY"] | str
 ParamLocation = Literal["path", "query", "header", "cookie"]
 ParamStyle = Literal["simple", "form", "label", "matrix", "space_delimited", "pipe_delimited", "deep_object"]
 ParamRole = Literal["plain", "idempotency_key", "dry_run", "origin", "auth", "constant"]

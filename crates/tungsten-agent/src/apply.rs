@@ -335,6 +335,7 @@ fn method_configured(cfg: &AgentConfig, method: HttpMethod) -> Option<Safety> {
         HttpMethod::Patch => s.patch,
         HttpMethod::Trace => s.trace,
         HttpMethod::Query => s.query,
+        HttpMethod::Custom => None,
     }
 }
 

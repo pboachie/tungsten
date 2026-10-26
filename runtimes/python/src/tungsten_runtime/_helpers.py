@@ -34,6 +34,24 @@ from .sentinels import UNSET
 from .types import OperationDescriptor, ParamDescriptor
 
 METHODS = frozenset({"GET", "PUT", "POST", "DELETE", "OPTIONS", "HEAD", "PATCH", "TRACE", "QUERY"})
+_METHOD_TOKEN = re.compile(r"[!#$%&'*+\-.^_`|~0-9A-Za-z]+")
+_FORBIDDEN_METHODS = frozenset({"CONNECT", "TRACK"})
+
+
+def is_method(method: object) -> bool:
+    """A standard method, or an OpenAPI 3.2 custom method token that is not a case variant of one and not forbidden."""
+    if not isinstance(method, str):
+        return False
+    if method in METHODS:
+        return True
+    upper = method.upper()
+    return (
+        _METHOD_TOKEN.fullmatch(method) is not None
+        and upper not in METHODS
+        and upper not in _FORBIDDEN_METHODS
+    )
+
+
 SAFETIES = frozenset({"read_only", "mutating", "destructive", "irreversible"})
 POLICIES = frozenset({"none", "auto", "caller_owned", "content_hash", "content_identity"})
 ENCODINGS = frozenset({"json", "form", "multipart", "bytes", "text"})
@@ -60,7 +78,7 @@ def descriptor_problem(op: object) -> str | None:
     op_id = op.get("id")
     if not isinstance(op_id, str) or op_id == "":
         return "`id` must be a non-empty string"
-    if op.get("method") not in METHODS:
+    if not is_method(op.get("method")):
         return "`method` must be an HTTP method"
     if not isinstance(op.get("path"), str):
         return "`path` must be a string"

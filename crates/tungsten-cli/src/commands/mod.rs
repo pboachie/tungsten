@@ -31,6 +31,7 @@ pub(crate) mod report;
 pub(crate) mod scenario;
 mod schema;
 pub(crate) mod support_bundle;
+pub(crate) mod support_bundle_attach;
 mod support_bundle_file;
 pub(crate) mod support_bundle_inspect;
 pub(crate) mod update;

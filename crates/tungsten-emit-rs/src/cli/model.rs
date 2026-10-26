@@ -355,29 +355,14 @@ fn op_about(op: &Operation) -> String {
     let summary = if op.agent.compact_doc.trim().is_empty() {
         let line = doc_line(op.doc.as_ref());
         if line.is_empty() {
-            format!("{} {}", method(op), op.path.raw)
+            format!("{} {}", op.wire_method(), op.path.raw)
         } else {
             line
         }
     } else {
         sentence(&op.agent.compact_doc)
     };
-    format!("{summary}\n\n{} {}", method(op), op.path.raw)
-}
-
-fn method(op: &Operation) -> &'static str {
-    use tungsten_ir::HttpMethod::*;
-    match op.method {
-        Get => "GET",
-        Put => "PUT",
-        Post => "POST",
-        Delete => "DELETE",
-        Options => "OPTIONS",
-        Head => "HEAD",
-        Patch => "PATCH",
-        Trace => "TRACE",
-        Query => "QUERY",
-    }
+    format!("{summary}\n\n{} {}", op.wire_method(), op.path.raw)
 }
 
 fn macro_flags(

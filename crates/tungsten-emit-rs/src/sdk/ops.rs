@@ -583,7 +583,7 @@ pub(crate) fn write_request(
     let intro = format!(
         "Arguments of `{}` (`{} {}`).",
         op.id.0,
-        method_str(op.method),
+        op.wire_method(),
         op.path.raw
     );
     let check = request_check_name(info);
@@ -791,22 +791,8 @@ pub(crate) fn fn_sig(w: &mut Writer, indent: usize, head: &str, params: &[String
     }
 }
 
-pub(crate) fn method_str(m: HttpMethod) -> &'static str {
-    match m {
-        HttpMethod::Get => "GET",
-        HttpMethod::Put => "PUT",
-        HttpMethod::Post => "POST",
-        HttpMethod::Delete => "DELETE",
-        HttpMethod::Options => "OPTIONS",
-        HttpMethod::Head => "HEAD",
-        HttpMethod::Patch => "PATCH",
-        HttpMethod::Trace => "TRACE",
-        HttpMethod::Query => "QUERY",
-    }
-}
-
-fn method_rs(m: HttpMethod) -> &'static str {
-    match m {
+fn method_rs(op: &Operation) -> String {
+    let name = match op.method {
         HttpMethod::Get => "HttpMethod::Get",
         HttpMethod::Put => "HttpMethod::Put",
         HttpMethod::Post => "HttpMethod::Post",
@@ -816,7 +802,11 @@ fn method_rs(m: HttpMethod) -> &'static str {
         HttpMethod::Patch => "HttpMethod::Patch",
         HttpMethod::Trace => "HttpMethod::Trace",
         HttpMethod::Query => "HttpMethod::Query",
-    }
+        HttpMethod::Custom => {
+            return format!("HttpMethod::Custom({})", string_lit(op.wire_method()));
+        }
+    };
+    name.to_string()
 }
 
 pub(crate) fn safety_str(s: Safety) -> &'static str {
@@ -1448,7 +1438,7 @@ pub(crate) fn descriptor_rx(
     let summary = op_summary(op);
     let mut fields = vec![
         ("id", Rx::string(&op.id.0)),
-        ("method", Rx::atom(method_rs(op.method))),
+        ("method", Rx::atom(method_rs(op))),
         ("path", Rx::string(&op.path.raw)),
         ("params", params),
         ("body", body),

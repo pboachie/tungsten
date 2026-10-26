@@ -100,6 +100,10 @@ pub enum FileRole {
     /// Bundle inventories only: a verified `.tungsten-inputs` pin record or
     /// pinned content file of a remote input. Never part of a lock's files.
     InputCache,
+    /// Bundle inventories only: a file of a prepared consumer dependency
+    /// cache (`bundle export --include-consumer-cache`). Never part of a
+    /// lock's files.
+    ConsumerCache,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

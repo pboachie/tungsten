@@ -196,7 +196,7 @@
     "title": "Assert retries with saved mock scenarios",
     "description": "Run an explicit integration against saved 429, interrupted-stream, malformed-response and lost-write scenarios, and fail deliberately broken retries.",
     "mode": "scenario",
-    "prerequisites": "Linux for scenario run; no target-specific toolchain",
+    "prerequisites": "Linux, macOS or Windows for scenario run; no target-specific toolchain",
     "outcome": "four saved scenarios pass, and broken retry, resume and replay behavior fails its assertions"
   },
   {

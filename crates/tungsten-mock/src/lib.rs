@@ -314,7 +314,7 @@ impl MockServer {
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_vendor = "apple", windows))]
     fn start_scenario_run(
         ir: Ir,
         mut opts: MockOptions,
@@ -432,7 +432,7 @@ pub mod __testing {
     use serde_json::Value;
     use tungsten_ir::{Ir, TypeRef};
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_vendor = "apple", windows))]
     pub fn runner_server(
         ir: Ir,
         bytes: &[u8],
@@ -441,12 +441,12 @@ pub mod __testing {
         super::MockServer::start_scenario_run(ir, super::MockOptions::default(), bytes, limits)
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_vendor = "apple", windows))]
     pub fn admitted_calls(server: &super::MockServer) -> u64 {
         server.state.admitted_calls()
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_vendor = "apple", windows))]
     pub fn finish_runner(server: super::MockServer, report: super::RunReport) -> super::RunReport {
         super::runner::finish(
             server,
@@ -456,7 +456,7 @@ pub mod __testing {
         )
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_vendor = "apple", windows))]
     pub fn finish_runner_with_cancellation(
         server: super::MockServer,
         report: super::RunReport,
