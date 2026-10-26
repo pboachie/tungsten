@@ -21,7 +21,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
-from tungsten_runtime import AsyncClientCore, Ok
+import anyio
+from tungsten_runtime import AsyncClientCore, Ok, StreamEvent
 
 from ._catalog import PROGRESSIVE_TOOLS, TOOL_META_KEY, Catalog, CatalogTool, verifies
 from ._options import ServerOptions
@@ -41,6 +42,9 @@ from ._render import (
 from ._search import bm25, suggest
 
 DEFAULT_SEARCH_LIMIT = 10
+#: Events a streamed call collects before it stops reading (the result then
+#: has ``truncated: true``).
+MAX_STREAM_EVENTS = 1000
 SEARCH_HINT = (
     "Call describe_tool(name) for the schema, preview(name, arguments) before destructive or irreversible calls, "
     "invoke(name, arguments) to execute (invoke_read for read_only tools)."
@@ -512,18 +516,7 @@ class Session:
             result = await core.run_macro(descriptor, args, opts)  # type: ignore[arg-type]
         else:
             if isinstance(args, Mapping) and _streams(descriptor, args):
-                return _Outcome(
-                    ok=False,
-                    error=envelope(
-                        prepared.tool.target,
-                        "VALIDATION_FAILED",
-                        remediation=(
-                            f"{prepared.tool.name} answers an event stream, which this experimental Python MCP "
-                            "server does not collect yet. Nothing was sent; use the TypeScript MCP server (`mcp` "
-                            "target) or the SDK's stream() for this operation."
-                        ),
-                    ),
-                )
+                return await self._collect_stream(descriptor, args, opts, prepared.tool)
             if verifies(prepared.tool):
                 opts["verify"] = True
             result = await core.call(descriptor, args, opts)  # type: ignore[arg-type]
@@ -531,6 +524,66 @@ class Session:
             return _Outcome(ok=True, value=result.value, verification=result.verification)
         partial = getattr(result, "partial", None)
         return _Outcome(ok=False, error=dict(result.error), partial=partial, has_partial=partial is not None)
+
+    async def _collect_stream(
+        self, op: Mapping[str, Any], args: Mapping[str, Any], opts: dict[str, Any], tool: CatalogTool
+    ) -> _Outcome:
+        """Collect the events of a stream in order: the events, or the failure
+        that ended the stream with the events before it as ``partial``. Stops
+        at ``MAX_STREAM_EVENTS`` events (``truncated: true``) and fails when the
+        events exceed ``max_stream_bytes`` of JSON or the collection runs past
+        ``max_stream_ms``."""
+        core = self._core
+        assert core is not None
+        events: list[Any] = []
+        max_bytes = self.options.max_stream_bytes
+        max_ms = self.options.max_stream_ms
+
+        def exceeded(what: str) -> _Outcome:
+            count = f"{len(events)} {'event' if len(events) == 1 else 'events'}"
+            effect = (
+                " The events collected so far are in partial."
+                if tool.safety == "read_only"
+                else " The call took effect; do not repeat it. The events collected so far are in partial."
+            )
+            return _Outcome(
+                ok=False,
+                error=envelope(
+                    op["id"],
+                    "UNEXPECTED_RESPONSE",
+                    failed_parameter="events",
+                    expected=what,
+                    remediation=(
+                        f"The stream was abandoned after {count} ({what}; ServerOptions.max_stream_bytes and "
+                        f"max_stream_ms).{effect}"
+                    ),
+                ),
+                partial={"events": events},
+                has_partial=True,
+            )
+
+        stream = core.stream(op, args, opts)  # type: ignore[arg-type]
+        size = 0
+        try:
+            with anyio.move_on_after(max_ms / 1000) as scope:
+                async for item in stream:
+                    if not isinstance(item, StreamEvent):
+                        partial = {"events": events}
+                        return _Outcome(ok=False, error=dict(item.error), partial=partial, has_partial=True)
+                    value = to_json(item.value)
+                    size += len(compact_json(value).encode())
+                    if size > max_bytes:
+                        return exceeded(f"at most {max_bytes} bytes of events")
+                    events.append(value)
+                    if len(events) >= MAX_STREAM_EVENTS:
+                        return _Outcome(ok=True, value={"events": events, "truncated": True})
+            if scope.cancelled_caught:
+                return exceeded(f"at most {max_ms} ms to collect the events")
+            return _Outcome(ok=True, value={"events": events})
+        finally:
+            stream.cancel()
+            with anyio.CancelScope(shield=True):
+                await stream.aclose()
 
     def _identity(self, prepared: _Prepared) -> str:
         """Digest identifying an identical call: tool, SDK arguments and key."""
