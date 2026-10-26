@@ -1014,3 +1014,13 @@ compatibility clients require `tungsten-runtime>=0.1.3,<0.2.0`, including when
 an explicit runtime specifier is supplied. A `runtime_path` checkout must
 contain this compatibility support. Publishing the matching runtime remains
 part of the coordinated release.
+
+Public CI builds the runtime sdist and wheel on the latest patch of CPython
+3.10, 3.11, 3.12, 3.13, 3.14 and 3.15 (macOS and Windows on 3.14), and
+installs them with freshly generated SDKs into clean environments: both model
+modes, `"3.10"` output on every minor and default output on 3.12 and newer,
+with compile, import, strict Pyright and sync/async mock-request checks. The
+3.10 lane also runs the lowest declared dependency versions. Python 3.10 is
+end-of-life upstream: it remains a compatibility lane, not a
+security-maintained runtime. Prerelease interpreters are not claimed, and
+`requires-python` sets only a floor.
