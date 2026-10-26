@@ -657,7 +657,7 @@ tungsten [--json] <command>
 | `capabilities` | Query built-in target declarations without running tools or emitters; optionally select a target id or alias, such as `capabilities py --json`; `--matrix` prints the Markdown support matrix derived from the same declarations |
 | `lock` | Capture the project generation lock `tungsten.lock.json` offline: content identities of the manifest, profiles, agent manifest, inputs, references and overlays (in order), compiler and built-in emitter identities, effective target option digests and consumer toolchains. `--check` fails when the lock is missing, stale or corrupt, `--preview` writes nothing, `--update` accepts changed identities |
 | `bundle export` / `bundle import` | Export the locked input closure and `tungsten.lock.json` into a new plain bundle directory with a digest inventory (`--preview` lists it; incomplete or credential-named content needs `--allow-incomplete` / `--allow-sensitive`), or validate a bundle completely and copy it into `--dest` without overwriting differing files. Neither runs emitters or grants trust |
-| `support-bundle --preview` | Inspect the exact metadata-only support manifest without writing files; `--exclude <id>` removes an entry. On Linux, `--output <PATH>` instead publishes it to a new file in an existing, trusted directory; `--inspect <FILE>` checks and shows an existing bundle |
+| `support-bundle --preview` | Inspect the exact metadata-only support manifest without writing files; `--exclude <id>` removes an entry. On Linux and macOS, `--output <PATH>` instead publishes it to a new file in an existing, trusted directory; `--inspect <FILE>` checks and shows an existing bundle |
 
 With `--json`, stdout carries exactly one JSON document described by `tungsten schema cli-output` (`lsp` speaks the language server protocol on stdio instead). Color is used only on a terminal and never when `NO_COLOR` is set.
 
@@ -671,7 +671,8 @@ network. It excludes configuration values, private paths, URLs, credentials,
 source text, logs, hashes and project identifiers. Use `--exclude <id>` to omit
 an entry; collection of additional sensitive content is not supported.
 
-On Linux, `tungsten support-bundle --output <PATH>` creates a new local file.
+On Linux and macOS, `tungsten support-bundle --output <PATH>` creates a new
+local file.
 Its bytes are exactly the same manifest serialized as compact JSON with one
 trailing newline, capped at 128 KiB including metadata; entry payloads retain
 their 16 KiB individual and 64 KiB combined limits. The JSON command result is
@@ -687,8 +688,12 @@ root-owned sticky ancestors such as `/tmp` are allowed. Symlink directories,
 an exclusive file with mode 0600 and never replaces an existing entry. These
 checks do not protect against root, another process with the same user ID,
 permission changes by those actors or a filesystem that violates local file
-operation semantics. Other platforms refuse export before collecting data;
-preview remains available.
+operation semantics. Every path component is opened without following
+symlinks, so macOS paths through the `/tmp`, `/var` and `/etc` symlinks are
+refused; use the `/private/...` path or a directory in your home folder.
+Publication needs hard-link support in the destination filesystem, which some
+FAT, exFAT and network volumes lack. Other platforms refuse export before
+collecting data; preview remains available.
 
 Library callers can cooperatively cancel an export before publication with
 `run_with_cancellation`. Successful publication is the commit point: a later

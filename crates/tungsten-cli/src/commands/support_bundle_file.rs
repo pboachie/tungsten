@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Bounded serialization and Linux-only, no-clobber support-bundle publication.
+//! Bounded serialization and no-clobber support-bundle publication on Unix
+//! platforms (Linux and macOS are the qualified targets).
 //!
 //! Directory descriptors anchor every operation. The final directory must be
 //! owned by the effective user and must not be writable by group or others;
@@ -45,7 +46,7 @@ pub(super) struct Publication {
 }
 
 pub(super) fn supported() -> bool {
-    cfg!(target_os = "linux")
+    cfg!(unix)
 }
 
 /// The exact manifest, with one trailing newline. Bound serialized bytes before
@@ -104,7 +105,7 @@ pub(super) fn publish(
     platform::publish(destination, bytes, cancelled)
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(unix))]
 mod platform {
     use super::*;
 
@@ -117,7 +118,7 @@ mod platform {
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 mod platform {
     use std::ffi::{OsStr, OsString};
     use std::fs::File;
@@ -128,7 +129,7 @@ mod platform {
 
     use nix::errno::Errno;
     use nix::fcntl::{AtFlags, OFlag, open, openat};
-    use nix::sys::stat::{Mode, fstatat};
+    use nix::sys::stat::{Mode, fstat, fstatat};
     use nix::unistd::{UnlinkatFlags, geteuid, linkat, unlinkat};
 
     use super::*;
@@ -196,8 +197,9 @@ mod platform {
         directory: File,
         file: File,
         name: OsString,
-        device: u64,
-        inode: u64,
+        // Raw platform types: `dev_t` is signed on macOS and unsigned on Linux.
+        device: nix::libc::dev_t,
+        inode: nix::libc::ino_t,
         cleanup_attempted: bool,
     }
 
@@ -228,7 +230,7 @@ mod platform {
                 let file = File::from(descriptor);
                 // fstat failure is exceptional: preserve the exclusively
                 // created entry rather than unlink an unverified pathname.
-                let metadata = file.metadata().map_err(|_| ExportError {
+                let metadata = fstat(&file).map_err(|_| ExportError {
                     kind: Failure::Io,
                     temporary_cleanup: false,
                 })?;
@@ -236,8 +238,8 @@ mod platform {
                     directory,
                     file,
                     name,
-                    device: metadata.dev(),
-                    inode: metadata.ino(),
+                    device: metadata.st_dev,
+                    inode: metadata.st_ino,
                     cleanup_attempted: false,
                 });
             }
