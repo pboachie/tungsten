@@ -126,8 +126,8 @@ Commands pick the account from `<PREFIX>_ACCOUNT` or the profile key
 Tokens are refreshed as needed and written back; a refresh that loses to
 another process or to a logout is not kept.
 
-Tokens are kept by the session store: `keychain` (default; macOS keychain or
-the Secret Service through `secret-tool`), `file` (`sessions/` next to the
+Tokens are kept by the session store: `keychain` (default; macOS keychain,
+the Secret Service through `secret-tool`, or the Windows Credential Locker), `file` (`sessions/` next to the
 config file, mode 0600, only when chosen with `--store file`,
 `<PREFIX>_SESSION_STORE=file` or `session_store = "file"`), or `ephemeral`
 (stored sessions are ignored). A non-secret index `sessions.json` records
@@ -228,9 +228,10 @@ cross-host exclusion guarantee. Applications own file-store permissions and
 coordination across hosts.
 
 No runtime ships a file-backed OAuth token store. Generated CLIs keep login
-sessions in the macOS keychain or the Secret Service (`secret-tool`); Windows
-and other platforms have no keychain adapter yet and need the explicit owner-only
-file store. Device authorization and remote token revocation are not
+sessions in the macOS keychain, the Secret Service (`secret-tool`) or the
+Windows Credential Locker (through Windows PowerShell; sessions larger than its
+secret size limit are refused, so use the explicit file store for them). Other
+platforms have no keychain adapter and need the explicit owner-only file store. Device authorization and remote token revocation are not
 supported. Concurrent CLI processes coordinate refreshes through the store's
 current content, not an exclusive lock. Registry publication and package
 availability are separate from building this source checkout.

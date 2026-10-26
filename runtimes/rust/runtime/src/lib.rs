@@ -64,6 +64,7 @@ mod client;
 mod confirm;
 pub mod crypto;
 mod dispatch;
+mod download;
 mod envelope;
 mod expr;
 mod helpers;
@@ -93,13 +94,14 @@ pub mod types;
 
 pub use checkpoint::{
     CHECKPOINT_PREFIX, CheckpointOptions, CheckpointPage, CheckpointState, CheckpointStatus,
-    ExportPages, MAX_CHECKPOINT_CHARS, describe_checkpoint,
+    ExportPages, MAX_CHECKPOINT_CHARS, TypedExportPages, describe_checkpoint,
 };
 pub use client::{ClientCore, ConfigError, Pages, Polled, TypedPages};
 pub use dispatch::{
     ByStatus, Dispatch, Mismatch, StatusDecode, decode, decode_by_status, decode_event,
     decode_page, decode_variant, no_stream,
 };
+pub use download::{Download, DownloadOptions, TransferProgress, disposition_filename};
 pub use idempotency::{FileIdempotencyStore, MemoryIdempotencyStore};
 pub use oauth::{
     LowLevelAuthorizationUrlParams, LowLevelExchangeCodeParams, MemoryTokenStore, OAuthFlow, Pkce,
