@@ -173,6 +173,14 @@ The support matrix below is generated from the capability catalog (`tungsten cap
 | `endpoint_manifest` | 1 | init_conversion | `endpoint_manifest` member | imported |  | local, https, git |
 | `manual_endpoint` |  | init_inference | `--method` and `--endpoint`, without `--from` | imported |  |  |
 
+| `init` selection | Targets |
+|---|---|
+| Default (`--targets` omitted) | `typescript`, `python`, `docs` |
+| Wizard default | `typescript`, `docs` |
+| Local setup (`--local-example`, wizard) | `typescript`, `python`, `rust`, `mcp`, `webmcp`, `docs`, and `cli` (Rust SDK and CLI) |
+| Selecting `mcp` adds | `typescript` |
+| Selecting `webmcp` adds | `typescript` |
+
 Source declarations only: a declared feature or environment is not qualification, and `unknown` evidence never becomes a compatibility claim.
 <!-- tungsten-capabilities-matrix:end -->
 

@@ -390,6 +390,16 @@ changes.
   and writes nothing when the limit is reached; library cancellation of an
   export is now honoured while collection runs.
 
+- Derive `tungsten init` and wizard target selection from the capability
+  catalog, which now declares the default targets, the wizard defaults, the
+  targets local setup (`--local-example`) covers and companion targets
+  (`mcp` and `webmcp` add `typescript`); `tungsten capabilities` reports them
+  under `init` and the support matrix lists them. `init --targets` and
+  `--add-targets` refuse the reserved `mock` target before writing anything,
+  naming the accepted outputs. The wizard's output list comes from the
+  catalog and no longer says source-only targets refuse imported operations
+  when they enforce the policy.
+
 - Declare a typed `options_schema` for every built-in target in
   `tungsten capabilities`: C#, F#, Dart, Java, Kotlin, Ruby, MCP, WebMCP and
   docs now list each option's JSON type, fixed default, description and the
