@@ -1673,12 +1673,11 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
     ),
 ];
 
-/// The extended explanation of a code, if one exists.
+/// The extended explanation of a code, if one exists. A linear scan, so a
+/// lookup never depends on the table staying sorted (it is kept sorted by code
+/// for readers, but an out-of-order entry once hid TG0705 from a binary search).
 pub(crate) fn explanation(code: &str) -> Option<&'static Explanation> {
-    EXPLANATIONS
-        .binary_search_by(|e| e.code.cmp(code))
-        .ok()
-        .map(|i| &EXPLANATIONS[i])
+    EXPLANATIONS.iter().find(|e| e.code == code)
 }
 
 /// The code range a diagnostic belongs to.
