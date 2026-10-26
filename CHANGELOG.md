@@ -236,6 +236,10 @@ changes.
 
 ### Added
 
+- The runtime telemetry observer reports macro runs and previews in
+  TypeScript, Python and Rust as one `macro` or `macro_preview` operation
+  named after the macro, covering every step. Unreleased 0.2.0 only.
+
 - The runtime telemetry observer reports `download()` (`entry` `download`,
   ending when the answer is handed over) and page exports (`export_pages`,
   like `pages`) in TypeScript, Python and Rust. Unreleased 0.2.0 only.

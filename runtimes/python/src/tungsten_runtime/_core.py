@@ -495,6 +495,16 @@ def _end_span(span: TelemetrySpan, result: object, call: bool) -> None:
         span.end(None, False, None)
 
 
+def _macro_subject(macro: object) -> dict[str, object]:
+    """Stands in for a macro where an operation is expected (its id, for
+    telemetry, and its safety)."""
+    safety = field(macro, "safety")
+    return {
+        "id": str_field(macro, "name") or "<unknown macro>",
+        "agent": {"safety": safety if isinstance(safety, str) else "mutating"},
+    }
+
+
 def _queue_reason(refused: Mapping[str, object] | None) -> TelemetryQueueReason:
     """The ``reason`` of a ``queue`` telemetry phase: why admission ended."""
     if refused is None:
@@ -833,22 +843,32 @@ class Engine:
         return answer.result
 
     def run_macro(self, macro: MacroDescriptor, input: object, opts: object) -> Flow[Ok[Any] | Err]:
-        resolved = self._call_options(opts)
-        result = yield from _within_deadline(
-            self._run_macro(macro, input, resolved),
-            _deadline_of(resolved),
-            lambda sent: self._deadline_expired(macro, sent),
+        result = yield from self._traced(
+            _macro_subject(macro),
+            "macro",
+            opts,
+            lambda resolved: _within_deadline(
+                self._run_macro(macro, input, resolved),
+                _deadline_of(resolved),
+                lambda sent: self._deadline_expired(macro, sent),
+            ),
+            lambda result: result,
         )
         return result
 
     def preview_macro(
         self, macro: MacroDescriptor, input: object, opts: object
     ) -> Flow[Ok[PreviewResult] | Err]:
-        resolved = self._call_options(opts)
-        result = yield from _within_deadline(
-            self._preview_macro(macro, input, resolved),
-            _deadline_of(resolved),
-            lambda sent: self._deadline_expired(macro, sent),
+        result = yield from self._traced(
+            _macro_subject(macro),
+            "macro_preview",
+            opts,
+            lambda resolved: _within_deadline(
+                self._preview_macro(macro, input, resolved),
+                _deadline_of(resolved),
+                lambda sent: self._deadline_expired(macro, sent),
+            ),
+            lambda result: result,
         )
         return result
 
