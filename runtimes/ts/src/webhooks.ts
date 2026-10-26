@@ -62,7 +62,9 @@ export interface VerifyWebhookOptions<T = unknown> {
    * Typed decoding of the parsed JSON payload, run before `claim`: return
    * the typed event, or throw to reject the delivery as `payload_invalid`
    * (a Zod schema's `parse`, for example). A payload whose arrays and
-   * objects nest deeper than `MAX_WEBHOOK_JSON_DEPTH` is `payload_invalid`.
+   * objects nest deeper than `MAX_WEBHOOK_JSON_DEPTH`, with a `\u` escape
+   * that is a lone surrogate, or with a number outside the double range is
+   * `payload_invalid`.
    */
   parse?: (event: unknown) => T;
 }
@@ -90,6 +92,20 @@ export interface RejectedWebhook {
 export type WebhookOutcome<T = unknown> = VerifiedWebhook<T> | RejectedWebhook;
 
 const encoder = new TextEncoder();
+/** A lone surrogate: with the `u` flag a surrogate pair is one code point and does not match. */
+const LONE_SURROGATE = /[\uD800-\uDFFF]/u;
+
+/**
+ * Rejects what the Rust runtime cannot represent, so every runtime accepts
+ * the same payloads: a number outside the double range and a string or key
+ * holding a lone surrogate (only a `\u` escape can produce one).
+ */
+function representable(key: string, value: unknown): unknown {
+  if (LONE_SURROGATE.test(key)) throw new SyntaxError("lone surrogate");
+  if (typeof value === "number" && !Number.isFinite(value)) throw new SyntaxError("number out of range");
+  if (typeof value === "string" && LONE_SURROGATE.test(value)) throw new SyntaxError("lone surrogate");
+  return value;
+}
 
 function reject(reason: WebhookRejection, message: string): RejectedWebhook {
   return { ok: false, reason, message };
@@ -226,7 +242,7 @@ export async function verifyWebhook<T = unknown>(options: VerifyWebhookOptions<T
   if (tooDeep(body)) return reject("payload_invalid", `the payload nests deeper than ${MAX_WEBHOOK_JSON_DEPTH} levels`);
   let event: unknown;
   try {
-    event = JSON.parse(new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(body));
+    event = JSON.parse(new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(body), representable);
   } catch {
     return reject("payload_invalid", "the body is not UTF-8 JSON");
   }

@@ -18,7 +18,9 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import inspect
 import json
+import math
 import re
 import time
 from collections.abc import Callable, Sequence
@@ -59,6 +61,7 @@ WebhookRejection = Literal[
 ]
 
 _TIMESTAMP = re.compile(r"[0-9]{1,15}")
+_SURROGATE = re.compile("[\ud800-\udfff]")
 _HEX = re.compile(r"[0-9a-fA-F]{64}")
 # The whitespace JavaScript's String.prototype.trim removes, so header items
 # split the same way in every runtime.
@@ -160,6 +163,51 @@ def _no_constant(name: str) -> Any:
     raise ValueError(name)
 
 
+def _finite_float(text: str) -> float:
+    value = float(text)
+    if math.isinf(value):
+        raise ValueError("number out of range")
+    return value
+
+
+def _finite_int(text: str) -> int:
+    # A literal beyond the double range is rejected in every runtime.
+    if math.isinf(float(text)):
+        raise ValueError("number out of range")
+    return int(text)
+
+
+def _has_lone_surrogate(value: object) -> bool:
+    """Whether a string or key in the parsed payload holds a lone surrogate
+    (only a ``\\u`` escape can produce one; strict UTF-8 decoding rejects the
+    bytes)."""
+    stack = [value]
+    while stack:
+        item = stack.pop()
+        if isinstance(item, str):
+            if _SURROGATE.search(item):
+                return True
+        elif isinstance(item, dict):
+            entries = cast("dict[str, object]", item)
+            stack.extend(entries.keys())
+            stack.extend(entries.values())
+        elif isinstance(item, list):
+            stack.extend(cast("list[object]", item))
+    return False
+
+
+def _utf8(text: str) -> bytes:
+    """UTF-8 of ``text`` with each lone surrogate as U+FFFD, as JavaScript's
+    ``TextEncoder`` encodes a string; surrogate pairs combine."""
+    return text.encode("utf-16-le", "surrogatepass").decode("utf-16-le", "replace").encode("utf-8")
+
+
+def _claim_type_error() -> TypeError:
+    return TypeError(
+        "claim must be a synchronous function returning a bool; verify_webhook does not await it"
+    )
+
+
 def verify_webhook(
     body: bytes | str,
     signature_header: str | None,
@@ -181,13 +229,23 @@ def verify_webhook(
     ``"<t>.<matched v1 signature>"``. ``parse`` is typed decoding of the parsed
     JSON payload, run before ``claim``: return the typed event, or raise to
     reject the delivery as ``payload_invalid``. A payload whose arrays and
-    objects nest deeper than ``MAX_WEBHOOK_JSON_DEPTH`` is ``payload_invalid``.
+    objects nest deeper than ``MAX_WEBHOOK_JSON_DEPTH``, with a ``\\u`` escape
+    that is a lone surrogate, or with a number outside the double range is
+    ``payload_invalid``. A ``str`` body or secret is encoded as UTF-8 with
+    each lone surrogate as U+FFFD.
 
-    Never raises for a bad delivery; raises ``ValueError`` for invalid options.
+    ``claim`` must be synchronous: verification never awaits, so an
+    ``async def`` claim (or one returning an awaitable) raises ``TypeError``
+    instead of letting a duplicate through.
+
+    Never raises for a bad delivery; raises ``ValueError`` for invalid options
+    and ``TypeError`` for an asynchronous ``claim``.
     """
+    if claim is not None and inspect.iscoroutinefunction(claim):
+        raise _claim_type_error()
     tolerance = _positive(tolerance_seconds, DEFAULT_WEBHOOK_TOLERANCE_SECONDS, "tolerance_seconds")
     max_body = _positive(max_body_bytes, DEFAULT_WEBHOOK_MAX_BODY_BYTES, "max_body_bytes")
-    raw = body.encode("utf-8", "surrogatepass") if isinstance(body, str) else bytes(body)
+    raw = _utf8(body) if isinstance(body, str) else bytes(body)
     if len(raw) > max_body:
         return RejectedWebhook("body_too_large", f"the body exceeds {max_body} bytes")
     keys = [secrets] if isinstance(secrets, str) else list(secrets)
@@ -203,7 +261,7 @@ def verify_webhook(
     signed = t.encode("ascii") + b"." + raw
     matched: bytes | None = None
     for secret in keys:
-        digest = hmac.new(secret.encode("utf-8", "surrogatepass"), signed, hashlib.sha256).digest()
+        digest = hmac.new(_utf8(secret), signed, hashlib.sha256).digest()
         for signature in signatures:
             if hmac.compare_digest(digest, signature) and matched is None:
                 matched = signature
@@ -224,7 +282,11 @@ def verify_webhook(
         text = raw.decode("utf-8")
         if text.startswith("﻿"):
             raise ValueError("BOM")
-        event = json.loads(text, parse_constant=_no_constant)
+        event = json.loads(
+            text, parse_constant=_no_constant, parse_float=_finite_float, parse_int=_finite_int
+        )
+        if _has_lone_surrogate(event):
+            raise ValueError("lone surrogate")
     except (ValueError, RecursionError):
         return RejectedWebhook("payload_invalid", "the body is not UTF-8 JSON")
     record = cast("dict[str, object]", event) if isinstance(event, dict) else None
@@ -237,8 +299,14 @@ def verify_webhook(
             event = parse(event)
         except Exception:
             return RejectedWebhook("payload_invalid", "the payload does not match the event type")
-    if claim is not None and not claim(event_id if event_id is not None else f"{t}.{matched.hex()}"):
-        return RejectedWebhook("duplicate", "the delivery was already accepted")
+    if claim is not None:
+        claimed = cast("object", claim(event_id if event_id is not None else f"{t}.{matched.hex()}"))
+        if inspect.isawaitable(claimed):
+            if inspect.iscoroutine(claimed):
+                claimed.close()
+            raise _claim_type_error()
+        if not claimed:
+            return RejectedWebhook("duplicate", "the delivery was already accepted")
     return VerifiedWebhook(event=event, timestamp=timestamp, type=event_type, id=event_id)
 
 
@@ -250,7 +318,7 @@ def sign_webhook(body: bytes | str, secret: str, timestamp: int) -> str:
     given = cast("object", timestamp)  # callers may pass untyped values
     if isinstance(given, bool) or not isinstance(given, int) or given < 0 or given > 2**53 - 1:
         raise ValueError("timestamp must be a non-negative integer")
-    raw = body.encode("utf-8", "surrogatepass") if isinstance(body, str) else bytes(body)
+    raw = _utf8(body) if isinstance(body, str) else bytes(body)
     t = str(timestamp)
-    digest = hmac.new(secret.encode("utf-8", "surrogatepass"), t.encode("ascii") + b"." + raw, hashlib.sha256)
+    digest = hmac.new(_utf8(secret), t.encode("ascii") + b"." + raw, hashlib.sha256)
     return f"t={t},v1={digest.hexdigest()}"
