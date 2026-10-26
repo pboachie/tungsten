@@ -81,7 +81,8 @@ The Git source lock under `.tungsten-inputs/git/` records the repository URL,
 requested ref, resolved commit, selected document and SHA256 of every materialized
 file. Ordinary runs retain that commit; `--refresh-inputs` is the explicit request
 to resolve a moving ref again. Converted imports retain their review provenance
-and require re-import into a fresh project to change source commits. Discovery
+and change source commits through `tungsten refresh-import`, which installs
+exactly the reviewed commit. Discovery
 recognizes all supported input formats and requires an explicit `#path` when
 multiple documents are found. Relative references retain the compiler's local
 input-root confinement. Acquisition is limited to 60 seconds, 512 files, 8 MiB per
@@ -346,9 +347,11 @@ A newer release is also classified in `upgrade`: `compatible` stays on your comp
 line (a patch release before 1.0, a minor or patch release from 1.0) and is followed by
 `tungsten generate --check`; `migration` starts a new line (a minor or major release before
 1.0, a major release from 1.0), is a prerelease, or has a Breaking section in its notes, and
-the guidance asks you to preview with `tungsten diff --migration`, `tungsten lock --preview`
-and `tungsten generate --dry-run` before replacing generated clients. Release notes can only
-make the classification stricter.
+the guidance asks you to rehearse before replacing generated clients. Release notes can only
+make the classification stricter. When a newer release is available, `rehearse_command` holds
+the `tungsten upgrade rehearse --to <version> --workspace <dir>` invocation to run with the new
+binary in each project; `tungsten upgrade apply` is the separate step that applies a reviewed
+rehearsal.
 
 | Exit code | Meaning |
 | --- | --- |

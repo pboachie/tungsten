@@ -73,6 +73,9 @@ pub struct RehearsalResult {
     pub checks: RehearsalChecks,
     /// The clean-consumer command run in a staged target, when requested.
     pub consumer_check: Option<ConsumerCheck>,
+    /// The release selected by `tungsten update check`, when `--candidate`
+    /// named its saved `--json` output.
+    pub candidate: Option<CandidateRelease>,
     /// Commands that reproduce or continue this rehearsal.
     pub commands: Vec<String>,
 }
@@ -178,6 +181,11 @@ pub struct RehearsalFinding {
 pub enum FindingKind {
     /// `--from`/`--to` do not match the recorded or running compiler.
     IdentityMismatch,
+    /// The `--candidate` document is not a usable `update check` result.
+    CandidateInvalid,
+    /// `update check` did not confirm this platform's archive and checksums
+    /// for the candidate release.
+    CandidateUnconfirmed,
     /// The lock is unreadable or its digest does not match.
     LockCorrupt,
     /// Inputs changed since the lock.
@@ -432,6 +440,23 @@ pub(crate) fn rehearse(args: &UpgradeRehearseArgs, env: &CliEnv) -> Report {
             )),
         }
     }
+    let candidate = match &args.candidate {
+        None => None,
+        Some(file) => match read_candidate(file) {
+            Ok(candidate) => {
+                candidate_findings(&candidate, from.as_ref(), &to, &mut findings);
+                Some(candidate)
+            }
+            Err(detail) => {
+                findings.push(blocking(
+                    FindingKind::CandidateInvalid,
+                    "--candidate",
+                    &detail,
+                ));
+                None
+            }
+        },
+    };
     if let Some(wanted) = &args.to
         && &to.version != wanted
     {
@@ -615,6 +640,7 @@ pub(crate) fn rehearse(args: &UpgradeRehearseArgs, env: &CliEnv) -> Report {
         findings,
         checks,
         consumer_check: None,
+        candidate,
         commands: vec![],
     };
 
@@ -968,6 +994,127 @@ fn stage(
         .map_err(|e| io("write the rehearsal record", e))
 }
 
+/// The candidate named by a saved `tungsten update check --json` document.
+/// Discovery only selects it: nothing is fetched or installed here.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct CandidateRelease {
+    /// The release `update check` selected.
+    pub version: String,
+    /// The version that ran the discovery.
+    pub discovered_by: String,
+    /// `update check` status (`update_available`, `artifacts_unavailable`, ...).
+    pub status: String,
+    /// `compatible` or `migration`, as `update check` classified it.
+    pub upgrade: Option<String>,
+    /// Whether discovery confirmed this platform's archive and `SHA256SUMS`;
+    /// says nothing about runtime packages.
+    pub artifacts_available: Option<bool>,
+    pub release_url: Option<String>,
+}
+
+/// Largest `--candidate` document read.
+const MAX_CANDIDATE_BYTES: u64 = 2 * 1024 * 1024;
+
+fn read_candidate(file: &Path) -> Result<CandidateRelease, String> {
+    use std::io::Read as _;
+    let shown = file.display();
+    let meta = std::fs::symlink_metadata(file).map_err(|e| format!("cannot read {shown}: {e}"))?;
+    if !meta.is_file() || meta.len() > MAX_CANDIDATE_BYTES {
+        return Err(format!(
+            "{shown} is not a saved `tungsten update check --json` document"
+        ));
+    }
+    let mut bytes = vec![];
+    std::fs::File::open(file)
+        .and_then(|f| f.take(MAX_CANDIDATE_BYTES + 1).read_to_end(&mut bytes))
+        .map_err(|e| format!("cannot read {shown}: {e}"))?;
+    let document: Value = serde_json::from_slice(&bytes)
+        .map_err(|_| format!("{shown} is not JSON; save `tungsten update check --json` output"))?;
+    if document["command"] != "update check" || !document["result"].is_object() {
+        return Err(format!(
+            "{shown} is not a saved `tungsten update check --json` document"
+        ));
+    }
+    let result = &document["result"];
+    let text = |key: &str| result[key].as_str().map(str::to_string);
+    let version = text("latest_version")
+        .filter(|v| valid_version(v))
+        .ok_or_else(|| {
+            format!(
+                "{shown} names no candidate release (status {})",
+                result["status"].as_str().unwrap_or("unknown")
+            )
+        })?;
+    let status = text("status").unwrap_or_default();
+    if !matches!(
+        status.as_str(),
+        "update_available" | "artifacts_unavailable"
+    ) {
+        return Err(format!(
+            "{shown} found no newer release (status {status}); there is no candidate to rehearse"
+        ));
+    }
+    Ok(CandidateRelease {
+        version,
+        discovered_by: text("current_version")
+            .filter(|v| valid_version(v))
+            .unwrap_or_default(),
+        status,
+        upgrade: text("upgrade").filter(|u| matches!(u.as_str(), "compatible" | "migration")),
+        artifacts_available: result["artifacts_available"].as_bool(),
+        release_url: text("release_url")
+            .filter(|u| u.starts_with("https://github.com/pboachie/tungsten/releases/")),
+    })
+}
+
+fn valid_version(v: &str) -> bool {
+    !v.is_empty()
+        && v.len() <= 64
+        && v.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'+' | b'-'))
+}
+
+/// The candidate must be the running compiler, discovered from the locked one.
+fn candidate_findings(
+    candidate: &CandidateRelease,
+    from: Option<&CompilerIdentity>,
+    to: &CompilerIdentity,
+    findings: &mut Vec<RehearsalFinding>,
+) {
+    if candidate.version != to.version {
+        findings.push(blocking(
+            FindingKind::IdentityMismatch,
+            "--candidate",
+            &format!(
+                "the discovered candidate is tungsten {}, but this binary is tungsten {}; run the rehearsal with the candidate release's binary",
+                candidate.version, to.version
+            ),
+        ));
+    }
+    if let Some(from) = from
+        && !candidate.discovered_by.is_empty()
+        && candidate.discovered_by != from.version
+    {
+        findings.push(blocking(
+            FindingKind::IdentityMismatch,
+            "--candidate",
+            &format!(
+                "the candidate was discovered by tungsten {}, but {LOCK_FILE} records tungsten {}; run `tungsten update check --json` with the locked release",
+                candidate.discovered_by, from.version
+            ),
+        ));
+    }
+    if candidate.artifacts_available != Some(true) {
+        findings.push(RehearsalFinding {
+            kind: FindingKind::CandidateUnconfirmed,
+            subject: candidate.version.clone(),
+            detail: "`update check` did not confirm this platform's release archive and SHA256SUMS; verify the binary you are rehearsing with".into(),
+            blocking: false,
+        });
+    }
+}
+
 /// Run the clean-consumer command in `dir`, logging to `log`, and stop it at
 /// its timeout. The command is the user's; tungsten only starts and waits.
 fn run_consumer(dir: Option<&Path>, request: &ConsumerRequest, log: &Path) -> ConsumerCheck {
@@ -1127,6 +1274,18 @@ fn human(r: &RehearsalResult) -> String {
         "upgrade rehearsal: {from} -> tungsten {}",
         r.to.version
     );
+    if let Some(candidate) = &r.candidate {
+        let _ = writeln!(
+            out,
+            "  candidate: tungsten {} selected by `update check` ({}{})",
+            candidate.version,
+            candidate.status,
+            candidate
+                .upgrade
+                .as_ref()
+                .map_or_else(String::new, |u| format!(", {u}"))
+        );
+    }
     for change in &r.identity_changes {
         let _ = writeln!(
             out,

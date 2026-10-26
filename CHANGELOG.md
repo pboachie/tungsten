@@ -43,6 +43,12 @@ changes.
 
 ### Documentation
 
+- Add the `webhook-receiver` gallery recipe: TypeScript, Python and Rust
+  receivers for a non-sensitive `order.shipped` webhook verify signed
+  deliveries with example secrets, refuse a replay, a tampered body, a stale
+  timestamp and an incomplete payload, accept a rotated-secret delivery, and
+  print identical outcomes, without a web framework or network.
+
 - Add a migration note contrasting the new opt-in total operation deadline
   with the existing per-attempt `timeoutMs` and its equivalents, across the
   runtimes, the generated Rust CLI and the MCP server.
@@ -230,6 +236,17 @@ changes.
 
 ### Added
 
+- The runtime telemetry observer reports `stream()` in TypeScript, Python and
+  Rust as one `stream` operation covering its connection and every reconnect,
+  ending `ok`, `error` (final failure item) or `cancelled` (cancelled or left
+  early). Unreleased 0.2.0 only.
+
+- `tungsten update check` links the upgrade rehearsal: when a newer release is
+  available, `rehearse_command` (new `--json` field) holds the
+  `tungsten upgrade rehearse --to <version> --workspace <dir>` invocation, and
+  the guidance for migrations names `upgrade rehearse` and `upgrade apply`
+  instead of the separate preview commands.
+
 - Concurrent commands of a generated Rust CLI refresh a stored login session
   one process at a time: the token is refreshed before the call under a
   per-session lock file and read again first, so a refresh token is not
@@ -374,6 +391,10 @@ changes.
 - `refresh-import --apply` stages the reviewed content beside its backups, so
   `refresh-import --resume` finishes an interrupted apply (writes, pin and
   lock) as an alternative to `--rollback`.
+- `refresh-import` refreshes converted inputs acquired from Git sources
+  (`git+https://…@ref#path`). The preview resolves the ref into a private
+  scratch cache; `--apply` installs exactly that reviewed commit's pin and
+  tree, so the ref is never resolved again between review and apply.
 - The language server offers a disabled "Refresh the converted import" action
   on TG0122 for a converted input whose remote source changed, naming the
   `refresh-import` preview, `--apply` and `--offline` choices.
@@ -401,6 +422,11 @@ changes.
   log are recorded, it sets `runtime_acceptance` to passed or failed, and a
   failure blocks `upgrade apply`. The command runs with your privileges and
   environment; it is not sandboxed.
+- Add `upgrade rehearse --candidate FILE` to take the release selected by a
+  saved `tungsten update check --json` result as the explicit candidate. It
+  is read offline; the rehearsal is blocked unless the candidate is the
+  running compiler and was discovered by the locked release, and notes when
+  discovery did not confirm the platform archive. Discovery never upgrades.
 - Add `tungsten upgrade apply --workspace DIR` to apply an accepted rehearsal
   as a separate step. It refuses when inputs, the lock, the staged files or
   any output file changed since the rehearsal, backs up what it replaces,
@@ -453,6 +479,10 @@ changes.
   write a project whose outputs collide with another's. The capability catalog
   declares the workspace contract under `workspace`.
 
+- The `actions/tungsten` GitHub Action runs saved mock scenarios after the
+  checks (`scenarios`, `scenario-input`) through `tungsten scenario run`, one
+  line per scenario split on whitespace without a shell; a failed assertion
+  fails the step, and scenarios are refused on `pull_request_target`.
 - The `actions/tungsten` GitHub Action checks the projects of a workspace
   (`workspace`), narrowed by project id (`workspace-projects`) and by
   `tungsten workspace --affected` evidence for listed files (`affected-files`)

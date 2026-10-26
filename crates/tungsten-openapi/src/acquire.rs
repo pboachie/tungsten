@@ -634,13 +634,13 @@ fn source_dir(source: &str, project: &Path) -> Result<(Url, PathBuf), Diagnostic
 
 /// Fetch the current bytes of an HTTP(S) source without reading, verifying or
 /// replacing its pin, so a reviewed refresh can compare them first. Git
-/// sources are refused; they are refreshed through their own pin.
+/// sources are refused; they are acquired through their own commit pin.
 pub fn fetch(source: &str, options: &Options) -> Result<Vec<u8>, Diagnostic> {
     if crate::git_input::is_source(source) {
         return Err(diagnostic(
             "TG0120",
-            "converted inputs from Git sources cannot be refreshed in place",
-            "convert a local checkout of the reviewed revision and pass it with --from",
+            "fetch reads HTTP(S) sources only",
+            "acquire Git sources through their own commit pin",
         ));
     }
     if options.offline {

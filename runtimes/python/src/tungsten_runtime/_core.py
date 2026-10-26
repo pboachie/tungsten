@@ -384,10 +384,39 @@ def _span_of(opts: Mapping[str, object]) -> TelemetrySpan | None:
     return span if isinstance(span, TelemetrySpan) else None
 
 
+#: Ends a telemetry span as cancelled (see ``_end_span``).
+_CANCELLED: Final = object()
+
+
+def _watch_items(flow: Flow[T], last: list[object]) -> Flow[T]:
+    """Run ``flow``, keeping the last item it emits in ``last``."""
+    sent: object = None
+    thrown: BaseException | None = None
+    try:
+        while True:
+            try:
+                effect = flow.throw(thrown) if thrown is not None else flow.send(sent)
+            except StopIteration as finished:
+                return cast(T, finished.value)
+            if isinstance(effect, Emit):
+                last[:] = [effect.item]
+            try:
+                sent = yield effect
+                thrown = None
+            except GeneratorExit:
+                raise
+            except BaseException as error:
+                sent, thrown = None, error
+    finally:
+        flow.close()
+
+
 def _end_span(span: TelemetrySpan, result: object, call: bool) -> None:
     """End ``span`` with a public result (none: the iteration ended without
     an item). Only a ``call`` reports its final HTTP status."""
-    if isinstance(result, Ok):
+    if result is _CANCELLED:
+        span.end({}, True, None)
+    elif isinstance(result, Ok):
         span.end(None, False, cast(Ok[object], result).meta.status if call else None)
     elif isinstance(result, Err):
         span.end(result.error, False, result.error["http_status"] if call else None)
@@ -665,7 +694,23 @@ class Engine:
     def stream(
         self, op: OperationDescriptor, args: object, opts: object, cancelled: Callable[[], bool] | None = None
     ) -> Flow[None]:
-        yield from self._stream(op, args, self._call_options(opts), cancelled)
+        # The stream's last item.
+        last: list[object] = []
+
+        def stopped() -> bool:
+            return cancelled is not None and cancelled() is True
+
+        def result_of(_: None) -> object:
+            # A stream the caller cancelled ends as cancelled, whatever it read.
+            return _CANCELLED if stopped() else (last[0] if last else None)
+
+        yield from self._traced(
+            op,
+            "stream",
+            opts,
+            lambda resolved: _watch_items(self._stream(op, args, resolved, cancelled), last),
+            result_of,
+        )
 
     def download(self, op: OperationDescriptor, args: object, opts: object) -> Flow[Ok[Any] | Err]:
         """Send ``op`` and hand its 2xx body over unread: ``Ok.value`` is a
