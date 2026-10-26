@@ -128,6 +128,14 @@ pub fn inspect_project(manifest: &Path, options: &CompileOptions) -> InspectedPr
                 "invalid supported target option",
                 "use the supported option schema from `tungsten capabilities typescript --json`; scalar warnings use defaults and invalid custom dependencies prevent generation",
             ),
+            "TG0731" => (
+                "invalid supported target option",
+                "use the supported option schema from `tungsten capabilities python --json`; invalid values use defaults",
+            ),
+            "TG0740" => (
+                "invalid supported target option",
+                "use the supported option schema from `tungsten capabilities rust --json`; invalid values use defaults",
+            ),
             _ => (
                 "configuration declaration is invalid",
                 "check the manifest/profile schema, supported version, relative selections, include roots, cycles and documented graph limits",

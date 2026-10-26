@@ -12,12 +12,16 @@ use serde::Serialize;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TargetOptionSchema {
     TypeScript,
+    Python,
+    Rust,
 }
 
 impl TargetOptionSchema {
     pub fn json_schema(self) -> serde_json::Value {
         match self {
             Self::TypeScript => crate::target_options::typescript_json_schema(),
+            Self::Python => crate::target_options::python_json_schema(),
+            Self::Rust => crate::target_options::rust_json_schema(),
         }
     }
 }
@@ -411,7 +415,7 @@ targets! {
         id: "python", aliases: &["py"], source: BuiltInEmitter, family: Some("python"), policy: true,
         tools: &[ToolRequirement {
             tool: "python3", minimum: Some([3, 12]), maximum_exclusive: None, minimum_option: Some("python_version"), excluded_versions: &[],
-        }],
+        }], schema: Some(TargetOptionSchema::Python),
         summary: "Sync and async Python SDK, Pydantic v2 or dataclass models",
         options: &["package", "module", "version", "runtime", "runtime_path", "python_version", "models", "out"],
         environments: [Cpython],
@@ -427,6 +431,7 @@ targets! {
     {
         id: "rust", aliases: &["rs"], source: BuiltInEmitter, family: Some("rust"), policy: true,
         tools: &[ToolRequirement::new("cargo", Some([1, 88])), ToolRequirement::new("rustc", Some([1, 88]))],
+        schema: Some(TargetOptionSchema::Rust),
         summary: "Async Rust SDK (serde, reqwest) and optional generated CLI",
         options: &["crate", "version", "runtime", "runtime_path", "cli", "out"],
         environments: [Native],
