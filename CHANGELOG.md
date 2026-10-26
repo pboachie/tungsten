@@ -226,6 +226,11 @@ changes.
 
 ### Added
 
+- Offer language-server quick fixes for unknown operation ids (`TG0603`) and
+  unknown manifest fields or values (`TG0602`), replacing the value named by
+  the diagnostic with the closest known name. Fixes are version-pinned edits
+  of the current buffer and are withheld when the buffer no longer matches.
+
 - Add explicit Linux support-bundle export to a new file in an existing,
   trusted user-owned directory. Export preserves the metadata-only preview
   manifest, caps complete artifacts at 128 KiB, refuses replacement and
