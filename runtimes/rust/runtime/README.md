@@ -272,7 +272,14 @@ operations too (`entry` `preview`, `pages`, `poll`): one `pages` or `poll`
 operation covers every request it made, with attempts numbered across it,
 and a page iteration the caller stops before its end is reported as
 `cancelled`. Only a `call` operation's end carries the final `http_status`.
-Event streams, page exports and macros do not emit telemetry yet.
+`stream()` is one `stream` operation covering its connection and every
+reconnect, with attempts numbered across them; it ends with the stream: `ok`
+at its end, `error` with its final failure item, `cancelled` when the caller
+cancels or leaves it early (dropped). Page exports are `export_pages`
+operations like `pages`; a `download` operation ends when the answer is
+handed over (reading the body is not part of it). A macro run or
+preview is one `macro` or `macro_preview` operation named after the macro,
+covering every step, with attempts numbered across the steps.
 No OpenTelemetry adapter ships with the Rust runtime; forward events from an
 observer to the exporter of your choice.
 

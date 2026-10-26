@@ -221,6 +221,19 @@ fn leaf_command(
                 .value_parser(clap::value_parser!(u32).range(1..))
                 .help("With --all, stop after N pages and say so when more remain (default: no limit)"),
         );
+        if safety == Safety::ReadOnly {
+            cmd = cmd.arg(
+                Arg::new("checkpoint-file")
+                    .long("checkpoint-file")
+                    .value_name("PATH")
+                    .action(ArgAction::Set)
+                    .requires("all")
+                    .help(format!(
+                        "With --all, save progress to PATH after each page is printed and resume from it when it exists (needs {}_CHECKPOINT_KEY; delete PATH to start over)",
+                        env.prefix
+                    )),
+            );
+        }
     }
     if safety != Safety::ReadOnly {
         cmd = cmd

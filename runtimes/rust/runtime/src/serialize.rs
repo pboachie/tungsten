@@ -331,6 +331,8 @@ pub enum Payload {
     Empty,
     Bytes(Vec<u8>),
     Multipart(Vec<MultipartPart>),
+    /// A streamed body: each attempt reads the source anew.
+    Upload(crate::upload::UploadSource),
 }
 
 /// An encoded request body.

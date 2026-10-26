@@ -215,7 +215,9 @@ export async function attempt(fetchImpl: typeof fetch, req: AttemptRequest): Pro
         body: req.body,
         redirect: req.redirect,
         signal: controller.signal,
-      });
+        // A streamed upload body is sent while the response may already arrive.
+        ...(req.body instanceof ReadableStream ? { duplex: "half" } : {}),
+      } as RequestInit);
     } catch (error) {
       if (timedOut) return { kind: "timeout", deadline: byDeadline };
       if (req.signal?.aborted) return { kind: "aborted", sent: true };

@@ -21,6 +21,7 @@ from types import MappingProxyType
 from typing import TypeGuard
 
 from ._json import FilePart, display_json, is_bytes_like, js_number, parse_json
+from ._upload import UploadSource
 from .sentinels import UNSET
 
 #: Placeholder written wherever a secret or sensitive value would appear.
@@ -367,7 +368,7 @@ def normalize_files(value: object, depth: int = 0) -> object:
     """File objects and ``(filename, content[, content_type])`` tuples
     become ``FilePart`` values (read once; a seekable file is rewound to
     where it was), so every later step digests and sends the same bytes."""
-    if depth > 64 or isinstance(value, str | FilePart) or is_bytes_like(value):
+    if depth > 64 or isinstance(value, str | FilePart | UploadSource) or is_bytes_like(value):
         return value
     if is_record(value):
         return {k: normalize_files(v, depth + 1) for k, v in value.items()}
@@ -380,7 +381,7 @@ def normalize_files(value: object, depth: int = 0) -> object:
     return part if part is not None else value
 
 
-_SUPPORTED_SCALARS = (str, int, float, bool, bytes, bytearray, memoryview, FilePart, dt.date)
+_SUPPORTED_SCALARS = (str, int, float, bool, bytes, bytearray, memoryview, FilePart, UploadSource, dt.date)
 
 
 def unsupported_path(value: object, path: list[str | int] | None = None) -> list[str | int] | None:

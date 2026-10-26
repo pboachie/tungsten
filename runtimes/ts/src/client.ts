@@ -51,6 +51,7 @@ import {
 import { DEFAULT_MAX_EVENT_BYTES, SseParser, type SseEvent } from "./sse.js";
 import { declaredLength, Download, type DownloadFailure } from "./download.js";
 import { EventStream } from "./streams.js";
+import { type UploadAttempt, UploadSource } from "./upload.js";
 import { attempt, type AttemptOutcome, nextLink, parseRetryAfter, StreamBody } from "./transport.js";
 import { type Permit, type Rejection, RequestScheduler } from "./scheduler.js";
 import { Telemetry, type TelemetryEntry, type TelemetryQueueReason, type TelemetrySpan } from "./telemetry.js";
@@ -196,6 +197,37 @@ interface Prepared {
   secrets: Set<string>;
   /** The authorization-code scheme whose stored token this request carries. */
   oauth: string | null;
+  /** A streamed body (`body` is then null): each attempt reads it anew. */
+  upload: UploadSource | null;
+}
+
+/** The failure of an attempt whose upload source ended it. */
+function uploadFailure(op: OperationDescriptor, callCtx: CallContext, sent: UploadAttempt, mutation: boolean): Failure | null {
+  const why = sent.failure();
+  if (why === null) return null;
+  const parameter = op.body?.shape.kind === "arg" ? argumentPath(op, [op.body.shape.arg]) : "body";
+  const bytes = sent.sent();
+  if (why.kind === "source") {
+    const cause = `The upload source failed (${why.detail}) after ${bytes} ${bytes === 1 ? "byte was" : "bytes were"} sent; the request was abandoned with an incomplete body.`;
+    return fail(mutation
+      ? outcomeUnknown(callCtx, cause, { code: "UPLOAD_SOURCE_FAILED" })
+      : diagnostic(op.id, "TRANSPORT_FAILED", {
+          code: "UPLOAD_SOURCE_FAILED", failed_parameter: parameter, retryable: "never", trace: { attempts: callCtx.attempts },
+          remediation: `${cause} This read has no side effects; fix the source and call again.`,
+        }));
+  }
+  const declared = why.kind === "length" ? `${why.read} bytes, not the declared length` : "bytes whose SHA-256 differs from the declared sha256";
+  return fail(diagnostic(op.id, "VALIDATION_FAILED", {
+    code: "UPLOAD_MISMATCH", failed_parameter: parameter, retryable: "never", trace: { attempts: callCtx.attempts },
+    expected: why.kind === "length" ? "exactly the declared length of the upload" : "bytes matching the declared sha256 of the upload",
+    remediation: `The upload source produced ${declared}; the request was abandoned before its last bytes were sent, so the server did not receive a complete body. Fix the source or its declaration and call again.`,
+  }));
+}
+
+/** The note on a failure that is not retried because its one-shot upload was read. */
+function oneShotSpent(failure: Failure): Failure {
+  const note = " The upload body is one-shot and was already read, so it was not sent again; pass UploadSource.recreatable(...) to allow retries.";
+  return { ...failure, error: { ...failure.error, remediation: `${failure.error.remediation}${note}` } };
 }
 
 /** Reconnects of a dropped stream when `ClientOptions.maxReconnects` is unset. */
@@ -232,6 +264,18 @@ function safeName(value: unknown, key: string, fallback: string): string {
   } catch {
     return fallback;
   }
+}
+
+/** Stands in for a macro where an operation is expected (its id, for
+ * diagnostics and telemetry, and its safety). */
+function macroSubject(macro: MacroDescriptor): OperationDescriptor {
+  let safety: unknown = "mutating";
+  try {
+    safety = isRecord(macro) ? macro.safety : safety;
+  } catch {
+    // Unreadable: treated as mutating.
+  }
+  return { id: safeName(macro, "name", "<unknown macro>"), agent: { safety } } as unknown as OperationDescriptor;
 }
 
 /** The `reason` of a `queue` telemetry phase: why admission ended. */
@@ -663,19 +707,25 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
   /** Iterate pages (cursor, offset, page number or `Link` header); stops
    * after the last page or after yielding the first error. */
   async *pages<T>(op: OperationDescriptor, args: Record<string, unknown>, opts?: CallOptions): AsyncIterable<Result<Page<T>>> {
-    const span = this.#startSpan(op, "pages");
+    yield* this.#tracedPages(op, "pages", opts, (resolved) => this.#pages<T>(op, args, resolved), "paginating");
+  }
+
+  /** Run a page iteration as one telemetry operation (when telemetry is
+   * on); one the caller stops before its end is reported as cancelled. */
+  async *#tracedPages<R extends Result<unknown>>(op: OperationDescriptor, entry: TelemetryEntry, opts: CallOptions | undefined, run: (resolved: CallOptions) => AsyncIterable<R>, during: string): AsyncGenerator<R> {
+    const span = this.#startSpan(op, entry);
     // The iteration's last item, and whether it ended (not stopped early by the caller).
     let last: Result<unknown> | null = null;
     let finished = false;
     try {
       const resolved = this.#callOptions(opts);
-      for await (const page of this.#pages<T>(op, args, span === null ? resolved : ({ ...resolved, [TELEMETRY_SPAN]: span } as StepOptions))) {
+      for await (const page of run(span === null ? resolved : ({ ...resolved, [TELEMETRY_SPAN]: span } as StepOptions))) {
         last = page;
         yield page;
       }
       finished = true;
     } catch (error) {
-      const failed = fail(this.#internal(op, error, "paginating"));
+      const failed = fail(this.#internal(op, error, during)) as R;
       last = failed;
       finished = true;
       yield failed;
@@ -699,11 +749,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
    * budgets, cycle detection, deadlines and cancellation apply per run.
    */
   async *exportPages<T>(op: OperationDescriptor, args: Record<string, unknown>, checkpoint: CheckpointOptions, opts?: CallOptions): AsyncIterable<Result<CheckpointPage<T>>> {
-    try {
-      yield* this.#exportPages<T>(op, args, checkpoint, this.#callOptions(opts));
-    } catch (error) {
-      yield fail(this.#internal(op, error, "exporting pages"));
-    }
+    yield* this.#tracedPages(op, "export_pages", opts, (resolved) => this.#exportPages<T>(op, args, checkpoint, resolved), "exporting pages");
   }
 
   /** The secret-free status of a checkpoint token (operation, style,
@@ -724,12 +770,28 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     if (caller?.aborted === true) controller.abort();
     else caller?.addEventListener("abort", forward, { once: true });
     const items = async function* (core: ClientCore): AsyncGenerator<StreamItem<T>> {
+      const span = core.#startSpan(op, "stream");
+      // The stream's last item, and whether it ended (not cancelled or left early).
+      let last: StreamItem<T> | null = null;
+      let finished = false;
       try {
-        yield* core.#stream<T>(op, args, { ...callOptions, signal: controller.signal });
+        for await (const item of core.#stream<T>(op, args, { ...callOptions, signal: controller.signal, [TELEMETRY_SPAN]: span ?? undefined } as StepOptions)) {
+          last = item;
+          yield item;
+        }
+        finished = true;
       } catch (error) {
-        yield fail(core.#internal(op, error, "streaming"));
+        const failed = fail(core.#internal(op, error, "streaming"));
+        last = failed;
+        finished = true;
+        yield failed;
       } finally {
         caller?.removeEventListener("abort", forward);
+        if (span !== null) {
+          if (finished && last !== null && !last.ok) span.end(last.error, controller.signal.aborted, null);
+          else if (finished && !controller.signal.aborted) span.end(null, false, null);
+          else span.end({}, true, null);
+        }
       }
     };
     return new EventStream<T>(items(this), () => controller.abort(), safeId(op), !(isRecord(op) && isRecord(op.agent) && op.agent.safety === "read_only"));
@@ -745,11 +807,8 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
    * connection and its scheduler capacity are held until the download
    * ends or is closed. Never throws. */
   async download(op: OperationDescriptor, args: Record<string, unknown>, opts?: DownloadOptions): Promise<Result<Download>> {
-    try {
-      return await this.#download(op, args, this.#callOptions(opts));
-    } catch (error) {
-      return fail(this.#internal(op, error, "downloading"));
-    }
+    // The operation ends when the answer is handed over; reading the body is not part of it.
+    return this.#traced(op, "download", opts, (resolved) => this.#download(op, args, resolved as DownloadOptions), "downloading");
   }
 
   /** Call a read operation until `until` holds on its body or the budget
@@ -769,22 +828,14 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
    * to its `as` name; returns the evaluated output, or the first failing
    * step's envelope (its remediation names the steps already completed). */
   async runMacro<T>(macro: MacroDescriptor, input: Record<string, unknown>, opts?: CallOptions): Promise<Result<T>> {
-    try {
-      return await this.#runMacro<T>(macro, input, this.#callOptions(opts));
-    } catch (error) {
-      return fail(this.#internal({ id: safeName(macro, "name", "<unknown macro>") }, error, "running the macro"));
-    }
+    return this.#traced(macroSubject(macro), "macro", opts, (resolved) => this.#runMacro<T>(macro, input, resolved), "running the macro");
   }
 
   /** Preview a macro: no request is sent. Validates and renders the first
    * step, lists the effects of every step, and returns a confirmation token
    * bound to the macro and this exact input unless the macro is read-only. */
   async previewMacro(macro: MacroDescriptor, input: Record<string, unknown>, opts?: CallOptions): Promise<Result<PreviewResult>> {
-    try {
-      return await this.#previewMacro(macro, input, this.#callOptions(opts));
-    } catch (error) {
-      return fail(this.#internal({ id: safeName(macro, "name", "<unknown macro>") }, error, "previewing the macro"));
-    }
+    return this.#traced(macroSubject(macro), "macro_preview", opts, (resolved) => this.#previewMacro(macro, input, resolved), "previewing the macro");
   }
 
   // ------------------------------------------------------------ internals
@@ -999,6 +1050,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
   async #retryRejected<T>(prepared: Prepared, rejected: Failure, opts: CallOptions, stream: boolean | "bytes" = false, idleMs?: number): Promise<Result<T>> {
     const interrupted = this.#beforeDispatch(prepared.op, opts);
     if (interrupted) return interrupted;
+    if (prepared.upload !== null && !prepared.upload.sendable) return oneShotSpent(rejected);
     const scheme = prepared.oauth;
     const current = prepared.headers.get("Authorization");
     if (scheme === null || current === undefined || !current.startsWith("Bearer ")) return rejected;
@@ -1301,11 +1353,25 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
     }
     if (encoded.contentType) headers.set("Content-Type", encoded.contentType);
     const observedBody = observableBody(op.body?.encoding ?? "json", encoded);
+    const upload = encoded.upload ?? null;
+    if (upload !== null) {
+      const policy = op.agent.idempotency.policy;
+      const keyed = policy === "auto" || policy === "content_hash" || policy === "content_identity";
+      const confirmed = op.agent.safety === "destructive" || op.agent.safety === "irreversible";
+      if (upload.sha256 === null && (keyed || confirmed)) {
+        const arg = op.body?.shape.kind === "arg" ? [op.body.shape.arg] : [];
+        return this.#validation(op, arg, upload, "an UploadSource with a declared sha256",
+          `Declare the SHA-256 of the upload (UploadSource sha256) so the ${keyed ? "idempotency key" : "confirmation"} of ${op.id} binds to its bytes. Nothing was sent.`);
+      }
+      if (upload.length !== null) headers.set("Content-Length", String(upload.length));
+    }
 
     const header = keyHeader(op);
     const beforeKey = this.#beforeDispatch(op, opts);
     if (beforeKey) return beforeKey;
-    const key = await this.#idempotencyKey(op, args, opts, purpose, encoded.hashMaterial);
+    const key = upload !== null && op.agent.idempotency.policy === "content_hash"
+      ? { ok: true as const, value: upload.sha256 }
+      : await this.#idempotencyKey(op, args, opts, purpose, encoded.hashMaterial);
     if (!key.ok) return key;
     if (key.value !== null) {
       headers.set(header, key.value, true);
@@ -1350,6 +1416,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
         hiddenQuery: [...auth.plan.query.map((q) => q.name), ...op.params.filter((x) => x.in === "query" && x.sensitive === true).map((x) => x.wire)],
         secrets: addAll(secrets, headers.secrets()),
         oauth: auth.oauth,
+        upload,
       },
     };
   }
@@ -1689,7 +1756,9 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
       const attemptStart = span?.attemptStart(attemptNumber) ?? 0;
       if (permit !== null && attempts === 1) this.#scheduler?.recordCall(this.#scopeKey(prepared.url));
       let result: Result<T>;
-      let current = { url: prepared.url, method: prepared.method, body: prepared.body };
+      const upload = prepared.upload;
+      let sending: UploadAttempt | null = upload === null ? null : upload.attempt();
+      let current = { url: prepared.url, method: prepared.method, body: sending?.stream ?? prepared.body };
       let handedOff = false;
       try {
         // Redirects are never followed by fetch: it would forward custom
@@ -1699,7 +1768,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
           url: prepared.url,
           method: prepared.method,
           headers,
-          body: prepared.body,
+          body: current.body,
           redirect: "manual",
           timeoutMs,
           signal: opts.signal,
@@ -1712,11 +1781,14 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
           const next = this.#redirectTarget(prepared, current.url, outcome.headers.location);
           if (next === null) break;
           const rewrite = outcome.status !== 307 && outcome.status !== 308 && current.method !== "GET" && current.method !== "HEAD";
-          current = { url: next.url, method: rewrite ? "GET" : current.method, body: rewrite ? null : current.body };
+          // A streamed body is read again for the redirect, never replayed from a spent one-shot source.
+          if (upload !== null && !rewrite && !upload.sendable) break;
+          sending = upload !== null && !rewrite ? upload.attempt() : null;
+          current = { url: next.url, method: rewrite ? "GET" : current.method, body: rewrite ? null : sending?.stream ?? current.body };
           ctx.url = next.display;
           ctx.method = current.method;
           const hopHeaders = { ...headers };
-          if (rewrite) for (const name of Object.keys(hopHeaders)) if (name.toLowerCase() === "content-type") delete hopHeaders[name];
+          if (rewrite) for (const name of Object.keys(hopHeaders)) if (["content-type", "content-length"].includes(name.toLowerCase())) delete hopHeaders[name];
           const beforeRedirect = this.#beforeDispatch(op, opts);
           if (beforeRedirect) return beforeRedirect;
           outcome = await attempt(this.#fetch(), {
@@ -1734,7 +1806,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
           });
         }
         const callCtx: CallContext = { api: this.api, op, key: prepared.key, keyHeader: prepared.keyHeader, attempts, check };
-        result = await this.#classify<T>(callCtx, prepared, outcome, ctx, timeoutMs);
+        result = (sending === null ? null : uploadFailure(op, callCtx, sending, mutation)) ?? await this.#classify<T>(callCtx, prepared, outcome, ctx, timeoutMs);
         if (permit !== null) {
           if (!result.ok && result.error.category === "RATE_LIMITED") permit.settle(result.error.retry_after_ms);
           else if (outcome.kind === "response") permit.settle(undefined);
@@ -1762,6 +1834,7 @@ export class ClientCore implements ClientCoreApi, ClientCoreExtensions {
       if (opts.signal?.aborted === true || attempts > retries.max || !RETRY_CATEGORIES.has(error.category)) return done();
       if (error.retryable === "never" || error.retryable === "after_remediation") return done();
       if (mutation && !protectedReplay) return done();
+      if (prepared.upload !== null && !prepared.upload.sendable) return oneShotSpent(done());
       let delay: number;
       if (retries.honorRetryAfter && error.retry_after_ms !== null) {
         if (error.retry_after_ms > retries.maxMs) return done();

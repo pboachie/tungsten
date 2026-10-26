@@ -86,6 +86,19 @@ inputs:
       `pull_request_target` events.
     required: false
     default: "false"
+  scenarios:
+    description: >-
+      Saved mock scenarios to run after the checks, one per line:
+      `<scenario.json> [--expect-exit N] [--timeout-ms N] [--max-calls N] --
+      <command> [args...]`. Split on whitespace, never through a shell. Each
+      runs `tungsten scenario run <scenario-input> --scenario <file> ... --
+      <command>`. Refused on `pull_request_target`.
+    required: false
+    default: ""
+  scenario-input:
+    description: The project, manifest or OpenAPI document the scenarios run against, relative to `working-directory`.
+    required: false
+    default: "."
   install-only:
     description: "Only install tungsten and add it to PATH; run no checks."
     required: false
@@ -139,6 +152,13 @@ runs:
         # The installer at the same commit as this action: pinning the action
         # by SHA pins the installer. It checks the archive against the
         # release's SHA256SUMS and its build provenance (GitHub CLI 2.102.0+).
+        # Provenance verification needs GitHub CLI 2.102.0 or newer. Say how to
+        # get it before the installer refuses; never fall back to checksums only.
+        gh_version=$(gh --version 2>/dev/null | awk 'NR == 1 { print $3 }' || true)
+        if [ -z "$gh_version" ] || ! printf '%s\n' "$gh_version" | awk -F. '{ exit !(NF >= 2 && ($1 > 2 || ($1 == 2 && $2 >= 102))) }'; then
+          echo "::error title=tungsten::GitHub CLI 2.102.0 or newer is required to verify the release provenance; this runner has ${gh_version:-no gh}. Update it in an earlier step (on macOS images: brew upgrade gh) or use a runner image with a newer GitHub CLI"
+          exit 1
+        fi
         installer="$GITHUB_ACTION_PATH/../../install.sh"
         [ -f "$installer" ] || { echo "::error title=tungsten::install.sh not found next to the action"; exit 1; }
         bin_dir="$RUNNER_TEMP/tungsten-$version/bin"
@@ -163,6 +183,8 @@ runs:
         INPUT_WORKSPACE_PROJECTS: ${{ inputs.workspace-projects }}
         INPUT_AFFECTED_FILES: ${{ inputs.affected-files }}
         INPUT_AFFECTED_BASE: ${{ inputs.affected-base }}
+        INPUT_SCENARIOS: ${{ inputs.scenarios }}
+        INPUT_SCENARIO_INPUT: ${{ inputs.scenario-input }}
         INPUT_CHECK: ${{ inputs.check }}
         INPUT_GENERATE_CHECK: ${{ inputs.generate-check }}
         INPUT_LOCK_CHECK: ${{ inputs.lock-check }}
@@ -226,7 +248,7 @@ runs:
           shift 2
           n=$((n + 1))
           log="${name// --/-}"
-          log="$log_dir/$n-${log// /-}.log"
+          log="$log_dir/$n-${log//[^A-Za-z0-9.-]/-}.log"
           echo "::group::tungsten $name ($project)"
           set +e
           "$@" 2>&1 | tee "$log"
@@ -335,6 +357,49 @@ runs:
         fi
         echo "projects=${#paths[@]}" >> "$GITHUB_OUTPUT"
 
+        # Scenario lines are validated before any check runs. Each becomes
+        # the argv of one `tungsten scenario run`, one word per line in
+        # $scenario_dir/<index> (words never contain a newline).
+        scenario_names=()
+        scenario_dir="$log_dir/scenarios"
+        mkdir -p "$scenario_dir"
+        if [ -n "$(lines "$INPUT_SCENARIOS")" ]; then
+          if [ "$EVENT_NAME" = pull_request_target ]; then
+            echo "::error title=tungsten::scenarios run commands and are refused on pull_request_target"
+            exit 1
+          fi
+          inside scenario-input "$INPUT_SCENARIO_INPUT"
+          [ -e "$INPUT_SCENARIO_INPUT" ] || { echo "::error title=tungsten::scenario-input '$INPUT_SCENARIO_INPUT' does not exist"; exit 1; }
+          while IFS= read -r line; do
+            read -r -a words <<< "$line"
+            file=${words[0]}
+            inside scenario "$file"
+            [ -f "$file" ] || { echo "::error title=tungsten::scenario '$file' does not exist"; exit 1; }
+            argv=(scenario run "$INPUT_SCENARIO_INPUT" --scenario "$file")
+            i=1
+            while [ "$i" -lt "${#words[@]}" ] && [ "${words[$i]}" != "--" ]; do
+              option=${words[$i]}
+              value=${words[$((i + 1))]:-}
+              case "$option" in
+                --expect-exit | --timeout-ms | --max-calls) ;;
+                *) echo "::error title=tungsten::scenario '$file': unknown option '$option' (expected --expect-exit, --timeout-ms, --max-calls or --)"; exit 1 ;;
+              esac
+              case "$value" in
+                '' | *[!0-9]*) echo "::error title=tungsten::scenario '$file': $option needs a number"; exit 1 ;;
+              esac
+              argv+=("$option" "$value")
+              i=$((i + 2))
+            done
+            if [ "$i" -ge "${#words[@]}" ] || [ $((i + 1)) -ge "${#words[@]}" ]; then
+              echo "::error title=tungsten::scenario '$file': give the command after --"
+              exit 1
+            fi
+            argv+=("${words[@]:$i}")
+            printf '%s\n' "${argv[@]}" > "$scenario_dir/${#scenario_names[@]}"
+            scenario_names+=("$file")
+          done < <(lines "$INPUT_SCENARIOS")
+        fi
+
         for i in ${paths[@]+"${!paths[@]}"}; do
           name=${names[$i]}
           project=${paths[$i]}
@@ -346,6 +411,14 @@ runs:
             true) step "$name" "lock --check" "$TUNGSTEN" lock --check "$project" ;;
             auto) [ -f "$root/tungsten.lock.json" ] && step "$name" "lock --check" "$TUNGSTEN" lock --check "$project" ;;
           esac
+        done
+
+        for index in ${scenario_names[@]+"${!scenario_names[@]}"}; do
+          argv=()
+          while IFS= read -r word; do
+            argv+=("$word")
+          done < "$scenario_dir/$index"
+          step "$INPUT_SCENARIO_INPUT" "scenario ${scenario_names[$index]}" "$TUNGSTEN" "${argv[@]}"
         done
 
         {

@@ -66,9 +66,13 @@ type Schema struct {
 	Extra      *Schema
 	// Variants of a union or the members of an "all"; Tag is a tagged
 	// union's discriminator member and Tags the value of each variant.
-	Variants []*Schema
-	Tag      string
-	Tags     []string
+	// DefaultTag, when set, is one of Tags: an object whose discriminator
+	// is missing, not a string or none of Tags is that variant (OpenAPI
+	// 3.2 defaultMapping).
+	Variants   []*Schema
+	Tag        string
+	Tags       []string
+	DefaultTag string
 	// Inner is the type of a nullable.
 	Inner *Schema
 }
@@ -548,6 +552,9 @@ func (v *validation) union(s *Schema, value any) {
 		}
 		tag, present := obj.Get(s.Tag)
 		text, isText := tag.(string)
+		if s.DefaultTag != "" && (!present || !isText || !containsString(s.Tags, text)) {
+			text, present, isText = s.DefaultTag, true, true
+		}
 		if !present || !isText {
 			v.push(seg{name: s.Tag})
 			v.bad("missing the discriminator " + s.Tag)

@@ -152,6 +152,7 @@ from ._serialize import (
     valid_header_value,
 )
 from ._sse import DEFAULT_MAX_EVENT_BYTES, SseEvent, SseParser
+from ._upload import UploadAttempt, UploadSource
 from ._util import (
     NOTHING,
     REDACTED,
@@ -340,10 +341,80 @@ class Prepared:
     secrets: frozenset[str]
     #: The authorization-code scheme whose stored token this request carries.
     oauth: str | None = None
+    #: A streamed body (``body`` is then None): each attempt reads it anew.
+    upload: UploadSource | None = None
 
 
 def _fail(error: Diagnostic, partial: object = None) -> Err:
     return Err(error=error, partial=partial)
+
+
+def _upload_failure(
+    op: OperationDescriptor, call_ctx: CallContext, sent: UploadAttempt, mutation: bool
+) -> Err | None:
+    """The failure of an attempt whose upload source ended it."""
+    why = sent.failure
+    if why is None:
+        return None
+    arg = body_arg(op)
+    parameter = argument_path(op, [arg]) if arg is not None else "body"
+    count = sent.sent
+    if why.kind == "source":
+        cause = (
+            f"The upload source failed ({why.detail}) after {count} "
+            f"{'byte was' if count == 1 else 'bytes were'} sent; the request was abandoned with an incomplete body."
+        )
+        if mutation:
+            return _fail(outcome_unknown(call_ctx, cause, code="UPLOAD_SOURCE_FAILED"))
+        return _fail(
+            diagnostic(
+                op["id"],
+                "TRANSPORT_FAILED",
+                code="UPLOAD_SOURCE_FAILED",
+                failed_parameter=parameter,
+                retryable="never",
+                attempts=call_ctx.attempts,
+                remediation=f"{cause} This read has no side effects; fix the source and call again.",
+            )
+        )
+    declared = (
+        f"{why.read} bytes, not the declared length"
+        if why.kind == "length"
+        else "bytes whose SHA-256 differs from the declared sha256"
+    )
+    return _fail(
+        diagnostic(
+            op["id"],
+            "VALIDATION_FAILED",
+            code="UPLOAD_MISMATCH",
+            failed_parameter=parameter,
+            retryable="never",
+            attempts=call_ctx.attempts,
+            expected=(
+                "exactly the declared length of the upload"
+                if why.kind == "length"
+                else "bytes matching the declared sha256 of the upload"
+            ),
+            remediation=(
+                f"The upload source produced {declared}; the request was abandoned before its last bytes "
+                "were sent, so the server did not receive a complete body. Fix the source or its declaration "
+                "and call again."
+            ),
+        )
+    )
+
+
+def _one_shot_spent(answer: Answer) -> Answer:
+    """The note on a failure that is not retried because its one-shot upload was read."""
+    result = answer.result
+    if not isinstance(result, Err):
+        return answer
+    note = (
+        " The upload body is one-shot and was already read, so it was not sent again; "
+        "pass UploadSource.recreatable(...) to allow retries."
+    )
+    error = with_fields(result.error, remediation=f"{result.error['remediation']}{note}")
+    return replace(answer, result=_fail(error, result.partial))
 
 
 def _run_noting(validate: Callable[[object], object], value: object, notes: list[PatternNote]) -> object:
@@ -384,15 +455,54 @@ def _span_of(opts: Mapping[str, object]) -> TelemetrySpan | None:
     return span if isinstance(span, TelemetrySpan) else None
 
 
+#: Ends a telemetry span as cancelled (see ``_end_span``).
+_CANCELLED: Final = object()
+
+
+def _watch_items(flow: Flow[T], last: list[object]) -> Flow[T]:
+    """Run ``flow``, keeping the last item it emits in ``last``."""
+    sent: object = None
+    thrown: BaseException | None = None
+    try:
+        while True:
+            try:
+                effect = flow.throw(thrown) if thrown is not None else flow.send(sent)
+            except StopIteration as finished:
+                return cast(T, finished.value)
+            if isinstance(effect, Emit):
+                last[:] = [effect.item]
+            try:
+                sent = yield effect
+                thrown = None
+            except GeneratorExit:
+                raise
+            except BaseException as error:
+                sent, thrown = None, error
+    finally:
+        flow.close()
+
+
 def _end_span(span: TelemetrySpan, result: object, call: bool) -> None:
     """End ``span`` with a public result (none: the iteration ended without
     an item). Only a ``call`` reports its final HTTP status."""
-    if isinstance(result, Ok):
+    if result is _CANCELLED:
+        span.end({}, True, None)
+    elif isinstance(result, Ok):
         span.end(None, False, cast(Ok[object], result).meta.status if call else None)
     elif isinstance(result, Err):
         span.end(result.error, False, result.error["http_status"] if call else None)
     else:
         span.end(None, False, None)
+
+
+def _macro_subject(macro: object) -> dict[str, object]:
+    """Stands in for a macro where an operation is expected (its id, for
+    telemetry, and its safety)."""
+    safety = field(macro, "safety")
+    return {
+        "id": str_field(macro, "name") or "<unknown macro>",
+        "agent": {"safety": safety if isinstance(safety, str) else "mutating"},
+    }
 
 
 def _queue_reason(refused: Mapping[str, object] | None) -> TelemetryQueueReason:
@@ -652,29 +762,61 @@ class Engine:
     def export_pages(
         self, op: OperationDescriptor, args: object, checkpoint: object, opts: object
     ) -> Flow[None]:
-        resolved = self._call_options(opts)
-        expired: list[Err] = []
-        yield from _within_deadline(
-            self._export_pages(op, args, checkpoint, resolved),
-            _deadline_of(resolved),
-            lambda sent: expired.append(self._deadline_expired(op, sent)),
-        )
-        if expired:
-            yield from emit(expired[0])
+        # The export's last item.
+        last: list[object] = []
+
+        def run(resolved: dict[str, object]) -> Flow[None]:
+            expired: list[Err] = []
+            yield from _watch_items(
+                _within_deadline(
+                    self._export_pages(op, args, checkpoint, resolved),
+                    _deadline_of(resolved),
+                    lambda sent: expired.append(self._deadline_expired(op, sent)),
+                ),
+                last,
+            )
+            if expired:
+                last[:] = [expired[0]]
+                yield from emit(expired[0])
+
+        yield from self._traced(op, "export_pages", opts, run, lambda _: last[0] if last else None)
 
     def stream(
         self, op: OperationDescriptor, args: object, opts: object, cancelled: Callable[[], bool] | None = None
     ) -> Flow[None]:
-        yield from self._stream(op, args, self._call_options(opts), cancelled)
+        # The stream's last item.
+        last: list[object] = []
+
+        def stopped() -> bool:
+            return cancelled is not None and cancelled() is True
+
+        def result_of(_: None) -> object:
+            # A stream the caller cancelled ends as cancelled, whatever it read.
+            return _CANCELLED if stopped() else (last[0] if last else None)
+
+        yield from self._traced(
+            op,
+            "stream",
+            opts,
+            lambda resolved: _watch_items(self._stream(op, args, resolved, cancelled), last),
+            result_of,
+        )
 
     def download(self, op: OperationDescriptor, args: object, opts: object) -> Flow[Ok[Any] | Err]:
         """Send ``op`` and hand its 2xx body over unread: ``Ok.value`` is a
-        ``DownloadStart`` the client wraps in a ``Download``."""
-        resolved = self._call_options(opts)
-        answer = yield from _within_deadline(
-            self._download(op, args, resolved),
-            _deadline_of(resolved),
-            lambda sent: Answer(self._deadline_expired(op, sent)),
+        ``DownloadStart`` the client wraps in a ``Download``. The telemetry
+        operation ends when the answer is handed over; reading the body is not
+        part of it."""
+        answer = yield from self._traced(
+            op,
+            "download",
+            opts,
+            lambda resolved: _within_deadline(
+                self._download(op, args, resolved),
+                _deadline_of(resolved),
+                lambda sent: Answer(self._deadline_expired(op, sent)),
+            ),
+            lambda answer: answer.result,
         )
         return answer.result
 
@@ -701,22 +843,32 @@ class Engine:
         return answer.result
 
     def run_macro(self, macro: MacroDescriptor, input: object, opts: object) -> Flow[Ok[Any] | Err]:
-        resolved = self._call_options(opts)
-        result = yield from _within_deadline(
-            self._run_macro(macro, input, resolved),
-            _deadline_of(resolved),
-            lambda sent: self._deadline_expired(macro, sent),
+        result = yield from self._traced(
+            _macro_subject(macro),
+            "macro",
+            opts,
+            lambda resolved: _within_deadline(
+                self._run_macro(macro, input, resolved),
+                _deadline_of(resolved),
+                lambda sent: self._deadline_expired(macro, sent),
+            ),
+            lambda result: result,
         )
         return result
 
     def preview_macro(
         self, macro: MacroDescriptor, input: object, opts: object
     ) -> Flow[Ok[PreviewResult] | Err]:
-        resolved = self._call_options(opts)
-        result = yield from _within_deadline(
-            self._preview_macro(macro, input, resolved),
-            _deadline_of(resolved),
-            lambda sent: self._deadline_expired(macro, sent),
+        result = yield from self._traced(
+            _macro_subject(macro),
+            "macro_preview",
+            opts,
+            lambda resolved: _within_deadline(
+                self._preview_macro(macro, input, resolved),
+                _deadline_of(resolved),
+                lambda sent: self._deadline_expired(macro, sent),
+            ),
+            lambda result: result,
         )
         return result
 
@@ -1046,6 +1198,8 @@ class Engine:
         """The answer to a request whose stored OAuth2 token was rejected (401):
         the refreshed token goes on the same request, which is sent once more;
         ``rejected`` stands when nothing could be refreshed."""
+        if prepared.upload is not None and not prepared.upload.sendable:
+            return _one_shot_spent(rejected)
         current = prepared.headers.get("Authorization")
         if prepared.oauth is None or current is None or not current.startswith("Bearer "):
             return rejected
@@ -1483,9 +1637,30 @@ class Engine:
         if encoded.content_type:
             headers.set("Content-Type", encoded.content_type)
         observed_body = observable_body(body["encoding"] if body is not None else "json", encoded)
+        upload = encoded.upload
+        if upload is not None:
+            upload_policy = policy_of(op)
+            keyed = upload_policy in ("auto", "content_hash", "content_identity")
+            confirmed = safety in ("destructive", "irreversible")
+            if upload.sha256 is None and (keyed or confirmed):
+                arg = body_arg(op)
+                return self._validation(
+                    op,
+                    [arg] if arg is not None else [],
+                    upload,
+                    "an UploadSource with a declared sha256",
+                    f"Declare the SHA-256 of the upload (UploadSource sha256) so the "
+                    f"{'idempotency key' if keyed else 'confirmation'} of {op_id} binds to its bytes. "
+                    "Nothing was sent.",
+                )
+            if upload.length is not None:
+                headers.set("Content-Length", str(upload.length))
 
         header = key_header(op)
-        key = yield from self._idempotency_key(op, args, opts, purpose, encoded.hash_material)
+        if upload is not None and policy_of(op) == "content_hash":
+            key: str | Err | None = upload.sha256
+        else:
+            key = yield from self._idempotency_key(op, args, opts, purpose, encoded.hash_material)
         if isinstance(key, Err):
             return key
         policy = policy_of(op)
@@ -1553,6 +1728,7 @@ class Engine:
             hidden_query=hidden,
             secrets=frozenset(secrets | set(headers.secrets())),
             oauth=auth.oauth,
+            upload=upload,
         )
 
     def _base_url(self) -> str | None:
@@ -1941,6 +2117,8 @@ class Engine:
             if admitted is not None and attempts == 1 and self.scheduler is not None:
                 self.scheduler.record_call(self._scope_key(prepared.url))
             handed_off = False
+            upload = prepared.upload
+            sending = upload.attempt() if upload is not None else None
             try:
                 # Redirects are never followed by the HTTP client: it would forward
                 # credential headers to another origin. A read follows same-origin
@@ -1950,7 +2128,7 @@ class Engine:
                         prepared.url,
                         prepared.method,
                         headers,
-                        prepared.body,
+                        sending if sending is not None else prepared.body,
                         timeout_ms,
                         stream,
                         idle_ms,
@@ -1962,7 +2140,8 @@ class Engine:
                 if span is not None and outcome is CANCELLED_SEND:
                     # The task was cancelled: the rest of the flow runs without I/O.
                     span.cancel()
-                current_url, current_method, current_body = prepared.url, prepared.method, prepared.body
+                current_url, current_method = prepared.url, prepared.method
+                current_body: bytes | UploadAttempt | None = sending if sending is not None else prepared.body
                 hops = 0
                 while (
                     not self._redirects_disabled
@@ -1976,13 +2155,19 @@ class Engine:
                     if target is None:
                         break
                     rewrite = outcome.status not in (307, 308) and current_method not in ("GET", "HEAD")
+                    # A streamed body is read again for the redirect, never replayed from a spent one-shot source.
+                    if upload is not None and not rewrite and not upload.sendable:
+                        break
+                    sending = upload.attempt() if upload is not None and not rewrite else None
                     current_url = target[0]
                     current_method = "GET" if rewrite else current_method
-                    current_body = None if rewrite else current_body
+                    current_body = None if rewrite else sending if sending is not None else current_body
                     ctx.url = target[1]
                     ctx.method = current_method
                     hop_headers = {
-                        k: v for k, v in headers.items() if not (rewrite and k.lower() == "content-type")
+                        k: v
+                        for k, v in headers.items()
+                        if not (rewrite and k.lower() in ("content-type", "content-length"))
                     }
                     outcome = yield from send(
                         AttemptRequest(
@@ -2014,7 +2199,11 @@ class Engine:
                     else None
                 )
                 call_ctx = CallContext(self.api, op, prepared.key, prepared.key_header, attempts, check)
-                answer = yield from self._classify(call_ctx, prepared, outcome, ctx, timeout_ms)
+                rejected = _upload_failure(op, call_ctx, sending, mutation) if sending is not None else None
+                if rejected is not None:
+                    answer = Answer(rejected)
+                else:
+                    answer = yield from self._classify(call_ctx, prepared, outcome, ctx, timeout_ms)
                 if admitted is not None:
                     failure = answer.result.error if isinstance(answer.result, Err) else None
                     if failure is not None and failure["category"] == "RATE_LIMITED":
@@ -2047,6 +2236,8 @@ class Engine:
                 return done
             if mutation and not protected:
                 return done
+            if prepared.upload is not None and not prepared.upload.sendable:
+                return _one_shot_spent(done)
             retry_after = error["retry_after_ms"]
             if retries.honor_retry_after and retry_after is not None:
                 if retry_after > retries.max_ms:

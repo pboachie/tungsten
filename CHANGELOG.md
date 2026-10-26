@@ -43,6 +43,12 @@ changes.
 
 ### Documentation
 
+- Add the `webhook-receiver` gallery recipe: TypeScript, Python and Rust
+  receivers for a non-sensitive `order.shipped` webhook verify signed
+  deliveries with example secrets, refuse a replay, a tampered body, a stale
+  timestamp and an incomplete payload, accept a rotated-secret delivery, and
+  print identical outcomes, without a web framework or network.
+
 - Add a migration note contrasting the new opt-in total operation deadline
   with the existing per-attempt `timeoutMs` and its equivalents, across the
   runtimes, the generated Rust CLI and the MCP server.
@@ -240,6 +246,50 @@ changes.
   listed as `multipart_part_encoding`. Per-part `headers`, and positional or
   nested multipart encoding (TG0146/TG0147), are not supported.
 
+- The runtime telemetry observer reports macro runs and previews in
+  TypeScript, Python and Rust as one `macro` or `macro_preview` operation
+  named after the macro, covering every step. Unreleased 0.2.0 only.
+
+- The runtime telemetry observer reports `download()` (`entry` `download`,
+  ending when the answer is handed over) and page exports (`export_pages`,
+  like `pages`) in TypeScript, Python and Rust. Unreleased 0.2.0 only.
+
+- Add the `examples/telemetry` gallery recipe: TypeScript, Python and Rust
+  SDKs collect correlated operation, attempt and phase telemetry in memory for
+  a read, a retried read and a missing record, print the same summary and
+  check that no event holds a URL or payload.
+
+- Add streamed upload sources to the TypeScript, Python and Rust runtimes
+  (`UploadSource`; Rust `ClientCore::call_upload` / `preview_upload`) for a
+  whole binary request body. A source is one-shot (never sent again once
+  read: no retry, redirect or token-refresh resend) or recreatable (opened
+  again for every attempt). A declared length (sent as `Content-Length`) and
+  SHA-256 are checked against the bytes, holding back the last chunk so a
+  mismatching source never completes its request (`UPLOAD_MISMATCH`); a
+  failing source reports `OUTCOME_UNKNOWN` for a mutation
+  (`UPLOAD_SOURCE_FAILED`). Operations whose idempotency key or confirmation
+  depends on the body require a declared SHA-256, which is also the
+  `content_hash` key. Registered as the `streaming_uploads` runtime
+  capability.
+- Add `tungsten update notice` to show whether update notices are on, where the
+  setting comes from (default, environment, settings file, opt-out or an
+  invalid value), the settings and cache paths and the cached answer.
+  `--enable [stable|prerelease]`, `--disable` and `--interval-hours N` update
+  the user settings file atomically and keep its other keys; a file that is not
+  a JSON object is never overwritten. It never makes a network request.
+  `--json` output adds the `update notice` command to the CLI output schema.
+
+- The runtime telemetry observer reports `stream()` in TypeScript, Python and
+  Rust as one `stream` operation covering its connection and every reconnect,
+  ending `ok`, `error` (final failure item) or `cancelled` (cancelled or left
+  early). Unreleased 0.2.0 only.
+
+- `tungsten update check` links the upgrade rehearsal: when a newer release is
+  available, `rehearse_command` (new `--json` field) holds the
+  `tungsten upgrade rehearse --to <version> --workspace <dir>` invocation, and
+  the guidance for migrations names `upgrade rehearse` and `upgrade apply`
+  instead of the separate preview commands.
+
 - Concurrent commands of a generated Rust CLI refresh a stored login session
   one process at a time: the token is refreshed before the call under a
   per-session lock file and read again first, so a refresh token is not
@@ -338,7 +388,12 @@ changes.
   without the cursor. Registered as the `pagination_checkpoints` capability for
   the `typescript`, `python` and `rust` targets. In Rust, `ExportPages::typed`
   decodes items and `blocking::Runtime::export_pages` iterates an export with
-  blocking calls.
+  blocking calls. Generated Rust CLIs accept `--checkpoint-file <PATH>` with
+  `--all` on read-only paginated commands: with `<PREFIX>_CHECKPOINT_KEY` set
+  to a secret of at least 32 bytes, the checkpoint is saved owner-only after
+  each page is printed, and rerunning with the same file prints only the
+  remaining pages; delete the file to start over. `checkpoint-file` is now a
+  reserved flag name.
 
 - Generated Rust CLIs sign in to OAuth2 `authorizationCode` schemes:
   `auth login` runs the runtime's managed S256 flow through a loopback
@@ -384,6 +439,10 @@ changes.
 - `refresh-import --apply` stages the reviewed content beside its backups, so
   `refresh-import --resume` finishes an interrupted apply (writes, pin and
   lock) as an alternative to `--rollback`.
+- `refresh-import` refreshes converted inputs acquired from Git sources
+  (`git+https://…@ref#path`). The preview resolves the ref into a private
+  scratch cache; `--apply` installs exactly that reviewed commit's pin and
+  tree, so the ref is never resolved again between review and apply.
 - The language server offers a disabled "Refresh the converted import" action
   on TG0122 for a converted input whose remote source changed, naming the
   `refresh-import` preview, `--apply` and `--offline` choices.
@@ -468,6 +527,10 @@ changes.
   write a project whose outputs collide with another's. The capability catalog
   declares the workspace contract under `workspace`.
 
+- The `actions/tungsten` GitHub Action runs saved mock scenarios after the
+  checks (`scenarios`, `scenario-input`) through `tungsten scenario run`, one
+  line per scenario split on whitespace without a shell; a failed assertion
+  fails the step, and scenarios are refused on `pull_request_target`.
 - The `actions/tungsten` GitHub Action checks the projects of a workspace
   (`workspace`), narrowed by project id (`workspace-projects`) and by
   `tungsten workspace --affected` evidence for listed files (`affected-files`)
@@ -969,10 +1032,11 @@ changes.
   as TG0306 and ignored. Other SDK targets still refuse an unmapped tag.
   TG0149 is retired and no longer reported.
 
-- Discriminator `defaultMapping` is honoured by more SDK targets: Java SDKs
-  decode an object whose tag is absent, not a string or claimed by no variant
-  as the default variant, as TypeScript, Python and Rust do. A non-string tag
-  then fails only if the default variant's own field type refuses it.
+- Discriminator `defaultMapping` is honoured by more SDK targets: Java,
+  Kotlin, Ruby, C#, F#, Dart and Go SDKs decode an object whose tag is absent,
+  not a string or claimed by no variant as the default variant, as TypeScript,
+  Python and Rust do. A non-string tag then fails only if the default
+  variant's own field type refuses it.
 
 - OpenAPI 3.2 security requirements that name a scheme by URI compile: a key
   such as `#/components/securitySchemes/apiKey`, or a URI into another input

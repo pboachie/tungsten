@@ -85,6 +85,7 @@ mod stream;
 mod telemetry;
 mod transport;
 mod unchecked;
+mod upload;
 mod util;
 mod validate;
 mod value;
@@ -127,6 +128,7 @@ pub use telemetry::{
 };
 pub use types::*;
 pub use unchecked::{PatternNote, note_unchecked_pattern};
+pub use upload::{UploadReader, UploadReplay, UploadSource};
 pub use value::{BINARY_KEY, Binary, Patch};
 
 /// Version of this runtime, sent as `X-Tungsten-Runtime: tungsten-rs/<version>`.

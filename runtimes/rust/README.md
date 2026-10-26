@@ -111,6 +111,19 @@ counted even without that header. Overflow closes the body and returns
 A mutation may have taken effect: inspect API state before retrying. The cap
 does not limit a successful SSE stream; use its event and collection limits.
 
+In unreleased 0.2.0, `ClientCore::call_upload(op, args, &opts, source)` and
+`preview_upload` send an `UploadSource` as the operation's whole binary body:
+`UploadSource::one_shot(reader)` (an `AsyncRead` read at most once) or
+`UploadSource::recreatable(|| Ok(reader))` (opened again for every attempt), with
+optional `with_length` and `with_sha256`. A one-shot body that was read is never sent
+again: a failure that would be retried is returned with a note, and redirects and
+token refresh resends stop. A declared length is sent as `Content-Length`; length and
+SHA-256 are checked against the bytes and the last chunk is held back until they match
+(`UPLOAD_MISMATCH`). A failing reader ends the call (`UPLOAD_SOURCE_FAILED`;
+`OUTCOME_UNKNOWN` for a mutation). Operations whose idempotency key or confirmation
+depends on the body require a SHA-256, which is also the `content_hash` key. Ranged or
+resumable uploads are not supported.
+
 In unreleased 0.2.0, `ClientCore::download(op, args, &opts, DownloadOptions { max_bytes,
 on_progress })` streams a 2xx body instead of buffering it: read the returned `Download`
 with `read()` or `write_to(sink)`, which awaits the sink's future before the next read.

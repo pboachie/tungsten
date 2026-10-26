@@ -177,6 +177,61 @@ starting another run; this guide does not promise cross-platform cancellation
 or recovery qualification. No real API, proxy/CA setup or credential flow is
 exercised by the offline import.
 """,
+    "webhook-receiver": """
+## Problem: trusting an incoming webhook
+
+An API that calls your service back (an order shipped, a payment settled) sends
+a signed request. Before acting on it, a receiver must check the signature
+against the raw bytes, refuse stale and replayed deliveries, and only then
+trust the payload's shape. The recipe's [openapi.json](openapi.json) declares
+one OpenAPI 3.1 webhook, `order.shipped`; the generated TypeScript, Python and
+Rust SDKs each get a `webhooks` module with its typed payload and a
+`parseWebhook` / `parse_webhook` helper. [receive.py](receive.py),
+[receive.mjs](receive.mjs) and [receive.rs](receive.rs) sign six example
+deliveries locally with example secrets and pass them through that helper, with
+no web framework and no network:
+
+```text
+accepted order.shipped evt_1001: ord_42 via parcelpost
+rejected duplicate
+rejected signature_mismatch
+rejected timestamp_out_of_tolerance
+rejected payload_invalid
+accepted order.shipped evt_1003: ord_45 via parcelpost
+```
+
+Every language prints exactly these lines: the first delivery is accepted, its
+replay is refused by the application's `claim` hook, a body changed after
+signing fails the signature, a delivery signed ten minutes ago is outside the
+default five-minute tolerance, a payload without `carrier` does not match the
+declared schema, and a delivery signed with the previous secret is accepted
+while both secrets are configured (rotation).
+
+## Wiring it into a service
+
+Give the helper the raw request body (bytes, before any JSON parsing), the
+`Stripe-Signature` header value and the endpoint secrets:
+
+```python
+outcome = webhooks.parse_webhook("order.shipped", raw_body, signature, [current, previous], claim=claim)
+```
+
+```js
+const outcome = await webhooks.parseWebhook("order.shipped", { body: rawBody, signatureHeader: signature, secrets: [current, previous], claim });
+```
+
+```rust
+let outcome = parse_webhook(WebhookName::OrderShipped, &raw_body, signature, &options)?;
+```
+
+The signature scheme is the Stripe-compatible `t=<unix>,v1=<hex HMAC-SHA256 of
+"t.body">` header. The helper bounds the body (1 MiB by default), compares
+signatures in constant time and never puts secrets or payloads in its rejection
+messages. Replay tracking, queues and the acknowledgement are the
+application's: `claim` is called only for a verified, well-formed delivery, so
+answer `2xx` once the event is durably handed off, and a non-`2xx` status lets
+the provider redeliver. See each runtime README's Limits section.
+""",
     "bulk-sync": """
 ## Problem: a bulk job turns into a storm of 429s
 
@@ -247,6 +302,64 @@ client a `tenant` when quotas are per tenant or principal. Closing a scheduler
 rejects waiting work at shutdown; `drained` waits for requests in flight.
 Nothing is coordinated across processes: run one scheduler per process and size
 `max_active` for that. See each runtime README's Limits section.
+""",
+    "telemetry": """
+## Problem: where did the time go?
+
+A slow or failed call can hide an authentication refresh, a wait for request
+scheduler capacity, a retry after a `503` or an error status. The recipe
+starts a loopback record store ([server.py](server.py)) where record 13 is
+briefly unavailable once and record 404 does not exist, generates TypeScript,
+Python and Rust SDKs for it, and reads records 7, 13 and 404 in each language
+with an in-memory telemetry collector:
+
+- [trace.py](trace.py), [trace.mjs](trace.mjs) and [trace.rs](trace.rs) each
+  print one line per operation from the collected events, then check that no
+  event holds the URL or a payload.
+
+Expected output, identical in the three languages:
+
+```text
+call 1 api.getRecord: auth ok; queue admitted; attempt 1 ok 200; ok after 1 attempt
+call 2 api.getRecord: auth ok; queue admitted; attempt 1 error UPSTREAM_UNAVAILABLE 503; retry_backoff ok; queue admitted; attempt 2 ok 200; ok after 2 attempts
+call 3 api.getRecord: auth ok; queue admitted; attempt 1 error NOT_FOUND 404; error NOT_FOUND after 1 attempt
+22 events, 0 dropped, no URL or payload in any event
+```
+
+## The configuration
+
+Telemetry is off unless the client is given an observer; nothing is sent
+anywhere by the runtime:
+
+```python
+collector = MemoryTelemetryCollector(256)
+client = RecordsClient(ClientOptions(base_url=base, telemetry=collector))
+```
+
+```js
+const collector = new MemoryTelemetryCollector(256);
+const client = new RecordsClient({ baseUrl: base, telemetry: collector });
+```
+
+```rust
+let collector = Arc::new(MemoryTelemetryCollector::new(256));
+let client = RecordsClient::new(ClientOptions { telemetry: Some(collector.clone()), ..Default::default() })?;
+```
+
+- Every event has the same fields in the three runtimes (`schema_version` 1):
+  `call_id` ties an operation's events together, `attempt` numbers what was
+  sent, and `phase` events time authentication (`auth`), scheduler admission
+  (`queue`) and the wait before a retry (`retry_backoff`), each with a
+  `duration_ms` and an `outcome`.
+- Events hold the API name, the operation id, enumerated outcomes, categories
+  and reasons, HTTP status codes, counts and durations: never URLs, headers,
+  bodies, argument values, credentials or error text.
+- The collector keeps at most its capacity of events and counts what it
+  dropped. Any function (or an object with `onEvent` / `on_event`, or a Rust
+  `TelemetryObserver`) can observe instead; it is called synchronously and its
+  failures never change the call. TypeScript and Python also offer an
+  OpenTelemetry adapter (`openTelemetryObserver`, `open_telemetry_observer`)
+  that takes a tracer without adding a dependency.
 """,
     "ci-drift": """
 ## Problem: the contract changed but generated output did not
@@ -594,14 +707,14 @@ def scenarios(binary: str, work: Path) -> None:
 
 @contextlib.contextmanager
 def quota_server(example: Path, work: Path):
-    """The bulk-sync record store on a free loopback port; yields its base URL."""
+    """An example's loopback server on a free port; yields its base URL."""
     with (work / "server.log").open("w+") as log:
         process = subprocess.Popen([sys.executable, "-I", str(example / "server.py"), "0"],
                                    cwd=work, stdout=subprocess.PIPE, stderr=log, text=True)
         try:
             line = process.stdout.readline() if process.stdout else ""
             if not line.startswith("listening on "):
-                raise RuntimeError("the bulk-sync server exited before listening")
+                raise RuntimeError(f"the {example.name} server exited before listening")
             yield line.removeprefix("listening on ").strip()
         finally:
             process.terminate()
@@ -666,6 +779,139 @@ tokio = {{ version = "1", features = ["macros", "rt-multi-thread"] }}
             print(command(argv, cwd).stdout, end="", flush=True)
 
 
+TELEMETRY_OUTCOME = """call 1 api.getRecord: auth ok; queue admitted; attempt 1 ok 200; ok after 1 attempt
+call 2 api.getRecord: auth ok; queue admitted; attempt 1 error UPSTREAM_UNAVAILABLE 503; retry_backoff ok; \
+queue admitted; attempt 2 ok 200; ok after 2 attempts
+call 3 api.getRecord: auth ok; queue admitted; attempt 1 error NOT_FOUND 404; error NOT_FOUND after 1 attempt
+22 events, 0 dropped, no URL or payload in any event
+"""
+
+
+def telemetry_trace(binary: str, example: Path, work: Path, build_packages: bool) -> None:
+    runtime = REPO / "runtimes"
+    shutil.copyfile(example / "openapi.json", work / "openapi.json")
+    write_json(work / "tungsten.yml", {
+        "tungsten": 1, "api": {"name": "records", "title": "Records"},
+        "inputs": [{"namespace": "api", "spec": "openapi.json"}],
+        "targets": {
+            "python": {"package": "records-sdk", "module": "records_sdk", "out": "sdk"},
+            "typescript": {"package": "@gallery/records", "out": "typescript",
+                           "runtime_path": relative(runtime / "ts", work / "typescript")},
+            "rust": {"out": "rust", "runtime_path": relative(runtime / "rust/runtime", work / "rust/records-sdk"),
+                     "cli": {"kit_path": relative(runtime / "rust/cli-kit", work / "rust/records-cli")}},
+        },
+    })
+    outputs = ("sdk", "typescript", "rust")
+    tungsten(binary, work, "check")
+    tungsten(binary, work, "generate")
+    first = {name: digest_tree(work / name) for name in outputs}
+    assert all(first.values()), "a target produced no files; inspect skipped/refused target diagnostics"
+    tungsten(binary, work, "generate")
+    assert first == {name: digest_tree(work / name) for name in outputs}, "regeneration was not deterministic"
+    tungsten(binary, work, "generate", "--check")
+    if not build_packages:
+        return
+    python = python_environment(work)
+    npm_build(REPO / "runtimes/ts")
+    npm_build(work / "typescript")
+    shutil.copyfile(example / "trace.mjs", work / "typescript/trace.mjs")
+    consumer = work / "consumer"
+    consumer.mkdir()
+    shutil.copyfile(example / "trace.rs", consumer / "trace.rs")
+    (consumer / "Cargo.toml").write_text(f'''[package]
+name = "telemetry-trace"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[[bin]]
+name = "telemetry-trace"
+path = "trace.rs"
+
+[dependencies]
+records-sdk = {{ path = "../rust/records-sdk" }}
+tungsten-runtime = {{ path = "{relative(runtime / "rust/runtime", consumer)}" }}
+reqwest = {{ version = "0.12", default-features = false }}
+serde_json = "1"
+tokio = {{ version = "1", features = ["macros", "rt-multi-thread"] }}
+
+[workspace]
+''')
+    command(["cargo", "build", "--quiet"], consumer)
+    with quota_server(example, work) as base:
+        for language, argv, cwd in (("python", [str(python), str(example / "trace.py"), base], work),
+                                    ("typescript", ["node", "trace.mjs", base], work / "typescript"),
+                                    ("rust", ["cargo", "run", "--quiet", "--", base], consumer)):
+            printed = command(argv, cwd).stdout
+            assert printed == TELEMETRY_OUTCOME, f"{language} trace printed:\n{printed}"
+            print(f"{language}:\n{printed}", end="", flush=True)
+
+
+WEBHOOK_OUTCOME = """accepted order.shipped evt_1001: ord_42 via parcelpost
+rejected duplicate
+rejected signature_mismatch
+rejected timestamp_out_of_tolerance
+rejected payload_invalid
+accepted order.shipped evt_1003: ord_45 via parcelpost
+"""
+
+
+def webhook_receiver(binary: str, example: Path, work: Path, build_packages: bool) -> None:
+    runtime = REPO / "runtimes"
+    shutil.copyfile(example / "openapi.json", work / "openapi.json")
+    write_json(work / "tungsten.yml", {
+        "tungsten": 1, "api": {"name": "orders", "title": "Orders"},
+        "inputs": [{"namespace": "api", "spec": "openapi.json"}],
+        "targets": {
+            "python": {"package": "orders-sdk", "module": "orders_sdk", "out": "sdk"},
+            "typescript": {"package": "@gallery/orders", "out": "typescript",
+                           "runtime_path": relative(runtime / "ts", work / "typescript")},
+            "rust": {"out": "rust", "runtime_path": relative(runtime / "rust/runtime", work / "rust/orders-sdk"),
+                     "cli": {"kit_path": relative(runtime / "rust/cli-kit", work / "rust/orders-cli")}},
+        },
+    })
+    outputs = ("sdk", "typescript", "rust")
+    tungsten(binary, work, "check")
+    tungsten(binary, work, "generate")
+    first = {name: digest_tree(work / name) for name in outputs}
+    assert all(first.values()), "a target produced no files; inspect skipped/refused target diagnostics"
+    tungsten(binary, work, "generate")
+    assert first == {name: digest_tree(work / name) for name in outputs}, "regeneration was not deterministic"
+    tungsten(binary, work, "generate", "--check")
+    if not build_packages:
+        return
+    python = python_environment(work)
+    npm_build(REPO / "runtimes/ts")
+    npm_build(work / "typescript")
+    shutil.copyfile(example / "receive.mjs", work / "typescript/receive.mjs")
+    consumer = work / "consumer"
+    consumer.mkdir()
+    shutil.copyfile(example / "receive.rs", consumer / "receive.rs")
+    (consumer / "Cargo.toml").write_text(f'''[package]
+name = "webhook-receiver"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[[bin]]
+name = "webhook-receiver"
+path = "receive.rs"
+
+[dependencies]
+orders-sdk = {{ path = "../rust/orders-sdk" }}
+tungsten-runtime = {{ path = "{relative(runtime / "rust/runtime", consumer)}" }}
+
+[workspace]
+''')
+    command(["cargo", "build", "--quiet"], consumer)
+    for language, argv, cwd in (("python", [str(python), str(example / "receive.py")], work),
+                                ("typescript", ["node", "receive.mjs"], work / "typescript"),
+                                ("rust", ["cargo", "run", "--quiet"], consumer)):
+        printed = command(argv, cwd).stdout
+        assert printed == WEBHOOK_OUTCOME, f"{language} receiver printed:\n{printed}"
+        print(f"{language}: " + printed.replace("\n", "; ").rstrip("; "), flush=True)
+
+
 def digest_tree(root: Path) -> dict[str, str]:
     return {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest()
             for p in root.rglob("*") if p.is_file()}
@@ -677,6 +923,12 @@ def execute(entry: dict, binary: str, build_packages: bool) -> None:
     mode = entry["mode"]
     if mode == "bulk-sync":
         bulk_sync(binary, example, work, build_packages)
+        return
+    if mode == "webhooks":
+        webhook_receiver(binary, example, work, build_packages)
+        return
+    if mode == "telemetry":
+        telemetry_trace(binary, example, work, build_packages)
         return
     if mode == "input":
         args = ["init", "--from", str(example / entry["input"]), "--dir", str(work / "project"),
@@ -855,7 +1107,7 @@ def main() -> None:
         execute(entry, binary, not args.generate_only)
         if args.generate_only and entry["mode"] == "target" and entry["target"] != "docs":
             print(f"OK: {entry['target']} generation is deterministic and fresh; package build was not run", flush=True)
-        elif args.generate_only and entry["mode"] == "bulk-sync":
+        elif args.generate_only and entry["mode"] in ("bulk-sync", "webhooks", "telemetry"):
             print("OK: generation is deterministic and fresh; the clients were not run", flush=True)
         else:
             print(f"OK: {entry['outcome']}", flush=True)

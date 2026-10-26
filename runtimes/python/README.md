@@ -122,6 +122,19 @@ longer waited for (on `ClientCore` they run on a bounded worker pool, as for
 injected transport that blocks without honouring the request's timeouts can
 delay the result past the deadline on `ClientCore`. Default: no total deadline.
 
+In unreleased 0.2.0, a whole binary request body also takes an `UploadSource`:
+`UploadSource.one_shot(chunks, length=..., sha256=...)` (an iterator of bytes, or an
+async iterator on `AsyncClientCore`, read at most once) or
+`UploadSource.recreatable(lambda: chunks, ...)` (opened again for every attempt). A
+one-shot body that was read is never sent again: a failure that would be retried is
+returned with a note, and redirects and token refresh resends stop. A declared
+`length` is sent as `Content-Length`; `length` and `sha256` are checked against the
+bytes and the last chunk is held back until they match (`UPLOAD_MISMATCH`). A source
+that raises ends the call (`UPLOAD_SOURCE_FAILED`; `OUTCOME_UNKNOWN` for a mutation).
+Operations whose idempotency key or confirmation depends on the body require
+`sha256`, which is also the `content_hash` key. Sources are refused inside JSON, form
+and multipart bodies. Ranged or resumable uploads are not supported.
+
 In unreleased 0.2.0, `download(op, args, {"max_bytes": ..., "on_progress": ...})` streams a
 2xx body instead of buffering it: read the returned `Download` (`AsyncDownload` on
 `AsyncClientCore`) with `read()`, iteration, or `write_to(sink)`, which calls the sink (and
@@ -243,7 +256,14 @@ operations too (`entry` `preview`, `pages`, `poll`): one `pages` or `poll`
 operation covers every request it made, with attempts numbered across it,
 and a page iteration the caller stops before its end is reported as
 `cancelled`. Only a `call` operation's end carries the final `http_status`.
-Event streams, page exports and macros do not emit telemetry yet.
+`stream()` is one `stream` operation covering its connection and every
+reconnect, with attempts numbered across them; it ends with the stream: `ok`
+at its end, `error` with its final failure item, `cancelled` when the caller
+cancels or leaves it early (reported once the iteration is closed or garbage collected). Page exports are `export_pages`
+operations like `pages`; a `download` operation ends when the answer is
+handed over (reading the body is not part of it). A macro run or
+preview is one `macro` or `macro_preview` operation named after the macro,
+covering every step, with attempts numbered across the steps.
 `open_telemetry_observer(tracer)` turns the events into one OpenTelemetry
 client span per operation (attempts and phases as span events, outcome
 attributes) for any object shaped like an `opentelemetry-api` `Tracer`; the

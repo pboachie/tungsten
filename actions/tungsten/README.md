@@ -51,6 +51,8 @@ the expected `failed` output, and the regenerated project passes.
 | `locked` | `false` | Pass `--locked` to check and generate (`TG0128` unless the project matches its lock; inputs are acquired offline). |
 | `strict` | `false` | Pass `--strict` to check and generate: warnings fail. |
 | `allow-external` | `false` | Start the commands of `external` targets. See the trust model. |
+| `scenarios` | empty | Saved mock scenarios to run after the checks, one per line: `<scenario.json> [--expect-exit N] [--timeout-ms N] [--max-calls N] -- <command> [args...]`. Each runs `tungsten scenario run <scenario-input> --scenario <file> ... -- <command>`, the runner used locally; a failed assertion fails the step. Refused on `pull_request_target`. |
+| `scenario-input` | `.` | The project, manifest or OpenAPI document the scenarios run against. |
 | `install-only` | `false` | Install tungsten, add it to `PATH` and stop; run your own commands afterwards. |
 | `token` | `github.token` | Token for the provenance check of the release archive. Only the install step sees it. |
 
@@ -89,6 +91,31 @@ treats an all-zeros base as no base and checks every selected project.
 Each check also prints in its own log group and, on failure, adds an error
 annotation naming the project and the exit status.
 
+## Scenarios
+
+Each scenario line is split on whitespace and never passed through a shell:
+quoting, `$VAR`, globs and redirections are not interpreted, and a word cannot
+contain a space. Scenario files and the input must be relative paths inside
+`working-directory`, and every line is validated before any check runs. The
+command after `--` is code from your repository (an integration test, for
+example) and runs with the job's environment, like any `run:` step; the
+action does not pass the install token to it. tungsten bounds each run with
+`--timeout-ms` (default 30 s) and `--max-calls`, and its report is the mock's
+bounded summary. Scenarios need a release that has `tungsten scenario`
+(newer than 0.1.3).
+
+```yaml
+      - uses: pboachie/tungsten/actions/tungsten@<commit> # <tag>
+        with:
+          version: <release>
+          projects: openapi.json
+          generate-check: "false"
+          scenario-input: openapi.json
+          scenarios: |
+            scenarios/rate-limit.json -- python3 -I integration.py rate-limit
+            scenarios/malformed.json --expect-exit 3 -- python3 -I integration.py malformed
+```
+
 ## Installation and pinning
 
 The action runs `install.sh` from the same commit as the action, so pinning
@@ -107,6 +134,12 @@ separate step with that target's own toolchain.
 Supported runners: Linux x86_64 and aarch64 (static musl build) and macOS
 (x86_64 and Apple silicon). Windows runners fail with a message; install
 there with `install.ps1`.
+
+The runner needs GitHub CLI 2.102.0 or newer for the provenance check. The
+action checks this first and fails with a message when it is missing or
+older; it never falls back to a checksum-only install. Some images ship an
+older CLI (`macos-15` at the time of writing): update it in a step before the
+action, for example `brew upgrade gh`.
 
 To upgrade, change `version` and the action commit together, to the commit of
 the new release tag, regenerate locally with that release, and review the

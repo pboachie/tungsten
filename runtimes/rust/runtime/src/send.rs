@@ -246,6 +246,11 @@ impl ClientCore {
             let mut url = prepared.url.clone();
             let mut method = prepared.method;
             let mut body: &Payload = &prepared.payload;
+            let upload = match &prepared.payload {
+                Payload::Upload(source) => Some(source.clone()),
+                _ => None,
+            };
+            let mut uploading = upload.as_ref().map(crate::upload::UploadSource::attempt);
             let mut headers = real_headers.clone();
             let mut outcome = attempt(
                 &self.inner.http,
@@ -257,6 +262,7 @@ impl ClientCore {
                     timeout,
                     stream,
                     download,
+                    upload: uploading.as_ref(),
                     idle: self.inner.idle_timeout.filter(|_| stream || download),
                     max_response_bytes: opts.max_response_bytes.or(self.inner.max_response_bytes),
                 },
@@ -289,11 +295,23 @@ impl ClientCore {
                 };
                 let rewrite = !matches!(status, 307 | 308)
                     && !matches!(method, HttpMethod::Get | HttpMethod::Head);
+                // A streamed body is read again for the redirect, never
+                // replayed from a spent one-shot source.
+                if !rewrite && upload.as_ref().is_some_and(|source| !source.sendable()) {
+                    break;
+                }
+                uploading = upload
+                    .as_ref()
+                    .filter(|_| !rewrite)
+                    .map(crate::upload::UploadSource::attempt);
                 url = next;
                 if rewrite {
                     method = HttpMethod::Get;
                     body = EMPTY_PAYLOAD;
-                    headers.retain(|(n, _)| !n.eq_ignore_ascii_case("content-type"));
+                    headers.retain(|(n, _)| {
+                        !n.eq_ignore_ascii_case("content-type")
+                            && !n.eq_ignore_ascii_case("content-length")
+                    });
                 }
                 ctx.url = shown;
                 ctx.method = method;
@@ -308,6 +326,7 @@ impl ClientCore {
                         timeout,
                         stream,
                         download,
+                        upload: uploading.as_ref(),
                         idle: self.inner.idle_timeout.filter(|_| stream || download),
                         max_response_bytes: opts
                             .max_response_bytes
@@ -332,14 +351,21 @@ impl ClientCore {
                 outcome,
                 AttemptOutcome::Response { .. } | AttemptOutcome::Streaming { .. }
             );
-            let error = match self.classify_response(
-                &call_ctx,
-                prepared,
-                outcome,
-                &ctx,
-                timeout,
-                sink.as_deref_mut(),
-            ) {
+            let rejected = uploading
+                .as_ref()
+                .and_then(|sent| crate::upload::attempt_failure(&call_ctx, sent, mutation));
+            let classified = match rejected {
+                Some(error) => Err(error),
+                None => self.classify_response(
+                    &call_ctx,
+                    prepared,
+                    outcome,
+                    &ctx,
+                    timeout,
+                    sink.as_deref_mut(),
+                ),
+            };
+            let error = match classified {
                 Ok(mut sent) => {
                     let start = sending.done();
                     if let (Some(span), Some(n)) = (&span, attempt_number) {
@@ -400,6 +426,9 @@ impl ClientCore {
             ) || (mutation && !protected)
             {
                 return Err(done(diagnostic, partial));
+            }
+            if upload.as_ref().is_some_and(|source| !source.sendable()) {
+                return Err(crate::upload::one_shot_spent(done(diagnostic, partial)));
             }
             let delay_ms = match diagnostic.retry_after_ms {
                 Some(after) if retries.honor_retry_after => {
@@ -1123,6 +1152,7 @@ impl ClientCore {
                 timeout: self.inner.timeout.max(Duration::from_millis(1)),
                 stream: false,
                 download: false,
+                upload: None,
                 idle: None,
                 max_response_bytes: None,
             },

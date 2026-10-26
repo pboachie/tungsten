@@ -207,6 +207,13 @@ The OAuth 2.0 device authorization flow (OpenAPI 3.2 `deviceAuthorization`) is
 not run by the client: configure the scheme with an access token obtained
 through it.
 
+A tagged union with an OpenAPI 3.2 discriminator `defaultMapping` (the schema's
+`DefaultTag`) decodes and validates an object whose tag is missing, not a
+string or none of `Tags` as the default variant; its own field types then
+apply. Without it such an object is refused. A value that is not an object is
+always refused. Only each variant's own tag selects it: further discriminator
+`mapping` values that name the same variant are not recognised.
+
 In unreleased 0.2.0, `Deadline` (on `ClientOptions` or `CallOptions`) sets a total
 deadline for one logical call, separate from the per-attempt `Timeout`. It is
 measured on the monotonic clock and covers authentication, idempotency-key

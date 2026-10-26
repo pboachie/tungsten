@@ -139,6 +139,9 @@ pub struct EventStream {
     state: State,
     /// Bounds connecting and each reconnect, not an open stream.
     deadline: Option<std::time::Instant>,
+    /// The stream's telemetry, started by the first `next`; reports it
+    /// cancelled when the stream is dropped before its end.
+    telemetry: crate::telemetry::Traversal,
 }
 
 impl std::fmt::Debug for EventStream {
@@ -167,6 +170,7 @@ impl EventStream {
             opts,
             state: State::Idle,
             deadline,
+            telemetry: crate::telemetry::Traversal::default(),
         }
     }
 
@@ -174,7 +178,19 @@ impl EventStream {
     /// Dropping the returned future before it completes loses nothing: the
     /// state only changes once an await has finished.
     pub async fn next(&mut self) -> Option<StreamResult<Value>> {
-        crate::verify::with_deadline_at(self.deadline, self.next_item()).await
+        let span = self
+            .telemetry
+            .span(&self.core, &self.op, crate::TelemetryEntry::Stream);
+        let item = crate::telemetry::scoped(
+            span,
+            crate::verify::with_deadline_at(self.deadline, self.next_item()),
+        )
+        .await;
+        if matches!(self.state, State::Done) {
+            self.telemetry
+                .end(item.as_ref().and_then(|item| item.as_ref().err()));
+        }
+        item
     }
 
     async fn next_item(&mut self) -> Option<StreamResult<Value>> {

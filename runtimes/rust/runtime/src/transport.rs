@@ -20,6 +20,8 @@ pub struct AttemptRequest<'a> {
     pub method: HttpMethod,
     pub headers: &'a [(String, String)],
     pub body: &'a Payload,
+    /// The attempt that reads a [`Payload::Upload`] body.
+    pub upload: Option<&'a crate::upload::UploadAttempt>,
     pub timeout: Duration,
     pub max_response_bytes: Option<u64>,
     /// Hand a `text/event-stream` answer with a 2xx status back unread, as
@@ -269,6 +271,10 @@ pub async fn attempt(client: &reqwest::Client, req: &AttemptRequest<'_>) -> Atte
         Payload::Empty => builder,
         Payload::Bytes(bytes) => builder.body(bytes.clone()),
         Payload::Multipart(parts) => builder.multipart(multipart_form(parts)),
+        Payload::Upload(_) => match req.upload {
+            Some(upload) => builder.body(upload.body()),
+            None => return AttemptOutcome::NotSent("UPLOAD_NOT_OPENED".to_owned()),
+        },
     };
     if Instant::now() >= deadline {
         return AttemptOutcome::NotSent("request deadline expired before send".to_owned());

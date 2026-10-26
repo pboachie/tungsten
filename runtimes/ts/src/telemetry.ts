@@ -40,8 +40,9 @@ export type TelemetryQueueReason = "admitted" | "full" | "timeout" | "paused" | 
 
 /** The public entry point that started the operation. One `pages`
  * operation covers every page it fetched, one `poll` operation every read
- * it made; their attempts are numbered across the whole operation. */
-export type TelemetryEntry = "call" | "pages" | "poll" | "preview";
+ * it made, one `stream` operation its connection and every reconnect; their
+ * attempts are numbered across the whole operation. */
+export type TelemetryEntry = "call" | "pages" | "poll" | "preview" | "stream" | "download" | "export_pages" | "macro" | "macro_preview";
 
 /** One telemetry event. Fields that do not apply to an event are null. */
 export interface TelemetryEvent {

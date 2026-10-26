@@ -25,6 +25,7 @@ from ._oauth import (
 )
 from ._oauth_attempt import AuthorizationAttempt, IssuerDefense
 from ._streams import ANY_EVENT, AsyncEventStream, EventStream, StreamResult
+from ._upload import UploadSource
 from .client import AsyncClientCore, ClientCore
 from .errors import TungstenError, unwrap
 from .idempotency import FileIdempotencyStore, MemoryIdempotencyStore
@@ -99,6 +100,7 @@ __all__ = [
     "TransferProgress",
     "TungstenError",
     "Unset",
+    "UploadSource",
     "canonical_json",
     "describe_checkpoint",
     "disposition_filename",
