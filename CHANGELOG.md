@@ -1327,6 +1327,11 @@ changes.
 
 ### Fixed
 
+- Java and C# no longer retry a keyed mutation once its deadline has passed.
+  An attempt cut by the deadline could end a fraction of a millisecond early
+  and send the request again after the deadline; it now reports the earlier
+  `OUTCOME_UNKNOWN` without resending, as TypeScript, Python and Rust do.
+
 - Check the MCP Node.js floor (22.13+, or 23.2+ on Node 23) in `init` local
   setup when the MCP target is selected, matching `doctor`. Previously setup
   accepted any Node 22 and failed later. `doctor` now also notes when Node is

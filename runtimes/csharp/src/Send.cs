@@ -60,9 +60,15 @@ public sealed partial class ClientCore
         OutcomeCheck? check = mutation && !protectedCall ? OutcomeCheckOf(op, p.Args) : null;
         var attemptTimeout = AttemptTimeout(opts);
         int attempts = 0;
+        TungstenError? previousMutation = null;
         while (true)
         {
             attempts++;
+            // No attempt starts once the deadline has passed; a mutation already sent keeps its outcome.
+            if (previousMutation is not null && DeadlinePassed(opts))
+            {
+                throw new Failure(previousMutation);
+            }
             CheckDeadline(op, opts, "before the request could be sent");
             // Each attempt's timeout is cut to the time left before the call's deadline.
             var timeoutNow = attemptTimeout;
@@ -119,9 +125,11 @@ public sealed partial class ClientCore
             p.FinalUrl = target;
             var cctx = new CallContext { Api = api, Op = op, Key = p.Key, HasKey = p.HasKey, KeyHeader = p.KeyHeader, Attempts = attempts, Check = check };
             TungstenError error;
+            // An attempt the deadline cut is the last one, even if its timer fired a little early.
+            bool cut = byDeadline && (outcome.Kind == OutcomeKind.Timeout || (outcome.Kind == OutcomeKind.Response && outcome.BodyFailure == "timeout"));
             try
             {
-                if (byDeadline && (outcome.Kind == OutcomeKind.Timeout || (outcome.Kind == OutcomeKind.Response && outcome.BodyFailure == "timeout" && !mutation)))
+                if (cut && (outcome.Kind == OutcomeKind.Timeout || !mutation))
                 {
                     throw DeadlineTimeout(cctx, outcome.Kind == OutcomeKind.Response ? outcome.Status : null);
                 }
@@ -133,7 +141,12 @@ public sealed partial class ClientCore
             }
             var d = p.Secrets.Scrub(error.Diagnostic);
             var done = error with { Diagnostic = d };
-            if (attempts > plan.Max || !RetryableCategory(d.Category))
+            if (mutation && (previousMutation is null || previousMutation.Diagnostic.Category != Category.OutcomeUnknown
+                || d.Category == Category.OutcomeUnknown))
+            {
+                previousMutation = done;
+            }
+            if (cut || attempts > plan.Max || !RetryableCategory(d.Category))
             {
                 throw new Failure(done);
             }
