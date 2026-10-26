@@ -226,6 +226,14 @@ changes.
 
 ### Added
 
+- Add an opt-in total operation deadline to the TypeScript (`deadlineMs`),
+  Python (`deadline_ms`) and Rust (`deadline`) runtimes, on client and call
+  options. Unlike the per-attempt timeout, it bounds one logical call across
+  authentication, idempotency-key reservation, retries and backoff, response
+  bodies and verification, and a whole traversal, poll or macro. No attempt
+  starts after it expires (`DEADLINE_EXCEEDED`); a mutation already sent still
+  reports `OUTCOME_UNKNOWN`. Existing timeout semantics are unchanged.
+
 - Add explicit Linux support-bundle export to a new file in an existing,
   trusted user-owned directory. Export preserves the metadata-only preview
   manifest, caps complete artifacts at 128 KiB, refuses replacement and

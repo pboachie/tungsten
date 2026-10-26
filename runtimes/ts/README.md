@@ -107,6 +107,22 @@ each supported platform, including Windows and WSL.
 
 ## Limits
 
+In unreleased 0.2.0, `deadlineMs` (on `ClientOptions` or `CallOptions`) sets a total
+deadline for one logical call, separate from the per-attempt `timeoutMs`. It is
+measured on a monotonic clock and covers authentication, idempotency-key
+reservation, every attempt (each one's `timeoutMs` is cut to the time left),
+retry waits, response bodies and verification; for `pages`, `poll` and
+`runMacro` it covers the whole traversal, poll or macro, and nested work cannot
+restart it. No attempt starts after it expires: the call fails with `code`
+`DEADLINE_EXCEEDED`, and a mutation that was already sent reports
+`OUTCOME_UNKNOWN`, never a blind replay. A retry wait that would end after the
+deadline returns the last failure at once. For `stream()` it bounds connecting
+and each reconnect, never an open stream (use `idleTimeoutMs`). A shared OAuth
+token refresh or idempotency-store write is not cancelled at the deadline, only
+no longer waited for, so other callers still get its result; it stays bounded by
+its own `timeoutMs`. A custom `fetch` that ignores its `AbortSignal` can keep
+running after the deadline. Default: no total deadline.
+
 Stream `collect({ maxBytes, maxMs })` accepts optional byte and time budgets. An
 unset budget defaults to 4 MiB or 60 seconds. The byte count uses UTF-8
 JSON for the event values, excluding SSE framing. A limit closes the stream
