@@ -414,6 +414,10 @@ pub mod codes {
             "target does not declare enforced imported-operation policy support; not generated",
         ),
         (
+            "TG0706",
+            "target does not declare the IR's protocol; not generated",
+        ),
+        (
             "TG0710",
             "macro not emitted by the TypeScript SDK (not in the canonical form)",
         ),

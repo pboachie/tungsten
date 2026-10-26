@@ -422,6 +422,16 @@ changes.
   and writes nothing when the limit is reached; library cancellation of an
   export is now honoured while collection runs.
 
+- Add the protocol design gate. An IR namespace may carry an optional
+  `protocol` binding (a registered protocol id, its version and a
+  protocol-specific `extension`); absent means HTTP, so existing IR is
+  unchanged. The capability catalog registers protocols under `protocols`
+  (`http` for every built-in target; `graphql`, `grpc` and
+  `async_messaging` reserved with no generating target) and the support
+  matrix lists them. Generation refuses a target, before writing it, for IR
+  bound to a protocol the target does not declare (TG0706), so new
+  frontends never reshape their operations into REST fields.
+
 - Derive `tungsten init` and wizard target selection from the capability
   catalog, which now declares the default targets, the wizard defaults, the
   targets local setup (`--local-example`) covers and companion targets

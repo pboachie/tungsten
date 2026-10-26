@@ -160,7 +160,7 @@ The support matrix below is generated from the capability catalog (`tungsten cap
 |---|---|---|
 | 3.0 | supported | 0 |
 | 3.1 | supported | 0 |
-| 3.2 | subset | 12 |
+| 3.2 | subset | 11 |
 
 | Input format | Versions | Route | Detection | Operations | Review flags | Acquisition |
 |---|---|---|---|---|---|---|
@@ -172,6 +172,13 @@ The support matrix below is generated from the capability catalog (`tungsten cap
 | `har` | 1.2 | init_conversion | `log` member | imported | `--har-paths` | local, https, git |
 | `endpoint_manifest` | 1 | init_conversion | `endpoint_manifest` member | imported |  | local, https, git |
 | `manual_endpoint` |  | init_inference | `--method` and `--endpoint`, without `--from` | imported |  |  |
+
+| IR protocol | Status | Targets | Protocol-specific extension |
+|---|---|---|---|
+| `http` | implemented | every built-in target | none; method, path, parameters and bodies are the common contract |
+| `graphql` | reserved | none (refused, TG0706) | selection sets, fragments and subscription transport |
+| `grpc` | reserved | none (refused, TG0706) | service and method names, streaming mode and status codes |
+| `async_messaging` | reserved | none (refused, TG0706) | channel bindings, delivery guarantees and acknowledgment |
 
 | `init` selection | Targets |
 |---|---|
@@ -1043,6 +1050,14 @@ invalid TypeScript scalars still produce TG0711 warnings and use defaults;
 invalid custom dependencies produce errors. Unknown keys remain ignored, and
 defaults that depend on the compiled API remain in the emitter. This is an
 option declaration; existing project target validation remains compatible.
+
+The catalog also registers the IR's protocols under `protocols`. Every IR
+namespace without a `protocol` binding is HTTP, which every built-in target
+generates; `graphql`, `grpc` and `async_messaging` are reserved for future
+frontends, which keep the common operation contract and put
+protocol-specific contract in the binding's `extension` rather than in REST
+fields. A target is refused with TG0706, before anything is written for it,
+when the IR binds a protocol the target does not declare.
 
 ### Local TypeScript profiles
 

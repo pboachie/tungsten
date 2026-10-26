@@ -40,6 +40,7 @@ pub(crate) fn run(args: &CapabilitiesArgs) -> Report {
         input_formats: capabilities::INPUT_FORMATS.to_vec(),
         execution_policy: capabilities::execution_policy(),
         init: capabilities::INIT,
+        protocols: capabilities::PROTOCOLS.to_vec(),
     };
     if args.matrix {
         report.human = match args.format {
@@ -254,6 +255,28 @@ fn matrix(catalog: &CapabilityCatalog) -> String {
                 .map(snake)
                 .collect::<Vec<_>>()
                 .join(", "),
+        );
+    }
+    out.push_str(
+        "\n| IR protocol | Status | Targets | Protocol-specific extension |\n|---|---|---|---|\n",
+    );
+    for protocol in &catalog.protocols {
+        let targets = match protocol.targets {
+            capabilities::protocols::ProtocolTargets::AllBuiltIn => "every built-in target".into(),
+            capabilities::protocols::ProtocolTargets::Only([]) => "none (refused, TG0706)".into(),
+            capabilities::protocols::ProtocolTargets::Only(ids) => ids
+                .iter()
+                .map(|id| format!("`{id}`"))
+                .collect::<Vec<_>>()
+                .join(", "),
+        };
+        let _ = writeln!(
+            out,
+            "| `{}` | {} | {} | {} |",
+            protocol.id,
+            snake(&protocol.status),
+            targets,
+            protocol.extension
         );
     }
     let code = |ids: &[&str]| {

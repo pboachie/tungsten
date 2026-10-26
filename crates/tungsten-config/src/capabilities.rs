@@ -9,7 +9,9 @@ use schemars::JsonSchema;
 use crate::option_fields;
 
 pub mod init;
+pub mod protocols;
 pub use init::{CompanionTarget, INIT, InitCapability};
+pub use protocols::{PROTOCOLS, ProtocolDefinition};
 use serde::Serialize;
 
 /// Component-owned schema declaration. An absent declaration is unknown,
@@ -531,6 +533,8 @@ pub struct CapabilityCatalog {
     pub execution_policy: ExecutionPolicyCapability,
     /// Target selection by `tungsten init` and the wizard.
     pub init: InitCapability,
+    /// Registered IR protocols and the targets generating each.
+    pub protocols: Vec<ProtocolDefinition>,
 }
 
 /// How an input format enters a project.
@@ -878,6 +882,7 @@ pub fn validate() -> Vec<String> {
     let mut errors = validate_parts(TARGETS, FEATURES, OPENAPI_INPUTS);
     errors.extend(validate_inputs(INPUT_FORMATS, OPENAPI_INPUTS));
     errors.extend(INIT.validate(TARGETS));
+    errors.extend(protocols::validate(PROTOCOLS, TARGETS));
     errors
 }
 
