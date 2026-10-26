@@ -14,6 +14,7 @@ public final class CallOptions {
     private final Confirm confirm;
     private final boolean refuseConfirmYes;
     private final Duration timeout;
+    private final Duration deadline;
     private final Long maxResponseBytes;
     private final boolean verify;
     private final Map<String, String> headers;
@@ -23,6 +24,7 @@ public final class CallOptions {
         confirm = b.confirm;
         refuseConfirmYes = b.refuseConfirmYes;
         timeout = b.timeout;
+        deadline = b.deadline;
         maxResponseBytes = b.maxResponseBytes;
         verify = b.verify;
         headers = Collections.unmodifiableMap(new LinkedHashMap<>(b.headers));
@@ -45,6 +47,7 @@ public final class CallOptions {
         b.confirm = confirm;
         b.refuseConfirmYes = refuseConfirmYes;
         b.timeout = timeout;
+        b.deadline = deadline;
         b.maxResponseBytes = maxResponseBytes;
         b.verify = verify;
         b.headers.putAll(headers);
@@ -71,6 +74,11 @@ public final class CallOptions {
         return timeout;
     }
 
+    /** The total deadline of this call, or null for the client's; zero or negative means none. */
+    public Duration deadline() {
+        return deadline;
+    }
+
     /** Maximum ordinary response bytes; null uses the client's limit. */
     public Long maxResponseBytes() {
         return maxResponseBytes;
@@ -93,7 +101,7 @@ public final class CallOptions {
     @Override
     public String toString() {
         return "CallOptions{idempotencyKey=" + (hasKey() ? Text.REDACTED : "")
-                + ", confirm=" + confirm + ", timeout=" + timeout + ", verify=" + verify
+                + ", confirm=" + confirm + ", timeout=" + timeout + ", deadline=" + deadline + ", verify=" + verify
                 + ", headers=" + headers.keySet() + "}";
     }
 
@@ -103,6 +111,7 @@ public final class CallOptions {
         private Confirm confirm = Confirm.NONE;
         private boolean refuseConfirmYes;
         private Duration timeout;
+        private Duration deadline;
         private Long maxResponseBytes;
         private boolean verify;
         private final Map<String, String> headers = new LinkedHashMap<>();
@@ -140,6 +149,20 @@ public final class CallOptions {
         /** The per-attempt timeout. */
         public Builder timeout(Duration value) {
             timeout = value;
+            return this;
+        }
+
+        /**
+         * The total deadline of this call, measured on a monotonic clock from the call. It bounds
+         * authentication, idempotency-key reservation, every attempt (each one's timeout is cut to
+         * the time left), retry waits, response bodies and verification; for pages, poll and
+         * runMacro the whole traversal, poll or macro. No attempt starts after it expires (code
+         * DEADLINE_EXCEEDED); a mutation already sent reports OUTCOME_UNKNOWN. For stream it is
+         * checked before connecting and each reconnect, never on an open stream. Null inherits the
+         * client's; zero or negative means none.
+         */
+        public Builder deadline(Duration value) {
+            deadline = value;
             return this;
         }
 

@@ -67,6 +67,21 @@ Compatibility helpers retain application-owned custom-scheme policy.
 
 ## Limits
 
+In unreleased 0.2.0, `deadline(Duration)` on the `ClientOptions` and `CallOptions`
+builders sets a total deadline for one logical call, separate from the
+per-attempt `timeout`; null inherits the client's, zero or negative means none.
+It is measured with `System.nanoTime()` from the call and held for the calling
+thread, so it covers authentication, idempotency-key reservation, every attempt
+(each one's timeout is cut to the time left), retry waits, response bodies and
+verification; for `pages`, `poll` and `runMacro` it covers the whole traversal,
+poll or macro. No attempt starts after it expires: the call fails with code
+`DEADLINE_EXCEEDED`, and a mutation that was already sent reports
+`OUTCOME_UNKNOWN`, never a blind replay. A retry wait that would end after the
+deadline returns the last failure at once. For `stream` it is checked before
+connecting and before each reconnect, never on an open stream. Token requests,
+stores and hooks already running are not interrupted; the call stops at the next
+boundary after they return.
+
 This is a thin Kotlin layer over the Java runtime. Calls are synchronous (the
 coroutines artifact above wraps them);
 Java's lack of async calls, proxy configuration and pluggable transport also

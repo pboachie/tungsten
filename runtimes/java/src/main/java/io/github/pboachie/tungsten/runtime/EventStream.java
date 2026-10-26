@@ -42,6 +42,8 @@ public final class EventStream<T> implements Iterator<Result<StreamEvent<T>>>, I
     private final Object lock = new Object();
     private Transport.Body body;
     private long collectDeadline;
+    /** Bounds connecting and each reconnect, not an open stream; null without one. */
+    private final Long deadline;
 
     EventStream(ClientCore core, OperationDescriptor op, Object args, CallOptions opts, Function<Object, T> decoder,
             TungstenException initial) {
@@ -52,6 +54,7 @@ public final class EventStream<T> implements Iterator<Result<StreamEvent<T>>>, I
         this.opts = opts;
         this.decoder = decoder;
         this.initial = initial;
+        this.deadline = core.deadlineAt(opts);
     }
 
     /** The streaming operation. */
@@ -134,7 +137,7 @@ public final class EventStream<T> implements Iterator<Result<StreamEvent<T>>>, I
     @Override
     public boolean hasNext() {
         if (ahead == null) {
-            ahead = advance();
+            ahead = ClientCore.withDeadline(deadline, this::advance);
         }
         return ahead != null;
     }
