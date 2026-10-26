@@ -464,8 +464,41 @@ impl ClientCore {
         input: Value,
         opts: &CallOptions,
     ) -> Outcome {
-        crate::verify::with_call_deadline(self, opts, self.run_macro_inner(macro_, &input, opts))
-            .await
+        self.traced_macro(
+            macro_,
+            crate::TelemetryEntry::Macro,
+            crate::verify::with_call_deadline(
+                self,
+                opts,
+                self.run_macro_inner(macro_, &input, opts),
+            ),
+        )
+        .await
+    }
+
+    /// Run a macro entry point as a telemetry operation named after the
+    /// macro (when telemetry is on).
+    async fn traced_macro<T, F: std::future::Future<Output = Result<T>>>(
+        &self,
+        macro_: &MacroDescriptor,
+        entry: crate::TelemetryEntry,
+        work: F,
+    ) -> Result<T> {
+        let span = self.inner.telemetry.as_ref().map(|telemetry| {
+            telemetry.start(
+                &self.inner.api.name,
+                &macro_.name,
+                entry,
+                macro_.safety != crate::types::Safety::ReadOnly,
+            )
+        });
+        let pending = Pending::new(span.as_ref(), PendingKind::Operation);
+        let result = crate::telemetry::scoped(span.clone(), work).await;
+        pending.done();
+        if let Some(span) = span {
+            span.end(result.as_ref().err().map(|e| &*e.diagnostic), false, None);
+        }
+        result
     }
 
     /// Preview a macro without sending anything (see `MacroStepPreview`).
@@ -475,10 +508,14 @@ impl ClientCore {
         input: Value,
         opts: &CallOptions,
     ) -> Result<PreviewResult> {
-        crate::verify::with_call_deadline(
-            self,
-            opts,
-            self.preview_macro_inner(macro_, &input, opts),
+        self.traced_macro(
+            macro_,
+            crate::TelemetryEntry::MacroPreview,
+            crate::verify::with_call_deadline(
+                self,
+                opts,
+                self.preview_macro_inner(macro_, &input, opts),
+            ),
         )
         .await
     }
