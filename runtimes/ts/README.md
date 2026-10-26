@@ -296,8 +296,10 @@ and a page iteration the caller stops before its end is reported as
 `stream()` is one `stream` operation covering its connection and every
 reconnect, with attempts numbered across them; it ends with the stream: `ok`
 at its end, `error` with its final failure item, `cancelled` when the caller
-cancels or leaves it early. Page exports, downloads and macros do not
-emit telemetry yet.
+cancels or leaves it early. Page exports are `export_pages`
+operations like `pages`; a `download` operation ends when the answer is
+handed over (reading the body is not part of it). Macros do not emit
+telemetry yet.
 `openTelemetryObserver(tracer)` turns the events into one OpenTelemetry client
 span per operation (attempts and phases as span events, outcome attributes,
 error status on failure) for any object shaped like an `@opentelemetry/api`
