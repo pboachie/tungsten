@@ -269,6 +269,12 @@ changes.
   name `code: DEADLINE_EXCEEDED`, and a mutation already sent still reports
   `OUTCOME_UNKNOWN`.
 
+- Add `--deadline <SECONDS>` to generated Rust CLIs, with the
+  `<PREFIX>_DEADLINE` variable and the profile key `deadline`. It sets the Rust
+  runtime's total deadline for the command (`--timeout` stays per attempt).
+  The flag name is now reserved: an API argument named `deadline` gets the
+  flag `--deadline-arg`.
+
 - Add the same total operation deadline to the Go runtime
   (`ClientOptions.Deadline`, `CallOptions.Deadline`), applied as a
   `context.Context` deadline on top of the caller's context.
