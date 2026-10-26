@@ -350,12 +350,12 @@ macro_rules! targets {
 targets! {
     {
         id: "csharp", aliases: &["cs"], source: BuiltInEmitter, family: Some("dotnet"),
-        policy: false, tools: DOTNET, summary: "C# SDK",
+        policy: true, tools: DOTNET, summary: "C# SDK",
         options: &["package_id", "namespace", "version", "runtime", "runtime_path", "out"],
-        environments: [Dotnet], features: SDK,
+        environments: [Dotnet], features: SDK_POLICY,
     },
     {
-        id: "dart", aliases: &[], source: BuiltInEmitter, family: Some("dart"), policy: false,
+        id: "dart", aliases: &[], source: BuiltInEmitter, family: Some("dart"), policy: true,
         tools: &[ToolRequirement {
             tool: "dart", minimum: Some([3, 6]), maximum_exclusive: Some([4, 0]), minimum_option: None, excluded_versions: &[],
         }],
@@ -597,6 +597,11 @@ pub const OPENAPI_32_SUPPORTED: &[SupportedInputFeature] = &[
         behavior: "an operation sent with the HTTP QUERY method and its request body; safe, so read-only by default",
     },
     SupportedInputFeature {
+        id: "reusable_media_types",
+        member: "components.mediaTypes, $ref media type",
+        behavior: "a media type object given by $ref is read as if written in place",
+    },
+    SupportedInputFeature {
         id: "item_schema_json_lines",
         member: "itemSchema (JSON Lines response)",
         behavior: "the type of one line of an application/jsonl or application/x-ndjson response",
@@ -637,12 +642,6 @@ pub const OPENAPI_32_FEATURES: &[UnsupportedInputFeature] = &[
         "nested_encoding",
         "encoding, prefixEncoding, itemEncoding (Encoding Object)",
         "TG0147",
-        Rejected,
-    ),
-    feature(
-        "reusable_media_types",
-        "components.mediaTypes, $ref media type",
-        "TG0148",
         Rejected,
     ),
     feature(

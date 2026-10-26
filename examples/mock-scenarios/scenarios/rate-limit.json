@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "programs": [
+    {"operation": "openapi.listPets", "status": 429, "headers": {"Retry-After": "0"}},
+    {"operation": "openapi.listPets", "status": 200, "body": [{"id": "pet-1", "name": "Rex"}]}
+  ],
+  "expect": {
+    "total_calls": 2,
+    "calls": [
+      {"operation": "openapi.listPets", "status": 429, "count": 1},
+      {"operation": "openapi.listPets", "status": 200, "count": 1}
+    ]
+  }
+}

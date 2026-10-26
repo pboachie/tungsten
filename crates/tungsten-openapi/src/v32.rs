@@ -2,11 +2,12 @@
 //! OpenAPI 3.2 constructs that have no 3.1 equivalent.
 //!
 //! A 3.2 document that uses only 3.1 constructs goes through the unchanged
-//! 3.1 path. The `query` method is compiled by the build (as `QUERY`); every
-//! other construct 3.2 added is either refused with an error (when
-//! ignoring it would produce a client that behaves differently from the API)
-//! or reported as a warning (when it only adds metadata the compiler has no
-//! use for). Nothing is dropped silently. Codes `TG0140`-`TG0156` form one
+//! 3.1 path. The `query` method is compiled by the build (as `QUERY`), and
+//! reusable media types (`components.mediaTypes`, `$ref` in a `content` map)
+//! are followed like any other reference. Every other construct 3.2 added is
+//! either refused with an error (when ignoring it would produce a client that
+//! behaves differently from the API) or reported as a warning (when it only
+//! adds metadata the compiler has no use for). Nothing is dropped silently. Codes `TG0140`-`TG0156` form one
 //! family, one code per feature, each located at the member that introduces
 //! it.
 
@@ -173,16 +174,6 @@ pub(crate) fn scan_document(root: &Value) -> Vec<Finding> {
             }
         }
     }
-    if let Some(Value::Object(components)) = doc.get("components")
-        && components.contains_key("mediaTypes")
-    {
-        out.push(error(
-            "TG0148",
-            "/components/mediaTypes".into(),
-            "OpenAPI 3.2 reusable media types (`components.mediaTypes`) are not supported",
-            "inline the media type object under each `content` map",
-        ));
-    }
     server_findings("/servers", doc.get("servers"), &mut out);
     requirements(doc.get("security"), "/security", &schemes, &mut out);
     walk(root, "", Kind::Document, |node| {
@@ -346,7 +337,7 @@ fn node_findings(node: &Node<'_>, schemes: &BTreeSet<String>, out: &mut Vec<Find
                     "TG0145",
                     at("itemSchema"),
                     "this use of OpenAPI 3.2 `itemSchema` (sequential and streaming media types) is not supported",
-                    "only response JSON Lines items and server-sent events whose `data` has a JSON `contentSchema` are compiled; otherwise describe the whole payload with `schema`",
+                    "only response JSON Lines items and server-sent events whose `data` has a JSON `contentSchema`, written in the response's `content` map, are compiled; otherwise describe the whole payload with `schema`",
                 ));
             }
             for key in ["prefixEncoding", "itemEncoding"] {
@@ -360,14 +351,6 @@ fn node_findings(node: &Node<'_>, schemes: &BTreeSet<String>, out: &mut Vec<Find
                         "name the parts with `encoding`, which 3.1 defines",
                     ));
                 }
-            }
-            if map.contains_key("$ref") {
-                out.push(error(
-                    "TG0148",
-                    at("$ref"),
-                    "an OpenAPI 3.2 media type object given by `$ref` is not supported",
-                    "inline the media type object under the `content` map",
-                ));
             }
         }
         Kind::Encoding => {
