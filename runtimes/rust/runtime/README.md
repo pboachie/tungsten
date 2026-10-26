@@ -120,6 +120,13 @@ each supported platform, including Windows and WSL.
 
 ## Limits
 
+Incoming webhooks: `webhooks::verify_webhook` accepts a body of at most 1 MiB by default
+(`max_body_bytes`) and a signature header of at most 8192 characters, rejects a signed
+timestamp more than 300 seconds from now by default (`tolerance_seconds`), and supports
+only the Stripe-compatible `t=,v1=` HMAC-SHA256 scheme (`v0` and other schemes
+are ignored). Replay tracking is the application's `claim` hook; the runtime
+keeps no delivery state. Unreleased 0.2.0 only.
+
 The OAuth 2.0 device authorization flow (OpenAPI 3.2 `deviceAuthorization`) is
 not run by the client: configure the scheme with an access token obtained
 through it.
@@ -205,6 +212,15 @@ Optionally, `max_active_total` and `max_streams_total` cap ordinary requests and
 flight across every scope, on top of each scope's `max_active` and `max_streams` (default:
 no cap across scopes). Scopes waiting for that shared capacity take turns, one
 request each, in scope order, so one busy tenant or origin cannot starve another.
+For queue telemetry, the optional scheduler observer `on_event` is called
+synchronously (in Python and Rust outside the scheduler's lock) with version-1
+events: `admitted` and `rejected` (with `wait_ms`, and `reason` and `pause_ms`
+for a rejection), `released` (`held_ms`), `paused` (`pause_ms`) and
+`retry_denied`. Every `admitted` is followed by one `released`; a request
+granted just as its wait was abandoned may be reported `rejected` (`aborted`) and
+`released`. Events carry no scope key, tenant, URL or payload, so they hold no
+secret and few distinct values; nothing is buffered, and an observer's
+exception or panic is ignored. Read `stats()` for current counts.
 See the [bulk-sync example](https://github.com/pboachie/tungsten/tree/main/examples/bulk-sync).
 
 No runtime ships a file-backed OAuth token store. Provide an application-owned

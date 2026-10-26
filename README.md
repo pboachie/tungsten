@@ -136,10 +136,10 @@ The support matrix below is generated from the capability catalog (`tungsten cap
 | `kotlin` | `kt` | Kotlin/JVM SDK (blocking functions returning Result; opt-in coroutines) | java >=17.0; gradle installed | jvm | `typed_sdk`, `pagination_helpers`, `coroutines` | enforced | unknown | unknown |
 | `mcp` |  | MCP server over stdio or Streamable HTTP, discrete or progressive | node >=22.13 excluding 23.0.x, 23.1.x; npm installed | node | `mcp_stdio`, `mcp_streamable_http`, `mcp_embedding_search`, `mcp_script_sandbox` | enforced | unknown | unknown |
 | `mock` |  | reserved; no emitter in this version | none |  |  | n/a | unknown | unknown |
-| `python` | `py` | Sync and async Python SDK, Pydantic v2 or dataclass models | python3 >=3.12 (`python_version` selects the minimum) | cpython | `typed_sdk`, `pagination_helpers`, `dataclass_models` | enforced | unknown | unknown |
+| `python` | `py` | Sync and async Python SDK, Pydantic v2 or dataclass models | python3 >=3.12 (`python_version` selects the minimum) | cpython | `typed_sdk`, `pagination_helpers`, `dataclass_models`, `webhook_verification` | enforced | unknown | unknown |
 | `ruby` | `rb` | Ruby SDK | ruby >=3.3; bundle installed | ruby | `typed_sdk`, `pagination_helpers` | enforced | unknown | unknown |
-| `rust` | `rs` | Async Rust SDK (serde, reqwest) and optional generated CLI | cargo >=1.88; rustc >=1.88 | native | `typed_sdk`, `pagination_helpers`, `generated_cli` | enforced | unknown | unknown |
-| `typescript` | `ts` | Typed TypeScript SDK, Result values, Zod validation | node >=22.0; npm installed | node | `typed_sdk`, `pagination_helpers` | enforced | unknown | unknown |
+| `rust` | `rs` | Async Rust SDK (serde, reqwest) and optional generated CLI | cargo >=1.88; rustc >=1.88 | native | `typed_sdk`, `pagination_helpers`, `generated_cli`, `webhook_verification` | enforced | unknown | unknown |
+| `typescript` | `ts` | Typed TypeScript SDK, Result values, Zod validation | node >=22.0; npm installed | node | `typed_sdk`, `pagination_helpers`, `webhook_verification` | enforced | unknown | unknown |
 | `webmcp` |  | Browser ESM package with tool manifest and registration helper | node >=22.0; npm installed | browser | `webmcp_registration` | enforced | unknown | unknown |
 
 | Feature | Domain | Opt-in option | Description |
@@ -154,6 +154,7 @@ The support matrix below is generated from the capability catalog (`tungsten cap
 | `mcp_embedding_search` | target | `search` | optional embedding index for tool search |
 | `mcp_script_sandbox` | runtime | `sandbox` | opt-in run_script sandbox |
 | `webmcp_registration` | protocol |  | browser tool manifest and WebMCP registration helper |
+| `webhook_verification` | runtime |  | framework-free incoming webhook verification: Stripe-compatible `t=,v1=` HMAC-SHA256 signatures compared in constant time, secret rotation, bounded body, timestamp tolerance and an application-owned replay hook |
 | `llms_txt` | target |  | llms.txt, llms-full.txt and tools.json documentation |
 
 | OpenAPI line | Support | Diagnosed constructs |
@@ -342,6 +343,26 @@ the command says so and prints no replacement command.
 
 `--offline` (also a global flag), `--no-update-check` and `TUNGSTEN_NO_UPDATE_CHECK=1`
 make no request and exit 6 with a reason in the `--json` result.
+
+Update notices are off by default. Enable them with `TUNGSTEN_UPDATE_NOTICE=stable` (or
+`prerelease`), or in the user settings file (`$XDG_CONFIG_HOME/tungsten/settings.json`,
+`~/Library/Application Support/tungsten/settings.json` on macOS,
+`%APPDATA%\tungsten\settings.json` on Windows, or `$TUNGSTEN_CONFIG_DIR/settings.json`):
+
+```json
+{ "update_notice": { "channel": "stable", "interval_hours": 24 } }
+```
+
+With notices on, `tungsten update check` saves its verified answer to `update-check.json`
+in the user cache directory (`TUNGSTEN_CACHE_DIR` overrides it). Other commands never make
+a request for notices: after an interactive command, tungsten reads that file and, at most
+once per interval (`TUNGSTEN_UPDATE_NOTICE_INTERVAL_HOURS`, 1 to 720, default 24), prints one
+line on stderr naming a newer release whose archive and `SHA256SUMS` the check confirmed.
+Answers older than 7 days are ignored. No notice is printed with `--json`, `--offline`,
+`--policy`, in CI, when stderr is not a terminal, or for `lsp` and `mock`.
+`TUNGSTEN_NO_UPDATE_CHECK=1` or `TUNGSTEN_UPDATE_NOTICE=off` turns notices off; an invalid
+setting also turns them off. A missing, corrupt or unwritable cache never changes a command's
+output or exit code.
 
 ### Runtime packages
 
@@ -1241,7 +1262,7 @@ if not configs.tungsten then
   configs.tungsten = {
     default_config = {
       cmd = { 'tungsten', 'lsp' },
-      filetypes = { 'yaml' },
+      filetypes = { 'yaml', 'json' },
       root_dir = util.root_pattern('tungsten.yml', 'tungsten.yaml'),
     },
   }
@@ -1250,7 +1271,9 @@ end
 require('lspconfig').tungsten.setup({})
 ```
 
-Any other client works the same way: start `tungsten lsp` as a stdio server for YAML files.
+Any other client works the same way: start `tungsten lsp` as a stdio server for YAML files, and for JSON files too when the project has JSON specs or overlays, so their unsaved edits are checked (the Neovim example attaches to both).
+
+Quick fixes are ordinary code actions: the light bulb or `Ctrl+.` in Visual Studio Code, `vim.lsp.buf.code_action()` in Neovim. Overlay fixes create a file and edit `tungsten.yml` in one workspace edit, so the client must support `documentChanges` with the `create` resource operation; clients with change-annotation support ask for confirmation and preview every file first (Visual Studio Code opens its refactor preview). Neovim applies the edit directly; undo it per buffer with `u`, and delete the created overlay to revert fully. A client that shows disabled code actions explains why a fix is unavailable, with the equivalent `tungsten overlay suggest` command.
 
 | Exit code | Meaning |
 |---|---|

@@ -166,6 +166,8 @@ export async function registerTungstenWebMcp(options: RegisterTungstenWebMcpOpti
     if (!Number.isSafeInteger(limits.maxBytes) || limits.maxBytes < 1) invalid("Result policy maxBytes must be a positive safe integer.");
   }
   if (options.streamCollection && (!Number.isSafeInteger(options.streamCollection.maxEvents) || options.streamCollection.maxEvents < 1 || !Number.isSafeInteger(options.streamCollection.maxDurationMs) || options.streamCollection.maxDurationMs < 1 || options.streamCollection.maxDurationMs > 2 ** 31 - 1 || maxBytes <= 1024)) invalid("streamCollection requires positive maxEvents, bounded maxDurationMs and maxResultBytes greater than 1024.");
+  const deadlineMs = options.toolDeadlineMs ?? 0;
+  if (!Number.isSafeInteger(deadlineMs) || deadlineMs < 0) invalid("toolDeadlineMs must be a non-negative safe integer.");
   if (options.binaryResults && (options.binaryResults.mode !== "base64" && options.binaryResults.mode !== "download" || options.binaryResults.mode === "download" && typeof options.binaryResults.render !== "function")) invalid("Invalid binaryResults renderer.");
   const selected = resolve(options);
   const controller = new AbortController();
@@ -191,6 +193,7 @@ export async function registerTungstenWebMcp(options: RegisterTungstenWebMcpOpti
         }
         const args = { ...raw };
         const opts: CallOptions = { allowConfirmTrue: false, verify: !preview && safety === "irreversible" };
+        if (deadlineMs > 0) opts.deadlineMs = deadlineMs;
         for (const [field, option] of [[entry.reserved.idempotencyKey, "idempotencyKey"], [entry.reserved.confirmationToken, "confirm"]] as const) {
           if (field === null) continue;
           const value = args[field];

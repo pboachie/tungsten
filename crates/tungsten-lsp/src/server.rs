@@ -460,10 +460,13 @@ impl Server<'_> {
         self.running = true;
         let cancellation = CancellationToken::default();
         self.cancellation = Some(cancellation.clone());
-        let key = self.analysis.as_ref().and_then(|a| a.inputs_key.clone());
+        let key = self.analysis.as_ref().and_then(|a| a.identity.clone());
         std::thread::spawn(move || {
             let result = std::panic::catch_unwind(|| {
-                if key.is_some_and(|k| k.unchanged(&manifest, &overrides, &cancellation)) {
+                if key.is_some_and(|k| {
+                    k.manifest() == normalize(&manifest)
+                        && k.sources_unchanged(&overrides, &cancellation)
+                }) {
                     return Checked::Unchanged;
                 }
                 Checked::Fresh(analyze(&manifest, overrides, cancellation).map(Box::new))
@@ -613,12 +616,34 @@ impl Server<'_> {
                     self.touch(self.opts.debounce);
                 }
             }
-            "textDocument/didSave" | "workspace/didChangeWatchedFiles" => {
-                self.touch(Duration::ZERO);
+            "textDocument/didSave" => self.touch(Duration::ZERO),
+            "workspace/didChangeWatchedFiles" => {
+                let changed = parse::<lsp_types::DidChangeWatchedFilesParams>(note.params);
+                if !changed.is_some_and(|p| self.unaffected(&p.changes)) {
+                    self.touch(Duration::ZERO);
+                }
             }
             _ => {}
         }
         None
+    }
+
+    /// Whether the current result cannot depend on any of `changes`: it
+    /// is current, its identity is known, and none of the changed files is
+    /// one the check read or looked for. Such a change neither cancels a
+    /// running check nor starts one.
+    fn unaffected(&self, changes: &[lsp_types::FileEvent]) -> bool {
+        let identity = self.analysis.as_ref().and_then(|a| a.identity.as_ref());
+        let Some(identity) = identity else {
+            return false;
+        };
+        self.analysis_generation == self.generation
+            && !self.running
+            && changes.iter().all(|change| {
+                uri_to_path(&change.uri).is_some_and(|path| {
+                    Some(path.as_path()) != self.manifest.as_deref() && !identity.reads(&path)
+                })
+            })
     }
 
     /// Without a configured manifest, the first manifest (or the manifest
