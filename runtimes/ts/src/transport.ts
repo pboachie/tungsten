@@ -5,7 +5,7 @@
  * by whether the request can have reached the server.
  */
 import type { HttpMethod } from "./types.js";
-import { isRecord } from "./util.js";
+import { isRecord, MAX_TIMER_MS } from "./util.js";
 
 export interface AttemptRequest {
   url: string;
@@ -188,7 +188,7 @@ export async function attempt(fetchImpl: typeof fetch, req: AttemptRequest): Pro
       timedOut = true;
       controller.abort();
     },
-    Math.max(1, remainingMs),
+    Math.min(MAX_TIMER_MS, Math.max(1, remainingMs)),
   );
   const onAbort = (): void => controller.abort();
   req.signal?.addEventListener("abort", onAbort, { once: true });

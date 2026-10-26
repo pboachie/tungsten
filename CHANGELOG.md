@@ -230,6 +230,46 @@ changes.
 
 ### Added
 
+- Add `tungsten_build::ProjectIdentity`, the shared in-process identity of
+  one compilation: its manifest, the content digest of every source it read,
+  the optional files it found absent, and a digest of the compiler version,
+  load limits, acquisition and remote-reference policy and invocation policy.
+  It revalidates against unsaved buffers and disk without modification times,
+  reports which files a project depends on, and is never persisted. The
+  language server uses it for result reuse, and a watched-file change to a
+  file the last check neither read nor looked for no longer cancels or starts
+  a check.
+
+- `tungsten workspace [PATH]` lists the tungsten projects under a directory
+  with deterministic ids (the project directory relative to PATH), their
+  output directories and declared inputs. Discovery is bounded (8 levels,
+  4,096 directories, 64 projects, 1 MiB manifests; TG0640), never follows
+  symbolic links (TG0643), refuses directories with two manifests (TG0641)
+  and reports output directories shared or nested across projects (TG0642).
+  `--project ID` on `check`, `generate`, `lock`, `report`, `diff`, `mock`,
+  `ir dump`, `overlay suggest` and `scenario` runs the command on one project
+  of the workspace at PATH (unknown ids are TG0644), and `generate` refuses to
+  write a project whose outputs collide with another's. The capability catalog
+  declares the workspace contract under `workspace`.
+
+- A reusable composite GitHub Action, `actions/tungsten`, installs a pinned
+  tungsten release through `install.sh` from the action's own commit (checksum
+  and build provenance verified, provenance cannot be disabled), then runs
+  `tungsten check`, `tungsten generate --check` and `tungsten lock --check`
+  for one or more projects. It writes one log per check, a run summary and a
+  `failed` output, keeps external targets off by default and ignores
+  `allow-external` for fork pull requests and `pull_request_target`. Linux
+  and macOS runners; `examples/github-actions/tungsten-action.yml` shows it in
+  a workflow.
+- Add opt-in update notices. `TUNGSTEN_UPDATE_NOTICE=stable|prerelease` or the
+  `update_notice` entry of the user settings file enables them; they are off by
+  default. With notices on, `tungsten update check` caches its verified answer,
+  and interactive human-mode commands print at most one stderr line per interval
+  (default 24 hours) naming a newer release whose platform archive and
+  `SHA256SUMS` were confirmed. Notices never make a network request and are
+  suppressed with `--json`, `--offline`, `--policy`, in CI, without a terminal
+  and for `lsp` and `mock`. Cached answers expire after 7 days; a corrupt or
+  unwritable cache is ignored.
 - Add the `examples/restricted-agent` customization example: an MCP server
   that reads freely, confirms writes and hides deletion, with transport
   references and SDK defaults from a shared profile and a check that verifies
@@ -310,6 +350,10 @@ changes.
   `admitted`, `rejected`, `released`, `paused` and `retry_denied` events with
   queue wait, hold and pause durations. Events carry no scope, tenant, URL or
   payload, are not buffered, and an observer's exception or panic is ignored.
+
+- Add `toolDeadlineMs` to the WebMCP adapter's registration options: each
+  tool call gets that total deadline, passed to the TypeScript runtime as
+  `deadlineMs`, as `ServerOptions.toolDeadlineMs` does for the MCP adapter.
 
 - Add an opt-in total operation deadline to the TypeScript (`deadlineMs`),
   Python (`deadline_ms`) and Rust (`deadline`) runtimes, on client and call
@@ -905,6 +949,11 @@ changes.
   nontransactional across files and directories.
 
 ### Fixed
+
+- A TypeScript `deadlineMs` longer than about 24.8 days (2^31 - 1 ms) no
+  longer fails authentication or idempotency-key reservation at once with
+  `DEADLINE_EXCEEDED`; timers over that limit fire immediately in JavaScript.
+  Retry waits and per-attempt timeouts above it are capped at it instead.
 
 - The Rust runtime runs an OAuth2 token fetch or refresh as its own task: a
   caller whose `deadline` passes, or whose future is dropped, stops waiting

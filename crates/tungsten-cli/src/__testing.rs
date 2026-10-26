@@ -11,6 +11,14 @@ use crate::output::{DiagnosticCounts, ExplainResult};
 /// `tungsten update check` seams: injected fetcher, no network.
 pub use crate::commands::update::testing as update;
 
+/// Opt-in cached update notices: pure settings, cache and notice decisions.
+pub mod update_notice {
+    pub use crate::commands::update_notice::{
+        CACHE_MAX_AGE, Cache, CachedStatus, Channel, DEFAULT_INTERVAL_HOURS, NoticeEnv, Settings,
+        after_command, cache_entry, notice, record, settings,
+    };
+}
+
 /// Exercise bounded staging preflight with a private harness budget, without
 /// introducing process-global test overrides or user-facing configuration.
 pub fn generate_with_staging_limits(
