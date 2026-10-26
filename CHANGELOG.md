@@ -347,6 +347,10 @@ changes.
   The bulk-sync example is now a gallery recipe (`python3 examples/run.py
   --only bulk-sync`) that runs it in TypeScript, Python and Rust.
 
+- Add `toolDeadlineMs` to the WebMCP adapter's registration options: each
+  tool call gets that total deadline, passed to the TypeScript runtime as
+  `deadlineMs`, as `ServerOptions.toolDeadlineMs` does for the MCP adapter.
+
 - Add an opt-in total operation deadline to the TypeScript (`deadlineMs`),
   Python (`deadline_ms`) and Rust (`deadline`) runtimes, on client and call
   options. Unlike the per-attempt timeout, it bounds one logical call across
@@ -941,6 +945,11 @@ changes.
   nontransactional across files and directories.
 
 ### Fixed
+
+- A TypeScript `deadlineMs` longer than about 24.8 days (2^31 - 1 ms) no
+  longer fails authentication or idempotency-key reservation at once with
+  `DEADLINE_EXCEEDED`; timers over that limit fire immediately in JavaScript.
+  Retry waits and per-attempt timeouts above it are capped at it instead.
 
 - The Rust runtime runs an OAuth2 token fetch or refresh as its own task: a
   caller whose `deadline` passes, or whose future is dropped, stops waiting
