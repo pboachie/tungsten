@@ -115,6 +115,16 @@ export interface RegisterTungstenWebMcpOptions {
   /** Absent: declared binary outputs reject before sending requests. Secret
    * and shown-once descriptors remain blocked even with this option. */
   binaryResults?: WebMcpBinaryResultOptions;
+  /** Total deadline, in milliseconds, of one tool call: passed to the client
+   * runtime as `CallOptions.deadlineMs`, so it bounds authentication,
+   * idempotency-key reservation, every attempt, retry waits, response bodies
+   * and verification, and a whole macro. A streamed call's deadline bounds
+   * connecting and reconnects; `streamCollection.maxDurationMs` bounds
+   * collecting. Expiry gives a failure with `code` `DEADLINE_EXCEEDED` and
+   * nothing more is sent; a mutation already sent reports `OUTCOME_UNKNOWN`.
+   * Each tool call gets its own deadline. Omitted or 0: the client's
+   * `deadlineMs`, if any. A non-negative safe integer. */
+  toolDeadlineMs?: number;
 }
 
 export interface WebMcpRegistration {
