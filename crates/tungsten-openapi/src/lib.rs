@@ -40,7 +40,7 @@ pub use graph::{RefGraph, is_named_schema};
 pub use jsonpath::overlay_target;
 pub use load::{load, load_str};
 pub use source::{CancellationToken, SourceProvider};
-pub use v32::{custom_method_problem, response_item_schema};
+pub use v32::{TEXT_EVENT_DATA, custom_method_problem, response_item_schema};
 
 /// Index into [`Workspace::documents`].
 pub type DocId = usize;
