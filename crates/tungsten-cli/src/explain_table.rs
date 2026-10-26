@@ -1673,6 +1673,36 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
     ),
 ];
 
+// `explanation` binary-searches the table: an entry out of order would be
+// unreachable, so the build fails instead.
+const _: () = assert!(
+    strictly_sorted(EXPLANATIONS),
+    "EXPLANATIONS must stay sorted by code"
+);
+
+const fn strictly_sorted(table: &[Explanation]) -> bool {
+    let mut i = 1;
+    while i < table.len() {
+        if !less(table[i - 1].code.as_bytes(), table[i].code.as_bytes()) {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+
+/// `a < b` byte-wise, as `str::cmp` orders them.
+const fn less(a: &[u8], b: &[u8]) -> bool {
+    let mut i = 0;
+    while i < a.len() && i < b.len() {
+        if a[i] != b[i] {
+            return a[i] < b[i];
+        }
+        i += 1;
+    }
+    a.len() < b.len()
+}
+
 /// The extended explanation of a code, if one exists. A linear scan, so a
 /// lookup never depends on the table staying sorted (it is kept sorted by code
 /// for readers, but an out-of-order entry once hid TG0705 from a binary search).
