@@ -67,3 +67,4 @@ Additional examples have their own runners and prerequisites:
 - [Response-contract quality](response-contract-audit/README.md): audit weak responses and apply reviewed schema overlays.
 - [GitHub Actions workflow](github-actions/README.md): a copyable workflow that installs a pinned release, validates the contract and fails on stale generated output.
 - [Reuse one configuration profile](profile-reuse/README.md): share reviewed defaults across an app and a multi-target library, with explicit per-project overrides.
+- [Restricted agent integration](restricted-agent/README.md): an MCP server that reads freely, confirms writes and never offers deletion, with transport references from a shared profile.
