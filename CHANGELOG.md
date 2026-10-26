@@ -536,6 +536,15 @@ changes.
 
 ### Fixed
 
+- The Rust runtime runs an OAuth2 token fetch or refresh as its own task: a
+  caller whose `deadline` passes, or whose future is dropped, stops waiting
+  (with `DEADLINE_EXCEEDED` for an expired deadline) instead of cutting short
+  a fetch other callers share, which then failed them with `AUTH_FAILED` and
+  sent a second token request. The TypeScript runtime also stops waiting for
+  authentication, an OAuth rejection refresh or an idempotency key
+  reservation when the caller's `signal` aborts. Python already behaved this
+  way.
+
 - Require Pydantic 2.10.1 or newer in generated Python packages and in
   guided `init` package setup: generated models failed to import with
   Pydantic 2.10.0, which the previous `>=2.10` range allowed.
