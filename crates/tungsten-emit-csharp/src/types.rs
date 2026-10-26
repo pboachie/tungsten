@@ -1080,7 +1080,51 @@ impl Ctx<'_> {
             UnionPlan::Tagged {
                 tag,
                 variants: tagged,
-                ..
+                default: Some(fallback),
+            } => {
+                // OpenAPI 3.2 `defaultMapping`: an object whose tag is
+                // missing, not a string or claimed by no other variant
+                // decodes as the default variant.
+                // The plan's default index always names a variant.
+                let (dname, dct) = &variants[*fallback];
+                let arms: Vec<(String, String)> = tagged
+                    .iter()
+                    .filter(|(index, _)| index != fallback)
+                    .filter_map(|(index, tags)| variants.get(*index).map(|v| (v, tags)))
+                    .flat_map(|((vname, ct), tags)| {
+                        tags.iter().map(move |value| {
+                            (
+                                lit(value),
+                                format!("new {vname}({})", ct.dec_call("node", "d", 0)),
+                            )
+                        })
+                    })
+                    .collect();
+                let default = format!("new {dname}({})", dct.dec_call("node", "d", 0));
+                if arms.is_empty() {
+                    w.line("_ = d.Object(node);");
+                    w.line(format!("return {default};"));
+                } else {
+                    w.line("var o = d.Object(node);");
+                    w.line(format!(
+                        "var tag = o.TryGetPropertyValue({}, out var tagNode) && global::Tungsten.Runtime.Json.TryString(tagNode, out var tagText) ? tagText : null;",
+                        lit(tag)
+                    ));
+                    w.line("return tag switch");
+                    w.line("{");
+                    w.indent();
+                    for (value, body) in arms {
+                        w.line(format!("{value} => {body},"));
+                    }
+                    w.line(format!("_ => {default},"));
+                    w.dedent();
+                    w.line("};");
+                }
+            }
+            UnionPlan::Tagged {
+                tag,
+                variants: tagged,
+                default: None,
             } => {
                 w.line("var o = d.Object(node);");
                 w.line(format!("var tag = d.Tag(o, {});", lit(tag)));

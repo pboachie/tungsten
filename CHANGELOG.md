@@ -244,6 +244,11 @@ changes.
   failure the partial file is removed and the destination is untouched. An
   existing destination is refused (`DESTINATION_EXISTS`) unless overwrite is
   set. Server-suggested file names never choose the destination.
+- Add the `examples/telemetry` gallery recipe: TypeScript, Python and Rust
+  SDKs collect correlated operation, attempt and phase telemetry in memory for
+  a read, a retried read and a missing record, print the same summary and
+  check that no event holds a URL or payload.
+
 - Add streamed upload sources to the TypeScript, Python and Rust runtimes
   (`UploadSource`; Rust `ClientCore::call_upload` / `preview_upload`) for a
   whole binary request body. A source is one-shot (never sent again once
@@ -1017,11 +1022,11 @@ changes.
   as TG0306 and ignored. Other SDK targets still refuse an unmapped tag.
   TG0149 is retired and no longer reported.
 
-- Discriminator `defaultMapping` is honoured by more SDK targets: Java, Kotlin
-  and Ruby SDKs decode an object whose tag is absent, not a string or claimed
-  by no variant as the default variant, as TypeScript, Python and Rust do. A
-  non-string tag then fails only if the default variant's own field type
-  refuses it.
+- Discriminator `defaultMapping` is honoured by more SDK targets: Java,
+  Kotlin, Ruby, C# and F# SDKs decode an object whose tag is absent, not a
+  string or claimed by no variant as the default variant, as TypeScript,
+  Python and Rust do. A non-string tag then fails only if the default
+  variant's own field type refuses it.
 
 - OpenAPI 3.2 security requirements that name a scheme by URI compile: a key
   such as `#/components/securitySchemes/apiKey`, or a URI into another input
