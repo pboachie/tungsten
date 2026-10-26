@@ -669,7 +669,7 @@ impl Server<'_> {
                     });
                     let uri = &p.text_document.uri;
                     let doc = uri_to_path(uri).and_then(|path| self.docs.get(&path));
-                    let list = match doc {
+                    let mut list = match doc {
                         Some(d) if wants_fixes => {
                             let buffer = Buffer {
                                 uri,
@@ -677,16 +677,13 @@ impl Server<'_> {
                                 text: &d.text,
                                 lines: &d.lines,
                             };
-                            let mut list = actions::actions(
-                                &buffer,
-                                &p.context.diagnostics,
-                                self.index.as_ref(),
-                            );
-                            list.extend(self.overlay_fixes(uri, &p.context.diagnostics));
-                            list
+                            actions::actions(&buffer, &p.context.diagnostics, self.index.as_ref())
                         }
                         _ => vec![],
                     };
+                    if wants_fixes {
+                        list.extend(self.overlay_fixes(uri, &p.context.diagnostics));
+                    }
                     self.reply(id, list)
                 }
                 None => self.fail(

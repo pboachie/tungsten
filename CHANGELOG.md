@@ -293,6 +293,13 @@ changes.
   the diagnostic with the closest known name. Fixes are version-pinned edits
   of the current buffer and are withheld when the buffer no longer matches.
 
+- Offer language-server overlay quick fixes for operations without an
+  `operationId` (`TG0403`) and repeated operation ids (`TG0401`), using the
+  actions `tungsten overlay suggest` derives. One previewed workspace edit adds
+  the action to `<namespace>.suggested-overlay.yaml`, creating that file and
+  listing it under the input's `overlays` in `tungsten.yml` when needed. No fix
+  is offered from an analysis older than the latest edit.
+
 - The `java` and `kotlin` targets now enforce imported-operation policy and may
   be generated for projects converted from Postman, cURL, `.http` or HAR input.
   The Java runtime reads each operation's `import_policy`, refuses a reviewed
