@@ -230,6 +230,40 @@ changes.
 
 ### Added
 
+- Add durable checkpoints for resumable read-only page exports to the
+  TypeScript, Python and Rust runtimes (`exportPages` / `export_pages`). Each
+  page carries a caller-owned, HMAC-sealed `checkpoint` token to persist after
+  the page is committed to the sink; passing it back resumes with the next page
+  after a restart. Tokens bind the operation, pagination contract, base URL,
+  tenant, scope and arguments without storing argument values or credentials,
+  and malformed, altered, mismatched, expired (`maxAgeMs` / `max_age_ms`) or
+  stopped tokens are refused before any request. A sink commit followed by a
+  crash before the token is saved replays that page once, so sinks must
+  deduplicate. `describeCheckpoint` / `describe_checkpoint` reports status
+  without the cursor. Registered as the `pagination_checkpoints` capability for
+  the `typescript`, `python` and `rust` targets.
+
+- Generated Rust CLIs sign in to OAuth2 `authorizationCode` schemes:
+  `auth login` runs the runtime's managed S256 flow through a loopback
+  redirect (bounded by the 10-minute attempt and `--deadline`), `auth switch`
+  selects a stored account per profile, `auth logout` removes local sessions
+  (tokens are not revoked at the provider) and `auth status` lists sessions
+  without secrets. Sessions are partitioned by scheme, account, token
+  endpoint, client id, base-URL origin and scopes. Tokens live in the macOS
+  keychain or the Secret Service (`secret-tool`), or in an owner-only file
+  only when `--store file` / `session_store = "file"` is chosen; a locked or
+  missing keychain never falls back to plaintext. Login refuses to run in CI
+  or without a terminal, and no other command starts one.
+
+- `tungsten config` now inspects the C#, F#, Dart, Java, Kotlin, Ruby, MCP,
+  WebMCP and docs target options declared in the capability catalog (status
+  `declared_fields`): each declared field reports its authored value or fixed
+  default, a value of the wrong JSON type is reported with the target's
+  invalid-option warning code, and only package identity fields are exported
+  unredacted. The emitter still validates values when it runs.
+- The `init --targets` help lists the default and companion targets from the
+  capability catalog.
+
 - Add `tungsten refresh-import` to refresh a converted import (Postman, HAR,
   saved cURL, HTTP file, Swagger or endpoint manifest) in place instead of
   re-importing into a fresh project. It converts the new source revision
