@@ -562,7 +562,8 @@ final class OAuthSessions {
             flight.complete(result);
         }
         try {
-            RefreshResult result = flight.get(job.remaining(), TimeUnit.NANOSECONDS);
+            // A caller's deadline stops its own wait, never the shared refresh.
+            RefreshResult result = flight.get(Math.max(1, Math.min(job.remaining(), Deadline.remainingNanos())), TimeUnit.NANOSECONDS);
             if (result.token().failure() != null) return result.token();
             return job.timely() && result.committed() != null && current(scheme, result.committed()) ? result.token() : changed();
         } catch (InterruptedException interrupted) {

@@ -74,7 +74,7 @@ public final class CallOptions {
         return timeout;
     }
 
-    /** The total deadline of this call, or null for the client's; zero or negative means none. */
+    /** The total deadline of this call, or null for the client's. */
     public Duration deadline() {
         return deadline;
     }
@@ -153,13 +153,16 @@ public final class CallOptions {
         }
 
         /**
-         * The total deadline of this call, measured on a monotonic clock from the call. It bounds
+         * The total deadline of this call, overriding the client's; null, zero or negative uses
+         * the client's (none by default). Measured on a monotonic clock from the call, it bounds
          * authentication, idempotency-key reservation, every attempt (each one's timeout is cut to
          * the time left), retry waits, response bodies and verification; for pages, poll and
-         * runMacro the whole traversal, poll or macro. No attempt starts after it expires (code
-         * DEADLINE_EXCEEDED); a mutation already sent reports OUTCOME_UNKNOWN. For stream it is
-         * checked before connecting and each reconnect, never on an open stream. Null inherits the
-         * client's; zero or negative means none.
+         * runMacro it bounds the whole traversal, poll or macro, and nested work cannot restart
+         * it. No attempt starts after it expires (code {@code DEADLINE_EXCEEDED}); a mutation
+         * already sent reports {@code OUTCOME_UNKNOWN}, never a blind replay. For a stream it
+         * bounds connecting and each reconnect, not an open stream (see the idle timeout).
+         * Blocking work the runtime cannot interrupt (a token request this call owns, a shared
+         * client-credentials fetch, an idempotency store) is checked when it returns.
          */
         public Builder deadline(Duration value) {
             deadline = value;

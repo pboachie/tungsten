@@ -820,9 +820,9 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
         "The project was imported from a Postman collection or another source whose operations \
          carry an enforced import policy (the runtime must apply it to every call), and a \
          configured target cannot apply it. Only the typescript, python, rust, java, kotlin, ruby, \
-         csharp, dart, mcp, webmcp and docs targets declare that support, and an external emitter \
-         declares it with `import_policy` in its `--describe` response (the Go emitter in \
-         `emitters/go` does); generating any other target would \
+         csharp, fsharp, dart, mcp, webmcp and docs targets declare that support, and an \
+         external emitter declares it with `import_policy` in its `--describe` response (the Go \
+         emitter in `emitters/go` does); generating any other target would \
          discard the policy. During input conversion, init refuses unsupported built-in \
          targets before saving the converted input or project manifests. During generation \
          of an existing project, tungsten refuses that target alone; other targets are \
@@ -1188,8 +1188,9 @@ pub(crate) const EXPLANATIONS: &[Explanation] = &[
          The emitter is not run and no files are written for that target. Other supported \
          targets are still processed. Built-in targets without this capability use TG0705.",
         "Use an emitter that declares `import_policy: true` and enforces the imported \
-         metadata (the Go emitter in `emitters/go` does), or select a supported TypeScript, Python, Rust, Java, Kotlin, Ruby, C#, Dart, MCP, \
-         WebMCP or docs target. Do not remove policy metadata merely to bypass this check. Protocol-1 \
+         metadata (the Go emitter in `emitters/go` does), or select a supported TypeScript, \
+         Python, Rust, Java, Kotlin, Ruby, C#, F#, Dart, MCP, WebMCP or docs target. Do not \
+         remove policy metadata merely to bypass this check. Protocol-1 \
          emitters remain compatible with projects that have no imported-operation policy.",
     ),
     e(

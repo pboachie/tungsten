@@ -3,7 +3,8 @@
 //! configuration file, then the default.
 //!
 //! Environment: `<PREFIX>_BASE_URL`, `<PREFIX>_PROFILE`, `<PREFIX>_CONFIG`,
-//! `<PREFIX>_TIMEOUT` and `<PREFIX>_DEADLINE` (seconds), and one variable per credential,
+//! `<PREFIX>_TIMEOUT` (seconds per attempt), `<PREFIX>_DEADLINE` (seconds for
+//! the whole command), and one variable per credential,
 //! `<PREFIX>_<SCHEME>` for a token or key and `<PREFIX>_<SCHEME>_<PART>` for
 //! each part of a composite profile (a cookie by its name, a header by the
 //! cookie it equals or the configuration key it takes). The same names,
@@ -18,7 +19,7 @@
 //! [profile.work]
 //! base_url = "https://api.example.test"
 //! timeout = 20
-//! deadline = 60              # total per call: retries, pages and verification
+//! deadline = 60
 //! bearer_auth = "token"
 //! ```
 
@@ -67,7 +68,7 @@ pub(crate) struct Settings {
     pub config_path: Option<PathBuf>,
     pub base_url: Option<(String, Source)>,
     pub timeout: Option<(Duration, Source)>,
-    /// Total deadline of one command's call (`ClientOptions::deadline`).
+    /// Total deadline of the command's logical call (`ClientOptions::deadline`).
     pub deadline: Option<(Duration, Source)>,
     doc: Option<Doc>,
 }
@@ -82,38 +83,6 @@ fn parse_seconds(text: &str, from: &str, what: &str) -> Result<Duration, String>
         _ => Err(format!(
             "{from}: the {what} must be a positive number of seconds"
         )),
-    }
-}
-
-/// A duration setting in seconds: the flag, then `<PREFIX>_<VAR>`, then the
-/// profile key `key`.
-fn seconds_setting(
-    flag: Option<&str>,
-    env: &BTreeMap<String, String>,
-    var: &str,
-    key: &str,
-    profile: Option<&toml::Value>,
-) -> Result<Option<(Duration, Source)>, String> {
-    if let Some(v) = flag {
-        return Ok(Some((
-            parse_seconds(v, &format!("--{key}"), key)?,
-            Source::Flag,
-        )));
-    }
-    if let Some(v) = nonempty(env, var) {
-        return Ok(Some((parse_seconds(v, var, key)?, Source::Env)));
-    }
-    match profile {
-        Some(v) => {
-            let secs = v
-                .as_seconds()
-                .ok_or_else(|| format!("profile {key} must be a number"))?;
-            Ok(Some((
-                parse_seconds(&secs.to_string(), &format!("profile {key}"), key)?,
-                Source::Profile,
-            )))
-        }
-        None => Ok(None),
     }
 }
 
@@ -194,20 +163,33 @@ pub(crate) fn resolve(
             .filter(|v| !v.is_empty())
             .map(|v| (v.to_string(), Source::Profile))
     };
-    let timeout = seconds_setting(
-        flags.timeout,
-        env,
-        &var("TIMEOUT"),
-        "timeout",
-        from_profile("timeout"),
-    )?;
-    let deadline = seconds_setting(
-        flags.deadline,
-        env,
-        &var("DEADLINE"),
-        "deadline",
-        from_profile("deadline"),
-    )?;
+    // `--timeout`/`TIMEOUT`/`timeout` and `--deadline`/`DEADLINE`/`deadline`.
+    let seconds = |flag: Option<&str>, name: &str| -> Result<Option<(Duration, Source)>, String> {
+        let upper = name.to_ascii_uppercase();
+        if let Some(v) = flag {
+            return Ok(Some((
+                parse_seconds(v, &format!("--{name}"), name)?,
+                Source::Flag,
+            )));
+        }
+        if let Some(v) = nonempty(env, &var(&upper)) {
+            return Ok(Some((parse_seconds(v, &var(&upper), name)?, Source::Env)));
+        }
+        match from_profile(name) {
+            Some(v) => {
+                let secs = v
+                    .as_seconds()
+                    .ok_or_else(|| format!("profile {name} must be a number"))?;
+                Ok(Some((
+                    parse_seconds(&secs.to_string(), &format!("profile {name}"), name)?,
+                    Source::Profile,
+                )))
+            }
+            None => Ok(None),
+        }
+    };
+    let timeout = seconds(flags.timeout, "timeout")?;
+    let deadline = seconds(flags.deadline, "deadline")?;
     Ok(Settings {
         profile,
         config_path: path.filter(|_| doc.is_some()),

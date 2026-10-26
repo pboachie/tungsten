@@ -77,7 +77,7 @@ public final class ClientOptions {
         auth = Collections.unmodifiableMap(new LinkedHashMap<>(b.auth));
         tokenStore = b.tokenStore != null ? b.tokenStore : new TokenStore.Memory();
         timeout = positive(b.timeout, DEFAULT_TIMEOUT);
-        deadline = b.deadline;
+        deadline = Deadline.positive(b.deadline) ? b.deadline : null;
         retries = b.retries != null ? b.retries : RetryOptions.none();
         idempotencyStore = b.idempotencyStore != null ? b.idempotencyStore : new IdempotencyStore.Memory();
         middleware = Collections.unmodifiableList(new ArrayList<>(b.middleware));
@@ -230,8 +230,8 @@ public final class ClientOptions {
         }
 
         /**
-         * The total deadline of one logical call (see {@link CallOptions.Builder#deadline}); null,
-         * zero or negative means none, only the per-attempt timeout.
+         * The total deadline of one logical call, see {@link CallOptions.Builder#deadline}. Null,
+         * zero or negative (the default): none, only the per-attempt timeout.
          */
         public Builder deadline(Duration value) {
             deadline = value;

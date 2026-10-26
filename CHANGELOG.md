@@ -226,6 +226,11 @@ changes.
 
 ### Added
 
+- The `fsharp` target now enforces imported-operation policy through the
+  .NET runtime it wraps and may be generated for projects converted from
+  Postman, cURL, `.http` or HAR input. Generated F# SDKs require a .NET runtime
+  with `ClientCore.RequireImportPolicyV1()`.
+
 - Declare every input format (OpenAPI, Swagger, Postman, saved cURL, HTTP
   request files, HAR, endpoint manifests and manual endpoints) in the
   capability catalog with its versions, route, detection, required review flags,
@@ -243,10 +248,12 @@ changes.
   profile keys and target defaults from the shared profile schema, and file
   watchers for profile directories outside the workspace folder so editing a
   shared profile rechecks the project.
+
 - `scenario run --timeout-ms` now bounds the whole command, including input
   acquisition and compilation, and SIGINT/SIGTERM cancel a run that is still
   preparing. Such a run reports `timed_out` or `cancelled` before any port is
   bound or integration started.
+
 - The `csharp` target now enforces imported-operation policy and may be
   generated for projects converted from Postman, cURL, `.http` or HAR input.
   The C# runtime reads each operation's `import_policy` (`AgentMeta.ImportPolicy`),
@@ -272,13 +279,11 @@ changes.
   cannot pay for is not made. A runnable bulk-sync example shows a job staying
   within a local API's concurrency quota.
 
-- Extend the total operation deadline to the Java and Kotlin
-  (`deadline(Duration)`) and Ruby (`deadline_ms`) runtimes, and to generated
-  Rust CLIs as `--deadline SECONDS`, `<PREFIX>_DEADLINE` or the profile key
-  `deadline`. An operation flag named `deadline` is now generated as
-  `--deadline-arg`. Under a deadline, the Rust runtime stops waiting for an
-  OAuth token request at the deadline without cancelling a refresh other
-  callers share.
+- Extend the total operation deadline to the Ruby runtime (`deadline_ms` on
+  client and call options). Under a deadline, the Rust runtime now stops
+  waiting for an OAuth token request at the deadline without cancelling a
+  refresh other callers share.
+
 - Add an opt-in total operation deadline to the TypeScript (`deadlineMs`),
   Python (`deadline_ms`) and Rust (`deadline`) runtimes, on client and call
   options. Unlike the per-attempt timeout, it bounds one logical call across
@@ -299,9 +304,21 @@ changes.
   name `code: DEADLINE_EXCEEDED`, and a mutation already sent still reports
   `OUTCOME_UNKNOWN`.
 
+- Add `--deadline <SECONDS>` to generated Rust CLIs, with the
+  `<PREFIX>_DEADLINE` variable and the profile key `deadline`. It sets the Rust
+  runtime's total deadline for the command (`--timeout` stays per attempt).
+  The flag name is now reserved: an API argument named `deadline` gets the
+  flag `--deadline-arg`.
+
 - Add the same total operation deadline to the Go runtime
   (`ClientOptions.Deadline`, `CallOptions.Deadline`), applied as a
   `context.Context` deadline on top of the caller's context.
+
+- Add the same total operation deadline to the Java runtime
+  (`ClientOptions.Builder.deadline`, `CallOptions.Builder.deadline`, both a
+  `Duration`). Blocking token or store work the calling thread performs is
+  checked when it returns; a caller waiting on shared token work stops at its
+  deadline without cancelling it.
 
 - Add `tungsten lock`, a versioned single-project generation lock
   (`tungsten.lock.json`). It records the declared input closure (manifest,
@@ -388,6 +405,13 @@ changes.
   the action to `<namespace>.suggested-overlay.yaml`, creating that file and
   listing it under the input's `overlays` in `tungsten.yml` when needed. No fix
   is offered from an analysis older than the latest edit.
+
+- Explain unavailable language-server overlay fixes: editors that show disabled
+  code actions show why no fix is offered for a `TG0403`/`TG0401` diagnostic (a
+  pending check, no derivable action, an editor without versioned edits or file
+  creation, or a manifest shape the fix does not edit) and the equivalent
+  `tungsten overlay suggest` command. Replacement fixes for `TG0603`/`TG0602`
+  fall back to plain edits for editors without versioned workspace edits.
 
 - The `java` and `kotlin` targets now enforce imported-operation policy and may
   be generated for projects converted from Postman, cURL, `.http` or HAR input.

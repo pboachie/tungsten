@@ -42,7 +42,7 @@ public final class EventStream<T> implements Iterator<Result<StreamEvent<T>>>, I
     private final Object lock = new Object();
     private Transport.Body body;
     private long collectDeadline;
-    /** Bounds connecting and each reconnect, not an open stream; null without one. */
+    /** The call deadline: it bounds connecting and each reconnect, never an open stream. */
     private final Long deadline;
 
     EventStream(ClientCore core, OperationDescriptor op, Object args, CallOptions opts, Function<Object, T> decoder,
@@ -54,7 +54,7 @@ public final class EventStream<T> implements Iterator<Result<StreamEvent<T>>>, I
         this.opts = opts;
         this.decoder = decoder;
         this.initial = initial;
-        this.deadline = core.deadlineAt(opts);
+        this.deadline = Deadline.resolve(core.deadline, opts);
     }
 
     /** The streaming operation. */
@@ -137,7 +137,7 @@ public final class EventStream<T> implements Iterator<Result<StreamEvent<T>>>, I
     @Override
     public boolean hasNext() {
         if (ahead == null) {
-            ahead = ClientCore.withDeadline(deadline, this::advance);
+            ahead = advance();
         }
         return ahead != null;
     }
@@ -318,6 +318,10 @@ public final class EventStream<T> implements Iterator<Result<StreamEvent<T>>>, I
     }
 
     private Open openStream(String resumeFrom) {
+        return Deadline.within(deadline, () -> openStreamWithin(resumeFrom));
+    }
+
+    private Open openStreamWithin(String resumeFrom) {
         String accept = "";
         for (Map.Entry<String, String> e : core.headers.entrySet()) {
             if (e.getKey().equalsIgnoreCase("accept")) {
@@ -389,6 +393,10 @@ public final class EventStream<T> implements Iterator<Result<StreamEvent<T>>>, I
         double ceiling = old.lastRetry != null ? old.lastRetry : DEFAULT_RECONNECT_MS;
         ceiling = Math.min(ceiling, core.reconnectMax.toMillis());
         double wait = ceiling - core.random() * 0.25 * ceiling;
+        // A reconnect wait never outlasts the deadline; the reconnect then fails unsent.
+        if (deadline != null) {
+            wait = Math.max(0, Math.min(wait, (deadline - System.nanoTime()) / 1e6));
+        }
         ClientCore.sleep(wait);
         Open fresh = openStream(old.lastId);
         fresh.count = old.count;

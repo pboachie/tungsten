@@ -120,6 +120,10 @@ final class Previews {
                 return new Result.Ok<>(new Polled(response.value(), response.hasValue(), outOfTime), true, response.raw(),
                         response.meta(), null);
             }
+            // A poll whose next call could not start before the deadline stops now.
+            if (Deadline.current() != null && Deadline.remainingNanos() <= interval.toNanos()) {
+                throw Deadline.failure(c, op.id(), "before the poll's predicate held");
+            }
             if (!ClientCore.sleep(interval.toNanos() / 1e6)) {
                 throw c.diag(op.id(), Category.TRANSPORT_FAILED).retry(Retryable.NEVER)
                         .remedy("The poll was interrupted before its predicate held.").fail();

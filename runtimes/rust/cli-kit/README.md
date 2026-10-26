@@ -63,6 +63,7 @@ Keep deployment settings in a TOML profile, for example `client.toml`:
 [profile.local]
 base_url = "http://127.0.0.1:4010"
 timeout = 10
+deadline = 60
 ```
 
 ```sh
@@ -75,17 +76,18 @@ environment-variable names and profile keys, and whether each credential is
 present. It does not print credential values or contact the API to verify them.
 The local address above requires a separately running mock when making a call.
 
-Base URL and timeout precedence is command flag, environment variable, selected
+Base URL, timeout and deadline precedence is command flag, environment variable, selected
 profile, then the SDK default. The generated API prefix supplies variables such
-as `PETSTORE_BASE_URL`, `PETSTORE_TIMEOUT`, `PETSTORE_PROFILE` and `PETSTORE_CONFIG`.
+as `PETSTORE_BASE_URL`, `PETSTORE_TIMEOUT`, `PETSTORE_DEADLINE`, `PETSTORE_PROFILE` and `PETSTORE_CONFIG`.
 An explicitly selected profile must exist. `--timeout` is a positive number of
 seconds per request attempt, not an overall retry or pagination deadline.
-In unreleased 0.2.0, `--deadline` (`<PREFIX>_DEADLINE`, profile key `deadline`) is
-a positive number of seconds for the whole command: authentication, every
-attempt, retry waits, all pages of `--all` and `--verify`. No request is sent
-after it expires; the command then fails with `code` `DEADLINE_EXCEEDED`, and a
-mutation that was already sent reports `OUTCOME_UNKNOWN`. Unset means no total
-deadline. An operation flag named `deadline` is generated as `--deadline-arg`.
+`--deadline` (positive seconds; default none) is that overall deadline: it bounds the
+command's one logical call across authentication, retries and backoff, response
+bodies, verification and, with `--all`, every page. No attempt starts after it
+expires, and the error envelope has `code` `DEADLINE_EXCEEDED`. A mutation
+already sent when it expires reports `OUTCOME_UNKNOWN`; run it again only with
+the same `--idempotency-key`. With both set, each attempt gets at most the time
+the deadline has left.
 
 Use the credential names reported by `auth status`; an API can override their
 default environment names. Credentials come from the environment or profile,

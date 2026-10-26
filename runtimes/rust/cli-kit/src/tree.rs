@@ -363,7 +363,7 @@ pub(crate) fn build(spec: &CliSpec, relaxed: &BTreeSet<String>) -> Tree {
             global(
                 "deadline",
                 Some("SECONDS"),
-                "Total deadline of the call: attempts, retries, pages and verification",
+                "Total deadline of the command across retries and verification",
             )
             .value_parser(ValueParser::new(|s: &str| {
                 s.parse::<f64>()

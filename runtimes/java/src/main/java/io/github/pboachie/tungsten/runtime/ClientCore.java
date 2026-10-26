@@ -35,6 +35,7 @@ public final class ClientCore {
     final Map<String, String> headers;
     final String baseUrl;
     final Duration timeout;
+    /** The client's total call deadline, or null. */
     final Duration deadline;
     final int maxEventBytes;
     final int maxCollectBytes;
@@ -158,7 +159,7 @@ public final class ClientCore {
      */
     public Result<Object> call(OperationDescriptor op, Object args, CallOptions opts) {
         try {
-            return withDeadline(deadlineAt(opts), () -> callWith(op, args, opts, null, null));
+            return Deadline.within(Deadline.resolve(deadline, opts), () -> callWith(op, args, opts, null, null));
         } catch (TungstenException e) {
             return e.toResult();
         }
@@ -171,7 +172,7 @@ public final class ClientCore {
      */
     public Result<PreviewResult> preview(OperationDescriptor op, Object args, CallOptions opts) {
         try {
-            return withDeadline(deadlineAt(opts), () -> Previews.preview(this, op, args, opts));
+            return Deadline.within(Deadline.resolve(deadline, opts), () -> Previews.preview(this, op, args, opts));
         } catch (TungstenException e) {
             return e.toResult();
         }
@@ -189,7 +190,7 @@ public final class ClientCore {
     public Result<Polled> poll(OperationDescriptor op, Object args, Object until, Duration interval,
             Duration budget, CallOptions opts) {
         try {
-            return withDeadline(deadlineAt(opts), () -> Previews.poll(this, op, args, until, interval, budget, opts, null));
+            return Deadline.within(Deadline.resolve(deadline, opts), () -> Previews.poll(this, op, args, until, interval, budget, opts, null));
         } catch (TungstenException e) {
             return e.toResult();
         }
@@ -201,7 +202,7 @@ public final class ClientCore {
      */
     public Result<Object> runMacro(MacroDescriptor m, Object input, CallOptions opts) {
         try {
-            return withDeadline(deadlineAt(opts), () -> Macros.run(this, m, input, opts));
+            return Deadline.within(Deadline.resolve(deadline, opts), () -> Macros.run(this, m, input, opts));
         } catch (TungstenException e) {
             return e.toResult();
         }
@@ -210,7 +211,7 @@ public final class ClientCore {
     /** Previews a macro without sending anything. */
     public Result<PreviewResult> previewMacro(MacroDescriptor m, Object input, CallOptions opts) {
         try {
-            return withDeadline(deadlineAt(opts), () -> Macros.preview(this, m, input, opts));
+            return Deadline.within(Deadline.resolve(deadline, opts), () -> Macros.preview(this, m, input, opts));
         } catch (TungstenException e) {
             return e.toResult();
         }
@@ -259,69 +260,6 @@ public final class ClientCore {
         } catch (RuntimeException ignored) {
             // observers never change the call
         }
-    }
-
-    /** The absolute {@link System#nanoTime} deadline of the logical call on this thread, or null. */
-    private static final ThreadLocal<Long> CALL_DEADLINE = new ThreadLocal<>();
-
-    /**
-     * The absolute deadline a call starting now gets from its options (else the client's), never
-     * later than an enclosing call's; null without one.
-     */
-    Long deadlineAt(CallOptions opts) {
-        Duration d = opts != null && opts.deadline() != null ? opts.deadline() : deadline;
-        Long outer = CALL_DEADLINE.get();
-        if (d == null || d.isZero() || d.isNegative()) {
-            return outer;
-        }
-        long nanos;
-        try {
-            nanos = Math.min(d.toNanos(), Long.MAX_VALUE / 4);
-        } catch (ArithmeticException e) {
-            nanos = Long.MAX_VALUE / 4;
-        }
-        long at = System.nanoTime() + nanos;
-        return outer == null || at - outer < 0 ? at : outer;
-    }
-
-    /** Runs {@code work} on this thread under the call deadline {@code at} (null: none). */
-    static <T> T withDeadline(Long at, java.util.function.Supplier<T> work) {
-        if (at == null) {
-            return work.get();
-        }
-        Long previous = CALL_DEADLINE.get();
-        CALL_DEADLINE.set(at);
-        try {
-            return work.get();
-        } finally {
-            if (previous == null) {
-                CALL_DEADLINE.remove();
-            } else {
-                CALL_DEADLINE.set(previous);
-            }
-        }
-    }
-
-    /** Whether the call deadline of this thread has passed. */
-    static boolean deadlineExpired() {
-        Long at = CALL_DEADLINE.get();
-        return at != null && System.nanoTime() - at >= 0;
-    }
-
-    TungstenException deadlineExceeded(String operation, String during) {
-        return diag(operation, Category.TRANSPORT_FAILED).code("DEADLINE_EXCEEDED").retry(Retryable.NEVER)
-                .remedy("The operation deadline expired " + during + ", so the request was not sent. Call again with a larger deadline.")
-                .fail();
-    }
-
-    /** The attempt timeout cut to the time left before the call deadline. */
-    private static Duration withinDeadline(Duration attemptTimeout) {
-        Long at = CALL_DEADLINE.get();
-        if (at == null) {
-            return attemptTimeout;
-        }
-        long left = Math.max(1_000_000L, at - System.nanoTime());
-        return left < attemptTimeout.toNanos() ? Duration.ofNanos(left) : attemptTimeout;
     }
 
     Duration attemptTimeout(CallOptions opts) {
@@ -784,6 +722,9 @@ public final class ClientCore {
                     } catch (RuntimeException e) {
                         throw storeFailure(op, "the store threw " + e.getClass().getSimpleName());
                     }
+                    if (Deadline.expired()) {
+                        throw Deadline.failure(this, op.id(), "while reserving an idempotency key");
+                    }
                     if (key == null || key.isEmpty()) {
                         throw storeFailure(op, "the store returned no key");
                     }
@@ -955,7 +896,13 @@ public final class ClientCore {
         }
         String method = op.method();
         String credentialError = Auth.insecureHttp(urlOverride != null ? urlOverride : baseUrl, options.allowInsecureHttp) ? Auth.INSECURE_HTTP_AUTH : null;
+        if (Deadline.expired()) {
+            throw Deadline.failure(this, op.id(), "before the request could be sent");
+        }
         Auth.Resolved auth = authResolver.resolve(op, method, credentialError);
+        if (Deadline.expired()) {
+            throw Deadline.failure(this, op.id(), "while authenticating");
+        }
         if (auth.failed != null) {
             throw diag(op.id(), Category.AUTH_FAILED).remedy(auth.failed).fail();
         }
@@ -1425,14 +1372,13 @@ public final class ClientCore {
         Classify.OutcomeCheck check = mutation && !protectedCall ? outcomeCheck(op, p.args) : null;
         Duration attemptTimeout = attemptTimeout(opts);
         Duration idle = stream ? idleTimeout : null;
+        Long deadline = Deadline.current();
         int attempts = 0;
-        TungstenException previousMutationFailure = null;
         while (true) {
-            if (deadlineExpired()) {
-                throw previousMutationFailure != null ? previousMutationFailure
-                        : deadlineExceeded(op.id(), "before the request could be sent");
-            }
             attempts++;
+            if (attempts == 1 && Deadline.expired()) {
+                throw Deadline.failure(this, op.id(), "before the request could be sent");
+            }
             Middleware.RequestContext rctx = context(p, attempts, p.method, p.displayUrl);
             onRequest(rctx);
             // Redirects are never followed by the HTTP client: it would forward credential headers
@@ -1442,7 +1388,7 @@ public final class ClientCore {
             Serialize.Payload body = p.payload;
             List<Serialize.Header> hs = new ArrayList<>(p.headers.entries);
             Transport.Outcome outcome = Transport.attempt(http,
-                    new Transport.Request(target, method, hs, body, stream ? attemptTimeout : withinDeadline(attemptTimeout), stream, idle, cap));
+                    new Transport.Request(target, method, hs, body, attemptTimeout, stream, idle, cap, deadline));
             for (int hops = 0; !redirectsDisabled && !mutation && hops < MAX_REDIRECTS; hops++) {
                 if (outcome.kind != Transport.Kind.RESPONSE || "oversized".equals(outcome.bodyFailure) || !isRedirect(outcome.status)) {
                     break;
@@ -1460,10 +1406,7 @@ public final class ClientCore {
                 }
                 rctx = new Middleware.RequestContext(rctx.operation(), rctx.attempt(), method, next[1], rctx.headers(),
                         rctx.body(), rctx.hasBody());
-                if (deadlineExpired()) {
-                    throw deadlineExceeded(op.id(), "before the redirect could be followed");
-                }
-                outcome = Transport.attempt(http, new Transport.Request(target, method, hs, body, withinDeadline(attemptTimeout), stream, idle, cap));
+                outcome = Transport.attempt(http, new Transport.Request(target, method, hs, body, attemptTimeout, stream, idle, cap, deadline));
             }
             p.finalUrl = target;
             Classify.Context cctx = new Classify.Context(identity, api, op, p.key, p.hasKey, p.keyHeader, attempts, check);
@@ -1502,12 +1445,8 @@ public final class ClientCore {
                 }
             }
             onRetry(rctx, d);
-            if (mutation) {
-                previousMutationFailure = done;
-            }
             // A retry that could not start before the deadline is not waited for.
-            Long at = CALL_DEADLINE.get();
-            if (at != null && System.nanoTime() + (long) Math.min(delayMs * 1e6, Long.MAX_VALUE / 4.0) - at >= 0) {
+            if (deadline != null && Deadline.remainingNanos() <= delayMs * 1e6) {
                 throw done;
             }
             if (!sleep(delayMs)) {
@@ -1561,6 +1500,20 @@ public final class ClientCore {
         OperationDescriptor op = p.op;
         boolean mutation = op.isMutation();
         int attempts = cctx.attempts();
+        if (outcome.deadline) {
+            if (outcome.kind == Transport.Kind.NOT_SENT) {
+                throw Deadline.failure(this, op.id(), "before the request could be sent");
+            }
+            if (outcome.kind == Transport.Kind.TIMEOUT) {
+                String cause = "The operation deadline expired before a response arrived.";
+                if (mutation) {
+                    throw new TungstenException(Classify.outcomeUnknown(cctx, cause, null, null, null, null, null));
+                }
+                throw diag(op.id(), Category.UPSTREAM_UNAVAILABLE).code("DEADLINE_EXCEEDED").retry(Retryable.NEVER)
+                        .remedy(cause + " This read has no side effects; call again with a larger " + identity.deadline() + ".")
+                        .attempts(attempts).fail();
+            }
+        }
         switch (outcome.kind) {
             case NOT_SENT:
                 throw diag(op.id(), Category.TRANSPORT_FAILED)
@@ -1584,16 +1537,6 @@ public final class ClientCore {
                         .remedy("The caller's thread was interrupted" + (outcome.sent ? "" : " before the call was sent") + ".")
                         .attempts(attempts).fail();
             case TIMEOUT: {
-                Long at = CALL_DEADLINE.get();
-                if (at != null && System.nanoTime() - at >= -1_000_000L) {
-                    String cause = "The operation deadline expired before a response arrived.";
-                    if (mutation) {
-                        throw new TungstenException(Classify.outcomeUnknown(cctx, cause, null, null, null, null, null));
-                    }
-                    throw diag(op.id(), Category.UPSTREAM_UNAVAILABLE).code("DEADLINE_EXCEEDED").retry(Retryable.NEVER)
-                            .remedy(cause + " This read has no side effects; call again with a larger deadline.")
-                            .attempts(attempts).fail();
-                }
                 long ms = attemptTimeout.toMillis();
                 if (mutation) {
                     throw new TungstenException(Classify.outcomeUnknown(cctx, "No response arrived within " + ms + " ms.", null, null, null, null, null));
@@ -1630,7 +1573,14 @@ public final class ClientCore {
                     .fail();
         }
         if (success && !outcome.bodyOk) {
-            String failure = "timeout".equals(outcome.bodyFailure) ? "timeout" : "broken";
+            String failure = "timeout".equals(outcome.bodyFailure) || "deadline".equals(outcome.bodyFailure) ? outcome.bodyFailure : "broken";
+            if (!mutation && failure.equals("deadline")) {
+                throw diag(op.id(), Category.UPSTREAM_UNAVAILABLE).code("DEADLINE_EXCEEDED").status(status).requestId(requestId)
+                        .retry(Retryable.NEVER)
+                        .remedy("The operation deadline expired while the response body was read. This read has no side effects; call again with a larger "
+                                + identity.deadline() + ".")
+                        .attempts(attempts).fail();
+            }
             if (!mutation) {
                 throw diag(op.id(), Category.UPSTREAM_UNAVAILABLE).status(status).requestId(requestId).retry(Retryable.AFTER_DELAY)
                         .remedy("The response body was cut off (" + failure + "). This read has no side effects; call again.")
