@@ -243,6 +243,10 @@ changes.
   starts after it expires (`DEADLINE_EXCEEDED`); a mutation already sent still
   reports `OUTCOME_UNKNOWN`. Existing timeout semantics are unchanged.
 
+- Add the same total operation deadline to the Go runtime
+  (`ClientOptions.Deadline`, `CallOptions.Deadline`), applied as a
+  `context.Context` deadline on top of the caller's context.
+
 - Add `tungsten lock`, a versioned single-project generation lock
   (`tungsten.lock.json`). It records the declared input closure (manifest,
   profiles, agent manifest, entry documents, local references and overlays in
