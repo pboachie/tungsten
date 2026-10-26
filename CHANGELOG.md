@@ -226,6 +226,10 @@ changes.
 
 ### Added
 
+- Serve local profile files in `tungsten lsp`: completion and hover for
+  profile keys and target defaults from the shared profile schema, and file
+  watchers for profile directories outside the workspace folder so editing a
+  shared profile rechecks the project.
 - `scenario run --timeout-ms` now bounds the whole command, including input
   acquisition and compilation, and SIGINT/SIGTERM cancel a run that is still
   preparing. Such a run reports `timed_out` or `cancelled` before any port is

@@ -2,7 +2,8 @@
 //! Language server for tungsten's manifests.
 //!
 //! `tungsten lsp` serves the Language Server Protocol over stdio for
-//! `tungsten.yml`, `agent.yml` and the overlay files a project lists. The
+//! `tungsten.yml`, `agent.yml`, the overlay files a project lists and the
+//! local profiles it selects (watched even outside the workspace folder). The
 //! workspace is the directory of the `tungsten.yml` (found from the
 //! workspace folder or given with `--config`), and it is compiled once for
 //! all the files in it:

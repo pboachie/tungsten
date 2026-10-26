@@ -17,6 +17,8 @@ pub enum Kind {
     Agent,
     /// An OpenAPI Overlay 1.0 document.
     Overlay,
+    /// A local profile v1 a manifest selects under `profiles`.
+    Profile,
 }
 
 type Table = &'static [(&'static str, &'static str)];
@@ -33,6 +35,7 @@ fn table(kind: Kind) -> Table {
         Kind::Manifest => MANIFEST,
         Kind::Agent => AGENT,
         Kind::Overlay => OVERLAY,
+        Kind::Profile => PROFILE,
     }
 }
 
@@ -61,7 +64,7 @@ fn matches(pattern: &str, path: &[Seg]) -> bool {
 pub fn value(kind: Kind, path: &[Seg], value: &str) -> Option<&'static str> {
     let table = match kind {
         Kind::Agent => AGENT_VALUES,
-        Kind::Manifest | Kind::Overlay => return None,
+        Kind::Manifest | Kind::Overlay | Kind::Profile => return None,
     };
     table
         .iter()
@@ -666,4 +669,47 @@ const OVERLAY: Table = &[
         "Object merged into every selected node: mappings merge recursively, arrays append.",
     ),
     ("actions[].remove", "`true` removes every selected node."),
+];
+
+const PROFILE: Table = &[
+    (
+        "tungsten_profile",
+        "Profile format version. Must be `1`; other versions are refused with a diagnostic.",
+    ),
+    (
+        "includes",
+        "Profiles applied before this one, as paths relative to this file. They must stay inside the include root the manifest selected; depth and cycles are bounded.",
+    ),
+    (
+        "includes[]",
+        "A relative path to another local profile under the same include root. URLs and absolute paths are refused.",
+    ),
+    (
+        "targets",
+        "Reusable target defaults. Explicit project fields in `tungsten.yml` win; `tungsten config` shows each value's winning and shadowed source.",
+    ),
+    (
+        "targets.typescript",
+        "Defaults for the TypeScript SDK: `package`, `version`, `runtime` and `dependencies`. Paths stay per project.",
+    ),
+    (
+        "targets.ts",
+        "Alias of `typescript`. Use one spelling per profile.",
+    ),
+    (
+        "targets.python",
+        "Defaults for the Python SDK: `package`, `version`, `runtime`, `models` and `python_version`. The `module` and paths stay per project.",
+    ),
+    (
+        "targets.py",
+        "Alias of `python`. Use one spelling per profile.",
+    ),
+    (
+        "targets.rust",
+        "Defaults for the Rust SDK: `crate`, `version` and `runtime`. The `cli` and paths stay per project.",
+    ),
+    (
+        "targets.rs",
+        "Alias of `rust`. Use one spelling per profile.",
+    ),
 ];
