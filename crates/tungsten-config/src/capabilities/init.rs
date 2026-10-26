@@ -17,6 +17,17 @@ pub struct CompanionTarget {
     pub requires: &'static str,
 }
 
+/// A named `init --preset` starting point. Explicit `--targets` win.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct InitPreset {
+    pub name: &'static str,
+    pub description: &'static str,
+    pub targets: &'static [&'static str],
+    /// The preset generates with `--strict`.
+    pub strict: bool,
+}
+
 /// Source declaration of `init` target selection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
 #[schemars(deny_unknown_fields)]
@@ -31,6 +42,7 @@ pub struct InitCapability {
     pub companions: &'static [CompanionTarget],
     /// The `init`-only output name expanding to the `rust` target with its CLI.
     pub cli_alias: &'static str,
+    pub presets: &'static [InitPreset],
 }
 
 pub const INIT: InitCapability = InitCapability {
@@ -48,9 +60,34 @@ pub const INIT: InitCapability = InitCapability {
         },
     ],
     cli_alias: "cli",
+    presets: &[
+        InitPreset {
+            name: "app",
+            description: "TypeScript SDK and docs for one application",
+            targets: &["typescript", "docs"],
+            strict: false,
+        },
+        InitPreset {
+            name: "library",
+            description: "TypeScript, Python and Rust SDKs with docs, sharing a local profile",
+            targets: &["typescript", "python", "rust", "docs"],
+            strict: false,
+        },
+        InitPreset {
+            name: "agent",
+            description: "MCP server on the TypeScript SDK, generated with --strict",
+            targets: &["typescript", "mcp"],
+            strict: true,
+        },
+    ],
 };
 
 impl InitCapability {
+    /// Look up a preset by name.
+    pub fn preset(&self, name: &str) -> Option<&'static InitPreset> {
+        self.presets.iter().find(|preset| preset.name == name)
+    }
+
     /// Whether local setup covers `target` (an id, or the CLI alias).
     pub fn local_setup(&self, target: &str) -> bool {
         let target = if target == self.cli_alias {
@@ -91,6 +128,7 @@ impl InitCapability {
             .iter()
             .chain(self.wizard_default_targets)
             .chain(self.local_setup_targets)
+            .chain(self.presets.iter().flat_map(|preset| preset.targets))
             .chain(
                 self.companions
                     .iter()
@@ -100,6 +138,18 @@ impl InitCapability {
             if !emitter(id) {
                 errors.push(format!(
                     "init declares `{id}`, which is not a built-in emitter target"
+                ));
+            }
+        }
+        let mut names = std::collections::BTreeSet::new();
+        for preset in self.presets {
+            if !names.insert(preset.name) {
+                errors.push(format!("init preset `{}` is declared twice", preset.name));
+            }
+            for companion in self.required_companions(preset.targets, &[]) {
+                errors.push(format!(
+                    "init preset `{}` omits `{companion}`, which its targets require",
+                    preset.name
                 ));
             }
         }

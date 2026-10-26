@@ -185,6 +185,9 @@ The support matrix below is generated from the capability catalog (`tungsten cap
 | Default (`--targets` omitted) | `typescript`, `python`, `docs` |
 | Wizard default | `typescript`, `docs` |
 | Local setup (`--local-example`, wizard) | `typescript`, `python`, `rust`, `mcp`, `webmcp`, `docs`, and `cli` (Rust SDK and CLI) |
+| `--preset app` | `typescript`, `docs` |
+| `--preset library` | `typescript`, `python`, `rust`, `docs` |
+| `--preset agent` (`--strict`) | `typescript`, `mcp` |
 | Selecting `mcp` adds | `typescript` |
 | Selecting `webmcp` adds | `typescript` |
 
