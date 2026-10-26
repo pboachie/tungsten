@@ -561,18 +561,14 @@ pub(crate) fn rehearse(args: &UpgradeRehearseArgs, env: &CliEnv) -> Report {
             targets: vec![],
         };
         let shown = workspace.display().to_string();
-        commands.push(format!(
-            "tungsten upgrade apply {path} --workspace {shown}"
-        ));
+        commands.push(format!("tungsten upgrade apply {path} --workspace {shown}"));
         result.commands = commands;
         match stage(workspace, plan, &recipe, ir, staged, &mut result) {
             Ok(()) => result.staged = true,
             Err(error) => {
-                result.findings.push(blocking(
-                    FindingKind::Staging,
-                    &shown,
-                    &error.message,
-                ));
+                result
+                    .findings
+                    .push(blocking(FindingKind::Staging, &shown, &error.message));
                 result.verdict = RehearsalVerdict::Blocked;
                 report.error = Some(error);
             }
@@ -614,7 +610,9 @@ fn conflict_detail(reason: ConflictReason) -> &'static str {
         ConflictReason::NotGenerated => {
             "the output directory was not written by tungsten; choose a new `out` directory or run `tungsten generate --force` with the current release first"
         }
-        ConflictReason::Link => "a symbolic link is in the way; replace it with the file it points to",
+        ConflictReason::Link => {
+            "a symbolic link is in the way; replace it with the file it points to"
+        }
         ConflictReason::ChangedSinceRehearsal => {
             "the file changed after the rehearsal; rehearse again"
         }
@@ -641,8 +639,7 @@ fn generated_by(out_dir: &Path) -> Option<String> {
 fn identities(locked: &GenerationRecipe, current: &GenerationRecipe) -> Vec<IdentityChange> {
     let mut changes = vec![];
     if locked.compiler != current.compiler {
-        let show =
-            |c: &CompilerIdentity| format!("{} {} (IR {})", c.name, c.version, c.ir_version);
+        let show = |c: &CompilerIdentity| format!("{} {} (IR {})", c.name, c.version, c.ir_version);
         changes.push(IdentityChange {
             kind: IdentityKind::Compiler,
             subject: "compiler".into(),
@@ -858,7 +855,8 @@ fn stage(
             baseline,
         });
     }
-    lock::write_lock(&workspace.join(LOCK_FILE), recipe).map_err(|e| io("write the proposed lock", e))?;
+    lock::write_lock(&workspace.join(LOCK_FILE), recipe)
+        .map_err(|e| io("write the proposed lock", e))?;
     result.staged = true;
     let record = RehearsalRecord {
         tungsten_rehearsal: REHEARSAL_VERSION,
@@ -866,7 +864,9 @@ fn stage(
         plan: &plan,
         report: result,
     };
-    let mut text = serde_json::to_string_pretty(&record).map_err(std::io::Error::other).map_err(|e| io("serialize the rehearsal", e))?;
+    let mut text = serde_json::to_string_pretty(&record)
+        .map_err(std::io::Error::other)
+        .map_err(|e| io("serialize the rehearsal", e))?;
     text.push('\n');
     write_atomic(&workspace.join(REHEARSAL_FILE), text.as_bytes())
         .map_err(|e| io("write the rehearsal record", e))
@@ -880,16 +880,17 @@ fn create_workspace<'a>(
 ) -> Result<(), CliError> {
     let shown = workspace.display().to_string();
     let refuse = |message: String| {
-        CliError::new(ErrorKind::Refused, message)
-            .with_help("pass --workspace with a new directory outside the project's output directories")
+        CliError::new(ErrorKind::Refused, message).with_help(
+            "pass --workspace with a new directory outside the project's output directories",
+        )
     };
     match std::fs::create_dir(workspace) {
         Ok(()) => {}
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
             let meta = std::fs::symlink_metadata(workspace)
                 .map_err(|e| refuse(format!("cannot inspect {shown}: {e}")))?;
-            let empty = meta.is_dir()
-                && std::fs::read_dir(workspace).is_ok_and(|mut d| d.next().is_none());
+            let empty =
+                meta.is_dir() && std::fs::read_dir(workspace).is_ok_and(|mut d| d.next().is_none());
             if !empty {
                 return Err(refuse(format!(
                     "{shown} already exists and is not an empty directory"
@@ -897,11 +898,10 @@ fn create_workspace<'a>(
             }
         }
         Err(error) => {
-            return Err(CliError::new(
-                ErrorKind::Io,
-                format!("cannot create {shown}: {error}"),
-            )
-            .with_help("the parent directory must exist and be writable"));
+            return Err(
+                CliError::new(ErrorKind::Io, format!("cannot create {shown}: {error}"))
+                    .with_help("the parent directory must exist and be writable"),
+            );
         }
     }
     let canonical = std::fs::canonicalize(workspace)
@@ -946,11 +946,15 @@ pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 /// Human output: identities, per-target changes, findings and next commands.
 fn human(r: &RehearsalResult) -> String {
     let mut out = String::new();
-    let from = r
-        .from
-        .as_ref()
-        .map_or_else(|| "an unlocked project".to_string(), |f| format!("tungsten {}", f.version));
-    let _ = writeln!(out, "upgrade rehearsal: {from} -> tungsten {}", r.to.version);
+    let from = r.from.as_ref().map_or_else(
+        || "an unlocked project".to_string(),
+        |f| format!("tungsten {}", f.version),
+    );
+    let _ = writeln!(
+        out,
+        "upgrade rehearsal: {from} -> tungsten {}",
+        r.to.version
+    );
     for change in &r.identity_changes {
         let _ = writeln!(
             out,
@@ -988,7 +992,11 @@ fn human(r: &RehearsalResult) -> String {
         let _ = writeln!(
             out,
             "  {} {}: {}",
-            if finding.blocking { "blocked:" } else { "note:" },
+            if finding.blocking {
+                "blocked:"
+            } else {
+                "note:"
+            },
             finding.subject,
             finding.detail
         );
@@ -1016,6 +1024,14 @@ fn human(r: &RehearsalResult) -> String {
     out
 }
 
+/// The snake_case name of a conflict reason, as in `--json` output.
+pub(crate) fn reason_name(reason: ConflictReason) -> String {
+    serde_json::to_value(reason)
+        .ok()
+        .and_then(|v| v.as_str().map(str::to_string))
+        .unwrap_or_default()
+}
+
 /// A short list of conflicts for an apply refusal.
 pub(crate) fn describe_conflicts(conflicts: &[(String, Conflict)]) -> String {
     conflicts
@@ -1025,7 +1041,7 @@ pub(crate) fn describe_conflicts(conflicts: &[(String, Conflict)]) -> String {
             format!(
                 "{target}: {} ({})",
                 if c.path.is_empty() { "." } else { &c.path },
-                format!("{:?}", c.reason).to_lowercase()
+                reason_name(c.reason)
             )
         })
         .collect::<Vec<_>>()

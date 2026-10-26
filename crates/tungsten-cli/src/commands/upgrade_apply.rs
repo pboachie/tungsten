@@ -31,7 +31,8 @@ use crate::args::UpgradeApplyArgs;
 use crate::commands::lock::{self, Existing, LOCK_FILE};
 use crate::commands::upgrade::{
     ApplyPlan, Conflict, ConflictReason, PlannedTarget, REHEARSAL_FILE, REHEARSAL_VERSION,
-    STAGED_DIR, describe_conflicts, disk_digest, local_manifest, plan_digest, write_atomic,
+    STAGED_DIR, describe_conflicts, disk_digest, local_manifest, plan_digest, reason_name,
+    write_atomic,
 };
 use crate::output::{CliError, CommandName, CommandResult, ErrorKind};
 use crate::{Report, exit, input, targets};
@@ -236,10 +237,7 @@ pub(crate) fn run(args: &UpgradeApplyArgs) -> Report {
         Existing::Corrupt => Some(String::new()),
     };
     if current_lock != plan.base_lock {
-        return refuse(
-            report,
-            format!("{LOCK_FILE} changed since the rehearsal"),
-        );
+        return refuse(report, format!("{LOCK_FILE} changed since the rehearsal"));
     }
 
     // Load and verify every staged target, and check the baseline.
@@ -251,7 +249,10 @@ pub(crate) fn run(args: &UpgradeApplyArgs) -> Report {
         if out_dir.display().to_string() != target.out {
             return refuse(
                 report,
-                format!("the output directory of {} changed since the rehearsal", target.target),
+                format!(
+                    "the output directory of {} changed since the rehearsal",
+                    target.target
+                ),
             );
         }
         let staged = match load_staged(&args.workspace, target) {
@@ -260,7 +261,10 @@ pub(crate) fn run(args: &UpgradeApplyArgs) -> Report {
         };
         for planned in &target.baseline {
             if !confined(&planned.path) {
-                return refuse(report, format!("the rehearsal lists the invalid path {:?}", planned.path));
+                return refuse(
+                    report,
+                    format!("the rehearsal lists the invalid path {:?}", planned.path),
+                );
             }
             let now = disk_digest(&out_dir.join(&planned.path));
             if now.as_ref().ok() != Some(&planned.digest) {
@@ -293,7 +297,9 @@ pub(crate) fn run(args: &UpgradeApplyArgs) -> Report {
                     describe_conflicts(&listed)
                 ),
             )
-            .with_help("nothing was written; review those files, then rehearse again into a new workspace"),
+            .with_help(
+                "nothing was written; review those files, then rehearse again into a new workspace",
+            ),
         );
         report.human = human(&result);
         report.result = Some(CommandResult::UpgradeApply(Box::new(result)));
@@ -375,7 +381,10 @@ pub(crate) fn run(args: &UpgradeApplyArgs) -> Report {
                 report.diagnostics.extend(d.0);
                 return io_failure(
                     report,
-                    format!("applying the output of {} failed; the project output may be partly upgraded", target.target),
+                    format!(
+                        "applying the output of {} failed; the project output may be partly upgraded",
+                        target.target
+                    ),
                     &restore_help,
                 );
             }
@@ -395,7 +404,9 @@ pub(crate) fn run(args: &UpgradeApplyArgs) -> Report {
     if let Err(error) = write_journal(&args.workspace, &journal) {
         return io_failure(
             report,
-            format!("the upgrade was applied but the apply journal could not be completed: {error}"),
+            format!(
+                "the upgrade was applied but the apply journal could not be completed: {error}"
+            ),
             "the project is upgraded; keep the workspace until you have reviewed it",
         );
     }
@@ -442,7 +453,10 @@ fn restore(
             let path = out_dir.join(&planned.path);
             let outcome = match &planned.digest {
                 Some(_) => copy_file(
-                    &workspace.join(BACKUP_DIR).join(index.to_string()).join(&planned.path),
+                    &workspace
+                        .join(BACKUP_DIR)
+                        .join(index.to_string())
+                        .join(&planned.path),
                     &path,
                 )
                 .map(|()| entry.written.push(planned.path.clone())),
@@ -473,8 +487,11 @@ fn restore(
         if let Err(error) = copy_file(&workspace.join(BACKUP_DIR).join(LOCK_FILE), &lock_path) {
             return report.failed(
                 exit::INTERNAL,
-                CliError::new(ErrorKind::Io, format!("cannot restore {LOCK_FILE}: {error}"))
-                    .with_help("fix the problem and run --restore again; it is safe to repeat"),
+                CliError::new(
+                    ErrorKind::Io,
+                    format!("cannot restore {LOCK_FILE}: {error}"),
+                )
+                .with_help("fix the problem and run --restore again; it is safe to repeat"),
             );
         }
         result.lock_updated = true;
@@ -485,7 +502,9 @@ fn restore(
             exit::INTERNAL,
             CliError::new(
                 ErrorKind::Io,
-                format!("the output was restored but the apply journal could not be updated: {error}"),
+                format!(
+                    "the output was restored but the apply journal could not be updated: {error}"
+                ),
             ),
         );
     }
@@ -509,15 +528,25 @@ fn load_staged(workspace: &Path, target: &PlannedTarget) -> Result<Staged, Strin
         .strip_prefix(&format!("{STAGED_DIR}/"))
         .filter(|i| !i.is_empty() && i.bytes().all(|b| b.is_ascii_digit()));
     if index.is_none() {
-        return Err(format!("the rehearsal lists the invalid staged directory {:?}", target.staged));
+        return Err(format!(
+            "the rehearsal lists the invalid staged directory {:?}",
+            target.staged
+        ));
     }
     let dir = workspace.join(&target.staged);
-    let modified = |path: &str| format!("the staged file {} was modified after the rehearsal", dir.join(path).display());
+    let modified = |path: &str| {
+        format!(
+            "the staged file {} was modified after the rehearsal",
+            dir.join(path).display()
+        )
+    };
     let mut files = FileSet::new();
     for planned in &target.files {
         let path = dir.join(&planned.path);
         let bytes = match std::fs::symlink_metadata(&path) {
-            Ok(meta) if meta.is_file() => std::fs::read(&path).map_err(|_| modified(&planned.path))?,
+            Ok(meta) if meta.is_file() => {
+                std::fs::read(&path).map_err(|_| modified(&planned.path))?
+            }
             _ => return Err(modified(&planned.path)),
         };
         if Some(Digest::of(&bytes).0) != planned.digest {
@@ -641,10 +670,14 @@ fn human(r: &UpgradeApplyResult) -> String {
     for c in &r.conflicts {
         let _ = writeln!(
             out,
-            "  conflict {}: {} ({:?})",
+            "  conflict {}: {} ({})",
             c.target,
-            if c.conflict.path.is_empty() { "." } else { &c.conflict.path },
-            c.conflict.reason
+            if c.conflict.path.is_empty() {
+                "."
+            } else {
+                &c.conflict.path
+            },
+            reason_name(c.conflict.reason)
         );
     }
     let _ = writeln!(
@@ -653,7 +686,11 @@ fn human(r: &UpgradeApplyResult) -> String {
         match r.action {
             ApplyAction::Applied => format!(
                 "applied the rehearsal{}; backups stay in {} until you remove it",
-                if r.lock_updated { " and updated the lock" } else { "" },
+                if r.lock_updated {
+                    " and updated the lock"
+                } else {
+                    ""
+                },
                 r.workspace
             ),
             ApplyAction::Restored => "restored the output recorded before the apply".to_string(),
