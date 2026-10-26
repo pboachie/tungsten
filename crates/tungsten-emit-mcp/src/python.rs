@@ -21,6 +21,7 @@
 //! | `runtime` | `tungsten-mcp` version specifier | `>=0.1.3,<0.2.0` |
 //! | `runtime_path` | `tungsten-mcp` from a local path (a uv path source) | |
 //! | `sdk_runtime_path` | `tungsten-runtime` from a local path (a uv path source) | |
+//! | `webmcp` | also generate `<module>/webmcp.py`, an experimental ASGI dispatch app backing browser WebMCP tools | `false` |
 //!
 //! The command line passes the sibling `python` target's options as the
 //! reserved option `python_target` (`{package, module, version}`). An invalid
@@ -114,6 +115,8 @@ pub struct PythonOptions {
     pub runtime: String,
     pub runtime_path: Option<String>,
     pub sdk_runtime_path: Option<String>,
+    /// Also generate `<module>/webmcp.py` (experimental browser dispatch).
+    pub webmcp: bool,
 }
 
 fn is_module(s: &str) -> bool {
@@ -159,6 +162,20 @@ impl PythonOptions {
                     .unwrap_or_else(|| serde_json::json!({})),
             },
         );
+        let webmcp = match cfg.options.get("webmcp") {
+            None => false,
+            Some(Value::Bool(value)) => *value,
+            Some(value) => {
+                diags.push(
+                    Diagnostic::warning(
+                        "TG0728",
+                        "target option `mcp-python.webmcp` must be true or false; the default is used",
+                    )
+                    .with_help(format!("got {value}")),
+                );
+                false
+            }
+        };
         let mut read = |key: &str, valid: &dyn Fn(&str) -> bool, expected: &str| {
             let value = cfg.options.get(key)?;
             match value.as_str() {
@@ -198,6 +215,7 @@ impl PythonOptions {
                 .unwrap_or_else(|| DEFAULT_RUNTIME.into()),
             runtime_path: read("runtime_path", &is_text, "a non-empty path"),
             sdk_runtime_path: read("sdk_runtime_path", &is_text, "a non-empty path"),
+            webmcp,
         };
         (opts, diags)
     }
@@ -224,7 +242,7 @@ pub fn generate(ir: &Ir, opts: &PythonOptions) -> Vec<(String, String)> {
     let manifest_json =
         crate::json::pretty(&serde_json::to_value(&manifest).unwrap_or(Value::Null));
     let m = &opts.module;
-    vec![
+    let mut files = vec![
         (".env.example".into(), env_example(ir)),
         ("README.md".into(), readme(ir, opts, &manifest)),
         ("pyproject.toml".into(), pyproject(ir, opts)),
@@ -233,7 +251,74 @@ pub fn generate(ir: &Ir, opts: &PythonOptions) -> Vec<(String, String)> {
         (format!("{m}/custom/__init__.py"), custom_template()),
         (format!("{m}/manifest.json"), manifest_json),
         (format!("{m}/server.py"), server_py(ir, opts)),
-    ]
+    ];
+    if opts.webmcp {
+        files.push((format!("{m}/webmcp.py"), webmcp_py(ir, opts)));
+    }
+    files
+}
+
+fn webmcp_py(ir: &Ir, opts: &PythonOptions) -> String {
+    let client = tungsten_emit_py::async_client_class(ir);
+    let mut out = head(ir);
+    out.push_str(&format!(
+        "\n\"\"\"Experimental Python dispatch for browser WebMCP tools of the {title} API.\n\
+         \n\
+         Mount `app(principal=...)` under a prefix of your application's own origin (any\n\
+         ASGI framework), and register the tools in the page with `registerRemoteWebMcp`\n\
+         from `@elysra/tungsten-webmcp`. Calls run here, through the generated Python SDK\n\
+         with credentials from the environment (README.md); none reach the browser.\"\"\"\n\
+         \n\
+         from __future__ import annotations\n\
+         \n\
+         from collections.abc import Sequence\n\
+         \n\
+         from {sdk} import {client}\n\
+         from tungsten_mcp import (\n\
+         \x20   ServerOptions,\n\
+         \x20   WebMcpDispatch,\n\
+         \x20   WebMcpOptions,\n\
+         \x20   load_manifest,\n\
+         \x20   webmcp_app,\n\
+         )\n\
+         from tungsten_mcp._webmcp import Authorizer, PrincipalResolver\n\
+         \n\
+         from .custom import customize\n\
+         from .server import client_options\n\
+         \n\
+         \n\
+         def app(\n\
+         \x20   principal: PrincipalResolver,\n\
+         \x20   *,\n\
+         \x20   allowlist: Sequence[str] | None = None,\n\
+         \x20   authorize: Authorizer | None = None,\n\
+         \x20   allowed_origins: Sequence[str] = (),\n\
+         \x20   tool_deadline_ms: int | None = None,\n\
+         ) -> WebMcpDispatch:\n\
+         \x20   \"\"\"The dispatch app. `principal(scope)` is your authentication (the signed-in\n\
+         \x20   user of the request, or None); `allowlist` exposes mutations and macros, which\n\
+         \x20   are hidden by default; `authorize(principal, tool)` checks each tool per user.\"\"\"\n\
+         \x20   options = ServerOptions(\n\
+         \x20       manifest=load_manifest(__package__ or {module}),\n\
+         \x20       create_core=lambda: {client}(client_options()).core,\n\
+         \x20       name={name},\n\
+         \x20       version={version},\n\
+         \x20       tool_deadline_ms=tool_deadline_ms,\n\
+         \x20   )\n\
+         \x20   web = WebMcpOptions(\n\
+         \x20       principal=principal,\n\
+         \x20       allowlist=allowlist,\n\
+         \x20       authorize=authorize,\n\
+         \x20       allowed_origins=allowed_origins,\n\
+         \x20   )\n\
+         \x20   return webmcp_app(customize(options), web)\n",
+        title = tungsten_ir::title_stem(&ir.api.title),
+        sdk = opts.sdk_module,
+        module = lit(&opts.module),
+        name = lit(&opts.package),
+        version = lit(&opts.version),
+    ));
+    out
 }
 
 fn pyproject(ir: &Ir, opts: &PythonOptions) -> String {
@@ -513,5 +598,19 @@ fn readme(ir: &Ir, opts: &PythonOptions, manifest: &McpManifest) -> String {
          - See the `tungsten-mcp` runtime README for the full list.\n\n\
          `custom/__init__.py` is yours: tungsten creates it once and never overwrites it.\n",
     );
+    if opts.webmcp {
+        out.push_str(&format!(
+            "\n## Browser WebMCP (experimental)\n\n\
+             `{module}.webmcp.app(principal=...)` is an ASGI app that backs browser WebMCP tools with \
+             this server's Python SDK calls. Mount it under a prefix of your application's own origin, \
+             pass your authentication as `principal(scope)` (the signed-in user, or None), and register \
+             the tools in the page with `registerRemoteWebMcp` from `@elysra/tungsten-webmcp`. Only \
+             read-only operations are exposed unless `allowlist` names others; every call needs the \
+             `X-Tungsten-WebMCP: 1` header, a same-origin `Origin` and an authenticated principal, and \
+             each principal has its own API client and confirmation tokens. Credentials stay on the \
+             server. See the `tungsten-mcp` runtime README.\n",
+            module = opts.module,
+        ));
+    }
     out
 }

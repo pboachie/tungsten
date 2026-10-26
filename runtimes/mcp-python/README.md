@@ -70,7 +70,46 @@ standard input and output and writes its own errors to standard error.
 - **Binary bodies.** A binary request body is accepted as base64 (standard or base64url)
   text and sent as bytes.
 
-## Limits
+## Browser WebMCP dispatch (experimental)
+
+`webmcp_app(options, WebMcpOptions(principal=...))` is a framework-neutral ASGI app. It
+backs browser WebMCP tools with calls through the generated Python SDK, so page-side tools
+run on the server, and credentials and runtime policy stay there. Generate it with
+`webmcp: true` on the `mcp-python` target, which writes `<module>/webmcp.py` with
+`app(principal, allowlist=..., authorize=...)`. Mount it under a prefix of your
+application's own origin, and register the tools in the page with `registerRemoteWebMcp`
+from `@elysra/tungsten-webmcp`. Browser registration stays JavaScript.
+
+The contract, `webmcpDispatchVersion` 1, is application integration, not a WebMCP protocol:
+
+- `GET <prefix>/tools` returns the WebMCP tools the principal may use. Each tool is listed
+  with `call: {tool, preview}`. A tool that needs confirmation also has a `<name>__preview`
+  tool.
+- `POST <prefix>/call` takes `{tool, preview, arguments}` and returns `{ok: true, value}` or
+  `{ok: false, error}` (the diagnostic envelope, with `partial` when the call produced
+  something before failing).
+
+Security:
+
+- **Authentication.** `principal(scope)` is required. A request without a principal gets
+  401. Each principal has its own API client, confirmation tokens and shown-once state, so
+  a token from one user is refused for another. Up to `max_principals` (1,000) are kept,
+  least recently used first out. Call `forget(principal)` at logout.
+- **CSRF and origin.** Every request needs `X-Tungsten-WebMCP: 1`. A `POST` also needs
+  `Content-Type: application/json` and an `Origin` equal to the request's own origin, or one
+  listed in `allowed_origins`. No CORS headers are sent.
+- **Exposure.** Read-only operations are exposed by default. Mutations and macros are
+  exposed only when listed in `allowlist`, and the allowlist is enforced on every call.
+  `authorize(principal, tool)` filters the listing and checks every call. Hiding a tool in
+  the browser is not access control; these server checks are.
+- **Results.** Destructive and irreversible calls need the argument-bound token from the
+  preview tool. Irreversible operations are verified. Request bodies and results are
+  bounded by `max_bytes` (1 MiB), and a larger result fails with `RESULT_TOO_LARGE`
+  (nothing is silently clipped). Secret-bearing (sensitive or shown-once), streamed and
+  binary results are refused, as in the TypeScript adapter's defaults. The per-call
+  deadline is `tool_deadline_ms`.
+
+
 
 - **Streamable HTTP.** `--http <port> [--host <host>] [--token-env <NAME>]` serves
   `http://<host>:<port>/mcp` through the SDK's session manager, with one tool session (its
