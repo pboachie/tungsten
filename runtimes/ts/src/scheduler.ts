@@ -269,7 +269,9 @@ export class RequestScheduler {
     if (signal?.aborted) return Promise.resolve({ reason: "aborted" });
     const pool = this.#pool(key);
     const now = performance.now();
-    const budget = Math.min(this.maxQueueMs, deadline === undefined ? Infinity : Math.max(0, deadline - now));
+    // The wait ends at an absolute time: the deadline itself when it comes first.
+    const until = Math.min(now + this.maxQueueMs, deadline ?? Infinity);
+    const budget = Math.max(0, until - now);
     const paused = Math.max(0, pool.pausedUntil - now);
     if (paused === 0 && pool.queue[kind].length === 0 && pool.active[kind] < this.#limit(pool, kind) && this.#room(kind)) {
       return Promise.resolve(this.#grant(key, pool, kind, random));
@@ -298,7 +300,13 @@ export class RequestScheduler {
         reject: (rejection) => { finish(); resolve(rejection); this.#forget(key, pool); this.#pump(key, pool); },
       };
       const onAbort = (): void => waiter.reject({ reason: "aborted" });
-      if (Number.isFinite(budget)) timer = setTimeout(() => waiter.reject({ reason: "timeout" }), budget);
+      // A timer can fire just before the clock reaches `until`; the wait ends only once it has.
+      const expire = (): void => {
+        const left = until - performance.now();
+        if (left > 0) timer = setTimeout(expire, left);
+        else waiter.reject({ reason: "timeout" });
+      };
+      if (Number.isFinite(budget)) timer = setTimeout(expire, budget);
       signal?.addEventListener("abort", onAbort, { once: true });
       pool.queue[kind].push(waiter);
       this.#pump(key, pool);

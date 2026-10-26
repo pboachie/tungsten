@@ -1382,6 +1382,14 @@ changes.
 
 ### Fixed
 
+- A TypeScript call whose `deadlineMs` runs out while it waits in the request
+  scheduler's queue now reports `TRANSPORT_FAILED` `DEADLINE_EXCEEDED`
+  (`retryable: never`), as Python and Rust do. Previously the queue timer
+  could fire just before the clock reached the deadline, and the call
+  reported `RATE_LIMITED` `QUEUE_TIMEOUT` (`after_delay`). The queue wait now
+  ends at the deadline itself in TypeScript and Python, as it does in Rust.
+  A wait bounded by `maxQueueMs` still reports `QUEUE_TIMEOUT`.
+
 - The Rust runtime reconnects a dropped event stream by resending the request it
   opened with, as the TypeScript and Python runtimes do, instead of preparing it
   again: a reconnect no longer re-runs authentication or reports a second `auth`
