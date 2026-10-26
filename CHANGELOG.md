@@ -226,6 +226,11 @@ changes.
 
 ### Added
 
+- Offer language-server quick fixes for unknown operation ids (`TG0603`) and
+  unknown manifest fields or values (`TG0602`), replacing the value named by
+  the diagnostic with the closest known name. Fixes are version-pinned edits
+  of the current buffer and are withheld when the buffer no longer matches.
+
 - The `java` and `kotlin` targets now enforce imported-operation policy and may
   be generated for projects converted from Postman, cURL, `.http` or HAR input.
   The Java runtime reads each operation's `import_policy`, refuses a reviewed
