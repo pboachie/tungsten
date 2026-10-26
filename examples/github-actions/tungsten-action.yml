@@ -29,12 +29,13 @@ jobs:
         with:
           persist-credentials: false
 
-      # Pin the action by the full commit SHA of a tungsten release tag that
-      # contains actions/tungsten, and set `version` to that release. Upgrade
-      # both together, see README.md.
+      # The action is pinned by full commit SHA. No release tag contains
+      # actions/tungsten yet, so this is the main commit that added it; once
+      # one does, pin the commit of that release tag instead. `version` is the
+      # compiler release the action installs. See README.md for upgrades.
       - name: Check the tungsten project
         id: tungsten
-        uses: pboachie/tungsten/actions/tungsten@<commit> # <tag>
+        uses: pboachie/tungsten/actions/tungsten@94776ac689e6745654ff9c1f617048647b46db9b # main
         with:
           version: "0.1.3"
           # One project per line, relative to the repository root.

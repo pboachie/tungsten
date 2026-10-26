@@ -21,9 +21,9 @@ The same checks are available as a reusable action,
 cp examples/github-actions/tungsten-action.yml .github/workflows/tungsten.yml
 ```
 
-Replace `<commit>` in that file with the full commit SHA of a tungsten release
-tag that contains `actions/tungsten` (until a release contains it, a commit of
-`main`), keep the tag in the comment and set `version`. The action also checks
+That file pins the action to the `main` commit that added it, because no
+release tag contains `actions/tungsten` yet; once one does, pin the full commit
+SHA of that tag, keep the tag in the comment and set `version` to the release. The action also checks
 `tungsten.lock.json` when the project has one, checks several projects in one
 step (`projects`, one per line), writes one log per check (uploaded as the
 `tungsten-logs` artifact when the job fails) and a summary table on the run
