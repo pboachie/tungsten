@@ -261,12 +261,6 @@ const fn def(
 /// Registered features. Ids are stable; descriptions may be refined.
 pub const FEATURES: &[FeatureDefinition] = &[
     def(
-        "imported_operation_policy",
-        FeatureDomain::Runtime,
-        "enforces imported-operation policy (Postman, cURL, .http, HAR inputs) at run time",
-        None,
-    ),
-    def(
         "typed_sdk",
         FeatureDomain::Target,
         "typed models and operation methods for every compiled operation",
@@ -358,11 +352,6 @@ const DOTNET: &[ToolRequirement] = &[ToolRequirement::new("dotnet", Some([10, 0]
 
 /// Typed SDK features shared by every built-in SDK target.
 const SDK: &[&str] = &["typed_sdk", "pagination_helpers"];
-const SDK_POLICY: &[&str] = &[
-    "typed_sdk",
-    "pagination_helpers",
-    "imported_operation_policy",
-];
 
 macro_rules! targets {
     ($({
@@ -397,12 +386,12 @@ macro_rules! targets {
 targets! {
     {
         id: "csharp", aliases: &["cs"], source: BuiltInEmitter, family: Some("dotnet"),
-        policy: false, tools: DOTNET, summary: "C# SDK",
+        policy: true, tools: DOTNET, summary: "C# SDK",
         options: &["package_id", "namespace", "version", "runtime", "runtime_path", "out"],
         environments: [Dotnet], features: SDK,
     },
     {
-        id: "dart", aliases: &[], source: BuiltInEmitter, family: Some("dart"), policy: false,
+        id: "dart", aliases: &[], source: BuiltInEmitter, family: Some("dart"), policy: true,
         tools: &[ToolRequirement {
             tool: "dart", minimum: Some([3, 6]), maximum_exclusive: Some([4, 0]), minimum_option: None, excluded_versions: &[],
         }],
@@ -413,7 +402,7 @@ targets! {
     {
         id: "docs", aliases: &[], source: BuiltInEmitter, family: None, policy: true, tools: &[],
         summary: "llms.txt, llms-full.txt, tools.json and README", options: &["out"],
-        environments: [Static], features: &["llms_txt", "imported_operation_policy"],
+        environments: [Static], features: &["llms_txt"],
     },
     {
         id: "fsharp", aliases: &["fs"], source: BuiltInEmitter, family: Some("dotnet"),
@@ -427,7 +416,7 @@ targets! {
         tools: &[ToolRequirement::new("java", Some([17, 0])), ToolRequirement::new("mvn", None)],
         summary: "Java SDK",
         options: &["group_id", "artifact_id", "package", "version", "runtime", "runtime_path", "out"],
-        environments: [Jvm], features: SDK_POLICY,
+        environments: [Jvm], features: SDK,
     },
     {
         id: "kotlin", aliases: &["kt"], source: BuiltInEmitter, family: Some("jvm"), policy: true,
@@ -437,7 +426,7 @@ targets! {
             "group", "artifact", "package", "version", "runtime", "runtime_path",
             "java_runtime_path", "coroutines", "coroutines_runtime_path", "out",
         ],
-        environments: [Jvm], features: &["typed_sdk", "pagination_helpers", "imported_operation_policy", "coroutines"],
+        environments: [Jvm], features: &["typed_sdk", "pagination_helpers", "coroutines"],
     },
     {
         id: "mcp", aliases: &[], source: BuiltInEmitter, family: Some("typescript"), policy: true,
@@ -450,7 +439,6 @@ targets! {
         environments: [Node],
         features: &[
             "mcp_stdio", "mcp_streamable_http", "mcp_embedding_search", "mcp_script_sandbox",
-            "imported_operation_policy",
         ],
     },
     {
@@ -466,14 +454,14 @@ targets! {
         summary: "Sync and async Python SDK, Pydantic v2 or dataclass models",
         options: &["package", "module", "version", "runtime", "runtime_path", "python_version", "models", "out"],
         environments: [Cpython],
-        features: &["typed_sdk", "pagination_helpers", "imported_operation_policy", "dataclass_models"],
+        features: &["typed_sdk", "pagination_helpers", "dataclass_models"],
     },
     {
         id: "ruby", aliases: &["rb"], source: BuiltInEmitter, family: Some("ruby"), policy: true,
         tools: &[ToolRequirement::new("ruby", Some([3, 3])), ToolRequirement::new("bundle", None)],
         summary: "Ruby SDK",
         options: &["gem", "module", "version", "runtime", "runtime_path", "out"],
-        environments: [Ruby], features: SDK_POLICY,
+        environments: [Ruby], features: SDK,
     },
     {
         id: "rust", aliases: &["rs"], source: BuiltInEmitter, family: Some("rust"), policy: true,
@@ -482,14 +470,14 @@ targets! {
         summary: "Async Rust SDK (serde, reqwest) and optional generated CLI",
         options: &["crate", "version", "runtime", "runtime_path", "cli", "out"],
         environments: [Native],
-        features: &["typed_sdk", "pagination_helpers", "imported_operation_policy", "generated_cli"],
+        features: &["typed_sdk", "pagination_helpers", "generated_cli"],
     },
     {
         id: "typescript", aliases: &["ts"], source: BuiltInEmitter, family: Some("typescript"),
         policy: true, tools: JS, schema: Some(TargetOptionSchema::TypeScript),
         summary: "Typed TypeScript SDK, Result values, Zod validation",
         options: &["package", "version", "runtime", "runtime_path", "dependencies", "out"],
-        environments: [Node], features: SDK_POLICY,
+        environments: [Node], features: SDK,
     },
     {
         id: "webmcp", aliases: &[], source: BuiltInEmitter, family: Some("typescript"), policy: true,
@@ -500,7 +488,7 @@ targets! {
             "sdk_runtime_path", "out",
         ],
         environments: [Browser],
-        features: &["webmcp_registration", "imported_operation_policy"],
+        features: &["webmcp_registration"],
     },
 }
 
@@ -750,11 +738,18 @@ pub struct OpenApiVersionCapability {
 use InputFeaturePolicy::{Ignored, Rejected};
 
 /// OpenAPI 3.2 constructs without a 3.1 equivalent that are compiled.
-pub const OPENAPI_32_SUPPORTED: &[SupportedInputFeature] = &[SupportedInputFeature {
-    id: "query_method",
-    member: "query",
-    behavior: "an operation sent with the HTTP QUERY method and its request body; safe, so read-only by default",
-}];
+pub const OPENAPI_32_SUPPORTED: &[SupportedInputFeature] = &[
+    SupportedInputFeature {
+        id: "query_method",
+        member: "query",
+        behavior: "an operation sent with the HTTP QUERY method and its request body; safe, so read-only by default",
+    },
+    SupportedInputFeature {
+        id: "reusable_media_types",
+        member: "components.mediaTypes, $ref media type",
+        behavior: "a media type object given by $ref is read as if written in place",
+    },
+];
 
 /// OpenAPI 3.2 constructs without a 3.1 equivalent that are diagnosed. A 3.2
 /// document using none of these is read as its 3.1 twin plus the supported
@@ -785,12 +780,6 @@ pub const OPENAPI_32_FEATURES: &[UnsupportedInputFeature] = &[
         "nested_encoding",
         "encoding, prefixEncoding, itemEncoding (Encoding Object)",
         "TG0147",
-        Rejected,
-    ),
-    feature(
-        "reusable_media_types",
-        "components.mediaTypes, $ref media type",
-        "TG0148",
         Rejected,
     ),
     feature(
@@ -951,13 +940,6 @@ pub fn validate_parts(
                 )),
                 Some(_) => {}
             }
-        }
-        if target.features.contains(&"imported_operation_policy")
-            != target.imported_operation_policy
-        {
-            errors.push(format!(
-                "target `{id}`: `imported_operation_policy` disagrees with its feature list"
-            ));
         }
         if target.source_support == SourceSupport::Reserved
             && (!target.prerequisites.is_empty()

@@ -22,6 +22,38 @@ CATALOG = json.loads((HERE / "gallery.json").read_text())
 
 
 TUTORIALS = {
+    "mock-scenarios": """
+## Saved scenarios for retry behavior
+
+This recipe compiles the committed `openapi.json` directly; it does not write a
+project manifest or generate an SDK. Each file in `scenarios/` is version 1 JSON:
+responses queued on the existing mock controls, plus the calls and effects the
+integration should cause. Files are data only. The integration is the separate,
+stdlib-only `integration.py`, selected explicitly after `--`:
+
+```sh
+tungsten scenario validate openapi.json --scenario scenarios/lost-write.json
+tungsten scenario run openapi.json --scenario scenarios/lost-write.json \\
+  --timeout-ms 30000 -- python3 -I integration.py lost-write
+```
+
+The integration reads its fresh loopback URL from `TUNGSTEN_MOCK_BASE_URL`. Each
+run binds its own port and mock state, so runs never share responses or counts.
+
+| Scenario | Correct integration | `--broken` variant that must fail |
+|---|---|---|
+| `rate-limit.json` | retries a 429 after `Retry-After` | gives up after the 429 |
+| `stream-interrupted.json` | resumes with `Last-Event-ID` after a cut stream | stops at the cut |
+| `malformed.json` | reports an invalid JSON body once (`--expect-exit 3`) | retries the same request |
+| `lost-write.json` | retries a dropped write with the same `Idempotency-Key` | uses a new key for the retry |
+
+The runner validates all four files, runs each correct integration, and
+requires each broken variant to fail. The lost-write broken variant matches
+every call count; only `expect.effects` (`applied` 2, `replayed` 0) rejects it.
+`scenario run` is currently Linux-only, and this recipe fails explicitly on
+other platforms after validation. Assertions describe the mock's observations
+and its own processing, not a real provider's behavior.
+""",
     "input-postman": """
 ## Problem: a collection is not yet a client contract
 
@@ -460,6 +492,35 @@ with PetstoreClient(base_url=sys.argv[1], validate_responses="strict") as client
         assert len(deletes) == (1 if preview else 0), "preview or missing confirmation executed a mutation"
 
 
+SCENARIOS = {"rate-limit": 0, "stream-interrupted": 0, "malformed": 3, "lost-write": 0}
+
+
+def scenario_run(binary: str, work: Path, name: str, broken: bool) -> dict:
+    # --json precedes the subcommand: everything after `--` is the integration argv.
+    argv = [binary, "--json", "scenario", "run", "openapi.json", "--scenario", f"scenarios/{name}.json",
+            "--timeout-ms", "30000", "--expect-exit", str(SCENARIOS[name]),
+            "--", sys.executable, "-I", str(work / "integration.py"), name]
+    result = command(argv + (["--broken"] if broken else []), work, 1 if broken else 0)
+    return json.loads(result.stdout)["result"]["run"]
+
+
+def scenarios(binary: str, work: Path) -> None:
+    for name in SCENARIOS:
+        tungsten(binary, work, "scenario", "validate", "openapi.json", "--scenario", f"scenarios/{name}.json")
+    if not sys.platform.startswith("linux"):
+        raise RuntimeError("scenario files validated, but scenario run is currently available on Linux only")
+    for name in SCENARIOS:
+        run = scenario_run(binary, work, name, broken=False)
+        assert run["passed"] and run["reason"] == "completed", (name, run)
+        broken = scenario_run(binary, work, name, broken=True)
+        assert not broken["passed"] and not broken["scenario"]["passed"], (name, broken)
+    # A new idempotency key on the retry matches every call count; only the
+    # effect assertion distinguishes it from a correct replay.
+    lost = scenario_run(binary, work, "lost-write", broken=True)["scenario"]
+    assert lost["total_calls"]["passed"] and all(c["passed"] for c in lost["calls"]), lost
+    assert lost["effects"][0]["applied"]["actual"] == 2, lost
+
+
 def digest_tree(root: Path) -> dict[str, str]:
     return {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest()
             for p in root.rglob("*") if p.is_file()}
@@ -483,6 +544,12 @@ def execute(entry: dict, binary: str, build_packages: bool) -> None:
         assert first == digest_tree(docs), "input regeneration was not deterministic"
         tungsten(binary, project, "generate", "--check")
         assert list(project.rglob("llms.txt")), "docs were not generated"
+        return
+    if mode == "scenario":
+        for name in ("openapi.json", "integration.py"):
+            shutil.copyfile(example / name, work / name)
+        shutil.copytree(example / "scenarios", work / "scenarios")
+        scenarios(binary, work)
         return
     target = entry.get("target", "python" if mode in {"mock", "preview"} else "docs")
     shutil.copyfile(example / "openapi.json", work / "openapi.json")

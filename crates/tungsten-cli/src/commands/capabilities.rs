@@ -4,7 +4,7 @@
 use std::fmt::Write as _;
 use tungsten_config::capabilities::{self, CapabilityCatalog};
 
-use crate::args::CapabilitiesArgs;
+use crate::args::{CapabilitiesArgs, MatrixFormat};
 use crate::output::{CliError, CommandName, CommandResult, ErrorKind};
 use crate::{Report, exit};
 
@@ -41,7 +41,10 @@ pub(crate) fn run(args: &CapabilitiesArgs) -> Report {
         execution_policy: capabilities::execution_policy(),
     };
     if args.matrix {
-        report.human = matrix(&result);
+        report.human = match args.format {
+            MatrixFormat::Human => matrix(&result),
+            MatrixFormat::Markdown => format!("{MATRIX_START}\n{}{MATRIX_END}\n", matrix(&result)),
+        };
         report.result = Some(CommandResult::Capabilities(result));
         return report;
     }
@@ -129,6 +132,11 @@ pub(crate) fn openapi_human(inputs: &[capabilities::OpenApiVersionCapability]) -
     }
     out
 }
+
+/// Markers delimiting the generated block in README.md; the
+/// `check-support-matrix.py` CI script compares the block with this output.
+pub(crate) const MATRIX_START: &str = "<!-- tungsten-capabilities-matrix:start -->";
+pub(crate) const MATRIX_END: &str = "<!-- tungsten-capabilities-matrix:end -->";
 
 /// The public support matrix: one row per target, every cell derived from
 /// the catalog so documentation cannot drift from the declarations.
