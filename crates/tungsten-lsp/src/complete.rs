@@ -211,6 +211,26 @@ fn target_keys(target: &str) -> &'static [&'static str] {
     tungsten_config::capabilities::target(target).map_or(&["out"], |target| target.option_keys)
 }
 
+/// Enumerated values of a target option, from the option schema the
+/// capability catalog declares for the target, each marked when it is the default.
+fn target_option_values(target: &str, key: &str) -> Vec<(String, bool)> {
+    let Some(schema) =
+        tungsten_config::capabilities::target(target).and_then(|target| target.options_schema)
+    else {
+        return vec![];
+    };
+    let schema = schema.json_schema();
+    let property = &schema["properties"][key];
+    let default = property.get("default");
+    property
+        .get("enum")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|value| Some((value.as_str()?.to_string(), Some(value) == default)))
+        .collect()
+}
+
 fn overlay_keys(path: &[Seg]) -> &'static [&'static str] {
     match shape(path).as_str() {
         "" => &["overlay", "info", "extends", "actions"],
@@ -291,6 +311,22 @@ fn values(inputs: &Inputs<'_>, cx: &Context) -> Vec<CompletionItem> {
                 CompletionItemKind::ENUM_MEMBER,
                 "cluster",
             );
+        }
+        (Kind::Manifest, s) if s.starts_with("targets.") && cx.path.len() == 3 => {
+            if let (Some(Seg::Key(target)), Some(Seg::Key(key))) = (cx.path.get(1), cx.path.get(2))
+            {
+                for (value, default) in target_option_values(target, key) {
+                    let mut it = item(
+                        inputs,
+                        cx,
+                        &value,
+                        CompletionItemKind::ENUM_MEMBER,
+                        value.clone(),
+                    );
+                    it.detail = default.then(|| "default".to_string());
+                    out.push(it);
+                }
+            }
         }
         (Kind::Manifest, "auth_profiles.*.satisfies[]") => {
             names(

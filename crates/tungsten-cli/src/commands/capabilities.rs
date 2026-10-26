@@ -37,6 +37,7 @@ pub(crate) fn run(args: &CapabilitiesArgs) -> Report {
         targets,
         features: capabilities::FEATURES.to_vec(),
         openapi_inputs: capabilities::OPENAPI_INPUTS.to_vec(),
+        input_formats: capabilities::INPUT_FORMATS.to_vec(),
         execution_policy: capabilities::execution_policy(),
     };
     if args.matrix {
@@ -68,11 +69,34 @@ pub(crate) fn run(args: &CapabilitiesArgs) -> Report {
                 requirement.description()
             );
         }
+        for record in target.evidence {
+            let _ = writeln!(
+                report.human,
+                "    evidence ({}): {} <{}>",
+                snake(&record.scope),
+                record.combination,
+                record.reference
+            );
+        }
     }
     report
         .human
         .push_str(&openapi_human(&result.openapi_inputs));
-    report.human.push_str("Source declarations only; platform qualification and artifact availability are unknown. Use doctor for local prerequisites.\n");
+    report.human.push_str("Input formats\n");
+    for format in &result.input_formats {
+        let _ = writeln!(
+            report.human,
+            "  {:<18} {}{}",
+            format.id,
+            snake(&format.route),
+            if format.imported_operations {
+                "; operations imported"
+            } else {
+                ""
+            }
+        );
+    }
+    report.human.push_str("Source declarations only; qualification, platform and artifact evidence are unknown unless a record is listed. Use doctor for local prerequisites.\n");
     report.result = Some(CommandResult::Capabilities(result));
     report
 }
@@ -201,6 +225,34 @@ fn matrix(catalog: &CapabilityCatalog) -> String {
             input.line,
             snake(&input.support),
             input.unsupported_features.len()
+        );
+    }
+    out.push_str("\n| Input format | Versions | Route | Detection | Operations | Review flags | Acquisition |\n|---|---|---|---|---|---|---|\n");
+    for format in &catalog.input_formats {
+        let _ = writeln!(
+            out,
+            "| `{}` | {} | {} | {} | {} | {} | {} |",
+            format.id,
+            format.versions.join(", "),
+            snake(&format.route),
+            format.detection,
+            if format.imported_operations {
+                "imported"
+            } else {
+                "native"
+            },
+            format
+                .review_flags
+                .iter()
+                .map(|flag| format!("`{flag}`"))
+                .collect::<Vec<_>>()
+                .join(", "),
+            format
+                .acquisition
+                .iter()
+                .map(snake)
+                .collect::<Vec<_>>()
+                .join(", "),
         );
     }
     out.push_str(

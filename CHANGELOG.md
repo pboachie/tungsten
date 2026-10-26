@@ -226,6 +226,19 @@ changes.
 
 ### Added
 
+- Declare every input format (OpenAPI, Swagger, Postman, saved cURL, HTTP
+  request files, HAR, endpoint manifests and manual endpoints) in the
+  capability catalog with its versions, route, detection, required review flags,
+  acquisition and whether its operations are imported; `tungsten capabilities`
+  and `--matrix` list them. Targets gain an `evidence` list: qualification,
+  artifact and platform states become `recorded` only when a record names the
+  exact combination and a public reference, and stay `unknown` otherwise.
+  Editors now complete enumerated target option values, such as Python
+  `python_version` and `models`, from the declared option schemas. Imported-operation
+  policy support is declared once per target instead of also as a feature, so
+  enabling it for a target (as for Dart) no longer makes `tungsten
+  capabilities` report conflicting declarations.
+
 - Serve local profile files in `tungsten lsp`: completion and hover for
   profile keys and target defaults from the shared profile schema, and file
   watchers for profile directories outside the workspace folder so editing a
