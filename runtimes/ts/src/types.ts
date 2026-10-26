@@ -231,6 +231,8 @@ export type BodyEncoding = "json" | "form" | "multipart" | "bytes" | "text";
 export interface PartDescriptor {
   name: string;
   contentType?: string;
+  /** Headers with a fixed value sent on each part of the field. */
+  headers?: Array<{ name: string; value: string }>;
 }
 
 export interface BodyDescriptor {

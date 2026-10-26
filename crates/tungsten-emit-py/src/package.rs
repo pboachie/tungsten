@@ -257,6 +257,7 @@ from tungsten_runtime import (
     Issue,
     MacroDescriptor,
     OperationDescriptor,
+    UploadSource,
     Valid,
 )
 
@@ -338,7 +339,7 @@ def _bytes(value: object, handler: ValidatorFunctionWrapHandler, info: Validatio
 
 
 def _bytes_or_file(value: Any, handler: ValidatorFunctionWrapHandler) -> Any:
-    return value if _is_file(value) else handler(value)
+    return value if _is_file(value) or isinstance(value, UploadSource) else handler(value)
 
 
 def _serialize_bytes(value: Any) -> Any:
@@ -377,8 +378,9 @@ file object or a ``(filename, content[, content_type])`` tuple only in a
 multipart body, where the runtime reads it."""
 
 type Binary = Annotated[bytes, WrapValidator(_bytes_or_file)]
-"""A whole binary request body: bytes, or a file object or ``(filename,
-content[, content_type])`` tuple the runtime reads."""
+"""A whole binary request body: bytes, a file object or ``(filename,
+content[, content_type])`` tuple the runtime reads, or an ``UploadSource``
+the runtime streams."""
 
 def _integral(value: object) -> object:
     if isinstance(value, float) and value.is_integer():
@@ -743,7 +745,10 @@ fn client_paths(plan: &Plan<'_>) -> Vec<(usize, String)> {
             match m.kind {
                 MemberKind::Op(o) => out.push((o, format!("{prefix}.{}", m.name))),
                 MemberKind::Child(c) => walk(plan, c, &format!("{prefix}.{}", m.name), out),
-                MemberKind::Preview(_) | MemberKind::Pages(_) | MemberKind::Stream(_) => {}
+                MemberKind::Preview(_)
+                | MemberKind::Pages(_)
+                | MemberKind::Stream(_)
+                | MemberKind::Download(_) => {}
             }
         }
     }

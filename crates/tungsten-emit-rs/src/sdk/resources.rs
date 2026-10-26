@@ -298,6 +298,67 @@ fn write_method(
             w.line("let events = client.core.stream(op.clone(), spec, args, opts.clone());");
             w.line("events.typed()");
         }
+        MemberKind::Download(_) => {
+            doc(
+                w,
+                &paragraphs([format!(
+                    "`{}` (`{}`) with its binary success body streamed instead of buffered: a `Download` to read chunk by chunk, hand to a sink with `write_to`, or save with `save_to`. Everything before the answer follows the rules of `{}()`; `transfer.max_bytes` bounds the body and `transfer.on_progress` reports it. The connection is held until the body ends or the `Download` is closed or dropped.",
+                    info.op.id.0,
+                    info.op.wire_method(),
+                    names.call
+                )]),
+            );
+            let params = vec![
+                "&self".to_string(),
+                format!("request: {req}"),
+                "opts: &CallOptions".to_string(),
+                "transfer: tungsten_runtime::DownloadOptions".to_string(),
+            ];
+            fn_sig(
+                w,
+                4,
+                &format!("pub async fn {name}"),
+                &params,
+                "std::result::Result<tungsten_runtime::Download, tungsten_runtime::Error>",
+            );
+            w.indent();
+            op_lines(w, &konst);
+            w.line("let args = s::args(&request);");
+            w.line("client.core.download(op, args, opts, transfer).await");
+        }
+        MemberKind::Upload(_) => {
+            doc(
+                w,
+                &paragraphs([format!(
+                    "`{}` (`{}`) with its binary request body streamed from `source` instead of `request`'s body, which is ignored. A one-shot source is never sent twice; a declared length or SHA-256 the bytes do not match abandons the request before its last bytes. Otherwise the rules of `{}()` apply.",
+                    info.op.id.0,
+                    info.op.wire_method(),
+                    names.call
+                )]),
+            );
+            let params = vec![
+                "&self".to_string(),
+                format!("request: {req}"),
+                "source: tungsten_runtime::UploadSource".to_string(),
+                "opts: &CallOptions".to_string(),
+            ];
+            fn_sig(
+                w,
+                4,
+                &format!("pub async fn {name}"),
+                &params,
+                &format!("tungsten_runtime::Result<{}>", shape.success),
+            );
+            w.indent();
+            op_lines(w, &konst);
+            w.line("let args = s::args(&request);");
+            w.line("let outcome = client.core.call_upload(op, args, opts, source).await;");
+            if shape.by_status.is_some() {
+                w.line("decode_by_status(&op.id, outcome)");
+            } else {
+                w.line("tungsten_runtime::decode(&op.id, outcome)");
+            }
+        }
         MemberKind::Op(_) | MemberKind::Child(_) => {
             doc(
                 w,
@@ -473,7 +534,9 @@ pub(crate) fn resource_file(
             MemberKind::Op(o)
             | MemberKind::Preview(o)
             | MemberKind::Pages(o)
-            | MemberKind::Stream(o) => o,
+            | MemberKind::Stream(o)
+            | MemberKind::Download(o)
+            | MemberKind::Upload(o) => o,
             MemberKind::Child(_) => continue,
         };
         let names = op_names(r, o);

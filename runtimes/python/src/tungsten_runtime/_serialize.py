@@ -18,7 +18,7 @@ from ._json import FilePart, canonical_json, iso_datetime, js_number, json_text,
 from ._upload import UploadSource
 from ._util import REDACTED, binary_size, is_array, is_binary, is_record, usv, utf8
 from .sentinels import UNSET
-from .types import BodyDescriptor, OperationDescriptor, ParamDescriptor
+from .types import BodyDescriptor, OperationDescriptor, ParamDescriptor, PartDescriptor
 
 
 class SerializationError(Exception):
@@ -331,17 +331,25 @@ def encode_body(
     if encoding == "multipart":
         if not is_record(value):
             raise SerializationError(parameter, "a mapping of multipart fields", value)
-        files: list[tuple[str, tuple[str | None, bytes, str | None]]] = []
+        files: list[tuple[str, tuple[str | None, bytes, str | None, dict[str, str]]]] = []
+
+        def add(name: str, filename: str | None, content: bytes, content_type: str | None) -> None:
+            # httpx adds Content-Type to the headers mapping it is given: a fresh one per part.
+            files.append((name, (filename, content, content_type, dict(part_headers))))
+
         display: dict[str, object] = {}
-        declared_parts = {
-            part["name"]: part["content_type"]
-            for part in reversed(descriptor.get("parts", []) if descriptor is not None else [])
-            if "content_type" in part
-        }
+        declared_parts: dict[str, PartDescriptor] = {}
+        for declared_part in descriptor.get("parts", []) if descriptor is not None else []:
+            declared_parts.setdefault(declared_part["name"], declared_part)
         for k, v in _entries(value):
             items = [item for item in v if _present(item)] if is_array(v) else [v]
             shown: list[object] = []
-            declared = declared_parts.get(k)
+            declared_part = declared_parts.get(k)
+            declared = declared_part.get("content_type") if declared_part is not None else None
+            part_headers = {
+                h["name"]: h["value"]
+                for h in (declared_part.get("headers", []) if declared_part is not None else [])
+            }
             declared_json = declared is not None and is_json_media(declared.split(";", 1)[0].strip().lower())
             for item in items:
                 if is_binary(item):
@@ -351,14 +359,12 @@ def encode_body(
                         raise SerializationError(
                             parameter, "multipart file content types that are valid media types", value
                         )
-                    files.append(
-                        (k, (part.filename if part.filename is not None else k, part.content, content_type))
-                    )
+                    add(k, part.filename if part.filename is not None else k, part.content, content_type)
                     shown.append(_binary_display(item, part.content_type or declared or ""))
                 elif is_record(item):
                     part_type = declared if declared is not None and declared_json else "application/json"
                     try:
-                        files.append((k, (None, utf8(json_text(item)), part_type)))
+                        add(k, None, utf8(json_text(item)), part_type)
                     except (TypeError, RecursionError) as error:
                         raise SerializationError(
                             parameter, "JSON-serializable multipart fields", item
@@ -371,10 +377,10 @@ def encode_body(
                         raise SerializationError(
                             parameter, "JSON-serializable multipart fields", item
                         ) from error
-                    files.append((k, (None, utf8(text), declared)))
+                    add(k, None, utf8(text), declared)
                     shown.append(scalar(item))
                 else:
-                    files.append((k, (None, utf8(scalar(item)), None)))
+                    add(k, None, utf8(scalar(item)), None)
                     shown.append(scalar(item))
             display[k] = shown if is_array(v) else shown[0] if len(shown) > 0 else None
         request = httpx.Request("POST", "http://multipart.invalid/", files=files)

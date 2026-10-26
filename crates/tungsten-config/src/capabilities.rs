@@ -365,7 +365,13 @@ pub const FEATURES: &[FeatureDefinition] = &[
     def(
         "multipart_part_encoding",
         FeatureDomain::Runtime,
-        "multipart/form-data request fields sent with the media type their OpenAPI `encoding` entry declares (`contentType`); per-part `headers` are not sent",
+        "multipart/form-data request fields sent with the media type their OpenAPI `encoding` entry declares (`contentType`)",
+        None,
+    ),
+    def(
+        "multipart_part_headers",
+        FeatureDomain::Runtime,
+        "multipart/form-data parts carry the headers of their OpenAPI `encoding` entry whose schema fixes one value (`const` or a one-value `enum`); other declared headers are not sent",
         None,
     ),
     def(
@@ -540,7 +546,7 @@ targets! {
         summary: "Sync and async Python SDK, Pydantic v2 or dataclass models",
         options: &["package", "module", "version", "runtime", "runtime_path", "python_version", "models", "out"],
         environments: [Cpython],
-        features: &["typed_sdk", "pagination_helpers", "pagination_checkpoints", "dataclass_models", "webhook_verification", "typed_webhooks", "streaming_downloads", "streaming_uploads", "telemetry_hooks", "multipart_part_encoding"],
+        features: &["typed_sdk", "pagination_helpers", "pagination_checkpoints", "dataclass_models", "webhook_verification", "typed_webhooks", "streaming_downloads", "streaming_uploads", "telemetry_hooks", "multipart_part_encoding", "multipart_part_headers"],
     },
     {
         id: "ruby", aliases: &["rb"], source: BuiltInEmitter, family: Some("ruby"), policy: true,
@@ -557,14 +563,14 @@ targets! {
         summary: "Async Rust SDK (serde, reqwest) and optional generated CLI",
         options: &["crate", "version", "runtime", "runtime_path", "cli", "out"],
         environments: [Native],
-        features: &["typed_sdk", "pagination_helpers", "pagination_checkpoints", "generated_cli", "webhook_verification", "typed_webhooks", "cli_login_sessions", "streaming_downloads", "streaming_uploads", "telemetry_hooks", "multipart_part_encoding"],
+        features: &["typed_sdk", "pagination_helpers", "pagination_checkpoints", "generated_cli", "webhook_verification", "typed_webhooks", "cli_login_sessions", "streaming_downloads", "streaming_uploads", "telemetry_hooks", "multipart_part_encoding", "multipart_part_headers"],
     },
     {
         id: "typescript", aliases: &["ts"], source: BuiltInEmitter, family: Some("typescript"),
         policy: true, tools: JS, schema: Some(TargetOptionSchema::TypeScript),
         summary: "Typed TypeScript SDK, Result values, Zod validation",
         options: &["package", "version", "runtime", "runtime_path", "dependencies", "out"],
-        environments: [Node], features: &["typed_sdk", "pagination_helpers", "pagination_checkpoints", "webhook_verification", "typed_webhooks", "streaming_downloads", "streaming_uploads", "telemetry_hooks", "multipart_part_encoding"],
+        environments: [Node], features: &["typed_sdk", "pagination_helpers", "pagination_checkpoints", "webhook_verification", "typed_webhooks", "streaming_downloads", "streaming_uploads", "telemetry_hooks", "multipart_part_encoding", "multipart_part_headers"],
     },
     {
         id: "webmcp", aliases: &[], source: BuiltInEmitter, family: Some("typescript"), policy: true,

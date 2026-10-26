@@ -489,6 +489,7 @@ const TOKENS: &[(&str, &str)] = &[
     ("ParamRole", "tungsten_runtime"),
     ("ParamStyle", "tungsten_runtime"),
     ("PartDescriptor", "tungsten_runtime"),
+    ("PartHeader", "tungsten_runtime"),
     ("PartialRetryOptions", "tungsten_runtime"),
     ("Patch", "tungsten_runtime"),
     ("PreviewMode", "tungsten_runtime"),

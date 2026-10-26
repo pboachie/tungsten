@@ -48,6 +48,7 @@ canonical inputs are never modified.
 | [Detect stale generated files in CI](ci-drift/README.md) | Generate, change a copied contract, observe the no-diff gate fail, then regenerate and pass. |
 | [Review semver and migration changes](surface-diff/README.md) | Compare a generated baseline with an additive operation using both diff review modes. |
 | [Bulk sync within a quota](bulk-sync/README.md) | Bound concurrent calls, queue the rest and share 429 backoff with a request scheduler in TypeScript, Python and Rust. |
+| [Stream files up and down](file-transfer/README.md) | Upload a file from disk and download it to a caller-chosen path without holding it in memory, with declared length and SHA-256, byte limits and safe partial-file handling, in TypeScript, Python and Rust. |
 | [Trace calls with local telemetry](telemetry/README.md) | Collect correlated operation, attempt and phase telemetry in memory from the TypeScript, Python and Rust SDKs, with nothing sent anywhere. |
 | [Receive signed webhooks](webhook-receiver/README.md) | Verify signed order.shipped deliveries and decode typed payloads with the TypeScript, Python and Rust SDKs, without a web framework. |
 | [Embed a Rust SDK through JNI](android-jni/README.md) | Call a generated Rust SDK from Java through a small JNI bridge with a bounded deadline and response size, error envelopes, cancellation and cleanup, as an Android app would. |

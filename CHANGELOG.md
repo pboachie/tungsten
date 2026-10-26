@@ -77,7 +77,6 @@ changes.
   longer over-counted; a value that fit only because of the old count can now be
   rejected.
 
-
 - Java and Ruby string `min_length`/`max_length` now count Unicode code points,
   as JSON Schema does, instead of UTF-16 code units: an emoji is one character
   (a surrogate pair is one, a lone surrogate is one). Strings with characters
@@ -250,6 +249,28 @@ changes.
   TG0728 reports invalid target options. The target sits in the capability
   catalog as experimental, and the runtime is not published.
 
+- TypeScript, Python and Rust SDKs send the headers of a multipart field's
+  OpenAPI Encoding Object whose schema fixes one value (`const` or a one-value
+  `enum`) on every part of the field. `Content-Type` and `Content-Disposition`
+  entries are skipped, and other declared headers are not sent. IR
+  `PartEncoding.headers` (`PartHeader`) and the SDK descriptor document's
+  `parts[].headers` are additive; the feature is listed as
+  `multipart_part_headers`. The TypeScript runtime writes the multipart body
+  itself when a part has such headers, because `FormData` cannot carry them.
+  The other SDK targets do not send part headers.
+
+- Add the `file-transfer` gallery recipe (`python3 examples/run.py --only
+  file-transfer`): TypeScript, Python and Rust SDKs upload a 16 MiB file from
+  disk with a recreatable `UploadSource` and download it to a caller-chosen
+  path with matching SHA-256, and show a refused second save, a byte limit and
+  a missing file.
+- Generate streamed transfer methods in TypeScript, Python and Rust SDKs. An
+  operation whose 2xx response is a binary body gets a `<method>Download` /
+  `<method>_download` method returning the runtime's `Download` (Rust: async
+  client only, with `DownloadOptions`). A whole binary request body accepts an
+  `UploadSource` (TypeScript `Uint8Array | UploadSource`, Python
+  `BinaryInput`), and Rust SDKs add `<method>_upload(request, source, opts)`.
+  Regenerated SDKs for such operations change; other operations are unchanged.
 - Gallery recipe `android-jni`: call a generated Rust SDK from Java through a
   minimal JNI bridge (`examples/android-jni`), with one Tokio runtime per
   native handle, the total deadline and response-size bound, diagnostic
@@ -340,7 +361,6 @@ changes.
   `call` operation's end carries the final `http_status`. Unreleased 0.2.0
   only.
 
-
 - OpenAPI 3.1+ `webhooks` are compiled. Each operation of a `webhooks` entry
   becomes an incoming webhook in the IR (`Namespace.webhooks`, omitted when
   empty: event key, method, operation id, docs and the JSON request body as a
@@ -372,7 +392,6 @@ changes.
   `MemoryTelemetryCollector` keeps recent events and counts dropped ones. The
   capability catalog declares the `telemetry_hooks` feature for these targets.
   Unreleased 0.2.0 only.
-
 
 
 - `tungsten workspace --run check|generate|lock [-- ARGS]` runs the command on
@@ -1131,7 +1150,6 @@ changes.
   platform thread per request in flight), no deadline spans a whole pagination,
   and a mutation cancelled after it was sent has an unknown outcome; reuse its
   idempotency key to repeat it.
-
 
 - Go, Java and Ruby (and Kotlin, which delegates to Java) report a schema
   `pattern` they cannot check. The value is still accepted, as before, but the
