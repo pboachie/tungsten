@@ -18,8 +18,9 @@
 use std::collections::HashMap;
 
 use lsp_types::{
-    CodeAction, CodeActionKind, CodeActionOrCommand, Diagnostic, NumberOrString,
-    OptionalVersionedTextDocumentIdentifier, TextDocumentEdit, TextEdit, Uri, WorkspaceEdit,
+    CodeAction, CodeActionDisabled, CodeActionKind, CodeActionOrCommand, Diagnostic,
+    NumberOrString, OptionalVersionedTextDocumentIdentifier, TextDocumentEdit, TextEdit, Uri,
+    WorkspaceEdit,
 };
 
 use crate::analysis::Index;
@@ -34,6 +35,10 @@ const MAX_DIAGNOSTICS: usize = 50;
 pub struct Buffer<'a> {
     pub uri: &'a Uri,
     pub version: i32,
+    /// Whether the client takes versioned `documentChanges`; without them
+    /// the edit is a plain `changes` map, still checked against the
+    /// current buffer text.
+    pub document_changes: bool,
     pub text: &'a str,
     pub lines: &'a LineIndex,
 }
@@ -79,6 +84,12 @@ pub fn actions(
 
 /// An edit of one buffer that the client applies only at `buffer.version`.
 fn versioned(buffer: &Buffer<'_>, edit: TextEdit) -> WorkspaceEdit {
+    if !buffer.document_changes {
+        return WorkspaceEdit {
+            changes: Some(HashMap::from([(buffer.uri.clone(), vec![edit])])),
+            ..WorkspaceEdit::default()
+        };
+    }
     WorkspaceEdit {
         document_changes: Some(lsp_types::DocumentChanges::Edits(vec![TextDocumentEdit {
             text_document: OptionalVersionedTextDocumentIdentifier {
@@ -90,6 +101,50 @@ fn versioned(buffer: &Buffer<'_>, edit: TextEdit) -> WorkspaceEdit {
         changes: None::<HashMap<Uri, Vec<TextEdit>>>,
         change_annotations: None,
     }
+}
+
+/// Whether an overlay action of `tungsten overlay suggest` can fix `d`:
+/// TG0403, or TG0401 on a repeated operation id.
+pub fn overlay_fixable(d: &Diagnostic) -> bool {
+    d.source.as_deref() == Some("tungsten")
+        && match &d.code {
+            Some(NumberOrString::String(code)) => {
+                code == "TG0403" || (code == "TG0401" && d.message.starts_with("operation id `"))
+            }
+            _ => false,
+        }
+}
+
+/// A disabled action explaining why the overlay-fixable `diagnostics` that
+/// no action in `offered` covers get no fix, for editors that show
+/// disabled actions.
+pub fn unavailable_overlay(
+    diagnostics: &[Diagnostic],
+    offered: &[CodeActionOrCommand],
+    reason: impl FnOnce() -> String,
+) -> Option<CodeActionOrCommand> {
+    let covered = |d: &Diagnostic| {
+        offered.iter().any(|a| match a {
+            CodeActionOrCommand::CodeAction(a) => a.diagnostics.iter().flatten().any(|c| c == d),
+            CodeActionOrCommand::Command(_) => false,
+        })
+    };
+    let left: Vec<Diagnostic> = diagnostics
+        .iter()
+        .filter(|d| overlay_fixable(d) && !covered(d))
+        .take(MAX_DIAGNOSTICS)
+        .cloned()
+        .collect();
+    if left.is_empty() {
+        return None;
+    }
+    Some(CodeActionOrCommand::CodeAction(CodeAction {
+        title: "Add the suggested overlay for this operation id".to_string(),
+        kind: Some(CodeActionKind::QUICKFIX),
+        diagnostics: Some(left),
+        disabled: Some(CodeActionDisabled { reason: reason() }),
+        ..CodeAction::default()
+    }))
 }
 
 /// The wrong value a diagnostic names and the names that could replace it.

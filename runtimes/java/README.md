@@ -87,6 +87,21 @@ each supported platform, including Windows and WSL.
 
 ## Limits
 
+In unreleased 0.2.0, `deadline(Duration)` (on `ClientOptions.Builder` or `CallOptions.Builder`)
+sets a total deadline for one logical call, separate from the per-attempt `timeout`. It is
+measured on `System.nanoTime` and covers authentication, idempotency-key reservation, every
+attempt (each one's `timeout` is cut to the time left), retry waits, response bodies and
+verification; for `pages`, `poll` and `runMacro` it covers the whole traversal, poll or macro,
+and nested work cannot restart it. No attempt starts after it expires: the call fails with code
+`DEADLINE_EXCEEDED`, and a mutation that was already sent reports `OUTCOME_UNKNOWN`, never a
+blind replay. A retry wait that would end after the deadline returns the last failure at once.
+For `stream` it bounds connecting and each reconnect, never an open stream (use
+`idleTimeout`). Calls are synchronous, so blocking work the runtime cannot interrupt is checked
+when it returns rather than cut short: an OAuth token request the calling thread itself performs
+(shared refreshes and client-credentials fetches are never cancelled for their other waiters,
+but a waiting caller stops at its deadline) and a custom `IdempotencyStore`. Such work stays
+bounded by its own timeout. Default: no total deadline.
+
 In unreleased 0.2.0, ordinary buffered responses default to **4 MiB (4,194,304 bytes) per response**.
 Set `ClientOptions.Builder.maxResponseBytes` to choose a finite client cap; the call option with the same
 native name overrides it. Omitted/null values inherit the default or client cap,
