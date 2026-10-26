@@ -23,7 +23,7 @@ import re
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 __all__ = [
     "DEFAULT_WEBHOOK_MAX_BODY_BYTES",
@@ -95,9 +95,10 @@ WebhookOutcome = VerifiedWebhook | RejectedWebhook
 def _positive(value: int | None, fallback: int, name: str) -> int:
     if value is None:
         return fallback
-    if isinstance(value, bool) or not isinstance(value, int) or value <= 0 or value > 2**53 - 1:
+    given = cast("object", value)  # callers may pass untyped values
+    if isinstance(given, bool) or not isinstance(given, int) or given <= 0 or given > 2**53 - 1:
         raise ValueError(f"{name} must be a positive integer")
-    return value
+    return given
 
 
 def _parse_header(header: str) -> tuple[str, list[bytes]] | str:
@@ -192,9 +193,11 @@ def verify_webhook(
         event = json.loads(text, parse_constant=_no_constant)
     except ValueError:
         return RejectedWebhook("payload_invalid", "the body is not UTF-8 JSON")
-    record = event if isinstance(event, dict) else None
-    event_id = record.get("id") if record is not None and isinstance(record.get("id"), str) else None
-    event_type = record.get("type") if record is not None and isinstance(record.get("type"), str) else None
+    record = cast("dict[str, object]", event) if isinstance(event, dict) else None
+    found_id = record.get("id") if record is not None else None
+    found_type = record.get("type") if record is not None else None
+    event_id = found_id if isinstance(found_id, str) else None
+    event_type = found_type if isinstance(found_type, str) else None
     if parse is not None:
         try:
             event = parse(event)
@@ -210,12 +213,8 @@ def sign_webhook(body: bytes | str, secret: str, timestamp: int) -> str:
 
     Intended for local examples and outbound test deliveries.
     """
-    if (
-        isinstance(timestamp, bool)
-        or not isinstance(timestamp, int)
-        or timestamp < 0
-        or timestamp > 2**53 - 1
-    ):
+    given = cast("object", timestamp)  # callers may pass untyped values
+    if isinstance(given, bool) or not isinstance(given, int) or given < 0 or given > 2**53 - 1:
         raise ValueError("timestamp must be a non-negative integer")
     raw = body.encode("utf-8", "surrogatepass") if isinstance(body, str) else bytes(body)
     t = str(timestamp)
