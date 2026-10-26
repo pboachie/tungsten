@@ -230,6 +230,9 @@ changes.
 
 ### Added
 
+- `scenario run` now works on macOS and Windows as well as Linux. macOS owns
+  the integration through a process group and non-reaping `waitid`, Windows
+  through a Job Object; the binary cancels on Ctrl-C/SIGTERM on both.
 - Add `tungsten init --preset app|library|agent`, also accepted at the guided
   setup's outputs prompt. `library` writes and selects a local profile
   (`profiles/library.yml`) with shared SDK versions; `agent` configures an MCP
@@ -291,10 +294,6 @@ changes.
   Optional caps across every scope (`maxActiveTotal`/`max_active_total`,
   `maxStreamsTotal`/`max_streams_total`) bound requests in flight per
   scheduler; scopes waiting for them take turns so none is starved.
-
-- Under a total operation deadline, the Rust runtime now stops waiting for an
-  OAuth token request or 401 refresh at the deadline without cancelling a
-  refresh other callers share, and reports `DEADLINE_EXCEEDED`.
 
 - Add an opt-in total operation deadline to the TypeScript (`deadlineMs`),
   Python (`deadline_ms`) and Rust (`deadline`) runtimes, on client and call

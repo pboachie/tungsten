@@ -211,8 +211,8 @@ pub fn run_with_cancellation(
     )
 }
 
-/// Process entry point. Linux scenario runs and support-bundle exports own
-/// scoped SIGINT/SIGTERM capture;
+/// Process entry point. Scenario runs (Ctrl-C on macOS and Windows) and Linux
+/// support-bundle exports own scoped SIGINT/SIGTERM capture;
 /// library callers use `run` or `run_with_cancellation` instead.
 pub fn run_binary(
     args: impl IntoIterator<Item = OsString>,
@@ -254,14 +254,15 @@ fn run_inner(
         }
     };
     let env = &selected_env;
-    #[cfg(target_os = "linux")]
-    let signals = if _binary_signals
+    #[cfg(any(target_os = "linux", target_vendor = "apple", windows))]
+    let signals = if cfg!(target_os = "linux")
+        && _binary_signals
         && matches!(&cli.command, args::Command::SupportBundle(bundle) if bundle.output.is_some())
     {
         // Turns SIGINT/SIGTERM into cooperative cancellation so an interrupted
         // export removes its temporary file. Without capture, the default
         // disposition applies, as before.
-        commands::scenario::signals::Signals::capture_interrupts().ok()
+        commands::scenario::BinarySignals::capture_interrupts().ok()
     } else if _binary_signals
         && matches!(
             &cli.command,
@@ -270,7 +271,7 @@ fn run_inner(
             }
         )
     {
-        match commands::scenario::signals::Signals::capture() {
+        match commands::scenario::BinarySignals::capture() {
             Ok(signals) => Some(signals),
             Err(_) => {
                 let report = Report::new(CommandName::Scenario).failed(
@@ -278,7 +279,11 @@ fn run_inner(
                     CliError::new(
                         ErrorKind::Io,
                         "cannot establish scenario cancellation and child ownership",
-                    ).with_help("Linux scenario run requires readable /proc/self/status and default SIGCHLD disposition"),
+                    ).with_help(if cfg!(target_os = "linux") {
+                        "Linux scenario run requires readable /proc/self/status and default SIGCHLD disposition"
+                    } else {
+                        "scenario run could not install its Ctrl-C handler"
+                    }),
                 );
                 return if cli.json {
                     emit_json(report, stdout)
@@ -290,7 +295,7 @@ fn run_inner(
     } else {
         None
     };
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_vendor = "apple", windows))]
     let cancellation = signals.as_ref().map_or(cancellation, |s| s.cancellation());
     let report = panic::catch_unwind(AssertUnwindSafe(|| {
         commands::dispatch(&cli, env, &cancellation)
@@ -314,7 +319,7 @@ fn run_inner(
         )
     });
     let mut report = report;
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_vendor = "apple", windows))]
     if let Some(signals) = signals {
         match signals.restore() {
             // Export commits at publication; a later signal changes nothing.
