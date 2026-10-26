@@ -378,6 +378,17 @@ pub struct BodyDescriptor {
     pub encoding: BodyEncoding,
     pub required: bool,
     pub shape: BodyShape,
+    /// Per-part encoding of a multipart body, by wire field name.
+    pub parts: Vec<PartDescriptor>,
+}
+
+/// The declared encoding of one multipart field (OpenAPI `encoding`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PartDescriptor {
+    pub name: String,
+    /// The media type each part of the field is sent with, unless a file
+    /// part carries its own.
+    pub content_type: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

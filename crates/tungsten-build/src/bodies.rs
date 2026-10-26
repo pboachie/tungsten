@@ -3,7 +3,7 @@
 
 use serde_json::Value;
 use tungsten_core::Diagnostic;
-use tungsten_ir::{Body, BodyContent, BodyEncoding, Primitive, Shape, TypeRef};
+use tungsten_ir::{Body, BodyContent, BodyEncoding, PartEncoding, Primitive, Shape, TypeRef};
 use tungsten_openapi::RefTarget;
 
 use crate::ctx::{Ctx, child, doc, flag, str_of};
@@ -191,13 +191,73 @@ pub(crate) fn content(
             }
             None => schemaless(encoding),
         };
+        let parts = if request && encoding == BodyEncoding::Multipart {
+            part_encodings(cx, &media_at)
+        } else {
+            vec![]
+        };
         out.push(BodyContent {
             media_type: media_type.clone(),
             ty,
             encoding,
+            parts,
         });
     }
     out
+}
+
+/// The `encoding` map of the multipart Media Type Object at `media_at`: the
+/// entries whose `contentType` names a concrete media type. Keys that name
+/// no property of the schema are kept; runtimes only read the parts a value
+/// carries.
+fn part_encodings(cx: &Ctx<'_>, media_at: &RefTarget) -> Vec<PartEncoding> {
+    let Some(Value::Object(map)) = cx.get(&child(media_at, "encoding")) else {
+        return vec![];
+    };
+    map.iter()
+        .filter_map(|(name, encoding)| {
+            let content_type = str_of(encoding, "contentType").and_then(concrete_media_type)?;
+            Some(PartEncoding {
+                name: name.clone(),
+                content_type: Some(content_type),
+            })
+        })
+        .collect()
+}
+
+/// The first entry of a comma-separated `contentType` list that is a valid
+/// media type without wildcards, normalized to lower-case type and subtype.
+fn concrete_media_type(list: &str) -> Option<String> {
+    list.split(',').map(str::trim).find_map(|entry| {
+        let (essence, params) = entry.split_once(';').unwrap_or((entry, ""));
+        let (kind, subtype) = essence.trim().split_once('/')?;
+        let token = |t: &str| {
+            !t.is_empty()
+                && t != "*"
+                && t.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b))
+                && !t.contains('*')
+        };
+        if !token(kind)
+            || !token(subtype)
+            || !params
+                .bytes()
+                .all(|b| b == b'\t' || (0x20..0x7f).contains(&b))
+        {
+            return None;
+        }
+        let essence = format!(
+            "{}/{}",
+            kind.to_ascii_lowercase(),
+            subtype.to_ascii_lowercase()
+        );
+        let params = params.trim();
+        Some(if params.is_empty() {
+            essence
+        } else {
+            format!("{essence}; {params}")
+        })
+    })
 }
 
 /// The media type and schema of the first JSON media type of `owner`'s

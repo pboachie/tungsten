@@ -776,12 +776,23 @@ fn descriptor_js(plan: &Plan<'_>, info: &OpInfo<'_>, shape: &OpShape<'_>) -> Js 
                     Js::obj(vec![("kind", Js::str("arg")), ("arg", Js::str(arg))])
                 }
             };
-            Js::obj(vec![
+            let mut members = vec![
                 ("mediaType", Js::str(&b.content.media_type)),
                 ("encoding", Js::str(encoding_str(b.content.encoding))),
                 ("required", Js::bool(b.required)),
                 ("shape", shape_js),
-            ])
+            ];
+            if !b.content.parts.is_empty() {
+                let parts = b.content.parts.iter().map(|part| {
+                    let mut entry = vec![("name", Js::str(&part.name))];
+                    if let Some(content_type) = &part.content_type {
+                        entry.push(("contentType", Js::str(content_type)));
+                    }
+                    Js::obj(entry)
+                });
+                members.push(("parts", Js::Array(parts.collect())));
+            }
+            Js::obj(members)
         },
     );
     let responses = Js::Array(

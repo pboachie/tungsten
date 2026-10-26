@@ -236,6 +236,16 @@ changes.
 
 ### Added
 
+- Multipart request bodies honour the OpenAPI `encoding` map: a field whose
+  Encoding Object declares a `contentType` is sent with that media type (the
+  first entry of the list without wildcards) in TypeScript, Python and Rust
+  SDKs. A file part without its own media type takes the declared one; an
+  object part keeps JSON and uses the declared type when it is a JSON media
+  type; a scalar part is sent as a typed part, JSON-encoded for a JSON media
+  type. IR `BodyContent.parts` (`PartEncoding`) is additive and the feature is
+  listed as `multipart_part_encoding`. Per-part `headers`, and positional or
+  nested multipart encoding (TG0146/TG0147), are not supported.
+
 - Save streamed downloads to a caller-chosen file: `saveDownload` in the
   TypeScript runtime's `/node` entry point, `Download.save_to` /
   `AsyncDownload.save_to` in Python and `Download::save_to` in Rust. Bytes go

@@ -13,6 +13,7 @@ from urllib.parse import quote
 
 import httpx
 
+from ._classify import is_json_media
 from ._json import FilePart, canonical_json, iso_datetime, js_number, json_text, parse_json
 from ._upload import UploadSource
 from ._util import REDACTED, binary_size, is_array, is_binary, is_record, usv, utf8
@@ -332,13 +333,20 @@ def encode_body(
             raise SerializationError(parameter, "a mapping of multipart fields", value)
         files: list[tuple[str, tuple[str | None, bytes, str | None]]] = []
         display: dict[str, object] = {}
+        declared_parts = {
+            part["name"]: part["content_type"]
+            for part in reversed(descriptor.get("parts", []) if descriptor is not None else [])
+            if "content_type" in part
+        }
         for k, v in _entries(value):
             items = [item for item in v if _present(item)] if is_array(v) else [v]
             shown: list[object] = []
+            declared = declared_parts.get(k)
+            declared_json = declared is not None and is_json_media(declared.split(";", 1)[0].strip().lower())
             for item in items:
                 if is_binary(item):
                     part = _file_of(item, k)
-                    content_type = part.content_type or "application/octet-stream"
+                    content_type = part.content_type or declared or "application/octet-stream"
                     if not _valid_media_type(content_type):
                         raise SerializationError(
                             parameter, "multipart file content types that are valid media types", value
@@ -346,15 +354,25 @@ def encode_body(
                     files.append(
                         (k, (part.filename if part.filename is not None else k, part.content, content_type))
                     )
-                    shown.append(_binary_display(item, part.content_type or ""))
+                    shown.append(_binary_display(item, part.content_type or declared or ""))
                 elif is_record(item):
+                    part_type = declared if declared is not None and declared_json else "application/json"
                     try:
-                        files.append((k, (None, utf8(json_text(item)), "application/json")))
+                        files.append((k, (None, utf8(json_text(item)), part_type)))
                     except (TypeError, RecursionError) as error:
                         raise SerializationError(
                             parameter, "JSON-serializable multipart fields", item
                         ) from error
                     shown.append(item)
+                elif declared is not None:
+                    try:
+                        text = json_text(item) if declared_json else scalar(item)
+                    except (TypeError, RecursionError) as error:
+                        raise SerializationError(
+                            parameter, "JSON-serializable multipart fields", item
+                        ) from error
+                    files.append((k, (None, utf8(text), declared)))
+                    shown.append(scalar(item))
                 else:
                     files.append((k, (None, utf8(scalar(item)), None)))
                     shown.append(scalar(item))
