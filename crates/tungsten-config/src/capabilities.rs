@@ -181,10 +181,10 @@ targets! {
     }]),
     ("docs", &[], BuiltInEmitter, None, true, &[]),
     ("fsharp", &["fs"], BuiltInEmitter, Some("dotnet"), false, DOTNET),
-    ("java", &[], BuiltInEmitter, Some("jvm"), false, &[
+    ("java", &[], BuiltInEmitter, Some("jvm"), true, &[
         ToolRequirement::new("java", Some([17, 0])), ToolRequirement::new("mvn", None),
     ]),
-    ("kotlin", &["kt"], BuiltInEmitter, Some("jvm"), false, &[
+    ("kotlin", &["kt"], BuiltInEmitter, Some("jvm"), true, &[
         ToolRequirement::new("java", Some([17, 0])), ToolRequirement::new("gradle", None),
     ]),
     ("mcp", &[], BuiltInEmitter, Some("typescript"), true, MCP),
