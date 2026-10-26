@@ -186,6 +186,10 @@ Retries are not budgeted unless `retryRatio` (0 to 1) is set: then each scope
 keeps a retry budget that starts at `retryReserve` (default 10), gains `retryRatio`
 per call (up to `retryReserve` + 100 × `retryRatio`) and loses one per retry. A retry
 the budget cannot pay for is not made; the call returns its last failure.
+Optionally, `maxActiveTotal` and `maxStreamsTotal` cap ordinary requests and event streams in
+flight across every scope, on top of each scope's `maxActive` and `maxStreams` (default:
+no cap across scopes). Scopes waiting for that shared capacity take turns, one
+request each, in scope order, so one busy tenant or origin cannot starve another.
 See the [bulk-sync example](https://github.com/pboachie/tungsten/tree/main/examples/bulk-sync).
 
 The core package is browser-safe; the separate `/node` adapter requires Node.js. No file-backed OAuth token store is provided.

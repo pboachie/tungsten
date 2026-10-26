@@ -134,9 +134,11 @@ pub(super) fn profile_root(profile: &str) -> String {
 }
 
 /// Compose the selected profiles exactly as compilation will, without writing.
+/// `pending` is a profile init is about to write, read from memory.
 pub(super) fn check_profiles(
     config: &mut tungsten_config::TungstenConfig,
     dir: &Path,
+    pending: Option<(&Path, &str)>,
 ) -> tungsten_core::Diagnostics {
     if config.profiles.is_empty() {
         return tungsten_core::Diagnostics::new();
@@ -148,24 +150,46 @@ pub(super) fn check_profiles(
         pointer: "/profiles".into(),
         digest: None,
     };
-    tungsten_config::profiles::compose(config, dir, project, &LocalProfiles).diagnostics
+    let pending = pending.and_then(|(path, text)| {
+        let parent = std::fs::canonicalize(path.parent()?).ok()?;
+        Some((parent.join(path.file_name()?), text.to_owned()))
+    });
+    let source = LocalProfiles { pending };
+    tungsten_config::profiles::compose(config, dir, project, &source).diagnostics
 }
 
 /// Local files only; reads stop at the composer's byte allowance.
-struct LocalProfiles;
+struct LocalProfiles {
+    /// Canonical identity and text of a profile not yet written.
+    pending: Option<(PathBuf, String)>,
+}
 
 impl tungsten_config::profiles::ProfileSource for LocalProfiles {
     fn canonical_root(&self, path: &Path) -> Option<PathBuf> {
-        self.canonical_path(path).filter(|root| root.is_dir())
+        std::fs::canonicalize(path)
+            .ok()
+            .filter(|root| root.is_dir())
     }
     fn canonical_path(&self, path: &Path) -> Option<PathBuf> {
-        std::fs::canonicalize(path).ok()
+        std::fs::canonicalize(path).ok().or_else(|| {
+            let (pending, _) = self.pending.as_ref()?;
+            let parent = std::fs::canonicalize(path.parent()?).ok()?;
+            let candidate = parent.join(path.file_name()?);
+            (&candidate == pending).then_some(candidate)
+        })
     }
     fn read(
         &self,
         path: &Path,
         max_bytes: usize,
     ) -> Result<(String, tungsten_core::Digest), tungsten_core::Diagnostic> {
+        if let Some((pending, text)) = &self.pending
+            && pending == path
+            && !path.exists()
+        {
+            let digest = tungsten_core::Digest::of(text.as_bytes());
+            return Ok((text.clone(), digest));
+        }
         let refused = || tungsten_core::Diagnostic::error("TG0101", "cannot read local profile");
         let file = std::fs::File::open(path).map_err(|_| refused())?;
         let mut bytes = vec![];

@@ -299,6 +299,30 @@ pub fn serialize_tagged<S: Serializer, T: Serialize>(
     }
 }
 
+/// Read a discriminated union's tag, or `default` when the member is
+/// absent or not a string (an OpenAPI 3.2 `defaultMapping`); the value is
+/// kept whole.
+pub fn read_tagged_or<'de, D: Deserializer<'de>>(
+    deserializer: D,
+    property: &str,
+    default: &str,
+) -> Result<(String, Value), D::Error> {
+    let value = Value::deserialize(deserializer)?;
+    let tag = match &value {
+        Value::Object(map) => match map.get(property) {
+            Some(Value::String(tag)) => tag.clone(),
+            _ => default.to_string(),
+        },
+        other => {
+            return Err(D::Error::custom(format!(
+                "expected an object with a `{property}` member, found {}",
+                describe(other)
+            )));
+        }
+    };
+    Ok((tag, value))
+}
+
 /// Read a discriminated union's tag; the value is kept whole.
 pub fn read_tagged<'de, D: Deserializer<'de>>(
     deserializer: D,

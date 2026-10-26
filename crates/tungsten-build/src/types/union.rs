@@ -8,7 +8,9 @@
 //!    `$ref`s or name a component; a variant without a mapping entry uses
 //!    its `const` value of the property, else its component name: a const
 //!    is the only value the variant admits, so a component name that
-//!    differs from it could never match).
+//!    differs from it could never match). An OpenAPI 3.2 `defaultMapping`
+//!    naming one of the variants becomes the discriminator's
+//!    `default_mapping`: the variant of a missing or unmapped tag.
 //! 2. `Tagged` on a property every variant record requires with a distinct
 //!    string `const` (or one-value `enum`), with the mapping derived from
 //!    those values. This is the RPC envelope shape (ZROtext workflow
@@ -30,7 +32,7 @@ use std::cmp::Reverse;
 use serde_json::Value;
 use tungsten_core::Diagnostic;
 use tungsten_ir::{
-    Additional, Discriminator, Field, Ident, Presence, Primitive, Shape, TypeRef, Union,
+    Additional, Discriminator, Field, Ident, Presence, Primitive, Shape, TypeId, TypeRef, Union,
     UnionStrategy, Variant,
 };
 use tungsten_openapi::{DocId, RefTarget, join_pointer};
@@ -201,11 +203,12 @@ impl<'a> TypeBuilder<'a> {
         if let Some(disc) = discriminator
             && let Some((property, tags)) = self.explicit_tags(target, disc, &variants)
         {
-            return self.tagged(target, variants, property, tags);
+            let default = self.default_mapping(target, disc, &variants);
+            return self.tagged(target, variants, property, tags, default);
         }
         if let Some((property, tags)) = self.const_tags(&variants) {
             let tags = tags.into_iter().map(|t| vec![t]).collect();
-            return self.tagged(target, variants, property, tags);
+            return self.tagged(target, variants, property, tags, None);
         }
         let raw_tags: Option<Vec<Vec<String>>> = variants
             .iter()
@@ -215,7 +218,7 @@ impl<'a> TypeBuilder<'a> {
             })
             .collect();
         if let (Some(property), Some(tags)) = (raw_property, raw_tags) {
-            return self.tagged(target, variants, property, tags);
+            return self.tagged(target, variants, property, tags, None);
         }
         if self.is_literal(&variants) {
             let n = variants.len();
@@ -236,6 +239,7 @@ impl<'a> TypeBuilder<'a> {
         variants: Vec<Candidate>,
         property: String,
         tags: Vec<Vec<String>>,
+        default_mapping: Option<TypeId>,
     ) -> Body {
         let mut mapping = vec![];
         for (v, values) in variants.iter().zip(&tags) {
@@ -244,7 +248,11 @@ impl<'a> TypeBuilder<'a> {
             }
         }
         let first: Vec<Option<String>> = tags.into_iter().map(|t| t.into_iter().next()).collect();
-        let discriminator = Discriminator { property, mapping };
+        let discriminator = Discriminator {
+            property,
+            mapping,
+            default_mapping,
+        };
         Body::Shape(self.union_shape(
             target,
             variants,
@@ -446,6 +454,39 @@ impl<'a> TypeBuilder<'a> {
             }
         }
         Some((property.to_string(), tags))
+    }
+
+    /// The variant named by an OpenAPI 3.2 `defaultMapping`. It must be a
+    /// variant of the union (a value it selects must still match the union);
+    /// otherwise it is reported and ignored, and unmapped values are refused.
+    fn default_mapping(
+        &mut self,
+        target: &RefTarget,
+        disc: &Object,
+        variants: &[Candidate],
+    ) -> Option<TypeId> {
+        let reference = disc.get("defaultMapping")?;
+        let at = child(target, &["discriminator", "defaultMapping"]).doc_pointer();
+        let shown = schema::value_text(reference);
+        let id = reference
+            .as_str()
+            .and_then(|r| self.mapping_target(target.doc, r))
+            .and_then(|t| self.type_id_for(&t));
+        let Some(id) = id else {
+            let message = format!(
+                "discriminator defaultMapping `{shown}` does not resolve to a schema; ignored"
+            );
+            self.report(Diagnostic::warning("TG0306", message), &at);
+            return None;
+        };
+        if variants.iter().any(|v| v.ty == TypeRef::Named(id.clone())) {
+            return Some(id);
+        }
+        let message = format!(
+            "discriminator defaultMapping `{shown}` is not a variant of this union; ignored"
+        );
+        self.report(Diagnostic::warning("TG0306", message), &at);
+        None
     }
 
     /// A mapping value: a `$ref`-style reference, or a bare component name.
