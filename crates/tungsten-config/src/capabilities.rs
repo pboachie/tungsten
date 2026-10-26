@@ -355,7 +355,7 @@ targets! {
         environments: [Dotnet], features: SDK,
     },
     {
-        id: "dart", aliases: &[], source: BuiltInEmitter, family: Some("dart"), policy: false,
+        id: "dart", aliases: &[], source: BuiltInEmitter, family: Some("dart"), policy: true,
         tools: &[ToolRequirement {
             tool: "dart", minimum: Some([3, 6]), maximum_exclusive: Some([4, 0]), minimum_option: None, excluded_versions: &[],
         }],

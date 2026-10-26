@@ -307,6 +307,11 @@ changes.
   sent), and generated gems require
   `Tungsten::Runtime::ClientCore.require_import_policy_v1`.
 
+- The `dart` target now enforces imported-operation policy the same way: the
+  Dart runtime refuses a reviewed imported operation whose target origin is
+  outside its saved review scope (`VALIDATION_FAILED` on `base_url`, nothing
+  sent), and generated clients require `ClientCore.requireImportPolicyV1()`.
+
 - Add explicit Linux support-bundle export to a new file in an existing,
   trusted user-owned directory. Export preserves the metadata-only preview
   manifest, caps complete artifacts at 128 KiB, refuses replacement and
