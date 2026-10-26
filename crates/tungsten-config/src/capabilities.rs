@@ -350,9 +350,9 @@ macro_rules! targets {
 targets! {
     {
         id: "csharp", aliases: &["cs"], source: BuiltInEmitter, family: Some("dotnet"),
-        policy: false, tools: DOTNET, summary: "C# SDK",
+        policy: true, tools: DOTNET, summary: "C# SDK",
         options: &["package_id", "namespace", "version", "runtime", "runtime_path", "out"],
-        environments: [Dotnet], features: SDK,
+        environments: [Dotnet], features: SDK_POLICY,
     },
     {
         id: "dart", aliases: &[], source: BuiltInEmitter, family: Some("dart"), policy: false,

@@ -135,6 +135,26 @@ public sealed record AgentMeta
     /// <summary>Dotted argument paths (arguments keys).</summary>
     public IReadOnlyList<string> SensitiveRequestFields { get; init; } = System.Array.Empty<string>();
     public bool ShownOnce { get; init; }
+    /// <summary>The review policy of an operation imported from a collection or capture, or null.</summary>
+    public ImportPolicy? ImportPolicy { get; init; }
+}
+
+/// <summary>
+/// The review policy of an operation imported from a Postman collection, cURL
+/// command, HTTP request file or HAR capture. A reviewed operation may be sent
+/// only to one of its allowed origins; an unreviewed one carries an effective
+/// safety tier that requires preview and confirmation.
+/// </summary>
+public sealed record ImportPolicy
+{
+    /// <summary>The origins (scheme, host, port) the review covers.</summary>
+    public IReadOnlyList<string> AllowedOrigins { get; init; } = System.Array.Empty<string>();
+    /// <summary>The tier inferred from the HTTP method.</summary>
+    public Safety InferredSafety { get; init; } = Safety.Irreversible;
+    /// <summary>Whether a person reviewed the operation.</summary>
+    public bool Reviewed { get; init; }
+    /// <summary>The kind of input the operation came from.</summary>
+    public string Source { get; init; } = "";
 }
 
 /// <summary>A runtime gate: the operation is mounted only when EnvVar is on.</summary>
@@ -673,12 +693,29 @@ public sealed class SdkDescriptors
                 SensitiveResponseFields = Strings(agent["sensitive_response_fields"]),
                 SensitiveRequestFields = sensitiveRequest,
                 ShownOnce = Bool(agent["shown_once"]),
+                ImportPolicy = ReadImportPolicy(agent["import_policy"]),
             },
             Request = o.ContainsKey("request") ? Schema.FromJson(o["request"], defs) : null,
             Response = o.ContainsKey("response") ? Schema.FromJson(o["response"], defs) : null,
             PageItem = o.ContainsKey("page_item") ? Schema.FromJson(o["page_item"], defs) : null,
             Stream = stream,
             Summary = Str(o["summary"]),
+        };
+    }
+
+    private static ImportPolicy? ReadImportPolicy(JsonNode? raw)
+    {
+        if (raw is not JsonObject p)
+        {
+            return null;
+        }
+        // Only a literal true counts as reviewed; anything else fails closed.
+        return new ImportPolicy
+        {
+            AllowedOrigins = Strings(p["allowed_origins"]),
+            InferredSafety = Wire.ParseSafety(Str(p["inferred_safety"])) ?? Safety.Irreversible,
+            Reviewed = Bool(p["reviewed"]),
+            Source = Str(p["source"]) ?? "",
         };
     }
 
