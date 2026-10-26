@@ -106,7 +106,7 @@ pub(crate) fn external_import_policy_refusal(name: &str) -> Diagnostic {
     )
     .with_help(format!(
         "use an emitter whose --describe response declares `import_policy: true` and \
-         enforces imported-operation policy, or select a supported {} target; `tungsten \
+         enforces imported-operation policy (the Go emitter in `emitters/go` does), or select a supported {} target; `tungsten \
          explain TG0808` has the details",
         import_policy_targets()
     ))

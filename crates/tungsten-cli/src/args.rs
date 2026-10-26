@@ -227,8 +227,7 @@ pub(crate) enum Command {
         #[command(subcommand)]
         command: OverlayCommand,
     },
-    /// Preview metadata-only diagnostics, or export them to a new file on Linux or
-    /// macOS.
+    /// Preview metadata-only diagnostics, or export them to a new file.
     SupportBundle(SupportBundleArgs),
     /// Check for a newer release; never installs anything.
     Update {
@@ -241,7 +240,7 @@ pub(crate) enum Command {
     Lsp(LspArgs),
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Clone, Args)]
 pub(crate) struct SupportBundleArgs {
     /// Local project directory or tungsten manifest.
     #[arg(default_value = ".")]
@@ -249,7 +248,7 @@ pub(crate) struct SupportBundleArgs {
     /// Print what a bundle would contain; writes, uploads and runs nothing.
     #[arg(long)]
     pub preview: bool,
-    /// Export metadata to a new file on Linux or macOS; never overwrite an existing entry.
+    /// Export metadata to a new file; never overwrite an existing entry.
     /// Its existing directory must be owned by you and not writable by others.
     #[arg(long, value_name = "PATH", conflicts_with = "preview")]
     pub output: Option<PathBuf>,
@@ -349,6 +348,11 @@ pub(crate) struct BundleExportArgs {
     /// Export declared inputs whose names suggest credential or key material.
     #[arg(long)]
     pub allow_sensitive: bool,
+    /// Also carry the verified `.tungsten-inputs` pins and content of remote
+    /// inputs, so they reproduce offline. Check that the upstream terms allow
+    /// redistributing those documents.
+    #[arg(long)]
+    pub include_input_cache: bool,
 }
 
 #[derive(Debug, Args)]
@@ -431,6 +435,11 @@ pub(crate) struct CheckArgs {
     /// `--json` always lists every diagnostic.
     #[arg(long)]
     pub all_warnings: bool,
+    /// Fail (TG0128) unless the project matches its tungsten.lock.json
+    /// exactly. Implies offline input acquisition. `locked: true` in the
+    /// manifest has the same effect.
+    #[arg(long)]
+    pub locked: bool,
 }
 
 #[derive(Debug, Args)]
@@ -456,6 +465,11 @@ pub(crate) struct GenerateArgs {
     /// is written when there are any, in any target.
     #[arg(long)]
     pub strict: bool,
+    /// Refuse (TG0128) unless the project matches its tungsten.lock.json
+    /// exactly; nothing is written. Implies offline input acquisition.
+    /// `locked: true` in the manifest has the same effect.
+    #[arg(long)]
+    pub locked: bool,
 }
 
 #[derive(Debug, Args)]
@@ -654,6 +668,11 @@ pub(crate) struct InitArgs {
     /// Writes tungsten-profiles.toml with no credentials.
     #[arg(long, conflicts_with = "resume")]
     pub cli_profile: Vec<String>,
+    /// Select a shared local configuration profile (`tungsten_profile: 1`),
+    /// relative to --dir; repeatable, later profiles win. Its directory is the
+    /// include root. Explicit project settings still win over profile defaults.
+    #[arg(long, conflicts_with = "resume")]
+    pub profile: Vec<String>,
     /// Advanced: promote generation warnings to errors and withhold all outputs.
     #[arg(long)]
     pub strict: bool,

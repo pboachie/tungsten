@@ -2,7 +2,8 @@
 //! Language server for tungsten's manifests.
 //!
 //! `tungsten lsp` serves the Language Server Protocol over stdio for
-//! `tungsten.yml`, `agent.yml` and the overlay files a project lists. The
+//! `tungsten.yml`, `agent.yml`, the overlay files a project lists and the
+//! local profiles it selects (watched even outside the workspace folder). The
 //! workspace is the directory of the `tungsten.yml` (found from the
 //! workspace folder or given with `--config`), and it is compiled once for
 //! all the files in it:
@@ -20,7 +21,11 @@
 //! - document symbols outline the manifest;
 //! - quick fixes replace an unknown operation id or manifest value named
 //!   by a diagnostic with the closest known name, as a versioned edit the
-//!   editor previews and can undo.
+//!   editor previews and can undo;
+//! - TG0401/TG0403 on an operation id get the overlay action `tungsten
+//!   overlay suggest` derives, as one workspace edit that adds it to the
+//!   input's suggested overlay (creating and listing that file in
+//!   `tungsten.yml` when needed), previewed before it is applied.
 //!
 //! The server keeps no compilation: after each run it keeps the mapped
 //! diagnostics and an index with one small entry per operation, so memory
@@ -37,6 +42,7 @@ mod analysis;
 mod complete;
 mod docs;
 mod hover;
+mod overlay_actions;
 mod position;
 mod scan;
 mod schema;

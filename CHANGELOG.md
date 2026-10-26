@@ -226,6 +226,23 @@ changes.
 
 ### Added
 
+- Declare every input format (OpenAPI, Swagger, Postman, saved cURL, HTTP
+  request files, HAR, endpoint manifests and manual endpoints) in the
+  capability catalog with its versions, route, detection, required review flags,
+  acquisition and whether its operations are imported; `tungsten capabilities`
+  and `--matrix` list them. Targets gain an `evidence` list: qualification,
+  artifact and platform states become `recorded` only when a record names the
+  exact combination and a public reference, and stay `unknown` otherwise.
+  Editors now complete enumerated target option values, such as Python
+  `python_version` and `models`, from the declared option schemas. Imported-operation
+  policy support is declared once per target instead of also as a feature, so
+  enabling it for a target (as for Dart) no longer makes `tungsten
+  capabilities` report conflicting declarations.
+
+- Serve local profile files in `tungsten lsp`: completion and hover for
+  profile keys and target defaults from the shared profile schema, and file
+  watchers for profile directories outside the workspace folder so editing a
+  shared profile rechecks the project.
 - `scenario run --timeout-ms` now bounds the whole command, including input
   acquisition and compilation, and SIGINT/SIGTERM cancel a run that is still
   preparing. Such a run reports `timed_out` or `cancelled` before any port is
@@ -250,6 +267,10 @@ changes.
   `RATE_LIMIT_PAUSED`; `TRANSPORT_FAILED` code `SCHEDULER_CLOSED`), and shares
   `Retry-After` pauses between callers of one scope, resuming with a single
   probe. A scheduler can be shared by several clients, closed and drained.
+  An optional retry budget (`retryRatio`/`retry_ratio`, with a reserve)
+  limits the retries all callers of one scope make together; a retry it
+  cannot pay for is not made. A runnable bulk-sync example shows a job staying
+  within a local API's concurrency quota.
 
 - Add an opt-in total operation deadline to the TypeScript (`deadlineMs`),
   Python (`deadline_ms`) and Rust (`deadline`) runtimes, on client and call
@@ -258,6 +279,18 @@ changes.
   bodies and verification, and a whole traversal, poll or macro. No attempt
   starts after it expires (`DEADLINE_EXCEEDED`); a mutation already sent still
   reports `OUTCOME_UNKNOWN`. Existing timeout semantics are unchanged.
+
+- Add the same total operation deadline to the C# runtime
+  (`ClientOptions.Deadline`, `CallOptions.Deadline`), measured on a monotonic
+  clock. Authentication and a shared OAuth refresh are waited for only until
+  the deadline, never cancelled for other callers. F# SDKs use the same
+  options through the .NET runtime.
+
+- Add a per-tool-call total deadline to the MCP adapter
+  (`ServerOptions.toolDeadlineMs`, `<API>_MCP_DEADLINE_MS` in generated
+  servers). It maps to the TypeScript runtime's `deadlineMs`; tool results
+  name `code: DEADLINE_EXCEEDED`, and a mutation already sent still reports
+  `OUTCOME_UNKNOWN`.
 
 - Add the same total operation deadline to the Go runtime
   (`ClientOptions.Deadline`, `CallOptions.Deadline`), applied as a
@@ -292,6 +325,24 @@ changes.
   bundle grants no trust to external emitters or execution policy.
   `tungsten schema project-bundle` prints the inventory schema.
 
+- Add `--locked` to `generate` and `check`. A locked run verifies the compiled
+  project against `tungsten.lock.json` from the same compilation and fails with
+  `TG0128`, listing the changed identities, when the lock is missing, stale or
+  corrupt; nothing is generated. Locked runs acquire remote inputs offline from
+  their pins and cannot be combined with `--refresh-inputs`.
+
+- Add `locked: true` to `tungsten.yml`, making every `generate` and `check`
+  of the project a locked run as with `--locked`. The JSON results of both
+  commands report `locked`.
+
+- Add `bundle export --include-input-cache` to carry the verified
+  `.tungsten-inputs` pin records and pinned content of remote HTTP(S) and Git
+  inputs, and of the reviewed sources of converted imports, so such projects
+  reproduce offline after import. Only the files of each verified pin are
+  copied; import accepts them only below `.tungsten-inputs`. Without the flag,
+  the reviewed source of a converted import is now listed as excluded too.
+  Check that upstream terms allow redistributing bundled documents.
+
 - Extend the versioned capability catalog with each built-in target's option
   keys, execution environments and implemented features, plus a registry of
   feature ids. `tungsten capabilities --matrix` prints the support matrix
@@ -301,6 +352,10 @@ changes.
   target option keys now comes from the catalog, adding the missing Python
   `module`, `python_version` and `models` keys. Declarations remain source
   statements: qualification and artifact availability stay `unknown`.
+
+- Support-bundle collection, for preview and export, is limited to 30 seconds
+  and writes nothing when the limit is reached; library cancellation of an
+  export is now honoured while collection runs.
 
 - Generate the README support matrix from the capability catalog.
   `tungsten capabilities --matrix --format markdown` prints the matrix
@@ -319,6 +374,13 @@ changes.
   unknown manifest fields or values (`TG0602`), replacing the value named by
   the diagnostic with the closest known name. Fixes are version-pinned edits
   of the current buffer and are withheld when the buffer no longer matches.
+
+- Offer language-server overlay quick fixes for operations without an
+  `operationId` (`TG0403`) and repeated operation ids (`TG0401`), using the
+  actions `tungsten overlay suggest` derives. One previewed workspace edit adds
+  the action to `<namespace>.suggested-overlay.yaml`, creating that file and
+  listing it under the input's `overlays` in `tungsten.yml` when needed. No fix
+  is offered from an analysis older than the latest edit.
 
 - The `java` and `kotlin` targets now enforce imported-operation policy and may
   be generated for projects converted from Postman, cURL, `.http` or HAR input.
@@ -339,6 +401,14 @@ changes.
   outside its saved review scope (`VALIDATION_FAILED` on `base_url`, nothing
   sent), and generated clients require `ClientCore.requireImportPolicyV1()`.
 
+- The external Go emitter (`emitters/go`) now declares `import_policy: true` in
+  its `--describe` response, so projects converted from Postman, cURL, `.http`
+  or HAR input can generate Go SDKs. The Go runtime refuses a reviewed imported
+  operation whose target origin is outside its saved review scope
+  (`VALIDATION_FAILED` on `base_url`, nothing sent), and generated descriptors
+  carry `tungsten.ImportPolicy`, so they build only against a runtime that
+  enforces it.
+
 - Add explicit Linux support-bundle export to a new file in an existing,
   trusted user-owned directory. Export preserves the metadata-only preview
   manifest, caps complete artifacts at 128 KiB, refuses replacement and
@@ -350,6 +420,13 @@ changes.
   Linux. Every path component is opened without following symlinks, so the
   macOS `/tmp` and `/var` symlinks are refused; publication needs hard-link
   support in the destination filesystem.
+
+- Extend support-bundle export to Windows with its own no-clobber writer: it
+  holds every traversed directory open without delete sharing, refuses
+  reparse points, network shares, device paths and reserved names, creates
+  the temporary file with `CREATE_NEW` and publishes it with a hard link that
+  never replaces an existing entry. The directory's owner and ACL are not
+  checked.
 
 - A copyable GitHub Actions workflow in `examples/github-actions/` installs a pinned,
   checksum- and provenance-verified release through `install.sh`, runs `tungsten check`
@@ -490,6 +567,18 @@ changes.
   text and JSON redact sensitive values and physical paths without compiling
   inputs, probing tools or executing emitters.
 
+- Select shared local configuration profiles from `tungsten init --profile PATH`
+  (repeatable) and from the guided setup. Selections are composed with the
+  compiler's limits before any file is written. Invalid, missing or remote
+  profiles are refused, and no files are written.
+
+- Apply profile defaults only to targets a project declares. A shared profile
+  no longer adds a TypeScript, Python or Rust output to a project that did not
+  ask for it.
+
+- Add a profile-reuse example: an app and a multi-target library share one
+  profile chain with per-project overrides, checked offline with the compiler.
+
 - Compose Python (`package`, `version`, `runtime`, `models`, `python_version`)
   and Rust (`crate`, `version`, `runtime`) defaults from the same bounded local
   profiles, so one profile serves a multi-target library. Explicit project
@@ -505,6 +594,11 @@ changes.
 - Declare the existing TypeScript target options and supported-value schema in
   the shared capability contract. Keep emitter defaults and TG0711 fallback
   behavior compatible while configuration and generation share validation.
+
+- Add a runnable `mock-scenarios` gallery recipe: saved 429-then-success,
+  interrupted-stream, malformed-response and lost-write scenarios run through
+  `tungsten scenario run`, and deliberately broken retry, resume and replay
+  variants must fail their assertions.
 
 - Assert mock-side effects in saved scenarios with optional `expect.effects`
   counts of applied writes and idempotent replays, so a lost-write retry that

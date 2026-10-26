@@ -746,7 +746,12 @@ public sealed partial class ClientCore
             Confirmed(new ConfirmTarget(op.Id, op.Id, "preview(...)"), op.Agent.Safety, args, opts);
         }
         var method = op.Method;
-        var authResult = await ResolveAuthAsync(op, method, ct, InsecureHttp(urlOverride ?? baseUrl) ? InsecureHttpAuth : null).ConfigureAwait(false);
+        CheckDeadline(op, opts, "before the request could be sent");
+        var (authenticated, authResult) = await UntilDeadlineAsync(ResolveAuthAsync(op, method, ct, InsecureHttp(urlOverride ?? baseUrl) ? InsecureHttpAuth : null), opts).ConfigureAwait(false);
+        if (!authenticated)
+        {
+            throw DeadlineExpired(op, "while authenticating");
+        }
         if (authResult.Failed is not null)
         {
             throw new Diag(op.Id, Category.AuthFailed).Remedy(authResult.Failed).Fail();
@@ -817,7 +822,7 @@ public sealed partial class ClientCore
             headerBag.Set("Content-Type", encoded.ContentType, false);
         }
         var header = Keys.Header(op);
-        var idem = await IdempotencyKeyAsync(op, args, key, purpose, encoded, ct).ConfigureAwait(false);
+        var idem = await IdempotencyKeyAsync(op, args, key, purpose, encoded, opts, ct).ConfigureAwait(false);
         if (idem is not null)
         {
             headerBag.Set(header, idem, true);
@@ -1154,7 +1159,7 @@ public sealed partial class ClientCore
         }
     }
 
-    private async Task<string?> IdempotencyKeyAsync(OperationDescriptor op, JsonObject args, string? supplied, Purpose purpose, EncodedBody encoded, CancellationToken ct)
+    private async Task<string?> IdempotencyKeyAsync(OperationDescriptor op, JsonObject args, string? supplied, Purpose purpose, EncodedBody encoded, CallOptions opts, CancellationToken ct)
     {
         switch (op.Agent.Idempotency.Policy)
         {
@@ -1177,7 +1182,17 @@ public sealed partial class ClientCore
                     Failure Refuse(string why) => new Diag(op.Id, Category.TransportFailed).Retry(Retryable.Never)
                         .Remedy($"The idempotency store failed ({why}), so the call was not sent rather than risk a second key for the same intent. Fix or replace ClientOptions.IdempotencyStore.").Fail();
                     var logical = Util.Sha256Hex(Json.Canonical(args));
-                    await keyLock.WaitAsync(ct).ConfigureAwait(false);
+                    if (Remaining(opts) is TimeSpan left)
+                    {
+                        if (!await keyLock.WaitAsync(left, ct).ConfigureAwait(false))
+                        {
+                            throw DeadlineExpired(op, "while reserving an idempotency key");
+                        }
+                    }
+                    else
+                    {
+                        await keyLock.WaitAsync(ct).ConfigureAwait(false);
+                    }
                     try
                     {
                         try
