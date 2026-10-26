@@ -744,6 +744,15 @@ changes.
 
 ### Fixed
 
+- The Rust runtime runs an OAuth2 token fetch or refresh as its own task: a
+  caller whose `deadline` passes, or whose future is dropped, stops waiting
+  (with `DEADLINE_EXCEEDED` for an expired deadline) instead of cutting short
+  a fetch other callers share, which then failed them with `AUTH_FAILED` and
+  sent a second token request. The TypeScript runtime also stops waiting for
+  authentication, an OAuth rejection refresh or an idempotency key
+  reservation when the caller's `signal` aborts. Python already behaved this
+  way.
+
 - Record profile files in `tungsten.lock.json` by their manifest-relative
   path below the selected profile root, instead of the logical
   `profile[N]/...` name. `bundle export` failed for any project that selected
