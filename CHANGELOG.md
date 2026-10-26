@@ -241,6 +241,20 @@ changes.
   grants no trust to external emitters. `tungsten schema generation-lock`
   prints its schema.
 
+- Add `tungsten bundle export` and `tungsten bundle import` for portable
+  single-project bundles. Export requires a current generation lock and copies
+  only the locked input closure and the lock into a new plain directory with a
+  `tungsten-bundle.json` inventory of paths, sizes and digests; it never
+  includes credentials, input caches, generated output or unrelated files.
+  `--preview` shows the inventory, excluded remote or out-of-project inputs and
+  files named like credential material; exporting an incomplete bundle or such
+  files needs `--allow-incomplete` or `--allow-sensitive`. Import validates the
+  whole bundle before writing (file-count, size and depth limits, relative
+  path confinement, no links, digests and lock consistency), keeps identical
+  existing files, refuses to overwrite differing ones and runs nothing; the
+  bundle grants no trust to external emitters or execution policy.
+  `tungsten schema project-bundle` prints the inventory schema.
+
 - Extend the versioned capability catalog with each built-in target's option
   keys, execution environments and implemented features, plus a registry of
   feature ids. `tungsten capabilities --matrix` prints the support matrix

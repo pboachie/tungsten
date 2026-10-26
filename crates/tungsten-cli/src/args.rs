@@ -146,6 +146,12 @@ impl Cli {
             Command::Capabilities(_) => CommandName::Capabilities,
             Command::Config(_) => CommandName::Config,
             Command::Lock(_) => CommandName::Lock,
+            Command::Bundle {
+                command: BundleCommand::Export(_),
+            } => CommandName::BundleExport,
+            Command::Bundle {
+                command: BundleCommand::Import(_),
+            } => CommandName::BundleImport,
             Command::Policy { .. } => CommandName::PolicyDigest,
             Command::Emitters(_) => CommandName::Emitters,
             Command::Generate(_) => CommandName::Generate,
@@ -187,6 +193,12 @@ pub(crate) enum Command {
     /// Capture or verify the project's generation lock (tungsten.lock.json)
     /// offline; never fetches inputs or runs emitters.
     Lock(LockArgs),
+    /// Export or import a portable project bundle: the locked input closure
+    /// as a plain directory with a digest inventory. Runs nothing.
+    Bundle {
+        #[command(subcommand)]
+        command: BundleCommand,
+    },
     /// Explicit host policy utilities; never approves or runs executables.
     Policy {
         #[command(subcommand)]
@@ -296,6 +308,48 @@ pub(crate) struct LockArgs {
     /// Accept changed identities and replace a stale or corrupt lock.
     #[arg(long)]
     pub update: bool,
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum BundleCommand {
+    /// Copy the locked input closure and lock into a new bundle directory.
+    /// Without --output, preview the inventory only.
+    Export(BundleExportArgs),
+    /// Validate a bundle completely, then copy it into a destination
+    /// directory without overwriting differing files.
+    Import(BundleImportArgs),
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct BundleExportArgs {
+    /// Local project directory or tungsten manifest.
+    #[arg(default_value = ".")]
+    pub path: PathBuf,
+    /// Show the inventory and what is excluded; writes nothing.
+    #[arg(long, conflicts_with = "output")]
+    pub preview: bool,
+    /// New bundle directory to create; never overwrites an existing entry.
+    #[arg(long, value_name = "DIR")]
+    pub output: Option<PathBuf>,
+    /// Export even when remote inputs, files outside the project or external
+    /// emitters keep the bundle from being self-contained.
+    #[arg(long)]
+    pub allow_incomplete: bool,
+    /// Export declared inputs whose names suggest credential or key material.
+    #[arg(long)]
+    pub allow_sensitive: bool,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct BundleImportArgs {
+    /// Bundle directory written by `bundle export`.
+    pub bundle: PathBuf,
+    /// Destination project directory; created when missing.
+    #[arg(long, value_name = "DIR")]
+    pub dest: PathBuf,
+    /// Validate and list what would be written; writes nothing.
+    #[arg(long)]
+    pub preview: bool,
 }
 
 #[derive(Debug, Subcommand)]
@@ -571,6 +625,8 @@ pub enum SchemaName {
     Capabilities,
     /// The project generation lock written by `lock` (tungsten.lock.json).
     GenerationLock,
+    /// The inventory of a project bundle (tungsten-bundle.json).
+    ProjectBundle,
 }
 
 #[derive(Debug, Clone, Args)]
