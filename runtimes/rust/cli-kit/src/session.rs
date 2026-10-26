@@ -743,6 +743,36 @@ impl SessionStore {
         Ok(present)
     }
 
+    /// The bound schemes whose token expires within `skew_ms` of `now` and
+    /// has a refresh token: scheme and storage key.
+    pub(crate) fn due(&self, now: u64, skew_ms: u64) -> Vec<(String, String)> {
+        self.lock()
+            .iter()
+            .filter(|(_, b)| {
+                b.token.as_ref().is_some_and(|t| {
+                    t.refresh_token.is_some()
+                        && t.expires_at
+                            .is_some_and(|e| e <= now.saturating_add(skew_ms))
+                })
+            })
+            .map(|(scheme, b)| (scheme.clone(), b.id.clone()))
+            .collect()
+    }
+
+    /// Read `scheme`'s token from its vault again (another process may have
+    /// refreshed it).
+    pub(crate) fn reload(&self, scheme: &str) -> Result<(), String> {
+        let mut bound = self.lock();
+        if let Some(b) = bound.get_mut(scheme) {
+            b.token = Self::current(b)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn index_dir(&self) -> Option<&Path> {
+        self.index_dir.as_deref()
+    }
+
     fn lock(&self) -> std::sync::MutexGuard<'_, BTreeMap<String, Bound>> {
         self.bound.lock().unwrap_or_else(|e| e.into_inner())
     }
@@ -1003,4 +1033,67 @@ pub(crate) fn known_keys(auth: &[AuthSchemeDescriptor]) -> Vec<String> {
         keys.push(format!("{base}_issuer"));
     }
     keys
+}
+
+/// An exclusive claim on refreshing one session across processes: a lock
+/// file created with `create_new` under `locks/` next to the index, removed
+/// on drop. A claim older than [`RefreshLock::STALE`] is taken over (its
+/// process died or hung).
+#[derive(Debug)]
+pub(crate) struct RefreshLock {
+    path: PathBuf,
+}
+
+impl RefreshLock {
+    const STALE: std::time::Duration = std::time::Duration::from_secs(60);
+
+    /// Claim session `id`, waiting up to `wait`; `None` when another process
+    /// still holds it or the lock directory cannot be used.
+    pub(crate) async fn acquire(
+        dir: &Path,
+        id: &str,
+        wait: std::time::Duration,
+    ) -> Option<RefreshLock> {
+        let locks = dir.join("locks");
+        create_private_dir(&locks).ok()?;
+        let path = locks.join(format!("{id}.lock"));
+        let started = std::time::Instant::now();
+        loop {
+            let mut options = std::fs::OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600);
+            }
+            match options.open(&path) {
+                Ok(mut file) => {
+                    let _ = writeln!(file, "{}", std::process::id());
+                    return Some(RefreshLock { path });
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    let stale = std::fs::metadata(&path)
+                        .and_then(|m| m.modified())
+                        .ok()
+                        .and_then(|t| t.elapsed().ok())
+                        .is_some_and(|age| age > Self::STALE);
+                    if stale {
+                        let _ = std::fs::remove_file(&path);
+                        continue;
+                    }
+                }
+                Err(_) => return None,
+            }
+            if started.elapsed() >= wait {
+                return None;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+    }
+}
+
+impl Drop for RefreshLock {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
 }
