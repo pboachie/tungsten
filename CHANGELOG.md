@@ -242,6 +242,15 @@ changes.
   missing keychain never falls back to plaintext. Login refuses to run in CI
   or without a terminal, and no other command starts one.
 
+- `tungsten config` now inspects the C#, F#, Dart, Java, Kotlin, Ruby, MCP,
+  WebMCP and docs target options declared in the capability catalog (status
+  `declared_fields`): each declared field reports its authored value or fixed
+  default, a value of the wrong JSON type is reported with the target's
+  invalid-option warning code, and only package identity fields are exported
+  unredacted. The emitter still validates values when it runs.
+- The `init --targets` help lists the default and companion targets from the
+  capability catalog.
+
 - Add `tungsten refresh-import` to refresh a converted import (Postman, HAR,
   saved cURL, HTTP file, Swagger or endpoint manifest) in place instead of
   re-importing into a fresh project. It converts the new source revision

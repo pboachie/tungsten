@@ -38,6 +38,26 @@ pub struct OptionField {
     pub default: Option<&'static str>,
 }
 
+impl OptionField {
+    /// Whether `value` has the declared JSON type. Semantic validation stays
+    /// with the emitter.
+    pub fn accepts(&self, value: &Value) -> bool {
+        match self.kind {
+            FieldType::String => value.is_string(),
+            FieldType::Boolean => value.is_boolean(),
+            FieldType::Object => value.is_object(),
+        }
+    }
+
+    /// The fixed default as JSON, when there is one.
+    pub fn default_value(&self) -> Option<Value> {
+        self.default.map(|default| match self.kind {
+            FieldType::Boolean => Value::Bool(default == "true"),
+            _ => Value::String(default.into()),
+        })
+    }
+}
+
 /// A target's declared fields and the diagnostic reporting an invalid value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DeclaredOptions {
@@ -66,11 +86,8 @@ impl DeclaredOptions {
                     schema["x-tungsten-invalid"] =
                         format!("{code} warning and emitter default").into();
                 }
-                if let Some(default) = field.default {
-                    schema["default"] = match field.kind {
-                        FieldType::Boolean => Value::Bool(default == "true"),
-                        _ => Value::String(default.into()),
-                    };
+                if let Some(default) = field.default_value() {
+                    schema["default"] = default;
                 }
                 (field.key, schema)
             })
