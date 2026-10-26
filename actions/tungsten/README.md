@@ -135,6 +135,12 @@ Supported runners: Linux x86_64 and aarch64 (static musl build) and macOS
 (x86_64 and Apple silicon). Windows runners fail with a message; install
 there with `install.ps1`.
 
+The runner needs GitHub CLI 2.102.0 or newer for the provenance check. The
+action checks this first and fails with a message when it is missing or
+older; it never falls back to a checksum-only install. Some images ship an
+older CLI (`macos-15` at the time of writing): update it in a step before the
+action, for example `brew upgrade gh`.
+
 To upgrade, change `version` and the action commit together, to the commit of
 the new release tag, regenerate locally with that release, and review the
 diff in one pull request. Dependabot's `github-actions` ecosystem can propose
