@@ -228,6 +228,10 @@ const MANIFEST: Table = &[
         "agent",
         "Path of the agent manifest, relative to this file. When absent, `agent.yml` next to this file is used if it exists.",
     ),
+    (
+        "locked",
+        "`true` requires a current `tungsten.lock.json` for `generate` and `check`, like `--locked`: inputs are read offline and nothing is generated while the lock is missing, stale or corrupt (TG0128). Default `false`.",
+    ),
 ];
 
 const AGENT: Table = &[
