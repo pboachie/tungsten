@@ -526,6 +526,24 @@ uninterruptible callbacks retain capacity until completion and late results are
 rejected, without a hard settlement deadline. OS resolver cancellation depends on
 the platform.
 
+Migrating to the total deadline (unreleased 0.2.0): `timeoutMs` and its
+equivalents keep their meaning. They bound one attempt, so retries, backoff,
+authentication, pages and verification can together take several times as long.
+To bound what a caller waits for one logical call, set the new opt-in total
+deadline as well: `deadlineMs` (TypeScript), `deadline_ms` (Python), `deadline`
+(Rust), `Deadline` (Go), `--deadline <SECONDS>` with `<PREFIX>_DEADLINE` or the
+profile key `deadline` (generated Rust CLI), and `toolDeadlineMs` with
+`<API>_MCP_DEADLINE_MS` (MCP server, per tool call). Other runtimes describe
+their support in their README's `Limits` section. With both set, each attempt
+gets at most the time the deadline has left, and queue admission waits no longer
+than the deadline. No attempt starts after the deadline expires (`code`
+`DEADLINE_EXCEEDED`). A mutation already sent at that point reports
+`OUTCOME_UNKNOWN` and is never replayed blindly, so retry it only with the same
+idempotency key. An open event stream is not cut by the deadline; its idle and
+collection limits apply. Shared token refreshes and custom transports or stores
+that ignore cancellation are no longer waited for, but they are not stopped.
+Without a deadline, behaviour is unchanged.
+
 For a saved collection, start with [Postman import and contract review](examples/input-postman/README.md).
 For an API change, use the [stale-output and regeneration walkthrough](examples/ci-drift/README.md).
 Both build on the existing gallery recipes.
