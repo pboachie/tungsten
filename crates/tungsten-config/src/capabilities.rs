@@ -590,23 +590,24 @@ pub struct OpenApiVersionCapability {
 use InputFeaturePolicy::{Ignored, Rejected};
 
 /// OpenAPI 3.2 constructs without a 3.1 equivalent that are compiled.
-pub const OPENAPI_32_SUPPORTED: &[SupportedInputFeature] = &[SupportedInputFeature {
-    id: "query_method",
-    member: "query",
-    behavior: "an operation sent with the HTTP QUERY method and its request body; safe, so read-only by default",
-}];
+pub const OPENAPI_32_SUPPORTED: &[SupportedInputFeature] = &[
+    SupportedInputFeature {
+        id: "query_method",
+        member: "query",
+        behavior: "an operation sent with the HTTP QUERY method and its request body; safe, so read-only by default",
+    },
+    SupportedInputFeature {
+        id: "additional_operations",
+        member: "additionalOperations",
+        behavior: "each entry is an operation sent with its method token exactly as written; unsafe and not idempotent by default. Tokens that cannot be sent (not an RFC 9110 token, a fixed method, CONNECT or TRACK) are refused with TG0142",
+    },
+];
 
 /// OpenAPI 3.2 constructs without a 3.1 equivalent that are diagnosed. A 3.2
 /// document using none of these is read as its 3.1 twin plus the supported
 /// constructs above.
 pub const OPENAPI_32_FEATURES: &[UnsupportedInputFeature] = &[
     feature("document_self", "$self", "TG0140", Rejected),
-    feature(
-        "additional_operations",
-        "additionalOperations",
-        "TG0142",
-        Rejected,
-    ),
     feature(
         "querystring_parameter",
         "in: querystring",
