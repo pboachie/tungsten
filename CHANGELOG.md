@@ -236,6 +236,21 @@ changes.
 
 ### Added
 
+- Experimental Python dispatch for browser WebMCP tools: `webmcp: true` on the
+  `mcp-python` target generates `<module>/webmcp.py`, an ASGI app
+  (`tungsten_mcp.webmcp_app`) that lists the tools a signed-in principal may
+  use and runs each call through the generated Python SDK and its runtime
+  policy. Every request needs the application's principal, the
+  `X-Tungsten-WebMCP: 1` header and a same-origin `Origin` (on `POST`); no CORS
+  headers are sent. Each principal has its own client and confirmation tokens.
+  Exposure is read-only by default, with a server-enforced allowlist and an
+  optional per-user `authorize`. Secret-bearing, streamed and binary results
+  are refused, and request and result bytes are bounded. The capability
+  catalog lists it as `webmcp_python_dispatch`. In the page,
+  `registerRemoteWebMcp({ endpoint })` of `@elysra/tungsten-webmcp` registers
+  those tools on the page's own origin, with the same owned registration and
+  cleanup as `registerTungstenWebMcp`.
+
 - The experimental `mcp-python` server collects streamed (server-sent event)
   results, as the TypeScript server does: at most 1,000 events (then
   `truncated: true`), `max_stream_bytes` of JSON (4 MiB) and `max_stream_ms`
