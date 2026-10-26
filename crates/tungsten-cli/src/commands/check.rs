@@ -21,7 +21,8 @@ use crate::{CliEnv, Collapse, Report, exit, input};
 pub(crate) fn run(args: &CheckArgs, env: &CliEnv, no_external: bool) -> Report {
     let compiled = input::compile_with_policy(&args.input.path, env.policy.clone());
     let mut diagnostics = compiled.diagnostics.0.clone();
-    if args.locked
+    let locked = super::lock::required(&args.input.path, args.locked);
+    if locked
         && !has_errors(&diagnostics)
         && let Some(diagnostic) = super::lock::locked_diagnostic(&args.input.path, &compiled)
     {
@@ -112,6 +113,7 @@ pub(crate) fn run(args: &CheckArgs, env: &CliEnv, no_external: bool) -> Report {
         refs: ref_stats(&compiled.workspace.graph),
         stats: compiled.ir.as_ref().map(ir_stats),
         outputs,
+        locked,
     };
     let mut report = Report::new(CommandName::Check);
     report.exit = if io_failed {

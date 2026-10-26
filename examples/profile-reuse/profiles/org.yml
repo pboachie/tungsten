@@ -1,0 +1,11 @@
+# Reviewed organization defaults. Projects select this file (or a profile that
+# includes it) and may override any field explicitly in their own tungsten.yml.
+tungsten_profile: 1
+targets:
+  typescript:
+    version: 1.0.0
+  python:
+    version: 1.0.0
+    python_version: "3.11"
+  rust:
+    version: 1.0.0

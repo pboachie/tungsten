@@ -272,7 +272,15 @@ pub fn render_overlay(input: &InputSuggestions) -> String {
         return out;
     }
     out.push_str("actions:\n");
-    for action in &input.actions {
+    out.push_str(&render_actions(&input.actions));
+    out
+}
+
+/// The items of an overlay's `actions` list, one per action with its
+/// comments, indented for a top-level `actions:` key. Deterministic.
+pub fn render_actions(actions: &[Action]) -> String {
+    let mut out = String::new();
+    for action in actions {
         for comment in &action.comments {
             out.push_str("  # ");
             out.push_str(comment);
