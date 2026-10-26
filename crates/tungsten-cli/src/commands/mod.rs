@@ -35,9 +35,11 @@ pub(crate) mod support_bundle_attach;
 mod support_bundle_file;
 pub(crate) mod support_bundle_inspect;
 pub(crate) mod update;
+pub(crate) mod update_notice;
 pub(crate) mod upgrade;
 pub(crate) mod upgrade_apply;
 mod wizard;
+pub(crate) mod workspace;
 
 use crate::args::{
     BundleCommand, Cli, Command, IrCommand, OverlayCommand, PolicyCommand, UpgradeCommand,
@@ -125,6 +127,7 @@ fn dispatch_with_inputs(
         Command::Doctor(args) => doctor::run(args, env),
         Command::Capabilities(args) => capabilities::run(args),
         Command::Config(args) => config::run(args, env),
+        Command::Workspace(args) => workspace::run(args),
         Command::Lock(args) => lock::run(args),
         Command::Bundle {
             command: BundleCommand::Export(args),

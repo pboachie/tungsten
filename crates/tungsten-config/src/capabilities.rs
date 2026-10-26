@@ -349,6 +349,10 @@ const JS: &[ToolRequirement] = &[
     ToolRequirement::new("npm", None),
 ];
 // The MCP root graph imports stripTypeScriptTypes, added in 22.13 and 23.2.
+/// Newest Node.js major the public npm package build lanes check. Doctor
+/// reports newer majors as unqualified until a release promotes them.
+pub const NODE_NEWEST_CHECKED_MAJOR: u32 = 26;
+
 const MCP: &[ToolRequirement] = &[
     ToolRequirement {
         tool: "node",
@@ -535,7 +539,52 @@ pub struct CapabilityCatalog {
     pub init: InitCapability,
     /// Registered IR protocols and the targets generating each.
     pub protocols: Vec<ProtocolDefinition>,
+    /// Multi-project workspace discovery and selection.
+    pub workspace: WorkspaceCapability,
 }
+
+/// How several tungsten projects under one directory are found and
+/// selected (`tungsten workspace`, `--project`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct WorkspaceCapability {
+    /// Manifest file names that make a directory a project; a directory
+    /// with more than one is ambiguous (TG0641).
+    pub manifest_names: &'static [&'static str],
+    /// Directory names never searched, besides hidden directories and the
+    /// output directories of discovered projects.
+    pub skipped_directories: &'static [&'static str],
+    /// Discovery bounds; reaching one is TG0640.
+    pub limits: crate::workspace::DiscoveryLimits,
+    /// Whether discovery follows symbolic links (it never does).
+    pub follows_links: bool,
+    /// Commands that take `--project ID` to run on one project.
+    pub project_selection: &'static [&'static str],
+    /// Whether the language server routes documents to their owning
+    /// project across several workspace folders and projects.
+    pub editor_routing: bool,
+}
+
+/// The workspace declaration.
+pub const WORKSPACE: WorkspaceCapability = WorkspaceCapability {
+    manifest_names: &crate::workspace::MANIFEST_NAMES,
+    skipped_directories: crate::workspace::SKIPPED_DIRECTORIES,
+    limits: crate::workspace::DEFAULT_LIMITS,
+    follows_links: false,
+    project_selection: &[
+        "check",
+        "generate",
+        "lock",
+        "report",
+        "diff",
+        "mock",
+        "ir dump",
+        "overlay suggest",
+        "scenario validate",
+        "scenario run",
+    ],
+    editor_routing: false,
+};
 
 /// How an input format enters a project.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
