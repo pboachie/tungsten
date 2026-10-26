@@ -661,6 +661,13 @@ func (g *gen) shapeSchema(s *Shape, hint []string) string {
 		}
 		if s.Discriminator != nil && s.Discriminator.Property != "" && s.Strategy == "tagged" && len(tags) == len(variants) {
 			parts = append(parts, "Tag: "+goString(s.Discriminator.Property), "Tags: []string{"+strings.Join(tags, ", ")+"}")
+			for i := range s.Variants {
+				v := &s.Variants[i]
+				if d := s.Discriminator.DefaultMapping; d != "" && v.Ty.Inline == nil && v.Ty.Named == d {
+					parts = append(parts, "DefaultTag: "+goString(*v.Tag))
+					break
+				}
+			}
 		}
 		return schemaLit(parts)
 	case "intersection":
