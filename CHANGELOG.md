@@ -230,6 +230,12 @@ changes.
 
 ### Added
 
+- Declare proxy, `NO_PROXY`, private CA, mTLS and account/provider references
+  under `transport` in profiles and `tungsten.yml`. Values are references
+  (`{env: NAME}`, `{file: path}`, `{store: store:item}`) or non-secret names;
+  inline material and settings that would disable certificate verification are
+  refused. `tungsten config` explains each reference's source; tungsten never
+  reads what they point to.
 - Add `tungsten init --preset app|library|agent`, also accepted at the guided
   setup's outputs prompt. `library` writes and selects a local profile
   (`profiles/library.yml`) with shared SDK versions; `agent` configures an MCP
