@@ -201,6 +201,14 @@ impl Ctx<'_> {
         if self.ir.agent.redirects == tungsten_ir::RedirectPolicy::None {
             w.line("ClientCore.RequireRedirectPolicyV1();");
         }
+        if self
+            .plan
+            .operations
+            .iter()
+            .any(|p| p.op.agent.import_policy.is_some())
+        {
+            w.line("ClientCore.RequireImportPolicyV1();");
+        }
         w.line("Core = new ClientCore(Ops.Document, options);");
         for (m, class) in &members {
             w.line(format!("{m} = new {class}(Core);"));

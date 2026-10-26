@@ -379,7 +379,7 @@ pub(crate) fn run(
                 "choose a support bundle preview or explicit export",
             )
             .with_help(
-                "use --preview, --output <PATH> to create a new metadata-only file on Unix, or --inspect <FILE> to review an existing bundle",
+                "use --preview, --output <PATH> to create a new metadata-only file on Linux or macOS, or --inspect <FILE> to review an existing bundle",
             ),
         );
     }
@@ -522,7 +522,7 @@ fn export_failed(report: Report, error: ExportError) -> Report {
         Failure::Unsupported => (
             exit::REFUSED,
             ErrorKind::Refused,
-            "support bundle export is supported only on Unix platforms",
+            "support bundle export is supported only on Linux and macOS",
         ),
         Failure::Cancelled => (
             exit::REFUSED,
@@ -971,6 +971,6 @@ fn human(preview: &SupportBundlePreview) -> String {
     for item in &preview.omitted {
         let _ = writeln!(out, "  {:<28} {}", item.category, item.description);
     }
-    out.push_str("Remove an entry with --exclude <id>. Export to a new file on Unix with --output <PATH>; review a bundle file with --inspect <FILE>.\n");
+    out.push_str("Remove an entry with --exclude <id>. Export to a new file on Linux or macOS with --output <PATH>; review a bundle file with --inspect <FILE>.\n");
     out
 }

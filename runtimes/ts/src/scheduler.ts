@@ -29,6 +29,15 @@ export interface SchedulerOptions {
   /** `"origin"` (default): one scope per tenant and request origin.
    * `"scheduler"`: one scope per tenant, whatever the origin. */
   scope?: "origin" | "scheduler";
+  /** Retries per call a scope may spend over time, shared by every caller
+   * of the scope (0 to 1). Each call adds this much to the scope's retry
+   * budget and each retry spends 1; a retry the budget cannot pay for is not
+   * made and the call returns its last failure. Default: retries are not
+   * budgeted. */
+  retryRatio?: number;
+  /** Retries a scope's budget holds before any call added to it, and the
+   * base of its cap (`retryReserve + 100 × retryRatio`). Default 10. */
+  retryReserve?: number;
 }
 
 /** Why a request was not admitted. */
@@ -71,6 +80,10 @@ interface Pool {
   timer: ReturnType<typeof setTimeout> | null;
 }
 
+/** Scopes whose retry budget is remembered; the least recently used is
+ * forgotten (and starts again from the reserve) beyond this. */
+const MAX_BUDGETS = 1024;
+
 /** The pause after a `RATE_LIMITED` answer that names no wait. */
 const DEFAULT_PAUSE_MS = 1000;
 const MAX_PAUSE_MS = 3_600_000;
@@ -95,7 +108,10 @@ export class RequestScheduler {
   readonly maxStreams: number;
   readonly maxQueueMs: number;
   readonly scope: "origin" | "scheduler";
+  readonly retryRatio: number | null;
+  readonly retryReserve: number;
   readonly #pools = new Map<string, Pool>();
+  readonly #budgets = new Map<string, number>();
   readonly #idle: Array<() => void> = [];
   #closed = false;
 
@@ -108,6 +124,41 @@ export class RequestScheduler {
       throw new RangeError(`scope must be "origin" or "scheduler", got ${String(options.scope)}`);
     }
     this.scope = options.scope ?? "origin";
+    const ratio = options.retryRatio;
+    if (ratio !== undefined && ratio !== null && (typeof ratio !== "number" || !Number.isFinite(ratio) || ratio < 0 || ratio > 1)) {
+      throw new RangeError(`retryRatio must be a number from 0 to 1, got ${String(ratio)}`);
+    }
+    this.retryRatio = ratio ?? null;
+    this.retryReserve = integer(options.retryReserve, 10, 0, 10_000);
+  }
+
+  /** Add one call's share to the retry budget of `key`. */
+  recordCall(key: string): void {
+    if (this.retryRatio === null) return;
+    const cap = this.retryReserve + 100 * this.retryRatio;
+    this.#setBudget(key, Math.min(cap, this.#budget(key) + this.retryRatio));
+  }
+
+  /** Spend one retry from the budget of `key`; false when it cannot pay. */
+  allowRetry(key: string): boolean {
+    if (this.retryRatio === null) return true;
+    const balance = this.#budget(key);
+    if (balance < 1) return false;
+    this.#setBudget(key, balance - 1);
+    return true;
+  }
+
+  #budget(key: string): number {
+    return this.#budgets.get(key) ?? this.retryReserve;
+  }
+
+  #setBudget(key: string, balance: number): void {
+    this.#budgets.delete(key);
+    this.#budgets.set(key, balance);
+    if (this.#budgets.size > MAX_BUDGETS) {
+      const oldest = this.#budgets.keys().next().value;
+      if (oldest !== undefined) this.#budgets.delete(oldest);
+    }
   }
 
   /** The scope of a request to `url` made for `tenant`. */

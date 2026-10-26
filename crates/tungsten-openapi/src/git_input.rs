@@ -836,6 +836,23 @@ fn verify(dir: &Path, source: &Source, pin: &Pin) -> Result<PathBuf, Diagnostic>
 
 /// Reuse an existing commit pin, or explicitly resolve/fetch a new one. Online
 /// reuse deliberately retains the pinned commit until `--refresh-inputs`.
+/// Pin record and pinned tree files of an already verified Git source.
+pub(crate) fn pinned_files(text: &str, project: &Path) -> Result<Vec<String>, Diagnostic> {
+    let source = parse(text)?;
+    let key = hash(format!("{}@{}#{}", source.url, source.reference, source.scope).as_bytes());
+    let dir = project.join(".tungsten-inputs").join("git").join(&key);
+    let pin: Pin = serde_json::from_slice(&read(&dir.join("source.lock.json"), 1024 * 1024)?)
+        .map_err(|_| cache_error())?;
+    verify(&dir, &source, &pin)?;
+    let mut files = vec![format!(".tungsten-inputs/git/{key}/source.lock.json")];
+    files.extend(
+        pin.files
+            .keys()
+            .map(|path| format!(".tungsten-inputs/git/{key}/files/{}/{path}", pin.commit)),
+    );
+    Ok(files)
+}
+
 pub fn acquire(text: &str, project: &Path, options: &Options) -> Result<PathBuf, Diagnostic> {
     let source = parse(text)?;
     if options.offline && options.refresh {

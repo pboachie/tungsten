@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Bounded serialization and Unix-only, no-clobber support-bundle publication.
+//! Bounded serialization and no-clobber support-bundle publication on Unix
+//! platforms (Linux and macOS are the qualified targets).
 //!
 //! Directory descriptors anchor every operation. The final directory must be
 //! owned by the effective user and must not be writable by group or others;
@@ -128,7 +129,7 @@ mod platform {
 
     use nix::errno::Errno;
     use nix::fcntl::{AtFlags, OFlag, open, openat};
-    use nix::sys::stat::{Mode, fstatat};
+    use nix::sys::stat::{Mode, fstat, fstatat};
     use nix::unistd::{UnlinkatFlags, geteuid, linkat, unlinkat};
 
     use super::*;
@@ -196,8 +197,9 @@ mod platform {
         directory: File,
         file: File,
         name: OsString,
-        device: u64,
-        inode: u64,
+        // Raw platform types: `dev_t` is signed on macOS and unsigned on Linux.
+        device: nix::libc::dev_t,
+        inode: nix::libc::ino_t,
         cleanup_attempted: bool,
     }
 
@@ -228,7 +230,7 @@ mod platform {
                 let file = File::from(descriptor);
                 // fstat failure is exceptional: preserve the exclusively
                 // created entry rather than unlink an unverified pathname.
-                let metadata = file.metadata().map_err(|_| ExportError {
+                let metadata = fstat(&file).map_err(|_| ExportError {
                     kind: Failure::Io,
                     temporary_cleanup: false,
                 })?;
@@ -236,8 +238,8 @@ mod platform {
                     directory,
                     file,
                     name,
-                    device: metadata.dev(),
-                    inode: metadata.ino(),
+                    device: metadata.st_dev,
+                    inode: metadata.st_ino,
                     cleanup_attempted: false,
                 });
             }
@@ -250,14 +252,7 @@ mod platform {
                 self.name.as_os_str(),
                 AtFlags::AT_SYMLINK_NOFOLLOW,
             )
-            .is_ok_and(|metadata| {
-                // `st_dev` and `st_ino` are narrower or signed on some Unix
-                // platforms; `MetadataExt` reports both as u64.
-                #[allow(clippy::unnecessary_cast)]
-                let same =
-                    metadata.st_dev as u64 == self.device && metadata.st_ino as u64 == self.inode;
-                same
-            })
+            .is_ok_and(|metadata| metadata.st_dev == self.device && metadata.st_ino == self.inode)
         }
 
         fn cleanup(&mut self) -> bool {

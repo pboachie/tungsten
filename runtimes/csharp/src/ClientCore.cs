@@ -54,6 +54,9 @@ public sealed partial class ClientCore
     /// <summary>Generated clients require this capability when redirects are forbidden.</summary>
     public static void RequireRedirectPolicyV1() { }
 
+    /// <summary>Generated clients require this capability when an operation carries an imported-operation policy.</summary>
+    public static void RequireImportPolicyV1() { }
+
     private static bool RedirectsNone(string? value)
     {
         if (value is null or "same_origin_read") return false;
