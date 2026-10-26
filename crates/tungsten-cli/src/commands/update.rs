@@ -43,7 +43,9 @@ pub const EXIT_UNCONFIRMED: i32 = exit::UPDATE_UNCONFIRMED;
 pub(crate) enum UpdateCommand {
     /// Ask GitHub once whether a newer release exists; never installs.
     ///
-    /// Prints installation-specific upgrade guidance.
+    /// Prints installation-specific upgrade guidance. When update notices
+    /// are enabled (TUNGSTEN_UPDATE_NOTICE or the user settings file), a
+    /// verified answer is cached for the opt-in interactive notice.
     /// Exit codes: 0 up to date, 5 newer release available, 6 could not
     /// confirm (offline, opted out, network or metadata failure, or the
     /// release lacks this platform's archive).
@@ -77,7 +79,16 @@ pub(crate) fn run(command: &UpdateCommand, offline: bool) -> Report {
     };
     let fetcher = HttpFetcher;
     let result = check(&GithubReleases { fetcher: &fetcher }, &ctx);
-    finish(result)
+    let recorded = super::update_notice::record(
+        &result,
+        &super::update_notice::NoticeEnv::from_process(),
+        std::time::SystemTime::now(),
+    );
+    let mut report = finish(result);
+    if let Some(path) = recorded {
+        let _ = writeln!(report.human, "Saved for update notices: {}", path.display());
+    }
+    report
 }
 
 fn finish(result: UpdateCheckResult) -> Report {
@@ -116,6 +127,9 @@ pub struct UpdateCheckResult {
     /// unknown (platform unsupported or no release determined).
     pub artifacts_available: Option<bool>,
     pub install: InstallReport,
+    /// How disruptive moving to `latest_version` is expected to be; null
+    /// unless a newer release was found.
+    pub upgrade: Option<UpgradeKind>,
     /// Upgrade guidance. Commands appear only for a detected installation
     /// route; they are printed, never run.
     pub advice: Vec<String>,
@@ -135,6 +149,20 @@ pub enum UpdateStatus {
     ArtifactsUnavailable,
     /// No usable answer; see `reason` (exit 6).
     UnableToCheck,
+}
+
+/// Expected effect of an upgrade on a project, decided from version numbers
+/// and never relaxed by remote text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum UpgradeKind {
+    /// Same compatibility line (patch release before 1.0, minor or patch
+    /// release from 1.0): regenerate and check as usual.
+    Compatible,
+    /// A new compatibility line (minor or major release before 1.0, major
+    /// release from 1.0), a prerelease, or a release whose notes carry a
+    /// Breaking section: rehearse the upgrade before replacing clients.
+    Migration,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
@@ -508,6 +536,12 @@ impl Version {
     }
 }
 
+/// Whether `candidate` is a strictly newer semantic version than `current`;
+/// `None` when either does not parse.
+pub(crate) fn newer_than(candidate: &str, current: &str) -> Option<bool> {
+    Some(Version::parse(candidate)? > Version::parse(current)?)
+}
+
 impl Ord for Version {
     fn cmp(&self, other: &Self) -> Ordering {
         self.core
@@ -743,6 +777,7 @@ pub fn check(source: &dyn UpdateSource, ctx: &Context) -> UpdateCheckResult {
         expected_archive: None,
         artifacts_available: None,
         install,
+        upgrade: None,
         advice: vec![],
     };
     let unable = |mut result: UpdateCheckResult, reason| {
@@ -804,12 +839,15 @@ pub fn check(source: &dyn UpdateSource, ctx: &Context) -> UpdateCheckResult {
         }
         Ordering::Greater => UpdateStatus::UpdateAvailable,
     };
+    if latest.version > current {
+        result.upgrade = Some(upgrade_kind(&current, latest));
+    }
     result.advice = match result.status {
-        UpdateStatus::UpdateAvailable => advice(
-            result.install.route,
-            &latest.tag,
-            ctx.install.windows,
-        ),
+        UpdateStatus::UpdateAvailable => {
+            let mut lines = advice(result.install.route, &latest.tag, ctx.install.windows);
+            lines.extend(project_advice(result.upgrade));
+            lines
+        }
         UpdateStatus::ArtifactsUnavailable if result.expected_archive.is_none() => vec![
             "Release archives are not declared for this platform; no replacement is recommended.".into(),
         ],
@@ -819,6 +857,41 @@ pub fn check(source: &dyn UpdateSource, ctx: &Context) -> UpdateCheckResult {
         _ => vec![],
     };
     result
+}
+
+/// SemVer decides; a Breaking heading in the notes can only make it stricter.
+fn upgrade_kind(current: &Version, latest: &Release) -> UpgradeKind {
+    let new_line = if current.core[0] == 0 && latest.version.core[0] == 0 {
+        current.core[1] != latest.version.core[1]
+    } else {
+        current.core[0] != latest.version.core[0]
+    };
+    let breaking_notes = latest.notes.lines().any(|line| {
+        let line = line.trim_start_matches('#').trim().to_ascii_lowercase();
+        line == "breaking" || line.starts_with("breaking change")
+    });
+    if new_line || !latest.version.pre.is_empty() || breaking_notes {
+        UpgradeKind::Migration
+    } else {
+        UpgradeKind::Compatible
+    }
+}
+
+/// Project-side steps after replacing the binary; printed, never run.
+fn project_advice(kind: Option<UpgradeKind>) -> Vec<String> {
+    match kind {
+        Some(UpgradeKind::Compatible) => vec![
+            "This release stays on your compatibility line. After upgrading, confirm generated clients are current:".into(),
+            "  tungsten generate --check".into(),
+        ],
+        Some(UpgradeKind::Migration) => vec![
+            "This release starts a new compatibility line and may need project changes. Before replacing generated clients:".into(),
+            "  read the release notes' Breaking and Changed sections;".into(),
+            "  with the new version, preview without writing: tungsten diff --migration, tungsten lock --preview, tungsten generate --dry-run".into(),
+            "  keep the current binary available until the preview is reviewed.".into(),
+        ],
+        None => vec![],
+    }
 }
 
 pub fn exit_code(result: &UpdateCheckResult) -> i32 {
@@ -844,7 +917,12 @@ pub fn render(result: &UpdateCheckResult) -> String {
         (UpdateStatus::Ahead, _) => {
             "This build is newer than the newest release considered.".to_string()
         }
-        (UpdateStatus::UpdateAvailable, _) => "A newer release is available.".to_string(),
+        (UpdateStatus::UpdateAvailable, _) if result.upgrade == Some(UpgradeKind::Migration) => {
+            "A newer release is available; it may require project migration.".to_string()
+        }
+        (UpdateStatus::UpdateAvailable, _) => {
+            "A newer, compatible release is available.".to_string()
+        }
         (UpdateStatus::ArtifactsUnavailable, _) if result.expected_archive.is_none() => {
             "A newer release exists, but no release archive is declared for this platform; not recommended."
                 .to_string()

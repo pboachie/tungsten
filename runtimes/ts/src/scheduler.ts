@@ -47,6 +47,36 @@ export interface SchedulerOptions {
   /** Event streams open at once across every scope, on top of each
    * scope's `maxStreams`. Default: no cap across scopes. */
   maxStreamsTotal?: number;
+  /** Receives every admission event, synchronously; see
+   * {@link SchedulerEvent}. Its exceptions are ignored and it must not wait.
+   * Default: none. */
+  onEvent?: (event: SchedulerEvent) => void;
+}
+
+/**
+ * One admission event (contract version 1). Events name no scope, tenant,
+ * URL or payload, so they carry no secret and few distinct values; read
+ * {@link RequestScheduler.stats} for counts. Durations are whole
+ * milliseconds; a field that does not apply is null.
+ */
+export interface SchedulerEvent {
+  version: 1;
+  /** `admitted`: a request got capacity. `rejected`: it did not and was
+   * not sent. `released`: a request gave its capacity back. `paused`: a
+   * `RATE_LIMITED` answer paused its scope. `retry_denied`: the retry
+   * budget refused a retry. */
+  event: "admitted" | "rejected" | "released" | "paused" | "retry_denied";
+  /** Ordinary call or event stream; null for `paused`. */
+  kind: "call" | "stream" | null;
+  /** `admitted`, `rejected`: how long the request waited for capacity. */
+  wait_ms: number | null;
+  /** `released`: how long the request held its capacity. */
+  held_ms: number | null;
+  /** `paused`: how long the scope pauses; `rejected` with reason `paused`:
+   * how long the pause still lasts. */
+  pause_ms: number | null;
+  /** `rejected`: why. */
+  reason: "full" | "timeout" | "paused" | "closed" | "aborted" | null;
 }
 
 /** Why a request was not admitted. */
@@ -127,6 +157,7 @@ export class RequestScheduler {
   readonly #pools = new Map<string, Pool>();
   readonly #budgets = new Map<string, number>();
   readonly #idle: Array<() => void> = [];
+  readonly #onEvent: ((event: SchedulerEvent) => void) | null;
   #closed = false;
 
   constructor(options: SchedulerOptions) {
@@ -146,6 +177,29 @@ export class RequestScheduler {
     this.retryReserve = integer(options.retryReserve, 10, 0, 10_000);
     this.maxActiveTotal = options.maxActiveTotal === undefined || options.maxActiveTotal === null ? null : integer(options.maxActiveTotal, 0, 1, 1_000_000);
     this.maxStreamsTotal = options.maxStreamsTotal === undefined || options.maxStreamsTotal === null ? null : integer(options.maxStreamsTotal, 0, 1, 1_000_000);
+    if (options.onEvent !== undefined && options.onEvent !== null && typeof options.onEvent !== "function") {
+      throw new TypeError("onEvent must be a function");
+    }
+    this.#onEvent = options.onEvent ?? null;
+  }
+
+  #emit(event: SchedulerEvent["event"], kind: Kind | null, fields: Partial<Pick<SchedulerEvent, "wait_ms" | "held_ms" | "pause_ms" | "reason">> = {}): void {
+    const observer = this.#onEvent;
+    if (observer === null) return;
+    const ms = (value: number | null | undefined): number | null => (value === null || value === undefined ? null : Math.max(0, Math.round(value)));
+    try {
+      observer({
+        version: 1,
+        event,
+        kind,
+        wait_ms: ms(fields.wait_ms),
+        held_ms: ms(fields.held_ms),
+        pause_ms: ms(fields.pause_ms),
+        reason: fields.reason ?? null,
+      });
+    } catch {
+      // Observers never change admission.
+    }
   }
 
   /** Add one call's share to the retry budget of `key`. */
@@ -159,7 +213,10 @@ export class RequestScheduler {
   allowRetry(key: string): boolean {
     if (this.retryRatio === null) return true;
     const balance = this.#budget(key);
-    if (balance < 1) return false;
+    if (balance < 1) {
+      this.#emit("retry_denied", "call");
+      return false;
+    }
     this.#setBudget(key, balance - 1);
     return true;
   }
@@ -196,6 +253,18 @@ export class RequestScheduler {
    * `performance.now()` time that also ends the wait.
    */
   acquire(key: string, kind: Kind, signal?: AbortSignal, deadline?: number, random: () => number = Math.random): Promise<Permit | Rejection> {
+    const outcome = this.#acquire(key, kind, signal, deadline, random);
+    if (this.#onEvent === null) return outcome;
+    const started = performance.now();
+    return outcome.then((admitted) => {
+      const wait_ms = performance.now() - started;
+      if ("release" in admitted) this.#emit("admitted", kind, { wait_ms });
+      else this.#emit("rejected", kind, { wait_ms, reason: admitted.reason, pause_ms: admitted.reason === "paused" ? admitted.retryAfterMs : null });
+      return admitted;
+    });
+  }
+
+  #acquire(key: string, kind: Kind, signal: AbortSignal | undefined, deadline: number | undefined, random: () => number): Promise<Permit | Rejection> {
     if (this.#closed) return Promise.resolve({ reason: "closed" });
     if (signal?.aborted) return Promise.resolve({ reason: "aborted" });
     const pool = this.#pool(key);
@@ -290,6 +359,7 @@ export class RequestScheduler {
     pool.active[kind] += 1;
     this.#total[kind] += 1;
     this.#served[kind] = key;
+    const granted = performance.now();
     let settled = false;
     let released = false;
     return {
@@ -307,6 +377,7 @@ export class RequestScheduler {
         const spread = Math.min(1000, wait * 0.1) * (Number.isFinite(r) ? Math.min(1, Math.max(0, r)) : 0.5);
         pool.pausedUntil = Math.max(pool.pausedUntil, performance.now() + wait + spread);
         pool.probing = true;
+        this.#emit("paused", null, { pause_ms: wait + spread });
         this.#pump(key, pool);
       },
       release: () => {
@@ -314,6 +385,7 @@ export class RequestScheduler {
         released = true;
         pool.active[kind] -= 1;
         this.#total[kind] -= 1;
+        this.#emit("released", kind, { held_ms: performance.now() - granted });
         this.#pump(key, pool);
         this.#forget(key, pool);
       },

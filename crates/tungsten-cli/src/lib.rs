@@ -236,7 +236,7 @@ fn run_inner(
     stderr: &mut dyn Write,
     env: &CliEnv,
     cancellation: tungsten_mock::RunCancellation,
-    _binary_signals: bool,
+    binary: bool,
 ) -> i32 {
     let color = env.color();
     let cli = match args::Cli::try_parse_from(&args) {
@@ -254,16 +254,25 @@ fn run_inner(
         }
     };
     let env = &selected_env;
+    let mut cli = cli;
+    if let Err(report) = commands::workspace::select(&mut cli) {
+        return if cli.json {
+            emit_json(*report, stdout)
+        } else {
+            emit_human(*report, color, stdout, stderr)
+        };
+    }
+    let cli = cli;
     #[cfg(any(target_os = "linux", target_vendor = "apple", windows))]
     let signals = if cfg!(target_os = "linux")
-        && _binary_signals
+        && binary
         && matches!(&cli.command, args::Command::SupportBundle(bundle) if bundle.output.is_some())
     {
         // Turns SIGINT/SIGTERM into cooperative cancellation so an interrupted
         // export removes its temporary file. Without capture, the default
         // disposition applies, as before.
         commands::scenario::BinarySignals::capture_interrupts().ok()
-    } else if _binary_signals
+    } else if binary
         && matches!(
             &cli.command,
             args::Command::Scenario {
@@ -340,6 +349,27 @@ fn run_inner(
     } else {
         emit_human(report, color && !cli.forces_plain(), stdout, stderr)
     };
+    // Opt-in, cache-only update notice: interactive human-mode binary runs
+    // only, never on protocol, JSON, policy, offline or CI invocations.
+    if binary
+        && serving.is_none()
+        && !cli.json
+        && !cli.offline
+        && cli.policy.is_none()
+        && cli.policy_digest.is_none()
+        && env.is_tty
+        && !matches!(
+            cli.command,
+            args::Command::Update { .. } | args::Command::Lsp(_)
+        )
+    {
+        commands::update_notice::after_command(
+            stderr,
+            &commands::update_notice::NoticeEnv::from_process(),
+            tungsten_build::TUNGSTEN_VERSION,
+            std::time::SystemTime::now(),
+        );
+    }
     if let Some(server) = serving {
         if code == exit::OK {
             serve(&server.base_url(), env);
