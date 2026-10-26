@@ -1,0 +1,259 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Reusable action: install a pinned, verified tungsten release and run the
+# contract checks. Reference it by full commit SHA:
+#
+#   - uses: pboachie/tungsten/actions/tungsten@<commit> # vX.Y.Z
+#     with:
+#       version: X.Y.Z
+#
+# See README.md in this directory for inputs, outputs and the trust model.
+name: tungsten check
+description: >-
+  Install a pinned, checksum- and provenance-verified tungsten release and run
+  `tungsten check`, `tungsten generate --check` and `tungsten lock --check`.
+author: pboachie
+
+inputs:
+  version:
+    description: >-
+      The tungsten release to install, for example `0.1.3` (no default: pin it).
+    required: true
+  projects:
+    description: >-
+      Projects to check, one per line: a directory with a tungsten.yml or a
+      tungsten*.yml manifest, relative to `working-directory`. Checked in the
+      order given.
+    required: false
+    default: "."
+  working-directory:
+    description: Directory the project paths are relative to.
+    required: false
+    default: "."
+  check:
+    description: "Run `tungsten check` (`true` or `false`)."
+    required: false
+    default: "true"
+  generate-check:
+    description: "Run `tungsten generate --check`: fail (TG0901) on stale generated output."
+    required: false
+    default: "true"
+  lock-check:
+    description: >-
+      Run `tungsten lock --check`: `auto` (when the project has a
+      tungsten.lock.json), `true` or `false`.
+    required: false
+    default: "auto"
+  locked:
+    description: "Pass `--locked` to check and generate: fail (TG0128) unless the project matches its lock."
+    required: false
+    default: "false"
+  strict:
+    description: "Pass `--strict` to check and generate: treat warnings as errors."
+    required: false
+    default: "false"
+  allow-external:
+    description: >-
+      Start the commands of `external` targets (`true` or `false`). Off by
+      default. Ignored, with a warning, for pull requests from forks and for
+      `pull_request_target` events.
+    required: false
+    default: "false"
+  install-only:
+    description: "Only install tungsten and add it to PATH; run no checks."
+    required: false
+    default: "false"
+  token:
+    description: >-
+      GitHub token for the provenance check of the release archive. Only the
+      install step sees it; it needs no permissions beyond reading public
+      attestations.
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  version:
+    description: The output of `tungsten --version`.
+    value: ${{ steps.install.outputs.version }}
+  bin-dir:
+    description: The directory holding the installed `tungsten` binary (also added to PATH).
+    value: ${{ steps.install.outputs.bin-dir }}
+  log-dir:
+    description: Directory with one log file per check (`<n>-<step>.log`), for upload as an artifact.
+    value: ${{ steps.checks.outputs.log-dir }}
+  failed:
+    description: "The failed checks, one `<project>: <step>` per line; empty when everything passed."
+    value: ${{ steps.checks.outputs.failed }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install tungsten ${{ inputs.version }}
+      id: install
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        INPUT_VERSION: ${{ inputs.version }}
+        RUNNER_OS_NAME: ${{ runner.os }}
+      run: |
+        set -euo pipefail
+        if [ "$RUNNER_OS_NAME" = "Windows" ]; then
+          echo "::error title=tungsten::this action supports Linux and macOS runners; on Windows use install.ps1"
+          exit 1
+        fi
+        if ! printf '%s' "$INPUT_VERSION" | grep -Eq '^v?[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$'; then
+          echo "::error title=tungsten::input 'version' must be a release version such as 0.1.3"
+          exit 1
+        fi
+        version="v${INPUT_VERSION#v}"
+        # The installer at the same commit as this action: pinning the action
+        # by SHA pins the installer. It checks the archive against the
+        # release's SHA256SUMS and its build provenance (GitHub CLI 2.102.0+).
+        installer="$GITHUB_ACTION_PATH/../../install.sh"
+        [ -f "$installer" ] || { echo "::error title=tungsten::install.sh not found next to the action"; exit 1; }
+        bin_dir="$RUNNER_TEMP/tungsten-$version/bin"
+        unset TUNGSTEN_NO_ATTESTATION TUNGSTEN_RELEASE_BASE_URL TUNGSTEN_REPO
+        sh "$installer" --version "$version" --dir "$bin_dir"
+        echo "$bin_dir" >> "$GITHUB_PATH"
+        installed="$("$bin_dir/tungsten" --version)"
+        echo "$installed"
+        {
+          echo "bin-dir=$bin_dir"
+          echo "version=$installed"
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Run the tungsten checks
+      id: checks
+      if: inputs.install-only != 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        INPUT_PROJECTS: ${{ inputs.projects }}
+        INPUT_CHECK: ${{ inputs.check }}
+        INPUT_GENERATE_CHECK: ${{ inputs.generate-check }}
+        INPUT_LOCK_CHECK: ${{ inputs.lock-check }}
+        INPUT_LOCKED: ${{ inputs.locked }}
+        INPUT_STRICT: ${{ inputs.strict }}
+        INPUT_ALLOW_EXTERNAL: ${{ inputs.allow-external }}
+        EVENT_NAME: ${{ github.event_name }}
+        PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        REPOSITORY: ${{ github.repository }}
+        TUNGSTEN: ${{ steps.install.outputs.bin-dir }}/tungsten
+      run: |
+        set -euo pipefail
+        bool() { # bool NAME VALUE: print true or false, fail on anything else
+          case "$2" in
+            true | false) printf '%s' "$2" ;;
+            *) echo "::error title=tungsten::input '$1' must be true or false, not '$2'" >&2; return 1 ;;
+          esac
+        }
+        run_check=$(bool check "$INPUT_CHECK")
+        run_generate=$(bool generate-check "$INPUT_GENERATE_CHECK")
+        locked=$(bool locked "$INPUT_LOCKED")
+        strict=$(bool strict "$INPUT_STRICT")
+        allow_external=$(bool allow-external "$INPUT_ALLOW_EXTERNAL")
+        case "$INPUT_LOCK_CHECK" in
+          auto | true | false) ;;
+          *) echo "::error title=tungsten::input 'lock-check' must be auto, true or false"; exit 1 ;;
+        esac
+
+        # A pull request can change the manifest, and an external target's
+        # command runs with the job's privileges. Never start one for a fork
+        # or under pull_request_target, whatever the input says.
+        if [ "$allow_external" = true ]; then
+          if [ "$EVENT_NAME" = pull_request_target ]; then
+            echo "::warning title=tungsten::allow-external ignored on pull_request_target"
+            allow_external=false
+          elif [ -n "$PR_HEAD_REPO" ] && [ "$PR_HEAD_REPO" != "$REPOSITORY" ]; then
+            echo "::warning title=tungsten::allow-external ignored for a pull request from a fork"
+            allow_external=false
+          fi
+        fi
+        if [ "$allow_external" = true ]; then
+          unset TUNGSTEN_NO_EXTERNAL
+        else
+          export TUNGSTEN_NO_EXTERNAL=1
+        fi
+
+        flags=()
+        [ "$locked" = true ] && flags+=(--locked)
+        [ "$strict" = true ] && flags+=(--strict)
+
+        log_dir="$RUNNER_TEMP/tungsten-logs"
+        rm -rf "$log_dir"
+        mkdir -p "$log_dir"
+        echo "log-dir=$log_dir" >> "$GITHUB_OUTPUT"
+
+        failed=()
+        rows=()
+        n=0
+        step() { # step PROJECT NAME COMMAND...: run one check, log and record it
+          local project=$1 name=$2 log status
+          shift 2
+          n=$((n + 1))
+          log="${name// --/-}"
+          log="$log_dir/$n-${log// /-}.log"
+          echo "::group::tungsten $name ($project)"
+          set +e
+          "$@" 2>&1 | tee "$log"
+          status=${PIPESTATUS[0]}
+          set -e
+          echo "::endgroup::"
+          if [ "$status" -eq 0 ]; then
+            rows+=("| \`$project\` | \`$name\` | passed |")
+          else
+            failed+=("$project: $name")
+            rows+=("| \`$project\` | \`$name\` | failed (exit $status) |")
+            echo "::error title=tungsten $name failed::$project: exit status $status; see the log above or $log"
+          fi
+        }
+
+        projects=()
+        while IFS= read -r line || [ -n "$line" ]; do
+          line="${line#"${line%%[![:space:]]*}"}"
+          line="${line%"${line##*[![:space:]]}"}"
+          [ -n "$line" ] && projects+=("$line")
+        done <<< "$INPUT_PROJECTS"
+        [ "${#projects[@]}" -gt 0 ] || { echo "::error title=tungsten::input 'projects' is empty"; exit 1; }
+
+        for project in "${projects[@]}"; do
+          case "$project" in
+            -* | /* | .. | ../* | */.. | */../*)
+              echo "::error title=tungsten::project '$project' must be a relative path inside the working directory"
+              exit 1 ;;
+          esac
+          [ -e "$project" ] || { echo "::error title=tungsten::project '$project' does not exist"; exit 1; }
+        done
+
+        for project in "${projects[@]}"; do
+          if [ -d "$project" ]; then root=$project; else root=$(dirname -- "$project"); fi
+
+          [ "$run_check" = true ] && step "$project" check "$TUNGSTEN" check ${flags[@]+"${flags[@]}"} "$project"
+          [ "$run_generate" = true ] && step "$project" "generate --check" "$TUNGSTEN" generate --check ${flags[@]+"${flags[@]}"} "$project"
+          case "$INPUT_LOCK_CHECK" in
+            true) step "$project" "lock --check" "$TUNGSTEN" lock --check "$project" ;;
+            auto) [ -f "$root/tungsten.lock.json" ] && step "$project" "lock --check" "$TUNGSTEN" lock --check "$project" ;;
+          esac
+        done
+
+        {
+          echo "### tungsten"
+          echo
+          echo "$("$TUNGSTEN" --version); external targets: $([ "$allow_external" = true ] && echo run || echo skipped)"
+          echo
+          echo "| Project | Check | Result |"
+          echo "|---|---|---|"
+          [ "${#rows[@]}" -gt 0 ] && printf '%s\n' "${rows[@]}"
+          if [ "${#failed[@]}" -gt 0 ]; then
+            echo
+            echo "Stale generated output (TG0901): run \`tungsten generate\` locally with the same release and commit the result."
+            echo "A stale lock: review the change with \`tungsten lock --preview\`, then \`tungsten lock --update\`."
+            echo "Any code: \`tungsten explain TG....\`."
+          fi
+        } >> "$GITHUB_STEP_SUMMARY"
+
+        {
+          echo "failed<<TUNGSTEN_FAILED_EOF"
+          [ "${#failed[@]}" -gt 0 ] && printf '%s\n' "${failed[@]}"
+          echo "TUNGSTEN_FAILED_EOF"
+        } >> "$GITHUB_OUTPUT"
+        [ "${#failed[@]}" -eq 0 ]

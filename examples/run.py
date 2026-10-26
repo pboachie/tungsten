@@ -813,7 +813,7 @@ Additional examples have their own runners and prerequisites:
 - [External Markdown emitter](external-emitter-markdown/README.md): implement the emitter protocol.
 - [Typed Python SSE](typed-sse/README.md): declare and consume named streams with explicit cleanup.
 - [Response-contract quality](response-contract-audit/README.md): audit weak responses and apply reviewed schema overlays.
-- [GitHub Actions workflow](github-actions/README.md): a copyable workflow that installs a pinned release, validates the contract and fails on stale generated output.
+- [GitHub Actions workflow](github-actions/README.md): a copyable workflow, inline or through the reusable [`actions/tungsten`](../actions/tungsten/README.md) action, that installs a pinned release, validates the contract and fails on stale generated output or a stale lock.
 - [Reuse one configuration profile](profile-reuse/README.md): share reviewed defaults across an app and a multi-target library, with explicit per-project overrides.
 - [Restricted agent integration](restricted-agent/README.md): an MCP server that reads freely, confirms writes and never offers deletion, with transport references from a shared profile.
 '''
