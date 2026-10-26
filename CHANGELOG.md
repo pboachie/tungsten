@@ -226,6 +226,14 @@ changes.
 
 ### Added
 
+- Add an opt-in total operation deadline to the TypeScript (`deadlineMs`),
+  Python (`deadline_ms`) and Rust (`deadline`) runtimes, on client and call
+  options. Unlike the per-attempt timeout, it bounds one logical call across
+  authentication, idempotency-key reservation, retries and backoff, response
+  bodies and verification, and a whole traversal, poll or macro. No attempt
+  starts after it expires (`DEADLINE_EXCEEDED`); a mutation already sent still
+  reports `OUTCOME_UNKNOWN`. Existing timeout semantics are unchanged.
+
 - Add `tungsten lock`, a versioned single-project generation lock
   (`tungsten.lock.json`). It records the declared input closure (manifest,
   profiles, agent manifest, entry documents, local references and overlays in

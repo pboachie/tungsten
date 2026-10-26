@@ -137,6 +137,8 @@ pub struct EventStream {
     args: Value,
     opts: CallOptions,
     state: State,
+    /// Bounds connecting and each reconnect, not an open stream.
+    deadline: Option<std::time::Instant>,
 }
 
 impl std::fmt::Debug for EventStream {
@@ -156,6 +158,7 @@ impl EventStream {
         args: Value,
         opts: CallOptions,
     ) -> Self {
+        let deadline = crate::verify::resolve_deadline(&core, &opts);
         EventStream {
             core,
             op,
@@ -163,6 +166,7 @@ impl EventStream {
             args,
             opts,
             state: State::Idle,
+            deadline,
         }
     }
 
@@ -170,6 +174,10 @@ impl EventStream {
     /// Dropping the returned future before it completes loses nothing: the
     /// state only changes once an await has finished.
     pub async fn next(&mut self) -> Option<StreamResult<Value>> {
+        crate::verify::with_deadline_at(self.deadline, self.next_item()).await
+    }
+
+    async fn next_item(&mut self) -> Option<StreamResult<Value>> {
         loop {
             match &mut self.state {
                 State::Done => return None,

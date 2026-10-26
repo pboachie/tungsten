@@ -22,11 +22,93 @@ tokio::task_local! {
     static POLL_DEADLINE: Option<Instant>;
 }
 
+// The total deadline of one logical call (`deadline` in `CallOptions` or
+// `ClientOptions`), fixed by the public entry point; nested pages, polls,
+// verification and macro steps inherit it and cannot restart it.
+tokio::task_local! {
+    static CALL_DEADLINE: Option<Instant>;
+}
+
 pub(crate) fn poll_deadline() -> Option<Instant> {
     POLL_DEADLINE.try_with(|deadline| *deadline).ok().flatten()
 }
 
+pub(crate) fn call_deadline() -> Option<Instant> {
+    CALL_DEADLINE.try_with(|deadline| *deadline).ok().flatten()
+}
+
+/// The earliest deadline bounding the current work: the call's total
+/// deadline or a polling budget.
+pub(crate) fn effective_deadline() -> Option<Instant> {
+    match (call_deadline(), poll_deadline()) {
+        (Some(call), Some(poll)) => Some(call.min(poll)),
+        (call, poll) => call.or(poll),
+    }
+}
+
+/// Whether the call's total deadline has passed.
+pub(crate) fn call_deadline_expired() -> bool {
+    call_deadline().is_some_and(|deadline| Instant::now() >= deadline)
+}
+
+pub(crate) fn deadline_exceeded(operation: &str, during: &str) -> crate::types::Error {
+    crate::prepare::fail(
+        crate::envelope::Diag::new(operation, crate::types::Category::TransportFailed)
+            .code(Some("DEADLINE_EXCEEDED".to_owned()))
+            .retryable(crate::types::Retryable::Never)
+            .remediation(format!(
+                "The operation deadline (`deadline`) expired {during}, so the request was not sent. Call again with a larger `deadline`."
+            ))
+            .build(),
+    )
+}
+
+/// Run `work` under the total deadline `opts.deadline` (else the client's
+/// default), measured from now; an enclosing call's deadline is never
+/// extended.
+pub(crate) async fn with_call_deadline<F: std::future::Future>(
+    core: &ClientCore,
+    opts: &CallOptions,
+    work: F,
+) -> F::Output {
+    with_deadline_at(resolve_deadline(core, opts), work).await
+}
+
+/// The absolute deadline a call starting now gets from `opts.deadline`
+/// (else the client's default), never later than an enclosing call's.
+pub(crate) fn resolve_deadline(core: &ClientCore, opts: &CallOptions) -> Option<Instant> {
+    let Some(budget) = opts
+        .deadline
+        .or(core.inner.deadline)
+        .filter(|d| !d.is_zero())
+    else {
+        return call_deadline();
+    };
+    let now = Instant::now();
+    let at = now
+        .checked_add(budget)
+        .unwrap_or_else(|| now + Duration::from_secs(86_400 * 365));
+    Some(call_deadline().map_or(at, |outer| outer.min(at)))
+}
+
+/// Run `work` under the absolute call deadline `at` (none: unbounded).
+pub(crate) async fn with_deadline_at<F: std::future::Future>(
+    at: Option<Instant>,
+    work: F,
+) -> F::Output {
+    match at {
+        Some(_) => CALL_DEADLINE.scope(at, work).await,
+        None => work.await,
+    }
+}
+
 pub(crate) fn check_poll_deadline(operation: &str) -> crate::prepare::Step<()> {
+    if call_deadline_expired() {
+        return Err(deadline_exceeded(
+            operation,
+            "before the request could be sent",
+        ));
+    }
     if poll_deadline().is_some_and(|deadline| Instant::now() >= deadline) {
         return Err(crate::prepare::fail(
             crate::envelope::Diag::new(operation, crate::types::Category::TransportFailed)
