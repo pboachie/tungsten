@@ -176,8 +176,10 @@ def advisory_exceptions(policy: dict, locked: set[str]) -> list[dict]:
         require(set(entry) == {"id", "package", "reason", "expires"},
                 f"{EXCEPTIONS_KEY}: an entry carries exactly id, package, reason and expires")
         advisory, package, reason, expires = entry["id"], entry["package"], entry["reason"], entry["expires"]
-        require(isinstance(advisory, str) and re.fullmatch(r"[A-Za-z]+-[0-9]{4}-[0-9A-Za-z-]+", advisory),
-                f"{EXCEPTIONS_KEY}: {advisory!r} is not an advisory id such as RUSTSEC-2026-0346")
+        require(isinstance(advisory, str) and re.fullmatch(
+                    r"GHSA-[0-9A-Za-z]{4}-[0-9A-Za-z]{4}-[0-9A-Za-z]{4}|[A-Za-z]+-[0-9]{4}-[0-9A-Za-z-]+",
+                    advisory),
+                f"{EXCEPTIONS_KEY}: {advisory!r} is not an advisory id such as RUSTSEC-2026-0346 or GHSA-qwgh-2vcv-g2f7")
         require(isinstance(package, str) and package in locked,
                 f"{EXCEPTIONS_KEY}: {advisory} names {package!r}, which is not in the locked dependency inventory")
         require(isinstance(reason, str) and reason.strip(),

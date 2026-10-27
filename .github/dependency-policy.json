@@ -1,5 +1,12 @@
 {
-  "advisory_exceptions": [],
+  "advisory_exceptions": [
+    {
+      "id": "GHSA-qwgh-2vcv-g2f7",
+      "package": "block-buffer",
+      "reason": "Reviewed 2026-10-27: block_buffer panic-recovery cursor corruption (CVSS 6.3) is only reachable when a panic raised inside a digest callback is caught and the buffer is then reused. The only callback block-buffer runs here is sha2's block compression, which does not panic, so no hasher is left with a corrupted cursor (a panic elsewhere in the Rust runtime's streaming upload hash poisons its state lock and rejects the attempt). No fixed release exists in the sha2 0.10 dependency line (the fix is block-buffer 0.12.1); the sha2 0.11 move (public #341) still resolves an unfixed block-buffer. Remove this exception once any locked dependency line carries a fixed block-buffer.",
+      "expires": "2027-01-27"
+    }
+  ],
   ".github/packaging-requirements.lock": [
     "attrs",
     "build",
@@ -58,6 +65,7 @@
     "bitflags",
     "blake3",
     "block-buffer",
+    "block2",
     "bytes",
     "cc",
     "cfg-if",
@@ -72,7 +80,9 @@
     "crossbeam-channel",
     "crossbeam-utils",
     "crypto-common",
+    "ctrlc",
     "digest",
+    "dispatch2",
     "displaydoc",
     "dyn-clone",
     "encoding_rs",
@@ -118,6 +128,8 @@
     "memchr",
     "mio",
     "nix",
+    "objc2",
+    "objc2-encode",
     "once_cell",
     "once_cell_polyfill",
     "percent-encoding",
