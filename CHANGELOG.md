@@ -11,6 +11,10 @@ changes.
 
 ### Security
 
+- Record a reviewed, time-limited exception for GHSA-qwgh-2vcv-g2f7
+  (block-buffer, no fixed release in the sha2 0.10 line) and accept GHSA ids
+  in the dependency audit's advisory exceptions.
+
 - Fix verified Python packaging bootstrap on Windows and temporary paths with
   punctuation. Enter pip as a module and install the wheel through a local file
   URI, preserving hash verification and isolated, offline installation.
