@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Build with the checksum-verified distribution/container directory as context.
-FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
+FROM alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a
 RUN apk add --no-cache --upgrade 'zlib>=1.3.2-r1' \
     && installed="$(apk list --installed zlib | cut -d ' ' -f 1)" \
     && case "$(apk version -t "${installed#zlib-}" 1.3.2-r1)" in \
