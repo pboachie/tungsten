@@ -72,7 +72,14 @@ pub(super) fn validate(args: &InitArgs) -> Result<(), &'static str> {
                 "profiles must be relative local paths using `/`; remote profiles are never downloaded",
             );
         }
-        if !args.dir.join(profile).is_file() {
+        // `init` creates `--dir`; until it exists, `..` cannot be resolved
+        // through it, so a profile beside a new project is found lexically.
+        let path = if args.dir.exists() {
+            args.dir.join(profile)
+        } else {
+            tungsten_config::workspace::normalize(&args.dir.join(profile))
+        };
+        if !path.is_file() {
             return Err("a selected profile file does not exist relative to the project directory");
         }
     }

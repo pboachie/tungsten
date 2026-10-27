@@ -1382,6 +1382,9 @@ changes.
 
 ### Fixed
 
+- `tungsten init --dir new --profile ../shared/team.yml` accepts a profile
+  beside a project directory that `init` has yet to create, instead of
+  reporting it missing.
 - Write `WebhookName::ALL` of generated Rust SDKs in rustfmt's layout: on one
   line when it fits, so `src/webhooks.rs` passes `cargo fmt --check`.
 - Register TG0124, TG0128 and TG0129 in the diagnostic code registry, so
