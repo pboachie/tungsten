@@ -37,7 +37,7 @@ jobs:
       - name: Stage verified pip for interpreter setup
         shell: bash
         run: python -I crates/tungsten-cli/src/commands/bootstrap_python.py --fetch-only --wheel-dir "$RUNNER_TEMP/tungsten-pip-bootstrap"
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         env:
           PIP_CONFIG_FILE: ${{ runner.os == 'Windows' && 'nul' || '/dev/null' }}
           PIP_NO_INDEX: "1"
@@ -54,7 +54,7 @@ jobs:
         with:
           go-version: "1.26.10"
           cache: false
-      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           distribution: temurin
           java-version: "21.0.13+9.0.LTS"
@@ -71,7 +71,7 @@ jobs:
           ruby-version: "3.3.13"
           bundler-cache: false
       - run: rustup toolchain install
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - name: Build the matching compiler
         run: cargo build --locked -p tungsten-cli
       - name: Run every indexed recipe and check README drift
