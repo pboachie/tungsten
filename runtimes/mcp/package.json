@@ -1,6 +1,6 @@
 {
   "name": "@elysra/tungsten-mcp",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "MCP server runtime for tungsten-generated APIs: discrete and progressive tool disclosure, search, previews and confirmation, envelope results.",
   "keywords": ["openapi", "mcp", "model-context-protocol", "tungsten", "agents", "tools"],
   "homepage": "https://github.com/pboachie/tungsten",
@@ -22,7 +22,7 @@
     "build": "tsc -p tsconfig.json"
   },
   "peerDependencies": {
-    "@elysra/tungsten-runtime": "^0.1.5"
+    "@elysra/tungsten-runtime": "^0.1.6"
   },
   "dependencies": {
     "@jitl/quickjs-wasmfile-release-sync": "0.32.0",

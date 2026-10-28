@@ -1,6 +1,6 @@
 {
   "name": "@elysra/tungsten-webmcp",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Browser WebMCP adapter for tungsten-generated APIs.",
   "license": "Apache-2.0",
   "keywords": ["openapi", "sdk", "tungsten", "agents", "runtime", "webmcp"],
@@ -17,6 +17,6 @@
   "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
   "files": ["dist", "LICENSE", "README.md"],
   "scripts": { "build": "tsc -p tsconfig.json" },
-  "peerDependencies": { "@elysra/tungsten-runtime": "^0.1.5" },
+  "peerDependencies": { "@elysra/tungsten-runtime": "^0.1.6" },
   "devDependencies": { "@elysra/tungsten-runtime": "file:../ts", "typescript": "5.9.3" }
 }

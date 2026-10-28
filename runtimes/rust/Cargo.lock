@@ -1193,7 +1193,7 @@ checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
 name = "tungsten-cli-kit"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "clap",
  "serde",
@@ -1204,7 +1204,7 @@ dependencies = [
 
 [[package]]
 name = "tungsten-runtime"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "base64 0.23.1",
  "bytes",
